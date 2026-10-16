@@ -699,28 +699,14 @@ def destination_udid(destination: str) -> str:
 
 
 def wait_for_service(ready_path: Path, process: subprocess.Popen[bytes], *,
-                     startup_log: Path | None = None, diagnostics_path: Path | None = None) -> tuple[str, int]:
-    recorder = active()
-    first_sequence = recorder.sequence if recorder else 0
+                     startup_log: Path | None = None) -> tuple[str, int]:
     try:
-        try:
-            return _wait_for_service(ready_path, process)
-        finally:
-            if recorder is not None:
-                recorder.fixture_log(diagnostics_path)
+        return _wait_for_service(ready_path, process)
     except CommandError as error:
-        retained = [event for event in recorder.events if event["sequence"] > first_sequence] if recorder else []
-        phases = [event for event in retained if event["scope"] == "fixture"]
         lines = _service_startup_diagnostics(startup_log)
-        message = str(error)
         if lines:
             phase, state = re.search(r"phase=([^;]+); state=([^;]+)", lines[-1]).groups()
-            message += f" startup_phase={phase}; startup_state={state}."
-        if phases:
-            phase, state = phases[-1]["phase"], phases[-1]["state"]
-            message += f" diagnostic={phase}/{state}."
-        if message != str(error):
-            raise CommandError(message, code=error.code) from error
+            raise CommandError(f"{error} startup_phase={phase}; startup_state={state}.", code=error.code) from error
         raise
     finally:
         for line in _service_startup_diagnostics(startup_log):

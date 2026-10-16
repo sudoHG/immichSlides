@@ -20,7 +20,7 @@ from datetime import date
 from pathlib import Path
 from typing import Callable, Mapping, Sequence, TextIO
 
-from ci_execution_diagnostics import IO_CAP_SECONDS, active, diagnostic_session, fixture_environment, official_exports
+from ci_execution_diagnostics import IO_CAP_SECONDS, active, diagnostic_session, official_exports
 
 from run_offline_unit_tests import (
     CommandError as OfflineCommandError,
@@ -849,8 +849,6 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         service_scenario, input_key, starts_service = scenario_settings(arguments.scenario)
         if starts_service:
             service_startup_path = arguments.evidence_dir / "service-startup.log"
-            service_diagnostics_path = arguments.evidence_dir / "service-diagnostics.log"
-            service_environment, service_diagnostics_path = fixture_environment(os.environ, service_diagnostics_path)
             with open(service_startup_path, "wb", opener=lambda path, flags: os.open(path, flags, 0o600)) as log:
                 service_process = subprocess.Popen(
                     [
@@ -870,19 +868,15 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                         str(service_log_path),
                     ],
                     cwd=REPO_ROOT,
-                    env=service_environment,
                     stdout=log,
                     stderr=subprocess.DEVNULL,
                 )
-            host, port = wait_for_service(ready_path, service_process, startup_log=service_startup_path,
-                                          diagnostics_path=service_diagnostics_path)
+            host, port = wait_for_service(ready_path, service_process, startup_log=service_startup_path)
             server_url = f"http://{host}:{port}/api"
             if arguments.suite in DUAL_SERVER_SUITES:
                 ready_b = arguments.evidence_dir / "service-b-ready.json"
                 service_log_b_path = arguments.evidence_dir / "service-b.log"
                 service_startup_b_path = arguments.evidence_dir / "service-b-startup.log"
-                service_diagnostics_b_path = arguments.evidence_dir / "service-b-diagnostics.log"
-                service_environment_b, service_diagnostics_b_path = fixture_environment(os.environ, service_diagnostics_b_path)
                 with open(service_startup_b_path, "wb", opener=lambda path, flags: os.open(path, flags, 0o600)) as log:
                     service_process_b = subprocess.Popen(
                         [
@@ -902,12 +896,10 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                             str(service_log_b_path),
                         ],
                         cwd=REPO_ROOT,
-                        env=service_environment_b,
                         stdout=log,
                         stderr=subprocess.DEVNULL,
                     )
-                host_b, port_b = wait_for_service(ready_b, service_process_b, startup_log=service_startup_b_path,
-                                                  diagnostics_path=service_diagnostics_b_path)
+                host_b, port_b = wait_for_service(ready_b, service_process_b, startup_log=service_startup_b_path)
                 server_url_b = f"http://{host_b}:{port_b}/api"
         else:
             server_url, unreachable_reservation = reserve_unreachable_server_url()

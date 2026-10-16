@@ -253,10 +253,9 @@ import run_strict_e2e as strict_runner
 class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
     def test_service_failure_exposes_private_startup_phase_for_either_server(self):
         import contextlib
-        import ci_execution_diagnostics as diagnostics
         import strict_e2e_runner_support as support
-        for failed_server, exhausted in ((1, False), (2, False), (1, True), (2, True)):
-            with self.subTest(failed_server=failed_server, exhausted=exhausted), tempfile.TemporaryDirectory() as raw:
+        for failed_server in (1, 2):
+            with self.subTest(failed_server=failed_server), tempfile.TemporaryDirectory() as raw:
                 evidence = Path(raw) / "evidence"
                 logs = []
                 def launch(command, **kwargs):
@@ -275,19 +274,11 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                     if len(logs) == failed_server:
                         raise CommandError("Test service health check timed out (last_state=ready-file-missing).")
                     return "127.0.0.1", 1234
-                with diagnostics.session() as recorder, mock.patch("run_strict_e2e.subprocess.Popen", side_effect=launch), \
+                with mock.patch("run_strict_e2e.subprocess.Popen", side_effect=launch), \
                         mock.patch.object(support, "_wait_for_service", side_effect=wait), \
-                        mock.patch("run_strict_e2e.wait_for_service", wraps=support.wait_for_service) as harvest, \
                         contextlib.redirect_stdout(io.StringIO()):
-                    if exhausted:
-                        recorder.charged["fixture"] = diagnostics.COLLECTION_BUDGET_SECONDS["fixture"]
                     code, _, stderr, _ = self._run_p2_main(
                         evidence, suite="filter-switch", platform="ios", model="iPhone")
-                    expected_paths = [None] * failed_server if exhausted else [
-                        evidence / "service-diagnostics.log", evidence / "service-b-diagnostics.log"][:failed_server]
-                    self.assertEqual(expected_paths, [call.kwargs["diagnostics_path"] for call in harvest.call_args_list])
-                    if exhausted:
-                        self.assertIsInstance(recorder.receipt()["collection_seconds"]["fixture"], (int, float))
                 self.assertEqual(code, 2, stderr)
                 phase = "fixture-build" if failed_server == 1 else "bind"
                 self.assertIn(f"CommandError: Test service health check timed out (last_state=ready-file-missing). "
@@ -1472,6 +1463,7 @@ raise SystemExit(65)
             self.assertEqual("failed", summary["status"])
             self.assertEqual("simulator-preparation-failed", summary["infrastructure"][0]["code"])
             events = summary["bounded_diagnostics"]["events"]
+            self.assertIsNone(summary["bounded_diagnostics"]["collection_seconds"]["fixture"])
             self.assertTrue(any(event["phase"] == "simulator-readiness" and event["state"] == "timeout"
                                 and event["elapsed_seconds"] == 301.5 for event in events))
             self.assertEqual(["started", "timeout", "reap-completed"],
@@ -1541,6 +1533,7 @@ raise SystemExit(65)
             self.assertIsInstance(failure.exception.__cause__, subprocess.TimeoutExpired)
             receipt = recorder.receipt()
             validate_receipt(receipt)
+            self.assertIsNone(receipt["collection_seconds"]["fixture"])
             events = receipt["events"]
             self.assertEqual(["timeout", "after-reap"], [event["state"] for event in events[-2:]])
             self.assertEqual("test-execution", events[-1]["phase"])
@@ -1612,34 +1605,12 @@ raise SystemExit(65)
                 support.simulator_app_container("unused", "public.bundle")
             self.assertEqual([("simulator-container", "started")], [(event["phase"], event["state"]) for event in recorder.events])
 
-    def test_fixture_harvest_includes_the_writer_completion_after_health_succeeds(self):
-        import ci_execution_diagnostics as diagnostics
-        import strict_e2e_runner_support as support
-        event = {"scope": "fixture", "phase": "ready-write", "state": "completed", "sequence": 1,
-                 "elapsed_seconds": 0.1, "cpu_seconds": 0.01, "sample": None,
-                 "input_sha256": None, "official_exports": None}
-        completed = (diagnostics.FIXTURE_PREFIX + json.dumps(event) + "\nfixture-collection-seconds: 0.03\n"
-                     "fixture-collection-completed: true\n").encode()
-        path = mock.Mock()
-        health = [False]
-        def read():
-            self.assertTrue(health[0], "diagnostic draining must follow the health decision")
-            return io.BytesIO(b"" if path.open.call_count == 1 else completed)
-        path.open.side_effect = lambda *args: read()
-        def healthy(*args):
-            health[0] = True
-            return "127.0.0.1", 42
-        with diagnostics.session() as recorder, mock.patch.object(support, "_wait_for_service", side_effect=healthy):
-            self.assertEqual(("127.0.0.1", 42), support.wait_for_service(Path("unused"), mock.Mock(), diagnostics_path=path))
-            self.assertEqual(["ready-write"], [item["phase"] for item in recorder.events])
-            self.assertEqual(2, path.open.call_count)
-            self.assertFalse(recorder.truncated)
 
     def test_hung_diagnostic_is_capped_and_invalid_measurements_cannot_break_a_summary(self):
         import ci_execution_diagnostics as diagnostics
         from ci_summary import parse_summary
         from test_ci_summary import valid_summary
-        for scope, budget in {"preparation": 5, "xcode": 10, "fixture": 2}.items():
+        for scope, budget in {"preparation": 5, "xcode": 10}.items():
             with self.subTest(scope=scope):
                 recorder = diagnostics.Recorder()
                 recorder.charged[scope] = budget - 0.04
@@ -1713,8 +1684,7 @@ raise SystemExit(65)
         from types import SimpleNamespace
         reasons = {"collection-budget-exhausted", "sample-timeout", "collection-timeout", "worker-unavailable",
                    "event-budget-exhausted", "event-cap", "io-pool-exhausted", "io-timeout", "ledger-unavailable",
-                   "reserve-failed", "fixture-read-unavailable", "fixture-emitter-truncated",
-                   "fixture-completion-missing", "fixture-allowance-below-minimum", "inherited"}
+                   "reserve-failed", "inherited"}
         self.assertEqual(reasons, diagnostics.TRUNCATION_REASONS)
         for reason in sorted(reasons):
             with self.subTest(reason=reason), mock.patch.object(diagnostics, "_TRUNCATION_REPORTED", False), \
@@ -1921,15 +1891,14 @@ raise SystemExit(65)
             successor.attach(summary)
             self.assertEqual([], summary["bounded_diagnostics"]["events"])
             self.assertTrue(summary["bounded_diagnostics"]["truncated"])
-            mixed = Path(raw) / "fixture.log"
-            seed = diagnostics.Recorder()
-            seed.event("preparation", "simulator-preparation", "started", 1)
-            seed.event("fixture", "image-generation", "started", 2)
-            mixed.write_text("".join(diagnostics.FIXTURE_PREFIX + json.dumps(event) + "\n" for event in seed.events)
-                             + "fixture-collection-seconds: 0.01\n")
-            collected = diagnostics.Recorder()
-            collected.fixture_log(mixed)
-            self.assertEqual(["fixture"], [event["scope"] for event in collected.events])
+            with diagnostics.session(path) as exhausted:
+                exhausted.charged["preparation"] = COLLECTION_BUDGET_SECONDS["preparation"]
+                exhausted.event("xcode", "test-execution", "timeout", 1, elapsed=600)
+            successor = diagnostics.Recorder()
+            successor.load(path)
+            self.assertEqual([("xcode", "timeout")],
+                             [(event["scope"], event["state"]) for event in successor.events])
+            self.assertIsNone(successor.receipt()["collection_seconds"]["fixture"])
 
     def test_failed_runner_keeps_official_counts_and_compilation_without_becoming_passed(self):
         import run_strict_ci_tracer as tracer

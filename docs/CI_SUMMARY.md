@@ -146,6 +146,11 @@ collection costs, event count, truncation and the last retained phase per scope;
 measurements stay in the summary JSON. Trusted report failure/missing counts and
 issue decisions do not consume the measurements.
 
+Current producers collect preparation and Xcode diagnostics only. Fixture-scope
+events remain reader-compatible, but no fixture diagnostics are emitted or
+harvested; `collection_seconds.fixture` is always null. The fixture servers,
+startup environment and health deadline use their ordinary paths unchanged.
+
 Successful phases retain only started/completed events. At 512 events the oldest
 success is evicted first; incoming anomalies replace older anomalies only when
 no successes remain. Thus the latest timeout and export observations survive a
@@ -176,7 +181,7 @@ Each write uses a distinct temporary file, including overlapping timed-out worke
 The refund deadline check precedes atomic replacement: a scheduling pause between
 them can commit after the caller times out. That window can undercount up to
 about 0.09 s per late commit; the caller still waits at most its 0.1 s IO cap.
-Exhausting preparation sampling never gates persistence of Xcode or fixture
+Exhausting preparation sampling never gates persistence of Xcode
 events. Start samples leave 0.5 s for anomaly sampling; the IO pool has its own
 exhaustion/truncation boundary rather than borrowing another scope's budget.
 A fresh process must read the ledger before learning that its inherited IO
@@ -187,32 +192,13 @@ The internal ledger stores the public receipt and remaining numeric allowances;
 allowances are distinct from observed `collection_seconds`. A lost child's
 collection measurements remain null rather than treating its reservation as an
 observation. Only the validated public receipt is attached to summaries.
-Fixture children receive a reserved emission allowance of at most 0.2 s; the
-parent harvests only validated fixture events from a separate file of at most
-512 KiB, passed through the child's environment. Emission defaults to disabled
-when no reader grants an allowance. The original `fixture-startup:` stdout and
-its 4096-byte reader window are unchanged. Import is visible before other service
-imports run. PNG and cache-miss fixture
-generation carry hashes of public generation arguments; these input digests are
-distinct from `hashes.manifests.fixture-c`, the generated manifest digest, and
-are not independently bound to that manifest by the reader. Cached deepcopies
-and nested fixture-set generation do not create duplicate generation envelopes.
-Allowances below 0.04 s (the server minimum plus the early import write) are
-disabled and marked truncated. A zero grant removes the diagnostic file variable
-and skips harvesting; earlier measured fixture costs remain numeric. A missing
-file after a positive grant makes fixture collection unavailable.
-A completion line seals the asynchronous file;
-a missing completion line also marks truncation. Failure messages retain the
-synchronous stdout phase and append the finer diagnostic phase separately.
-
 Every process sample has a 0.25 s cap, with 0.08 s subprocess deadlines; public
-Xcode progress reads have a 0.1 s cap, and fixture log reads have a
-0.25 s cap. Capped daemon workers prevent a stuck diagnostic from blocking the
+Xcode progress reads have a 0.1 s cap. Capped daemon workers prevent a stuck diagnostic from blocking the
 runner. Retention and cumulative collection budgets stop additional work and
 mark truncation.
 The first truncation per process also starts a best-effort, non-waited stderr
 write: `bounded-diagnostics truncated: <reason>`. Reasons come from a closed set
-of collection/IO/fixture/retention code paths and inherited truncation; the line
+of collection/IO/retention code paths and inherited truncation; the line
 contains no values or paths and is never added to records. The daemon uses
 `os.write(2, ...)` directly, avoiding buffered stderr's interpreter-shutdown lock;
 a full stderr pipe blocks only that non-waited writer, which may outlive collection.
@@ -220,20 +206,7 @@ The strict tracer forwards only the first exact prefix/allowlisted reason from
 each child's private runner log to job stderr, preserving its original exit code.
 It latches that signal and marks truncation after every subsequent checkpoint
 load, including when the child could not load or persist its own receipt.
-Fixture writes run on a single daemon outside the ready path; each write has a
-10 ms CPU allowance and no synchronous ready-path IO wait.
-Ready-path reports acquire the shared accounting lock without waiting; if a
-writer holds it, that event is dropped and collection is marked truncated.
-Server drain waits are capped at 10 ms after service exit or failure is
-decided; sealing the writer before health serving never waits. After the health
-decision the parent allows up to 10 ms for the completion line inside its capped
-file read, so it can harvest the final rows without changing readiness. A blocked file
-writer cannot hold up ready or process exit. Fixture
-collection accounting includes emitter bookkeeping/IO CPU time and conservatively
-reserves the final write allowance and drain wait before reporting its footer;
-overlapped scheduler waits are not added job latency. Enqueueing and public input
-hashing leave small CPU bookkeeping costs on the existing startup path; the
-0.2 s child allowance is charged in full before spawn. Out-of-range measurements become null (or zero for a required
+Out-of-range measurements become null (or zero for a required
 elapsed offset), and receipts are validated before attachment; invalid receipts
 are dropped without changing the verdict. Xcode timeout observations follow
 stdlib cleanup; they do not claim a pre-kill sample. They retain allowlisted
@@ -242,34 +215,34 @@ recognized public phase, and official-export existence booleans. Existing bundle
 export, retention and privacy rules still apply. Ready is written at the existing
 point after generation and bind; health and the 60 s deadline remain authoritative.
 
-The approved per-job ceilings apply across repeated preparations and services.
+The approved per-job ceilings apply across repeated preparations and Xcode invocations.
 Both the 25 strict jobs and 18 fixture UI jobs use the shared producers: at most
-43 × 5 s = 3.59 machine minutes/night for preparation and 43 × 2 s = 1.44 for
-fixture startup. Xcode diagnostics add at most 10 s (0.167 machine minutes) per
-failed strict job. With one such failed job, the combined ceiling is 5.19 machine
-minutes/night and 2.74 minutes wall time at two jobs per matrix (13 strict waves
+43 × 5 s = 3.59 machine minutes/night for preparation. Xcode diagnostics add at
+most 10 s (0.167 machine minutes) per failed strict job. With one such failed
+job, the combined ceiling is 3.75 machine minutes/night and 2.00 minutes wall
+time at two jobs per matrix (13 strict waves
 and nine UI waves, conservatively summed). These are ceilings and ideal parallel
 estimates, not hosted measurements or billing. Existing readiness, Xcode and
 service deadlines remain unchanged.
 
 PR CI uses the same ceilings. For a six-shard functional `ci-ui` selection,
-6 × (5 + 2) s = 0.70 machine minutes/push; two `ci-strict-tracer` jobs add
-2 × (5 + 2) s = 0.234 machine minutes, plus 0.167 per failed strict job.
-With one failure the combined ceiling is 1.10 machine minutes/push. Two serial
-UI shards per device add at most 14 s wall time; the parallel strict jobs add
-at most 17 s with one failure, or 0.284 minutes of combined critical-path
+6 × 5 s = 0.50 machine minutes/push; two `ci-strict-tracer` jobs add
+2 × 5 s = 0.167 machine minutes, plus 0.167 per failed strict job.
+With one failure the combined ceiling is 0.834 machine minutes/push. Two serial
+UI shards per device add at most 10 s wall time; the parallel strict jobs add
+at most 15 s with one failure, or 0.25 minutes of combined critical-path
 overhead when the tiers overlap. Selection/Cloud waits run no producers. Actual
 packing, runner queues and approval waits determine the full workflow wall time;
 these figures describe diagnostic overhead, not total CI duration.
 
 Direct strict invocations also activate an in-memory recorder: `ci-p2-review`
-runs two serial processes (warm build and test), each capped at 5 + 2 s plus
-10 s on an Xcode timeout, so that job adds at most 0.234 machine minutes and
-14 s wall time without timeouts, or 0.567 machine minutes and 34 s with both
+runs two serial processes (warm build and test), each capped at 5 s plus
+10 s on an Xcode timeout, so that job adds at most 0.167 machine minutes and
+10 s wall time without timeouts, or 0.50 machine minutes and 30 s with both
 timed out. Direct helper calls in the iOS/tvOS access-lifecycle runners and
 `ci_flaky.run_ui` activate no session themselves; when called within an active
 strict session they share its existing ceiling. An explicitly wrapped independent
-invocation would add at most 0.284 machine minutes and 17 s wall time. These
+invocation would add at most 0.25 machine minutes and 15 s wall time. These
 direct callers publish no bounded receipt themselves. They have no scheduled
 nightly frequency and are outside the 43-job nightly estimate above; add their
 per-invocation costs for any manual or additional workflow runs.

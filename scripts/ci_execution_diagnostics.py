@@ -28,9 +28,6 @@ from ci_summary import BOUNDED_DIAGNOSTICS_FIELD
 
 SAMPLE_CAP_SECONDS = 0.25
 IO_CAP_SECONDS = 0.1
-FIXTURE_READ_CAP_SECONDS = 0.25
-FIXTURE_DRAIN_CAP_SECONDS = 0.01
-FIXTURE_PREFIX = "fixture-diagnostic: "
 MAX_RECEIPT_BYTES = 512 * 1024
 BOOKKEEPING_RESERVE_SECONDS = 0.01
 LEDGER_ALLOWANCE_SECONDS = 1.5
@@ -38,9 +35,6 @@ LEDGER_IO_CAP_SECONDS = 0.1
 LEDGER_REFUND_CAP_SECONDS = 0.01
 ANOMALY_SAMPLE_RESERVE_SECONDS = 0.5
 SYSTEM_COMMAND_CAP_SECONDS = 0.08
-FIXTURE_EMISSION_CAP_SECONDS = 0.2
-FIXTURE_HARVEST_RESERVE_SECONDS = 0.3
-FIXTURE_MIN_ALLOWANCE_SECONDS = 0.04
 MAX_PROGRESS_BYTES = 64 * 1024
 EXECUTABLE_NAMES = {name: name for name in PROCESS_NAMES} | {
     "com.apple.CoreSimulator.CoreSimulatorService": "CoreSimulatorService"}
@@ -51,8 +45,7 @@ TRUNCATION_PREFIX = "bounded-diagnostics truncated: "
 TRUNCATION_REASONS = frozenset({
     "collection-budget-exhausted", "sample-timeout", "collection-timeout", "worker-unavailable",
     "event-budget-exhausted", "event-cap", "io-pool-exhausted", "io-timeout", "ledger-unavailable",
-    "reserve-failed", "fixture-read-unavailable", "fixture-emitter-truncated", "fixture-completion-missing",
-    "fixture-allowance-below-minimum", "inherited",
+    "reserve-failed", "inherited",
 })
 
 
@@ -180,7 +173,7 @@ class Recorder:
             self.truncate("sample-timeout" if operation is system_sample else "collection-timeout")
         return values[0] if finished and values else None
 
-    def event(self, scope, phase, state, sequence, *, elapsed=0, cpu=None, sample=None, digest=None, exports=None):
+    def event(self, scope, phase, state, sequence, *, elapsed=0, cpu=None, sample=None, exports=None):
         started = time.perf_counter()
         if self.charged[scope] >= COLLECTION_BUDGET_SECONDS[scope] - BOOKKEEPING_RESERVE_SECONDS:
             self.truncate("event-budget-exhausted")
@@ -188,7 +181,7 @@ class Recorder:
         event = {"scope": scope, "phase": phase, "state": state, "sequence": sequence,
                             "elapsed_seconds": finite(elapsed, MAX_DIAGNOSTIC_SECONDS, default=0),
                             "cpu_seconds": finite(cpu, MAX_CPU_SECONDS), "sample": sample,
-                            "input_sha256": digest, "official_exports": exports}
+                            "input_sha256": None, "official_exports": exports}
         self.retain(event)
         elapsed = time.perf_counter() - started
         self.cost[scope] += elapsed
@@ -249,8 +242,9 @@ class Recorder:
         return values[0] if finished and values else None
 
     def receipt(self):
+        # Keep the reader-required fixture scope unavailable without collecting it.
         receipt = {"schema_version": 1, "collection_seconds": {
-            scope: None if scope in self.unavailable else finite(value, MAX_DIAGNOSTIC_SECONDS)
+            scope: None if scope == "fixture" or scope in self.unavailable else finite(value, MAX_DIAGNOSTIC_SECONDS)
             for scope, value in self.cost.items()},
             "truncated": self.truncated, "events": copy.deepcopy(self.events)}
         try:
@@ -360,71 +354,6 @@ class Recorder:
         cancelled.set()
         return committed is True
 
-    def fixture_log(self, path):
-        if path is None:
-            return
-        def read():
-            # Health has already been decided. Let the async writer seal its
-            # file within this collection's own cap, never the ready deadline.
-            deadline = time.perf_counter() + FIXTURE_DRAIN_CAP_SECONDS
-            for _ in range(3):
-                try:
-                    with path.open("rb") as stream:
-                        raw = stream.read(MAX_RECEIPT_BYTES)
-                except FileNotFoundError:
-                    raw = b""
-                text = raw.decode("utf-8", errors="replace")
-                if "fixture-collection-completed: true\n" in text or time.perf_counter() >= deadline:
-                    return text
-                threading.Event().wait(min(0.005, max(0, deadline - time.perf_counter())))
-            return text
-        text = self.collect("fixture", read, cap=FIXTURE_READ_CAP_SECONDS)
-        if text is None:
-            self.truncate("fixture-read-unavailable")
-            self.unavailable.add("fixture")
-            return
-        mapping = {}
-        emission_seconds = None
-        completed = False
-        for line in text.splitlines():
-            if self.charged["fixture"] >= COLLECTION_BUDGET_SECONDS["fixture"] - BOOKKEEPING_RESERVE_SECONDS:
-                self.truncate("collection-budget-exhausted")
-                break
-            if line.startswith("fixture-collection-seconds: "):
-                try:
-                    emission_seconds = finite(float(line.removeprefix("fixture-collection-seconds: ")), FIXTURE_EMISSION_CAP_SECONDS)
-                except ValueError:
-                    pass
-            if line == "fixture-collection-truncated: true":
-                self.truncate("fixture-emitter-truncated")
-            if line == "fixture-collection-completed: true":
-                completed = True
-            if not line.startswith(FIXTURE_PREFIX):
-                continue
-            started = time.perf_counter()
-            try:
-                event = json.loads(line[len(FIXTURE_PREFIX):])
-                validate_receipt({"schema_version": 1, "collection_seconds": dict.fromkeys(COLLECTION_BUDGET_SECONDS, 0),
-                                  "truncated": False, "events": [event]})
-                if event["scope"] != "fixture":
-                    continue
-                original = event["sequence"]
-                if original not in mapping:
-                    mapping[original] = self.next_sequence()
-                event["sequence"] = mapping[original]
-                self.retain(event)
-            except (ValueError, TypeError, KeyError):
-                continue
-            finally:
-                elapsed = time.perf_counter() - started
-                self.cost["fixture"] += elapsed
-                self.charged["fixture"] += elapsed
-        if emission_seconds is None:
-            self.unavailable.add("fixture")
-        else:
-            self.cost["fixture"] += emission_seconds
-        if not completed:
-            self.truncate("fixture-completion-missing")
 
     def xcode_snapshot(self, state, started, sequence, log_path, bundles=()):
         def progress():
@@ -458,22 +387,6 @@ def active():
     return _ACTIVE.get()
 
 
-def fixture_environment(environment, path):
-    """Reserve emission time; return its environment and optional harvest path."""
-    environment = dict(environment)
-    recorder = active()
-    allowance = max(0, min(FIXTURE_EMISSION_CAP_SECONDS, COLLECTION_BUDGET_SECONDS["fixture"] - recorder.charged["fixture"] - FIXTURE_HARVEST_RESERVE_SECONDS)) if recorder else 0
-    if allowance < FIXTURE_MIN_ALLOWANCE_SECONDS:
-        allowance = 0
-    if recorder:
-        recorder.charged["fixture"] += allowance
-        if allowance == 0:
-            recorder.truncate("fixture-allowance-below-minimum")
-    environment["IMMICHSLIDES_FIXTURE_DIAGNOSTIC_SECONDS"] = str(allowance)
-    environment.pop("IMMICHSLIDES_FIXTURE_DIAGNOSTIC_FILE", None)
-    if allowance > 0:
-        environment["IMMICHSLIDES_FIXTURE_DIAGNOSTIC_FILE"] = str(path)
-    return environment, path if allowance > 0 else None
 
 
 @contextmanager

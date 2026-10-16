@@ -21,7 +21,7 @@ from functools import partial
 from pathlib import Path
 
 from ci_build_archive import check_products, disk_check, measure_signing, record_signing
-from ci_execution_diagnostics import active, diagnostic_session, fixture_environment
+from ci_execution_diagnostics import active, diagnostic_session
 from ci_population import ui_identities
 from ci_summary import ContractError, observation, require, write_summary
 from ci_ui_shards import DEVICES, default_plan_population, shard_populations
@@ -531,15 +531,13 @@ def main(argv=None, *, simulator_prepared=False):
         bundles.append(bundle)
         work = bundle.parent.parent
         env = clean_environment(os.environ)
-        service_environment, service_diagnostics_path = fixture_environment(env, work / "service-diagnostics.log")
         # Start fixtures during preflight, before spending time on a build.
         with (work / "service.log").open("wb") as log:
             service = subprocess.Popen([sys.executable, str(ROOT / "scripts/strict_e2e_server.py"), "--fixture-set", "c",
                                         "--host", "127.0.0.1", "--port", "0", "--ready-file", str(work / "ready.json"),
                                         "--log-file", str(work / "service-requests.log")],
-                                       env=service_environment, stdout=log, stderr=subprocess.STDOUT)
-        host, port = wait_for_service(work / "ready.json", service, startup_log=work / "service.log",
-                                      diagnostics_path=service_diagnostics_path)
+                                       env=env, stdout=log, stderr=subprocess.STDOUT)
+        host, port = wait_for_service(work / "ready.json", service, startup_log=work / "service.log")
         print(f"Fixture preflight ready: http://{host}:{port}/api (public set C)", flush=True)
         timeout = args.timeout_minutes * 60
         def execute(command, name):

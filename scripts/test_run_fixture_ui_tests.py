@@ -56,7 +56,7 @@ class FixtureCoverageTests(unittest.TestCase):
         from test_ci_summary import discovery_summary
         from ci_summary import parse_summary
         from ci_verdict import parse_policy
-        for stage in ("simulator", "inventory", "service-import", "service-image-generation"):
+        for stage in ("simulator", "inventory", "service"):
             with self.subTest(stage=stage), tempfile.TemporaryDirectory() as directory:
                 root, output = Path(directory, "checkout"), Path(directory, "output")
                 root.mkdir()
@@ -81,35 +81,13 @@ class FixtureCoverageTests(unittest.TestCase):
                     stack.enter_context(patch.object(runner, "prepare_simulator", side_effect=error if stage == "simulator" else None))
                     stack.enter_context(patch.object(runner, "simulator_inventory", return_value={},
                         side_effect=InfrastructureTimeout("simulator-inventory", 60) if stage == "inventory" else None))
-                    if stage.startswith("service-"):
-                        import strict_e2e_runner_support as support
-                        from types import SimpleNamespace
-                        elapsed = [0.0]
-                        phase = stage.removeprefix("service-")
-                        stdout_phase = "import" if phase == "import" else "fixture-build"
-                        def spawn(*args, **kwargs):
-                            event = {"scope": "fixture", "phase": phase, "state": "started", "sequence": 0,
-                                     "elapsed_seconds": 0, "cpu_seconds": 0.5, "sample": None,
-                                     "input_sha256": "a" * 64 if phase == "image-generation" else None,
-                                     "official_exports": None}
-                            kwargs["stdout"].write(("fixture-startup: phase=" + stdout_phase + "; state=started; elapsed=0.000s; total=0.000s\n"
-                                + "private-input\n").encode())
-                            Path(kwargs["env"]["IMMICHSLIDES_FIXTURE_DIAGNOSTIC_FILE"]).write_text(
-                                "fixture-diagnostic: " + json.dumps(event) + "\n")
-                            return SimpleNamespace(pid=42, poll=lambda: None)
-                        stack.enter_context(patch.object(runner.subprocess, "Popen", side_effect=spawn))
-                        stack.enter_context(patch.object(support.time, "monotonic", side_effect=lambda: elapsed[0]))
-                        stack.enter_context(patch.object(support.time, "sleep", side_effect=lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds)))
-                    else:
-                        stack.enter_context(patch.object(runner.subprocess, "Popen"))
-                        stack.enter_context(patch.object(runner, "wait_for_service", side_effect=error))
+                    stack.enter_context(patch.object(runner.subprocess, "Popen"))
+                    stack.enter_context(patch.object(runner, "wait_for_service", side_effect=error))
                     launch = stack.enter_context(patch.object(runner, "run_xcode_attempts"))
                     scan = stack.enter_context(patch.object(runner, "write_sensitive_scan"))
                     evaluate = stack.enter_context(patch.object(runner, "evaluate_population", wraps=runner.evaluate_population))
                     stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
                     stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
-                    from ci_execution_diagnostics import session
-                    stack.enter_context(session())
                     code = runner.main(["--device", "iphone", "--destination", "platform=iOS Simulator,id=target",
                         "--output-dir", str(output), "--xctestrun", str(root / "unused.xctestrun"), "--shard", "scoped-a",
                         "--shard-manifest", str(root / "unused.json"), "--scoped-plan-sha256", "e" * 64,
@@ -120,19 +98,7 @@ class FixtureCoverageTests(unittest.TestCase):
                 self.assertEqual(evaluate.call_args.kwargs["evaluated_on"], date(2026, 10, 13))
                 result = parse_summary((output / "summary.json").read_text())
                 self.assertEqual(result["status"], "failed")
-                self.assertTrue(any(stage.split("-")[0] in item["message"] for item in result["infrastructure"]))
-                if stage.startswith("service-"):
-                    self.assertEqual(elapsed[0], 60)
-                    self.assertTrue(any(f"startup_phase={stdout_phase}; startup_state=started" in item["message"]
-                                        for item in result["infrastructure"]))
-                    self.assertTrue(any(f"diagnostic={phase}/started" in item["message"]
-                                        for item in result["infrastructure"]))
-                    receipt = result["bounded_diagnostics"]
-                    self.assertEqual(phase, receipt["events"][-1]["phase"])
-                    self.assertEqual("started", receipt["events"][-1]["state"])
-                    self.assertIsNone(receipt["collection_seconds"]["fixture"])
-                    self.assertTrue(receipt["truncated"])
-                    self.assertNotIn("private-input", json.dumps(receipt))
+                self.assertTrue(any(stage in item["message"] for item in result["infrastructure"]))
                 self.assertTrue(all(item["outcome"] == "not-run" for item in result["population"]["observed"]))
                 verdict = json.loads((output / "coverage-verdict.json").read_text())
                 self.assertEqual(verdict["status"], "failed")
@@ -321,19 +287,13 @@ class FixtureCoverageTests(unittest.TestCase):
                     self.assertIn(conflict["infrastructure"][0]["message"], stderr.getvalue())
 
     def test_scoped_execution_skips_enumeration_and_rejected_proofs_still_scan_and_dispose(self):
-        import ci_execution_diagnostics as diagnostics
-        import strict_e2e_runner_support as support
         from types import SimpleNamespace
         from test_ci_summary import discovery_summary
         from ci_summary import observation, parse_summary
         from ci_verdict import parse_policy
         for raw, shape in ((0, "complete"), (0, "expected-skip"), (65, "missing-export"), (124, "empty"),
-                           (0, "empty"), (65, "complete"), (65, "unknown"), (65, "malformed"), (2, "launch"),
-                           (0, "diagnostics-exhausted"), (0, "diagnostics-missing")):
-            diagnostic_mode = shape if shape.startswith("diagnostics-") else None
+                           (0, "empty"), (65, "complete"), (65, "unknown"), (65, "malformed"), (2, "launch")):
             with self.subTest(raw=raw, shape=shape), tempfile.TemporaryDirectory() as directory:
-                if diagnostic_mode:
-                    shape = "complete"
                 root = Path(directory, "checkout").resolve()
                 root.mkdir()
                 output, work = Path(directory, "output"), Path(directory, "private")
@@ -401,9 +361,6 @@ class FixtureCoverageTests(unittest.TestCase):
                     return SimpleNamespace(returncode=0, stdout=b"{}")
                 stderr = io.StringIO()
                 with contextlib.ExitStack() as stack:
-                    recorder = stack.enter_context(diagnostics.session())
-                    if diagnostic_mode == "diagnostics-exhausted":
-                        recorder.charged["fixture"] = diagnostics.COLLECTION_BUDGET_SECONDS["fixture"]
                     stack.enter_context(patch.dict(os.environ, {"GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1"}))
                     for name, value in (("ROOT", root), ("run_identity", seed["identity"]),
                                         ("source_metadata", (".github/workflows/ci-ui.yml", False)),
@@ -416,9 +373,6 @@ class FixtureCoverageTests(unittest.TestCase):
                                         ("read_xcode_observations", observed), ("read_problem_reason", "Candidate skip"),
                                         ("stop_exact_process", None)):
                         stack.enter_context(patch.object(runner, name, value if name == "ROOT" else unittest.mock.Mock(return_value=value)))
-                    if diagnostic_mode:
-                        stack.enter_context(patch.object(support, "_wait_for_service", return_value=("127.0.0.1", 1234)))
-                        stack.enter_context(patch.object(runner, "wait_for_service", wraps=support.wait_for_service))
                     stack.enter_context(patch.object(runner.subprocess, "Popen", side_effect=process))
                     stack.enter_context(patch.object(runner.subprocess, "run", side_effect=run))
                     stack.enter_context(patch.object(runner, "prepare_simulator", side_effect=gate))
@@ -430,9 +384,7 @@ class FixtureCoverageTests(unittest.TestCase):
                     code = runner.main(argv, simulator_prepared=shape == "complete")
                     runner.reset_simulator_app.assert_called_once_with("target", boot_submitted=True)
                     runner.wait_for_service.assert_called_once_with(work / "ready.json", unittest.mock.ANY,
-                                                                    startup_log=work / "service.log",
-                                                                    diagnostics_path=None if diagnostic_mode == "diagnostics-exhausted"
-                                                                    else work / "service-diagnostics.log")
+                                                                    startup_log=work / "service.log")
                 self.assertEqual(len(inventory_calls), 2)
                 tests = [command for command in commands if command[0] == "xcodebuild"]
                 self.assertEqual(len(tests), 1)
@@ -442,13 +394,6 @@ class FixtureCoverageTests(unittest.TestCase):
                 dispose.assert_called_once()
                 self.assertEqual(code, 0 if raw == 0 and shape in {"complete", "expected-skip"} else raw or 1)
                 result = json.loads((output / "summary.json").read_text())
-                if diagnostic_mode:
-                    collection = result["bounded_diagnostics"]["collection_seconds"]["fixture"]
-                    if diagnostic_mode == "diagnostics-exhausted":
-                        self.assertIsInstance(collection, (int, float))
-                    else:
-                        self.assertIsNone(collection)
-                    self.assertTrue(result["bounded_diagnostics"]["truncated"])
                 self.assertEqual(result["compiled_evidence"]["first_exit_code"], raw)
                 self.assertEqual(result["status"], "passed" if code == 0 else "failed")
                 if shape in {"missing-export", "launch"} or raw == 124 or code == 0:
