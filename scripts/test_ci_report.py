@@ -19,7 +19,7 @@ from ci_summary import ContractError, observation, test_identity
 from ci_report import (daily_rollup, identity_token, issue_decision, registry_checks,
                        render_entry, summary_diagnostics, synchronize_issues, read_state,
                        read_run, check_context, NIGHTLY_INFRASTRUCTURE)
-from test_ci_summary import valid_summary
+from test_ci_summary import archive_download_summary, valid_summary
 
 
 IDENTITY = {"kind": "strict", "key": "ExampleUITests/testPlayback",
@@ -532,6 +532,41 @@ class ReporterTests(unittest.TestCase):
                         "observed": [observation(tracked, "failed", 1)]}], registry_referenced=False)["state"]
                     incomplete["day"] = "2026-10-02"
                     self.assertEqual([], issue_decision(opened, tracked, [incomplete], registry_referenced=False)["state"]["explicit_pass_nights"])
+            for reason in ("archive-member-missing", "archive-member-extra", "archive-size-mismatch",
+                           "archive-hash-mismatch", "archive-identity-mismatch"):
+                changed = copy.deepcopy(summaries)
+                failed = changed[4]
+                failed["status"] = "failed"
+                failed["population"].update(compiled=[], observed=[observation(
+                    failed["population"]["declared"][0], "not-run", 0, reason=reason)])
+                failed["infrastructure"] = [{"code": reason, "message": "private-download-error-text"}]
+                receipt = archive_download_summary()["archive_download"]
+                receipt.update(producer_run_id="10", producer_attempt=1, failure_reason=reason)
+                failed["archive_download"] = receipt
+                ui["verdict"] = judge_ui(plan, changed, policy=policy, registry=registry,
+                    evaluated_on=date(2026, 10, 1), matrix_job_result="failure")
+                for index, item in enumerate(plan["shards"]):
+                    members[(f"ui-{item['device']}-{item['shard']}-10-1", "summary.json")] = changed[index]
+                with self.subTest(archive_reason=reason):
+                    report = ci_report.nightly_attempt(api, run, 1, artifacts)
+                    self.assertIn(reason, report["diagnostics"]["infrastructure"])
+                    self.assertEqual(8, report["diagnostics"]["counts"]["ui_executed"])
+                    self.assertEqual("failed", report["status"])
+                    self.assertIn(reason, render_entry(report))
+                    self.assertNotIn("private-download-error-text", json.dumps(report))
+                    compact = ci_report.compact_entry(report, set())
+                    self.assertIn(reason, compact["diagnostics"]["infrastructure"])
+                    state = issue_decision(None, NIGHTLY_INFRASTRUCTURE, [report], registry_referenced=False)["state"]
+                    body = ci_report.issue_body(None, state, api.repository)
+                    self.assertIn("| Archive gate reason |", body)
+                    self.assertIn("| failed | " + reason + " |", body)
+                    later = copy.deepcopy(report)
+                    later["run"]["attempt"] = 2
+                    later["status"] = "passed"
+                    later["diagnostics"]["infrastructure"] = []
+                    later_state = issue_decision(state, NIGHTLY_INFRASTRUCTURE, [later], registry_referenced=False)["state"]
+                    self.assertIn("| failed | " + reason + " |", ci_report.issue_body(None, later_state, api.repository))
+                    self.assertEqual([], later_state["explicit_pass_nights"])
             for index, item in enumerate(plan["shards"]):
                 members[(f"ui-{item['device']}-{item['shard']}-10-1", "summary.json")] = summaries[index]
             skipped = summaries[0]["population"]["declared"][0]

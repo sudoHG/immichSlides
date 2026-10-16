@@ -76,6 +76,17 @@ format needs no change. With `max_parallel: 2`, minimum waves are the actual sha
 up after division by two. The manifest determines the actual device/shard count;
 the v2 visual partition manifest supplies eighteen jobs and nine minimum nightly waves.
 
+The optional [archive download receipt](CI_SUMMARY.md#prepared-archive-download-receipt)
+has reader support before producer activation. After validating the summary and
+recomputing its UI verdict, the reporter retains only its closed-set failure code
+in infrastructure diagnostics. Raw download errors are not copied. Nightly
+infrastructure issue rows show these codes in an `Archive gate reason` column;
+historical rows without a receipt show a dash. Reasons survive compaction and a
+later attempt of the same run, alongside the existing failed-night retention.
+They cannot turn NOT_RUN cases into executed cases, clear a failure, change retry
+eligibility, or supply recovery evidence. No producer emits receipts until a
+separate PR follows this reader onto main.
+
 This reader must be merged before a producer emits version 2, following
 [reader-first evolution](CI_SUMMARY.md#reader-first-evolution). Installing it does
 not activate UI execution, alter live scope or implement offline performance.

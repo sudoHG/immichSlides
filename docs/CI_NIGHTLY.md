@@ -253,6 +253,13 @@ job with an exact workflow/ref binding; other branch registry consumers are refu
 This branch evidence remains self-reported and diagnostic. Live admission and
 credential-bearing jobs retain their independent main-only boundary.
 
+The reader accepts an optional [archive download receipt](CI_SUMMARY.md#prepared-archive-download-receipt)
+on nightly UI summaries and retains its closed-set failure reason in reporting.
+This reader preparation does not enable a consumer gate or change download,
+simulator ordering, retries, budgets or producer output. A separate producer change
+must follow after the reader reaches main; until then incomplete downloads retain
+the existing preflight behavior.
+
 The UI matrix waits for the strict matrix to settle, then runs with `max-parallel: 2`
 and `fail-fast: false`. Minimum waves round the actual shard count up after division
 by two: the current nine shards require five start-order waves, without
