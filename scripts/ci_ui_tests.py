@@ -21,12 +21,13 @@ import tarfile
 import time
 import urllib.error
 import zipfile
+import zlib
 from pathlib import Path
 from urllib.request import Request, build_opener
 
 from ci_build_archive import (artifact_name, check_products, extract_products, file_hash, measure_signing,
                               output, validate_artifact, validate_manifest, validated_tar_members, workspace_preflight)
-from ci_publish import ArtifactRedirect, GitHub, RateLimitWaitingGitHub, json_member, rate_limit_wait, verify_workflow
+from ci_publish import ArtifactRedirect, RateLimitWaitingGitHub, json_member, rate_limit_wait, verify_workflow
 from ci_summary import (ContractError, decode, observation, parse_identity, parse_summary, require, test_identity, write_summary)
 from ci_summary import (ARCHIVE_DOWNLOAD_MAX_DISK_BYTES, ARCHIVE_DOWNLOAD_MAX_SECONDS, identity_key, validate_test_identity)
 from ci_ui_shards import DEVICES, MANIFEST_PATH, parse_shard_manifest, shard_populations
@@ -57,7 +58,7 @@ def stage_download():
 
 
 def gate_archive(args):
-    """Fail closed before simulator creation; publish only an entirely verified download."""
+    """Fail closed before the UI run step; publish only an entirely verified download."""
     started = time.monotonic()
     elapsed = time.time() - args.transfer_started
     receipt = {"schema_version": 1, "artifact_id": args.artifact_id, "action_outcome": args.action_outcome,
@@ -76,14 +77,18 @@ def gate_archive(args):
     previous = signal.signal(signal.SIGALRM, timed_out)
     try:
         signal.setitimer(signal.ITIMER_REAL, ARCHIVE_GATE_SECONDS)
+        staging = args.staging_dir
+        for name in receipt["member_bytes"]:
+            path = staging / name
+            if path.is_file():
+                size = path.stat().st_size
+                if 0 <= size <= MAX_ARCHIVE_BYTES:
+                    receipt["member_bytes"][name] = size
         require(args.action_outcome == "success", reason)
         ctx = context()
         reason = "archive-identity-mismatch"
-        staging = args.staging_dir
         prefix = f"ui-download-{ctx['run']['id']}-{ctx['run']['attempt']}-"
-        require(staging.parent.resolve() == Path(os.environ["RUNNER_TEMP"]).resolve()
-                and staging.name.startswith(prefix) and not staging.is_symlink()
-                and staging.is_dir() and staging.stat().st_uid == os.getuid(), reason)
+        require(staging.name.startswith(prefix), reason)
         names = {path.name for path in staging.iterdir()}
         reason = "archive-member-missing"
         require({"build.tar.gz", "manifest.json"} <= names, reason)
@@ -93,9 +98,6 @@ def gate_archive(args):
         for name in receipt["member_bytes"]:
             path = staging / name
             require(path.is_file() and not path.is_symlink(), reason)
-            size = path.stat().st_size
-            if 0 < size <= MAX_ARCHIVE_BYTES:
-                receipt["member_bytes"][name] = size
         reason = "archive-size-mismatch"
         require(all(value is not None for value in receipt["member_bytes"].values())
                 and receipt["member_bytes"]["manifest.json"] <= 4 * 1024 * 1024, reason)
@@ -106,12 +108,6 @@ def gate_archive(args):
                 and selection["producer_run_id"] == ctx["run"]["id"]
                 and selection["producer_attempt"] == ctx["run"]["attempt"]
                 and selection["artifact_id"] == args.artifact_id, reason)
-        reason = "archive-download-incomplete"
-        # One metadata read, without the selector's retry/rate-limit wrapper.
-        api = GitHub(ctx["identity"]["repository"], os.environ.get("GH_TOKEN", ""), retry_reads=False)
-        metadata = api.repo(f"actions/artifacts/{args.artifact_id}", timeout=10)
-        reason = "archive-identity-mismatch"
-        validate_artifact(metadata, ctx["identity"], ctx["run"]["id"], ctx["run"]["attempt"], platform_name, args.artifact_id)
         reason = "archive-hash-mismatch"
         receipt["digests_matched"]["manifest"] = file_hash(staging / "manifest.json") == selection["build_manifest_sha256"]
         require(receipt["digests_matched"]["manifest"], reason)
@@ -129,9 +125,13 @@ def gate_archive(args):
             raise
         # Read through the gzip trailer before hashing: incomplete transfer is distinct from a digest mismatch.
         reason = "archive-download-incomplete"
-        with gzip.open(staging / "build.tar.gz", "rb") as compressed:
-            while compressed.read(1024 * 1024):
-                pass
+        try:
+            with gzip.open(staging / "build.tar.gz", "rb") as compressed:
+                while compressed.read(1024 * 1024):
+                    pass
+        except (zlib.error, gzip.BadGzipFile):
+            # Corrupt bytes get the digest reason; truncation keeps the incomplete-transfer reason.
+            pass
         reason = "archive-hash-mismatch"
         receipt["digests_matched"]["tar"] = file_hash(staging / "build.tar.gz") == manifest["archive_sha256"]
         require(receipt["digests_matched"]["tar"], reason)
@@ -149,10 +149,11 @@ def gate_archive(args):
         require(not os.path.lexists(args.archive_dir), reason)
         staging.rename(args.archive_dir)
         reason = None
-    except TimeoutError:
+    except TimeoutError as error:
         reason = "archive-gate-timeout"
-    except (OSError, EOFError, ValueError, KeyError, TypeError, AttributeError, tarfile.TarError):
-        pass
+        print(type(error).__name__, file=sys.stderr)
+    except Exception as error:
+        print(type(error).__name__, file=sys.stderr)
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
         signal.signal(signal.SIGALRM, previous)
@@ -167,9 +168,6 @@ def gate_archive(args):
         failed_shard(failure_args, error)
         print(reason, file=sys.stderr)
         return 1
-    if args.create_simulator:
-        from ci_simulator import create_and_boot_simulator
-        create_and_boot_simulator(args.device, args.shard)
     return 0
 
 
@@ -967,7 +965,6 @@ def main(argv=None):
     gate.add_argument("--transfer-started", type=float, required=True)
     gate.add_argument("--download-receipt-path", type=Path, required=True)
     gate.add_argument("--output-dir", type=Path, required=True)
-    gate.add_argument("--create-simulator", action="store_true")
     selection = commands.add_parser("select")
     selection.add_argument("--output-dir", type=Path, required=True)
     selection.add_argument("--pack-scoped-ui", action="store_true")

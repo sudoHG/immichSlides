@@ -99,7 +99,7 @@ class SummaryContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             ci_summary.write_summary(optional_measurements, Path(directory))
             self.assertEqual(ci_summary.parse_summary(Path(directory, "summary.json").read_text()), optional_measurements)
-            for detail in ("transfer/extract=unavailable", "gate=unavailable", "free disk=unavailable"):
+            for detail in ("transfer/extract=unavailable;", "gate=unavailable;", "free disk=unavailable;"):
                 self.assertIn(detail, Path(directory, "summary.md").read_text())
         for reason in ("archive-member-missing",):
             failed = copy.deepcopy(summary)

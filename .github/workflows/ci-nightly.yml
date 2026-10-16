@@ -416,6 +416,10 @@ jobs:
           /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 \
             --venv "$RUNNER_TEMP/ui-python" --verify-toolchain
           echo "PYTHON=$RUNNER_TEMP/ui-python/bin/python3" >> "$GITHUB_ENV"
+      - name: Create and start only this shard's pinned simulator
+        working-directory: ui-source
+        run: |
+          /usr/bin/python3 -B scripts/ci_simulator.py --device '${{ matrix.device }}' --shard '${{ matrix.shard }}'
       - name: Read the retained archive job's selection record
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -435,11 +439,10 @@ jobs:
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
           run-id: ${{ matrix.device == 'appletv' && needs.ui-archive.outputs.tvos_producer_run_id || needs.ui-archive.outputs.ios_producer_run_id }}
-      - name: Verify and publish archive before creating the shard simulator
+      - name: Verify and publish archive before the UI run step
         if: ${{ !cancelled() && steps.staging.outcome == 'success' }}
         working-directory: ui-source
         env:
-          GH_TOKEN: ${{ github.token }}
           ARCHIVE_STAGING: ${{ steps.staging.outputs.staging_path }}
           ARCHIVE_TRANSFER_STARTED: ${{ steps.staging.outputs.transfer_started }}
           ARCHIVE_ACTION_OUTCOME: ${{ steps.download.outcome }}
@@ -451,7 +454,7 @@ jobs:
             --selection-path "$RUNNER_TEMP/ui-selection/archive-selection-$ARCHIVE_PLATFORM.json" \
             --artifact-id "$ARCHIVE_ARTIFACT_ID" --action-outcome "$ARCHIVE_ACTION_OUTCOME" \
             --transfer-started "$ARCHIVE_TRANSFER_STARTED" --download-receipt-path "$RUNNER_TEMP/ui-download.json" \
-            --output-dir "$RUNNER_TEMP/ui-records" --create-simulator
+            --output-dir "$RUNNER_TEMP/ui-records"
       - name: Run the UI target from relocated Products
         working-directory: ui-source
         run: |

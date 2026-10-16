@@ -254,24 +254,35 @@ This branch evidence remains self-reported and diagnostic. Live admission and
 credential-bearing jobs retain their independent main-only boundary.
 
 Each nightly UI consumer downloads to a fresh directory owned by its run/attempt.
-Before creating or preparing a simulator, a 30-second integrity gate makes one
-artifact metadata read, verifies the selected ID/run/attempt and identity, requires
-exactly `manifest.json` and `build.tar.gz`, and reuses the manifest and tar inventory
-validators. It reads through the gzip trailer before checking the compressed SHA256,
-then checks every declared member size and atomically renames the verified directory
-to the run step's archive path. No manifest or selection schema changes are needed.
+After the download and before the UI run step, a 30-second integrity gate verifies
+the selected ID/run/attempt and identity, requires exactly `manifest.json` and
+`build.tar.gz`, and reuses the manifest and tar inventory
+validators. The selection already validated the immutable artifact ID in this run;
+the gate makes no network request. It reads through the gzip trailer before checking
+the compressed SHA256: truncation (`EOFError`) reports `archive-download-incomplete`,
+while corrupt deflate data or a bad gzip CRC continues to the digest check and reports
+`archive-hash-mismatch`. It then checks every declared member size and atomically
+renames the verified directory to the run step's archive path. No manifest or
+selection schema changes are needed.
 
 The [download receipt](CI_SUMMARY.md#prepared-archive-download-receipt) records the
 action outcome, bounded member sizes, digest/size matches, combined transfer/extract
 elapsed time (including step scheduling), gate seconds and available disk. Its
-closed-set failure reason reaches the job summary and issue table; raw action/API
-errors and paths are not copied into it. A gate refusal is infrastructure failure
-with no compiled or executed cases; those cases remain `NOT_RUN`. Missing diagnostics
-are null and render as `unavailable`. The gate adds no retry or budget change.
+closed-set failure reason reaches the job summary and issue table; raw errors and
+paths are not copied into it. Existing member byte sizes are measured before action
+and member-set checks, so missing manifests and failed actions still report the tar
+size. Unexpected exceptions retain the current section's reason and still write a
+receipt; stderr includes only the exception type and the closed-set reason.
+A gate refusal is infrastructure failure with no compiled or executed cases; those
+cases remain `NOT_RUN`. Missing diagnostics are null and render as `unavailable`
+without a unit. The gate adds no retry or budget change.
 
-Simulator creation now follows successful publication, so boot no longer overlaps
-archive downloads. The gate does not prove simulator readiness, app behavior or
-runner survival; later relocation, signing, extraction and UI checks remain required.
+The standalone simulator creation/boot step remains before the archive downloads,
+as on main. A gate refusal skips the run step and never reaches XCTest; it does not
+prevent that earlier boot. Reordering boot (option B3) remains a separate later
+decision, and the existing readiness budgets are unchanged.
+The gate does not prove simulator readiness, app behavior or runner survival; later
+relocation, signing, extraction and UI checks remain required.
 
 The UI matrix waits for the strict matrix to settle, then runs with `max-parallel: 2`
 and `fail-fast: false`. Minimum waves round the actual shard count up after division

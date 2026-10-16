@@ -25,11 +25,9 @@ from ci_summary import ContractError
 
 
 class BuildArchiveTests(unittest.TestCase):
-    def test_nightly_gate_publishes_before_simulator_and_records_single_defect_refusals(self):
+    def test_nightly_gate_publishes_verified_archives_and_records_single_defect_refusals(self):
         from ci_summary import parse_summary
-        from ci_publish import GitHub
         from test_ci_summary import archive_download_summary
-        import ci_simulator
         inputs = archive_download_summary()
         inputs["population"].update(compiled=[], observed=[])
         inputs["hashes"]["manifests"]["ui-shards"] = "c" * 64
@@ -38,19 +36,19 @@ class BuildArchiveTests(unittest.TestCase):
         ctx = {"identity": identity, "source": {"repository": "owner/repo", "event": "schedule",
                "workflow_path": ui.NIGHTLY_WORKFLOW, "fork_originated": False, "ci_changing": None},
                "run": {"id": "123", "attempt": 1, "tier": "ui-infrastructure", "job": "ui-archive", "shard": None}}
-        metadata = {"id": 456, "expired": False, "name": "build-ios-123-1",
-                    "workflow_run": {"id": 123, "head_sha": "a" * 40}}
         pins = json.loads((ui.ROOT / "scripts/ci-pins.json").read_text())
         defects = {"success": None, "missing-member": "archive-member-missing", "extra-member": "archive-member-extra",
                    "truncated-tar": "archive-download-incomplete", "hash-mismatch": "archive-hash-mismatch",
-                   "wrong-attempt": "archive-identity-mismatch", "wrong-artifact": "archive-identity-mismatch",
+                   "wrong-attempt": "archive-identity-mismatch", "build-identity": "archive-identity-mismatch",
+                   "build-platform": "archive-identity-mismatch", "architecture": "archive-toolchain-mismatch",
                    "toolchain": "archive-toolchain-mismatch", "invalid-manifest": "archive-manifest-invalid",
                    "manifest-hash": "archive-hash-mismatch", "size": "archive-size-mismatch",
                    "action-failure": "archive-download-incomplete", "timeout": "archive-gate-timeout",
                    "publish": "archive-publish-failed", "unowned-stage": "archive-identity-mismatch",
-                   "oversized": "archive-size-mismatch", "metadata-unavailable": "archive-download-incomplete",
+                   "oversized": "archive-size-mismatch", "manifest-cap": "archive-size-mismatch",
                    "nonregular-member": "archive-download-incomplete", "existing-publish": "archive-publish-failed",
-                   "missing-selection": "archive-identity-mismatch"}
+                   "missing-selection": "archive-identity-mismatch", "deflate-corrupt": "archive-hash-mismatch",
+                   "gzip-crc": "archive-hash-mismatch", "unexpected-error": "archive-hash-mismatch"}
         for defect, reason in defects.items():
             with self.subTest(defect=defect), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
@@ -62,12 +60,18 @@ class BuildArchiveTests(unittest.TestCase):
                     staging = Path(values["staging_path"])
                     packed = staging / "build.tar.gz"
                     archive.pack_products(self.products, packed)
-                    manifest = archive.make_manifest(self.products, identity=identity, run_id="123", attempt=1,
+                    manifest = archive.make_manifest(self.products, identity=copy.deepcopy(identity), run_id="123", attempt=1,
                         platform="ios", architecture=[platform.machine()], xcode_build=pins["xcode"]["build"],
                         source_path=self.root / "source", archive_sha=archive.file_hash(packed),
                         pins_sha=archive.file_hash(ui.ROOT / "scripts/ci-pins.json"), signing_mode="adhoc")
                     if defect == "wrong-attempt":
                         manifest["producer"]["attempt"] = 2
+                    if defect == "build-identity":
+                        manifest["identity"]["tree_sha"] = "c" * 40
+                    if defect == "build-platform":
+                        manifest["platform"] = "tvos"
+                    if defect == "architecture":
+                        manifest["architectures"] = ["arm64" if platform.machine() == "x86_64" else "x86_64"]
                     if defect == "toolchain":
                         manifest["xcode_build"] = "wrong"
                     if defect == "invalid-manifest":
@@ -75,6 +79,9 @@ class BuildArchiveTests(unittest.TestCase):
                     if defect == "size":
                         next(entry for entry in manifest["files"] if entry["kind"] == "file")["size"] += 1
                     ui.write_json(staging / "manifest.json", manifest)
+                    if defect == "manifest-cap":
+                        with (staging / "manifest.json").open("a") as handle:
+                            handle.write(" " * (4 * 1024 * 1024))
                     selection = {"identity": identity, "platform": "ios", "producer_run_id": "123", "producer_attempt": 1,
                                  "artifact_id": 456, "build_manifest_sha256": archive.file_hash(staging / "manifest.json")}
                     if defect == "manifest-hash":
@@ -87,59 +94,67 @@ class BuildArchiveTests(unittest.TestCase):
                     if defect == "extra-member":
                         (staging / "extra").write_text("unexpected")
                     if defect == "nonregular-member":
-                        packed.unlink()
-                        packed.symlink_to(self.plist)
+                        outside = packed.rename(root / "outside-build.tar.gz")
+                        packed.symlink_to(outside)
                     if defect == "truncated-tar":
                         packed.write_bytes(packed.read_bytes()[:-8])
                     if defect == "hash-mismatch":
                         changed = bytearray(packed.read_bytes())
                         changed[4] ^= 1  # Valid gzip mtime change; payload and sizes remain intact.
                         packed.write_bytes(changed)
+                    if defect == "deflate-corrupt":
+                        changed = bytearray(packed.read_bytes())
+                        offset = changed.index(0, 10) + 1 if changed[3] & 8 else 10
+                        changed[offset] |= 0b110  # Reserved BTYPE 11; byte count and gzip trailer stay intact.
+                        packed.write_bytes(changed)
+                    if defect == "gzip-crc":
+                        changed = bytearray(packed.read_bytes())
+                        changed[-8] ^= 1
+                        packed.write_bytes(changed)
                     if defect == "unowned-stage":
                         staging = staging.rename(root / "unowned")
-                    api_metadata = dict(metadata, id=457) if defect == "wrong-artifact" else metadata
                     receipt_path, published, records = root / "receipt.json", root / "verified", root / "records"
                     if defect == "existing-publish":
-                        published.write_text("preserve")
-                    def simulator(*unused):
-                        self.assertTrue(published.is_dir())
-                        self.assertFalse(staging.exists())
-                        self.assertIsNone(json.loads(receipt_path.read_text())["failure_reason"])
-                    def delayed_metadata(*unused, **options):
+                        published.mkdir()
+                    gzip_open = ui.gzip.open
+                    def delayed_gzip(*arguments, **options):
                         time.sleep(0.2)
-                        return api_metadata
-                    with patch.object(GitHub, "repo", return_value=api_metadata,
-                                      side_effect=OSError("private transport detail") if defect == "metadata-unavailable"
-                                      else delayed_metadata if defect == "timeout" else None) as metadata_read, \
-                            patch.object(ci_simulator, "create_and_boot_simulator", side_effect=simulator) as create, \
+                        return gzip_open(*arguments, **options)
+                    with patch.object(ui.gzip, "open", side_effect=delayed_gzip) if defect == "timeout" else contextlib.nullcontext(), \
                             patch.object(ui, "ARCHIVE_GATE_SECONDS", 0.02 if defect == "timeout" else ui.ARCHIVE_GATE_SECONDS), \
                             patch.object(ui, "MAX_ARCHIVE_BYTES", 1 if defect == "oversized" else ui.MAX_ARCHIVE_BYTES), \
                             patch.object(Path, "rename", side_effect=OSError("private disk detail")) if defect == "publish" else contextlib.nullcontext(), \
+                            patch.object(ui, "file_hash", side_effect=RuntimeError("private unexpected detail")) \
+                            if defect == "unexpected-error" else contextlib.nullcontext(), \
                             redirect_stderr(io.StringIO()) as errors:
                         code = ui.main(["gate-archive", "--device", "ipad", "--shard", "navigation", "--staging-dir", str(staging),
                             "--archive-dir", str(published), "--selection-path", str(root / "selection.json"),
                             "--artifact-id", "456", "--action-outcome", "failure" if defect == "action-failure" else "success",
                             "--transfer-started", values["transfer_started"], "--download-receipt-path", str(receipt_path),
-                            "--output-dir", str(records), "--create-simulator"])
+                            "--output-dir", str(records)])
                     receipt = json.loads(receipt_path.read_text())
-                    self.assertLessEqual(metadata_read.call_count, 1)
                     self.assertEqual(receipt["failure_reason"], reason)
                     self.assertEqual(code, int(reason is not None))
                     if reason:
-                        create.assert_not_called()
                         if defect == "existing-publish":
-                            self.assertEqual(published.read_text(), "preserve")
+                            self.assertTrue(published.is_dir())
+                            self.assertEqual(list(published.iterdir()), [])
                         else:
                             self.assertFalse(published.exists())
                         self.assertTrue((records / "summary.json").is_file(), "gate refusal must persist the bound NOT_RUN receipt")
                         summary = parse_summary((records / "summary.json").read_text())
                         self.assertEqual(summary["archive_download"], receipt)
                         self.assertEqual(summary["infrastructure"], [{"code": reason, "message": reason}])
-                        self.assertFalse(summary["population"]["compiled"])
-                        self.assertFalse(summary["population"]["observed"])
+                        error_type = {"truncated-tar": "EOFError", "timeout": "TimeoutError", "publish": "OSError",
+                                      "missing-selection": "FileNotFoundError", "unexpected-error": "RuntimeError"}.get(defect, "ContractError")
+                        self.assertIn(error_type, errors.getvalue().splitlines())
                         self.assertNotIn("private", errors.getvalue())
+                        if defect in {"missing-member", "action-failure"}:
+                            self.assertEqual(receipt["member_bytes"], {"build.tar.gz": packed.stat().st_size,
+                                "manifest.json": None if defect == "missing-member" else (staging / "manifest.json").stat().st_size})
                     else:
-                        create.assert_called_once_with("ipad", "navigation")
+                        self.assertTrue(published.is_dir())
+                        self.assertFalse(staging.exists())
                         summary = archive_download_summary()
                         summary["archive_download"] = receipt
                         self.assertEqual(parse_summary(summary)["archive_download"], receipt)

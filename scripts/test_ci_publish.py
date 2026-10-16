@@ -1427,24 +1427,23 @@ class PublisherTests(unittest.TestCase):
             for job in ui_jobs:
                 steps = job["steps"]
                 nightly = workflow_name == "ci-nightly.yml"
-                boot = [i for i, step in enumerate(steps) if "scripts/ci_simulator.py" in step.get("run", "")
-                        or "scripts/ci_ui_tests.py gate-archive " in step.get("run", "")
-                        and "--create-simulator" in step["run"]]
+                boot = [i for i, step in enumerate(steps) if "scripts/ci_simulator.py" in step.get("run", "")]
                 self.assertEqual(len(boot), 1)
                 self.assertIn("--device '${{ matrix.device }}' --shard '${{ matrix.shard }}'", steps[boot[0]]["run"])
-                expected_command = "scripts/ci_ui_tests.py gate-archive " if nightly else "scripts/ci_simulator.py"
-                self.assertIn(expected_command, steps[boot[0]]["run"])
+                gate = [i for i, step in enumerate(steps) if "scripts/ci_ui_tests.py gate-archive " in step.get("run", "")]
+                if nightly:
+                    self.assertEqual(len(gate), 1)
+                    self.assertEqual(steps[gate[0]].get("if"), "${{ !cancelled() && steps.staging.outcome == 'success' }}")
                 for i, step in enumerate(steps):
                     if "setup_ci_python.py" in step.get("run", ""):
                         self.assertLess(i, boot[0])
                     if step.get("uses", "").startswith("actions/download-artifact@"):
+                        self.assertLess(boot[0], i)
                         if nightly:
-                            self.assertLess(i, boot[0])
-                        else:
-                            self.assertLess(boot[0], i)
+                            self.assertLess(i, gate[0])
                 consumer = next(i for i, step in enumerate(steps) if "scripts/ci_ui_tests.py run --device" in step.get("run", ""))
                 if nightly:
-                    self.assertEqual(boot[0] + 1, consumer)
+                    self.assertEqual(gate[0] + 1, consumer)
                 else:
                     self.assertTrue(all(step.get("uses", "").startswith("actions/download-artifact@")
                                         for step in steps[boot[0] + 1:consumer]))
