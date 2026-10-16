@@ -167,6 +167,7 @@ def logged_request_events(log: str, *, size: str) -> list[tuple[str, str, int]]:
 
 class StrictE2EServerContractTests(unittest.TestCase):
     def test_startup_phases_distinguish_fixture_bind_and_ready_write_failures(self) -> None:
+        from ci_bounded_diagnostics import validate_receipt
         for phase in ("fixture-build", "bind", "ready-write", "success"):
             with self.subTest(phase=phase), tempfile.TemporaryDirectory() as directory:
                 output, errors = io.StringIO(), io.StringIO()
@@ -180,20 +181,63 @@ class StrictE2EServerContractTests(unittest.TestCase):
                     elif phase == "ready-write":
                         failure = mock.patch.object(Path, "write_text", side_effect=OSError("private-input"))
                     else:
+                        strict_e2e_server._cached_fixture_data.cache_clear()
                         failure = mock.patch.object(strict_e2e_server.time, "monotonic", wraps=time.monotonic)
                     with failure:
                         code = server_main(["--port", "0", "--fixture-set", "c", "--ready-file", str(ready)])
                 self.assertEqual(code, 0 if phase == "success" else 2)
                 self.assertNotIn("private-input", output.getvalue() + errors.getvalue())
-                lines = output.getvalue().splitlines()
+                all_lines = output.getvalue().splitlines()
+                events = [json.loads(line.removeprefix("fixture-diagnostic: ")) for line in all_lines
+                          if line.startswith("fixture-diagnostic: ")]
+                validate_receipt({"schema_version": 1, "collection_seconds": {"preparation": 0, "xcode": 0, "fixture": 0},
+                                  "truncated": False, "events": events})
+                self.assertTrue(events)
+                self.assertTrue(all(event["cpu_seconds"] is not None for event in events))
+                lines = [line for line in all_lines if line.startswith("fixture-startup: ")]
+                self.assertTrue(any(line.startswith("fixture-collection-seconds: ") for line in all_lines))
                 for line in lines:
-                    self.assertRegex(line, r"^fixture-startup: phase=(fixture-build|bind|ready-write); state=(started|completed); elapsed=\d+\.\d{3}s; total=\d+\.\d{3}s$")
+                    self.assertRegex(line, r"^fixture-startup: phase=(fixture-build|manifest|bind|ready-write); state=(started|completed); elapsed=\d+\.\d{3}s; total=\d+\.\d{3}s$")
                 if phase == "success":
                     self.assertTrue(ready.is_file())
                     self.assertIn("phase=ready-write; state=completed", lines[-1])
+                    for generation in ("image-generation", "fixture-generation"):
+                        generated = [event for event in events if event["phase"] == generation]
+                        self.assertEqual({"started", "completed"}, {event["state"] for event in generated})
+                        self.assertTrue(all(event["input_sha256"] is not None for event in generated))
                 else:
-                    self.assertIn(f"phase={phase}; state=started", lines[-1])
+                    self.assertIn(f"phase={'manifest' if phase == 'fixture-build' else phase}; state=started", lines[-1])
                     self.assertFalse(ready.exists())
+        gate = threading.Event()
+        durations, reporters = [], []
+        original = strict_e2e_server.StartupDiagnostics
+        original_print = print
+        class MeasuredEmitter(original):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                reporters.append(self)
+            def report(self, *args, **kwargs):
+                started = time.perf_counter()
+                super().report(*args, **kwargs)
+                durations.append(time.perf_counter() - started)
+        def stalled_output(line, *args, **kwargs):
+            if line.startswith("fixture-diagnostic: "):
+                gate.wait(30)
+            else:
+                original_print(line, *args, **kwargs)
+        with tempfile.TemporaryDirectory() as directory, redirect_stdout(io.StringIO()), \
+                mock.patch.object(strict_e2e_server, "StartupDiagnostics", MeasuredEmitter), \
+                mock.patch.object(strict_e2e_server.StrictE2EServer, "serve_forever"), \
+                mock.patch("builtins.print", side_effect=stalled_output):
+            ready = Path(directory) / "ready.json"
+            try:
+                self.assertEqual(0, server_main(["--port", "0", "--fixture-set", "a", "--ready-file", str(ready)]))
+                self.assertTrue(ready.is_file())
+                self.assertLess(max(durations), 0.1)
+                self.assertLess(reporters[0].cost, 0.25)
+                self.assertTrue(reporters[0].truncated)
+            finally:
+                gate.set()
 
     def test_binding_serves_health_without_reverse_dns(self) -> None:
         with mock.patch.object(socket, "getfqdn", side_effect=AssertionError("Bind must not resolve reverse DNS")) as lookup:

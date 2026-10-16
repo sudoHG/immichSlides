@@ -22,6 +22,8 @@ import urllib.request
 from pathlib import Path
 from typing import Callable, Mapping, Sequence, TextIO
 
+from ci_execution_diagnostics import active
+
 from run_offline_unit_tests import (
     CommandError as OfflineCommandError,
     TestResultsSummary,
@@ -285,6 +287,40 @@ def simulator_command(command: list[str], phase: str, *, deadline: float | None 
     budget = min(timeout_seconds, deadline - time.monotonic()) if deadline is not None else timeout_seconds
     if budget <= 0:
         raise InfrastructureTimeout(phase, 0)
+    recorder = active()
+    if recorder is not None and phase in ("simulator-boot", "simulator-bootstatus", "simulator-container"):
+        started, cpu = time.monotonic(), time.process_time()
+        sequence = recorder.next_sequence()
+        def mark(state, *, anomaly=False):
+            elapsed = time.monotonic() - started
+            recorder.event("preparation", phase, state, sequence, elapsed=elapsed,
+                           cpu=time.process_time() - cpu, sample=recorder.sample("preparation") if anomaly else None)
+        mark("spawn-started")
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        mark("spawn-completed")
+        mark("communicate-started")
+        try:
+            stdout, stderr = process.communicate(timeout=budget)
+        except subprocess.TimeoutExpired as error:
+            mark("timeout", anomaly=True)
+            mark("kill-started")
+            process.kill()
+            mark("kill-completed")
+            mark("reap-started")
+            process.communicate()
+            mark("reap-completed")
+            raise InfrastructureTimeout(phase, budget) from error
+        except BaseException:
+            process.kill()
+            process.wait()
+            raise
+        finally:
+            for stream in (process.stdout, process.stderr):
+                if stream is not None:
+                    stream.close()
+        mark("completed")
+        mark("reap-completed")
+        return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
     try:
         return subprocess.run(command, capture_output=True, text=True, check=False, timeout=budget)
     except subprocess.TimeoutExpired as error:
@@ -524,6 +560,10 @@ def _wait_for_simulator_response(query, phase: str, *, report: Callable[[str], N
     query_timeout = SIMULATOR_READINESS_INITIAL_QUERY_TIMEOUT_SECONDS
     outcome = "failed"
     lines = []
+    recorder = active() if phase == "simulator-readiness" else None
+    sequence = recorder.next_sequence() if recorder else 0
+    if recorder:
+        recorder.event("preparation", phase, "started", sequence)
     try:
         while True:
             remaining = deadline - time.monotonic()
@@ -547,6 +587,9 @@ def _wait_for_simulator_response(query, phase: str, *, report: Callable[[str], N
             break
     finally:
         elapsed = time.monotonic() - started
+        if recorder:
+            recorder.event("preparation", phase, "timeout" if isinstance(sys.exc_info()[1], InfrastructureTimeout) else "completed", sequence,
+                           elapsed=elapsed)
         line = (f"{phase}: {outcome}; attempts={attempts}; elapsed={elapsed:.1f}s; "
                 f"total budget={budget:g}s; "
                 f"deadline_overrun={max(0, elapsed - budget):.1f}s")
@@ -563,6 +606,11 @@ def prepare_simulator(simulator_udid: str, bundle_id: str = "com.331works.immich
     deadline = started + SIMULATOR_PREPARATION_TIMEOUT_SECONDS
     lines = [f"simulator_id={simulator_udid}"]
     outcome = "failed"
+    recorder = active()
+    sequence = recorder.next_sequence() if recorder else 0
+    if recorder:
+        recorder.event("preparation", "simulator-preparation", "started", sequence,
+                       sample=recorder.sample("preparation"))
     try:
         lines.extend(boot_simulator(simulator_udid, report=report, deadline=deadline, boot_submitted=boot_submitted).splitlines())
         container, readiness_log = wait_for_simulator_app_response(simulator_udid, bundle_id, report=report, deadline=deadline)
@@ -570,6 +618,9 @@ def prepare_simulator(simulator_udid: str, bundle_id: str = "com.331works.immich
         outcome = "passed"
     finally:
         elapsed = time.monotonic() - started
+        if recorder:
+            recorder.event("preparation", "simulator-preparation", "timeout" if isinstance(sys.exc_info()[1], InfrastructureTimeout) else "completed",
+                           sequence, elapsed=elapsed, sample=recorder.sample("preparation") if outcome != "passed" else None)
         line = (f"simulator-preparation: {outcome}; elapsed={elapsed:.1f}s; "
                 f"total budget={SIMULATOR_PREPARATION_TIMEOUT_SECONDS}s; "
                 f"deadline_overrun={max(0, elapsed - SIMULATOR_PREPARATION_TIMEOUT_SECONDS):.1f}s")
@@ -662,9 +713,20 @@ def destination_udid(destination: str) -> str:
 
 def wait_for_service(ready_path: Path, process: subprocess.Popen[bytes], *,
                      startup_log: Path | None = None) -> tuple[str, int]:
+    recorder = active()
+    first_event = len(recorder.events) if recorder else 0
     try:
-        return _wait_for_service(ready_path, process)
+        try:
+            return _wait_for_service(ready_path, process)
+        finally:
+            if recorder is not None:
+                recorder.fixture_log(startup_log)
     except CommandError as error:
+        retained = recorder.events[first_event:] if recorder else []
+        phases = [event for event in retained if event["scope"] == "fixture"]
+        if phases:
+            phase, state = phases[-1]["phase"], phases[-1]["state"]
+            raise CommandError(f"{error} startup_phase={phase}; startup_state={state}.", code=error.code) from error
         lines = _service_startup_diagnostics(startup_log)
         if lines:
             phase, state = re.search(r"phase=([^;]+); state=([^;]+)", lines[-1]).groups()

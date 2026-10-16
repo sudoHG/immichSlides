@@ -21,6 +21,7 @@ from functools import partial
 from pathlib import Path
 
 from ci_build_archive import check_products, disk_check, measure_signing, record_signing
+from ci_execution_diagnostics import active, diagnostic_session, fixture_environment
 from ci_population import ui_identities
 from ci_summary import ContractError, observation, require, write_summary
 from ci_ui_shards import DEVICES, default_plan_population, shard_populations
@@ -449,6 +450,7 @@ def fixture_inputs(root, device, selectors, *, shard=None, shard_manifest=None, 
             "official_discovery_eligible": discovery_eligible(declared, discovery_policy)}
 
 
+@diagnostic_session
 def main(argv=None, *, simulator_prepared=False):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--device", choices=DEVICES, required=True)
@@ -534,7 +536,7 @@ def main(argv=None, *, simulator_prepared=False):
             service = subprocess.Popen([sys.executable, str(ROOT / "scripts/strict_e2e_server.py"), "--fixture-set", "c",
                                         "--host", "127.0.0.1", "--port", "0", "--ready-file", str(work / "ready.json"),
                                         "--log-file", str(work / "service-requests.log")],
-                                       env=env, stdout=log, stderr=subprocess.STDOUT)
+                                       env=fixture_environment(env), stdout=log, stderr=subprocess.STDOUT)
         host, port = wait_for_service(work / "ready.json", service, startup_log=work / "service.log")
         print(f"Fixture preflight ready: http://{host}:{port}/api (public set C)", flush=True)
         timeout = args.timeout_minutes * 60
@@ -768,6 +770,7 @@ def main(argv=None, *, simulator_prepared=False):
                              f"{row['duration_seconds']:.2f} | {(row['reason'] or '').replace('|', '/').replace(chr(10), ' ')} |\n"
                              for row in rows)
             (output / "fixture-coverage.md").write_text(table)
+            active().attach(summary)
             code = write_fixture_summary(summary, output) or code
             try:
                 write_sensitive_scan(output, [PUBLIC_API_KEY])

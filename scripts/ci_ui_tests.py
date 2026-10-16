@@ -27,6 +27,7 @@ from urllib.request import Request, build_opener
 
 from ci_build_archive import (artifact_name, check_products, extract_products, file_hash, measure_signing,
                               output, validate_artifact, validate_manifest, validated_tar_members, workspace_preflight)
+from ci_execution_diagnostics import active, diagnostic_session
 from ci_publish import ArtifactRedirect, RateLimitWaitingGitHub, json_member, rate_limit_wait, verify_workflow
 from ci_summary import (ContractError, decode, observation, parse_identity, parse_summary, require, test_identity, write_summary)
 from ci_summary import (ARCHIVE_DOWNLOAD_MAX_DISK_BYTES, ARCHIVE_DOWNLOAD_MAX_SECONDS, identity_key, validate_test_identity)
@@ -715,6 +716,7 @@ def cloud_selection(args):
     return 0
 
 
+@diagnostic_session
 def run_shard(args):
     from run_fixture_ui_tests import declared_tests, main as fixture_main
     from strict_e2e_runner_support import CommandError, destination_udid, prepare_simulator
@@ -833,6 +835,8 @@ def failed_shard(args, error):
     summary["status"] = "failed"
     summary["infrastructure"] = [getattr(error, "entry", {"code": "ui-shard-preflight-failed", "message": str(error)[:200]})]
     attach_download_receipt(args, summary)
+    if active() is not None:
+        active().attach(summary)
     write_fixture_summary(summary, directory)
 
 

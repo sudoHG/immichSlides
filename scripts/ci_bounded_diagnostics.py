@@ -6,7 +6,8 @@ import re
 
 from ci_summary import require
 
-COLLECTION_LIMITS = {"preparation": 5, "xcode": 10, "fixture": 2}
+COLLECTION_BUDGET_SECONDS = {"preparation": 5, "xcode": 10, "fixture": 2}
+MAX_DIAGNOSTIC_SECONDS = 86400
 PHASES = {
     "preparation": ("simulator-preparation", "simulator-readiness", "simulator-boot", "simulator-bootstatus", "simulator-container"),
     "xcode": ("unknown", "xcodebuild", "build", "test-launch", "test-execution", "official-export"),
@@ -65,9 +66,9 @@ def validate_receipt(receipt):
     exact_fields(receipt, {"schema_version", "collection_seconds", "truncated", "events"}, "bounded diagnostics")
     require(type(receipt["schema_version"]) is int and receipt["schema_version"] == 1,
             "bounded diagnostics: unsupported version")
-    exact_fields(receipt["collection_seconds"], COLLECTION_LIMITS, "bounded diagnostics collection")
-    for scope in COLLECTION_LIMITS:
-        number(receipt["collection_seconds"][scope], 86400, "bounded diagnostics " + scope + " collection", nullable=True)
+    exact_fields(receipt["collection_seconds"], COLLECTION_BUDGET_SECONDS, "bounded diagnostics collection")
+    for scope in COLLECTION_BUDGET_SECONDS:
+        number(receipt["collection_seconds"][scope], MAX_DIAGNOSTIC_SECONDS, "bounded diagnostics " + scope + " collection", nullable=True)
     require(type(receipt["truncated"]) is bool, "bounded diagnostics: truncated must be boolean")
     events = receipt["events"]
     require(isinstance(events, list) and len(events) <= MAX_EVENTS, "bounded diagnostics: invalid event count")
@@ -79,7 +80,7 @@ def validate_receipt(receipt):
         require(event["phase"] in PHASES[scope], "bounded diagnostic event: invalid phase")
         require(event["state"] in STATES, "bounded diagnostic event: invalid state")
         number(event["sequence"], 2**31 - 1, "bounded diagnostic sequence", integral=True)
-        number(event["elapsed_seconds"], 86400, "bounded diagnostic elapsed_seconds")
+        number(event["elapsed_seconds"], MAX_DIAGNOSTIC_SECONDS, "bounded diagnostic elapsed_seconds")
         number(event["cpu_seconds"], 10**12, "bounded diagnostic cpu_seconds", nullable=True)
         digest = event["input_sha256"]
         require(digest is None or (scope == "fixture" and event["phase"] in ("image-generation", "fixture-generation")
@@ -98,11 +99,11 @@ def render_receipt(receipt):
     costs = []
     for scope, value in receipt["collection_seconds"].items():
         measurement = "unavailable" if value is None else f"{value:g} s"
-        if value is not None and value > COLLECTION_LIMITS[scope]:
+        if value is not None and value > COLLECTION_BUDGET_SECONDS[scope]:
             measurement += " (over budget)"
         costs.append(f"{scope}={measurement}")
     latest = {event["scope"]: event for event in receipt["events"]}
     phases = "; ".join(f"{scope}: {event['phase']}/{event['state']} at {event['elapsed_seconds']:g} s"
-                       for scope, event in latest.items())
+                       for scope, event in latest.items()) or "none"
     return (f"\nBounded diagnostics (measurements only): {'; '.join(costs)}; events={len(receipt['events'])}; "
             f"truncated={'yes' if receipt['truncated'] else 'no'}. Last retained phase: {phases}\n")

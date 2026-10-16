@@ -3,7 +3,7 @@
 import json
 import re
 
-from ci_summary import FIELD
+from ci_summary import BOUNDED_DIAGNOSTICS_FIELD
 
 FAILURE_PHASES = frozenset({"interval_setup", "hidden_controls", "visible_scene_capture", "background_return",
                             "continue_timing", "paused_hold", "settings_navigation", "control_action", "unknown",
@@ -419,9 +419,9 @@ def test_node_diagnostics(payload):
 def validate_diagnostic_fields(value):
     """Reject free text, unpaired fields and non-string values, without echoing them."""
     if isinstance(value, dict):
-        if FIELD in value:
+        if BOUNDED_DIAGNOSTICS_FIELD in value:
             from ci_bounded_diagnostics import validate_receipt
-            validate_receipt(value[FIELD])
+            validate_receipt(value[BOUNDED_DIAGNOSTICS_FIELD])
         if VALIDATOR_FAILURE_FIELD in value:
             validate_validator_failure_message(value[VALIDATOR_FAILURE_FIELD])
         if DIAGNOSTIC_FIELDS & value.keys():
@@ -438,7 +438,7 @@ def validate_diagnostic_fields(value):
 
 
 def scan_diagnostic_json(data):
-    diagnostic_fields = DIAGNOSTIC_FIELDS | {VALIDATOR_FAILURE_FIELD, FIELD}
+    diagnostic_fields = DIAGNOSTIC_FIELDS | {VALIDATOR_FAILURE_FIELD, BOUNDED_DIAGNOSTICS_FIELD}
     bounded_seen = False
     duplicate_seen = False
     def object_pairs(pairs):
@@ -449,7 +449,7 @@ def scan_diagnostic_json(data):
                 raise ValueError("duplicate failure diagnostic field")
             duplicate_seen |= key in value
             value[key] = child
-        bounded_seen |= FIELD in value
+        bounded_seen |= BOUNDED_DIAGNOSTICS_FIELD in value
         validate_diagnostic_fields(value)
         return value
     try:
@@ -458,6 +458,6 @@ def scan_diagnostic_json(data):
             raise ValueError("duplicate bounded diagnostic JSON key")
     except (json.JSONDecodeError, UnicodeDecodeError):
         ascii_keys = re.sub(rb"\\u00([0-9a-fA-F]{2})", lambda match: bytes([int(match[1], 16)]), data)
-        if ('"' + FIELD + '"').encode() in ascii_keys or any(
+        if ('"' + BOUNDED_DIAGNOSTICS_FIELD + '"').encode() in ascii_keys or any(
                 ('"' + field + '"').encode() in data for field in DIAGNOSTIC_FIELDS | {VALIDATOR_FAILURE_FIELD}):
             raise ValueError("invalid failure diagnostic JSON")

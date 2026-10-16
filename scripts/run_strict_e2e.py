@@ -20,6 +20,8 @@ from datetime import date
 from pathlib import Path
 from typing import Callable, Mapping, Sequence, TextIO
 
+from ci_execution_diagnostics import active, diagnostic_session, fixture_environment, official_exports
+
 from run_offline_unit_tests import (
     CommandError as OfflineCommandError,
     TestResultsSummary,
@@ -623,6 +625,25 @@ def run_command(command: list[str], *, cwd: Path, environment: Mapping[str, str]
                 timeout_seconds: int = XCODEBUILD_TIMEOUT_SECONDS) -> int:
     with log_path.open("w", encoding="utf-8") as log_file:
         try:
+            if active() is not None:
+                recorder = active()
+                started = time.monotonic()
+                sequence = recorder.next_sequence()
+                bundles = [Path(command[command.index("-resultBundlePath") + 1])] if "-resultBundlePath" in command else []
+                process = subprocess.Popen(command, cwd=cwd, env=dict(environment), stdout=log_file,
+                                           stderr=subprocess.STDOUT)
+                try:
+                    return process.wait(timeout=timeout_seconds)
+                except subprocess.TimeoutExpired:
+                    recorder.xcode_snapshot("before-kill", started, sequence, log_path, bundles)
+                    process.kill()
+                    process.wait()
+                    recorder.xcode_snapshot("after-reap", started, sequence, log_path, bundles)
+                    raise
+                except BaseException:
+                    process.kill()
+                    process.wait()
+                    raise
             completed = subprocess.run(
                 command,
                 cwd=cwd,
@@ -637,6 +658,7 @@ def run_command(command: list[str], *, cwd: Path, environment: Mapping[str, str]
     return completed.returncode
 
 
+@diagnostic_session
 def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: TextIO | None = None) -> int:
     stdout = sys.stdout if stdout is None else stdout
     stderr = sys.stderr if stderr is None else stderr
@@ -644,6 +666,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
     parser.add_argument("--platform", required=True, choices=sorted(PLATFORM_SETTINGS))
     parser.add_argument("--destination", required=True)
     parser.add_argument("--evidence-dir", type=Path, required=True)
+    parser.add_argument("--diagnostics-receipt", type=Path, help="shared job measurement ledger")
     parser.add_argument("--fixture-set", choices=("a", "b"), default="a")
     parser.add_argument("--scenario", choices=RUNNER_SCENARIOS, default="normal")
     parser.add_argument("--suite", choices=RUNNER_SUITES, default="smoke")
@@ -853,6 +876,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                         str(service_log_path),
                     ],
                     cwd=REPO_ROOT,
+                    env=fixture_environment(os.environ),
                     stdout=log,
                     stderr=subprocess.DEVNULL,
                 )
@@ -881,6 +905,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                             str(service_log_b_path),
                         ],
                         cwd=REPO_ROOT,
+                        env=fixture_environment(os.environ),
                         stdout=log,
                         stderr=subprocess.DEVNULL,
                     )
@@ -1279,6 +1304,12 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         for bundle, suffix in private_bundles:
             actions.append(("export_and_hold_bundle" + suffix, lambda b=bundle, s=suffix: export_and_hold_bundle(b, s)))
         cleanup_failures.extend(run_cleanup_actions(actions))
+
+        recorder = active()
+        if recorder is not None and recorder.xcode_timed_out:
+            exports = recorder.collect("xcode", lambda: official_exports(arguments.evidence_dir,
+                [bundle for bundle, _suffix in private_bundles]), cap=0.1)
+            recorder.event("xcode", "official-export", "completed", recorder.next_sequence(), exports=exports)
 
         if owns_evidence_directory:
             if cleanup_failures:

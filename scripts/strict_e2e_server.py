@@ -5,10 +5,15 @@ from __future__ import annotations
 
 import sys
 import time
+import os
 
 _IMPORT_STARTED = time.monotonic()
+_IMPORT_CPU_STARTED = time.process_time()
 if __name__ == "__main__":
     print("fixture-startup: phase=import; state=started; elapsed=0.000s; total=0.000s", flush=True)
+    if os.environ.get("IMMICHSLIDES_FIXTURE_DIAGNOSTIC_SECONDS", "0.2") != "0":
+        print('fixture-diagnostic: {"scope":"fixture","phase":"import","state":"started","sequence":0,'
+              '"elapsed_seconds":0,"cpu_seconds":0,"sample":null,"input_sha256":null,"official_exports":null}', flush=True)
 
 import argparse
 import copy
@@ -17,7 +22,6 @@ import hashlib
 import json
 import logging
 import math
-import os
 import socket
 import socketserver
 import struct
@@ -28,6 +32,84 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, BinaryIO, Callable
 from urllib.parse import parse_qs, urlparse
+
+_STARTUP_DIAGNOSTICS = None
+
+
+class StartupDiagnostics:
+    """Keep this emitter standalone for the source-free Cloud fixture copy."""
+    def __init__(self, budget, *, origin=None, cpu_origin=None):
+        self.budget = min(0.2, max(0, budget)) if math.isfinite(budget) else 0
+        self.origin = time.monotonic() if origin is None else origin
+        self.cpu_origin = time.process_time() if cpu_origin is None else cpu_origin
+        self.cost, self.sequence = 0.0, 0
+        self.phases = {}
+        self.truncated = False
+
+    def emit(self, line):
+        cap = min(0.01, self.budget - self.cost - 0.001)
+        if cap <= 0:
+            return
+        started = time.perf_counter()
+        done = threading.Event()
+        def write():
+            try:
+                print(line, flush=True)
+            finally:
+                done.set()
+        try:
+            threading.Thread(target=write, daemon=True).start()
+            if not done.wait(max(0, cap - (time.perf_counter() - started))):
+                self.truncated = True
+        except (OSError, RuntimeError):
+            self.truncated = True
+        self.cost += time.perf_counter() - started
+
+    def report(self, phase, state, digest=None):
+        if self.cost >= self.budget - 0.002 or self.sequence >= 512:
+            if not self.truncated:
+                self.truncated = True
+                self.emit("fixture-collection-truncated: true")
+            return
+        started = time.perf_counter()
+        if state == "started":
+            self.sequence += 1
+            self.phases.setdefault(phase, []).append(self.sequence)
+        sequences = self.phases.get(phase, [])
+        sequence = sequences[-1] if sequences else 0
+        if state == "completed" and sequences:
+            sequences.pop()
+        elapsed, cpu = time.monotonic() - self.origin, time.process_time() - self.cpu_origin
+        event = {"scope": "fixture", "phase": phase, "state": state, "sequence": sequence,
+                 "elapsed_seconds": elapsed if math.isfinite(elapsed) and 0 <= elapsed <= 86400 else 0,
+                 "cpu_seconds": cpu if math.isfinite(cpu) and 0 <= cpu <= 10**12 else None,
+                 "sample": None, "input_sha256": digest, "official_exports": None}
+        line = "fixture-diagnostic: " + json.dumps(event, separators=(",", ":"))
+        self.cost += time.perf_counter() - started
+        self.emit(line)
+        self.emit("fixture-collection-seconds: " + str(self.cost))
+        if self.truncated:
+            self.emit("fixture-collection-truncated: true")
+
+
+def public_input_digest(values):
+    return hashlib.sha256(json.dumps(values, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def generation_phase(phase):
+    def decorate(function):
+        @functools.wraps(function)
+        def wrapped(*args, **kwargs):
+            reporter = _STARTUP_DIAGNOSTICS
+            if reporter is None:
+                return function(*args, **kwargs)
+            digest = public_input_digest([args, kwargs])
+            reporter.report(phase, "started", digest)
+            result = function(*args, **kwargs)
+            reporter.report(phase, "completed", digest)
+            return result
+        return wrapped
+    return decorate
 
 
 PUBLIC_API_KEY = "immichslides-public-e2e-key"
@@ -79,6 +161,7 @@ def public_visual_label(fixture_set: str, index: int) -> str:
     return f"{letter}{index}"
 
 
+@generation_phase("image-generation")
 def _png(width: int, height: int, seed: int, label: str, *, striped: bool = False) -> bytes:
     """Keep on-screen fixture identity deterministic without fonts or third-party image generators."""
     scale = max(8, min(width // 18, height // 10))
@@ -127,6 +210,7 @@ def _png(width: int, height: int, seed: int, label: str, *, striped: bool = Fals
     ) + chunk(b"IEND", b"")
 
 
+@generation_phase("fixture-generation")
 def _fixture_data(name: str) -> dict[str, Any]:
     # Callers get a copy so no caller can corrupt the shared cache; PNG bytes are immutable and are not duplicated.
     return copy.deepcopy(_cached_fixture_data(name))
@@ -895,6 +979,7 @@ def create_server(
 
 
 def main(argv: list[str] | None = None) -> int:
+    global _STARTUP_DIAGNOSTICS
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, required=True)
@@ -911,6 +996,14 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     startup_started = _IMPORT_STARTED if __name__ == "__main__" else time.monotonic()
+    try:
+        diagnostic_budget = float(os.environ.get("IMMICHSLIDES_FIXTURE_DIAGNOSTIC_SECONDS", "0.2"))
+    except ValueError:
+        diagnostic_budget = 0
+    _STARTUP_DIAGNOSTICS = StartupDiagnostics(diagnostic_budget, origin=startup_started,
+        cpu_origin=_IMPORT_CPU_STARTED if __name__ == "__main__" else None)
+    if __name__ == "__main__":
+        _STARTUP_DIAGNOSTICS.report("import", "completed")
     phase_started = startup_started
     def report(phase: str, state: str) -> None:
         nonlocal phase_started
@@ -919,11 +1012,13 @@ def main(argv: list[str] | None = None) -> int:
             phase_started = now
         print(f"fixture-startup: phase={phase}; state={state}; elapsed={now - phase_started:.3f}s; "
               f"total={now - startup_started:.3f}s", flush=True)
+        _STARTUP_DIAGNOSTICS.report(phase, state)
 
     log_handle = None
     server = None
     try:
         report("fixture-build", "started")
+        report("manifest", "started")
         manifest = fixture_manifest(arguments.fixture_set)
         if arguments.manifest_out:
             arguments.manifest_out.parent.mkdir(parents=True, exist_ok=True)
@@ -931,6 +1026,7 @@ def main(argv: list[str] | None = None) -> int:
                 json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
             )
+        report("manifest", "completed")
 
         log_handle = arguments.log_file.open("a", encoding="utf-8") if arguments.log_file else None
         server = create_server(
@@ -957,6 +1053,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Server file I/O failed: {type(error).__name__}.", file=sys.stderr)
         return 2
     finally:
+        _STARTUP_DIAGNOSTICS = None
         if server is not None:
             server.server_close()
         if log_handle is not None:

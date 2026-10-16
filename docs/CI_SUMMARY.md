@@ -92,14 +92,14 @@ producer data, not its provenance or a trusted verdict.
 | `infrastructure` | Version 1 array of `{code, message}` diagnostics, never silently omitted; codes distinguish coverage, policy and population diagnostics from infrastructure outcomes |
 | `status` | Producer execution status: `passed`, `failed`, `unverified` |
 
-### Prepared bounded infrastructure diagnostics
+### Bounded infrastructure diagnostics
 
 The optional `bounded_diagnostics` object is measurement evidence only. Historical
 field-free records remain valid, and population, status, timeout and retry rules
-are unchanged. This is the reader-only rollout: no producer emits the field yet.
-Producers may enable it only after this reader reaches `main`, following
-[reader-first evolution](#reader-first-evolution). The isolated trusted reader and
-source-free unit tools carry `ci_bounded_diagnostics.py` with their other readers.
+are unchanged. Producers use the reader contract merged before activation,
+following [reader-first evolution](#reader-first-evolution). The isolated trusted
+reader carries `ci_bounded_diagnostics.py`; source-free unit tools also carry the
+separate `ci_execution_diagnostics.py` producer.
 
 The object has exactly `schema_version: 1`, `collection_seconds`, boolean
 `truncated`, and `events` (at most 512 entries). `collection_seconds` contains
@@ -146,15 +146,44 @@ collection costs, event count, truncation and the last retained phase per scope;
 measurements stay in the summary JSON. Trusted report failure/missing counts and
 issue decisions do not consume the measurements.
 
-Reader-only runtime cost is zero diagnostic subprocesses or collection waits.
-The approved producer ceilings are 25 preparation jobs × 5 s = 2.09 machine
-minutes/night (ideal two-job wall time at most 1.09 minutes), 10 s per failed
-Xcode job = 0.167 machine minutes (the investigation's one-failure sample adds
-under 0.2 minutes wall), and 18 UI jobs × 2 s = 0.6 machine minutes/night
-(two-job wall time at most 0.3 minutes). These are diagnostic ceilings and ideal
-parallel estimates, not hosted measurements or billing. The producers must keep
-the existing readiness, Xcode and service deadlines, and must not write ready
-early or delay its definition.
+Preparation records spawn, communicate, timeout, kill and reap boundaries, with
+start and anomaly statistics. The nightly preparation step hands the same compact
+receipt to the tracer even with `--preparation-failed`. Serial strict children
+share the job ledger: each reserves its remaining collection allowance before
+starting, then returns unused allowance after completion. Missing or invalid
+accounting disables further collection instead of granting another budget.
+The internal ledger stores the public receipt and remaining numeric allowances;
+allowances are distinct from observed `collection_seconds`. A lost child's
+collection measurements remain null rather than treating its reservation as an
+observation. Only the validated public receipt is attached to summaries.
+Fixture children receive a reserved emission allowance of at most 0.2 s; the
+parent harvests only validated fixture events from at most 512 KiB of startup
+output. Import is visible before the other service imports run. PNG and fixture
+generation carry hashes of public generation arguments; these input digests are
+distinct from `hashes.manifests.fixture-c`, the generated manifest digest, and
+are not independently bound to that manifest by the reader.
+
+Every process sample has a 0.25 s cap, with 0.08 s subprocess deadlines; receipt
+IO and public Xcode progress reads have 0.1 s caps, and fixture log reads have a
+0.25 s cap. Capped daemon workers prevent a stuck diagnostic from blocking the
+runner. Retention and cumulative collection budgets stop additional work and
+mark truncation. Out-of-range measurements become null (or zero for a required
+elapsed offset), and receipts are validated before attachment; invalid receipts
+are dropped without changing the verdict. Xcode timeout samples surround the
+existing kill/reap path and retain only allowlisted process statistics, the last
+recognized public phase, and official-export existence booleans. Existing bundle
+export, retention and privacy rules still apply. Ready is written at the existing
+point after generation and bind; health and the 60 s deadline remain authoritative.
+
+The approved per-job ceilings apply across repeated preparations and services.
+Both the 25 strict jobs and 18 fixture UI jobs use the shared producers: at most
+43 × 5 s = 3.59 machine minutes/night for preparation and 43 × 2 s = 1.44 for
+fixture startup. Xcode diagnostics add at most 10 s (0.167 machine minutes) per
+failed strict job. With one such failed job, the combined ceiling is 5.19 machine
+minutes/night and 2.74 minutes wall time at two jobs per matrix (13 strict waves
+and nine UI waves, conservatively summed). These are ceilings and ideal parallel
+estimates, not hosted measurements or billing. Existing readiness, Xcode and
+service deadlines remain unchanged.
 
 ### Prepared strict identity failure receipt
 
