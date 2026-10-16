@@ -108,7 +108,7 @@ def gate_archive(args):
                 and selection["artifact_id"] == args.artifact_id, reason)
         reason = "archive-download-incomplete"
         # One metadata read, without the selector's retry/rate-limit wrapper.
-        api = GitHub(ctx["identity"]["repository"], os.environ.get("GH_TOKEN", ""))
+        api = GitHub(ctx["identity"]["repository"], os.environ.get("GH_TOKEN", ""), retry_reads=False)
         metadata = api.repo(f"actions/artifacts/{args.artifact_id}", timeout=10)
         reason = "archive-identity-mismatch"
         validate_artifact(metadata, ctx["identity"], ctx["run"]["id"], ctx["run"]["attempt"], platform_name, args.artifact_id)
@@ -162,7 +162,9 @@ def gate_archive(args):
     if reason:
         error = ContractError(reason)
         error.entry = {"code": reason, "message": reason}
-        failed_shard(args, error)
+        # Nightly gates bind the full shard even when the downloaded selection is unreadable.
+        failure_args = argparse.Namespace(**{**vars(args), "selection_path": None})
+        failed_shard(failure_args, error)
         print(reason, file=sys.stderr)
         return 1
     if args.create_simulator:

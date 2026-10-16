@@ -58,7 +58,8 @@ class BuildArchiveTests(unittest.TestCase):
                    "action-failure": "archive-download-incomplete", "timeout": "archive-gate-timeout",
                    "publish": "archive-publish-failed", "unowned-stage": "archive-identity-mismatch",
                    "oversized": "archive-size-mismatch", "metadata-unavailable": "archive-download-incomplete",
-                   "nonregular-member": "archive-download-incomplete", "existing-publish": "archive-publish-failed"}
+                   "nonregular-member": "archive-download-incomplete", "existing-publish": "archive-publish-failed",
+                   "missing-selection": "archive-identity-mismatch"}
         for defect, reason in defects.items():
             with self.subTest(defect=defect), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
@@ -88,6 +89,8 @@ class BuildArchiveTests(unittest.TestCase):
                     if defect == "manifest-hash":
                         selection["build_manifest_sha256"] = "0" * 64
                     ui.write_json(root / "selection.json", selection)
+                    if defect == "missing-selection":
+                        (root / "selection.json").unlink()
                     if defect == "missing-member":
                         (staging / "manifest.json").unlink()
                     if defect == "extra-member":
@@ -137,6 +140,7 @@ class BuildArchiveTests(unittest.TestCase):
                             self.assertEqual(published.read_text(), "preserve")
                         else:
                             self.assertFalse(published.exists())
+                        self.assertTrue((records / "summary.json").is_file(), "gate refusal must persist the bound NOT_RUN receipt")
                         summary = parse_summary((records / "summary.json").read_text())
                         self.assertEqual(summary["archive_download"], receipt)
                         self.assertEqual(summary["infrastructure"], [{"code": reason, "message": reason}])
