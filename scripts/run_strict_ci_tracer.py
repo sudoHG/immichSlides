@@ -16,6 +16,7 @@ import time
 from pathlib import Path
 
 from ci_build_archive import file_hash, workspace_preflight
+from ci_failure_diagnostics import VALIDATOR_FAILURE_FIELD, public_validator_failure_message
 from ci_summary import decode, identity_key, observation, require, test_identity, write_summary
 from run_host_checks import GROUP_TERM_GRACE_SECONDS, group_has_live_members, run_identity, source_metadata, stop_group, toolchain
 from run_strict_e2e import (CommandError, FILTER_PERSON_SESSIONS, resolve_suite_selector,
@@ -101,6 +102,8 @@ def evaluate_tracer(declared, results, *, interrupted=False, informational=()):
         observed.append(observation(result["identity"], outcome, result["duration_seconds"],
             reason="P2 contract requires signed human review" if outcome == "needs-human-review" else None,
             exit_code=result["exit_code"]))
+        if outcome == "failed" and VALIDATOR_FAILURE_FIELD in result:
+            observed[-1][VALIDATOR_FAILURE_FIELD] = observed[-1]["attempts"][0][VALIDATOR_FAILURE_FIELD] = result[VALIDATOR_FAILURE_FIELD]
     declared_keys = {identity_key(item) for item in declared}
     observed_keys = {identity_key(item["identity"]) for item in observed}
     complete = bool(declared) and declared_keys == observed_keys and len(results) == len(declared)
@@ -294,6 +297,11 @@ def main(argv=None):
         phase.update(log_present=log_path.is_file(), build_operations=len(builds), products_unchanged=unchanged,
                      official_summary=official, p2_verdict=details.get("visual_identity", {}).get("verdict"),
                      automated_contract_failed=contract_failed)
+        if contract_failed:
+            observed, _ = evaluate_tracer([phase["identity"]], [phase])
+            if observed[0]["outcome"] == "failed":
+                # records/ is uploaded unscanned; raw validator errors stay in case evidence.
+                phase[VALIDATOR_FAILURE_FIELD] = public_validator_failure_message(contract.get("error"))
         results.append(phase)
         if official is not None and official["totalTestCount"] > 0:
             summary["population"]["compiled"].append(phase["identity"])

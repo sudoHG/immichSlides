@@ -1066,12 +1066,6 @@ class FailureDiagnosticsTests(unittest.TestCase):
                 evaluate_server_switch_evidence(evidence)
             identity_message = str(raised.exception)
             self.assertEqual(identity_message + "; context unresolved", public_validator_failure_message(identity_message))
-            for message in (pattern_message, manifest_message, identity_message):
-                (evidence / "receipt.json").write_text(json.dumps({
-                    "validator_failure_message": public_validator_failure_message(message)}))
-                strict_runner.write_sensitive_scan(evidence, ["PRIVATE_SENTINEL"])
-                self.assertEqual("PASS", json.loads((evidence / "sensitive-scan.json").read_text())["result"])
-
         for message in (pattern_message.replace("switch-b-play-1", "private-screenshot"),
                         pattern_message.replace("must be b", "must be private-pattern"),
                         pattern_message.replace("got None", "got private-pattern"),
@@ -1153,6 +1147,130 @@ class FailureDiagnosticsTests(unittest.TestCase):
 
 
 class StrictCITracerTests(unittest.TestCase):
+    def _produce_validator_records(self, directory, error, *, verdict="FAIL", runner_exit=2,
+                                   receipt_suite="tvos-server-switch-display"):
+        import run_strict_ci_tracer as tracer
+        case = {"platform": "tvos", "device": "tv", "configuration": "Debug",
+                "suite": "tvos-server-switch-display", "scenario": "normal", "fixture": "a"}
+        identity = {"schema_version": 1, "event": "local", "repository": "sudoHG/immichSlides",
+                    "commit_sha": "0" * 40, "tree_sha": "0" * 40, "dirty": False}
+        output = directory / "trace"
+        manifest = directory / "manifest.json"
+        manifest.write_text(json.dumps({"cases": [case], "exclusions": []}))
+
+        def runner(command, *_args, **_kwargs):
+            derived = Path(command[command.index("--derived-data-path") + 1])
+            evidence = Path(command[command.index("--evidence-dir") + 1])
+            if "--warm-up-only" in command:
+                derived.mkdir(parents=True)
+                (derived / "strict-warm-build.json").write_text(json.dumps({"signing_mode": "adhoc"}))
+                return 0
+            evidence.mkdir(parents=True)
+            (evidence / "case-manifest.json").write_text(json.dumps({"infrastructure": []}))
+            if receipt_suite is not None:
+                message = error(evidence) if callable(error) else error
+                (evidence / "visual-identity-runner.json").write_text(json.dumps({
+                    "suite": receipt_suite, "verdict": verdict, "error": message}))
+            (evidence / "xcodebuild.log").write_text("test-without-building\n")
+            (evidence / "xcodebuild-reuse.json").write_text(json.dumps({"products_unchanged": True}))
+            (evidence / "official-summary.json").write_text(json.dumps({"totalTestCount": 1, "passedTests": 1,
+                "failedTests": 0, "skippedTests": 0, "result": "Passed"}))
+            selector = tracer.resolve_suite_selector(case["platform"], case["suite"])
+            bundle, method = selector.split("/", 1)
+            (evidence / "official-tests.json").write_text(json.dumps({"testNodes": [{
+                "nodeType": "Unit test bundle", "name": bundle, "children": [{
+                    "nodeType": "Test Case", "nodeIdentifier": method + "()", "result": "Passed"}]}]}))
+            return runner_exit
+
+        with mock.patch.object(tracer, "run_runner", side_effect=runner), \
+                mock.patch.object(tracer, "workspace_preflight"), mock.patch.object(tracer, "run_identity", return_value=identity), \
+                mock.patch.object(tracer, "source_metadata", return_value=(None, False)), \
+                mock.patch.object(tracer.shutil, "disk_usage", return_value=mock.Mock(total=200 * 1024**3, free=100 * 1024**3)), \
+                mock.patch.object(tracer, "toolchain", return_value={"versions": {"python": "test"}, "signing_mode": "not-applicable"}):
+            exit_code = tracer.main(["--platform", "tvos", "--destination", "unused", "--manifest", str(manifest),
+                                     "--output-dir", str(output)])
+        return exit_code, output / "records", json.loads((output / "records/trace.json").read_text()), \
+            json.loads((output / "records/summary.json").read_text())
+
+    def test_tracer_redacts_private_validator_errors_before_writing_public_records(self):
+        from ci_nightly import aggregate_nightly
+        private_values = ("https://private.invalid/api", "/private/validator/secret.json", "asset-private-nonfixture", "192.0.2.1")
+        for error, expected in (("Validator failure: " + " ".join(private_values), "[redacted validator failure]"),
+                                (None, "unresolved")):
+            with self.subTest(error=error), tempfile.TemporaryDirectory() as raw:
+                exit_code, records, trace, summary = self._produce_validator_records(Path(raw), error)
+                self.assertEqual(1, exit_code)
+                self.assertEqual("failed", summary["status"])
+                phase = trace["warm"][0]
+                self.assertEqual(2, phase["exit_code"])
+                self.assertTrue(phase["automated_contract_failed"])
+                self.assertEqual("Passed", phase["official_summary"]["result"])
+                self.assertEqual(expected, phase.get("validator_failure_message"))
+                failed = summary["population"]["observed"][0]
+                self.assertEqual(("failed", 2), (failed["outcome"], failed["attempts"][0]["exit_code"]))
+                self.assertEqual(expected, failed.get("validator_failure_message"))
+                self.assertEqual(expected, failed["attempts"][0].get("validator_failure_message"))
+                aggregate = aggregate_nightly(summary["population"]["declared"], [summary], live_in_scope=False)
+                self.assertEqual(expected, aggregate["observed"][0].get("validator_failure_message"))
+                self.assertEqual(expected, aggregate["observed"][0]["attempts"][0].get("validator_failure_message"))
+                for path in records.iterdir():
+                    for value in private_values:
+                        self.assertNotIn(value, path.read_text())
+                for value in private_values:
+                    self.assertNotIn(value, json.dumps(aggregate))
+
+    def test_real_validator_failure_reaches_nightly_aggregation_and_report(self):
+        from html import unescape
+        import ci_report
+        from ci_nightly import aggregate_nightly
+        from album_server_narrow_contract import AlbumServerContractError, evaluate_server_switch_evidence
+        from test_album_server_narrow_contract import _fixture_png, _side_by_side, _write_server_switch_pass
+
+        def fail_contract(evidence):
+            _write_server_switch_pass(evidence)
+            (evidence / "switch-b-play-1.png").write_bytes(
+                _side_by_side(_fixture_png("A1", "a"), _fixture_png("A1", "b")))
+            with self.assertRaisesRegex(AlbumServerContractError,
+                                       "^switch-b-play-1 public pattern must be b, got None$") as raised:
+                evaluate_server_switch_evidence(evidence)
+            return str(raised.exception)
+
+        expected = "switch-b-play-1 public pattern must be b, got None; context unresolved"
+        with tempfile.TemporaryDirectory() as raw:
+            exit_code, _records, trace, summary = self._produce_validator_records(Path(raw), fail_contract)
+            self.assertEqual(1, exit_code)
+            self.assertEqual(expected, trace["warm"][0].get("validator_failure_message"))
+            failed = summary["population"]["observed"][0]
+            self.assertEqual(expected, failed.get("validator_failure_message"))
+            self.assertEqual(expected, failed["attempts"][0].get("validator_failure_message"))
+            aggregate = aggregate_nightly(summary["population"]["declared"], [summary], live_in_scope=False)
+            self.assertEqual(expected, aggregate["observed"][0].get("validator_failure_message"))
+            observed, missing = ci_report.method_observations(summary, trace)
+            self.assertEqual([], missing)
+            contract = next(item for item in observed if item["identity"] == failed["identity"])
+            self.assertEqual(("failed", 2, "strict-case-contract-failed"),
+                (contract["outcome"], contract["attempts"][0]["exit_code"], contract["attempts"][0]["reason"]))
+            self.assertEqual(expected, contract.get("validator_failure_message"))
+            self.assertEqual(expected, contract["attempts"][0].get("validator_failure_message"))
+            report = {"schema_version": 1, "day": "2026-10-01", "run": {"id": 10, "attempt": 1},
+                      "source": {**summary["source"], "workflow_path": ci_report.NIGHTLY_PATH, "approval_based": False},
+                      "status": aggregate["status"], "observed": observed,
+                      "diagnostics": ci_report.summary_diagnostics([summary])}
+            compact = ci_report.compact_entry(report, set())
+            self.assertEqual(expected, compact["observed"][-1].get("validator_failure_message"))
+            self.assertIn(expected, unescape(ci_report.render_entry(compact)))
+
+    def test_tracer_omits_receipts_without_both_a_failed_contract_and_failed_case(self):
+        for changed in ({"verdict": "PASS"}, {"receipt_suite": "smoke"}, {"receipt_suite": None}, {"runner_exit": 0}):
+            with self.subTest(changed=changed), tempfile.TemporaryDirectory() as raw:
+                exit_code, _records, trace, summary = self._produce_validator_records(Path(raw), "no public glyph", **changed)
+                self.assertEqual(0 if changed.get("runner_exit") == 0 else 1, exit_code)
+                self.assertNotIn("validator_failure_message", trace["warm"][0])
+                self.assertNotIn("validator_failure_message", trace["cold"][0])
+                observed = summary["population"]["observed"][0]
+                self.assertNotIn("validator_failure_message", observed)
+                self.assertNotIn("validator_failure_message", observed["attempts"][0])
+
     def test_preparation_failure_records_every_planned_case_without_starting_a_runner(self):
         import run_strict_ci_tracer as tracer
         from ci_nightly import case_identity, parse_manifest, shards, validate_shard

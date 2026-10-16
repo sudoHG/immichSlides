@@ -487,10 +487,11 @@ not release eligibility.
 
 ### Public validator failure receipts
 
-Reader-only preparation accepts an optional `validator_failure_message` on a warm
-trace and on failed strict summary observations/attempts. The strict tracer still
-emits only `automated_contract_failed`; producer activation is a separate PR after
-this reader is on main, following [reader-first evolution](CI_SUMMARY.md#reader-first-evolution).
+The strict tracer emits optional `validator_failure_message` on a failed warm case
+with an explicit failing validator receipt, alongside `automated_contract_failed`.
+The same public message is retained on its failed summary observation and attempt.
+The accepting reader shipped first in PR #459, following
+[reader-first evolution](CI_SUMMARY.md#reader-first-evolution).
 XCTest diagnostics below remain separate from post-test validator failures.
 
 The value is at most 512 characters. The reviewed grammar in
@@ -504,11 +505,12 @@ The public helper appends that suffix to a recognized bare prefix. Interpolated
 messages are limited to the existing count/letter/slot/axis grammar, the public
 pattern mismatch (allowlisted screenshot stem, expected fixture `a`/`b`, observed
 `a`/`b`/`None`), and the unrecognizable-input message (classifier status and public
-photo mark or `None`). AST synchronization tests pin the literal tables and these
-closed sets to their contract sources without adding image dependencies to the
-isolated reader. The closed `unreadable public glyph:` exception names are `AttributeError`, `IndexError`,
+photo mark or `None`). AST synchronization tests pin the literal tables and the
+classifier pattern/status/mark sets to their contract sources without adding image
+dependencies to the isolated reader. The closed `unreadable public glyph:` exception
+names are `AttributeError`, `IndexError`,
 `KeyError`, `OSError`, `TypeError`, `UnidentifiedImageError` and `ValueError`.
-Screenshot names come from `public_scene_photos_from_bytes` and server-switch
+Screenshot names are hand-reviewed against `public_scene_photos_from_bytes` and server-switch
 `_require_public_pattern` callers: `history-*`,
 `pause-immediate`, `pause-after-10s`, `resumed`, `album-playback-N`, `person-normal`,
 `person-no-faces`, `person-conflict-normal(-N)`, `album-switch-b-play-N`,
@@ -521,18 +523,19 @@ xcresult text or pixel arrays. It does not decode images or change a visual chec
 The existing sensitive-output scan also covers UI, unit, fixture and flaky outputs.
 On the strict path it validates the field in case evidence, P2 recordings and review packages.
 It checks length and duplicate/malformed fields, alongside existing sensitive-value
-scanning. **`records/` is uploaded unscanned**, including on failure. A future producer
-must therefore write only `public_validator_failure_message(...)` output to both
+scanning. **`records/` is uploaded unscanned**, including on failure. The producer
+therefore writes only `public_validator_failure_message(...)` output to both
 `records/trace.json` and `records/summary.json`, never the raw validator error.
 The helper returns `[redacted validator failure]` on refusal instead of dropping
 the case. An invalid value written directly to a summary invalidates the entire
 shard; reporter-side redaction cannot repair an already public artifact.
 
-PR 2 must test the real producer with a URL, directory path or ID injected into
+The producer regression tests inject a URL, absolute directory path, non-fixture ID and IP into
 `visual-identity-runner.json`: trace and summary must contain only the fixed
-redaction marker, retaining the failed case and exit code. Aggregation must consume
-that actual producer summary. An upload scan for `records/` is an optional follow-up
-requiring maintainer approval; this reader change adds no workflow step.
+redaction marker, retaining the failed case and exit code. Aggregation consumes
+that actual producer summary, and a real public contract failure reaches the report table.
+An upload scan for `records/` is an optional follow-up requiring maintainer approval;
+receipt publication adds no workflow step.
 
 The report reader applies the grammar once at its optional trace boundary and
 copies a receipt only for outcome `failed`; it retains the redaction marker on refusal.
