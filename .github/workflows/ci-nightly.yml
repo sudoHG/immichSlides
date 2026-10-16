@@ -425,21 +425,43 @@ jobs:
         with:
           name: ${{ needs.ui-archive.outputs.selection_artifact }}
           path: ${{ runner.temp }}/ui-selection
+      - name: Allocate this attempt's archive staging directory
+        id: staging
+        working-directory: ui-source
+        run: '"$PYTHON" -B scripts/ci_ui_tests.py stage-download'
       - name: Download by verified immutable archive ID
+        id: download
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           artifact-ids: ${{ matrix.device == 'appletv' && needs.ui-archive.outputs.tvos_artifact_id || needs.ui-archive.outputs.ios_artifact_id }}
-          path: ${{ runner.temp }}/ui-archive
+          path: ${{ steps.staging.outputs.staging_path }}
           merge-multiple: true
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
           run-id: ${{ matrix.device == 'appletv' && needs.ui-archive.outputs.tvos_producer_run_id || needs.ui-archive.outputs.ios_producer_run_id }}
+      - name: Verify and publish archive before the UI run step
+        if: ${{ !cancelled() && steps.staging.outcome == 'success' }}
+        working-directory: ui-source
+        env:
+          ARCHIVE_STAGING: ${{ steps.staging.outputs.staging_path }}
+          ARCHIVE_TRANSFER_STARTED: ${{ steps.staging.outputs.transfer_started }}
+          ARCHIVE_ACTION_OUTCOME: ${{ steps.download.outcome }}
+          ARCHIVE_ARTIFACT_ID: ${{ matrix.device == 'appletv' && needs.ui-archive.outputs.tvos_artifact_id || needs.ui-archive.outputs.ios_artifact_id }}
+          ARCHIVE_PLATFORM: ${{ matrix.device == 'appletv' && 'tvos' || 'ios' }}
+        run: |
+          "$PYTHON" -B scripts/ci_ui_tests.py gate-archive --device '${{ matrix.device }}' --shard '${{ matrix.shard }}' \
+            --staging-dir "$ARCHIVE_STAGING" --archive-dir "$RUNNER_TEMP/ui-archive" \
+            --selection-path "$RUNNER_TEMP/ui-selection/archive-selection-$ARCHIVE_PLATFORM.json" \
+            --artifact-id "$ARCHIVE_ARTIFACT_ID" --action-outcome "$ARCHIVE_ACTION_OUTCOME" \
+            --transfer-started "$ARCHIVE_TRANSFER_STARTED" --download-receipt-path "$RUNNER_TEMP/ui-download.json" \
+            --output-dir "$RUNNER_TEMP/ui-records"
       - name: Run the UI target from relocated Products
         working-directory: ui-source
         run: |
           "$PYTHON" -B scripts/ci_ui_tests.py run --device '${{ matrix.device }}' --shard '${{ matrix.shard }}' \
             --destination "$UI_DESTINATION" --archive-dir "$RUNNER_TEMP/ui-archive" \
             --selection-path "$RUNNER_TEMP/ui-selection/archive-selection-$UI_PLATFORM.json" \
+            --download-receipt-path "$RUNNER_TEMP/ui-download.json" \
             --relocated-path "$RUNNER_TEMP/ui-relocated" --output-dir "$RUNNER_TEMP/ui-records" \
             --timeout-minutes 65 --total-timeout-minutes 85 --result-export-timeout-seconds 180 --wait-factor 2 --min-free-gib 30
       - name: Recheck the sensitive scan before publishing
@@ -490,6 +512,10 @@ jobs:
             xcrun simctl delete "$UI_SIMULATOR"
           fi
           rm -rf "$RUNNER_TEMP/ui-relocated" "$RUNNER_TEMP/ui-archive"
+          if test -n "$ARCHIVE_STAGING"; then rm -rf "$ARCHIVE_STAGING"; fi
+          rm -f "$RUNNER_TEMP/ui-download.json"
+        env:
+          ARCHIVE_STAGING: ${{ steps.staging.outputs.staging_path }}
 
 
   ui-aggregate:

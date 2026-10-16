@@ -253,17 +253,41 @@ job with an exact workflow/ref binding; other branch registry consumers are refu
 This branch evidence remains self-reported and diagnostic. Live admission and
 credential-bearing jobs retain their independent main-only boundary.
 
-The reader accepts an optional [archive download receipt](CI_SUMMARY.md#prepared-archive-download-receipt)
-on nightly UI summaries and retains its closed-set failure reason in reporting.
-This reader preparation does not enable a consumer gate or change download,
-simulator ordering, retries, budgets or producer output. A separate producer change
-must follow after the reader reaches main; until then incomplete downloads retain
-the existing preflight behavior.
+Each nightly UI consumer downloads to a fresh directory owned by its run/attempt.
+After the download and before the UI run step, a 30-second integrity gate verifies
+the selected ID/run/attempt and identity, requires exactly `manifest.json` and
+`build.tar.gz`, and reuses the manifest and tar inventory
+validators. The selection already validated the immutable artifact ID in this run;
+the gate makes no network request. It reads through the gzip trailer before checking
+the compressed SHA256: truncation (`EOFError`) reports `archive-download-incomplete`,
+while corrupt deflate data or a bad gzip CRC continues to the digest check and reports
+`archive-hash-mismatch`. It then checks every declared member size and atomically
+renames the verified directory to the run step's archive path. No manifest or
+selection schema changes are needed.
+
+The [download receipt](CI_SUMMARY.md#prepared-archive-download-receipt) records the
+action outcome, bounded member sizes, digest/size matches, combined transfer/extract
+elapsed time (including step scheduling), gate seconds and available disk. Its
+closed-set failure reason reaches the job summary and issue table; raw errors and
+paths are not copied into it. Existing member byte sizes are measured before action
+and member-set checks, so missing manifests and failed actions still report the tar
+size. Unexpected exceptions retain the current section's reason and still write a
+receipt; stderr includes only the exception type and the closed-set reason.
+A gate refusal is infrastructure failure with no compiled or executed cases; those
+cases remain `NOT_RUN`. Missing diagnostics are null and render as `unavailable`
+without a unit. The gate adds no retry or budget change.
+
+The standalone simulator creation/boot step runs before the archive downloads.
+A gate refusal skips the run step and never reaches XCTest; it does not prevent
+that earlier boot. The existing readiness budgets are unchanged.
+The gate does not prove simulator readiness, app behavior or runner survival; later
+relocation, signing, extraction and UI checks remain required.
 
 The UI matrix waits for the strict matrix to settle, then runs with `max-parallel: 2`
 and `fail-fast: false`. Minimum waves round the actual shard count up after division
-by two: the current nine shards require five start-order waves, without
-reserved runner slots. Existing invocation, export and job timeouts remain bounded.
+by two: the current six shards on each of three devices require 18 jobs and nine
+start-order waves, without reserved runner slots. Existing invocation, export and
+job timeouts remain bounded.
 Each shard publishes timing and its bound summary even after a test failure when
 the sensitive scan succeeds. When the workflow has not been cancelled, the UI
 aggregate checks each shard verdict, compiled population and executed/default-plan

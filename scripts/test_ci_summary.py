@@ -99,6 +99,8 @@ class SummaryContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             ci_summary.write_summary(optional_measurements, Path(directory))
             self.assertEqual(ci_summary.parse_summary(Path(directory, "summary.json").read_text()), optional_measurements)
+            for detail in ("transfer/extract=unavailable;", "gate=unavailable;", "free disk=unavailable;"):
+                self.assertIn(detail, Path(directory, "summary.md").read_text())
         for reason in ("archive-member-missing",):
             failed = copy.deepcopy(summary)
             failed["status"] = "failed"
@@ -111,15 +113,20 @@ class SummaryContractTests(unittest.TestCase):
             with self.subTest(reason=reason):
                 self.assertEqual(ci_summary.parse_summary(json.dumps(failed)), failed)
                 self.assertIn("failure=" + reason, ci_summary.render_markdown(failed))
+                self.assertIn("manifest.json=unavailable", ci_summary.render_markdown(failed))
 
     def test_nightly_archive_receipt_rejects_invalid_fields_and_false_success(self):
         from ci_ui_tests import MAX_ARCHIVE_BYTES
+        import yaml
         base = archive_download_summary()
         self.assertEqual(ci_summary.parse_summary(base), base)
+        workflow = yaml.safe_load(Path(ci_summary.__file__).resolve().parent.parent.joinpath(
+            ".github/workflows/ci-nightly.yml").read_text())
+        job_seconds = workflow["jobs"]["ui-shards"]["timeout-minutes"] * 60
         push_identity = {key: value for key, value in base["identity"].items() if key not in {"event", "commit_sha"}}
         push_identity.update(event="push", pushed_sha=base["identity"]["commit_sha"])
         for key, maximum in (("artifact_id", 2**63 - 1), ("free_disk_bytes", 2**50),
-                             ("transfer_extract_seconds", 6600), ("gate_seconds", 6600)):
+                             ("transfer_extract_seconds", job_seconds), ("gate_seconds", job_seconds)):
             boundary = copy.deepcopy(base)
             boundary["archive_download"][key] = maximum
             self.assertEqual(ci_summary.parse_summary(boundary), boundary)
@@ -147,12 +154,13 @@ class SummaryContractTests(unittest.TestCase):
             (("archive_download", "size_matched"), 1, "archive size match must be boolean or null"),
             (("archive_download", "transfer_extract_seconds"), -1, "duration must be finite and nonnegative"),
             (("archive_download", "gate_seconds"), float("inf"), "duration must be finite and nonnegative"),
-            (("archive_download", "transfer_extract_seconds"), 6601, "archive elapsed seconds exceed bound"),
-            (("archive_download", "gate_seconds"), 6601, "archive elapsed seconds exceed bound"),
+            (("archive_download", "transfer_extract_seconds"), job_seconds + 1, "archive elapsed seconds exceed bound"),
+            (("archive_download", "gate_seconds"), job_seconds + 1, "archive elapsed seconds exceed bound"),
             (("archive_download", "free_disk_bytes"), True, "archive free disk bytes: expected integer >= 0"),
             (("archive_download", "free_disk_bytes"), 2**50 + 1, "archive free disk bytes exceed bound"),
             (("archive_download", "action_outcome"), "failure", "successful archive gate requires complete integrity checks"),
             (("archive_download", "member_bytes", "manifest.json"), 0, "successful archive gate requires complete integrity checks"),
+            (("archive_download", "member_bytes", "manifest.json"), None, "successful archive gate requires complete integrity checks"),
             (("archive_download", "digests_matched", "manifest"), False, "successful archive gate requires complete integrity checks"),
             (("archive_download", "size_matched"), None, "successful archive gate requires complete integrity checks"),
         ]

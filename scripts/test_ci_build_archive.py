@@ -25,6 +25,172 @@ from ci_summary import ContractError
 
 
 class BuildArchiveTests(unittest.TestCase):
+    def test_nightly_gate_publishes_verified_archives_and_records_single_defect_refusals(self):
+        from ci_summary import parse_summary
+        from test_ci_summary import archive_download_summary
+        inputs = archive_download_summary()
+        inputs["population"].update(compiled=[], observed=[])
+        inputs["hashes"]["manifests"]["ui-shards"] = "c" * 64
+        identity = {"schema_version": 1, "event": "schedule", "repository": "owner/repo",
+                    "ref": "refs/heads/main", "commit_sha": "a" * 40, "tree_sha": "b" * 40}
+        ctx = {"identity": identity, "source": {"repository": "owner/repo", "event": "schedule",
+               "workflow_path": ui.NIGHTLY_WORKFLOW, "fork_originated": False, "ci_changing": None},
+               "run": {"id": "123", "attempt": 1, "tier": "ui-infrastructure", "job": "ui-archive", "shard": None}}
+        pins = json.loads((ui.ROOT / "scripts/ci-pins.json").read_text())
+        defects = {"success": None, "missing-member": "archive-member-missing", "extra-member": "archive-member-extra",
+                   "truncated-tar": "archive-download-incomplete", "hash-mismatch": "archive-hash-mismatch",
+                   "selection-attempt": "archive-identity-mismatch", "selection-artifact": "archive-identity-mismatch",
+                   "wrong-attempt": "archive-identity-mismatch", "build-identity": "archive-identity-mismatch",
+                   "build-platform": "archive-identity-mismatch", "architecture": "archive-toolchain-mismatch",
+                   "toolchain": "archive-toolchain-mismatch", "invalid-manifest": "archive-manifest-invalid",
+                   "manifest-hash": "archive-hash-mismatch", "size": "archive-size-mismatch",
+                   "action-failure": "archive-download-incomplete", "timeout": "archive-gate-timeout",
+                   "publish": "archive-publish-failed", "unowned-stage": "archive-identity-mismatch",
+                   "oversized": "archive-size-mismatch", "manifest-cap": "archive-size-mismatch",
+                   "nonregular-member": "archive-download-incomplete", "existing-publish": "archive-publish-failed",
+                   "missing-selection": "archive-identity-mismatch", "deflate-corrupt": "archive-hash-mismatch",
+                   "gzip-crc": "archive-hash-mismatch", "unexpected-error": "archive-hash-mismatch"}
+        for defect, reason in defects.items():
+            with self.subTest(defect=defect), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                with patch.object(ui, "context", return_value=copy.deepcopy(ctx)), patch.dict(os.environ, {"RUNNER_TEMP": temporary}), \
+                        patch("run_fixture_ui_tests.fixture_inputs", return_value=inputs), \
+                        patch.object(ui, "output") as exported:
+                    self.assertEqual(ui.main(["stage-download"]), 0)
+                    values = dict(call.args for call in exported.call_args_list)
+                    staging = Path(values["staging_path"])
+                    packed = staging / "build.tar.gz"
+                    archive.pack_products(self.products, packed)
+                    manifest = archive.make_manifest(self.products, identity=copy.deepcopy(identity), run_id="123", attempt=1,
+                        platform="ios", architecture=[platform.machine()], xcode_build=pins["xcode"]["build"],
+                        source_path=self.root / "source", archive_sha=archive.file_hash(packed),
+                        pins_sha=archive.file_hash(ui.ROOT / "scripts/ci-pins.json"), signing_mode="adhoc")
+                    if defect == "wrong-attempt":
+                        manifest["producer"]["attempt"] = 2
+                    if defect == "build-identity":
+                        manifest["identity"]["tree_sha"] = "c" * 40
+                    if defect == "build-platform":
+                        manifest["platform"] = "tvos"
+                    if defect == "architecture":
+                        manifest["architectures"] = ["arm64" if platform.machine() == "x86_64" else "x86_64"]
+                    if defect == "toolchain":
+                        manifest["xcode_build"] = "wrong"
+                    if defect == "invalid-manifest":
+                        manifest["schema_version"] = 2
+                    if defect == "size":
+                        next(entry for entry in manifest["files"] if entry["kind"] == "file")["size"] += 1
+                    ui.write_json(staging / "manifest.json", manifest)
+                    if defect == "manifest-cap":
+                        with (staging / "manifest.json").open("a") as handle:
+                            handle.write(" " * (4 * 1024 * 1024))
+                    selection = {"identity": identity, "platform": "ios", "producer_run_id": "123", "producer_attempt": 1,
+                                 "artifact_id": 456, "build_manifest_sha256": archive.file_hash(staging / "manifest.json")}
+                    if defect == "selection-attempt":
+                        selection["producer_attempt"] = 2
+                    if defect == "selection-artifact":
+                        selection["artifact_id"] = 457
+                    if defect == "manifest-hash":
+                        selection["build_manifest_sha256"] = "0" * 64
+                    ui.write_json(root / "selection.json", selection)
+                    if defect == "missing-selection":
+                        (root / "selection.json").unlink()
+                    if defect == "missing-member":
+                        (staging / "manifest.json").unlink()
+                    if defect == "extra-member":
+                        (staging / "extra").write_text("unexpected")
+                    if defect == "nonregular-member":
+                        outside = packed.rename(root / "outside-build.tar.gz")
+                        packed.symlink_to(outside)
+                    if defect == "truncated-tar":
+                        packed.write_bytes(packed.read_bytes()[:-8])
+                    if defect == "hash-mismatch":
+                        changed = bytearray(packed.read_bytes())
+                        changed[4] ^= 1  # Valid gzip mtime change; payload and sizes remain intact.
+                        packed.write_bytes(changed)
+                    if defect == "deflate-corrupt":
+                        changed = bytearray(packed.read_bytes())
+                        offset = changed.index(0, 10) + 1 if changed[3] & 8 else 10
+                        changed[offset] |= 0b110  # Reserved BTYPE 11; byte count and gzip trailer stay intact.
+                        packed.write_bytes(changed)
+                    if defect == "gzip-crc":
+                        changed = bytearray(packed.read_bytes())
+                        changed[-8] ^= 1
+                        packed.write_bytes(changed)
+                    if defect == "unowned-stage":
+                        staging = staging.rename(root / "unowned")
+                    receipt_path, published, records = root / "receipt.json", root / "verified", root / "records"
+                    if defect == "existing-publish":
+                        published.mkdir()
+                    gzip_open = ui.gzip.open
+                    def delayed_gzip(*arguments, **options):
+                        time.sleep(0.2)
+                        return gzip_open(*arguments, **options)
+                    with patch.object(ui.gzip, "open", side_effect=delayed_gzip) if defect == "timeout" else contextlib.nullcontext(), \
+                            patch.object(ui, "ARCHIVE_GATE_SECONDS", 0.02 if defect == "timeout" else ui.ARCHIVE_GATE_SECONDS), \
+                            patch.object(ui, "MAX_ARCHIVE_BYTES", 1 if defect == "oversized" else ui.MAX_ARCHIVE_BYTES), \
+                            patch.object(Path, "rename", side_effect=OSError("private disk detail")) if defect == "publish" else contextlib.nullcontext(), \
+                            patch.object(ui, "file_hash", side_effect=RuntimeError("private unexpected detail")) \
+                            if defect == "unexpected-error" else contextlib.nullcontext(), \
+                            redirect_stderr(io.StringIO()) as errors:
+                        code = ui.main(["gate-archive", "--device", "ipad", "--shard", "navigation", "--staging-dir", str(staging),
+                            "--archive-dir", str(published), "--selection-path", str(root / "selection.json"),
+                            "--artifact-id", "456", "--action-outcome", "failure" if defect == "action-failure" else "success",
+                            "--transfer-started", values["transfer_started"], "--download-receipt-path", str(receipt_path),
+                            "--output-dir", str(records)])
+                    receipt = json.loads(receipt_path.read_text())
+                    self.assertEqual(receipt["failure_reason"], reason)
+                    self.assertEqual(code, int(reason is not None))
+                    if reason:
+                        if defect == "existing-publish":
+                            self.assertTrue(published.is_dir())
+                            self.assertEqual(list(published.iterdir()), [])
+                        else:
+                            self.assertFalse(published.exists())
+                        self.assertTrue((records / "summary.json").is_file(), "gate refusal must persist the bound NOT_RUN receipt")
+                        summary = parse_summary((records / "summary.json").read_text())
+                        self.assertEqual(summary["archive_download"], receipt)
+                        self.assertEqual(summary["infrastructure"], [{"code": reason, "message": reason}])
+                        error_type = {"truncated-tar": "EOFError", "timeout": "TimeoutError", "publish": "OSError",
+                                      "missing-selection": "FileNotFoundError", "unexpected-error": "RuntimeError"}.get(defect, "ContractError")
+                        self.assertIn(error_type, errors.getvalue().splitlines())
+                        self.assertNotIn("private", errors.getvalue())
+                        if defect == "nonregular-member":
+                            self.assertIsNone(receipt["member_bytes"]["build.tar.gz"])
+                        if defect in {"missing-member", "action-failure"}:
+                            self.assertEqual(receipt["member_bytes"], {"build.tar.gz": packed.stat().st_size,
+                                "manifest.json": None if defect == "missing-member" else (staging / "manifest.json").stat().st_size})
+                    else:
+                        self.assertTrue(published.is_dir())
+                        self.assertFalse(staging.exists())
+                        summary = archive_download_summary()
+                        summary["archive_download"] = receipt
+                        self.assertEqual(parse_summary(summary)["archive_download"], receipt)
+                        from types import SimpleNamespace
+                        from ci_summary import write_summary
+                        executed = root / "executed-records"
+                        def fixture(*unused, **options):
+                            ordinary = archive_download_summary()
+                            del ordinary["archive_download"]
+                            write_summary(ordinary, executed)
+                            return 0
+                        with patch.object(ui, "workspace_preflight"), \
+                                patch("strict_e2e_runner_support.prepare_simulator"), \
+                                patch("run_fixture_ui_tests.declared_tests", return_value=inputs["population"]["declared"]), \
+                                patch.object(ui, "selected_shard", return_value=inputs["population"]["declared"]), \
+                                patch("run_fixture_ui_tests.main", side_effect=fixture):
+                            self.assertEqual(ui.run_shard(SimpleNamespace(output_dir=executed, device="ipad", shard="navigation",
+                                destination="platform=iOS Simulator,id=fixture-device", manifest_revision=None,
+                                selection_path=None, archive_dir=None, xctestrun=self.plist, download_receipt_path=receipt_path,
+                                timeout_minutes=65, total_timeout_minutes=85, result_export_timeout_seconds=180,
+                                wait_factor=1, min_free_gib=80, max_parallel=2)), 0)
+                        self.assertEqual(parse_summary((executed / "summary.json").read_text())["archive_download"], receipt)
+                        # Later preflight failures must retain a successful download receipt too.
+                        args = type("Args", (), {"output_dir": records, "device": "ipad", "shard": "navigation",
+                            "manifest_revision": None, "selection_path": root / "selection.json",
+                            "download_receipt_path": receipt_path})()
+                        ui.failed_shard(args, ContractError("later preflight failure"))
+                        self.assertEqual(parse_summary((records / "summary.json").read_text())["archive_download"], receipt)
+
     def test_packed_reproduction_refuses_another_tested_tree_before_building(self):
         from types import SimpleNamespace
         selection = self.root / 'ui-selection.json'

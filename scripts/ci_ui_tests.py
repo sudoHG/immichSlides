@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
 import io
 import json
@@ -11,20 +12,24 @@ import math
 import os
 import platform
 import shlex
+import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import tarfile
 import time
 import urllib.error
 import zipfile
+import zlib
 from pathlib import Path
 from urllib.request import Request, build_opener
 
 from ci_build_archive import (artifact_name, check_products, extract_products, file_hash, measure_signing,
-                              output, validate_artifact, validate_manifest, workspace_preflight)
+                              output, validate_artifact, validate_manifest, validated_tar_members, workspace_preflight)
 from ci_publish import ArtifactRedirect, RateLimitWaitingGitHub, json_member, rate_limit_wait, verify_workflow
 from ci_summary import (ContractError, decode, observation, parse_identity, parse_summary, require, test_identity, write_summary)
-from ci_summary import identity_key, validate_test_identity
+from ci_summary import (ARCHIVE_DOWNLOAD_MAX_DISK_BYTES, ARCHIVE_DOWNLOAD_MAX_SECONDS, identity_key, validate_test_identity)
 from ci_ui_shards import DEVICES, MANIFEST_PATH, parse_shard_manifest, shard_populations
 from ci_verdict import classify_changes
 from run_host_checks import run_identity, source_metadata
@@ -36,10 +41,140 @@ GATE_WORKFLOW = ".github/workflows/ci-gate.yml"
 NIGHTLY_WORKFLOW = ".github/workflows/ci-nightly.yml"
 GATE_PENDING_PAUSE_SECONDS = 50 * 60  # 120 + 50 = 170-minute cap leaves 15 minutes of the 185-minute job for final reads and downloads
 MAX_ARCHIVE_BYTES = 128 * 1024 * 1024
+ARCHIVE_GATE_SECONDS = 30
 
 
 def write_json(path, value):
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def stage_download():
+    ctx = context()
+    prefix = f"ui-download-{ctx['run']['id']}-{ctx['run']['attempt']}-"
+    staging = tempfile.mkdtemp(prefix=prefix, dir=os.environ["RUNNER_TEMP"])
+    output("staging_path", staging)
+    output("transfer_started", str(time.time()))
+    return 0
+
+
+def gate_archive(args):
+    """Fail closed before the UI run step; publish only an entirely verified download."""
+    started = time.monotonic()
+    elapsed = time.time() - args.transfer_started
+    receipt = {"schema_version": 1, "artifact_id": args.artifact_id, "action_outcome": args.action_outcome,
+               "member_bytes": {"manifest.json": None, "build.tar.gz": None},
+               "digests_matched": {"manifest": None, "tar": None}, "size_matched": None,
+               "transfer_extract_seconds": elapsed if math.isfinite(elapsed) and 0 <= elapsed <= ARCHIVE_DOWNLOAD_MAX_SECONDS else None,
+               "gate_seconds": None, "free_disk_bytes": None, "failure_reason": None}
+    try:
+        free = shutil.disk_usage(args.staging_dir.parent).free
+        receipt["free_disk_bytes"] = free if 0 <= free <= ARCHIVE_DOWNLOAD_MAX_DISK_BYTES else None
+    except OSError:
+        pass
+    reason = "archive-download-incomplete"
+    def timed_out(signum, frame):
+        raise TimeoutError("archive-gate-timeout")
+    previous = signal.signal(signal.SIGALRM, timed_out)
+    try:
+        signal.setitimer(signal.ITIMER_REAL, ARCHIVE_GATE_SECONDS)
+        staging = args.staging_dir
+        for name in receipt["member_bytes"]:
+            path = staging / name
+            if path.is_file() and not path.is_symlink():
+                size = path.stat().st_size
+                if 0 <= size <= MAX_ARCHIVE_BYTES:
+                    receipt["member_bytes"][name] = size
+        require(args.action_outcome == "success", reason)
+        ctx = context()
+        reason = "archive-identity-mismatch"
+        prefix = f"ui-download-{ctx['run']['id']}-{ctx['run']['attempt']}-"
+        require(staging.name.startswith(prefix), reason)
+        names = {path.name for path in staging.iterdir()}
+        reason = "archive-member-missing"
+        require({"build.tar.gz", "manifest.json"} <= names, reason)
+        reason = "archive-member-extra"
+        require(names == {"build.tar.gz", "manifest.json"}, reason)
+        reason = "archive-download-incomplete"
+        for name in receipt["member_bytes"]:
+            path = staging / name
+            require(path.is_file() and not path.is_symlink(), reason)
+        reason = "archive-size-mismatch"
+        require(all(value is not None for value in receipt["member_bytes"].values())
+                and receipt["member_bytes"]["manifest.json"] <= 4 * 1024 * 1024, reason)
+        reason = "archive-identity-mismatch"
+        selection = decode(args.selection_path.read_text())
+        platform_name = DEVICES[args.device]
+        require(parse_identity(selection["identity"]) == ctx["identity"] and selection["platform"] == platform_name
+                and selection["producer_run_id"] == ctx["run"]["id"]
+                and selection["producer_attempt"] == ctx["run"]["attempt"]
+                and selection["artifact_id"] == args.artifact_id, reason)
+        reason = "archive-hash-mismatch"
+        receipt["digests_matched"]["manifest"] = file_hash(staging / "manifest.json") == selection["build_manifest_sha256"]
+        require(receipt["digests_matched"]["manifest"], reason)
+        reason = "archive-manifest-invalid"
+        manifest = decode((staging / "manifest.json").read_text())
+        pins = decode((ROOT / "scripts/ci-pins.json").read_text())
+        try:
+            validate_manifest(manifest, ctx["identity"], ctx["run"]["id"], ctx["run"]["attempt"],
+                              platform_name, pins["xcode"]["build"], file_hash(ROOT / "scripts/ci-pins.json"))
+        except ContractError as error:
+            if str(error) in {"build identity mismatch", "producer run or attempt mismatch", "build platform mismatch"}:
+                reason = "archive-identity-mismatch"
+            elif str(error) in {"build toolchain/pins mismatch", "archive architecture mismatch"}:
+                reason = "archive-toolchain-mismatch"
+            raise
+        # Read through the gzip trailer before hashing: incomplete transfer is distinct from a digest mismatch.
+        reason = "archive-download-incomplete"
+        try:
+            with gzip.open(staging / "build.tar.gz", "rb") as compressed:
+                while compressed.read(1024 * 1024):
+                    pass
+        except (zlib.error, gzip.BadGzipFile):
+            # Corrupt bytes get the digest reason; truncation keeps the incomplete-transfer reason.
+            pass
+        reason = "archive-hash-mismatch"
+        receipt["digests_matched"]["tar"] = file_hash(staging / "build.tar.gz") == manifest["archive_sha256"]
+        require(receipt["digests_matched"]["tar"], reason)
+        reason = "archive-manifest-invalid"
+        try:
+            with tarfile.open(staging / "build.tar.gz", "r:gz") as handle:
+                validated_tar_members(handle, manifest)
+        except ContractError as error:
+            if str(error) == "archive size mismatch":
+                receipt["size_matched"] = False
+                reason = "archive-size-mismatch"
+            raise
+        receipt["size_matched"] = True
+        reason = "archive-publish-failed"
+        require(not os.path.lexists(args.archive_dir), reason)
+        staging.rename(args.archive_dir)
+        reason = None
+    except TimeoutError as error:
+        reason = "archive-gate-timeout"
+        print(type(error).__name__, file=sys.stderr)
+    except Exception as error:
+        print(type(error).__name__, file=sys.stderr)
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+    receipt["gate_seconds"] = min(time.monotonic() - started, ARCHIVE_DOWNLOAD_MAX_SECONDS)
+    receipt["failure_reason"] = reason
+    write_json(args.download_receipt_path, receipt)
+    if reason:
+        error = ContractError(reason)
+        error.entry = {"code": reason, "message": reason}
+        # Nightly gates bind the full shard even when the downloaded selection is unreadable.
+        failure_args = argparse.Namespace(**{**vars(args), "selection_path": None})
+        failed_shard(failure_args, error)
+        print(reason, file=sys.stderr)
+        return 1
+    return 0
+
+
+def attach_download_receipt(args, summary):
+    path = getattr(args, "download_receipt_path", None)
+    if path:
+        summary["archive_download"] = decode(path.read_text())
 
 
 def git_blob(revision, path):
@@ -643,6 +778,10 @@ def run_shard(args):
                 command += ["--compiled-from-official-results"]
         started, started_epoch = time.monotonic(), time.time()
         code = fixture_main(command, simulator_prepared=True)
+        if getattr(args, "download_receipt_path", None):
+            summary = decode((args.output_dir / "summary.json").read_text())
+            attach_download_receipt(args, summary)
+            write_summary(summary, args.output_dir)
         write_json(args.output_dir / "shard-timing.json", {"schema_version": 1, "device": args.device, "shard": args.shard,
                    "wall_seconds": time.monotonic() - started, "exit_code": code,
                    "started_epoch": started_epoch, "finished_epoch": time.time(),
@@ -658,7 +797,7 @@ def failed_shard(args, error):
         return
     try:
         ctx = context()
-        require(args.manifest_revision is None, "failed CI shards cannot override the admitted manifest")
+        require(getattr(args, "manifest_revision", None) is None, "failed CI shards cannot override the admitted manifest")
         selection_path = getattr(args, "selection_path", None)
         selection = decode(selection_path.read_text()) if selection_path else None
         selectors, plan_hash = [], None
@@ -693,6 +832,7 @@ def failed_shard(args, error):
             error = policy_error
     summary["status"] = "failed"
     summary["infrastructure"] = [getattr(error, "entry", {"code": "ui-shard-preflight-failed", "message": str(error)[:200]})]
+    attach_download_receipt(args, summary)
     write_fixture_summary(summary, directory)
 
 
@@ -813,6 +953,18 @@ def reproduce(args):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("stage-download")
+    gate = commands.add_parser("gate-archive")
+    gate.add_argument("--device", choices=DEVICES, required=True)
+    gate.add_argument("--shard", required=True)
+    gate.add_argument("--staging-dir", type=Path, required=True)
+    gate.add_argument("--archive-dir", type=Path, required=True)
+    gate.add_argument("--selection-path", type=Path, required=True)
+    gate.add_argument("--artifact-id", type=int, required=True)
+    gate.add_argument("--action-outcome", choices=("success", "failure", "cancelled", "skipped"), required=True)
+    gate.add_argument("--transfer-started", type=float, required=True)
+    gate.add_argument("--download-receipt-path", type=Path, required=True)
+    gate.add_argument("--output-dir", type=Path, required=True)
     selection = commands.add_parser("select")
     selection.add_argument("--output-dir", type=Path, required=True)
     selection.add_argument("--pack-scoped-ui", action="store_true")
@@ -844,6 +996,7 @@ def main(argv=None):
     source.add_argument("--archive-dir", type=Path)
     source.add_argument("--xctestrun", type=Path)
     run.add_argument("--selection-path", type=Path)
+    run.add_argument("--download-receipt-path", type=Path)
     run.add_argument("--relocated-path", type=Path)
     run.add_argument("--timeout-minutes", type=float, default=65)
     run.add_argument("--total-timeout-minutes", type=float, default=85)
@@ -867,6 +1020,10 @@ def main(argv=None):
     upload.add_argument("--output-dir", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
+        if args.command == "stage-download":
+            return stage_download()
+        if args.command == "gate-archive":
+            return gate_archive(args)
         require(not getattr(args, "scoped_ui_v2", False) or args.pack_scoped_ui,
                 "scoped UI acceleration requires functional packing")
         if args.command in {"run", "reproduce"}:
@@ -912,7 +1069,7 @@ def main(argv=None):
         require(not args.archive_dir or (args.selection_path and args.relocated_path), "archive shards need selection and relocation paths")
         return run_shard(args)
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
-        if args.command == "run":
+        if args.command in {"run", "gate-archive"}:
             failed_shard(args, error)
         print(f"UI producer refused: {type(error).__name__}: {error}", file=sys.stderr)
         return 1
