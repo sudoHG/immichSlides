@@ -270,10 +270,12 @@ class StrictE2EServerContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, redirect_stdout(io.StringIO()):
             ready = Path(directory) / "ready.json"
             reporters = []
-            def finish(instance):
+            drain_options = []
+            def finish(instance, *, wait=True):
                 reporters.append(instance)
+                drain_options.append(wait)
                 self.assertTrue(ready.is_file(), "diagnostic drain must follow the unchanged ready write")
-                original_finish(instance)
+                original_finish(instance, wait=wait)
             with mock.patch.dict(os.environ, {
                     strict_e2e_server.DIAGNOSTIC_FILE_ENV: str(Path(directory) / "blocked.log"),
                     strict_e2e_server.DIAGNOSTIC_BUDGET_ENV: "0.2"}), \
@@ -282,6 +284,7 @@ class StrictE2EServerContractTests(unittest.TestCase):
                     mock.patch.object(strict_e2e_server.StrictE2EServer, "serve_forever"):
                 try:
                     self.assertEqual(0, server_main(["--port", "0", "--fixture-set", "a", "--ready-file", str(ready)]))
+                    self.assertEqual([False, True], drain_options, "health serving must begin without a diagnostic drain wait")
                 finally:
                     gate.set()
                     for reporter in reporters:

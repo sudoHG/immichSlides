@@ -183,8 +183,9 @@ IO and public Xcode progress reads have 0.1 s caps, and fixture log reads have a
 runner. Retention and cumulative collection budgets stop additional work and
 mark truncation. Fixture writes run on a single daemon outside the ready path;
 each write has a 10 ms CPU allowance and no synchronous ready-path IO wait.
-The only drain wait is capped at 10 ms after ready is written or failure is
-decided. A blocked file writer cannot hold up ready or process exit. Fixture
+The only drain wait is capped at 10 ms after service exit or failure is
+decided; sealing the writer before health serving never waits. A blocked file
+writer cannot hold up ready or process exit. Fixture
 collection accounting includes emitter bookkeeping/IO CPU time and conservatively
 reserves the final write allowance and drain wait before reporting its footer;
 overlapped scheduler waits are not added job latency. Enqueueing and public input

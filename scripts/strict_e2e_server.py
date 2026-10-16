@@ -127,12 +127,13 @@ class StartupDiagnostics:
                     pass
             self.done.set()
 
-    def finish(self):
-        if self.budget and not self.is_finishing:
-            self.is_finishing = True
-            self.pending.put(None)
-            # Called only after ready is written, or after failure has been decided.
-            if not self.done.wait(DIAGNOSTIC_FINISH_CAP_SECONDS):
+    def finish(self, *, wait=True):
+        if self.budget:
+            if not self.is_finishing:
+                self.is_finishing = True
+                self.pending.put(None)
+            # Drain only after serve_forever exits, or failure has been decided.
+            if wait and not self.done.wait(DIAGNOSTIC_FINISH_CAP_SECONDS):
                 self.truncated = True
 
     def report(self, phase, state, digest=None):
@@ -1123,7 +1124,7 @@ def main(argv: list[str] | None = None) -> int:
                 encoding="utf-8",
             )
             report("ready-write", "completed")
-        _STARTUP_DIAGNOSTICS.finish()
+        _STARTUP_DIAGNOSTICS.finish(wait=False)
         server.serve_forever()
         return 0
     except OSError as error:
