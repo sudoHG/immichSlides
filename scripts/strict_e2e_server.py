@@ -11,7 +11,7 @@ import _thread
 DIAGNOSTIC_EMISSION_CAP_SECONDS = 0.2
 DIAGNOSTIC_WRITE_ALLOWANCE_SECONDS = 0.01
 DIAGNOSTIC_FINISH_CAP_SECONDS = 0.01
-DIAGNOSTIC_MIN_ALLOWANCE_SECONDS = DIAGNOSTIC_FINISH_CAP_SECONDS + DIAGNOSTIC_WRITE_ALLOWANCE_SECONDS
+DIAGNOSTIC_MIN_ALLOWANCE_SECONDS = DIAGNOSTIC_FINISH_CAP_SECONDS + 2 * DIAGNOSTIC_WRITE_ALLOWANCE_SECONDS
 DIAGNOSTIC_MAX_EVENTS = 512
 DIAGNOSTIC_MAX_ELAPSED_SECONDS = 86400
 DIAGNOSTIC_MAX_CPU_SECONDS = 10**12
@@ -32,7 +32,8 @@ def _start_import_diagnostic():
     try:
         budget = float(os.environ.get(DIAGNOSTIC_BUDGET_ENV, "0"))
         path = os.environ.get(DIAGNOSTIC_FILE_ENV)
-        if not path or not DIAGNOSTIC_WRITE_ALLOWANCE_SECONDS <= budget <= DIAGNOSTIC_EMISSION_CAP_SECONDS:
+        if not path or not (DIAGNOSTIC_MIN_ALLOWANCE_SECONDS + DIAGNOSTIC_WRITE_ALLOWANCE_SECONDS
+                            <= budget <= DIAGNOSTIC_EMISSION_CAP_SECONDS):
             return False
         def write():
             try:
@@ -87,6 +88,7 @@ class StartupDiagnostics:
         self.cost = min(self.budget, DIAGNOSTIC_FINISH_CAP_SECONDS) if self.budget else 0.0
         self.cost += DIAGNOSTIC_WRITE_ALLOWANCE_SECONDS if self.budget else 0.0
         self.cost += DIAGNOSTIC_WRITE_ALLOWANCE_SECONDS if _IMPORT_DIAGNOSTIC_STARTED else 0.0
+        self.cost_lock = threading.Lock()
         self.sequence, self.event_count = 0, 0
         self.phases = {}
         self.truncated = False
@@ -102,29 +104,33 @@ class StartupDiagnostics:
     def _write(self):
         try:
             while (line := self.pending.get()) is not None:
-                if self.cost + DIAGNOSTIC_WRITE_ALLOWANCE_SECONDS > self.budget:
-                    self.truncated = True
-                    break
                 started = time.thread_time()
-                self.cost += DIAGNOSTIC_WRITE_ALLOWANCE_SECONDS
-                payload = (line + "\nfixture-collection-seconds: " + str(self.cost) + "\n").encode()
+                with self.cost_lock:
+                    if self.cost + DIAGNOSTIC_WRITE_ALLOWANCE_SECONDS > self.budget:
+                        self.truncated = True
+                        break
+                    self.cost += DIAGNOSTIC_WRITE_ALLOWANCE_SECONDS
+                    payload = (line + "\nfixture-collection-seconds: " + str(self.cost) + "\n").encode()
                 # A blocked write owns only this daemon; ready never waits for it.
                 _append_diagnostics(self.path, payload)
                 elapsed = time.thread_time() - started
-                self.cost += elapsed - DIAGNOSTIC_WRITE_ALLOWANCE_SECONDS
-                if elapsed > DIAGNOSTIC_WRITE_ALLOWANCE_SECONDS:
-                    self.truncated = True
-                    break
+                with self.cost_lock:
+                    self.cost += elapsed - DIAGNOSTIC_WRITE_ALLOWANCE_SECONDS
+                    if elapsed > DIAGNOSTIC_WRITE_ALLOWANCE_SECONDS:
+                        self.truncated = True
+                        break
         except (OSError, RuntimeError):
             self.truncated = True
         finally:
-            if self.event_count:
-                try:
-                    # The final-write allowance is already reserved in cost.
-                    _append_diagnostics(self.path, ("fixture-collection-seconds: " + str(self.cost) + "\n"
-                        + ("fixture-collection-truncated: true\n" if self.truncated else "")).encode())
-                except OSError:
-                    pass
+            try:
+                # Always seal, including a stream truncated before its first row.
+                with self.cost_lock:
+                    footer = ("fixture-collection-seconds: " + str(self.cost) + "\n"
+                        + ("fixture-collection-truncated: true\n" if self.truncated else "")
+                        + "fixture-collection-completed: true\n")
+                _append_diagnostics(self.path, footer.encode())
+            except OSError:
+                pass
             self.done.set()
 
     def finish(self, *, wait=True):
@@ -137,6 +143,10 @@ class StartupDiagnostics:
                 self.truncated = True
 
     def report(self, phase, state, digest=None):
+        with self.cost_lock:
+            self._report(phase, state, digest)
+
+    def _report(self, phase, state, digest=None):
         if not self.budget:
             return
         if self.cost >= self.budget - DIAGNOSTIC_WRITE_ALLOWANCE_SECONDS or self.event_count >= DIAGNOSTIC_MAX_EVENTS:

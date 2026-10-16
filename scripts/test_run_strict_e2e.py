@@ -339,9 +339,9 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                 bundle.mkdir()
                 (bundle / "raw.bin").write_bytes(b"raw diagnostics")
             if timeout_phase == "xcodebuild":
-                from ci_execution_diagnostics import active
-                active().xcode_timed_out = True
-                raise CommandError("xcodebuild timed out after 600.0s.")
+                with mock.patch("run_strict_e2e.subprocess.run", side_effect=subprocess.TimeoutExpired(command, 600)), \
+                        mock.patch("ci_execution_diagnostics.system_sample", return_value=None):
+                    return run_command(command, **kwargs)
             if failure_session is not None and kwargs["log_path"].name != f"xcodebuild-{failure_session}.log":
                 return 0
             if retry:
@@ -421,6 +421,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                     *(["--scenario", "out-of-order"] if suite == "late-image" else []),
                     *(["--test-without-building", "--derived-data-path", str(evidence.parent / "derived")] if warm else []),
                     *(["--listed-retry-device", "iphone"] if retry else []),
+                    *(["--warm-timeout-seconds", "600"] if timeout_phase == "xcodebuild" else []),
                 ],
                 stdout=stdout,
                 stderr=stderr,
@@ -1507,6 +1508,71 @@ class StrictCITracerTests(unittest.TestCase):
                                                   log_path=Path(raw) / "passed.log", timeout_seconds=600))
             self.assertNotIn("completed", [event["state"] for event in recorder.events])
 
+    def test_successful_preparation_keeps_anomaly_headroom_and_evictable_start_events(self):
+        import ci_execution_diagnostics as diagnostics
+        import strict_e2e_runner_support as support
+        sample = {"cpu_percent": 1, "memory_free_bytes": 1, "load_average": [1, 1, 1],
+                  "runner_hosted": False, "image_version": None, "processes": []}
+        with diagnostics.session() as recorder, mock.patch.object(diagnostics, "system_sample", return_value=sample), \
+                mock.patch.object(support, "boot_simulator", return_value=""), \
+                mock.patch.object(support, "wait_for_simulator_app_response", return_value=(None, "")):
+            support.prepare_simulator("unused", report=lambda line: None)
+            self.assertEqual(["started", "completed"], [event["state"] for event in recorder.events])
+            self.assertIsNone(recorder.events[0]["sample"])
+            recorder.charged["preparation"] = 4.7
+            with mock.patch.object(diagnostics, "system_sample", return_value=sample) as collect:
+                support.prepare_simulator("unused", report=lambda line: None)
+                collect.assert_not_called()
+                self.assertEqual(sample, recorder.sample("preparation"))
+                collect.assert_called_once_with()
+        recorder = diagnostics.Recorder()
+        recorder.event("preparation", "simulator-preparation", "timeout", 0, sample=sample)
+        for index in range(1, 512):
+            recorder.event("preparation", "simulator-container", "completed", index)
+        recorder.event("preparation", "simulator-container", "completed", 512)
+        self.assertEqual([0, *range(2, 513)], [event["sequence"] for event in recorder.events])
+        recorder = diagnostics.Recorder()
+        for index in range(512):
+            recorder.event("preparation", "simulator-preparation", "timeout", index)
+        recorder.event("preparation", "simulator-container", "completed", 512)
+        self.assertEqual(list(range(512)), [event["sequence"] for event in recorder.events])
+
+    def test_semantically_successful_nonzero_simulator_commands_finish_their_events(self):
+        import ci_execution_diagnostics as diagnostics
+        import strict_e2e_runner_support as support
+        responses = [subprocess.CompletedProcess([], 149, "", "Current state: Booted"),
+                     subprocess.CompletedProcess([], 0, "", ""), subprocess.CompletedProcess([], 2, "", "absent")]
+        with diagnostics.session() as recorder, mock.patch.object(support.subprocess, "run", side_effect=responses):
+            support.boot_simulator("unused")
+            self.assertIsNone(support.simulator_app_container("unused", "public.bundle", deadline=1000000000000))
+        self.assertEqual([("simulator-boot", "started"), ("simulator-boot", "completed"),
+                          ("simulator-bootstatus", "started"), ("simulator-bootstatus", "completed"),
+                          ("simulator-container", "started"), ("simulator-container", "completed")],
+                         [(event["phase"], event["state"]) for event in recorder.events])
+
+    def test_fixture_harvest_includes_the_writer_completion_after_health_succeeds(self):
+        import ci_execution_diagnostics as diagnostics
+        import strict_e2e_runner_support as support
+        event = {"scope": "fixture", "phase": "ready-write", "state": "completed", "sequence": 1,
+                 "elapsed_seconds": 0.1, "cpu_seconds": 0.01, "sample": None,
+                 "input_sha256": None, "official_exports": None}
+        completed = (diagnostics.FIXTURE_PREFIX + json.dumps(event) + "\nfixture-collection-seconds: 0.03\n"
+                     "fixture-collection-completed: true\n").encode()
+        path = mock.Mock()
+        health = [False]
+        def read():
+            self.assertTrue(health[0], "diagnostic draining must follow the health decision")
+            return io.BytesIO(b"" if path.open.call_count == 1 else completed)
+        path.open.side_effect = lambda *args: read()
+        def healthy(*args):
+            health[0] = True
+            return "127.0.0.1", 42
+        with diagnostics.session() as recorder, mock.patch.object(support, "_wait_for_service", side_effect=healthy):
+            self.assertEqual(("127.0.0.1", 42), support.wait_for_service(Path("unused"), mock.Mock(), diagnostics_path=path))
+            self.assertEqual(["ready-write"], [item["phase"] for item in recorder.events])
+            self.assertEqual(2, path.open.call_count)
+            self.assertFalse(recorder.truncated)
+
     def test_hung_diagnostic_is_capped_and_invalid_measurements_cannot_break_a_summary(self):
         import ci_execution_diagnostics as diagnostics
         from ci_summary import parse_summary
@@ -1544,6 +1610,23 @@ class StrictCITracerTests(unittest.TestCase):
             recorder.events[0]["phase"] = "private-input"
             recorder.attach(summary)
             self.assertNotIn("bounded_diagnostics", summary)
+        recorder = diagnostics.Recorder()
+        recorder.ledger_remaining = 0.015
+        clock = [0.0]
+        def stalled(seconds):
+            clock[0] += seconds
+            return False
+        done = mock.Mock(wait=mock.Mock(side_effect=stalled))
+        with mock.patch.object(diagnostics.threading, "Event", return_value=done), \
+                mock.patch.object(diagnostics.threading.Thread, "start"), \
+                mock.patch.object(diagnostics.time, "perf_counter", side_effect=lambda: clock[0]):
+            self.assertIsNone(recorder.ledger_io(lambda: True))
+            done.wait.assert_called_once_with(0.015)
+            operation = mock.Mock()
+            self.assertIsNone(recorder.ledger_io(operation))
+            operation.assert_not_called()
+        self.assertEqual(0, recorder.ledger_remaining)
+        self.assertTrue(recorder.truncated)
 
     def test_serial_children_cannot_reuse_a_lost_diagnostic_allowance(self):
         import ci_execution_diagnostics as diagnostics
@@ -1563,6 +1646,22 @@ class StrictCITracerTests(unittest.TestCase):
                     self.assertIsNone(successor.collect(scope, operation, cap=0.01))
                     operation.assert_not_called()
                 self.assertTrue(successor.truncated)
+            stale_reader = diagnostics.Recorder()
+            stale_reader.ledger_remaining = 0.04
+            stale_reader.load(path)
+            stale_reader.load(path)
+            operation = mock.Mock()
+            stale_reader.ledger_io(operation)
+            operation.assert_not_called()
+            invalid = json.loads(path.read_text())
+            invalid["ledger_remaining_seconds"] = float("inf")
+            path.write_text(json.dumps(invalid))
+            invalid_reader = diagnostics.Recorder()
+            invalid_reader.load(path)
+            invalid_reader.collect("xcode", operation, cap=0.01)
+            invalid_reader.ledger_io(operation)
+            operation.assert_not_called()
+            self.assertTrue(invalid_reader.truncated)
             successor = diagnostics.Recorder()
             successor.load(Path(raw) / "missing.json")
             operation = mock.Mock()
@@ -1623,7 +1722,21 @@ class StrictCITracerTests(unittest.TestCase):
                             "result": official_result}]}]}))
                     import ci_execution_diagnostics as diagnostics
                     receipt_path = Path(command[command.index("--diagnostics-receipt") + 1])
+                    # A six-case shard performs about thirty ledger saves before its last result.
+                    parent = diagnostics.Recorder()
+                    parent.load(receipt_path)
+                    parent.charged["preparation"] = 4
+                    for _ in range(30):
+                        parent.save(receipt_path)
                     with diagnostics.session(receipt_path, reuse=True) as child:
+                        clock = [0.0]
+                        def stalled(seconds):
+                            clock[0] += seconds
+                            return False
+                        with mock.patch.object(diagnostics.threading, "Event", return_value=mock.Mock(wait=stalled)), \
+                                mock.patch.object(diagnostics.threading.Thread, "start"), \
+                                mock.patch.object(diagnostics.time, "perf_counter", side_effect=lambda: clock[0]):
+                            child.collect("preparation", lambda: None, cap=5)
                         child.event("xcode", "test-execution", "timeout", child.next_sequence(), elapsed=600)
                     return 124 if infrastructure else 65
 

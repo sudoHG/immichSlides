@@ -86,12 +86,13 @@ class FixtureCoverageTests(unittest.TestCase):
                         from types import SimpleNamespace
                         elapsed = [0.0]
                         phase = stage.removeprefix("service-")
+                        stdout_phase = "import" if phase == "import" else "fixture-build"
                         def spawn(*args, **kwargs):
                             event = {"scope": "fixture", "phase": phase, "state": "started", "sequence": 0,
                                      "elapsed_seconds": 0, "cpu_seconds": 0.5, "sample": None,
                                      "input_sha256": "a" * 64 if phase == "image-generation" else None,
                                      "official_exports": None}
-                            kwargs["stdout"].write(("fixture-startup: phase=" + phase + "; state=started; elapsed=0.000s; total=0.000s\n"
+                            kwargs["stdout"].write(("fixture-startup: phase=" + stdout_phase + "; state=started; elapsed=0.000s; total=0.000s\n"
                                 + "private-input\n").encode())
                             Path(kwargs["env"]["IMMICHSLIDES_FIXTURE_DIAGNOSTIC_FILE"]).write_text(
                                 "fixture-diagnostic: " + json.dumps(event) + "\n")
@@ -108,7 +109,7 @@ class FixtureCoverageTests(unittest.TestCase):
                     stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
                     stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
                     from ci_execution_diagnostics import session
-                    diagnostic = stack.enter_context(session())
+                    stack.enter_context(session())
                     code = runner.main(["--device", "iphone", "--destination", "platform=iOS Simulator,id=target",
                         "--output-dir", str(output), "--xctestrun", str(root / "unused.xctestrun"), "--shard", "scoped-a",
                         "--shard-manifest", str(root / "unused.json"), "--scoped-plan-sha256", "e" * 64,
@@ -122,12 +123,15 @@ class FixtureCoverageTests(unittest.TestCase):
                 self.assertTrue(any(stage.split("-")[0] in item["message"] for item in result["infrastructure"]))
                 if stage.startswith("service-"):
                     self.assertEqual(elapsed[0], 60)
-                    self.assertTrue(any(f"startup_phase={phase}; startup_state=started" in item["message"]
+                    self.assertTrue(any(f"startup_phase={stdout_phase}; startup_state=started" in item["message"]
+                                        for item in result["infrastructure"]))
+                    self.assertTrue(any(f"diagnostic={phase}/started" in item["message"]
                                         for item in result["infrastructure"]))
                     receipt = result["bounded_diagnostics"]
                     self.assertEqual(phase, receipt["events"][-1]["phase"])
                     self.assertEqual("started", receipt["events"][-1]["state"])
                     self.assertIsNone(receipt["collection_seconds"]["fixture"])
+                    self.assertTrue(receipt["truncated"])
                     self.assertNotIn("private-input", json.dumps(receipt))
                 self.assertTrue(all(item["outcome"] == "not-run" for item in result["population"]["observed"]))
                 verdict = json.loads((output / "coverage-verdict.json").read_text())

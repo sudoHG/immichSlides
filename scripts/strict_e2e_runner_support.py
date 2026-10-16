@@ -283,7 +283,8 @@ class InfrastructureTimeout(CommandError):
 
 
 def simulator_command(command: list[str], phase: str, *, deadline: float | None = None,
-                      timeout_seconds: float = SIMULATOR_COMMAND_TIMEOUT_SECONDS):
+                      timeout_seconds: float = SIMULATOR_COMMAND_TIMEOUT_SECONDS,
+                      accepts_nonzero: Callable[[subprocess.CompletedProcess], bool] | None = None):
     budget = min(timeout_seconds, deadline - time.monotonic()) if deadline is not None else timeout_seconds
     if budget <= 0:
         raise InfrastructureTimeout(phase, 0)
@@ -291,19 +292,19 @@ def simulator_command(command: list[str], phase: str, *, deadline: float | None 
     recorder = recorder if phase in ("simulator-boot", "simulator-bootstatus", "simulator-container") else None
     started, cpu = time.monotonic(), time.process_time()
     sequence = recorder.next_sequence() if recorder else 0
-    def mark(state, *, anomaly=False):
+    def mark(state):
         if recorder:
             recorder.event("preparation", phase, state, sequence, elapsed=time.monotonic() - started,
-                           cpu=time.process_time() - cpu, sample=recorder.sample("preparation") if anomaly else None)
+                           cpu=time.process_time() - cpu)
     mark("started")
     try:
         completed = subprocess.run(command, capture_output=True, text=True, check=False, timeout=budget)
     except subprocess.TimeoutExpired as error:
         # run has already killed, waited and closed pipes; internal boundaries are unobserved.
-        mark("timeout", anomaly=deadline is None)
+        mark("timeout")
         mark("reap-completed")
         raise InfrastructureTimeout(phase, budget) from error
-    if completed.returncode == 0:
+    if completed.returncode == 0 or (accepts_nonzero is not None and accepts_nonzero(completed)):
         mark("completed")
     return completed
 
@@ -492,7 +493,8 @@ def boot_simulator(simulator_udid: str, *, report: Callable[[str], None] | None 
         outcome = "failed"
         try:
             completed = simulator_command(["xcrun", "simctl", step, simulator_udid, *(["-b"] if step == "bootstatus" else [])],
-                                          phase, deadline=deadline, timeout_seconds=cap)
+                                          phase, deadline=deadline, timeout_seconds=cap,
+                                          accepts_nonzero=lambda result: step == "boot" and _is_already_booted(result.stderr))
             lines.append(f"{step}_exit={completed.returncode}")
             if completed.returncode and not (step == "boot" and _is_already_booted(completed.stderr)):
                 message = "Simulator boot failed" if step == "boot" else "Simulator did not become available"
@@ -584,7 +586,7 @@ def prepare_simulator(simulator_udid: str, bundle_id: str = "com.331works.immich
     """Absorb cold-device stalls before inventory, fixture health checks or reset mutations."""
     report = report or (lambda line: print(line, flush=True))
     recorder = active()
-    initial_sample = recorder.sample("preparation") if recorder else None
+    initial_sample = recorder.sample("preparation", initial=True) if recorder else None
     started = time.monotonic()
     deadline = started + SIMULATOR_PREPARATION_TIMEOUT_SECONDS
     lines = [f"simulator_id={simulator_udid}"]
@@ -674,6 +676,7 @@ def simulator_app_container(simulator_udid: str, bundle_id: str, *, deadline: fl
     completed = simulator_command(
         ["xcrun", "simctl", "get_app_container", simulator_udid, bundle_id], "simulator-container", deadline=deadline,
         timeout_seconds=timeout_seconds,
+        accepts_nonzero=lambda result: result.returncode == 2,
     )
     path = completed.stdout.strip()
     if completed.returncode == 0 and path:
@@ -708,13 +711,16 @@ def wait_for_service(ready_path: Path, process: subprocess.Popen[bytes], *,
     except CommandError as error:
         retained = [event for event in recorder.events if event["sequence"] > first_sequence] if recorder else []
         phases = [event for event in retained if event["scope"] == "fixture"]
-        if phases:
-            phase, state = phases[-1]["phase"], phases[-1]["state"]
-            raise CommandError(f"{error} startup_phase={phase}; startup_state={state}.", code=error.code) from error
         lines = _service_startup_diagnostics(startup_log)
+        message = str(error)
         if lines:
             phase, state = re.search(r"phase=([^;]+); state=([^;]+)", lines[-1]).groups()
-            raise CommandError(f"{error} startup_phase={phase}; startup_state={state}.", code=error.code) from error
+            message += f" startup_phase={phase}; startup_state={state}."
+        if phases:
+            phase, state = phases[-1]["phase"], phases[-1]["state"]
+            message += f" diagnostic={phase}/{state}."
+        if message != str(error):
+            raise CommandError(message, code=error.code) from error
         raise
     finally:
         for line in _service_startup_diagnostics(startup_log):

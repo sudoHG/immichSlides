@@ -210,6 +210,7 @@ class StrictE2EServerContractTests(unittest.TestCase):
                 self.assertTrue(all(event["cpu_seconds"] is not None for event in events))
                 lines = [line for line in all_lines if line.startswith("fixture-startup: ")]
                 self.assertTrue(any(line.startswith("fixture-collection-seconds: ") for line in diagnostic_lines))
+                self.assertIn("fixture-collection-completed: true", diagnostic_lines)
                 for line in lines:
                     self.assertRegex(line, r"^fixture-startup: phase=(fixture-build|bind|ready-write); state=(started|completed); elapsed=\d+\.\d{3}s; total=\d+\.\d{3}s$")
                 if phase == "success":
@@ -251,10 +252,17 @@ class StrictE2EServerContractTests(unittest.TestCase):
                                     for line in path.read_text().splitlines() if line.startswith("fixture-collection-seconds: ")]
                     self.assertAlmostEqual(0.02, measurements[-1], msg="include the final write and drain reservations")
                     self.assertEqual(0.2, float(env["IMMICHSLIDES_FIXTURE_DIAGNOSTIC_SECONDS"]))
+                    recorder.fixture_log(path)
+                    self.assertFalse(recorder.truncated)
                     # A second service must share the first service's charge, not reset it.
-                    recorder.charged["fixture"] = 1.6
-                    following = diagnostics.fixture_environment({}, Path(directory) / "next.log")
-                    self.assertAlmostEqual(0.1, float(following["IMMICHSLIDES_FIXTURE_DIAGNOSTIC_SECONDS"]))
+                    self.assertGreaterEqual(recorder.charged["fixture"], 0.2)
+                    allowances = [float(env["IMMICHSLIDES_FIXTURE_DIAGNOSTIC_SECONDS"])]
+                    for _ in range(12):
+                        following = diagnostics.fixture_environment({}, Path(directory) / "next.log")
+                        allowances.append(float(following["IMMICHSLIDES_FIXTURE_DIAGNOSTIC_SECONDS"]))
+                    self.assertLessEqual(sum(allowances), 1.7)
+                    self.assertEqual(0, allowances[-1])
+                    self.assertTrue(recorder.truncated)
                 elif mode == "exhausted":
                     self.assertEqual(0, float(env["IMMICHSLIDES_FIXTURE_DIAGNOSTIC_SECONDS"]))
         # Inject the blocking primitive; no host-load-dependent wall-clock assertion.
@@ -289,6 +297,27 @@ class StrictE2EServerContractTests(unittest.TestCase):
                     gate.set()
                     for reporter in reporters:
                         self.assertTrue(reporter.done.wait(10), "release the injected IO stall before test cleanup")
+
+    def test_insufficient_fixture_allowance_disables_import_and_marks_missing_completion(self):
+        import ci_execution_diagnostics as diagnostics
+        with tempfile.TemporaryDirectory() as directory, diagnostics.session() as recorder:
+            path = Path(directory) / "diagnostics.log"
+            recorder.charged["fixture"] = 1.67
+            env = diagnostics.fixture_environment({}, path)
+            self.assertEqual(0, float(env[strict_e2e_server.DIAGNOSTIC_BUDGET_ENV]))
+            self.assertTrue(recorder.truncated)
+            env[strict_e2e_server.DIAGNOSTIC_BUDGET_ENV] = "0.03"
+            with mock.patch.dict(os.environ, env), mock.patch.object(strict_e2e_server._thread, "start_new_thread") as start:
+                self.assertFalse(strict_e2e_server._start_import_diagnostic())
+                start.assert_not_called()
+            path.write_text("fixture-collection-seconds: 0.01\n")
+            incomplete = diagnostics.Recorder()
+            incomplete.fixture_log(path)
+            self.assertTrue(incomplete.truncated)
+            path.write_text("fixture-collection-seconds: 0.01\nfixture-collection-completed: true\n")
+            complete = diagnostics.Recorder()
+            complete.fixture_log(path)
+            self.assertFalse(complete.truncated)
 
     def test_binding_serves_health_without_reverse_dns(self) -> None:
         with mock.patch.object(socket, "getfqdn", side_effect=AssertionError("Bind must not resolve reverse DNS")) as lookup:

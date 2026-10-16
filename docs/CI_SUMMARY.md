@@ -162,6 +162,12 @@ receipt to the tracer even with `--preparation-failed`. Serial strict children
 share the job ledger: each reserves its remaining collection allowance before
 starting, then returns unused allowance after completion. Missing or invalid
 accounting disables further collection instead of granting another budget.
+Ledger IO has a separate 1.5 s pool reserved once within the 5 s preparation
+ceiling, with a 20 ms cap charged against that pool per read or write. Its unused
+reservation stays held for the job; only measured time enters collection costs.
+Exhausting preparation sampling never gates persistence of Xcode or fixture
+events. Start samples leave 0.5 s for anomaly sampling; the IO pool has its own
+exhaustion/truncation boundary rather than borrowing another scope's budget.
 The internal ledger stores the public receipt and remaining numeric allowances;
 allowances are distinct from observed `collection_seconds`. A lost child's
 collection measurements remain null rather than treating its reservation as an
@@ -176,15 +182,21 @@ generation carry hashes of public generation arguments; these input digests are
 distinct from `hashes.manifests.fixture-c`, the generated manifest digest, and
 are not independently bound to that manifest by the reader. Cached deepcopies
 and nested fixture-set generation do not create duplicate generation envelopes.
+Allowances below 0.04 s (the server minimum plus the early import write) are
+disabled and marked truncated. A completion line seals the asynchronous file;
+a missing completion line also marks truncation. Failure messages retain the
+synchronous stdout phase and append the finer diagnostic phase separately.
 
-Every process sample has a 0.25 s cap, with 0.08 s subprocess deadlines; receipt
-IO and public Xcode progress reads have 0.1 s caps, and fixture log reads have a
+Every process sample has a 0.25 s cap, with 0.08 s subprocess deadlines; public
+Xcode progress reads have a 0.1 s cap, and fixture log reads have a
 0.25 s cap. Capped daemon workers prevent a stuck diagnostic from blocking the
 runner. Retention and cumulative collection budgets stop additional work and
 mark truncation. Fixture writes run on a single daemon outside the ready path;
 each write has a 10 ms CPU allowance and no synchronous ready-path IO wait.
-The only drain wait is capped at 10 ms after service exit or failure is
-decided; sealing the writer before health serving never waits. A blocked file
+Server drain waits are capped at 10 ms after service exit or failure is
+decided; sealing the writer before health serving never waits. After the health
+decision the parent allows up to 10 ms for the completion line inside its capped
+file read, so it can harvest the final rows without changing readiness. A blocked file
 writer cannot hold up ready or process exit. Fixture
 collection accounting includes emitter bookkeeping/IO CPU time and conservatively
 reserves the final write allowance and drain wait before reporting its footer;
@@ -218,6 +230,18 @@ at most 17 s with one failure, or 0.284 minutes of combined critical-path
 overhead when the tiers overlap. Selection/Cloud waits run no producers. Actual
 packing, runner queues and approval waits determine the full workflow wall time;
 these figures describe diagnostic overhead, not total CI duration.
+
+Direct strict invocations also activate an in-memory recorder: `ci-p2-review`
+runs two serial processes (warm build and test), each capped at 5 + 2 s plus
+10 s on an Xcode timeout, so that job adds at most 0.234 machine minutes and
+14 s wall time without timeouts, or 0.567 machine minutes and 34 s with both
+timed out. Direct helper calls in the iOS/tvOS access-lifecycle runners and
+`ci_flaky.run_ui` activate no session themselves; when called within an active
+strict session they share its existing ceiling. An explicitly wrapped independent
+invocation would add at most 0.284 machine minutes and 17 s wall time. These
+direct callers publish no bounded receipt themselves. They have no scheduled
+nightly frequency and are outside the 43-job nightly estimate above; add their
+per-invocation costs for any manual or additional workflow runs.
 
 ### Prepared strict identity failure receipt
 
