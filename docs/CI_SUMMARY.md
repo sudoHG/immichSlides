@@ -42,6 +42,8 @@ empty Python suite or infrastructure problem; invalid arguments
 exit 2. `--timeout-seconds` sets the total
 host budget (default 900, maximum 1200), not a product timing threshold. A timeout
 stops the child process group and records remaining checks as `not-run`.
+The hosted Linux partition explicitly uses 1200 seconds inside its 25-minute job;
+the macOS partition and local default retain 900 seconds.
 
 The shared host/strict group probe on macOS uses `ps -g <group> -o pgid=,stat=`
 to select the runner's process group instead of inspecting every simulator process.

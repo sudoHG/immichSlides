@@ -24,6 +24,23 @@ import ci_ui_tests as ui
 from ci_summary import ContractError
 
 
+def share_ui_source_fixture(test):
+    """Parse each immutable source corpus once; keep every caller's inventory independent."""
+    import ci_population
+    parse = ci_population.parse_ui_tests
+    fixtures = {}
+
+    def parsed_sources(files, **options):
+        key = (tuple(files.items()), tuple(sorted(options.items())))
+        if key not in fixtures:
+            fixtures[key] = parse(files, **options)
+        return copy.deepcopy(fixtures[key])
+
+    parser = patch.object(ci_population, "parse_ui_tests", side_effect=parsed_sources)
+    parser.start()
+    test.addCleanup(parser.stop)
+
+
 class BuildArchiveTests(unittest.TestCase):
     def test_nightly_gate_publishes_verified_archives_and_records_single_defect_refusals(self):
         from ci_summary import parse_summary
@@ -205,6 +222,7 @@ class BuildArchiveTests(unittest.TestCase):
         build.assert_not_called()
 
     def test_functional_producer_plan_and_serialized_fixture_population_equal_the_base_reader(self):
+        share_ui_source_fixture(self)
         from types import SimpleNamespace
         import ci_xcode_cloud_ui as grouped
         from ci_population import ui_identities
