@@ -17,7 +17,7 @@ from pathlib import Path
 
 from ci_build_archive import file_hash, workspace_preflight
 from ci_failure_diagnostics import VALIDATOR_FAILURE_FIELD, public_validator_failure_message
-from ci_execution_diagnostics import Recorder
+from ci_execution_diagnostics import Recorder, TRUNCATION_PREFIX, TRUNCATION_REASONS, report_truncation
 from ci_summary import decode, identity_key, observation, require, test_identity, write_summary
 from run_host_checks import GROUP_TERM_GRACE_SECONDS, group_has_live_members, run_identity, source_metadata, stop_group, toolchain
 from run_strict_e2e import (CommandError, FILTER_PERSON_SESSIONS, resolve_suite_selector,
@@ -139,7 +139,12 @@ def run_runner(command, repo_root, log_path, *, timeout_seconds):
             except BaseException as error:
                 raise RunnerGroupCleanupError(f"Runner process group cleanup failed: {type(error).__name__}: {error}") from error
             log.seek(offset)
-            errors = [line for line in log.read().splitlines() if line.startswith(("CommandError: ", "OfflineCommandError: ", "InfrastructureTimeout: "))]
+            lines = log.read().splitlines()
+            truncation = next((line for line in lines if line.startswith(TRUNCATION_PREFIX)
+                               and line.removeprefix(TRUNCATION_PREFIX) in TRUNCATION_REASONS), None)
+            if truncation is not None:
+                report_truncation(truncation.removeprefix(TRUNCATION_PREFIX))
+            errors = [line for line in lines if line.startswith(("CommandError: ", "OfflineCommandError: ", "InfrastructureTimeout: "))]
             if errors:
                 print(errors[-1], file=sys.stderr, flush=True)
     return code

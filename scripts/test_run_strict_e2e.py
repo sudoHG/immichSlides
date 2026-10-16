@@ -1678,6 +1678,8 @@ class StrictCITracerTests(unittest.TestCase):
                     mock.patch.object(diagnostics.threading, "Thread", side_effect=lambda *, target, daemon: SimpleNamespace(start=target)), \
                     mock.patch.object(diagnostics.sys, "stderr", io.StringIO()) as stderr:
                 first, second = diagnostics.Recorder(), diagnostics.Recorder()
+                diagnostics.report_truncation("private-input /private/path")
+                self.assertEqual("", stderr.getvalue())
                 first.truncate("private-input /private/path")
                 self.assertEqual("", stderr.getvalue())
                 first.truncate(reason)
@@ -1686,6 +1688,27 @@ class StrictCITracerTests(unittest.TestCase):
                 self.assertEqual("bounded-diagnostics truncated: " + reason + "\n", stderr.getvalue())
                 self.assertTrue(first.truncated)
                 self.assertTrue(second.truncated)
+
+    def test_runner_forwards_only_one_closed_truncation_line_from_its_child_log(self):
+        import run_strict_ci_tracer as tracer
+        import ci_execution_diagnostics as diagnostics
+        from types import SimpleNamespace
+        line = "bounded-diagnostics truncated: io-timeout"
+        for rejected in ("private-input", "event-cap", "bounded-diagnostics truncated: private-input /private/path",
+                         line + " private-input"):
+            with self.subTest(rejected=rejected), tempfile.TemporaryDirectory() as raw:
+                def spawn(*args, **kwargs):
+                    kwargs["stdout"].write(rejected + "\n" + line + "\nbounded-diagnostics truncated: event-cap\n")
+                    kwargs["stdout"].flush()
+                    return SimpleNamespace(pid=42, wait=lambda **kwargs: 65)
+                stderr = io.StringIO()
+                with mock.patch.object(tracer.subprocess, "Popen", side_effect=spawn), \
+                        mock.patch.object(tracer, "stop_group"), \
+                        mock.patch.object(tracer, "group_has_live_members", return_value=False), \
+                        mock.patch.object(diagnostics.threading, "Thread", side_effect=lambda *, target, daemon: SimpleNamespace(start=target)), \
+                        mock.patch.object(tracer.sys, "stderr", stderr):
+                    self.assertEqual(65, tracer.run_runner(["unused"], Path(raw), Path(raw) / "runner.log", timeout_seconds=2))
+                self.assertEqual(line + "\n", stderr.getvalue())
 
     def test_failed_child_reservation_preserves_the_previous_ledger(self):
         import ci_execution_diagnostics as diagnostics

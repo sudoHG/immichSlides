@@ -215,6 +215,8 @@ write: `bounded-diagnostics truncated: <reason>`. Reasons come from a closed set
 of collection/IO/fixture/retention code paths and inherited truncation; the line
 contains no values or paths and is never added to records. A blocked log writer
 cannot delay the runner, and an already-running writer may outlive collection.
+The strict tracer forwards only the first exact prefix/allowlisted reason from
+each child's private runner log to job stderr, preserving its original exit code.
 Fixture writes run on a single daemon outside the ready path; each write has a
 10 ms CPU allowance and no synchronous ready-path IO wait.
 Server drain waits are capped at 10 ms after service exit or failure is

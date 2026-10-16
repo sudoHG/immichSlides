@@ -47,12 +47,28 @@ EXECUTABLE_NAMES = {name: name for name in PROCESS_NAMES} | {
 _ACTIVE = contextvars.ContextVar("execution_diagnostics", default=None)
 _WRITE_SEQUENCE = itertools.count()
 _TRUNCATION_REPORTED = False
+TRUNCATION_PREFIX = "bounded-diagnostics truncated: "
 TRUNCATION_REASONS = frozenset({
     "collection-budget-exhausted", "sample-timeout", "collection-timeout", "worker-unavailable",
     "event-budget-exhausted", "event-cap", "io-pool-exhausted", "io-timeout", "ledger-unavailable",
     "reserve-failed", "fixture-read-unavailable", "fixture-emitter-truncated", "fixture-completion-missing",
     "fixture-allowance-below-minimum", "inherited",
 })
+
+
+def report_truncation(reason):
+    if reason not in TRUNCATION_REASONS:
+        return
+    def report():
+        try:
+            print(TRUNCATION_PREFIX + reason, file=sys.stderr, flush=True)
+        except (OSError, ValueError):
+            pass
+    # A blocked stderr must not extend the job or acquire another budget.
+    try:
+        threading.Thread(target=report, daemon=True).start()
+    except (OSError, RuntimeError):
+        pass
 
 
 def finite(value, ceiling, *, integral=False, default=None):
@@ -133,16 +149,7 @@ class Recorder:
         if _TRUNCATION_REPORTED or reason not in TRUNCATION_REASONS:
             return
         _TRUNCATION_REPORTED = True
-        def report():
-            try:
-                print("bounded-diagnostics truncated: " + reason, file=sys.stderr, flush=True)
-            except (OSError, ValueError):
-                pass
-        # A blocked stderr must not extend the job or acquire another budget.
-        try:
-            threading.Thread(target=report, daemon=True).start()
-        except (OSError, RuntimeError):
-            pass
+        report_truncation(reason)
 
     def collect(self, scope, operation, *, cap):
         remaining = COLLECTION_BUDGET_SECONDS[scope] - self.charged[scope]
