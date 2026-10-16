@@ -76,6 +76,39 @@ format needs no change. With `max_parallel: 2`, minimum waves are the actual sha
 up after division by two. The manifest determines the actual device/shard count;
 the v2 visual partition manifest supplies eighteen jobs and nine minimum nightly waves.
 
+The reporter accepts a separate, untrusted
+[strict identity failure receipt](CI_SUMMARY.md#prepared-strict-identity-failure-receipt)
+only for missing cases in its verified run/attempt scheduling record. These cases
+remain missing and NOT_RUN with `identity-collection-failed`; no receipt becomes
+a formal summary, compiled/executed result or recovery proof. This reader support
+does not activate the tracer producer.
+
+For a missing strict or UI shard, current-attempt GitHub job metadata binds its
+check-run annotation endpoint. Candidates exclude strict shards with an interval
+summary or a matching records artifact, and UI shards with a matching UI artifact.
+A disconnect after records upload therefore keeps the summary's existing failure
+reason. Only the failure-level hosted-runner communication
+loss marker becomes `hosted-runner-disconnected`. The existing GitHub client's
+bounded GET retry implementation is enabled only for annotation reads, within the
+existing reporter request budget. Annotation text and API errors are withheld;
+unavailable facts retain the generic missing reason and already verified results
+from this run survive. The reporter has `checks: read` for the
+[annotation endpoint](https://docs.github.com/en/rest/checks/runs#list-check-run-annotations),
+with no additional write grant. Neither reason changes the failed verdict or
+borrows execution evidence from another attempt.
+
+Strict C1 receipts and strict F1 job association depend on scheduling-plan validation
+against the reporter checkout's current `contract_population()`, including the tested
+matrix and shard assignments. If that population changes or any plan binding fails,
+these strict diagnostics fail closed to the generic missing reason; verified results
+from other shards remain available.
+
+The nightly infrastructure issue retains these two closed codes in an optional
+`early_failure_reasons` array per run row and an `Early infrastructure reason`
+column. Historical rows remain readable, unknown manually edited values are
+excluded from the visible reason column, and three missing-evidence nights never
+satisfy explicit-pass closure.
+
 The optional [archive download receipt](CI_SUMMARY.md#prepared-archive-download-receipt)
 has reader support before producer activation. After validating the summary and
 recomputing its UI verdict, the reporter retains only its closed-set failure code

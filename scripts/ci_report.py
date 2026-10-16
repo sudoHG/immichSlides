@@ -10,6 +10,7 @@ import json
 import os
 import re
 import time
+import zipfile
 from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -29,6 +30,7 @@ FAILURES = {"failed", "crashed", "timed-out"}
 NIGHTLY_INFRASTRUCTURE = {"kind": "host", "key": "Nightly infrastructure", "dimensions": {}}
 EVIDENCE_DAYS = 7
 REQUEST_BUDGET = 150
+EARLY_FAILURE_REASONS = {"identity-collection-failed", "hosted-runner-disconnected"}
 
 
 class RateLimitLow(RuntimeError):
@@ -51,6 +53,15 @@ class ReportGitHub(GitHub):
         self.diagnostic_nightly = False
         super().__init__(repository, token, response_headers=self.check_headers)
 
+    def annotations(self, check_id):
+        # Reuse the existing bounded GET retry policy only for annotation reads.
+        previous = self.retry_reads
+        self.retry_reads = True
+        try:
+            return self.pages(f"check-runs/{check_id}/annotations")
+        finally:
+            self.retry_reads = previous
+
     def check_headers(self, headers):
         remaining = headers.get("X-RateLimit-Remaining")
         if remaining is not None:
@@ -63,6 +74,14 @@ class ReportGitHub(GitHub):
     def budget_exhausted(self):
         return self.request_count >= REQUEST_BUDGET or self.remaining is not None and self.remaining <= (self.rate_limit + 1) // 2
 
+    def _request(self, path, **options):
+        if self.retry_reads and self._request_attempts:
+            if self.budget_exhausted():
+                raise RateLimitLow("API budget reserve reached")
+            self.request_count += 1
+        self._request_attempts += 1
+        return super()._request(path, **options)
+
     def request(self, path, *, method="GET", **options):
         require(not self.dry_run or method == "GET", "dry-run refuses every API write")
         if method == "GET" and options.get("binary") and path in self.binary_cache:
@@ -70,6 +89,7 @@ class ReportGitHub(GitHub):
         if self.budget_exhausted():
             raise RateLimitLow("API budget reserve reached")
         self.request_count += 1
+        self._request_attempts = 0
         try:
             result = super().request(path, method=method, **options)
         except ContractError:
@@ -322,6 +342,10 @@ def issue_decision(previous, identity, entries, *, registry_referenced):
                        | set((old or {}).get("archive_failure_reasons", []))) & ARCHIVE_DOWNLOAD_FAILURES
             if reasons:
                 record["archive_failure_reasons"] = sorted(reasons)
+            early = (set(entry["diagnostics"]["infrastructure"])
+                     | set((old or {}).get("early_failure_reasons", []))) & EARLY_FAILURE_REASONS
+            if early:
+                record["early_failure_reasons"] = sorted(early)
         if old is None or old["attempt"] <= record["attempt"]:
             if outcome == "failed" and (old is None or old["outcome"] != "failed" or old["attempt"] < record["attempt"]):
                 new_failure |= state["last_failure"] is None or day >= state["last_failure"]
@@ -603,6 +627,69 @@ def nightly_ui_attempt(api, run, attempt, artifacts, raw):
     return verdict
 
 
+def nightly_failure_reasons(api, run, attempt, artifacts, raw, missing):
+    """Bind fail-only diagnostics to this attempt without admitting untrusted execution."""
+    from ci_nightly import case_identity, parse_identity_failure, parse_manifest, shards
+    from ci_publish import complete_attempt_jobs, json_member
+    import subprocess
+    absent = {identity_key(item["identity"]) for item in missing}
+    reasons, jobs = {}, {}
+    for shard in raw.get("ui", {}).get("plan", {}).get("shards", []):
+        job_name = f"ui-{shard['device']}-{shard['shard']}"
+        if not any(item["name"] == f"{job_name}-{run['id']}-{attempt}" for item in artifacts):
+            jobs[job_name] = {identity_key(item) for item in shard["declared"]}
+    plans = [item for item in artifacts if item["name"] == f"nightly-plan-{run['id']}-{attempt}"]
+    summary_shards = {item["shard"] for item in raw["capacity"]["shard_intervals"]}
+    if raw.get("diagnostic_shard") in {None, "strict-only"} and raw["matrix"].get("missing", []) and len(plans) == 1 and not plans[0]["expired"]:
+        try:
+            plan = json_member(api, plans[0], "plan.json")
+            require(type(plan["schema_version"]) is int and plan["schema_version"] == 1
+                    and plan["identity"] == raw["identity"] and plan["run"] == {"id": str(run["id"]), "attempt": attempt}
+                    and plan["source"] == raw["source"] and plan["hashes"] == raw["hashes"], "early scheduling record differs")
+            matrix = subprocess.check_output(["git", "show", run["head_sha"] + ":scripts/nightly-matrix.json"], timeout=30)
+            require(hashlib.sha256(matrix).hexdigest() == plan["hashes"]["manifests"]["nightly-matrix"],
+                    "early scheduling matrix differs")
+            require(subprocess.check_output(["git", "rev-parse", run["head_sha"] + "^{tree}"], timeout=30).decode().strip()
+                    == plan["identity"]["tree_sha"], "early scheduling tree differs")
+            require(plan["shards"] == shards(parse_manifest(matrix.decode())), "early scheduling shards differ")
+            for shard in plan["shards"]:
+                declared = [case_identity(case) for case in shard["cases"]]
+                keys = {identity_key(item) for item in declared}
+                matches = [item for item in artifacts if item["name"] == f"nightly-identity-{shard['id']}-{run['id']}-{attempt}"]
+                has_records = shard["id"] in summary_shards or any(
+                    item["name"] == f"nightly-strict-{shard['id']}-{run['id']}-{attempt}" for item in artifacts)
+                if not has_records:
+                    jobs["nightly-strict-" + shard["id"]] = keys
+                if not has_records and len(matches) == 1 and not matches[0]["expired"]:
+                    try:
+                        receipt = parse_identity_failure(json_member(api, matches[0], "identity-failure.json"),
+                            {"id": str(run["id"]), "attempt": attempt}, shard["id"], declared)
+                        reasons.update({key: receipt["reason"] for key in keys})
+                    except (ContractError, KeyError, TypeError, ValueError, zipfile.BadZipFile):
+                        pass  # Invalid untrusted diagnostics never replace missing evidence.
+        except (ContractError, KeyError, TypeError, ValueError, OSError, subprocess.SubprocessError, zipfile.BadZipFile):
+            pass
+    candidates = {name: keys & absent for name, keys in jobs.items() if keys & absent}
+    if not candidates:
+        return reasons
+    try:
+        for job in complete_attempt_jobs(api, {**run, "run_attempt": attempt}):
+            if job["name"] not in candidates or job["status"] != "completed" or job["conclusion"] != "failure":
+                continue
+            check = re.fullmatch(r"https://api\.github\.com/repos/" + re.escape(api.repository)
+                                 + r"/check-runs/([1-9][0-9]*)", job.get("check_run_url", ""))
+            if check is None:
+                continue
+            annotations = api.annotations(int(check[1]))
+            if any(isinstance(item, dict) and item.get("annotation_level") == "failure"
+                   and isinstance(item.get("message"), str)
+                   and item["message"].startswith("The hosted runner lost communication with the server") for item in annotations):
+                reasons.update({key: "hosted-runner-disconnected" for key in candidates[job["name"]]})
+    except (ContractError, KeyError, ValueError, TypeError, OSError, AttributeError):
+        pass  # Unavailable annotation facts leave the existing fail-closed reason intact.
+    return reasons
+
+
 def nightly_attempt(api, run, attempt, artifacts):
     from ci_health import observation_metrics
     from ci_nightly_change import INFRASTRUCTURE_ERROR_PREFIXES
@@ -633,6 +720,7 @@ def nightly_attempt(api, run, attempt, artifacts):
     case_keys = {identity_key(item["identity"]) for item in raw["observed"]}
     informational = {identity_key(item["identity"]) for item in raw["informational"]}
     shards = {item["shard"] for item in raw["capacity"]["shard_intervals"]}
+    summary_cases = set()
     for shard in sorted(shards):
         name = f"nightly-strict-{shard}-{run['id']}-{attempt}"
         matches = [item for item in artifacts if item["name"] == name]
@@ -646,6 +734,7 @@ def nightly_attempt(api, run, attempt, artifacts):
                 "nightly shard provenance mismatch")
         declared = summary["population"]["declared"]
         require(all(identity_key(item) in case_keys for item in declared), "shard cases differ from aggregate")
+        summary_cases.update(identity_key(item) for item in declared)
         summary["population"]["declared"] = [item for item in declared if identity_key(item) not in informational]
         trace = json_member(api, matches[0], "trace.json")
         methods, absent = method_observations(summary, trace)
@@ -655,6 +744,16 @@ def nightly_attempt(api, run, attempt, artifacts):
     if ui is not None:
         observed.extend(ui["observed"])
         missing.extend({"identity": item, "reason": "nightly-ui-sample-missing"} for item in ui["matrix"]["missing"])
+    # Valid interval summaries already own their method-level not-run accounting.
+    represented = {identity_key(item["identity"]) for item in observed + missing} | summary_cases
+    if raw.get("diagnostic_shard") in {None, "strict-only"}:
+        for case in raw["matrix"].get("missing", []):
+            validate_test_identity(case)
+            if identity_key(case) not in represented:
+                missing.append({"identity": case, "reason": "missing or invalid shard evidence"})
+    reasons = nightly_failure_reasons(api, run, attempt, artifacts, raw, missing)
+    for item in missing:
+        item["reason"] = reasons.get(identity_key(item["identity"]), item["reason"])
     counts = Counter(item["outcome"] for item in observed)
     declared_keys = {identity_key(item["identity"]) for item in observed + missing}
     if ui is not None:
@@ -666,6 +765,7 @@ def nightly_attempt(api, run, attempt, artifacts):
         infrastructure.append("nightly infrastructure or scheduling failure")
     if missing:
         infrastructure.append("nightly official method evidence incomplete")
+    infrastructure.extend(sorted(set(reasons.values())))
     if ui is not None:
         counts.update(ui_scheduled=ui["matrix"]["scheduled"], ui_executed=ui["matrix"]["executed"],
                       ui_deselected=ui["matrix"]["deselected"])
@@ -844,8 +944,8 @@ def read_state(issue):
 def issue_body(issue, state, repository):
     existing = ((issue or {}).get("body") or "").split(SECTION)[0]
     archive_column = state["identity"] == NIGHTLY_INFRASTRUCTURE
-    archive_header = " Archive gate reason |" if archive_column else ""
-    archive_separator = " --- |" if archive_column else ""
+    archive_header = " Archive gate reason | Early infrastructure reason |" if archive_column else ""
+    archive_separator = " --- | --- |" if archive_column else ""
     lines = ["CI nightly tracking: " + text(identity_key(state["identity"])) + ".", "",
              f"Failure nights: {state['failure_nights']}; first: {state['first_failure']}; last: {state['last_failure']}.",
              "Explicit pass nights after the last failure: " + ", ".join(state["explicit_pass_nights"]) + ".",
@@ -854,7 +954,8 @@ def issue_body(issue, state, repository):
     for day, runs in sorted(state["nights"].items()):
         for run, item in sorted(runs.items()):
             reasons = sorted(set(item.get("archive_failure_reasons", [])) & ARCHIVE_DOWNLOAD_FAILURES)
-            archive_cell = " " + (", ".join(reasons) or "—") + " |" if archive_column else ""
+            early = sorted(set(item.get("early_failure_reasons", [])) & EARLY_FAILURE_REASONS)
+            archive_cell = " " + (", ".join(reasons) or "—") + " | " + (", ".join(early) or "—") + " |" if archive_column else ""
             lines.append(f"| {day} | [Run {run}, attempt {item['attempt']}](https://github.com/{repository}/actions/runs/{run}) | {item['outcome']} |" + archive_cell)
     lines.append(MARKER + json.dumps(state, sort_keys=True, separators=(",", ":")) + " -->")
     body = existing + SECTION + "\n".join(lines)

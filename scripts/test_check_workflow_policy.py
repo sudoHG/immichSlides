@@ -891,7 +891,7 @@ final class LocaleUITests: XCTestCase {
                     "((github.event.workflow_run.path == '.github/workflows/ci-nightly.yml' && contains(fromJSON('[\"schedule\",\"workflow_dispatch\"]'), github.event.workflow_run.event)) || "
                     "(contains(fromJSON('[\".github/workflows/ci-gate.yml\",\".github/workflows/ci-ui.yml\"]'), github.event.workflow_run.path) && github.event.workflow_run.event == 'push'))))",
                     "runs-on": "ubuntu-24.04", "timeout-minutes": 30,
-                    "permissions": {"contents": "read", "actions": "read", "pull-requests": "read", "issues": "write"},
+                    "permissions": {"contents": "read", "actions": "read", "checks": "read", "pull-requests": "read", "issues": "write"},
                     "concurrency": {"group": "ci-report-state", "cancel-in-progress": False},
                     "steps": [{"uses": "actions/checkout@" + SHA, "with": {"ref": "main", "fetch-depth": 0}},
                               {"run": '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_report.py --phase collect',
@@ -911,6 +911,8 @@ final class LocaleUITests: XCTestCase {
                      "path": "${{ runner.temp }}/ci-report/health", "if-no-files-found": "error", "retention-days": 90}})
         self.assertEqual(set(), self.rules(document, policy.REPORT_WORKFLOW))
         for mutate in (lambda job: job["permissions"].update(actions="write"),
+                       lambda job: job["permissions"].pop("checks"),
+                       lambda job: job["permissions"].update(checks="write"),
                        lambda job: job.update(environment="ci-publisher"),
                        lambda job: job.update({"if": "github.ref == 'refs/heads/main'"}),
                        lambda job: job.update({"if": job["if"].replace("workflow_run.path == '.github/workflows/ci-nightly.yml'", "workflow_run.name == 'ci-nightly'")}),

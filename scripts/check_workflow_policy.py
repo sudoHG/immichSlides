@@ -696,7 +696,7 @@ def check_workflow(path: str, source: str, *, ui_shards=None, run_named_workflow
         if path == PROBE_WORKFLOW and permissions != {"contents": "read", "issues": "write"}:
             flag(location, "probe-contract", "ci-probe grants only contents: read and issues: write at job level")
         if path == REPORT_WORKFLOW:
-            if (permissions != {"contents": "read", "actions": "read", "pull-requests": "read", "issues": "write"}
+            if (permissions != {"contents": "read", "actions": "read", "checks": "read", "pull-requests": "read", "issues": "write"}
                     or job.get("runs-on") != "ubuntu-24.04" or "environment" in job
                     or job.get("if") != "github.ref == 'refs/heads/main' && "
                     "(github.event_name != 'workflow_run' || "
