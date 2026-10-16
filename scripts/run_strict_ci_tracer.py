@@ -186,7 +186,18 @@ def main(argv=None):
     else:
         cases = [case for case in manifest["cases"] if case["platform"] == args.platform]
     identities = [test_identity("strict", case["suite"], **{key: case[key] for key in ("device", "configuration", "suite", "scenario", "fixture")}) for case in cases]
-    identity = run_identity(os.environ, ci=os.environ.get("GITHUB_ACTIONS") == "true")
+    identity_failure = None
+    if nightly:
+        identity_failure = {"schema_version": 1, "run": {"id": os.environ.get("GITHUB_RUN_ID"),
+                            "attempt": int(os.environ.get("GITHUB_RUN_ATTEMPT", "1"))},
+                            "job": "nightly-strict", "shard": args.shard, "phase": "identity-collection",
+                            "reason": "identity-collection-failed", "declared": identities}
+    try:
+        identity = run_identity(os.environ, ci=os.environ.get("GITHUB_ACTIONS") == "true")
+    except Exception:
+        if identity_failure is not None:
+            write_json(output / "identity-failure.json", identity_failure)
+        raise
     workspace_preflight(ROOT)
     workflow_path = ".github/workflows/ci-nightly.yml" if nightly else ".github/workflows/ci-strict-tracer.yml"
     workflow, fork = source_metadata(identity, os.environ, workflow_path if identity["event"] != "local" else None)

@@ -1158,6 +1158,27 @@ class FailureDiagnosticsTests(unittest.TestCase):
 
 
 class StrictCITracerTests(unittest.TestCase):
+    def test_identity_success_writes_no_early_failure_receipt_even_when_a_later_case_fails(self):
+        for nightly, runner_exit in ((False, 0), (True, 0), (True, 2)):
+            with self.subTest(nightly=nightly, runner_exit=runner_exit), tempfile.TemporaryDirectory() as directory:
+                code, records, _trace, summary = self._produce_validator_records(
+                    Path(directory), "no public glyph", nightly=nightly, runner_exit=runner_exit)
+                self.assertEqual(0 if runner_exit == 0 else 1, code)
+                self.assertEqual("passed" if runner_exit == 0 else "failed", summary["status"])
+                self.assertFalse((records.parent / "identity-failure.json").exists())
+
+    def test_non_nightly_identity_timeout_keeps_the_original_failure_without_a_receipt(self):
+        import run_strict_ci_tracer as tracer
+        timeout = subprocess.TimeoutExpired(["git", "rev-parse", "HEAD"], 30)
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(os.environ, {
+                "GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "schedule", "GITHUB_REPOSITORY": "sudoHG/immichSlides"}), \
+                mock.patch("run_host_checks.subprocess.check_output", side_effect=timeout):
+            output = Path(directory) / "trace"
+            with self.assertRaises(subprocess.TimeoutExpired) as raised:
+                tracer.main(["--platform", "ios", "--destination", "unused", "--output-dir", str(output)])
+            self.assertIs(timeout, raised.exception)
+            self.assertEqual([], list(output.iterdir()))
+
     def _produce_validator_records(self, directory, error, *, verdict="FAIL", runner_exit=2,
                                    receipt_suite="tvos-server-switch-display", nightly=False):
         import run_strict_ci_tracer as tracer
