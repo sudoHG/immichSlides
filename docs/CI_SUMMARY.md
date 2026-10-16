@@ -103,15 +103,14 @@ The receipt has exactly these fields; unknown fields and free-text reasons are r
 | Field | Meaning |
 | --- | --- |
 | `schema_version` | Integer `1` |
-| `artifact_id` | Positive integer immutable artifact ID; diagnostic, not independent proof of API provenance |
-| `producer_run_id`, `producer_attempt` | Positive decimal run ID string and positive integer attempt, matching the enclosing nightly run |
+| `artifact_id` | Integer immutable artifact ID from 1 through 2^63 - 1 (signed 64-bit diagnostic ceiling); not independent proof of API provenance |
 | `action_outcome` | `success`, `failure`, `cancelled`, or `skipped` |
-| `member_bytes` | Exactly `manifest.json` and `build.tar.gz`, each a nonnegative integer byte count or null |
+| `member_bytes` | Exactly `manifest.json` and `build.tar.gz`, each an integer byte count from 0 through the existing 128 MiB UI download cap, or null |
 | `digests_matched` | Exactly `manifest` and `tar`, each boolean or null (not reached) |
 | `size_matched` | Boolean or null; tar size compared with its manifest |
-| `transfer_extract_seconds` | Nonnegative finite elapsed action time, or null when unavailable; transfer and extraction are combined |
-| `gate_seconds` | Nonnegative finite elapsed validation/publication time |
-| `free_disk_bytes` | Nonnegative integer available bytes at the gate, or null when unavailable |
+| `transfer_extract_seconds` | Finite elapsed action time from 0 through 6600 seconds (the 110-minute UI job cap), or null when unavailable; transfer and extraction are combined |
+| `gate_seconds` | Finite elapsed validation/publication time from 0 through 6600 seconds, or null when unavailable |
+| `free_disk_bytes` | Integer available bytes from 0 through 1 PiB (2^50 bytes), or null when unavailable |
 | `failure_reason` | Null for a successful gate, otherwise one of the closed-set codes below |
 
 Failure codes are `archive-member-missing`, `archive-member-extra`,
@@ -121,9 +120,16 @@ Failure codes are `archive-member-missing`, `archive-member-extra`,
 `status: failed`, a matching infrastructure code, no compiled tests, and only
 `not-run` test attempts (or no observations). It cannot count as a product failure
 or evidence of test execution. A successful receipt requires action success,
-positive member sizes, all three checks true, elapsed transfer/extract time and
-available disk measurements. It does not excuse any later test or infrastructure
-failure. Summary Markdown displays the compact measurements and reason.
+positive member sizes and all three integrity checks true. Timing and disk
+measurements may be null even on success, so unavailable diagnostics cannot prevent
+writing an otherwise valid summary. Failure receipt measurements are diagnostics;
+the reader validates their types and bounds but does not cross-check them against
+the reason. The enclosing summary already provides run/attempt coordinates;
+observed archive coordinate mismatches use `archive-identity-mismatch`, without
+duplicating those coordinates in the receipt. It does not excuse any later test
+or infrastructure failure. Summary Markdown displays the compact measurements
+and reason. An invalid shard summary can make the trusted reporter drop the whole
+nightly attempt, rather than only that shard.
 
 Source repository/event must match the identity. CI requires a workflow path below
 `.github/workflows/`, a run ID and a boolean fork-origin flag. The producer derives

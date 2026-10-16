@@ -20,6 +20,10 @@ ARCHIVE_DOWNLOAD_FAILURES = frozenset({
     "archive-identity-mismatch", "archive-toolchain-mismatch", "archive-manifest-invalid",
     "archive-download-incomplete", "archive-gate-timeout", "archive-publish-failed",
 })
+ARCHIVE_DOWNLOAD_MAX_MEMBER_BYTES = 128 * 1024 * 1024  # Boundary tests bind this to the existing UI download cap.
+ARCHIVE_DOWNLOAD_MAX_SECONDS = 110 * 60
+ARCHIVE_DOWNLOAD_MAX_DISK_BYTES = 2**50  # 1 PiB diagnostic ceiling.
+ARCHIVE_DOWNLOAD_MAX_ARTIFACT_ID = 2**63 - 1
 
 
 class ContractError(ValueError):
@@ -189,7 +193,7 @@ def validate_observation(entry):
 
 
 def validate_archive_download(receipt, summary):
-    fields(receipt, {"schema_version", "artifact_id", "producer_run_id", "producer_attempt", "action_outcome",
+    fields(receipt, {"schema_version", "artifact_id", "action_outcome",
                      "member_bytes", "digests_matched", "size_matched", "transfer_extract_seconds", "gate_seconds",
                      "free_disk_bytes", "failure_reason"}, "archive download receipt")
     require(type(receipt["schema_version"]) is int and receipt["schema_version"] == 1,
@@ -200,11 +204,7 @@ def validate_archive_download(receipt, summary):
             and run["job"] in {"ui-iphone", "ui-ipad", "ui-appletv"} and bool(run["shard"]),
             "archive download receipt requires a nightly UI shard")
     integer(receipt["artifact_id"], 1, "archive artifact ID")
-    integer(receipt["producer_attempt"], 1, "archive producer attempt")
-    require(isinstance(receipt["producer_run_id"], str)
-            and re.fullmatch(r"[1-9][0-9]*", receipt["producer_run_id"]) is not None
-            and receipt["producer_run_id"] == run["id"] and receipt["producer_attempt"] == run["attempt"],
-            "archive download producer differs")
+    require(receipt["artifact_id"] <= ARCHIVE_DOWNLOAD_MAX_ARTIFACT_ID, "archive artifact ID exceeds bound")
     require(receipt["action_outcome"] in ("success", "failure", "cancelled", "skipped"),
             "invalid archive download action outcome")
     reason = receipt["failure_reason"]
@@ -213,22 +213,24 @@ def validate_archive_download(receipt, summary):
     for value in receipt["member_bytes"].values():
         if value is not None:
             integer(value, 0, "archive member bytes")
+            require(value <= ARCHIVE_DOWNLOAD_MAX_MEMBER_BYTES, "archive member bytes exceed bound")
     fields(receipt["digests_matched"], {"manifest", "tar"}, "archive digest matches")
     for value in receipt["digests_matched"].values():
         require(value is None or type(value) is bool, "archive digest match must be boolean or null")
     require(receipt["size_matched"] is None or type(receipt["size_matched"]) is bool,
             "archive size match must be boolean or null")
-    if receipt["transfer_extract_seconds"] is not None:
-        duration(receipt["transfer_extract_seconds"])
-    duration(receipt["gate_seconds"])
+    for key in ("transfer_extract_seconds", "gate_seconds"):
+        if receipt[key] is not None:
+            duration(receipt[key])
+            require(receipt[key] <= ARCHIVE_DOWNLOAD_MAX_SECONDS, "archive elapsed seconds exceed bound")
     if receipt["free_disk_bytes"] is not None:
         integer(receipt["free_disk_bytes"], 0, "archive free disk bytes")
+        require(receipt["free_disk_bytes"] <= ARCHIVE_DOWNLOAD_MAX_DISK_BYTES, "archive free disk bytes exceed bound")
     if reason is None:
         require(receipt["action_outcome"] == "success" and receipt["size_matched"] is True
                 and all(value is True for value in receipt["digests_matched"].values())
-                and all(value is not None and value > 0 for value in receipt["member_bytes"].values())
-                and receipt["transfer_extract_seconds"] is not None and receipt["free_disk_bytes"] is not None,
-                "successful archive gate requires complete measurements and matches")
+                and all(value is not None and value > 0 for value in receipt["member_bytes"].values()),
+                "successful archive gate requires complete integrity checks")
     else:
         require(summary["status"] == "failed" and any(item["code"] == reason for item in summary["infrastructure"])
                 and not summary["population"]["compiled"]

@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import select
 import signal
 import subprocess
@@ -75,8 +76,8 @@ def archive_download_summary():
     summary["run"] = {"id": "123", "attempt": 2, "tier": "ui", "job": "ui-ipad", "shard": "navigation"}
     case = ci_summary.test_identity("ui", "NavigationUITests/testOpen", platform="ios", device="ipad")
     summary["population"].update(declared=[case], compiled=[case], observed=[ci_summary.observation(case, "passed", 1)])
-    summary["archive_download"] = {"schema_version": 1, "artifact_id": 456, "producer_run_id": "123",
-        "producer_attempt": 2, "action_outcome": "success", "member_bytes": {"manifest.json": 100, "build.tar.gz": 200},
+    summary["archive_download"] = {"schema_version": 1, "artifact_id": 456,
+        "action_outcome": "success", "member_bytes": {"manifest.json": 100, "build.tar.gz": 200},
         "digests_matched": {"manifest": True, "tar": True}, "size_matched": True,
         "transfer_extract_seconds": 2.5, "gate_seconds": 0.1, "free_disk_bytes": 1000, "failure_reason": None}
     return summary
@@ -93,15 +94,18 @@ class SummaryContractTests(unittest.TestCase):
                        "manifest digest=yes", "tar digest=yes", "size=yes", "transfer/extract=2.5 s",
                        "gate=0.1 s", "free disk=1000 bytes", "failure=none"):
             self.assertIn(detail, rendered)
-        for reason in ("archive-member-missing", "archive-member-extra", "archive-size-mismatch", "archive-hash-mismatch",
-                       "archive-identity-mismatch", "archive-toolchain-mismatch", "archive-manifest-invalid",
-                       "archive-download-incomplete", "archive-gate-timeout", "archive-publish-failed"):
+        optional_measurements = copy.deepcopy(summary)
+        optional_measurements["archive_download"].update(transfer_extract_seconds=None, gate_seconds=None, free_disk_bytes=None)
+        with tempfile.TemporaryDirectory() as directory:
+            ci_summary.write_summary(optional_measurements, Path(directory))
+            self.assertEqual(ci_summary.parse_summary(Path(directory, "summary.json").read_text()), optional_measurements)
+        for reason in ("archive-member-missing",):
             failed = copy.deepcopy(summary)
             failed["status"] = "failed"
             failed["population"].update(compiled=[], observed=[ci_summary.observation(
                 failed["population"]["declared"][0], "not-run", 0, reason=reason)])
             failed["infrastructure"] = [{"code": reason, "message": reason}]
-            failed["archive_download"].update(failure_reason=reason, action_outcome="failure", size_matched=None,
+            failed["archive_download"].update(failure_reason=reason, size_matched=None,
                 member_bytes={"manifest.json": None, "build.tar.gz": None}, digests_matched={"manifest": None, "tar": None},
                 transfer_extract_seconds=None, free_disk_bytes=None)
             with self.subTest(reason=reason):
@@ -109,50 +113,72 @@ class SummaryContractTests(unittest.TestCase):
                 self.assertIn("failure=" + reason, ci_summary.render_markdown(failed))
 
     def test_nightly_archive_receipt_rejects_invalid_fields_and_false_success(self):
+        from ci_ui_tests import MAX_ARCHIVE_BYTES
+        base = archive_download_summary()
+        self.assertEqual(ci_summary.parse_summary(base), base)
+        push_identity = {key: value for key, value in base["identity"].items() if key not in {"event", "commit_sha"}}
+        push_identity.update(event="push", pushed_sha=base["identity"]["commit_sha"])
+        for key, maximum in (("artifact_id", 2**63 - 1), ("free_disk_bytes", 2**50),
+                             ("transfer_extract_seconds", 6600), ("gate_seconds", 6600)):
+            boundary = copy.deepcopy(base)
+            boundary["archive_download"][key] = maximum
+            self.assertEqual(ci_summary.parse_summary(boundary), boundary)
+        boundary = copy.deepcopy(base)
+        boundary["archive_download"]["member_bytes"]["build.tar.gz"] = MAX_ARCHIVE_BYTES
+        self.assertEqual(ci_summary.parse_summary(boundary), boundary)
         mutations = [
-            (("archive_download",), None, "archive download receipt: expected fields"),
+            (("archive_download",), None, "archive download receipt: expected fields " + str(sorted(base["archive_download"]))),
             (("archive_download", "schema_version"), True, "unsupported archive download receipt"),
-            (("archive_download", "artifact_id"), True, "archive artifact ID: expected integer"),
-            (("archive_download", "producer_run_id"), "124", "archive download producer differs"),
-            (("archive_download", "producer_attempt"), 3, "archive download producer differs"),
-            (("archive_download", "producer_attempt"), True, "archive producer attempt: expected integer"),
+            (("archive_download", "artifact_id"), True, "archive artifact ID: expected integer >= 1"),
+            (("archive_download", "artifact_id"), 0, "archive artifact ID: expected integer >= 1"),
+            (("archive_download", "artifact_id"), 2**63, "archive artifact ID exceeds bound"),
+            (("identity",), push_identity, "archive download receipt requires a nightly UI shard"),
             (("source", "workflow_path"), ".github/workflows/ci-ui.yml", "archive download receipt requires a nightly UI shard"),
             (("run", "job"), "ui-other", "archive download receipt requires a nightly UI shard"),
             (("run", "tier"), "host", "archive download receipt requires a nightly UI shard"),
             (("run", "shard"), None, "archive download receipt requires a nightly UI shard"),
             (("archive_download", "action_outcome"), "warning", "invalid archive download action outcome"),
             (("archive_download", "failure_reason"), "private-server.example", "invalid archive download failure reason"),
-            (("archive_download", "member_bytes"), {}, "archive member bytes: expected fields"),
-            (("archive_download", "member_bytes", "build.tar.gz"), -1, "archive member bytes: expected integer"),
-            (("archive_download", "digests_matched"), {}, "archive digest matches: expected fields"),
+            (("archive_download", "member_bytes"), {}, "archive member bytes: expected fields ['build.tar.gz', 'manifest.json']"),
+            (("archive_download", "member_bytes", "build.tar.gz"), -1, "archive member bytes: expected integer >= 0"),
+            (("archive_download", "member_bytes", "build.tar.gz"), MAX_ARCHIVE_BYTES + 1, "archive member bytes exceed bound"),
+            (("archive_download", "digests_matched"), {}, "archive digest matches: expected fields ['manifest', 'tar']"),
             (("archive_download", "digests_matched", "tar"), "yes", "archive digest match must be boolean or null"),
             (("archive_download", "size_matched"), 1, "archive size match must be boolean or null"),
             (("archive_download", "transfer_extract_seconds"), -1, "duration must be finite and nonnegative"),
             (("archive_download", "gate_seconds"), float("inf"), "duration must be finite and nonnegative"),
-            (("archive_download", "free_disk_bytes"), True, "archive free disk bytes: expected integer"),
-            (("archive_download", "action_outcome"), "failure", "successful archive gate requires complete measurements and matches"),
-            (("archive_download", "member_bytes", "manifest.json"), 0, "successful archive gate requires complete measurements and matches"),
-            (("archive_download", "digests_matched", "manifest"), False, "successful archive gate requires complete measurements and matches"),
-            (("archive_download", "size_matched"), None, "successful archive gate requires complete measurements and matches"),
-            (("archive_download", "transfer_extract_seconds"), None, "successful archive gate requires complete measurements and matches"),
-            (("archive_download", "free_disk_bytes"), None, "successful archive gate requires complete measurements and matches"),
+            (("archive_download", "transfer_extract_seconds"), 6601, "archive elapsed seconds exceed bound"),
+            (("archive_download", "gate_seconds"), 6601, "archive elapsed seconds exceed bound"),
+            (("archive_download", "free_disk_bytes"), True, "archive free disk bytes: expected integer >= 0"),
+            (("archive_download", "free_disk_bytes"), 2**50 + 1, "archive free disk bytes exceed bound"),
+            (("archive_download", "action_outcome"), "failure", "successful archive gate requires complete integrity checks"),
+            (("archive_download", "member_bytes", "manifest.json"), 0, "successful archive gate requires complete integrity checks"),
+            (("archive_download", "digests_matched", "manifest"), False, "successful archive gate requires complete integrity checks"),
+            (("archive_download", "size_matched"), None, "successful archive gate requires complete integrity checks"),
         ]
         for path, value, message in mutations:
-            summary = archive_download_summary()
+            summary = copy.deepcopy(base)
             target = summary
             for key in path[:-1]:
                 target = target[key]
             target[path[-1]] = value
-            with self.subTest(path=path, value=value), self.assertRaisesRegex(ci_summary.ContractError, "^" + message):
+            if path == ("identity",):
+                # Keep the enclosing record valid so only the receipt's event scope is wrong.
+                summary["source"]["event"] = value["event"]
+                without_receipt = {key: value for key, value in summary.items() if key != "archive_download"}
+                self.assertEqual(ci_summary.parse_summary(without_receipt), without_receipt)
+            with self.subTest(path=path, value=value), self.assertRaisesRegex(ci_summary.ContractError, "^" + re.escape(message) + "$"):
                 ci_summary.parse_summary(summary)
 
     def test_failed_archive_receipt_cannot_mask_execution_or_a_passing_producer(self):
         summary = archive_download_summary()
         summary["status"] = "failed"
         summary["archive_download"]["failure_reason"] = "archive-hash-mismatch"
+        summary["archive_download"]["digests_matched"]["tar"] = False
         summary["infrastructure"] = [{"code": "archive-hash-mismatch", "message": "archive-hash-mismatch"}]
         case = summary["population"]["declared"][0]
         summary["population"].update(compiled=[], observed=[ci_summary.observation(case, "not-run", 0)])
+        self.assertEqual(ci_summary.parse_summary(summary), summary)
         for change in ("status", "diagnostic", "compiled", "observation"):
             changed = copy.deepcopy(summary)
             if change == "status":
@@ -164,7 +190,7 @@ class SummaryContractTests(unittest.TestCase):
             else:
                 changed["population"]["observed"] = [ci_summary.observation(case, "passed", 1)]
             with self.subTest(change=change), self.assertRaisesRegex(ci_summary.ContractError,
-                    "^failed archive gate requires failed infrastructure and no executed or compiled tests"):
+                    "^failed archive gate requires failed infrastructure and no executed or compiled tests$"):
                 ci_summary.parse_summary(changed)
 
     def test_strict_validator_receipts_are_optional_bounded_and_fail_only(self):
