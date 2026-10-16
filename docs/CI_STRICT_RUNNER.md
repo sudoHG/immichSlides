@@ -496,24 +496,30 @@ XCTest diagnostics below remain separate from post-test validator failures.
 The value is at most 512 characters. The reviewed grammar in
 [`ci_failure_diagnostics.py`](../scripts/ci_failure_diagnostics.py) preserves existing
 fixed public validator prefixes from `album_server_narrow_contract.py`,
-`strict_e2e_photo_identity.py` and `strict_e2e_filter_contract.py`, plus screenshot
-basenames from their actual scene-reader calls,
+`strict_e2e_photo_identity.py`, `strict_e2e_filter_contract.py` and
+`strict_e2e_filter_manifest.py`, plus screenshot basenames from their actual calls,
 slot indices, horizontal/vertical/both-axis labels, fixture A/B letters and counts.
 Unavailable context can be `unresolved` or a prefix followed by `; context unresolved`.
 The public helper appends that suffix to a recognized bare prefix. Interpolated
-messages remain excluded except the existing count/letter/slot/axis grammar and
-the closed `unreadable public glyph:` exception names: `AttributeError`, `IndexError`,
+messages are limited to the existing count/letter/slot/axis grammar, the public
+pattern mismatch (allowlisted screenshot stem, expected fixture `a`/`b`, observed
+`a`/`b`/`None`), and the unrecognizable-input message (classifier status and public
+photo mark or `None`). AST synchronization tests pin the literal tables and these
+closed sets to their contract sources without adding image dependencies to the
+isolated reader. The closed `unreadable public glyph:` exception names are `AttributeError`, `IndexError`,
 `KeyError`, `OSError`, `TypeError`, `UnidentifiedImageError` and `ValueError`.
-Screenshot names come only from `public_scene_photos_from_bytes` callers: `history-*`,
+Screenshot names come from `public_scene_photos_from_bytes` and server-switch
+`_require_public_pattern` callers: `history-*`,
 `pause-immediate`, `pause-after-10s`, `resumed`, `album-playback-N`, `person-normal`,
-`person-no-faces`, `person-conflict-normal(-N)`, `album-switch-b-play-N` and
-`server-switch-a-play-1` (all `.png`). No names are reserved for a future producer.
+`person-no-faces`, `person-conflict-normal(-N)`, `album-switch-b-play-N`,
+`server-switch-a-play-1` and `switch-b-play-1`/`switch-b-play-2` (all `.png`).
+No names are reserved for a future producer.
 Unrecognized prefixes, filenames and suffixes are refused rather than treated as public
 text. The grammar accepts no URLs, keys, server addresses, directory paths, private
 xcresult text or pixel arrays. It does not decode images or change a visual check.
 
-The existing sensitive-output scan validates the field only in the directories
-where that scan is invoked: case evidence, P2 recordings and review packages.
+The existing sensitive-output scan also covers UI, unit, fixture and flaky outputs.
+On the strict path it validates the field in case evidence, P2 recordings and review packages.
 It checks length and duplicate/malformed fields, alongside existing sensitive-value
 scanning. **`records/` is uploaded unscanned**, including on failure. A future producer
 must therefore write only `public_validator_failure_message(...)` output to both

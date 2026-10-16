@@ -18,7 +18,8 @@ VALIDATOR_FAILURE_MAX_LENGTH = 512
 VALIDATOR_FAILURE_REDACTED = "[redacted validator failure]"
 
 # Fixed raise arguments and _require_named_png messages from the reviewed public contracts.
-# Interpolated messages remain excluded, except the closed scene-reader exception set.
+# Source synchronization guards keep these literal and closed-set copies current
+# without importing image/fixture dependencies into the isolated trusted reader.
 VALIDATOR_FIXED_PREFIXES = (
     # album_server_narrow_contract.py
     "Selectors must be Target/Class/method",
@@ -127,9 +128,37 @@ VALIDATOR_FIXED_PREFIXES = (
     "device Vision face_counts must contain only integers",
     "request log has no checkable lines",
 )
+VALIDATOR_MANIFEST_PREFIXES = (
+    "a person filter must be a separate person_id + mode",
+    "member manifest fixture set is unknown",
+    "member-manifest labels do not match classify_screenshot: must cover all five photos",
+    "member-manifest labels do not match classify_screenshot: all five must MATCH and tell A1–A5 apart",
+    "member-manifest labels do not match classify_screenshot: missing person_cases",
+    "member-manifest independent object sets do not match fixture derivation",
+    "fixture hash has drifted from the frozen contract",
+    "member manifest is not the frozen contract",
+    "member manifest fixture hash does not match the frozen contract",
+    "Request logs, indexes, and probes cannot be used as identity truth",
+    "Empty playback membership cannot count as passing",
+    "An empty selection cannot start",
+    "start button state does not match the selection contract",
+    "Simulator Vision cannot substitute for a device; soloOnly must not be marked PASS",
+    "Vision unavailable; soloOnly must not pass by accident",
+    "An empty soloOnly result cannot pass by coincidence from an empty set",
+)
+VALIDATOR_FIXTURE_PATTERNS = ("a", "b", None)
+VALIDATOR_IDENTITY_STATUSES = ("UNRECOGNIZABLE", "BLACK", "BLANK", "TRANSITION", "MATCH")
+VALIDATOR_IDENTITY_MARKS = ("A1", "A2", "A3", "A4", "A5", None)
 
 # No arbitrary filename, exception suffix or pixel values.
 # See CI_STRICT_RUNNER.md#public-validator-failure-receipts for the staged contract.
+_VALIDATOR_SCREENSHOT_STEM = (
+    r"(?:person-normal|person-no-faces|person-conflict-normal(?:-[1-9][0-9]?)?|"
+    r"album-playback-[123]|album-switch-b-play-[12]|server-switch-a-play-1|switch-b-play-[12]|"
+    r"history-(?:start|first-next|second-next|first-previous|second-previous)|"
+    r"pause-immediate|pause-after-10s|resumed)"
+)
+_VALIDATOR_SCREENSHOT = _VALIDATOR_SCREENSHOT_STEM + r"\.png"
 _VALIDATOR_PREFIX = (
     r"(?:Unrecognizable input: )?(?:no public glyph|mixed public glyphs|"
     r"unreadable public glyph slot(?:: (?:single photo color or public texture is missing|"
@@ -139,14 +168,18 @@ _VALIDATOR_PREFIX = (
     r"unreadable public glyph: (?:AttributeError|IndexError|KeyError|OSError|TypeError|"
     r"UnidentifiedImageError|ValueError))"
 )
-_VALIDATOR_PREFIX = "(?:" + _VALIDATOR_PREFIX + "|" + "|".join(map(re.escape, VALIDATOR_FIXED_PREFIXES)) + ")"
-_VALIDATOR_PREFIX_ONLY = re.compile(_VALIDATOR_PREFIX)
-_VALIDATOR_SCREENSHOT = (
-    r"(?:person-normal|person-no-faces|person-conflict-normal(?:-[1-9][0-9]?)?|"
-    r"album-playback-[123]|album-switch-b-play-[12]|server-switch-a-play-1|"
-    r"history-(?:start|first-next|second-next|first-previous|second-previous)|"
-    r"pause-immediate|pause-after-10s|resumed)\.png"
+_VALIDATOR_EXPECTED_PATTERN = "(?:" + "|".join(re.escape(value) for value in VALIDATOR_FIXTURE_PATTERNS
+                                             if value is not None) + ")"
+_VALIDATOR_PATTERN = "(?:" + "|".join(re.escape(str(value)) for value in VALIDATOR_FIXTURE_PATTERNS) + ")"
+_VALIDATOR_STATUS = "(?:" + "|".join(map(re.escape, VALIDATOR_IDENTITY_STATUSES)) + ")"
+_VALIDATOR_MARK = "(?:" + "|".join(re.escape(str(value)) for value in VALIDATOR_IDENTITY_MARKS) + ")"
+_VALIDATOR_PREFIX = (
+    "(?:" + _VALIDATOR_PREFIX + "|"
+    + "|".join(map(re.escape, VALIDATOR_FIXED_PREFIXES + VALIDATOR_MANIFEST_PREFIXES))
+    + rf"|{_VALIDATOR_SCREENSHOT_STEM} public pattern must be {_VALIDATOR_EXPECTED_PATTERN}, got {_VALIDATOR_PATTERN}"
+    + rf"|Unrecognizable input cannot count as passing: status={_VALIDATOR_STATUS} mark={_VALIDATOR_MARK})"
 )
+_VALIDATOR_PREFIX_ONLY = re.compile(_VALIDATOR_PREFIX)
 _VALIDATOR_COUNT = r"(?:0|[1-9][0-9]{0,2})"
 _VALIDATOR_AXIS = r"(?:horizontal|vertical|both axes)"
 _VALIDATOR_CONTEXT = (

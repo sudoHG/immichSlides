@@ -987,6 +987,102 @@ class FailureDiagnosticsTests(unittest.TestCase):
                     self.assertNotIn("192.0.2.1", str(raised.exception))
                     self.assertEqual("FAIL", json.loads((evidence / "sensitive-scan.json").read_text())["result"])
 
+    def test_validator_receipt_vocabularies_match_contract_sources(self):
+        import ast
+        import ci_failure_diagnostics as diagnostics
+        from strict_e2e_filter_manifest import FROZEN_FIXTURE_SHA256
+        from strict_e2e_photo_identity import MARKS
+
+        def tree(name):
+            return ast.parse((SCRIPT_DIR / name).read_text())
+
+        def fixed_messages(module):
+            messages = set()
+            for node in ast.walk(module):
+                argument = None
+                if (isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call)
+                        and isinstance(node.exc.func, ast.Name)
+                        and node.exc.func.id in {"AlbumServerContractError", "IdentityAssertionError", "FilterContractError"}
+                        and node.exc.args):
+                    argument = node.exc.args[0]
+                elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                      and node.func.id == "_require_named_png"):
+                    argument = node.args[2]
+                if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
+                    messages.add(argument.value)
+            return messages
+
+        original_modules = ("album_server_narrow_contract.py", "strict_e2e_photo_identity.py",
+                            "strict_e2e_filter_contract.py")
+        self.assertEqual(set(diagnostics.VALIDATOR_FIXED_PREFIXES),
+                         set().union(*(fixed_messages(tree(name)) for name in original_modules)))
+        self.assertEqual(set(diagnostics.VALIDATOR_MANIFEST_PREFIXES),
+                         fixed_messages(tree("strict_e2e_filter_manifest.py")))
+        identity_tree = tree("strict_e2e_photo_identity.py")
+        classifier = next(node for node in identity_tree.body
+                          if isinstance(node, ast.FunctionDef) and node.name == "classify_screenshot")
+        identities = [node for node in ast.walk(classifier) if isinstance(node, ast.Call)
+                      and isinstance(node.func, ast.Name) and node.func.id == "PhotoIdentity"]
+        self.assertEqual(set(diagnostics.VALIDATOR_IDENTITY_STATUSES),
+                         {ast.literal_eval(node.args[0]) for node in identities})
+        self.assertEqual(set(diagnostics.VALIDATOR_IDENTITY_MARKS), set(MARKS) | {
+            ast.literal_eval(node.args[1]) for node in identities if isinstance(node.args[1], ast.Constant)})
+        pattern_classifier = next(node for node in identity_tree.body
+                                  if isinstance(node, ast.FunctionDef) and node.name == "classify_public_pattern")
+        patterns = {node.value.value for node in ast.walk(pattern_classifier)
+                    if isinstance(node, ast.Return) and isinstance(node.value, ast.Constant)}
+        self.assertEqual(set(diagnostics.VALIDATOR_FIXTURE_PATTERNS), patterns)
+        self.assertEqual(set(diagnostics.VALIDATOR_FIXTURE_PATTERNS), set(FROZEN_FIXTURE_SHA256) | {None})
+
+    def test_closed_server_switch_failures_are_public_and_unknown_values_redact(self):
+        from album_server_narrow_contract import AlbumServerContractError, evaluate_server_switch_evidence
+        from strict_e2e_filter_manifest import FilterContractError
+        from test_album_server_narrow_contract import _fixture_png, _side_by_side, _write_server_switch_pass
+        from ci_failure_diagnostics import public_validator_failure_message
+
+        with tempfile.TemporaryDirectory() as raw:
+            evidence = Path(raw)
+            _write_server_switch_pass(evidence)
+            (evidence / "switch-b-play-1.png").write_bytes(
+                _side_by_side(_fixture_png("A1", "a"), _fixture_png("A1", "b")))
+            with self.assertRaisesRegex(AlbumServerContractError,
+                                       "^switch-b-play-1 public pattern must be b, got None$") as raised:
+                evaluate_server_switch_evidence(evidence)
+            pattern_message = str(raised.exception)
+            self.assertEqual(pattern_message + "; context unresolved", public_validator_failure_message(pattern_message))
+
+            _write_server_switch_pass(evidence)
+            manifest_path = evidence / "member-manifest-b.json"
+            manifest = json.loads(manifest_path.read_text())
+            manifest["fixture_sha256"] = "0" * 64
+            manifest_path.write_text(json.dumps(manifest))
+            with self.assertRaisesRegex(FilterContractError,
+                                       "^member manifest fixture hash does not match the frozen contract$") as raised:
+                evaluate_server_switch_evidence(evidence)
+            manifest_message = str(raised.exception)
+            self.assertEqual(manifest_message + "; context unresolved", public_validator_failure_message(manifest_message))
+
+            _write_server_switch_pass(evidence)
+            (evidence / "switch-b-play-1.png").write_bytes(b"unreadable public fixture")
+            with self.assertRaisesRegex(FilterContractError,
+                                       "^Unrecognizable input cannot count as passing: status=UNRECOGNIZABLE mark=None$") as raised:
+                evaluate_server_switch_evidence(evidence)
+            identity_message = str(raised.exception)
+            self.assertEqual(identity_message + "; context unresolved", public_validator_failure_message(identity_message))
+            for message in (pattern_message, manifest_message, identity_message):
+                (evidence / "receipt.json").write_text(json.dumps({
+                    "validator_failure_message": public_validator_failure_message(message)}))
+                strict_runner.write_sensitive_scan(evidence, ["PRIVATE_SENTINEL"])
+                self.assertEqual("PASS", json.loads((evidence / "sensitive-scan.json").read_text())["result"])
+
+        for message in (pattern_message.replace("switch-b-play-1", "private-screenshot"),
+                        pattern_message.replace("must be b", "must be private-pattern"),
+                        pattern_message.replace("got None", "got private-pattern"),
+                        identity_message.replace("UNRECOGNIZABLE", "private-status"),
+                        identity_message.replace("mark=None", "mark=private-mark")):
+            with self.subTest(message=message):
+                self.assertEqual("[redacted validator failure]", public_validator_failure_message(message))
+
     def test_real_contract_failures_keep_public_context_and_redact_dynamic_identifiers(self):
         from album_server_narrow_contract import AlbumServerContractError, evaluate_server_switch_evidence
         from strict_e2e_filter_contract import FilterContractError, evaluate_filter_visual_identity
