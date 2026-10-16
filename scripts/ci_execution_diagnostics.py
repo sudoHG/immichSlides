@@ -9,6 +9,7 @@ from __future__ import annotations
 import contextvars
 import copy
 import functools
+import itertools
 import json
 import math
 import os
@@ -44,6 +45,14 @@ MAX_PROGRESS_BYTES = 64 * 1024
 EXECUTABLE_NAMES = {name: name for name in PROCESS_NAMES} | {
     "com.apple.CoreSimulator.CoreSimulatorService": "CoreSimulatorService"}
 _ACTIVE = contextvars.ContextVar("execution_diagnostics", default=None)
+_WRITE_SEQUENCE = itertools.count()
+_TRUNCATION_REPORTED = False
+TRUNCATION_REASONS = frozenset({
+    "collection-budget-exhausted", "sample-timeout", "collection-timeout", "worker-unavailable",
+    "event-budget-exhausted", "event-cap", "io-pool-exhausted", "io-timeout", "ledger-unavailable",
+    "reserve-failed", "fixture-read-unavailable", "fixture-emitter-truncated", "fixture-completion-missing",
+    "fixture-allowance-below-minimum", "inherited",
+})
 
 
 def finite(value, ceiling, *, integral=False, default=None):
@@ -118,12 +127,29 @@ class Recorder:
         self.sequence = 0
         self.xcode_timed_out = False
 
+    def truncate(self, reason):
+        self.truncated = True
+        global _TRUNCATION_REPORTED
+        if _TRUNCATION_REPORTED or reason not in TRUNCATION_REASONS:
+            return
+        _TRUNCATION_REPORTED = True
+        def report():
+            try:
+                print("bounded-diagnostics truncated: " + reason, file=sys.stderr, flush=True)
+            except (OSError, ValueError):
+                pass
+        # A blocked stderr must not extend the job or acquire another budget.
+        try:
+            threading.Thread(target=report, daemon=True).start()
+        except (OSError, RuntimeError):
+            pass
+
     def collect(self, scope, operation, *, cap):
         remaining = COLLECTION_BUDGET_SECONDS[scope] - self.charged[scope]
         # Leave room for bookkeeping and do not start work after a scope is spent.
         limit = min(cap, remaining - BOOKKEEPING_RESERVE_SECONDS)
         if limit <= 0:
-            self.truncated = True
+            self.truncate("collection-budget-exhausted")
             return None
         started = time.perf_counter()
         done, values = threading.Event(), []
@@ -139,17 +165,18 @@ class Recorder:
             finished = done.wait(max(0, limit - (time.perf_counter() - started)))
         except (OSError, RuntimeError):
             finished = False
+            self.truncate("worker-unavailable")
         elapsed = time.perf_counter() - started
         self.cost[scope] += elapsed
         self.charged[scope] += elapsed
         if not finished:
-            self.truncated = True
+            self.truncate("sample-timeout" if operation is system_sample else "collection-timeout")
         return values[0] if finished and values else None
 
     def event(self, scope, phase, state, sequence, *, elapsed=0, cpu=None, sample=None, digest=None, exports=None):
         started = time.perf_counter()
         if self.charged[scope] >= COLLECTION_BUDGET_SECONDS[scope] - BOOKKEEPING_RESERVE_SECONDS:
-            self.truncated = True
+            self.truncate("event-budget-exhausted")
             return
         event = {"scope": scope, "phase": phase, "state": state, "sequence": sequence,
                             "elapsed_seconds": finite(elapsed, MAX_DIAGNOSTIC_SECONDS, default=0),
@@ -167,7 +194,7 @@ class Recorder:
 
     def retain(self, event):
         if len(self.events) >= MAX_EVENTS:
-            self.truncated = True
+            self.truncate("event-cap")
             oldest_success = next((index for index, previous in enumerate(self.events) if not self.is_anomaly(previous)), None)
             if oldest_success is None and not self.is_anomaly(event):
                 return
@@ -188,7 +215,7 @@ class Recorder:
     def ledger_io(self, operation):
         limit = min(LEDGER_IO_CAP_SECONDS, self.ledger_remaining)
         if limit <= 0:
-            self.truncated = True
+            self.truncate("io-pool-exhausted")
             return None
         self.ledger_remaining -= limit
         started = time.perf_counter()
@@ -205,12 +232,13 @@ class Recorder:
             finished = done.wait(max(0, limit - (time.perf_counter() - started)))
         except (OSError, RuntimeError):
             finished = False
+            self.truncate("worker-unavailable")
         elapsed = time.perf_counter() - started
         self.cost["preparation"] += elapsed
         if finished:
             self.ledger_remaining += max(0, limit - elapsed)
         if not finished:
-            self.truncated = True
+            self.truncate("io-timeout")
         return values[0] if finished and values else None
 
     def receipt(self):
@@ -255,7 +283,7 @@ class Recorder:
             self.charged = dict(COLLECTION_BUDGET_SECONDS)
             self.ledger_remaining = 0
             self.unavailable = set(COLLECTION_BUDGET_SECONDS)
-            self.truncated = True
+            self.truncate("ledger-unavailable")
             return
         receipt = ledger["receipt"]
         self.cost = {scope: value if value is not None else 0 for scope, value in receipt["collection_seconds"].items()}
@@ -265,7 +293,10 @@ class Recorder:
         # The read consumed part of the inherited IO pool, not a fresh loan.
         self.ledger_remaining = min(self.ledger_remaining, max(0, ledger["ledger_remaining_seconds"] - io_charge))
         self.events, self.truncated = receipt["events"], receipt["truncated"]
+        if self.truncated:
+            self.truncate("inherited")
         self.sequence = max((event["sequence"] for event in self.events), default=0)
+        return ledger
 
     def save(self, path):
         receipt = self.receipt()
@@ -284,14 +315,14 @@ class Recorder:
         if not self._write(path, ledger):
             self.charged = dict(COLLECTION_BUDGET_SECONDS)
             self.unavailable = set(COLLECTION_BUDGET_SECONDS)
-            self.truncated = True
+            self.truncate("reserve-failed")
             return False
         return True
 
     def _write(self, path, receipt):
         cancelled = threading.Event()
         path = Path(path)
-        temporary = path.with_name(path.name + "." + str(os.getpid()) + ".tmp")
+        temporary = path.with_name(path.name + "." + str(os.getpid()) + "." + str(next(_WRITE_SEQUENCE)) + ".tmp")
         started = time.perf_counter()
         limit = min(LEDGER_IO_CAP_SECONDS, self.ledger_remaining)
         def write():
@@ -342,7 +373,7 @@ class Recorder:
             return text
         text = self.collect("fixture", read, cap=FIXTURE_READ_CAP_SECONDS)
         if text is None:
-            self.truncated = True
+            self.truncate("fixture-read-unavailable")
             self.unavailable.add("fixture")
             return
         mapping = {}
@@ -350,7 +381,7 @@ class Recorder:
         completed = False
         for line in text.splitlines():
             if self.charged["fixture"] >= COLLECTION_BUDGET_SECONDS["fixture"] - BOOKKEEPING_RESERVE_SECONDS:
-                self.truncated = True
+                self.truncate("collection-budget-exhausted")
                 break
             if line.startswith("fixture-collection-seconds: "):
                 try:
@@ -358,7 +389,7 @@ class Recorder:
                 except ValueError:
                     pass
             if line == "fixture-collection-truncated: true":
-                self.truncated = True
+                self.truncate("fixture-emitter-truncated")
             if line == "fixture-collection-completed: true":
                 completed = True
             if not line.startswith(FIXTURE_PREFIX):
@@ -385,7 +416,8 @@ class Recorder:
             self.unavailable.add("fixture")
         else:
             self.cost["fixture"] += emission_seconds
-        self.truncated |= not completed
+        if not completed:
+            self.truncate("fixture-completion-missing")
 
     def xcode_snapshot(self, state, started, sequence, log_path, bundles=()):
         def progress():
@@ -420,7 +452,7 @@ def active():
 
 
 def fixture_environment(environment, path):
-    """Reserve child emission time before spawn; repeated services share one budget."""
+    """Reserve emission time; return its environment and optional harvest path."""
     environment = dict(environment)
     recorder = active()
     allowance = max(0, min(FIXTURE_EMISSION_CAP_SECONDS, COLLECTION_BUDGET_SECONDS["fixture"] - recorder.charged["fixture"] - FIXTURE_HARVEST_RESERVE_SECONDS)) if recorder else 0
@@ -428,12 +460,13 @@ def fixture_environment(environment, path):
         allowance = 0
     if recorder:
         recorder.charged["fixture"] += allowance
-        recorder.truncated |= allowance == 0
+        if allowance == 0:
+            recorder.truncate("fixture-allowance-below-minimum")
     environment["IMMICHSLIDES_FIXTURE_DIAGNOSTIC_SECONDS"] = str(allowance)
     environment.pop("IMMICHSLIDES_FIXTURE_DIAGNOSTIC_FILE", None)
     if allowance > 0:
         environment["IMMICHSLIDES_FIXTURE_DIAGNOSTIC_FILE"] = str(path)
-    return environment
+    return environment, path if allowance > 0 else None
 
 
 @contextmanager
@@ -443,8 +476,9 @@ def session(path=None, *, reuse=False):
         return
     recorder = Recorder()
     can_save = True
+    loaded = None
     if reuse and path is not None:
-        recorder.load(path)
+        loaded = recorder.load(path)
         can_save = recorder.reserve(path)
     token = _ACTIVE.set(recorder)
     try:
@@ -452,6 +486,9 @@ def session(path=None, *, reuse=False):
     finally:
         if path is not None and can_save:
             recorder.save(path)
+        elif path is not None and loaded is not None:
+            loaded["receipt"]["truncated"] = True
+            recorder._write(path, loaded)
         _ACTIVE.reset(token)
 
 

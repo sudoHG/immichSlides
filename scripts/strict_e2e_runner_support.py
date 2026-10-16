@@ -706,7 +706,7 @@ def wait_for_service(ready_path: Path, process: subprocess.Popen[bytes], *,
         try:
             return _wait_for_service(ready_path, process)
         finally:
-            if recorder is not None and diagnostics_path is not None:
+            if recorder is not None:
                 recorder.fixture_log(diagnostics_path)
     except CommandError as error:
         retained = [event for event in recorder.events if event["sequence"] > first_sequence] if recorder else []

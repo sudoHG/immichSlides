@@ -531,7 +531,7 @@ def main(argv=None, *, simulator_prepared=False):
         bundles.append(bundle)
         work = bundle.parent.parent
         env = clean_environment(os.environ)
-        service_environment = fixture_environment(env, work / "service-diagnostics.log")
+        service_environment, service_diagnostics_path = fixture_environment(env, work / "service-diagnostics.log")
         # Start fixtures during preflight, before spending time on a build.
         with (work / "service.log").open("wb") as log:
             service = subprocess.Popen([sys.executable, str(ROOT / "scripts/strict_e2e_server.py"), "--fixture-set", "c",
@@ -539,7 +539,7 @@ def main(argv=None, *, simulator_prepared=False):
                                         "--log-file", str(work / "service-requests.log")],
                                        env=service_environment, stdout=log, stderr=subprocess.STDOUT)
         host, port = wait_for_service(work / "ready.json", service, startup_log=work / "service.log",
-                                      diagnostics_path=work / "service-diagnostics.log" if "IMMICHSLIDES_FIXTURE_DIAGNOSTIC_FILE" in service_environment else None)
+                                      diagnostics_path=service_diagnostics_path)
         print(f"Fixture preflight ready: http://{host}:{port}/api (public set C)", flush=True)
         timeout = args.timeout_minutes * 60
         def execute(command, name):

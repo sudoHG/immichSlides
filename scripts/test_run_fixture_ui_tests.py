@@ -321,13 +321,19 @@ class FixtureCoverageTests(unittest.TestCase):
                     self.assertIn(conflict["infrastructure"][0]["message"], stderr.getvalue())
 
     def test_scoped_execution_skips_enumeration_and_rejected_proofs_still_scan_and_dispose(self):
+        import ci_execution_diagnostics as diagnostics
+        import strict_e2e_runner_support as support
         from types import SimpleNamespace
         from test_ci_summary import discovery_summary
         from ci_summary import observation, parse_summary
         from ci_verdict import parse_policy
         for raw, shape in ((0, "complete"), (0, "expected-skip"), (65, "missing-export"), (124, "empty"),
-                           (0, "empty"), (65, "complete"), (65, "unknown"), (65, "malformed"), (2, "launch")):
+                           (0, "empty"), (65, "complete"), (65, "unknown"), (65, "malformed"), (2, "launch"),
+                           (0, "diagnostics-exhausted"), (0, "diagnostics-missing")):
+            diagnostic_mode = shape if shape.startswith("diagnostics-") else None
             with self.subTest(raw=raw, shape=shape), tempfile.TemporaryDirectory() as directory:
+                if diagnostic_mode:
+                    shape = "complete"
                 root = Path(directory, "checkout").resolve()
                 root.mkdir()
                 output, work = Path(directory, "output"), Path(directory, "private")
@@ -395,6 +401,9 @@ class FixtureCoverageTests(unittest.TestCase):
                     return SimpleNamespace(returncode=0, stdout=b"{}")
                 stderr = io.StringIO()
                 with contextlib.ExitStack() as stack:
+                    recorder = stack.enter_context(diagnostics.session())
+                    if diagnostic_mode == "diagnostics-exhausted":
+                        recorder.charged["fixture"] = diagnostics.COLLECTION_BUDGET_SECONDS["fixture"]
                     stack.enter_context(patch.dict(os.environ, {"GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1"}))
                     for name, value in (("ROOT", root), ("run_identity", seed["identity"]),
                                         ("source_metadata", (".github/workflows/ci-ui.yml", False)),
@@ -407,6 +416,9 @@ class FixtureCoverageTests(unittest.TestCase):
                                         ("read_xcode_observations", observed), ("read_problem_reason", "Candidate skip"),
                                         ("stop_exact_process", None)):
                         stack.enter_context(patch.object(runner, name, value if name == "ROOT" else unittest.mock.Mock(return_value=value)))
+                    if diagnostic_mode:
+                        stack.enter_context(patch.object(support, "_wait_for_service", return_value=("127.0.0.1", 1234)))
+                        stack.enter_context(patch.object(runner, "wait_for_service", wraps=support.wait_for_service))
                     stack.enter_context(patch.object(runner.subprocess, "Popen", side_effect=process))
                     stack.enter_context(patch.object(runner.subprocess, "run", side_effect=run))
                     stack.enter_context(patch.object(runner, "prepare_simulator", side_effect=gate))
@@ -419,7 +431,8 @@ class FixtureCoverageTests(unittest.TestCase):
                     runner.reset_simulator_app.assert_called_once_with("target", boot_submitted=True)
                     runner.wait_for_service.assert_called_once_with(work / "ready.json", unittest.mock.ANY,
                                                                     startup_log=work / "service.log",
-                                                                    diagnostics_path=work / "service-diagnostics.log")
+                                                                    diagnostics_path=None if diagnostic_mode == "diagnostics-exhausted"
+                                                                    else work / "service-diagnostics.log")
                 self.assertEqual(len(inventory_calls), 2)
                 tests = [command for command in commands if command[0] == "xcodebuild"]
                 self.assertEqual(len(tests), 1)
@@ -429,6 +442,13 @@ class FixtureCoverageTests(unittest.TestCase):
                 dispose.assert_called_once()
                 self.assertEqual(code, 0 if raw == 0 and shape in {"complete", "expected-skip"} else raw or 1)
                 result = json.loads((output / "summary.json").read_text())
+                if diagnostic_mode:
+                    collection = result["bounded_diagnostics"]["collection_seconds"]["fixture"]
+                    if diagnostic_mode == "diagnostics-exhausted":
+                        self.assertIsInstance(collection, (int, float))
+                    else:
+                        self.assertIsNone(collection)
+                    self.assertTrue(result["bounded_diagnostics"]["truncated"])
                 self.assertEqual(result["compiled_evidence"]["first_exit_code"], raw)
                 self.assertEqual(result["status"], "passed" if code == 0 else "failed")
                 if shape in {"missing-export", "launch"} or raw == 124 or code == 0:

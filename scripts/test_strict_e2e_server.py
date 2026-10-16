@@ -240,7 +240,7 @@ class StrictE2EServerContractTests(unittest.TestCase):
                 path = Path(directory) / "diagnostics.log"
                 if mode == "exhausted":
                     recorder.charged["fixture"] = 2
-                env = diagnostics.fixture_environment({}, path) if mode != "default" else {
+                env = diagnostics.fixture_environment({}, path)[0] if mode != "default" else {
                     strict_e2e_server.DIAGNOSTIC_FILE_ENV: str(path)}
                 with mock.patch.dict(os.environ, env, clear=True), \
                         mock.patch.object(strict_e2e_server.time, "perf_counter", return_value=0), \
@@ -252,13 +252,14 @@ class StrictE2EServerContractTests(unittest.TestCase):
                                     for line in path.read_text().splitlines() if line.startswith("fixture-collection-seconds: ")]
                     self.assertAlmostEqual(0.02, measurements[-1], msg="include the final write and drain reservations")
                     allowance = float(env["IMMICHSLIDES_FIXTURE_DIAGNOSTIC_SECONDS"])
+                    self.assertEqual(diagnostics.FIXTURE_EMISSION_CAP_SECONDS, allowance)
                     recorder.fixture_log(path)
                     self.assertFalse(recorder.truncated)
                     # A second service must share the first service's charge, not reset it.
                     self.assertGreaterEqual(recorder.charged["fixture"], allowance)
                     allowances = [allowance]
                     for _ in range(12):
-                        following = diagnostics.fixture_environment({}, Path(directory) / "next.log")
+                        following, _ = diagnostics.fixture_environment({}, Path(directory) / "next.log")
                         allowances.append(float(following["IMMICHSLIDES_FIXTURE_DIAGNOSTIC_SECONDS"]))
                     self.assertLessEqual(sum(allowances), diagnostics.COLLECTION_BUDGET_SECONDS["fixture"]
                                          - diagnostics.FIXTURE_HARVEST_RESERVE_SECONDS)
@@ -307,19 +308,17 @@ class StrictE2EServerContractTests(unittest.TestCase):
                 mock.patch.dict(diagnostics.COLLECTION_BUDGET_SECONDS, {"fixture": budget}), \
                 mock.patch.object(support, "_wait_for_service", return_value=("127.0.0.1", 42)):
             path = Path(directory) / "first.log"
-            first = diagnostics.fixture_environment({}, path)
+            first, harvest_path = diagnostics.fixture_environment({}, path)
             self.assertGreater(float(first[strict_e2e_server.DIAGNOSTIC_BUDGET_ENV]), 0)
             path.write_text("fixture-collection-seconds: 0.01\nfixture-collection-completed: true\n")
-            support.wait_for_service(Path("unused"), mock.Mock(), diagnostics_path=Path(first[strict_e2e_server.DIAGNOSTIC_FILE_ENV]))
+            support.wait_for_service(Path("unused"), mock.Mock(), diagnostics_path=harvest_path)
             previous = recorder.cost["fixture"]
             # Even a stale inherited file variable must disappear with a zero grant.
-            second = diagnostics.fixture_environment(first, Path(directory) / "missing.log")
+            second, harvest_path = diagnostics.fixture_environment(first, Path(directory) / "missing.log")
             self.assertEqual(0, float(second[strict_e2e_server.DIAGNOSTIC_BUDGET_ENV]))
             self.assertNotIn(strict_e2e_server.DIAGNOSTIC_FILE_ENV, second)
-            with mock.patch.object(recorder, "fixture_log", wraps=recorder.fixture_log) as harvest:
-                support.wait_for_service(Path("unused"), mock.Mock(), diagnostics_path=
-                    Path(second[strict_e2e_server.DIAGNOSTIC_FILE_ENV]) if strict_e2e_server.DIAGNOSTIC_FILE_ENV in second else None)
-                harvest.assert_not_called()
+            self.assertIsNone(harvest_path)
+            support.wait_for_service(Path("unused"), mock.Mock(), diagnostics_path=harvest_path)
             self.assertEqual(previous, recorder.receipt()["collection_seconds"]["fixture"])
             self.assertTrue(recorder.truncated)
 
@@ -328,7 +327,7 @@ class StrictE2EServerContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, diagnostics.session() as recorder:
             path = Path(directory) / "diagnostics.log"
             recorder.charged["fixture"] = 1.67
-            env = diagnostics.fixture_environment({}, path)
+            env, _ = diagnostics.fixture_environment({}, path)
             self.assertEqual(0, float(env[strict_e2e_server.DIAGNOSTIC_BUDGET_ENV]))
             self.assertTrue(recorder.truncated)
             env[strict_e2e_server.DIAGNOSTIC_BUDGET_ENV] = "0.03"

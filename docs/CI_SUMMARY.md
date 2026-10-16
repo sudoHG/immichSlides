@@ -168,7 +168,14 @@ unused time in memory. Writes first persist the conservative balance, then
 persist a refund within the same worker deadline, reserving up to 10 ms for
 that final write. A failed or late refund leaves the conservative balance.
 The pool's unused reservation stays held for the job; only measured time
-enters collection costs. A child whose reservation fails skips its exit save.
+enters collection costs. A child whose reservation fails skips its normal exit
+save. Instead it attempts a capped write of its loaded receipt with truncation
+set and the original scope allowances unchanged; IO still spends the shared
+pool. If that write also fails, the prior disk receipt remains authoritative.
+Each write uses a distinct temporary file, including overlapping timed-out workers.
+The refund deadline check precedes atomic replacement: a scheduling pause between
+them can commit after the caller times out. That window can undercount up to
+about 0.09 s per late commit; the caller still waits at most its 0.1 s IO cap.
 Exhausting preparation sampling never gates persistence of Xcode or fixture
 events. Start samples leave 0.5 s for anomaly sampling; the IO pool has its own
 exhaustion/truncation boundary rather than borrowing another scope's budget.
@@ -202,8 +209,14 @@ Every process sample has a 0.25 s cap, with 0.08 s subprocess deadlines; public
 Xcode progress reads have a 0.1 s cap, and fixture log reads have a
 0.25 s cap. Capped daemon workers prevent a stuck diagnostic from blocking the
 runner. Retention and cumulative collection budgets stop additional work and
-mark truncation. Fixture writes run on a single daemon outside the ready path;
-each write has a 10 ms CPU allowance and no synchronous ready-path IO wait.
+mark truncation.
+The first truncation per process also starts a best-effort, non-waited stderr
+write: `bounded-diagnostics truncated: <reason>`. Reasons come from a closed set
+of collection/IO/fixture/retention code paths and inherited truncation; the line
+contains no values or paths and is never added to records. A blocked log writer
+cannot delay the runner, and an already-running writer may outlive collection.
+Fixture writes run on a single daemon outside the ready path; each write has a
+10 ms CPU allowance and no synchronous ready-path IO wait.
 Server drain waits are capped at 10 ms after service exit or failure is
 decided; sealing the writer before health serving never waits. After the health
 decision the parent allows up to 10 ms for the completion line inside its capped

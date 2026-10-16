@@ -253,9 +253,10 @@ import run_strict_e2e as strict_runner
 class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
     def test_service_failure_exposes_private_startup_phase_for_either_server(self):
         import contextlib
+        import ci_execution_diagnostics as diagnostics
         import strict_e2e_runner_support as support
-        for failed_server in (1, 2):
-            with self.subTest(failed_server=failed_server), tempfile.TemporaryDirectory() as raw:
+        for failed_server, exhausted in ((1, False), (2, False), (1, True), (2, True)):
+            with self.subTest(failed_server=failed_server, exhausted=exhausted), tempfile.TemporaryDirectory() as raw:
                 evidence = Path(raw) / "evidence"
                 logs = []
                 def launch(command, **kwargs):
@@ -274,11 +275,19 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                     if len(logs) == failed_server:
                         raise CommandError("Test service health check timed out (last_state=ready-file-missing).")
                     return "127.0.0.1", 1234
-                with mock.patch("run_strict_e2e.subprocess.Popen", side_effect=launch), \
+                with diagnostics.session() as recorder, mock.patch("run_strict_e2e.subprocess.Popen", side_effect=launch), \
                         mock.patch.object(support, "_wait_for_service", side_effect=wait), \
+                        mock.patch("run_strict_e2e.wait_for_service", wraps=support.wait_for_service) as harvest, \
                         contextlib.redirect_stdout(io.StringIO()):
+                    if exhausted:
+                        recorder.charged["fixture"] = diagnostics.COLLECTION_BUDGET_SECONDS["fixture"]
                     code, _, stderr, _ = self._run_p2_main(
                         evidence, suite="filter-switch", platform="ios", model="iPhone")
+                    expected_paths = [None] * failed_server if exhausted else [
+                        evidence / "service-diagnostics.log", evidence / "service-b-diagnostics.log"][:failed_server]
+                    self.assertEqual(expected_paths, [call.kwargs["diagnostics_path"] for call in harvest.call_args_list])
+                    if exhausted:
+                        self.assertIsInstance(recorder.receipt()["collection_seconds"]["fixture"], (int, float))
                 self.assertEqual(code, 2, stderr)
                 phase = "fixture-build" if failed_server == 1 else "bind"
                 self.assertIn(f"CommandError: Test service health check timed out (last_state=ready-file-missing). "
@@ -1656,19 +1665,55 @@ class StrictCITracerTests(unittest.TestCase):
         self.assertAlmostEqual(0.005, recorder.cost["preparation"])
         self.assertFalse(recorder.truncated)
 
+    def test_truncation_logs_one_closed_reason_per_process_without_private_values(self):
+        import ci_execution_diagnostics as diagnostics
+        from types import SimpleNamespace
+        reasons = {"collection-budget-exhausted", "sample-timeout", "collection-timeout", "worker-unavailable",
+                   "event-budget-exhausted", "event-cap", "io-pool-exhausted", "io-timeout", "ledger-unavailable",
+                   "reserve-failed", "fixture-read-unavailable", "fixture-emitter-truncated",
+                   "fixture-completion-missing", "fixture-allowance-below-minimum", "inherited"}
+        self.assertEqual(reasons, diagnostics.TRUNCATION_REASONS)
+        for reason in sorted(reasons):
+            with self.subTest(reason=reason), mock.patch.object(diagnostics, "_TRUNCATION_REPORTED", False), \
+                    mock.patch.object(diagnostics.threading, "Thread", side_effect=lambda *, target, daemon: SimpleNamespace(start=target)), \
+                    mock.patch.object(diagnostics.sys, "stderr", io.StringIO()) as stderr:
+                first, second = diagnostics.Recorder(), diagnostics.Recorder()
+                first.truncate("private-input /private/path")
+                self.assertEqual("", stderr.getvalue())
+                first.truncate(reason)
+                second.truncate("inherited")
+                first.truncate(reason)
+                self.assertEqual("bounded-diagnostics truncated: " + reason + "\n", stderr.getvalue())
+                self.assertTrue(first.truncated)
+                self.assertTrue(second.truncated)
+
     def test_failed_child_reservation_preserves_the_previous_ledger(self):
         import ci_execution_diagnostics as diagnostics
         with tempfile.TemporaryDirectory() as raw:
             path = Path(raw) / "job.json"
             with diagnostics.session(path) as recorder:
                 recorder.event("preparation", "simulator-preparation", "completed", 1)
-            previous = path.read_bytes()
-            with mock.patch.object(diagnostics.Recorder, "_write", return_value=False) as write:
+            previous = json.loads(path.read_text())
+            original_write = Path.write_text
+            writes = []
+            def fail_reserve(target, *args, **kwargs):
+                writes.append(target)
+                if len(writes) == 1:
+                    raise OSError("reserve write failed")
+                return original_write(target, *args, **kwargs)
+            with mock.patch.object(Path, "write_text", fail_reserve), \
+                    mock.patch.object(diagnostics.Recorder, "save", autospec=True) as save:
                 with diagnostics.session(path, reuse=True) as child:
                     self.assertTrue(child.truncated)
                     self.assertEqual(diagnostics.COLLECTION_BUDGET_SECONDS, child.charged)
-                write.assert_called_once()
-            self.assertEqual(previous, path.read_bytes())
+                save.assert_not_called()
+            restored = json.loads(path.read_text())
+            self.assertEqual(previous["remaining_seconds"], restored["remaining_seconds"])
+            self.assertEqual(previous["receipt"]["collection_seconds"], restored["receipt"]["collection_seconds"])
+            self.assertLessEqual(restored["ledger_remaining_seconds"], previous["ledger_remaining_seconds"])
+            successor = diagnostics.Recorder()
+            successor.load(path)
+            self.assertTrue(successor.truncated)
 
     def test_failed_refund_write_keeps_the_conservative_ledger_balance(self):
         import ci_execution_diagnostics as diagnostics
@@ -1688,10 +1733,36 @@ class StrictCITracerTests(unittest.TestCase):
                     return original_write(target, *args, **kwargs)
                 with mock.patch.object(Path, "write_text", write), \
                         mock.patch.object(diagnostics.time, "perf_counter", side_effect=lambda: clock[0]):
-                    recorder.save(path)
+                    ledger = {"receipt": recorder.receipt(), "remaining_seconds": {
+                        scope: budget - recorder.charged[scope] for scope, budget in diagnostics.COLLECTION_BUDGET_SECONDS.items()}}
+                    self.assertIs(recorder._write(path, ledger), True)
                 self.assertEqual(2, len(calls))
                 self.assertAlmostEqual(diagnostics.LEDGER_ALLOWANCE_SECONDS - diagnostics.LEDGER_IO_CAP_SECONDS,
                                        json.loads(path.read_text())["ledger_remaining_seconds"])
+
+    def test_interleaved_ledger_writers_cannot_replace_or_remove_each_others_temporary_file(self):
+        import ci_execution_diagnostics as diagnostics
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "job.json"
+            first, second = diagnostics.Recorder(), diagnostics.Recorder()
+            first_ledger = {"receipt": first.receipt(), "remaining_seconds": dict(diagnostics.COLLECTION_BUDGET_SECONDS)}
+            second_ledger = {"receipt": second.receipt(), "remaining_seconds": dict(diagnostics.COLLECTION_BUDGET_SECONDS)}
+            second_ledger["receipt"]["truncated"] = True
+            original_replace = Path.replace
+            interleaved = []
+            def replace(temporary, destination):
+                if not interleaved:
+                    interleaved.append(True)
+                    self.assertIs(second._write(path, second_ledger), True)
+                return original_replace(temporary, destination)
+            # Run workers synchronously to pause the first at replace and
+            # finish the second writer without scheduler-dependent timing.
+            with mock.patch.object(diagnostics.threading, "Thread", side_effect=lambda *, target, daemon: SimpleNamespace(start=target)), \
+                    mock.patch.object(Path, "replace", replace):
+                self.assertIs(first._write(path, first_ledger), True)
+            self.assertEqual([True], interleaved)
+            self.assertFalse(json.loads(path.read_text())["receipt"]["truncated"])
 
     def test_serial_children_cannot_reuse_a_lost_diagnostic_allowance(self):
         import ci_execution_diagnostics as diagnostics
