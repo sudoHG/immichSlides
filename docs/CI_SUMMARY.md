@@ -163,11 +163,19 @@ share the job ledger: each reserves its remaining collection allowance before
 starting, then returns unused allowance after completion. Missing or invalid
 accounting disables further collection instead of granting another budget.
 Ledger IO has a separate 1.5 s pool reserved once within the 5 s preparation
-ceiling, with a 20 ms cap charged against that pool per read or write. Its unused
-reservation stays held for the job; only measured time enters collection costs.
+ceiling, with a 0.1 s cap precharged per read or write. Completed IO refunds
+unused time in memory. Writes first persist the conservative balance, then
+persist a refund within the same worker deadline, reserving up to 10 ms for
+that final write. A failed or late refund leaves the conservative balance.
+The pool's unused reservation stays held for the job; only measured time
+enters collection costs. A child whose reservation fails skips its exit save.
 Exhausting preparation sampling never gates persistence of Xcode or fixture
 events. Start samples leave 0.5 s for anomaly sampling; the IO pool has its own
 exhaustion/truncation boundary rather than borrowing another scope's budget.
+A fresh process must read the ledger before learning that its inherited IO
+pool is exhausted. That first read can consume up to 0.1 s outside the exhausted
+pool's accounting; subsequent IO in that process is disabled. Long local runs
+can repeat this overhead across new children after exhaustion.
 The internal ledger stores the public receipt and remaining numeric allowances;
 allowances are distinct from observed `collection_seconds`. A lost child's
 collection measurements remain null rather than treating its reservation as an
@@ -183,7 +191,10 @@ distinct from `hashes.manifests.fixture-c`, the generated manifest digest, and
 are not independently bound to that manifest by the reader. Cached deepcopies
 and nested fixture-set generation do not create duplicate generation envelopes.
 Allowances below 0.04 s (the server minimum plus the early import write) are
-disabled and marked truncated. A completion line seals the asynchronous file;
+disabled and marked truncated. A zero grant removes the diagnostic file variable
+and skips harvesting; earlier measured fixture costs remain numeric. A missing
+file after a positive grant makes fixture collection unavailable.
+A completion line seals the asynchronous file;
 a missing completion line also marks truncation. Failure messages retain the
 synchronous stdout phase and append the finer diagnostic phase separately.
 

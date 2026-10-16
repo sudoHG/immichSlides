@@ -251,16 +251,17 @@ class StrictE2EServerContractTests(unittest.TestCase):
                     measurements = [float(line.removeprefix("fixture-collection-seconds: "))
                                     for line in path.read_text().splitlines() if line.startswith("fixture-collection-seconds: ")]
                     self.assertAlmostEqual(0.02, measurements[-1], msg="include the final write and drain reservations")
-                    self.assertEqual(0.2, float(env["IMMICHSLIDES_FIXTURE_DIAGNOSTIC_SECONDS"]))
+                    allowance = float(env["IMMICHSLIDES_FIXTURE_DIAGNOSTIC_SECONDS"])
                     recorder.fixture_log(path)
                     self.assertFalse(recorder.truncated)
                     # A second service must share the first service's charge, not reset it.
-                    self.assertGreaterEqual(recorder.charged["fixture"], 0.2)
-                    allowances = [float(env["IMMICHSLIDES_FIXTURE_DIAGNOSTIC_SECONDS"])]
+                    self.assertGreaterEqual(recorder.charged["fixture"], allowance)
+                    allowances = [allowance]
                     for _ in range(12):
                         following = diagnostics.fixture_environment({}, Path(directory) / "next.log")
                         allowances.append(float(following["IMMICHSLIDES_FIXTURE_DIAGNOSTIC_SECONDS"]))
-                    self.assertLessEqual(sum(allowances), 1.7)
+                    self.assertLessEqual(sum(allowances), diagnostics.COLLECTION_BUDGET_SECONDS["fixture"]
+                                         - diagnostics.FIXTURE_HARVEST_RESERVE_SECONDS)
                     self.assertEqual(0, allowances[-1])
                     self.assertTrue(recorder.truncated)
                 elif mode == "exhausted":
@@ -297,6 +298,30 @@ class StrictE2EServerContractTests(unittest.TestCase):
                     gate.set()
                     for reporter in reporters:
                         self.assertTrue(reporter.done.wait(10), "release the injected IO stall before test cleanup")
+
+    def test_zero_allowance_service_does_not_invalidate_previous_fixture_measurements(self):
+        import ci_execution_diagnostics as diagnostics
+        import strict_e2e_runner_support as support
+        budget = diagnostics.FIXTURE_EMISSION_CAP_SECONDS + diagnostics.FIXTURE_HARVEST_RESERVE_SECONDS
+        with tempfile.TemporaryDirectory() as directory, diagnostics.session() as recorder, \
+                mock.patch.dict(diagnostics.COLLECTION_BUDGET_SECONDS, {"fixture": budget}), \
+                mock.patch.object(support, "_wait_for_service", return_value=("127.0.0.1", 42)):
+            path = Path(directory) / "first.log"
+            first = diagnostics.fixture_environment({}, path)
+            self.assertGreater(float(first[strict_e2e_server.DIAGNOSTIC_BUDGET_ENV]), 0)
+            path.write_text("fixture-collection-seconds: 0.01\nfixture-collection-completed: true\n")
+            support.wait_for_service(Path("unused"), mock.Mock(), diagnostics_path=Path(first[strict_e2e_server.DIAGNOSTIC_FILE_ENV]))
+            previous = recorder.cost["fixture"]
+            # Even a stale inherited file variable must disappear with a zero grant.
+            second = diagnostics.fixture_environment(first, Path(directory) / "missing.log")
+            self.assertEqual(0, float(second[strict_e2e_server.DIAGNOSTIC_BUDGET_ENV]))
+            self.assertNotIn(strict_e2e_server.DIAGNOSTIC_FILE_ENV, second)
+            with mock.patch.object(recorder, "fixture_log", wraps=recorder.fixture_log) as harvest:
+                support.wait_for_service(Path("unused"), mock.Mock(), diagnostics_path=
+                    Path(second[strict_e2e_server.DIAGNOSTIC_FILE_ENV]) if strict_e2e_server.DIAGNOSTIC_FILE_ENV in second else None)
+                harvest.assert_not_called()
+            self.assertEqual(previous, recorder.receipt()["collection_seconds"]["fixture"])
+            self.assertTrue(recorder.truncated)
 
     def test_insufficient_fixture_allowance_disables_import_and_marks_missing_completion(self):
         import ci_execution_diagnostics as diagnostics

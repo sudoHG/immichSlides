@@ -850,6 +850,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         if starts_service:
             service_startup_path = arguments.evidence_dir / "service-startup.log"
             service_diagnostics_path = arguments.evidence_dir / "service-diagnostics.log"
+            service_environment = fixture_environment(os.environ, service_diagnostics_path)
             with open(service_startup_path, "wb", opener=lambda path, flags: os.open(path, flags, 0o600)) as log:
                 service_process = subprocess.Popen(
                     [
@@ -869,18 +870,19 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                         str(service_log_path),
                     ],
                     cwd=REPO_ROOT,
-                    env=fixture_environment(os.environ, service_diagnostics_path),
+                    env=service_environment,
                     stdout=log,
                     stderr=subprocess.DEVNULL,
                 )
             host, port = wait_for_service(ready_path, service_process, startup_log=service_startup_path,
-                                          diagnostics_path=service_diagnostics_path)
+                                          diagnostics_path=service_diagnostics_path if "IMMICHSLIDES_FIXTURE_DIAGNOSTIC_FILE" in service_environment else None)
             server_url = f"http://{host}:{port}/api"
             if arguments.suite in DUAL_SERVER_SUITES:
                 ready_b = arguments.evidence_dir / "service-b-ready.json"
                 service_log_b_path = arguments.evidence_dir / "service-b.log"
                 service_startup_b_path = arguments.evidence_dir / "service-b-startup.log"
                 service_diagnostics_b_path = arguments.evidence_dir / "service-b-diagnostics.log"
+                service_environment_b = fixture_environment(os.environ, service_diagnostics_b_path)
                 with open(service_startup_b_path, "wb", opener=lambda path, flags: os.open(path, flags, 0o600)) as log:
                     service_process_b = subprocess.Popen(
                         [
@@ -900,12 +902,12 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                             str(service_log_b_path),
                         ],
                         cwd=REPO_ROOT,
-                        env=fixture_environment(os.environ, service_diagnostics_b_path),
+                        env=service_environment_b,
                         stdout=log,
                         stderr=subprocess.DEVNULL,
                     )
                 host_b, port_b = wait_for_service(ready_b, service_process_b, startup_log=service_startup_b_path,
-                                                  diagnostics_path=service_diagnostics_b_path)
+                                                  diagnostics_path=service_diagnostics_b_path if "IMMICHSLIDES_FIXTURE_DIAGNOSTIC_FILE" in service_environment_b else None)
                 server_url_b = f"http://{host_b}:{port_b}/api"
         else:
             server_url, unreachable_reservation = reserve_unreachable_server_url()

@@ -1520,10 +1520,13 @@ class StrictCITracerTests(unittest.TestCase):
             self.assertEqual(["started", "completed"], [event["state"] for event in recorder.events])
             self.assertIsNone(recorder.events[0]["sample"])
             recorder.charged["preparation"] = 4.7
-            with mock.patch.object(diagnostics, "system_sample", return_value=sample) as collect:
-                support.prepare_simulator("unused", report=lambda line: None)
-                collect.assert_not_called()
-                self.assertEqual(sample, recorder.sample("preparation"))
+            with mock.patch.object(diagnostics, "system_sample", return_value=sample) as collect, \
+                    mock.patch.object(support, "boot_simulator", side_effect=support.InfrastructureTimeout("simulator-boot", 60)):
+                with self.assertRaisesRegex(support.InfrastructureTimeout, "simulator-boot timed out after 60.0s"):
+                    support.prepare_simulator("unused", report=lambda line: None)
+                self.assertEqual(["started", "timeout"], [event["state"] for event in recorder.events[-2:]])
+                self.assertIsNone(recorder.events[-2]["sample"])
+                self.assertEqual(sample, recorder.events[-1]["sample"])
                 collect.assert_called_once_with()
         recorder = diagnostics.Recorder()
         recorder.event("preparation", "simulator-preparation", "timeout", 0, sample=sample)
@@ -1549,6 +1552,16 @@ class StrictCITracerTests(unittest.TestCase):
                           ("simulator-bootstatus", "started"), ("simulator-bootstatus", "completed"),
                           ("simulator-container", "started"), ("simulator-container", "completed")],
                          [(event["phase"], event["state"]) for event in recorder.events])
+        with diagnostics.session() as recorder, mock.patch.object(support.subprocess, "run", return_value=
+                subprocess.CompletedProcess([], 149, "", "Unable to boot")):
+            with self.assertRaisesRegex(CommandError, r"Simulator boot failed \(exit 149\)"):
+                support.boot_simulator("unused", report=lambda line: None)
+            self.assertEqual([("simulator-boot", "started")], [(event["phase"], event["state"]) for event in recorder.events])
+        with diagnostics.session() as recorder, mock.patch.object(support.subprocess, "run", return_value=
+                subprocess.CompletedProcess([], 1, "", "Unable to read container")):
+            with self.assertRaisesRegex(CommandError, r"Could not determine whether the App container exists \(simctl get_app_container exit 1\)"):
+                support.simulator_app_container("unused", "public.bundle")
+            self.assertEqual([("simulator-container", "started")], [(event["phase"], event["state"]) for event in recorder.events])
 
     def test_fixture_harvest_includes_the_writer_completion_after_health_succeeds(self):
         import ci_execution_diagnostics as diagnostics
@@ -1618,15 +1631,67 @@ class StrictCITracerTests(unittest.TestCase):
             return False
         done = mock.Mock(wait=mock.Mock(side_effect=stalled))
         with mock.patch.object(diagnostics.threading, "Event", return_value=done), \
-                mock.patch.object(diagnostics.threading.Thread, "start"), \
+                mock.patch.object(diagnostics.threading.Thread, "start") as start, \
                 mock.patch.object(diagnostics.time, "perf_counter", side_effect=lambda: clock[0]):
             self.assertIsNone(recorder.ledger_io(lambda: True))
             done.wait.assert_called_once_with(0.015)
-            operation = mock.Mock()
-            self.assertIsNone(recorder.ledger_io(operation))
-            operation.assert_not_called()
+            start.reset_mock()
+            self.assertIsNone(recorder.ledger_io(lambda: True))
+            start.assert_not_called()
         self.assertEqual(0, recorder.ledger_remaining)
         self.assertTrue(recorder.truncated)
+
+    def test_completed_ledger_io_refunds_unused_precharge(self):
+        import ci_execution_diagnostics as diagnostics
+        recorder = diagnostics.Recorder()
+        clock = [0.0]
+        def operation():
+            self.assertAlmostEqual(diagnostics.LEDGER_ALLOWANCE_SECONDS - diagnostics.LEDGER_IO_CAP_SECONDS,
+                                   recorder.ledger_remaining, msg="precharge remains held until IO completes")
+            clock[0] += 0.005
+            return True
+        with mock.patch.object(diagnostics.time, "perf_counter", side_effect=lambda: clock[0]):
+            self.assertTrue(recorder.ledger_io(operation))
+        self.assertAlmostEqual(diagnostics.LEDGER_ALLOWANCE_SECONDS - 0.005, recorder.ledger_remaining)
+        self.assertAlmostEqual(0.005, recorder.cost["preparation"])
+        self.assertFalse(recorder.truncated)
+
+    def test_failed_child_reservation_preserves_the_previous_ledger(self):
+        import ci_execution_diagnostics as diagnostics
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "job.json"
+            with diagnostics.session(path) as recorder:
+                recorder.event("preparation", "simulator-preparation", "completed", 1)
+            previous = path.read_bytes()
+            with mock.patch.object(diagnostics.Recorder, "_write", return_value=False) as write:
+                with diagnostics.session(path, reuse=True) as child:
+                    self.assertTrue(child.truncated)
+                    self.assertEqual(diagnostics.COLLECTION_BUDGET_SECONDS, child.charged)
+                write.assert_called_once()
+            self.assertEqual(previous, path.read_bytes())
+
+    def test_failed_refund_write_keeps_the_conservative_ledger_balance(self):
+        import ci_execution_diagnostics as diagnostics
+        for failure in ("error", "late"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as raw:
+                recorder = diagnostics.Recorder()
+                path = Path(raw) / "job.json"
+                clock = [0.0]
+                original_write = Path.write_text
+                calls = []
+                def write(target, *args, **kwargs):
+                    calls.append(True)
+                    if len(calls) == 2:
+                        if failure == "error":
+                            raise OSError("refund write failed")
+                        clock[0] += diagnostics.LEDGER_REFUND_CAP_SECONDS + 0.001
+                    return original_write(target, *args, **kwargs)
+                with mock.patch.object(Path, "write_text", write), \
+                        mock.patch.object(diagnostics.time, "perf_counter", side_effect=lambda: clock[0]):
+                    recorder.save(path)
+                self.assertEqual(2, len(calls))
+                self.assertAlmostEqual(diagnostics.LEDGER_ALLOWANCE_SECONDS - diagnostics.LEDGER_IO_CAP_SECONDS,
+                                       json.loads(path.read_text())["ledger_remaining_seconds"])
 
     def test_serial_children_cannot_reuse_a_lost_diagnostic_allowance(self):
         import ci_execution_diagnostics as diagnostics
@@ -1648,8 +1713,15 @@ class StrictCITracerTests(unittest.TestCase):
                 self.assertTrue(successor.truncated)
             stale_reader = diagnostics.Recorder()
             stale_reader.ledger_remaining = 0.04
-            stale_reader.load(path)
-            stale_reader.load(path)
+            clock = [0.0]
+            original_open = Path.open
+            def slow_open(*args, **kwargs):
+                clock[0] += 0.02
+                return original_open(*args, **kwargs)
+            with mock.patch.object(Path, "open", slow_open), \
+                    mock.patch.object(diagnostics.time, "perf_counter", side_effect=lambda: clock[0]):
+                stale_reader.load(path)
+                stale_reader.load(path)
             operation = mock.Mock()
             stale_reader.ledger_io(operation)
             operation.assert_not_called()
@@ -1720,24 +1792,6 @@ class StrictCITracerTests(unittest.TestCase):
                         "nodeType": "Unit test bundle", "name": "immichSlidesUITests", "children": [{
                             "nodeType": "Test Case", "nodeIdentifier": "StrictE2ESmokeUITests/testIOSStrictE2EConnectionSmoke()",
                             "result": official_result}]}]}))
-                    import ci_execution_diagnostics as diagnostics
-                    receipt_path = Path(command[command.index("--diagnostics-receipt") + 1])
-                    # A six-case shard performs about thirty ledger saves before its last result.
-                    parent = diagnostics.Recorder()
-                    parent.load(receipt_path)
-                    parent.charged["preparation"] = 4
-                    for _ in range(30):
-                        parent.save(receipt_path)
-                    with diagnostics.session(receipt_path, reuse=True) as child:
-                        clock = [0.0]
-                        def stalled(seconds):
-                            clock[0] += seconds
-                            return False
-                        with mock.patch.object(diagnostics.threading, "Event", return_value=mock.Mock(wait=stalled)), \
-                                mock.patch.object(diagnostics.threading.Thread, "start"), \
-                                mock.patch.object(diagnostics.time, "perf_counter", side_effect=lambda: clock[0]):
-                            child.collect("preparation", lambda: None, cap=5)
-                        child.event("xcode", "test-execution", "timeout", child.next_sequence(), elapsed=600)
                     return 124 if infrastructure else 65
 
                 with mock.patch.object(tracer, "run_runner", side_effect=runner), mock.patch.object(tracer, "workspace_preflight"), \
@@ -1748,8 +1802,6 @@ class StrictCITracerTests(unittest.TestCase):
                     self.assertEqual(tracer.main(["--platform", "ios", "--destination", "unused", "--manifest", str(manifest),
                                                   "--output-dir", str(output)]), 1)
                 summary = json.loads((output / "records/summary.json").read_text())
-                self.assertEqual("timeout", summary["bounded_diagnostics"]["events"][-1]["state"])
-                self.assertEqual("xcode", summary["bounded_diagnostics"]["events"][-1]["scope"])
                 trace = json.loads((output / "records/trace.json").read_text())
                 self.assertEqual(summary["population"]["compiled"], summary["population"]["declared"])
                 self.assertEqual(summary["population"]["observed"][0]["outcome"], "failed")
@@ -1764,6 +1816,82 @@ class StrictCITracerTests(unittest.TestCase):
                 self.assertEqual(trace["warm"][0]["infrastructure"], infrastructure)
                 self.assertEqual(contract == "FAIL", trace["warm"][0]["automated_contract_failed"])
                 self.assertNotIn("private runner details", json.dumps(trace))
+
+    def test_six_case_nightly_shard_retains_its_last_child_timeout_without_truncation(self):
+        import run_strict_ci_tracer as tracer
+        import ci_execution_diagnostics as diagnostics
+        from ci_nightly import parse_manifest, shards
+        matrix = tracer.ROOT / "scripts/nightly-matrix.json"
+        selected = next(shard for shard in shards(parse_manifest(matrix.read_text()))
+                        if shard["id"] == "iphone-immichSlides-iOS-debug-0")
+        self.assertEqual(6, len(selected["cases"]))
+        identity = {"schema_version": 1, "event": "local", "repository": "sudoHG/immichSlides",
+                    "commit_sha": "0" * 40, "tree_sha": "0" * 40, "dirty": False}
+        warm = []
+        cold = []
+        io_count = []
+        clock = [0.0]
+        original_io = diagnostics.Recorder.ledger_io
+        def measured_io(recorder, operation):
+            def work():
+                io_count.append(operation.__name__)
+                clock[0] += 0.015
+                return operation()
+            return original_io(recorder, work)
+        def runner(command, *_args, **_kwargs):
+            receipt = Path(command[command.index("--diagnostics-receipt") + 1])
+            with diagnostics.session(receipt, reuse=True) as child:
+                if "--warm-up-only" in command:
+                    cold.append(command[command.index("--configuration") + 1])
+                    derived = Path(command[command.index("--derived-data-path") + 1])
+                    derived.mkdir(parents=True)
+                    (derived / "strict-warm-build.json").write_text(json.dumps({"signing_mode": "adhoc"}))
+                    return 0
+                warm.append(command[command.index("--suite") + 1])
+                last = len(warm) == len(selected["cases"])
+                if last:
+                    child.event("xcode", "test-execution", "timeout", child.next_sequence(), elapsed=600)
+                evidence = Path(command[command.index("--evidence-dir") + 1])
+                evidence.mkdir(parents=True)
+                (evidence / "xcodebuild.log").write_text("test-without-building\n")
+                (evidence / "xcodebuild-reuse.json").write_text(json.dumps({"products_unchanged": True}))
+                result = "Failed" if last else "Passed"
+                (evidence / "official-summary.json").write_text(json.dumps({"totalTestCount": 1,
+                    "passedTests": int(not last), "failedTests": int(last), "skippedTests": 0, "result": result}))
+                bundle, method = tracer.resolve_suite_selector("ios", warm[-1]).split("/", 1)
+                (evidence / "official-tests.json").write_text(json.dumps({"testNodes": [{
+                    "nodeType": "Unit test bundle", "name": bundle, "children": [{
+                    "nodeType": "Test Case", "nodeIdentifier": method + "()", "result": result}]}]}))
+                return 124 if last else 0
+        with tempfile.TemporaryDirectory() as raw, \
+                mock.patch.object(diagnostics.Recorder, "ledger_io", measured_io), \
+                mock.patch.object(diagnostics.time, "perf_counter", side_effect=lambda: clock[0]), \
+                mock.patch.object(tracer, "run_runner", side_effect=runner), mock.patch.object(tracer, "workspace_preflight"), \
+                mock.patch.object(tracer, "run_identity", return_value=identity), \
+                mock.patch.object(tracer, "source_metadata", return_value=(None, False)), \
+                mock.patch.object(tracer.shutil, "disk_usage", return_value=mock.Mock(total=200 * 1024**3, free=100 * 1024**3)), \
+                mock.patch.object(tracer, "toolchain", return_value={"versions": {"python": "test"}, "signing_mode": "not-applicable"}):
+            preparation = Path(raw) / "preparation.json"
+            with diagnostics.session(preparation):
+                pass
+            output = Path(raw) / "trace"
+            self.assertEqual(1, tracer.main(["--platform", "ios", "--destination", "unused", "--manifest", str(matrix),
+                "--shard", selected["id"], "--preparation-diagnostics", str(preparation), "--output-dir", str(output)]))
+            summary = json.loads((output / "records/summary.json").read_text())
+            self.assertEqual(["Debug"], cold)
+            self.assertEqual(6, len(warm))
+            # Six warm cases (9 IO each), one cold (5), preparation/start/final (7).
+            self.assertEqual(66, len(io_count))
+            self.assertEqual(["passed"] * 5 + ["failed"], [item["outcome"] for item in summary["population"]["observed"]])
+            receipt = summary["bounded_diagnostics"]
+            self.assertEqual([("xcode", "test-execution", "timeout")],
+                [(event["scope"], event["phase"], event["state"]) for event in receipt["events"]])
+            self.assertFalse(receipt["truncated"])
+            ledger = json.loads((output / "bounded-diagnostics.json").read_text())
+            self.assertGreater(ledger["ledger_remaining_seconds"], 0)
+            self.assertGreaterEqual(ledger["ledger_remaining_seconds"], diagnostics.LEDGER_ALLOWANCE_SECONDS - clock[0]
+                                    - io_count.count("write") * diagnostics.LEDGER_REFUND_CAP_SECONDS)
+            self.assertLess(ledger["ledger_remaining_seconds"], diagnostics.LEDGER_ALLOWANCE_SECONDS - clock[0])
 
     def test_official_export_rejects_another_selected_test_even_when_counts_match(self):
         from run_strict_ci_tracer import validate_case_export

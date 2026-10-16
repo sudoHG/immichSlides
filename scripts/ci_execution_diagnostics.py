@@ -33,7 +33,8 @@ FIXTURE_PREFIX = "fixture-diagnostic: "
 MAX_RECEIPT_BYTES = 512 * 1024
 BOOKKEEPING_RESERVE_SECONDS = 0.01
 LEDGER_ALLOWANCE_SECONDS = 1.5
-LEDGER_IO_CAP_SECONDS = 0.02
+LEDGER_IO_CAP_SECONDS = 0.1
+LEDGER_REFUND_CAP_SECONDS = 0.01
 ANOMALY_SAMPLE_RESERVE_SECONDS = 0.5
 SYSTEM_COMMAND_CAP_SECONDS = 0.08
 FIXTURE_EMISSION_CAP_SECONDS = 0.2
@@ -108,7 +109,7 @@ class Recorder:
         self.cost = {scope: 0.0 for scope in COLLECTION_BUDGET_SECONDS}
         self.charged = dict(self.cost)
         # One prepaid IO pool survives exhausted sampling scopes; each ledger
-        # operation spends at most 20 ms of it, including crashed writers.
+        # operation precharges its cap, including crashed writers.
         self.charged["preparation"] = LEDGER_ALLOWANCE_SECONDS
         self.ledger_remaining = LEDGER_ALLOWANCE_SECONDS
         self.unavailable = set()
@@ -204,7 +205,10 @@ class Recorder:
             finished = done.wait(max(0, limit - (time.perf_counter() - started)))
         except (OSError, RuntimeError):
             finished = False
-        self.cost["preparation"] += time.perf_counter() - started
+        elapsed = time.perf_counter() - started
+        self.cost["preparation"] += elapsed
+        if finished:
+            self.ledger_remaining += max(0, limit - elapsed)
         if not finished:
             self.truncated = True
         return values[0] if finished and values else None
@@ -267,32 +271,51 @@ class Recorder:
         receipt = self.receipt()
         if receipt is None:
             return
-        self._write(path, {"receipt": self.receipt(), "remaining_seconds": {
+        self._write(path, {"receipt": receipt, "remaining_seconds": {
             scope: max(0, budget - self.charged[scope]) for scope, budget in COLLECTION_BUDGET_SECONDS.items()}})
 
     def reserve(self, path):
         """Spend the loan durably before collecting; release unused time on exit."""
         receipt = self.receipt()
         if receipt is None:
-            return
+            return False
         receipt["collection_seconds"] = dict.fromkeys(COLLECTION_BUDGET_SECONDS, None)
         ledger = {"receipt": receipt, "remaining_seconds": dict.fromkeys(COLLECTION_BUDGET_SECONDS, 0)}
         if not self._write(path, ledger):
             self.charged = dict(COLLECTION_BUDGET_SECONDS)
             self.unavailable = set(COLLECTION_BUDGET_SECONDS)
             self.truncated = True
+            return False
+        return True
 
     def _write(self, path, receipt):
         cancelled = threading.Event()
         path = Path(path)
         temporary = path.with_name(path.name + "." + str(os.getpid()) + ".tmp")
+        started = time.perf_counter()
+        limit = min(LEDGER_IO_CAP_SECONDS, self.ledger_remaining)
         def write():
             try:
                 receipt["ledger_remaining_seconds"] = self.ledger_remaining
                 temporary.write_text(json.dumps(receipt, separators=(",", ":")) + "\n")
-                if not cancelled.is_set():
-                    temporary.replace(path)
-                    return True
+                if cancelled.is_set():
+                    return False
+                temporary.replace(path)
+                # Commit the refund only while its own tail allowance still
+                # covers the final write, inside the original IO deadline.
+                elapsed = time.perf_counter() - started
+                tail = min(LEDGER_REFUND_CAP_SECONDS, max(0, limit - elapsed))
+                refund = max(0, limit - elapsed - tail)
+                if refund > 0:
+                    deadline = time.perf_counter() + tail
+                    receipt["ledger_remaining_seconds"] += refund
+                    try:
+                        temporary.write_text(json.dumps(receipt, separators=(",", ":")) + "\n")
+                        if not cancelled.is_set() and time.perf_counter() <= deadline:
+                            temporary.replace(path)
+                    except (OSError, ValueError, TypeError):
+                        pass  # The conservative first write remains authoritative.
+                return True
             finally:
                 temporary.unlink(missing_ok=True)
         committed = self.ledger_io(write)
@@ -407,7 +430,9 @@ def fixture_environment(environment, path):
         recorder.charged["fixture"] += allowance
         recorder.truncated |= allowance == 0
     environment["IMMICHSLIDES_FIXTURE_DIAGNOSTIC_SECONDS"] = str(allowance)
-    environment["IMMICHSLIDES_FIXTURE_DIAGNOSTIC_FILE"] = str(path)
+    environment.pop("IMMICHSLIDES_FIXTURE_DIAGNOSTIC_FILE", None)
+    if allowance > 0:
+        environment["IMMICHSLIDES_FIXTURE_DIAGNOSTIC_FILE"] = str(path)
     return environment
 
 
@@ -417,14 +442,15 @@ def session(path=None, *, reuse=False):
         yield active()
         return
     recorder = Recorder()
+    can_save = True
     if reuse and path is not None:
         recorder.load(path)
-        recorder.reserve(path)
+        can_save = recorder.reserve(path)
     token = _ACTIVE.set(recorder)
     try:
         yield recorder
     finally:
-        if path is not None:
+        if path is not None and can_save:
             recorder.save(path)
         _ACTIVE.reset(token)
 
