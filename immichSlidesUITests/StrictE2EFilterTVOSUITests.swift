@@ -188,6 +188,21 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
             XCTFail("The tvOS filter flow must run on a tvOS Simulator.")
             return
         }
+        guard let evidenceDirectory = StrictE2EVisualEvidence.directory() else {
+            throw StrictE2EVisualEvidence.WriteError.missingDirectory
+        }
+        let manifest = try StrictE2EFilterContract.loadMemberManifest(from: evidenceDirectory)
+        guard
+            let targetAlbum = manifest["target_album"] as? [String: Any],
+            let targetAlbumID = targetAlbum["id"] as? String,
+            let nonTargetAlbum = manifest["non_target_album"] as? [String: Any],
+            let nonTargetAlbumID = nonTargetAlbum["id"] as? String,
+            let emptyAlbum = manifest["empty_album"] as? [String: Any],
+            let emptyAlbumID = emptyAlbum["id"] as? String
+        else {
+            throw StrictE2EFilterContract.AssertionError.message(
+                "member manifest is missing the target, non-target or empty album ID")
+        }
         let input = try requireStrictE2EInput()
         let emptyCopy = "当前筛选条件没有找到可播放照片，请换一组相册或人物再试。"
         let app = try launchStrictE2EApp()
@@ -212,7 +227,7 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
             name: "empty-selection.json"
         )
 
-        try selectAlbum(app: app, albumID: "album-a-target", neighborID: "album-a-non-target")
+        try selectAlbum(app: app, albumID: targetAlbumID, neighborID: nonTargetAlbumID)
         XCTAssertTrue(
             start.waitForExistence(timeout: TestWait.seconds(.product(8))) && start.isEnabled,
             "Start Playback must be enabled after selecting the target album.")
@@ -223,7 +238,7 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
         try capturePausedPlaybackPNGs(app: app, names: ["album-play-1", "album-play-2"])
 
         try openFilterEditorFromPlaybackSettings(app: app)
-        try isolateAndSelectEmptyAlbum(app: app, emptyAlbumID: "album-a-empty", neighborID: "album-a-target")
+        try isolateAndSelectEmptyAlbum(app: app, emptyAlbumID: emptyAlbumID, neighborID: targetAlbumID)
         let editorStart = app.buttons["filterSummary.startPlayback.button"]
         let didObserveStart = editorStart.exists
         // The Settings filter editor does not present Start Playback; record that explicitly, never as a disabled button.
@@ -239,7 +254,7 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
         XCTAssertEqual(emptyLabel.label, emptyCopy)
         try StrictE2EVisualEvidence.writeRequiredJSON(
             [
-                "album_id": "album-a-empty",
+                "album_id": emptyAlbumID,
                 "start_enabled": startEnabledAfterEmpty,
                 "start_button_observed": didObserveStart,
                 "empty_copy": emptyLabel.label,
