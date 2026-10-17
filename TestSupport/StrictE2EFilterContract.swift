@@ -99,7 +99,7 @@ enum StrictE2EFilterContract {
     // Hashes cover every public fixture field, including B's expanded ordinary target pool.
     static let frozenFixtureSHA256: [String: String] = [
         "a": "44f9dc4b144e5fcc5dd14a98b76ba1bf1ca8829648555aebe738c3e2b3048989",
-        "b": "74fdc0b91305523628bea46fb7873a4cf6a589ed6f695974a8db11539e6a5947"
+        "b": "1a73818341ca101fffa165c127dc83b533482347952cd802abf741538e0066aa"
     ]
 
     static func loadMemberManifest(from directory: URL) throws -> [String: Any] {

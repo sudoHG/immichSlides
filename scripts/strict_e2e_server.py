@@ -149,9 +149,9 @@ def _cached_fixture_data(name: str) -> dict[str, Any]:
         png_dimensions += [(320, 180), (180, 320), (300, 300)]
     # Each added identity keeps its own white-antialias trajectory, away from old hue pairs.
     additional_palettes = {
-        6: ((180, 110, 250), (215, 110, 250)),
-        7: ((250, 110, 250), (250, 110, 215)),
-        8: ((250, 110, 180), (250, 110, 145)),
+        6: ((180, 120, 250), (215, 120, 250)),
+        7: ((225, 120, 210), (225, 120, 175)),
+        8: ((185, 120, 200), (185, 120, 165)),
     }
     original_dimension_scale = 12
     delays = [LEGACY_FIXTURE_DELAY_MS, 0, 0, 0, 0]

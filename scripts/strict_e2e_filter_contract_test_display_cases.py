@@ -23,6 +23,7 @@ from strict_e2e_filter_contract_test_fixtures import (
     ImageFilter,
     ImageOps,
     PUBLIC_API_KEY,
+    PUBLIC_APP_CHROME_SAMPLES,
     Path,
     RunningServer,
     SCRIPT_DIR,
@@ -552,6 +553,13 @@ print(String(data: try JSONSerialization.data(withJSONObject: report), encoding:
                             path = directory / f"b-pair-{added}-{existing}-{horizontal}-slot-{slot}.png"
                             scene.crop(box).save(path)
                             cases.append((path, path.read_bytes(), f"A{index}", False, False))
+            for name, (_, _, colors) in PUBLIC_APP_CHROME_SAMPLES.items():
+                scene = Image.new("RGB", (320, len(colors) * 10))
+                for row, color in enumerate(colors):
+                    scene.paste(color, (0, row * 10, 320, row * 10 + 10))
+                path = directory / f"chrome-{name}-slot-colors.png"
+                scene.save(path)
+                cases.append((path, path.read_bytes(), None, False, False))
             arguments = [argument for path, _, mark, regions, _ in cases for argument in (
                 str(path), "slot" if "-slot-" in path.name else "regions" if regions else "single")]
             result = subprocess.run([str(executable), str(directory), *arguments],

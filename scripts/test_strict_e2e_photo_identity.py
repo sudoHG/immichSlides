@@ -36,6 +36,7 @@ from strict_e2e_photo_identity import (  # noqa: E402
 )
 from strict_e2e_server import GLYPHS, _fixture_data, _png as fixture_png  # noqa: E402
 from test_album_server_narrow_contract import IPHONE_SCREEN  # noqa: E402
+from strict_e2e_filter_contract_test_fixtures import PUBLIC_APP_CHROME_SAMPLES  # noqa: E402
 
 
 REVIEWED_SCREENSHOT_RELATIVE_PATHS = (
@@ -244,6 +245,20 @@ class FrameGlyphBoundaryTests(unittest.TestCase):
                             with self.assertRaisesRegex(IdentityAssertionError, r"^mixed public glyphs; 2 slots \((?:horizontal|vertical)\)$"):
                                 public_frame_photos_from_bytes(self._pair("b", added, existing,
                                                                          horizontal=horizontal, second_fixture="a"))
+        for name, (_, _, colors) in PUBLIC_APP_CHROME_SAMPLES.items():
+            with self.subTest(real_app_chrome=name):
+                chrome = Image.new("RGB", (320, len(colors) * 10))
+                draw = ImageDraw.Draw(chrome)
+                for row, color in enumerate(colors):
+                    draw.rectangle((0, row * 10, 319, row * 10 + 9), fill=color)
+                self.assertNotIn(classify_screenshot(_png(chrome)).mark, ("A6", "A7", "A8"))
+        with self.subTest(measured_ipad_control_bar=True):
+            scene = Image.open(io.BytesIO(self._pair("b", 6, 3, horizontal=False))).convert("RGB")
+            # Measured B6+B3 capture: preserve the bar position and sampled glass RGB.
+            ImageDraw.Draw(scene).rounded_rectangle((477, 2164, 1163, 2245), radius=40,
+                                                   fill=PUBLIC_APP_CHROME_SAMPLES["ipad-glass"][2][0])
+            photos = public_frame_photos_from_bytes(_png(scene))
+            self.assertEqual([(photo.letter, photo.mark) for photo in photos], [("B", "A6"), ("B", "A3")])
         for asset_id, source in _fixture_data("c")["images"].items():
             with self.subTest(foreign=asset_id):
                 image = Image.open(io.BytesIO(source)).convert("RGB")
