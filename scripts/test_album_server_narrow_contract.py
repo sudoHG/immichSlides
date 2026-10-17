@@ -1042,6 +1042,27 @@ class ABMixTests(unittest.TestCase):
 
     def test_server_switch_pack_with_side_by_side_b_playback_passes(self) -> None:
         from test_strict_e2e_photo_identity import FrameGlyphBoundaryTests
+        with self.subTest(shape="native iPad B6+B3 with control bevel"), tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            _write_server_switch_pass(directory)
+            frame = Image.open(io.BytesIO(_stacked_album_frame("b", top_mark="A6"))).convert("RGB")
+            # Native SHA 19c553410f9c4da9aea326a63f30af9b655c392a6b7695c31ec06017c4396ff6:
+            # sampled row 629 crosses the B3 stripe seam and 22 pixels of the control-bar bevel.
+            sample_width, sample_height = 480, round(480 * frame.height / frame.width)
+            top = 629 * frame.height // sample_height
+            bottom = (630 * frame.height + sample_height - 1) // sample_height
+            draw = ImageDraw.Draw(frame)
+            draw.rectangle((0, top, frame.width - 1, bottom - 1), fill=(139, 26, 94))
+            colors = ((247, 129, 209), (247, 129, 209), (246, 128, 208), (246, 128, 208),
+                      (246, 128, 208), (245, 128, 208), (245, 128, 208), (243, 129, 204),
+                      (242, 129, 202), (240, 130, 200), (238, 130, 198))
+            for offset, color in enumerate(colors):
+                for column in (143 + offset, 336 - offset):
+                    left = column * frame.width // sample_width
+                    right = ((column + 1) * frame.width + sample_width - 1) // sample_width
+                    draw.rectangle((left, top, right - 1, bottom - 1), fill=color)
+            (directory / "switch-b-play-2.png").write_bytes(_png(frame))
+            self.assertEqual(evaluate_server_switch_evidence(directory)["marks"], ["A1", "A6", "A3"])
         for horizontal in (False, True):
             with self.subTest(horizontal=horizontal), tempfile.TemporaryDirectory() as raw:
                 directory = Path(raw)
@@ -1074,6 +1095,19 @@ class ABMixTests(unittest.TestCase):
             # Native A1 capture SHA 9f44e8935770690cdcfec83ca491f163f0272cfc2db160d9e313d916a9245c44:
             # the EXIF top edge contributes 53 pixels on sampled row 7, including 52 at this exact RGB.
             ImageDraw.Draw(frame).rectangle((3008, 56, 3431, 63), fill=(216, 120, 216))
+            (directory / "server-switch-a-play-1.png").write_bytes(_png(frame))
+            self.assertEqual(evaluate_server_switch_evidence(directory)["verdict"], "PASS")
+        with self.subTest(shape="native iPad A1+A3 with entry-hint edge"), tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            _write_server_switch_pass(directory)
+            frame = Image.open(io.BytesIO(_stacked_album_frame("a"))).convert("RGB")
+            photo = _fixture_image("A3", "a")
+            height = round(photo.height * 2008 / photo.width)
+            resized = photo.resize((2008, height), Image.Resampling.BILINEAR)
+            # Keep the measured hint edge below the glyph by panning the real A3 original 150 px upward.
+            frame.paste(resized.crop((179, 442, 1819, 1864)), (0, 938))
+            # Native hint SHA 4e9f80924c9056f837e4a6824ca79005d6ce6fedac4368e38a25affbf7adf890.
+            ImageDraw.Draw(frame).rectangle((600, 1990, 700, 1996), fill=(180, 115, 164))
             (directory / "server-switch-a-play-1.png").write_bytes(_png(frame))
             self.assertEqual(evaluate_server_switch_evidence(directory)["verdict"], "PASS")
         for horizontal in (False, True):

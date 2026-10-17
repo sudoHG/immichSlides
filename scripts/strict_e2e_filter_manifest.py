@@ -20,7 +20,7 @@ from strict_e2e_server import PUBLIC_API_KEY, _fixture_data, fixture_manifest, p
 # Fixture B has eight distinct glyphs and bars; A retains its original five photos.
 FROZEN_FIXTURE_SHA256 = {
     "a": "44f9dc4b144e5fcc5dd14a98b76ba1bf1ca8829648555aebe738c3e2b3048989",
-    "b": "38a8c8f838ff0f6a65d230ffb0dc6ab5bb274864a740ceb1e75f43cba3f99870",
+    "b": "9a0c084f5f6d5ed05186a47130a4ebbf7e1635d08374e26db9e822442cc5162a",
 }
 START_PLAYBACK_BUTTON_ID = "filterSummary.startPlayback.button"
 MEMBER_MANIFEST_KIND = "strict-e2e-member-manifest"
