@@ -240,7 +240,7 @@ extension StrictE2EFilterIOSUITests {
     func clearTextFieldOrFail(_ field: XCUIElement, app: XCUIApplication, evidenceName: String) {
         if isTextFieldEmpty(field) { return }
         // Native editing avoids the iPad keyboard-shortcut animation wait during server switching.
-        field.press(forDuration: 1)
+        field.press(forDuration: TestWait.seconds(.product(1)))
         // ui-label-lookup: System text editing supplies the localized Select All action.
         let selectAllLabels = ["Select All", "全选"]
         let menuItem = app.menuItems.matching(NSPredicate(format: "label IN %@", selectAllLabels)).firstMatch
