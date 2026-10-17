@@ -102,7 +102,7 @@ class DeviceFilterVisualIdentityTestsCases:
                 for filename, replacement, message in (
                     ("server-switch-a-play-1.png", None, "Missing screenshot of A's selected scope and photo"),
                     ("screen-recording.mov", b"unfinished", "The server-switch recording was not finalized"),
-                    ("display-before.png", _fixture_png("A1", "b"), "The fixture yields no multi-photo screen"),
+                    ("display-before.png", _fixture_png("A1", "b"), "display-before.png must keep the raw screenshot of the first valid candidate"),
                     ("display-before-candidate-04.png", None, "missing raw candidate screenshot display-before-candidate-04.png"),
                     ("display-before-candidate-01.png", (evidence / "display-before.png").read_bytes(),
                      "found extra candidate screenshots after the first one that met the condition"),
@@ -111,9 +111,11 @@ class DeviceFilterVisualIdentityTestsCases:
                         path = evidence / filename
                         original = path.read_bytes()
                         path.unlink() if replacement is None else path.write_bytes(replacement)
-                        with self.assertRaisesRegex(FilterContractError, message):
-                            evaluate_filter_visual_identity(evidence, suite)
-                        path.write_bytes(original)
+                        try:
+                            with self.assertRaisesRegex(FilterContractError, message):
+                                evaluate_filter_visual_identity(evidence, suite)
+                        finally:
+                            path.write_bytes(original)
                 from test_strict_e2e_photo_identity import FrameGlyphBoundaryTests
                 mixed = FrameGlyphBoundaryTests._pair("b", 3, 2, horizontal=True, seam=2458, second_fixture="a")
                 for filenames in (("display-before-candidate-04.png", "display-before.png"),
@@ -122,13 +124,51 @@ class DeviceFilterVisualIdentityTestsCases:
                         originals = {name: (evidence / name).read_bytes() for name in filenames}
                         for name in filenames:
                             (evidence / name).write_bytes(mixed)
-                        with self.assertRaisesRegex(
-                            FilterContractError,
-                            "every slot must show the public glyph of fixture B|mixed public glyphs",
-                        ):
-                            evaluate_filter_visual_identity(evidence, suite)
-                        for name, original in originals.items():
-                            (evidence / name).write_bytes(original)
+                        try:
+                            with self.assertRaisesRegex(
+                                FilterContractError,
+                                "every slot must show the public glyph of fixture B|mixed public glyphs",
+                            ):
+                                evaluate_filter_visual_identity(evidence, suite)
+                        finally:
+                            for name, original in originals.items():
+                                (evidence / name).write_bytes(original)
+
+            # Real iPhone shape: the seam is above halfway, so old fixed half-region
+            # crops lose both letters even though both actual slots are readable.
+            with self.subTest(suite=suite, shape="B1+B8 portrait to fitted B1"), tempfile.TemporaryDirectory() as raw:
+                evidence = Path(raw)
+                _write_server_switch_pass(evidence)
+                _write_switch_display_bridge(evidence)
+                (evidence / "switch-b-playback.png").write_bytes(_fixture_png("A1", "b"))
+                (evidence / "observed-ids-after-switch.json").write_bytes((evidence / "observed-ids.json").read_bytes())
+                (evidence / "empty-selection-after-switch.json").write_text(json.dumps({
+                    "selection_source": "accessibility_ui",
+                    "album_summary": "筛选相册 0 个相册 · 0 张照片",
+                    "person_summary": "筛选人物 0 个人物 · 0 张照片",
+                }))
+                scene = Image.new("RGB", IPHONE_SCREEN)
+                for mark, box in (("A1", (0, 0, 1170, 910)), ("A8", (0, 910, 1170, 2532))):
+                    with Image.open(io.BytesIO(_fixture_png(mark, "b"))) as photo:
+                        scene.paste(ImageOps.fit(photo, (box[2], box[3] - box[1]), method=Image.Resampling.BILINEAR), box)
+                before = io.BytesIO()
+                scene.save(before, format="PNG")
+                first_step, selected_step = "display-before-candidate-01", "display-before-candidate-02"
+                (evidence / f"{first_step}.png").write_bytes(_full_screen("A2", IPHONE_SCREEN, "b"))
+                (evidence / f"{selected_step}.png").write_bytes(before.getvalue())
+                (evidence / "display-before.png").write_bytes(before.getvalue())
+                (evidence / "display-after.png").write_bytes(buffer.getvalue())
+                policy = evidence / "display-policy.json"
+                policy.write_text(json.dumps(json.loads(policy.read_text()) | {
+                    "before_candidate_steps": [first_step, selected_step], "selected_before_step": selected_step,
+                }))
+                report = evaluate_filter_visual_identity(evidence, suite)
+                display = report["server_switch"]["display"]
+                self.assertEqual(set(display), {"verdict", "before_marks", "after_mark", "before_status", "after_status", "finite_rotation"})
+                self.assertEqual(display["before_marks"], ["A1", "A8"])
+                self.assertEqual(display["after_mark"], "A1")
+                self.assertEqual(display["after_status"], "MATCH")
+                self.assertEqual(display["finite_rotation"]["before_candidate_steps"], [first_step, selected_step])
 
     def test_filter_album_unmeasured_geometry_keeps_the_main_result(self) -> None:
         for fixture_set in ("a", "b"):

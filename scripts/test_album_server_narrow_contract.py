@@ -26,7 +26,6 @@ from album_server_narrow_contract import (  # noqa: E402
     count_official_executions,
     empty_album_id,
     empty_album_is_listed,
-    evaluate_immediate_display_policy,
     evaluate_album_empty_evidence,
     evaluate_server_switch_evidence,
     official_case_count,
@@ -72,39 +71,6 @@ def _side_by_side(left: bytes, right: bytes) -> bytes:
     return buffer.getvalue()
 
 
-def _stack_vertical_lower_bias(top: bytes, bottom: bytes, canvas: tuple[int, int] = IPHONE_SCREEN) -> bytes:
-    """Top photo ~40%, bottom ~60%, so center lands on the bottom one; simulates iPhone portrait Smart Fill."""
-    top_image = Image.open(io.BytesIO(top)).convert("RGB")
-    bottom_image = Image.open(io.BytesIO(bottom)).convert("RGB")
-    canvas_image = Image.new("RGB", canvas, (0, 0, 0))
-    top_height = max(1, int(canvas[1] * 0.4))
-    bottom_height = canvas[1] - top_height
-
-    def fit(image: Image.Image, box_width: int, box_height: int) -> Image.Image:
-        scale = min(box_width / image.width, box_height / image.height)
-        return image.resize(
-            (max(1, int(image.width * scale)), max(1, int(image.height * scale))),
-            Image.Resampling.BILINEAR,
-        )
-
-    fitted_top = fit(top_image, canvas[0], top_height)
-    fitted_bottom = fit(bottom_image, canvas[0], bottom_height)
-    canvas_image.paste(
-        fitted_top,
-        ((canvas[0] - fitted_top.width) // 2, (top_height - fitted_top.height) // 2),
-    )
-    canvas_image.paste(
-        fitted_bottom,
-        (
-            (canvas[0] - fitted_bottom.width) // 2,
-            top_height + (bottom_height - fitted_bottom.height) // 2,
-        ),
-    )
-    buffer = io.BytesIO()
-    canvas_image.save(buffer, format="PNG")
-    return buffer.getvalue()
-
-
 def _blurred_photo(png: bytes) -> bytes:
     """Heavy blur that keeps the original hue; simulates a photo still visible on the Smart Fill blurred background."""
     image = Image.open(io.BytesIO(png)).convert("RGB")
@@ -123,22 +89,6 @@ def _photo_on_empty_background(background: bytes, photo: bytes) -> bytes:
     canvas.paste(fitted, ((canvas.width - width) // 2, (canvas.height - height) // 2))
     buffer = io.BytesIO()
     canvas.save(buffer, format="PNG")
-    return buffer.getvalue()
-
-
-def _smart_fill_single(png: bytes, canvas: tuple[int, int] = IPHONE_SCREEN) -> bytes:
-    """One photo over its own blurred background; simulates a Smart Fill single photo, not two separate photos."""
-    image = Image.open(io.BytesIO(png)).convert("RGB")
-    background = image.resize(canvas, Image.Resampling.BILINEAR).filter(ImageFilter.GaussianBlur(radius=48))
-    scale = canvas[0] / image.width
-    fitted = image.resize(
-        (canvas[0], max(1, int(image.height * scale))),
-        Image.Resampling.BILINEAR,
-    )
-    top = (canvas[1] - fitted.height) // 2
-    background.paste(fitted, (0, top))
-    buffer = io.BytesIO()
-    background.save(buffer, format="PNG")
     return buffer.getvalue()
 
 
@@ -333,16 +283,6 @@ def _write_synthetic_album_empty_pack(directory: Path, play_1: bytes, play_2: by
     (directory / "album-play-1.png").write_bytes(play_1)
     (directory / "album-play-2.png").write_bytes(play_2)
     (directory / "empty-album-result.png").write_bytes(empty_result)
-
-
-def _write_display_pack(directory: Path, before: bytes, after: bytes) -> None:
-    (directory / "display-before.png").write_bytes(before)
-    (directory / "display-after.png").write_bytes(after)
-    (directory / "display-settings.png").write_bytes(_fixture_png("A1", "b"))
-    (directory / "display-policy.json").write_text(
-        json.dumps({"identity_source": "public_fixture_photo_mark"}),
-        encoding="utf-8",
-    )
 
 
 SERVER_SWITCH_MOVIE = (
@@ -967,133 +907,95 @@ class EmptyResultIdentityTests(unittest.TestCase):
 
 
 class DisplayPolicyNegativeTests(unittest.TestCase):
-    def test_enum_only_cannot_pass(self) -> None:
-        with tempfile.TemporaryDirectory() as raw:
-            directory = Path(raw)
-            (directory / "display-policy.json").write_text(
-                json.dumps({"displayMode": "singlePhoto", "identity_source": "enum"}),
-                encoding="utf-8",
-            )
-            with self.assertRaises(AlbumServerContractError) as raised:
-                evaluate_immediate_display_policy(directory)
-            self.assertIn("enum", str(raised.exception))
-
-    def test_missing_screenshots_fail(self) -> None:
-        with tempfile.TemporaryDirectory() as raw:
-            with self.assertRaises(AlbumServerContractError):
-                evaluate_immediate_display_policy(Path(raw))
-
-    def test_transition_after_fails(self) -> None:
-        with tempfile.TemporaryDirectory() as raw:
-            directory = Path(raw)
-            (directory / "display-before.png").write_bytes(_side_by_side(_fixture_png("A2"), _fixture_png("A3")))
-            (directory / "display-settings.png").write_bytes(_fixture_png("A1"))
-            mixed = _side_by_side(_fixture_png("A2"), _fixture_png("A1"))
-            (directory / "display-after.png").write_bytes(mixed)
-            try:
-                evaluate_immediate_display_policy(directory)
-            except AlbumServerContractError as error:
-                self.assertTrue("transition" in str(error) or "multi-photo" in str(error) or "single-photo" in str(error))
-            else:
-                self.fail("Must fail when the after screen is not a stable single photo")
-
-    def test_identical_before_after_fails(self) -> None:
-        with tempfile.TemporaryDirectory() as raw:
-            directory = Path(raw)
-            multi = _side_by_side(_fixture_png("A2"), _fixture_png("A3"))
-            (directory / "display-before.png").write_bytes(multi)
-            (directory / "display-after.png").write_bytes(multi)
-            (directory / "display-settings.png").write_bytes(_fixture_png("A1"))
-            with self.assertRaises(AlbumServerContractError):
-                evaluate_immediate_display_policy(directory)
-
-    def test_stable_single_after_multi_passes(self) -> None:
-        with tempfile.TemporaryDirectory() as raw:
-            directory = Path(raw)
-            (directory / "display-before.png").write_bytes(_side_by_side(_fixture_png("A2"), _fixture_png("A3")))
-            (directory / "display-after.png").write_bytes(_fixture_png("A2"))
-            (directory / "display-settings.png").write_bytes(_fixture_png("A1"))
-            (directory / "display-policy.json").write_text(
-                json.dumps({"identity_source": "public_fixture_photo_mark"}),
-                encoding="utf-8",
-            )
-            report = evaluate_immediate_display_policy(directory)
-        self.assertEqual(report["verdict"], "PASS")
-        self.assertGreaterEqual(len(report["before_marks"]), 2)
-        self.assertEqual(report["after_mark"], "A2")
-
-    def test_single_b1_cannot_count_as_before_multi(self) -> None:
-        with tempfile.TemporaryDirectory() as raw:
-            directory = Path(raw)
-            _write_display_pack(directory, _fixture_png("A1", "b"), _fixture_png("A2", "b"))
-            with self.assertRaises(AlbumServerContractError) as raised:
-                evaluate_immediate_display_policy(directory)
-            self.assertIn("multi-photo", str(raised.exception))
-
-    def test_letterboxed_b1_cannot_count_as_before_multi(self) -> None:
-        b1 = _fixture_png("A1", "b")
-        b2 = _fixture_png("A2", "b")
-        for canvas in ((1170, 2532), (1640, 2360), (1920, 1080)):
-            with self.subTest(canvas=canvas), tempfile.TemporaryDirectory() as raw:
-                directory = Path(raw)
-                _write_display_pack(directory, _letterbox(b1, canvas), b2)
-                with self.assertRaises(AlbumServerContractError) as raised:
-                    evaluate_immediate_display_policy(directory)
-                self.assertIn("multi-photo", str(raised.exception))
-
-    def test_two_distinct_b_side_by_side_still_passes(self) -> None:
-        with tempfile.TemporaryDirectory() as raw:
-            directory = Path(raw)
-            before = _side_by_side(_fixture_png("A2", "b"), _fixture_png("A3", "b"))
-            _write_display_pack(directory, before, _fixture_png("A2", "b"))
-            report = evaluate_immediate_display_policy(directory)
-        self.assertEqual(report["verdict"], "PASS")
-        self.assertGreaterEqual(len(report["before_marks"]), 2)
-
-    def test_two_distinct_b_stacked_on_iphone_still_passes(self) -> None:
-        with tempfile.TemporaryDirectory() as raw:
-            directory = Path(raw)
-            before = _stack_vertical_lower_bias(_fixture_png("A3", "b"), _fixture_png("A2", "b"))
-            _write_display_pack(directory, before, _fixture_png("A2", "b"))
-            report = evaluate_immediate_display_policy(directory)
-        self.assertEqual(report["verdict"], "PASS")
-        self.assertGreaterEqual(len(report["before_marks"]), 2)
-
-    def test_server_switch_pack_with_single_b1_before_fails(self) -> None:
+    def test_migrated_policy_requires_public_identity_and_original_captures(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             directory = Path(raw)
             _write_server_switch_pass(directory)
-            (directory / "display-before.png").write_bytes(_fixture_png("A1", "b"))
-            with self.assertRaises(AlbumServerContractError) as raised:
-                evaluate_server_switch_evidence(directory)
-            self.assertIn("multi-photo", str(raised.exception))
+            policy = directory / "display-policy.json"
+            original = policy.read_bytes()
+            payload = json.loads(original)
+            for source in ("enum", "probe", "asset_id", "currentAssetId", "launch_argument",
+                           "UI_TEST_FORCE_PLAYBACK_DISPLAY_MODE", None, "unknown"):
+                with self.subTest(source=source):
+                    policy.write_text(json.dumps(payload | {"identity_source": source}))
+                    with self.assertRaisesRegex(FilterContractError, "^display-policy screenshot identity must come from public fixture photo marks$"):
+                        evaluate_server_switch_evidence(directory)
+            for content, message in ((b"{", "^display-policy.json is unreadable:"),
+                                     (b"[]", "^display-policy.json is not an object$")):
+                with self.subTest(sidecar=content):
+                    policy.write_bytes(content)
+                    with self.assertRaisesRegex(FilterContractError, message):
+                        evaluate_server_switch_evidence(directory)
+            policy.write_bytes(original)
+            for name in ("display-before.png", "display-settings.png", "display-after.png"):
+                with self.subTest(missing=name):
+                    path = directory / name
+                    photo = path.read_bytes()
+                    path.unlink()
+                    with self.assertRaisesRegex(FilterContractError, "^Missing multi-photo before, real settings action, or stable single-photo after screenshot$"):
+                        evaluate_server_switch_evidence(directory)
+                    path.write_bytes(photo)
 
-    def test_smart_fill_single_after_stacked_multi_passes(self) -> None:
-        with tempfile.TemporaryDirectory() as raw:
-            directory = Path(raw)
-            before = _stack_vertical_lower_bias(_fixture_png("A3", "b"), _fixture_png("A2", "b"))
-            after = _smart_fill_single(_fixture_png("A1", "b"))
-            _write_display_pack(directory, before, after)
-            report = evaluate_immediate_display_policy(directory)
-        self.assertEqual(report["verdict"], "PASS")
-        self.assertGreaterEqual(len(report["before_marks"]), 2)
-        self.assertEqual(report["after_status"], "MATCH")
+    def test_migrated_policy_rejects_false_multi_photo_before(self) -> None:
+        from test_strict_e2e_photo_identity import FrameGlyphBoundaryTests
+        from strict_e2e_filter_contract_test_fixtures import _full_frame_transition
+        cases = [
+            ("single", _fixture_png("A1", "b"), "^The before-change frame must actually show at least two different photos$"),
+            ("same photo twice", _side_by_side(_fixture_png("A2", "b"), _fixture_png("A2", "b")),
+             "^The before-change frame must actually show at least two different photos$"),
+            ("transition", _full_frame_transition(_fixture_png("A1", "b"), _fixture_png("A3", "b")),
+             "^unreadable public glyph slot"),
+            ("unknown", _png(Image.new("RGB", (320, 568), (25, 25, 25))), "^unreadable public glyph slot: public photo colors are missing or mixed;"),
+            ("black", _png(Image.new("RGB", (320, 568), (0, 0, 0))), "^unreadable public glyph slot: public photo colors are missing or mixed;"),
+            ("blank", _png(Image.new("RGB", (320, 568), (255, 255, 255))), "^unreadable public glyph slot: public photo colors are missing or mixed;"),
+            ("undecodable", b"not a PNG", "^display-policy screenshot regions cannot be classified: UnidentifiedImageError$"),
+        ]
+        for screen in (IPHONE_SCREEN, IPAD_SCREEN, TV_SCREEN):
+            cases.append((f"letterbox {screen}", _letterbox(_fixture_png("A1", "b"), screen),
+                          "^The before-change frame must actually show at least two different photos$" if screen == TV_SCREEN
+                          else "does not match.*blurred background"))
+        for screen in (IPHONE_SCREEN, IPAD_SCREEN):
+            cases.append((f"own blur {screen}", _single_on_own_blur("A1", screen, "b"),
+                          "^The before-change frame must actually show at least two different photos$"))
+        for horizontal in (False, True):
+            axis = "horizontal" if horizontal else "vertical"
+            for slot in (1, 2):
+                cases.append((f"unread slot {slot} {axis}", FrameGlyphBoundaryTests._pair(
+                    "b", 3, 2, horizontal=horizontal, unreadable_slot=slot),
+                    rf"^unreadable public glyph slot; slot {slot} \({axis}\)$"))
+        for name, frame, message in cases:
+            with self.subTest(defect=name), tempfile.TemporaryDirectory() as raw:
+                directory = Path(raw)
+                _write_server_switch_pass(directory)
+                (directory / "display-before.png").write_bytes(frame)
+                (directory / "display-before-candidate-01.png").write_bytes(frame)
+                with self.assertRaisesRegex(FilterContractError, message):
+                    evaluate_server_switch_evidence(directory)
 
-    def test_synthetic_iphone_server_switch_blurred_single_is_not_multi(self) -> None:
-        # After the switch the blurred copy of one photo must not count as a second photo.
-        with tempfile.TemporaryDirectory() as raw:
-            directory = Path(raw)
-            _write_display_pack(
-                directory,
-                _stacked_screen("A3", "A2", IPHONE_SCREEN, "b"),
-                _single_on_own_blur("A1", IPHONE_SCREEN, "b"),
-            )
-            report = evaluate_immediate_display_policy(directory)
-        self.assertEqual(report["verdict"], "PASS")
-        self.assertGreaterEqual(len(report["before_marks"]), 2)
-        self.assertEqual(report["after_status"], "MATCH")
-        self.assertIn(report["after_mark"], {"A1", "A2", "A3", "A4", "A5"})
-
+    def test_migrated_policy_rejects_unstable_multi_or_unchanged_after(self) -> None:
+        from strict_e2e_filter_contract_test_fixtures import _full_frame_transition
+        cases = [
+            ("transition", _full_frame_transition(_fixture_png("A1", "b"), _fixture_png("A3", "b")),
+             "^after-change cannot use a transition or unknown frame as passing$"),
+            ("black", _png(Image.new("RGB", (320, 568), (0, 0, 0))),
+             "^after-change cannot use a transition or unknown frame as passing$"),
+            ("blank", _png(Image.new("RGB", (320, 568), (255, 255, 255))),
+             "^after-change cannot use a transition or unknown frame as passing$"),
+            ("unknown", _png(Image.new("RGB", (320, 568), (25, 25, 25))),
+             "^after-change cannot use a transition or unknown frame as passing$"),
+            ("undecodable", b"not a PNG", "^after-change cannot use a transition or unknown frame as passing$"),
+            ("multi", _side_by_side(_fixture_png("A1", "b"), _fixture_png("A2", "b")),
+             "^after-change cannot use a transition or unknown frame as passing: the stable photo region is still transitioning$"),
+            ("unchanged", _side_by_side(_fixture_png("A2", "b"), _fixture_png("A3", "b")),
+             "^after-change cannot use a transition or unknown frame as passing$"),
+        ]
+        for name, frame, message in cases:
+            with self.subTest(defect=name), tempfile.TemporaryDirectory() as raw:
+                directory = Path(raw)
+                _write_server_switch_pass(directory)
+                (directory / "display-after.png").write_bytes(frame)
+                with self.assertRaisesRegex(FilterContractError, message):
+                    evaluate_server_switch_evidence(directory)
 
 class ABMixTests(unittest.TestCase):
     def test_missing_a_playback_screenshot_fails_server_switch(self) -> None:

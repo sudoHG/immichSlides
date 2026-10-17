@@ -118,6 +118,7 @@ class DisplayPolicyVisualContractTests(DisplayPolicyVisualContractTestsCases, un
         candidate_step = f"{DISPLAY_POLICY_CANDIDATE_PREFIX}01"
         (evidence / f"{candidate_step}.png").write_bytes(before)
         (evidence / "display-after.png").write_bytes(after)
+        (evidence / "display-settings.png").write_bytes(_fixture_png("A1"))
         (evidence / "display-policy.json").write_text(
             json.dumps(
                 {

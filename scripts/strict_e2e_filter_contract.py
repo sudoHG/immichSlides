@@ -418,7 +418,10 @@ def _require_same_process(payload: Mapping[str, Any], label: str) -> int:
 
 
 def _display_photo_identity(image_bytes: bytes, *, fixture_set: str, labels: Sequence[str], label: str) -> str:
-    image_bytes = _display_foreground_png(image_bytes)
+    try:
+        image_bytes = _display_foreground_png(image_bytes)
+    except (OSError, ValueError) as error:
+        raise FilterContractError(f"{label} cannot use a transition or unknown frame as passing") from error
     identity = classify_screenshot(image_bytes)
     if identity.status != "MATCH" or identity.mark not in MARKS:
         raise FilterContractError(f"{label} cannot use a transition or unknown frame as passing")
@@ -443,6 +446,10 @@ def _evaluate_display_policy(evidence_dir: Path, suite: str, *, manifest: Mappin
     if payload.get("mode_before") != "smartFill" or payload.get("mode_after") != "singlePhoto":
         raise FilterContractError("display policy must change from SmartFill to single-photo mode")
     process_id = _require_same_process(payload, "display strategy run evidence")
+    if any(not (evidence_dir / name).is_file() for name in (
+        "display-before.png", "display-settings.png", "display-after.png",
+    )):
+        raise FilterContractError("Missing multi-photo before, real settings action, or stable single-photo after screenshot")
 
     candidate_steps = payload.get("before_candidate_steps")
     if not isinstance(candidate_steps, list) or not candidate_steps:

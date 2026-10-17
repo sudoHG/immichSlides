@@ -8,12 +8,11 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from access_lifecycle_contract import (
-    DISPLAY_REGION_BOXES,
-    _crop_png_bytes,
     classify_display_regions,
 )
 from strict_e2e_filter_contract import (
     FilterContractError,
+    _display_foreground_png,
     _evaluate_display_policy,
     _scene_slot_marks,
     START_PLAYBACK_BUTTON_ID,
@@ -27,7 +26,6 @@ from strict_e2e_filter_contract import (
 from strict_e2e_photo_identity import (
     MARKS,
     classify_screenshot,
-    public_letter_from_bytes,
 )
 from strict_e2e_server import PUBLIC_API_KEY, fixture_manifest
 
@@ -37,7 +35,6 @@ class AlbumServerContractError(FilterContractError):
 
 
 EMPTY_FILTERED_COPY = "当前筛选条件没有找到可播放照片，请换一组相册或人物再试。"
-ALLOWED_IDENTITY_SOURCE = "public_fixture_photo_mark"
 START_NOT_APPLICABLE_SETTINGS_EDITOR = "not_applicable_settings_editor"
 SETTINGS_FILTER_ENTRY_ID = "settings.playback.filterConfig.button"
 FORBIDDEN_IDENTITY_SOURCES = frozenset(
@@ -402,8 +399,15 @@ def evaluate_server_switch_evidence(evidence_dir: Path, *, suite: str = "filter-
     observed = _read_json(evidence_dir / "observed-ids.json", "observed-ids.json")
     assert_server_switch_observed_ids(observed, str(manifest_b["fixture_set"]))
     _require_server_switch_recording(evidence_dir)
-    display = evaluate_immediate_display_policy(evidence_dir)
-    display["finite_rotation"] = _evaluate_display_policy(evidence_dir, suite, manifest=manifest_b)
+    finite_rotation = _evaluate_display_policy(evidence_dir, suite, manifest=manifest_b)
+    display = {
+        "verdict": finite_rotation["verdict"],
+        "before_marks": finite_rotation["before_marks"],
+        "after_mark": finite_rotation["after_mark"],
+        "before_status": classify_screenshot((evidence_dir / "display-before.png").read_bytes()).status,
+        "after_status": classify_screenshot(_display_foreground_png((evidence_dir / "display-after.png").read_bytes())).status,
+        "finite_rotation": finite_rotation,
+    }
     return {
         "verdict": "PASS",
         "suite": "server-switch",
@@ -444,115 +448,6 @@ def _require_server_switch_recording(evidence_dir: Path) -> None:
         raise AlbumServerContractError("A server switch requires a non-empty continuous recording")
     if b"moov" not in path.read_bytes():
         raise AlbumServerContractError("The server-switch recording was not finalized")
-
-
-def evaluate_immediate_display_policy(evidence_dir: Path) -> dict[str, Any]:
-    payload_path = evidence_dir / "display-policy.json"
-    if payload_path.is_file():
-        payload = _read_json(payload_path, "display-policy.json")
-        source = str(payload.get("identity_source") or "")
-        if source in FORBIDDEN_IDENTITY_SOURCES or source != ALLOWED_IDENTITY_SOURCE:
-            raise AlbumServerContractError("Display policy cannot pass on enum/probe alone")
-        if payload.get("displayMode") and not (evidence_dir / "display-before.png").is_file():
-            raise AlbumServerContractError("Display policy cannot pass on enum/probe alone")
-    before_path = evidence_dir / "display-before.png"
-    after_path = evidence_dir / "display-after.png"
-    settings_path = evidence_dir / "display-settings.png"
-    if not before_path.is_file() or not after_path.is_file() or not settings_path.is_file():
-        raise AlbumServerContractError("Missing multi-photo before, real settings action, or stable single-photo after screenshot")
-    before = classify_screenshot(before_path.read_bytes())
-    after = classify_screenshot(after_path.read_bytes())
-    if after.status == "TRANSITION":
-        raise AlbumServerContractError("A still frame mid-transition cannot pass")
-    before_regions = classify_display_regions(before_path.read_bytes())
-    after_regions = classify_display_regions(after_path.read_bytes())
-    before_marks = _distinct_region_marks(before_regions, before_path.read_bytes())
-    after_marks = _distinct_region_marks(after_regions, after_path.read_bytes())
-    if len(before_marks) < 2:
-        raise AlbumServerContractError("The fixture yields no multi-photo screen; fix the fixture/preconditions first")
-    if after.status != "MATCH" or after.mark not in MARKS:
-        raise AlbumServerContractError("After the change the screen must be a stable single-photo public identity")
-    if len(after_marks) >= 2:
-        raise AlbumServerContractError("Still multi-photo after the change; cannot pass as single-photo")
-    if before_path.read_bytes() == after_path.read_bytes():
-        raise AlbumServerContractError("Display policy did not take effect")
-    return {
-        "verdict": "PASS",
-        "before_marks": before_marks,
-        "after_mark": after.mark,
-        "before_status": before.status,
-        "after_status": after.status,
-    }
-
-
-def _region_match_mark(regions: Mapping[str, Any], name: str) -> str | None:
-    identity = regions.get(name)
-    if identity is None:
-        return None
-    if identity.status == "MATCH" and identity.mark in MARKS:
-        return identity.mark
-    return None
-
-
-def _region_public_letter(image_bytes: bytes, name: str) -> str | None:
-    box = DISPLAY_REGION_BOXES.get(name)
-    if box is None:
-        return None
-    try:
-        crop = _crop_png_bytes(image_bytes, box)
-    except (OSError, ValueError):
-        return None
-    return public_letter_from_bytes(crop)
-
-
-def _distinct_region_marks(regions: Mapping[str, Any], image_bytes: bytes) -> list[str]:
-    # Left/right photos at the screen edges are judged by color. A middle or top/bottom split needs a public
-    # letter on each part; a blurred background cannot count as a second photo.
-    marks: list[str] = []
-
-    def add(mark: str | None) -> None:
-        if mark is not None and mark not in marks:
-            marks.append(mark)
-
-    left_mark = _region_match_mark(regions, "left")
-    right_mark = _region_match_mark(regions, "right")
-    if left_mark is not None and right_mark is not None and left_mark != right_mark:
-        add(left_mark)
-        add(right_mark)
-
-    for left_name, right_name in (("mid_left", "mid_right"), ("center", "bottom_half")):
-        pair_left = _region_match_mark(regions, left_name)
-        pair_right = _region_match_mark(regions, right_name)
-        if (
-            pair_left is not None
-            and pair_right is not None
-            and pair_left != pair_right
-            and _region_public_letter(image_bytes, left_name) in {"A", "B"}
-            and _region_public_letter(image_bytes, right_name) in {"A", "B"}
-        ):
-            add(pair_left)
-            add(pair_right)
-
-    top_half = _region_match_mark(regions, "top_half")
-    bottom_half = _region_match_mark(regions, "bottom_half")
-    center = _region_match_mark(regions, "center")
-    top = _region_match_mark(regions, "top")
-    # For a letterboxed single B1 the top is a black bar, so top_half must not fake a second color.
-    # iPhone portrait Smart Fill really shows two stacked photos; the center falls on the lower one,
-    # so center==bottom_half.
-    # Each stacked photo also needs its own public letter; a blurred background has no glyph.
-    real_stacked_halves = top is not None and top == top_half
-    if (
-        top_half is not None
-        and bottom_half is not None
-        and top_half != bottom_half
-        and (center != bottom_half or real_stacked_halves)
-        and _region_public_letter(image_bytes, "top_half") in {"A", "B"}
-        and _region_public_letter(image_bytes, "bottom_half") in {"A", "B"}
-    ):
-        add(top_half)
-        add(bottom_half)
-    return marks
 
 
 # Empty results only check the full screen and the main photo regions. top/upper/top_half are overlay strips,
