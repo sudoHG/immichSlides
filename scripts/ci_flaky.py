@@ -15,6 +15,7 @@ import re
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from datetime import date
 from functools import partial
 from pathlib import Path
@@ -296,10 +297,28 @@ class OfficialResultReadError(ContractError):
         self.observed = observed
 
 
+@contextmanager
+def official_result_step(phase):
+    """Annotate timeouts without changing subprocess execution or cleanup."""
+    # Policy-only base readers may not carry this optional diagnostic module.
+    from ci_bounded_diagnostics import MAX_DIAGNOSTIC_SECONDS
+    phase = phase if phase in {"export", "tests-read", "summary-read", "legacy-read", "details-read", "attachments-export"} else "unknown"
+    started = time.monotonic()
+    try:
+        yield
+    except subprocess.TimeoutExpired as error:
+        elapsed = time.monotonic() - started
+        measurement = f"{elapsed:.3f}" if 0 <= elapsed <= MAX_DIAGNOSTIC_SECONDS else "unavailable"
+        error.entry = {"code": "xcresult-export-timeout", "message":
+                       f"Official result export exceeded its budget; phase={phase}; elapsed_seconds={measurement}"}
+        raise
+
+
 def read_xcode_observations(bundle, identity_for_key, elapsed, invocation_exit, *, expected_device=None, export_timeout_seconds=60):
     from strict_e2e_p2_contract import official_tests_facts, device_class_of, P2ContractError
-    completed = subprocess.run(["xcrun", "xcresulttool", "get", "test-results", "tests", "--path", str(bundle), "--compact"],
-                               capture_output=True, check=True, timeout=export_timeout_seconds)
+    with official_result_step("tests-read"):
+        completed = subprocess.run(["xcrun", "xcresulttool", "get", "test-results", "tests", "--path", str(bundle), "--compact"],
+                                   capture_output=True, check=True, timeout=export_timeout_seconds)
     payload = json.loads(completed.stdout)
     facts = official_tests_facts(payload)
     if expected_device is not None:
@@ -316,8 +335,9 @@ def read_xcode_observations(bundle, identity_for_key, elapsed, invocation_exit, 
     read_errors = []
     if any(case["result"] == "Failed" for case in facts["test_cases"]):
         try:
-            details = subprocess.run(["xcrun", "xcresulttool", "get", "object", "--legacy", "--path", str(bundle), "--format", "json"],
-                                     capture_output=True, check=True, timeout=export_timeout_seconds)
+            with official_result_step("legacy-read"):
+                details = subprocess.run(["xcrun", "xcresulttool", "get", "object", "--legacy", "--path", str(bundle), "--format", "json"],
+                                         capture_output=True, check=True, timeout=export_timeout_seconds)
             failure_outcomes = official_failure_outcomes(json.loads(details.stdout))
             from ci_failure_diagnostics import legacy_diagnostics
             failure_diagnostics = legacy_diagnostics(json.loads(details.stdout))
@@ -344,8 +364,9 @@ def read_xcode_observations(bundle, identity_for_key, elapsed, invocation_exit, 
         duration(durations.get(raw_key))
         if case["result"] == "Failed" and failure_outcomes.get(key) == "uncategorized":
             try:
-                details = subprocess.run(["xcrun", "xcresulttool", "get", "test-results", "test-details", "--path", str(bundle),
-                                          "--test-id", raw_key, "--compact"], capture_output=True, check=True, timeout=export_timeout_seconds)
+                with official_result_step("details-read"):
+                    details = subprocess.run(["xcrun", "xcresulttool", "get", "test-results", "test-details", "--path", str(bundle),
+                                              "--test-id", raw_key, "--compact"], capture_output=True, check=True, timeout=export_timeout_seconds)
                 if official_assertion_details(json.loads(details.stdout), raw_key):
                     failure_outcomes[key] = "assertion"
             except (ContractError, OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as error:
@@ -413,9 +434,10 @@ def run_xcode_attempts(command, registry, *, tier, environment, today, identity_
             return read(path, identity_for_key, elapsed, code), code
         except (ContractError, OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as error:
             cause = error.error if isinstance(error, OfficialResultReadError) else error
-            infrastructure.append({"code": "official-result-read-failed", "message": (type(cause).__name__ + ": " + str(cause))[:200]})
+            detail = getattr(cause, "entry", {}).get("message", str(cause))
+            infrastructure.append({"code": "official-result-read-failed", "message": (type(cause).__name__ + ": " + detail)[:200]})
             if isinstance(cause, subprocess.TimeoutExpired):
-                infrastructure.append({"code": "xcresult-export-timeout", "message": "Official result export exceeded its budget"})
+                infrastructure.append(getattr(cause, "entry", {"code": "xcresult-export-timeout", "message": "Official result export exceeded its budget"}))
             return error.observed if isinstance(error, OfficialResultReadError) else [], code or 1
     first, first_exit = invoke(command, bundle)
     effective_bundle = bundle

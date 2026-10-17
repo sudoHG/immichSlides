@@ -215,11 +215,13 @@ def export_private_result_bundle(
     export_timeout_seconds: float = OFFICIAL_EXPORT_TIMEOUT_SECONDS,
     enrich_failure_diagnostics: bool = False,
 ) -> str:
+    from ci_flaky import official_result_step
     try:
-        completed = subprocess.run(
-            ["xcrun", "xcresulttool", "get", "test-results", "tests", "--path", str(bundle), "--compact"],
-            capture_output=True, check=False, timeout=export_timeout_seconds,
-        )
+        with official_result_step("export"):
+            completed = subprocess.run(
+                ["xcrun", "xcresulttool", "get", "test-results", "tests", "--path", str(bundle), "--compact"],
+                capture_output=True, check=False, timeout=export_timeout_seconds,
+            )
     except subprocess.TimeoutExpired as error:
         if summary_timeout_seconds is not None:
             raise

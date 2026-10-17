@@ -485,10 +485,21 @@ their shard and coverage verdict stay failed. The trusted publisher still derive
 from the producer run metadata.
 An official-result read error records `official-result-read-failed` with its
 exception type and a bounded message. Validated completed cases survive an
-incomplete result; only missing official cases stay `not-run`. Exit 124 marks
+incomplete result. In pre-enumerated shards, missing method identities remain
+missing when the first invocation's official result read fails, including in fixture coverage rows.
+An anonymous summary count does not establish a method's outcome or that it did
+not run. Exit 124 marks
 the invocation `timed-out` and records `xcodebuild-timeout`, so partial passes
 cannot turn a timed-out shard green. Result export timeouts additionally record
-`xcresult-export-timeout`; infrastructure errors never obtain a retry.
+`xcresult-export-timeout`; infrastructure errors never obtain a retry. For a
+timed-out result step, the existing message records a closed phase (`tests-read`,
+`legacy-read`, `details-read`, `attachments-export`, `export`, or `summary-read`;
+`unknown` for an unrecognized phase) and that step's `elapsed_seconds`, measured
+through standard-library timeout cleanup. Invalid or out-of-range elapsed
+measurements are `unavailable`; they never prevent writing the failure summary.
+The message includes no command, path, test identifier or subprocess output.
+No process snapshot is taken: the timed-out process has already been killed and
+reaped by `subprocess.run`.
 The [registry contract](TESTING.md#known-flaky-registry-and-listed-only-retries)
 defines ownership and expiry.
 
@@ -615,7 +626,13 @@ in [the default control](https://github.com/sudoHG/immichSlides/actions/runs/377
 so the hosted allowance is bounded at three times that observed limit and is
 checked against fresh run measurements. Each compact official export records
 elapsed time and its bound in `export-timing*.json`; normalized result reading
-records its per-attempt total in `export-read-timing.json`. Shard timing also records
+records its per-attempt total in `export-read-timing.json`. The `tests-read` phase
+belongs to this normalized read, while `export` and `summary-read` belong to the
+separate subsequent official export. Export success never replaces missing
+normalized method identities or clears an earlier read failure. Timing adds one
+monotonic clock read per successful step and one more plus fixed-message formatting
+on timeout; no extra subprocess, IO, wait, retry or collection allowance is added.
+The existing 180-second hosted budget remains unchanged. Shard timing also records
 the bound. Local disk checks retain 80 GiB; only hosted jobs pass the existing 30 GiB
 allowance. No simulator runtime is downloaded or installed.
 

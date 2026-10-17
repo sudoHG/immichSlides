@@ -140,6 +140,7 @@ class RegistryTests(unittest.TestCase):
 
 class RetryTests(unittest.TestCase):
     def test_result_read_error_and_timeout_preserve_completed_cases_and_fail_closed(self):
+        from ci_bounded_diagnostics import MAX_DIAGNOSTIC_SECONDS
         from ci_flaky import read_xcode_observations
         identity = registry()["entries"][0]["identity"]
         other = dict(identity, key="ExampleTests/testInterrupted")
@@ -147,23 +148,41 @@ class RetryTests(unittest.TestCase):
             {"nodeType": "Test Case", "nodeIdentifier": identity["key"] + "()", "result": "Passed", "durationInSeconds": 1},
             {"nodeType": "Test Case", "nodeIdentifier": other["key"] + "()", "result": "Failed"}]}]}
         command = ["xcodebuild", "test-without-building", "-resultBundlePath", "first/result.xcresult"]
-        for code, failure in ((65, ValueError("bad official details")), (124, None),
-                              (65, subprocess.TimeoutExpired("xcresulttool", 180))):
-            with self.subTest(code=code):
+        for code, failure, elapsed, phase in ((65, ValueError("bad official details"), 0, "legacy-read"),
+                (124, None, 0, "legacy-read"),
+                (65, subprocess.TimeoutExpired("PRIVATE_SENTINEL", 180), 184.7, "legacy-read"),
+                (65, subprocess.TimeoutExpired("PRIVATE_SENTINEL", 180), -1, "legacy-read"),
+                (65, subprocess.TimeoutExpired("PRIVATE_SENTINEL", 180), MAX_DIAGNOSTIC_SECONDS + 1, "legacy-read"),
+                (65, subprocess.TimeoutExpired("PRIVATE_SENTINEL", 180), 184.7, "details-read")):
+            with self.subTest(code=code, elapsed=elapsed, phase=phase):
+                clock = [0.0]
                 def exported(call, **kwargs):
                     self.assertEqual(kwargs["timeout"], 180)
                     if "--legacy" in call:
+                        if phase == "details-read":
+                            return subprocess.CompletedProcess(call, 0, json.dumps({"issues": {"testFailureSummaries": {"_values": [
+                                {"testCaseName": {"_value": "ExampleTests.testInterrupted()"},
+                                 "issueType": {"_value": "Uncategorized"}}]}}}))
                         if failure:
+                            clock[0] += elapsed
                             raise failure
                         return subprocess.CompletedProcess(call, 0, "{}")
-                    return subprocess.CompletedProcess(call, 0, json.dumps(tests))
-                with mock.patch("ci_flaky.subprocess.run", side_effect=exported):
+                    if "test-details" in call:
+                        clock[0] += elapsed
+                        raise failure
+                    payload = copy.deepcopy(tests)
+                    if phase == "details-read":
+                        payload["testNodes"][0]["children"][1]["durationInSeconds"] = 1
+                    return subprocess.CompletedProcess(call, 0, json.dumps(payload))
+                with mock.patch("ci_flaky.subprocess.run", side_effect=exported), \
+                        mock.patch("ci_flaky.time.monotonic", side_effect=lambda: clock[0]):
                     actual = run_xcode_attempts(command, registry(), tier="ui", environment="hermetic",
                         today=date(2026, 10, 8), identity_for_key=lambda key: identity if key == identity["key"] else other,
                         reset=lambda: self.fail("infrastructure must not retry"), execute=lambda call: (code, 10),
                         allocate_bundle=lambda: self.fail("infrastructure must not retry"),
                         read=lambda *args: read_xcode_observations(*args, export_timeout_seconds=180))
-                self.assertEqual([row["identity"] for row in actual["observed"]], [identity])
+                self.assertEqual([row["identity"] for row in actual["observed"]],
+                                 [identity, other] if phase == "details-read" else [identity])
                 self.assertEqual(actual["observed"][0]["outcome"], "passed")
                 self.assertNotEqual(actual["exit_code"], 0)
                 errors = {item["code"] for item in actual["infrastructure"]}
@@ -175,7 +194,10 @@ class RetryTests(unittest.TestCase):
                     self.assertIn("xcodebuild-timeout", errors)
                     self.assertEqual(actual["invocations"][0]["outcome"], "timed-out")
                 if isinstance(failure, subprocess.TimeoutExpired):
-                    self.assertIn("xcresult-export-timeout", errors)
+                    timeout = next(item for item in actual["infrastructure"] if item["code"] == "xcresult-export-timeout")
+                    self.assertEqual(timeout["message"], "Official result export exceeded its budget; phase=" + phase + "; elapsed_seconds="
+                                     + ("184.700" if elapsed == 184.7 else "unavailable"))
+                    self.assertNotIn("PRIVATE_SENTINEL", json.dumps(actual, allow_nan=False))
 
     def test_official_failure_types_and_devices_control_retry_admission(self):
         from ci_flaky import read_xcode_observations

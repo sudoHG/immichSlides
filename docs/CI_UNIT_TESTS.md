@@ -132,7 +132,8 @@ the hosted workflow passes 180 seconds. Execution exits other than 0 or 65 recor
 `unit-execution-timed-out` (124) or `unit-execution-failed` before result comparison.
 An export timeout records the UI runner's distinct `xcresult-export-timeout` infrastructure
 code, with phase, bound and elapsed time; it cannot count as a product failure or verified
-execution. Owned-simulator shutdown and delete
+execution. Unit-side official tests/summary export corresponds to the UI `export`/`summary-read` phases, respectively.
+Owned-simulator shutdown and delete
 have 60-second bounds; deletion still runs after shutdown failure. Their durations
 and exit codes are measured and shown in `summary.md`. A cleanup that fails, or times out
 while results are incomplete or unverified, makes the summary failed, and scanning
