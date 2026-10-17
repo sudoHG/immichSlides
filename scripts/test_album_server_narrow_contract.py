@@ -1067,6 +1067,15 @@ class ABMixTests(unittest.TestCase):
 
     def test_server_switch_a_frame_checks_every_slot_for_both_orientations(self) -> None:
         from test_strict_e2e_photo_identity import FrameGlyphBoundaryTests
+        with self.subTest(shape="native 4K A1 with TV EXIF edge"), tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            _write_server_switch_pass(directory)
+            frame = Image.open(io.BytesIO(_full_screen("A1", TV_4K_SCREEN))).convert("RGB")
+            # Native A1 capture SHA 9f44e8935770690cdcfec83ca491f163f0272cfc2db160d9e313d916a9245c44:
+            # the EXIF top edge contributes 53 pixels on sampled row 7, including 52 at this exact RGB.
+            ImageDraw.Draw(frame).rectangle((3008, 56, 3431, 63), fill=(216, 120, 216))
+            (directory / "server-switch-a-play-1.png").write_bytes(_png(frame))
+            self.assertEqual(evaluate_server_switch_evidence(directory)["verdict"], "PASS")
         for horizontal in (False, True):
             with self.subTest(horizontal=horizontal), tempfile.TemporaryDirectory() as raw:
                 directory = Path(raw)

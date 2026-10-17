@@ -150,7 +150,7 @@ def _cached_fixture_data(name: str) -> dict[str, Any]:
     # Each added identity keeps its own white-antialias trajectory, away from old hue pairs.
     additional_palettes = {
         6: ((180, 120, 250), (215, 120, 250)),
-        7: ((225, 120, 210), (225, 120, 175)),
+        7: ((235, 120, 210), (235, 120, 175)),
         8: ((185, 120, 200), (185, 120, 165)),
     }
     original_dimension_scale = 12

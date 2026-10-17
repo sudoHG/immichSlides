@@ -55,7 +55,7 @@ enum StrictE2EPhotoIdentity {
     // RGB pairs keep old-photo hue mixtures from being read as new B photos.
     private static let extendedPalettes: [String: [[Int]]] = [
         "A6": [[180, 120, 250], [215, 120, 250]],
-        "A7": [[225, 120, 210], [225, 120, 175]],
+        "A7": [[235, 120, 210], [235, 120, 175]],
         "A8": [[185, 120, 200], [185, 120, 165]]
     ]
     private static let extendedPaletteChannelTolerance = 12
