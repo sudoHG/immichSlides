@@ -432,10 +432,11 @@ def _display_photo_identity(image_bytes: bytes, *, fixture_set: str, labels: Seq
     return mark
 
 
-def _evaluate_display_policy(evidence_dir: Path, suite: str) -> dict[str, Any]:
-    manifest = load_member_manifest(evidence_dir / "member-manifest.json")
+def _evaluate_display_policy(evidence_dir: Path, suite: str, *, manifest: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    switched_server = manifest is not None
+    manifest = manifest if switched_server else load_member_manifest(evidence_dir / "member-manifest.json")
     fixture_set = str(manifest["fixture_set"])
-    if fixture_set != "a":
+    if not switched_server and fixture_set != "a":
         raise FilterContractError("standalone display-policy suite must use fixture A only")
     allowed = manifest["target_album"]["labels"]
     visual_labels = manifest["target_album"]["visual_labels"]
@@ -471,12 +472,13 @@ def _evaluate_display_policy(evidence_dir: Path, suite: str) -> dict[str, Any]:
         image_bytes = path.read_bytes()
         candidate_bytes.append(image_bytes)
         regions = _classify_display_regions(image_bytes)
-        region_marks = _display_region_marks(regions)
+        region_marks = (list(dict.fromkeys(_scene_slot_marks(image_bytes, fixture_set))) if switched_server
+                        else _display_region_marks(regions))
         if region_marks:
             for mark in region_marks:
                 if mark not in allowed:
                     raise FilterContractError(f"before-change multi-photo frame contains a photo outside the target album: {mark}")
-            if classify_public_pattern(image_bytes) not in (None, fixture_set):
+            if not switched_server and classify_public_pattern(image_bytes) not in (None, fixture_set):
                 raise FilterContractError(f"before-change multi-photo frame must not mix in another server fixture: {step}")
         candidate_marks.append(region_marks)
         candidate_regions.append(regions)
@@ -499,7 +501,7 @@ def _evaluate_display_policy(evidence_dir: Path, suite: str) -> dict[str, Any]:
         ):
             raise FilterContractError("Multiple before-change photos cannot be faked by a transition")
         raise FilterContractError("The before-change frame must actually show at least two different photos")
-    if classify_public_pattern(candidate_bytes[-1]) != fixture_set:
+    if not switched_server and classify_public_pattern(candidate_bytes[-1]) != fixture_set:
         raise FilterContractError("The before-change frame must contain only fixture A; do not mix fixtures A and B or unknown content")
 
     after_bytes = (evidence_dir / "display-after.png").read_bytes() if (evidence_dir / "display-after.png").is_file() else b""
@@ -635,8 +637,8 @@ def _evaluate_tvos_person(evidence_dir: Path, *, fixture_set: str | None = None)
 def _evaluate_tvos_switch(evidence_dir: Path) -> dict[str, Any]:
     manifest_b = load_member_manifest(evidence_dir / "member-manifest-b.json")
     identity = _classify_named_png(evidence_dir, "switch-b-playback")
-    mark = require_photo_mark("public_fixture_photo_mark", identity.status, identity.mark)
-    assert_playback_marks_in_target([mark], "b")
+    marks = _scene_slot_marks((evidence_dir / "switch-b-playback.png").read_bytes(), "b")
+    assert_playback_marks_in_target(marks, "b")
     observed = _read_json_object(evidence_dir / "observed-ids-after-switch.json", "observed-ids-after-switch.json")
     if observed.get("identity_source") not in (None, "ui_accessibility_identifier"):
         raise FilterContractError("Request logs, indexes, and probes cannot be used as identity truth")
@@ -659,11 +661,14 @@ def _evaluate_tvos_switch(evidence_dir: Path) -> dict[str, Any]:
         if counts != [("0", "0")]:
             raise FilterContractError(f"empty selection after server switch lacks real zero counts or keeps an old selection: {field}")
     bridge = _evaluate_switch_display_policy(evidence_dir, manifest_b)
+    from album_server_narrow_contract import evaluate_server_switch_evidence
+    server_switch = evaluate_server_switch_evidence(evidence_dir)
     return {
         "verdict": "PASS",
         "suite": "tvos-switch",
         "identity_source": "public_fixture_photo_mark",
-        "marks": [mark],
+        "marks": list(marks),
+        "server_switch": server_switch,
         "post_switch_single_photo": bridge,
         "steps": {"switch-b-playback": _step_payload("switch-b-playback", identity)},
     }
@@ -896,7 +901,9 @@ def _evaluate_filter_switch(evidence_dir: Path) -> dict[str, Any]:
     manifest_b = load_member_manifest(evidence_dir / "member-manifest-b.json")
     load_member_manifest(evidence_dir / "member-manifest-a.json")
     fixture_set = str(manifest_b["fixture_set"])
-    marks = [_classified_mark_from_png(evidence_dir, name) for name in FILTER_SWITCH_STEPS]
+    marks = [mark for name in FILTER_SWITCH_STEPS
+             for mark in _scene_slot_marks((evidence_dir / f"{name}.png").read_bytes(), fixture_set,
+                                            screenshot_name=f"{name}.png")]
     assert_playback_marks_in_target(marks, fixture_set)
 
     observed = _read_json_object(evidence_dir / "observed-ids.json", "observed-ids.json")
@@ -912,6 +919,8 @@ def _evaluate_filter_switch(evidence_dir: Path) -> dict[str, Any]:
         assert_foreign_server_ids_absent(_extract_ids_from_request_log(log_text), fixture_set)
 
     bridge = _evaluate_switch_display_policy(evidence_dir, manifest_b)
+    from album_server_narrow_contract import evaluate_server_switch_evidence
+    server_switch = evaluate_server_switch_evidence(evidence_dir)
 
     return {
         "verdict": "PASS",
@@ -920,6 +929,7 @@ def _evaluate_filter_switch(evidence_dir: Path) -> dict[str, Any]:
         "fixture_set": fixture_set,
         "marks": marks,
         "post_switch_single_photo": bridge,
+        "server_switch": server_switch,
     }
 
 

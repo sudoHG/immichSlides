@@ -2,11 +2,6 @@ import XCTest
 
 #if os(iOS)
 extension StrictE2EFilterIOSUITests {
-    @MainActor
-    func collectVisibleFilterIDs(app: XCUIApplication) -> [String] {
-        collectVisibleFilterEvidence(app: app).ids
-    }
-
     // Observations come only from UI identifiers; never splice in albumB from the manifest.
     @MainActor
     func collectVisibleFilterEvidence(app: XCUIApplication) -> (ids: [String], raw: [String]) {

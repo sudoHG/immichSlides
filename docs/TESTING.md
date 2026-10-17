@@ -533,8 +533,8 @@ attempt exports, including `filter-person`. `retry-invocations.json` has a `sess
 map keyed by Xcode log stem, so later sessions retain earlier retries. Every warm
 attempt writes `<stem>-reuse.json` with duration, exit code, timeout budget and
 Products immutability; a first attempt's receipt moves with its archived outputs.
-Recording suites (P2 cases with `video=True`, `server-switch-display` and
-`tvos-server-switch-display`) are refused by registry validation and the retry CLI.
+Recording suites (P2 cases with `video=True`, `filter-switch` and
+`tvos-switch`) are refused by registry validation and the retry CLI.
 Existing visual/evidence validators
 still run on the final attempt and must pass. The target UDID's simulator device
 type determines the device class; the argument and every official result device

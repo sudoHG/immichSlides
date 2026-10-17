@@ -417,30 +417,6 @@ extension StrictE2EFilterIOSUITests {
         )
     }
 
-    @MainActor
-    func waitForStablePublicPhoto(app: XCUIApplication, timeout: TimeInterval) -> StrictE2EPhotoIdentity.Result? {
-        var last: StrictE2EPhotoIdentity.Result?
-        _ = waitUntil(timeout: timeout) {
-            let png = app.screenshot().pngRepresentation
-            last = StrictE2EPhotoIdentity.classify(png: png)
-            return last?.status == .match
-        }
-        return last
-    }
-
-    // Server-switch multi-photo uses the same crops as Python _distinct_region_marks but checks only color
-    // classification and distinct marks; the Python contract additionally requires A/B letters in middle and stacked crops.
-    @MainActor
-    func waitForDistinctRegionMarks(app: XCUIApplication, timeout: TimeInterval) -> [String] {
-        var last: [String] = []
-        _ = waitUntil(timeout: timeout) {
-            let png = app.screenshot().pngRepresentation
-            last = self.distinctRegionMarks(StrictE2EPhotoIdentity.classifyRegions(png: png))
-            return last.count >= 2
-        }
-        return last
-    }
-
     func distinctRegionMarks(_ regions: [String: StrictE2EPhotoIdentity.Result]) -> [String] {
         func mark(_ name: String) -> String? {
             guard let identity = regions[name],

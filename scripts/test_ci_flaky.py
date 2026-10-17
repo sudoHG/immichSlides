@@ -126,8 +126,8 @@ class RegistryTests(unittest.TestCase):
         validate_registry_population(payload, {"ios": [identity], "tvos": []})
 
     def test_recording_suites_cannot_be_registered_for_retry(self):
-        from strict_e2e_runner_support import P2_CASES, SERVER_SWITCH_DISPLAY_SUITES
-        suites = [suite for suite, case in P2_CASES.items() if case.video] + list(SERVER_SWITCH_DISPLAY_SUITES)
+        from strict_e2e_runner_support import P2_CASES, SERVER_SWITCH_RECORDING_SUITES
+        suites = [suite for suite, case in P2_CASES.items() if case.video] + list(SERVER_SWITCH_RECORDING_SUITES)
         for suite in suites:
             with self.subTest(suite=suite):
                 payload = registry()
