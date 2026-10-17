@@ -79,6 +79,15 @@ In `--preparation-failed` accounting mode, an identity failure writes no receipt
 and preserves the generic missing-evidence reason: simulator preparation was the
 original failure, so accounting must not relabel it as an identity failure.
 
+The reader also prepares acceptance for a standalone
+[UI staging identity failure receipt](CI_SUMMARY.md#prepared-ui-staging-identity-failure-receipt).
+It binds the current run, attempt, UI job, shard and ordered methods to the verified
+UI plan. A shard with an interval summary or matching UI records artifact retains
+its existing reason. Eligible missing methods receive only
+`identity-collection-failed`; they remain missing/NOT_RUN and the night stays failed.
+The UI staging producer and workflow upload remain deferred until this reader
+merges to main.
+
 For missing strict or UI cases, the reporter can also associate the current
 attempt's GitHub job with its check-run annotations. A failure annotation with the
 hosted-runner communication-loss marker becomes `hosted-runner-disconnected`.

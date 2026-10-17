@@ -83,9 +83,19 @@ remain missing and NOT_RUN with `identity-collection-failed`; no receipt becomes
 a formal summary, compiled/executed result or recovery proof. This reader support
 does not activate the tracer producer.
 
+For UI shards, the equivalent
+[staging identity receipt](CI_SUMMARY.md#prepared-ui-staging-identity-failure-receipt)
+is bound to the independently verified UI plan, including the tested tree,
+source-derived method population and hashes. Neither an interval summary nor a
+matching current-attempt UI records artifact may exist. Only eligible missing
+methods receive `identity-collection-failed`; counts, execution evidence, failed
+verdicts and issue recovery rules are unchanged. This reader does not activate the
+UI producer or upload workflow.
+
 For a missing strict or UI shard, current-attempt GitHub job metadata binds its
 check-run annotation endpoint. Candidates exclude strict shards with an interval
-summary or a matching records artifact, and UI shards with a matching UI artifact.
+summary or a matching records artifact, and UI shards with an interval summary or
+a matching UI artifact.
 A disconnect after records upload therefore keeps the summary's existing failure
 reason. Only the failure-level hosted-runner communication
 loss marker becomes `hosted-runner-disconnected`. The existing GitHub client's
