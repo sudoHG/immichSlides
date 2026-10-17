@@ -117,6 +117,20 @@ matrix and shard assignments. If that population changes or any plan binding fai
 these strict diagnostics fail closed to the generic missing reason; verified results
 from other shards remain available.
 
+Historical method interpretation is separate from the current runner population.
+The reader-only `HISTORICAL_STRICT_SELECTORS` retains `server-switch-display` (iOS)
+and `tvos-server-switch-display` (tvOS), with their original XCTest method names.
+The tested commit's `scripts/nightly-matrix.json` must match the summary's matrix
+hash and tested tree, and declare the complete platform/device/configuration/suite/
+scenario/fixture case before a retired selector can be used. A record that introduces
+an undeclared retired case still raises the original unknown-suite error. Original
+official results, case verdicts and validator receipts follow the ordinary reader;
+the registry does not schedule a suite or emit a new record format.
+These entries can be removed after the last pre-retirement nightly leaves the
+seven-day producer retention: 2026-10-24 UTC for the retained 2026-10-17 night
+(`39041728419`, aggregate expiry `2026-10-24T22:24:20Z`). A later retained attempt
+would extend that removal date. Compact 90-day history needs no suite resolution.
+
 The nightly infrastructure issue retains these two closed codes in an optional
 `early_failure_reasons` array per run row and an `Early infrastructure reason`
 column. Historical rows remain readable, unknown manually edited values are
