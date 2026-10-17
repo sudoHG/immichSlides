@@ -297,7 +297,8 @@ Missing methods stay missing/NOT_RUN, the verdict stays failed, and other shards
 formal results survive. The receipt is untrusted: it supplies no source identity,
 paths, environment SHAs, command output, compiled/executed evidence, pass night or
 issue closure. Following the reader's merge to main, nightly UI staging emits
-this receipt only when its Git identity collection raises an exception. It
+this receipt only when source identity collection or validation raises: Git
+failure or timeout, a checkout/`GITHUB_SHA` mismatch, or identity validation failure. It
 derives the ordered methods from the same versioned Swift source, default plan
 and shard manifest used by scheduling, without collecting or substituting a
 source identity. The normal path does not compute or write a receipt. Cancellation,

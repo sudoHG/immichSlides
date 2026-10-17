@@ -28,6 +28,7 @@ from urllib.request import Request, build_opener
 from ci_build_archive import (artifact_name, check_products, extract_products, file_hash, measure_signing,
                               output, validate_artifact, validate_manifest, validated_tar_members, workspace_preflight)
 from ci_execution_diagnostics import active, diagnostic_session
+from ci_nightly_ui import default_plan_populations
 from ci_publish import ArtifactRedirect, RateLimitWaitingGitHub, json_member, rate_limit_wait, verify_workflow
 from ci_summary import (ContractError, decode, observation, parse_identity, parse_summary, require, test_identity, write_summary)
 from ci_summary import (ARCHIVE_DOWNLOAD_MAX_DISK_BYTES, ARCHIVE_DOWNLOAD_MAX_SECONDS, identity_key, validate_test_identity)
@@ -51,13 +52,7 @@ def write_json(path, value):
 
 def stage_download(args=None):
     def identity_failed():
-        from ci_population import ui_identities
-        ui_root = ROOT / "immichSlidesUITests"
-        sources = {path.relative_to(ui_root).as_posix(): path.read_text() for path in ui_root.rglob("*.swift")}
-        platform_name = DEVICES[args.device]
-        test_plan = ROOT / ("immichSlides-" + ("iOS" if platform_name == "ios" else "tvOS") + ".xctestplan")
-        declared = shard_populations(ui_identities(sources, platform_name), test_plan.read_text(),
-                                     (ROOT / MANIFEST_PATH).read_text(), args.device)[args.shard]
+        declared = default_plan_populations(ROOT, (args.device,))[args.device][args.shard]
         receipt = {"schema_version": 1, "run": {"id": os.environ.get("GITHUB_RUN_ID"),
                    "attempt": int(os.environ.get("GITHUB_RUN_ATTEMPT", "1"))},
                    "job": "ui-" + args.device, "shard": args.shard, "phase": "identity-collection",

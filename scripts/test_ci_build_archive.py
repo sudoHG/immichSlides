@@ -47,11 +47,13 @@ class BuildArchiveTests(unittest.TestCase):
         from ci_nightly import parse_identity_failure
         from ci_nightly_ui import current_plan
         share_ui_source_fixture(self)
-        for event, failure in (("schedule", subprocess.TimeoutExpired(["git", "rev-parse", "HEAD^{tree}"], 30,
+        for event, device, failure in (("schedule", "ipad", subprocess.TimeoutExpired(["git", "rev-parse", "HEAD^{tree}"], 30,
                                    output="private identity output", stderr="private identity error")),
-                               ("workflow_dispatch", subprocess.CalledProcessError(128, ["git", "rev-parse", "HEAD^{tree}"],
+                               ("workflow_dispatch", "ipad", subprocess.CalledProcessError(128, ["git", "rev-parse", "HEAD^{tree}"],
+                                   output="private identity output", stderr="private identity error")),
+                               ("schedule", "appletv", subprocess.TimeoutExpired(["git", "rev-parse", "HEAD^{tree}"], 30,
                                    output="private identity output", stderr="private identity error"))):
-            with self.subTest(event=event), tempfile.TemporaryDirectory() as directory:
+            with self.subTest(event=event, device=device), tempfile.TemporaryDirectory() as directory:
                 temporary = Path(directory)
                 environment = {"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": event, "GITHUB_REPOSITORY": "owner/repo",
                     "GITHUB_SHA": "a" * 40, "GITHUB_REF": "refs/heads/main", "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "2",
@@ -59,7 +61,8 @@ class BuildArchiveTests(unittest.TestCase):
                 with patch.dict(os.environ, environment, clear=True), \
                         patch("run_host_checks.subprocess.check_output", side_effect=["a" * 40, "b" * 40]):
                     plan = current_plan(ui.ROOT)
-                scheduled = next(item for item in plan["shards"] if item["device"] == "ipad" and item["shard"] == "visual-b")
+                scheduled = (next(item for item in plan["shards"] if item["device"] == "appletv") if device == "appletv" else
+                             next(item for item in plan["shards"] if item["device"] == "ipad" and item["shard"] == "visual-b"))
                 def git_output(command, **options):
                     self.assertEqual(30, options["timeout"])
                     if command == ["git", "rev-parse", "HEAD"]:
@@ -69,7 +72,7 @@ class BuildArchiveTests(unittest.TestCase):
                 with patch.dict(os.environ, environment, clear=True), \
                         patch("run_host_checks.subprocess.check_output", side_effect=git_output) as git_process:
                     try:
-                        ui.stage_download(argparse.Namespace(device="ipad", shard="visual-b"))
+                        ui.stage_download(argparse.Namespace(device=device, shard=scheduled["shard"]))
                     except BaseException as raised:
                         self.assertIs(failure, raised)
                     else:
@@ -78,15 +81,15 @@ class BuildArchiveTests(unittest.TestCase):
                 self.assertEqual(["ui-identity/identity-failure.json"],
                                  [path.relative_to(temporary).as_posix() for path in temporary.rglob("*") if path.is_file()])
                 receipt = json.loads((temporary / "ui-identity/identity-failure.json").read_text())
-                expected = {"schema_version": 1, "run": plan["run"], "job": "ui-ipad", "shard": "visual-b",
+                expected = {"schema_version": 1, "run": plan["run"], "job": "ui-" + device, "shard": scheduled["shard"],
                     "phase": "identity-collection", "reason": "identity-collection-failed", "declared": scheduled["declared"]}
                 self.assertEqual(json.dumps(expected, sort_keys=True), json.dumps(receipt, sort_keys=True))
-                self.assertEqual(receipt, parse_identity_failure(receipt, plan["run"], "visual-b", scheduled["declared"], job="ui-ipad"))
+                self.assertEqual(receipt, parse_identity_failure(receipt, plan["run"], scheduled["shard"], scheduled["declared"], job="ui-" + device))
 
     def test_staging_success_cancellation_and_non_identity_failures_write_no_early_receipt(self):
         import argparse
         from ci_local import Interrupted
-        for mode in ("success", "cancelled", "metadata", "allocation", "non-nightly", "receipt-write"):
+        for mode in ("success", "cancelled", "metadata", "allocation", "non-nightly", "receipt-generation", "receipt-write"):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory, contextlib.ExitStack() as stack:
                 temporary = Path(directory)
                 environment = {"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "pull_request" if mode == "non-nightly" else "schedule",
@@ -101,7 +104,7 @@ class BuildArchiveTests(unittest.TestCase):
                     if command == ["git", "rev-parse", "HEAD"]:
                         return "a" * 40
                     self.assertEqual(["git", "rev-parse", "HEAD^{tree}"], command)
-                    if mode in {"cancelled", "non-nightly", "receipt-write"}:
+                    if mode in {"cancelled", "non-nightly", "receipt-generation", "receipt-write"}:
                         raise failure
                     return "b" * 40
                 stack.enter_context(patch.dict(os.environ, environment, clear=True))
@@ -110,7 +113,7 @@ class BuildArchiveTests(unittest.TestCase):
                     stack.enter_context(patch.object(ui.tempfile, "mkdtemp", side_effect=OSError("staging allocation failed")))
                 if mode == "receipt-write":
                     stack.enter_context(patch.object(ui, "write_json", side_effect=OSError("private receipt write failure")))
-                args = argparse.Namespace(device="ipad", shard="visual-b")
+                args = argparse.Namespace(device="ipad", shard="no-such-shard" if mode == "receipt-generation" else "visual-b")
                 if mode == "success":
                     self.assertEqual(0, ui.stage_download(args))
                     outputs = dict(line.split("=", 1) for line in (temporary / "outputs").read_text().splitlines())

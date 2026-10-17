@@ -842,7 +842,7 @@ class ReporterTests(unittest.TestCase):
                         self.assertEqual(["git", "rev-parse", "HEAD^{tree}"], command)
                         raise failure
                     environment = {"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "schedule", "GITHUB_REPOSITORY": api.repository,
-                        "GITHUB_SHA": "f" * 40, "GITHUB_REF": "refs/heads/main", "GITHUB_RUN_ID": "10", "GITHUB_RUN_ATTEMPT": "1",
+                        "GITHUB_SHA": run["head_sha"], "GITHUB_REF": "refs/heads/main", "GITHUB_RUN_ID": "10", "GITHUB_RUN_ATTEMPT": "1",
                         "RUNNER_TEMP": str(temporary)}
                     with patch.dict(os.environ, environment, clear=True), patch.object(ui_producer, "ROOT", checkout), \
                             patch("run_host_checks.subprocess.check_output", side_effect=identity_output) as git_process:

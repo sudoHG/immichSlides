@@ -86,8 +86,10 @@ UI plan. A shard with an interval summary or matching UI records artifact retain
 its existing reason. Eligible missing methods receive only
 `identity-collection-failed`; they remain missing/NOT_RUN and the night stays failed.
 Following the reader's merge to main, the nightly UI job invokes
-`ci_ui_tests.py stage-download --device <device> --shard <shard>`. Only a Git identity
-collection exception writes `ui-identity/identity-failure.json` under `RUNNER_TEMP`.
+`ci_ui_tests.py stage-download --device <device> --shard <shard>`. It writes
+`ui-identity/identity-failure.json` under `RUNNER_TEMP` only when source identity
+collection or validation raises: Git failure or timeout, a checkout/`GITHUB_SHA`
+mismatch, or identity validation failure.
 The declared methods come from the same versioned Swift source, default plan and
 shard manifest as scheduling. This computation runs only on the failure path;
 successful identity collection retains the original staging outputs and writes no

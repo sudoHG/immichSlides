@@ -148,10 +148,23 @@ def validate_ui_record(raw, summaries, *, policy, registry, evaluated_on):
     return record
 
 
-def current_plan(root):
-    from ci_build_archive import file_hash
+def default_plan_populations(root, devices=DEVICES):
     from ci_population import ui_identities
     from ci_ui_shards import MANIFEST_PATH, shard_populations
+    ui_root = root / "immichSlidesUITests"
+    sources = {path.relative_to(ui_root).as_posix(): path.read_text() for path in ui_root.rglob("*.swift")}
+    manifest = (root / MANIFEST_PATH).read_text()
+    populations = {}
+    for device in devices:
+        platform = DEVICES[device]
+        test_plan = root / ("immichSlides-" + ("iOS" if platform == "ios" else "tvOS") + ".xctestplan")
+        populations[device] = shard_populations(ui_identities(sources, platform), test_plan.read_text(), manifest, device)
+    return populations
+
+
+def current_plan(root):
+    from ci_build_archive import file_hash
+    from ci_ui_shards import MANIFEST_PATH
     from run_host_checks import run_identity, source_metadata
     from strict_e2e_server import fixture_manifest
     identity = run_identity(os.environ, ci=os.environ.get("GITHUB_ACTIONS") == "true")
@@ -161,13 +174,10 @@ def current_plan(root):
                        "fork_originated": fork, "ci_changing": None},
             "run": {"id": os.environ.get("GITHUB_RUN_ID"), "attempt": int(os.environ.get("GITHUB_RUN_ATTEMPT", "1"))},
             "shards": [], "hashes": {}, "max_parallel": 2, "started_epoch": time.time()}
-    ui_root = root / "immichSlidesUITests"
-    sources = {path.relative_to(ui_root).as_posix(): path.read_text() for path in ui_root.rglob("*.swift")}
-    manifest = (root / MANIFEST_PATH).read_text()
+    populations = default_plan_populations(root)
     for device, platform in DEVICES.items():
         test_plan = root / ("immichSlides-" + ("iOS" if platform == "ios" else "tvOS") + ".xctestplan")
-        populations = shard_populations(ui_identities(sources, platform), test_plan.read_text(), manifest, device)
-        plan["shards"].extend({"device": device, "shard": shard, "declared": declared} for shard, declared in populations.items())
+        plan["shards"].extend({"device": device, "shard": shard, "declared": declared} for shard, declared in populations[device].items())
         plan["hashes"][device] = {"manifests": {"fixture-c": fixture_manifest("c")["fixture_sha256"],
                                                "test-plan": file_hash(test_plan), "ui-shards": file_hash(root / MANIFEST_PATH)},
                                   "policies": {"test-policy": file_hash(root / "scripts/ci-test-policy.json"),
