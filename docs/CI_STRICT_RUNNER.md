@@ -39,10 +39,11 @@ a qualified frame fails. A real Settings change must produce a stable B single
 photo in the same live process. Candidate numbering, raw-byte identity, album
 membership and the finite denominator are checked by the display-policy contract.
 That finite-candidate validator is the sole display-policy authority for merged
-switch evidence. The original before, Settings and after screenshots are required;
-the report keeps its `display` fields and nested `finite_rotation` result. After
+switch evidence. Merged switch runs require the original before, Settings and after
+screenshots; the report keeps its `display` fields and nested `finite_rotation` result. After
 identity is read from the validated foreground when the frame has its matching
 blurred surround, rather than from obsolete whole-frame color proxies.
+Standalone A uses its original before/after PNGs plus real-UI and same-process metadata.
 Fitted single-photo candidates retain their place in that rotation and use the
 existing matched-foreground/blurred-surround gate before slot reading; they never
 qualify as the multi-photo before frame.

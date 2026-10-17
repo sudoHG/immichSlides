@@ -636,11 +636,13 @@ print(String(data: try JSONSerialization.data(withJSONObject: report), encoding:
                 after=_fixture_png("A3"),
             )
 
-            report = evaluate_filter_visual_identity(evidence, "display-policy")
-
-            self.assertEqual(report["verdict"], "PASS")
-            self.assertEqual(report["before_marks"], ["A1", "A2"])
-            self.assertEqual(report["after_mark"], "A3")
+            for suite in ("display-policy", "tvos-display-policy"):
+                with self.subTest(suite=suite):
+                    report = evaluate_filter_visual_identity(evidence, suite)
+                    self.assertEqual(report["verdict"], "PASS")
+                    self.assertEqual(report["suite"], suite)
+                    self.assertEqual(report["before_marks"], ["A1", "A2"])
+                    self.assertEqual(report["after_mark"], "A3")
 
 
     def test_display_policy_requires_same_live_process_and_bounded_candidate_rotation(self) -> None:

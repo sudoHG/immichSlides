@@ -446,7 +446,7 @@ def _evaluate_display_policy(evidence_dir: Path, suite: str, *, manifest: Mappin
     if payload.get("mode_before") != "smartFill" or payload.get("mode_after") != "singlePhoto":
         raise FilterContractError("display policy must change from SmartFill to single-photo mode")
     process_id = _require_same_process(payload, "display strategy run evidence")
-    if any(not (evidence_dir / name).is_file() for name in (
+    if switched_server and any(not (evidence_dir / name).is_file() for name in (
         "display-before.png", "display-settings.png", "display-after.png",
     )):
         raise FilterContractError("Missing multi-photo before, real settings action, or stable single-photo after screenshot")
