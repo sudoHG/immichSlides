@@ -3,6 +3,7 @@
 import copy
 import json
 import hashlib
+import http.client
 import os
 import plistlib
 import subprocess
@@ -344,6 +345,61 @@ class ReporterTests(unittest.TestCase):
                 if variant == "annotation-retry":
                     self.assertEqual(2, api.annotation_calls)
                     self.assertEqual(4, api.request_count)
+
+        # A later valid receipt distinguishes the inner receipt catch from the outer plan catch.
+        witness = next(shard for shard in planned if planned.index(shard) > planned.index(target)
+            and shard["id"] != failed_summary["run"]["shard"]
+            and all(case["suite"] != "filter-vision" for case in shard["cases"]))
+        witness_cases = [case_identity(case) for case in witness["cases"]]
+        witness_keys = {ci_report.identity_key(case) for case in witness_cases}
+        witness_name = "nightly-identity-" + witness["id"] + "-10-1"
+        retained = copy.deepcopy(members)
+        for member in ("summary.json", "trace.json"):
+            del retained[("nightly-strict-" + witness["id"] + "-10-1", member)]
+        raw = retained[("nightly-aggregate-10-1", "nightly.json")]
+        raw["capacity"]["shard_intervals"] = [item for item in raw["capacity"]["shard_intervals"] if item["shard"] != witness["id"]]
+        for collection in ("observed", "informational"):
+            raw[collection] = [item for item in raw[collection] if ci_report.identity_key(item["identity"]) not in witness_keys]
+        raw["matrix"]["missing"].extend(witness_cases)
+        raw["matrix"]["executed"] -= len(witness_cases)
+        retained[(receipt_name, "identity-failure.json")] = copy.deepcopy(receipt)
+        retained[(witness_name, "identity-failure.json")] = {**copy.deepcopy(receipt), "shard": witness["id"], "declared": witness_cases}
+        artifacts = [{"id": number + 1, "name": name, "size_in_bytes": 1, "expired": False}
+                     for number, name in enumerate(sorted({name for name, _ in retained}))]
+        for defect in (None, "receipt-incomplete", "receipt-eof", "plan-incomplete", "plan-eof"):
+            with self.subTest(artifact_read=defect):
+                saved = copy.deepcopy(retained)
+                api = ci_report.ReportGitHub(identity["repository"], "", dry_run=True)
+                broken_name = receipt_name if defect and defect.startswith("receipt-") else "nightly-plan-10-1"
+                def read_member(client, artifact, member):
+                    if defect and artifact["name"] == broken_name:
+                        return json_member(client, artifact, member)
+                    return saved[(artifact["name"], member)]
+                def read_api(path, **options):
+                    if "/artifacts?" in path:
+                        return {"artifacts": artifacts}
+                    if "/jobs?" in path:
+                        return {"total_count": 0, "jobs": []}
+                    self.assertTrue(path.endswith("/zip"), path)
+                    raise (EOFError("private-download-error") if defect.endswith("-eof") else
+                           http.client.IncompleteRead(b"private-download-error", 100))
+                def git_output(command, **options):
+                    return b"b" * 40 + b"\n" if command[1] == "rev-parse" else matrix
+                with patch("ci_publish.json_member", side_effect=read_member), patch("ci_report.on_main", return_value=True), \
+                        patch("ci_publish.GitHub._request", side_effect=read_api), patch("subprocess.check_output", side_effect=git_output):
+                    report = read_run(api, run, {})
+                if defect is None:
+                    intact = report
+                expected_missing = [{"identity": case, "reason": "missing or invalid shard evidence" if defect else "identity-collection-failed"}
+                                    for case in cases]
+                expected_missing.extend({"identity": case, "reason": "missing or invalid shard evidence"
+                    if defect and defect.startswith("plan-") else "identity-collection-failed"} for case in witness_cases)
+                self.assertCountEqual(expected_missing, report["diagnostics"]["missing"])
+                self.assertEqual(intact["observed"], report["observed"])
+                self.assertEqual(intact["diagnostics"]["counts"], report["diagnostics"]["counts"])
+                self.assertIn(failed_method, [item["identity"] for item in report["observed"] if item["outcome"] == "failed"])
+                self.assertNotIn("private-download-error", json.dumps(report))
+                self.assertFalse(api.retry_reads)
 
     def test_validator_receipt_survives_case_aggregation_compaction_and_report(self):
         from html import unescape
@@ -859,7 +915,7 @@ class ReporterTests(unittest.TestCase):
                     self.assertEqual(receipt, parse_identity_failure(receipt, plan["run"], "default", plan["shards"][0]["declared"], job="ui-iphone"))
             for defect in ("valid", "run", "attempt", "attempt-bool", "job", "shard", "version", "phase", "reason",
                            "declared", "extra", "duplicate", "expired", "previous-attempt", "foreign-device", "foreign-shard",
-                           "corrupt", "invalid-json", "unavailable", "summary-present", "records-present"):
+                           "corrupt", "invalid-json", "unavailable", "incomplete", "eof", "summary-present", "records-present"):
                 with self.subTest(ui_identity_receipt=defect):
                     saved_capacity, saved_verdict, saved_pages = ui["capacity"], ui["verdict"], api.pages
                     saved_summary = members[("ui-iphone-default-10-1", "summary.json")]
@@ -905,6 +961,10 @@ class ReporterTests(unittest.TestCase):
                             if path.endswith("/zip"):
                                 if defect == "unavailable":
                                     raise OSError("private-download-error")
+                                if defect == "incomplete":
+                                    raise http.client.IncompleteRead(b"private-download-error", 100)
+                                if defect == "eof":
+                                    raise EOFError("private-download-error")
                                 return b"not a ZIP" if defect == "corrupt" else packed.getvalue()
                             return {"total_count": 1, "jobs": [lost_job]} if defect == "summary-present" else {"total_count": 0, "jobs": []}
                         api.pages = lambda path, collection: candidate_artifacts

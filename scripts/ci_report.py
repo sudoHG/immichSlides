@@ -6,6 +6,7 @@ from __future__ import annotations
 import copy
 import argparse
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -650,7 +651,7 @@ def nightly_failure_reasons(api, run, attempt, artifacts, raw, missing):
                 receipt = parse_identity_failure(json_member(api, matches[0], "identity-failure.json"),
                     {"id": str(run["id"]), "attempt": attempt}, shard["shard"], shard["declared"], job="ui-" + shard["device"])
                 reasons.update({key: receipt["reason"] for key in keys})
-            except (ContractError, KeyError, TypeError, ValueError, OSError, zipfile.BadZipFile):
+            except (ContractError, KeyError, TypeError, ValueError, OSError, EOFError, http.client.HTTPException, zipfile.BadZipFile):
                 pass  # Invalid untrusted diagnostics never replace missing evidence.
     plans = [item for item in artifacts if item["name"] == f"nightly-plan-{run['id']}-{attempt}"]
     summary_shards = {item["shard"] for item in raw["capacity"]["shard_intervals"]}
@@ -679,9 +680,9 @@ def nightly_failure_reasons(api, run, attempt, artifacts, raw, missing):
                         receipt = parse_identity_failure(json_member(api, matches[0], "identity-failure.json"),
                             {"id": str(run["id"]), "attempt": attempt}, shard["id"], declared)
                         reasons.update({key: receipt["reason"] for key in keys})
-                    except (ContractError, KeyError, TypeError, ValueError, zipfile.BadZipFile):
+                    except (ContractError, KeyError, TypeError, ValueError, EOFError, http.client.HTTPException, zipfile.BadZipFile):
                         pass  # Invalid untrusted diagnostics never replace missing evidence.
-        except (ContractError, KeyError, TypeError, ValueError, OSError, subprocess.SubprocessError, zipfile.BadZipFile):
+        except (ContractError, KeyError, TypeError, ValueError, OSError, EOFError, http.client.HTTPException, subprocess.SubprocessError, zipfile.BadZipFile):
             pass
     candidates = {name: keys & absent for name, keys in jobs.items() if keys & absent}
     if not candidates:
