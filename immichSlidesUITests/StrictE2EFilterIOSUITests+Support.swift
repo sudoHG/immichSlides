@@ -239,16 +239,18 @@ extension StrictE2EFilterIOSUITests {
     @MainActor
     func clearTextFieldOrFail(_ field: XCUIElement, app: XCUIApplication, evidenceName: String) {
         if isTextFieldEmpty(field) { return }
-        // Command-A does not always select the whole URL field, so fall back to end-of-field deletes.
-        field.typeKey("a", modifierFlags: .command)
-        field.typeKey(XCUIKeyboardKey.delete.rawValue, modifierFlags: [])
-        if !isTextFieldEmpty(field) {
-            field.typeKey(XCUIKeyboardKey.rightArrow.rawValue, modifierFlags: .command)
-            let remaining = field.value as? String ?? ""
-            if !remaining.isEmpty {
-                field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: remaining.count))
-            }
+        // Native editing avoids the iPad keyboard-shortcut animation wait during server switching.
+        field.press(forDuration: 1)
+        // ui-label-lookup: System text editing supplies the localized Select All action.
+        let selectAllLabels = ["Select All", "全选"]
+        let menuItem = app.menuItems.matching(NSPredicate(format: "label IN %@", selectAllLabels)).firstMatch
+        let button = app.buttons.matching(NSPredicate(format: "label IN %@", selectAllLabels)).firstMatch
+        if menuItem.exists {
+            menuItem.tap()
+        } else if button.exists {
+            button.tap()
         }
+        field.typeText(XCUIKeyboardKey.delete.rawValue)
         if !isTextFieldEmpty(field) {
             _ = captureNamedPNG(app: app, name: "\(evidenceName)-clear-failed")
             XCTFail("Failed to clear the URL field; read back \(field.value as? String ?? "")")
