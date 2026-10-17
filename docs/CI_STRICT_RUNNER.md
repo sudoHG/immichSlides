@@ -28,6 +28,20 @@ unit/UI archives. They reuse the [archive workspace preflight](CI_BUILD_ARCHIVE.
 product inventory and signing inspection. No competing archive producer or artifact
 selection mechanism is introduced.
 
+The dual-server `filter-switch` (iOS/iPadOS) and `tvos-switch` contracts also carry
+the former standalone server-switch display guarantees. Each records A playback,
+B save success, the cleared filter editor and real B UI identifiers, then checks
+every A/B photo slot by glyph, color and axis. A continuous recording covers the
+flow. On B, real Next actions traverse at most one complete four-frame target-album
+candidate rotation; every sampled original is retained, and the first real
+multi-photo frame becomes `display-before.png`. Exhausting all candidates without
+a qualified frame fails. A real Settings change must produce a stable B single
+photo in the same live process. Candidate numbering, raw-byte identity, album
+membership and the finite denominator are checked by the display-policy contract.
+The nightly matrix runs only these merged identities; the standalone selectors
+and suites have been removed. This does not resolve the pixel-coverage limits
+tracked in #434.
+
 `filter-edit-switch` checks both the original whole-frame color identity and each
 full-span photo slot against the non-target album's A1–A5 classifier labels. Public
 background colors locate slots independently of glyphs along both rows and columns.
@@ -136,7 +150,7 @@ The tvOS wait latches a newer action/publication pair from one app snapshot, the
 checks the stable window within the same deadline. Index, render and manifest
 come from that snapshot; it neither wakes the bar nor queries its missing probe.
 
-These scene contracts, `tvos-edit-switch`, the A frame of server-switch, and
+These scene contracts, `tvos-edit-switch`, both A and B frames of server-switch, and
 `tvos-person`/`tvos-album` use the same reader. Uniformly across geometries, a
 segmentable single-photo frame retains #381's whole-frame color and visible
 public-texture judgement, including clipped glyphs. Collages require the strict

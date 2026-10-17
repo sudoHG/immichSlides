@@ -392,9 +392,16 @@ def _write_server_switch_pass(directory: Path) -> None:
     (directory / "display-after.png").write_bytes(_fixture_png("A2", "b"))
     (directory / "display-settings.png").write_bytes(_fixture_png("A1", "b"))
     (directory / "display-policy.json").write_text(
-        json.dumps({"identity_source": "public_fixture_photo_mark"}),
+        json.dumps({
+            "identity_source": "public_fixture_photo_mark", "setting_source": "accessibility_ui",
+            "mode_before": "smartFill", "mode_after": "singlePhoto",
+            "process_id_before": 44, "process_id_after": 44,
+            "before_candidate_steps": ["display-before-candidate-01"],
+            "selected_before_step": "display-before-candidate-01",
+        }),
         encoding="utf-8",
     )
+    (directory / "display-before-candidate-01.png").write_bytes((directory / "display-before.png").read_bytes())
 
 
 def _write_album_empty_pass(directory: Path, fixture_set: str = "a") -> None:
@@ -1091,7 +1098,7 @@ class ABMixTests(unittest.TestCase):
             (directory / "switch-b-play-2.png").write_bytes(_fixture_png("A2", "a"))
             with self.assertRaises(AlbumServerContractError) as raised:
                 evaluate_server_switch_evidence(directory)
-            self.assertIn("pass as B", str(raised.exception))
+            self.assertIn("every slot must show the public glyph of fixture B", str(raised.exception))
 
     def test_two_b_panels_are_public_pattern_b(self) -> None:
         image = _side_by_side(_fixture_png("A3", "b"), _fixture_png("A2", "b"))
@@ -1109,15 +1116,28 @@ class ABMixTests(unittest.TestCase):
                 evaluate_server_switch_evidence(directory)
 
     def test_server_switch_pack_with_side_by_side_b_playback_passes(self) -> None:
-        with tempfile.TemporaryDirectory() as raw:
-            directory = Path(raw)
-            _write_server_switch_pass(directory)
-            panels = _side_by_side(_fixture_png("A3", "b"), _fixture_png("A2", "b"))
-            (directory / "switch-b-play-1.png").write_bytes(panels)
-            (directory / "switch-b-play-2.png").write_bytes(panels)
-            report = evaluate_server_switch_evidence(directory)
-        self.assertEqual(report["verdict"], "PASS")
-        self.assertEqual(report["b_pattern"], "b")
+        from test_strict_e2e_photo_identity import FrameGlyphBoundaryTests
+        for horizontal in (False, True):
+            with self.subTest(horizontal=horizontal), tempfile.TemporaryDirectory() as raw:
+                directory = Path(raw)
+                _write_server_switch_pass(directory)
+                panels = FrameGlyphBoundaryTests._pair("b", 3, 2, horizontal=horizontal,
+                                                      seam=1382 if horizontal else None)
+                (directory / "switch-b-play-1.png").write_bytes(panels)
+                report = evaluate_server_switch_evidence(directory)
+                self.assertEqual(report["marks"], ["A3", "A2", "A2"])
+                self.assertEqual(report["b_pattern"], "b")
+                for case, options, prefix in (
+                    ("mixed", {"second_fixture": "a"}, "mixed public glyphs"),
+                    ("unreadable", {"unreadable_slot": 1}, "unreadable public glyph slot"),
+                ):
+                    with self.subTest(case=case):
+                        broken = FrameGlyphBoundaryTests._pair("b", 3, 2, horizontal=horizontal, **options)
+                        (directory / "switch-b-play-1.png").write_bytes(broken)
+                        with self.assertRaisesRegex(AlbumServerContractError, prefix) as raised:
+                            evaluate_server_switch_evidence(directory)
+                        self.assertIn("screenshot switch-b-play-1.png", str(raised.exception))
+                        self.assertIn("horizontal" if horizontal else "vertical", str(raised.exception))
 
     def test_server_switch_a_frame_checks_every_slot_for_both_orientations(self) -> None:
         from test_strict_e2e_photo_identity import FrameGlyphBoundaryTests
@@ -1222,7 +1242,7 @@ class ABMixTests(unittest.TestCase):
             )
         self.assertEqual(command[0], "python3")
         self.assertIn("scripts/run_strict_e2e.py", command)
-        self.assertIn("server-switch-display", command)
+        self.assertIn("filter-switch", command)
         self.assertNotIn("xcodebuild", command)
 
 

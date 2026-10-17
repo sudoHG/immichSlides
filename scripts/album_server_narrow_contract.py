@@ -13,6 +13,9 @@ from access_lifecycle_contract import (
     classify_display_regions,
 )
 from strict_e2e_filter_contract import (
+    FilterContractError,
+    _evaluate_display_policy,
+    _scene_slot_marks,
     START_PLAYBACK_BUTTON_ID,
     assert_empty_selection_cannot_start,
     assert_foreign_server_ids_absent,
@@ -24,16 +27,13 @@ from strict_e2e_filter_contract import (
 )
 from strict_e2e_photo_identity import (
     MARKS,
-    classify_public_pattern,
     classify_screenshot,
     public_letter_from_bytes,
-    public_scene_photos_from_bytes,
-    IdentityAssertionError,
 )
 from strict_e2e_server import PUBLIC_API_KEY, fixture_manifest
 
 
-class AlbumServerContractError(Exception):
+class AlbumServerContractError(FilterContractError):
     pass
 
 
@@ -58,20 +58,20 @@ TVOS_PLAN = "StrictE2E-tvOS"
 
 IOS_FIRST_BOOT_COLD_RELAUNCH = "immichSlidesUITests/StrictE2EFirstBatchIOSUITests/testFirstBootSetupSurvivesColdRelaunch"
 IOS_ALBUM_EMPTY = "immichSlidesUITests/StrictE2EFilterIOSUITests/testTargetAlbumPlaysAndEmptyAlbumShowsEmptyResult"
-IOS_SERVER_SWITCH = "immichSlidesUITests/StrictE2EFilterIOSUITests/testServerSwitchDropsOldFiltersAndDisplayPolicyAppliesImmediately"
+IOS_SERVER_SWITCH = "immichSlidesUITests/StrictE2EFilterIOSUITests/testFilterServerSwitchIsolation"
 IOS_FAILURE = "immichSlidesUITests/StrictE2EFirstBatchIOSUITests/testFirstBootFailureStaysOnFirstBoot"
 TVOS_FIRST_BOOT_COLD_RELAUNCH = "immichSlidesUITests/StrictE2ETVOSFlowUITests/testTVOSFirstBootSaveAndConfiguredColdLaunch"
 TVOS_ALBUM_EMPTY = "immichSlidesUITests/StrictE2EFilterTVOSUITests/testTVOSTargetAlbumPlaysAndEmptyAlbumShowsEmptyResult"
-TVOS_SERVER_SWITCH = "immichSlidesUITests/StrictE2EFilterTVOSUITests/testTVOSServerSwitchDropsOldFiltersAndDisplayPolicyAppliesImmediately"
+TVOS_SERVER_SWITCH = "immichSlidesUITests/StrictE2EFilterTVOSUITests/testTVOSServerSwitchIsolation"
 TVOS_FAILURE = "immichSlidesUITests/StrictE2ETVOSFlowUITests/testTVOSAlbumServerFirstBootFailureHTML200"
 SERVER_SWITCH_RECORDING_FILE = "screen-recording.mov"
 SERVER_SWITCH_SAVE_SUCCESS_PNG = "server-switch-b-save-success.png"
 SERVER_SWITCH_SELECTION_CLEARED_PNG = "server-switch-b-selection-cleared.png"
 SERVER_SWITCH_OBSERVED_SOURCE = "ui_accessibility_identifier"
 SERVER_SWITCH_SUITE_BY_PLATFORM = {
-    "iphone": "server-switch-display",
-    "ipad": "server-switch-display",
-    "tvos": "tvos-server-switch-display",
+    "iphone": "filter-switch",
+    "ipad": "filter-switch",
+    "tvos": "tvos-switch",
 }
 SERVER_SWITCH_RUNNER_PLATFORM = {
     "iphone": "ios",
@@ -377,32 +377,33 @@ def evaluate_server_switch_evidence(evidence_dir: Path) -> dict[str, Any]:
     if not (evidence_dir / "server-switch-a-play-1.png").is_file():
         raise AlbumServerContractError("Missing screenshot of A's selected scope and photo")
     try:
-        a_photos = public_scene_photos_from_bytes((evidence_dir / "server-switch-a-play-1.png").read_bytes(),
-                                                 screenshot_name="server-switch-a-play-1.png")
-    except IdentityAssertionError as error:
+        a_marks = _scene_slot_marks((evidence_dir / "server-switch-a-play-1.png").read_bytes(), "a",
+                                    screenshot_name="server-switch-a-play-1.png")
+    except FilterContractError as error:
         raise AlbumServerContractError(str(error)) from error
-    if any(photo.letter != "A" for photo in a_photos):
-        raise AlbumServerContractError("server-switch-a-play-1: every slot must show the public pattern a")
-    assert_playback_marks_in_target([photo.mark for photo in a_photos], "a")
+    assert_playback_marks_in_target(a_marks, "a")
     b_names = [name for name in ("switch-b-play-1", "switch-b-play-2") if (evidence_dir / f"{name}.png").is_file()]
     if not b_names:
         raise AlbumServerContractError("After switching servers there must be a screenshot of B's public pattern")
-    marks = [_classified_mark(evidence_dir, name) for name in b_names]
-    assert_playback_marks_in_target(marks, str(manifest_b["fixture_set"]))
+    marks = []
     for name in b_names:
-        _require_public_pattern(evidence_dir, name, "b")
+        try:
+            marks.extend(_scene_slot_marks((evidence_dir / f"{name}.png").read_bytes(), "b",
+                                           screenshot_name=f"{name}.png"))
+        except FilterContractError as error:
+            raise AlbumServerContractError(str(error)) from error
+    assert_playback_marks_in_target(marks, str(manifest_b["fixture_set"]))
     a_bytes = (evidence_dir / "server-switch-a-play-1.png").read_bytes()
     b_bytes = (evidence_dir / f"{b_names[0]}.png").read_bytes()
     if a_bytes == b_bytes:
         raise AlbumServerContractError("After switching servers the screen is still the same as A")
-    if classify_public_pattern(b_bytes) == "a":
-        raise AlbumServerContractError("An A screen must not pass as B")
     _require_named_png(evidence_dir, SERVER_SWITCH_SAVE_SUCCESS_PNG, "Missing B save-success screen")
     _require_named_png(evidence_dir, SERVER_SWITCH_SELECTION_CLEARED_PNG, "Missing screen showing the old selection cleared")
     observed = _read_json(evidence_dir / "observed-ids.json", "observed-ids.json")
     assert_server_switch_observed_ids(observed, str(manifest_b["fixture_set"]))
     _require_server_switch_recording(evidence_dir)
     display = evaluate_immediate_display_policy(evidence_dir)
+    display["finite_rotation"] = _evaluate_display_policy(evidence_dir, "filter-switch", manifest=manifest_b)
     return {
         "verdict": "PASS",
         "suite": "server-switch",
@@ -429,17 +430,6 @@ def assert_server_switch_observed_ids(observed: Mapping[str, Any], fixture_set: 
         if item not in joined:
             raise AlbumServerContractError("Observations assembled from the expected manifest cannot pass")
     assert_foreign_server_ids_absent(observed_ids, fixture_set)
-
-
-def _require_public_pattern(evidence_dir: Path, name: str, expected: str) -> None:
-    path = evidence_dir / f"{name}.png"
-    if not path.is_file():
-        raise AlbumServerContractError(f"Missing screenshot {name}.png")
-    pattern = classify_public_pattern(path.read_bytes())
-    if pattern != expected:
-        if expected == "b" and pattern == "a":
-            raise AlbumServerContractError("An A screen must not pass as B")
-        raise AlbumServerContractError(f"{name} public pattern must be {expected}, got {pattern}")
 
 
 def _require_named_png(evidence_dir: Path, filename: str, message: str) -> None:
