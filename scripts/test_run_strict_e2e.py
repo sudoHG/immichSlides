@@ -1140,8 +1140,10 @@ class FailureDiagnosticsTests(unittest.TestCase):
             self.assertEqual(message, public_validator_failure_message(message))
             self.assertIn("screenshot person-normal.png", message)
             _write_server_switch_pass(evidence)
-            (evidence / "display-before.png").write_bytes(_fixture_png("A1", "b"))
-            with self.assertRaisesRegex(AlbumServerContractError, "^The fixture yields no multi-photo screen;") as raised:
+            single_before = _fixture_png("A1", "b")
+            (evidence / "display-before.png").write_bytes(single_before)
+            (evidence / "display-before-candidate-01.png").write_bytes(single_before)
+            with self.assertRaisesRegex(FilterContractError, "^The before-change frame must actually show at least two different photos$") as raised:
                 evaluate_server_switch_evidence(evidence)
             message = str(raised.exception) + "; context unresolved"
             validate_validator_failure_message(message)
