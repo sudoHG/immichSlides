@@ -662,7 +662,9 @@ def main(argv=None, *, simulator_prepared=False):
                          (retry_result["invocations"][0]["exit_code"] == 65 and len(retry_result["invocations"]) > 1))):
                 code = 0
             observed = {entry["identity"]["key"]: entry for entry in retry_result["observed"]}
-            read_failed = any(entry["code"] == "official-result-read-failed" for entry in retry_result["infrastructure"])
+            # A failed first read cannot start a listed retry.
+            read_failed = (len(retry_result["invocations"]) == 1 and
+                           any(entry["code"] == "official-result-read-failed" for entry in retry_result["infrastructure"]))
             rows = [{"identity": entry, "device": args.device,
                      "outcome": observed[entry["key"]]["outcome"] if entry["key"] in observed else "not-run",
                      "duration_seconds": observed[entry["key"]]["duration_seconds"] if entry["key"] in observed else 0,

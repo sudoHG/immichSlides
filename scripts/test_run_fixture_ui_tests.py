@@ -104,7 +104,6 @@ class FixtureCoverageTests(unittest.TestCase):
                                  "Result export is separate from normalized tests reading")
                 observed = result["population"]["observed"]
                 self.assertEqual(len(observed), 0 if phase == "tests-read" else 21)
-                self.assertFalse(any(item["outcome"] == "not-run" for item in observed))
                 rows = json.loads((output / "fixture-coverage.json").read_text())["tests"]
                 self.assertEqual(len(rows), len(observed))
                 self.assertNotIn(str(bundle), json.dumps(result["infrastructure"]))
@@ -208,10 +207,10 @@ class FixtureCoverageTests(unittest.TestCase):
         from ci_verdict import parse_policy
         from test_ci_flaky import registry
         from test_ci_summary import discovery_summary
-        for retried in (False, True):
+        for retried, retry_read_failed in ((False, False), (True, False), (True, True)):
             for diagnostics in ({"failure_phase": "interval_setup", "failure_class": "interval_readback"},
                                 {"failure_phase": "unknown", "failure_class": "unknown"}):
-                with self.subTest(retried=retried, diagnostics=diagnostics), tempfile.TemporaryDirectory() as directory:
+                with self.subTest(retried=retried, retry_read_failed=retry_read_failed, diagnostics=diagnostics), tempfile.TemporaryDirectory() as directory:
                     root = Path(directory, "checkout").resolve()
                     root.mkdir()
                     output = Path(directory, "output")
@@ -221,6 +220,9 @@ class FixtureCoverageTests(unittest.TestCase):
                     (source.parent / "Debug-iphonesimulator" / "immichSlides.app").mkdir(parents=True)
                     seed = discovery_summary()
                     entry = seed["population"]["declared"][0]
+                    if retry_read_failed:
+                        missing = dict(entry, key="SettingsUITests/testMissing")
+                        seed["population"]["declared"].append(missing)
                     official = seed["compiled_evidence"]["official_tests"]
                     official["testNodes"][0]["children"][0].update(result="Failed", **diagnostics)
                     trusted = registry()
@@ -276,7 +278,8 @@ class FixtureCoverageTests(unittest.TestCase):
                                                             else unittest.mock.Mock(return_value=value)))
                         stack.enter_context(patch.object(runner, "prepare_fixture_result_bundle", side_effect=allocate))
                         stack.enter_context(patch.object(runner, "read_xcode_observations",
-                                                         side_effect=[copy.deepcopy([failed]), [passed]]))
+                            side_effect=[copy.deepcopy([failed]), subprocess.TimeoutExpired("xcresulttool", 60)
+                                         if retry_read_failed else [passed]]))
                         stack.enter_context(patch.object(runner.subprocess, "Popen", side_effect=process))
                         stack.enter_context(patch.object(runner, "simulator_inventory", return_value={}))
                         stack.enter_context(patch.object(runner, "export_private_result_bundle", side_effect=export))
@@ -288,16 +291,19 @@ class FixtureCoverageTests(unittest.TestCase):
                             "--output-dir", str(output), "--xctestrun", str(source), "--shard", "scoped-a",
                             "--shard-manifest", str(root / "manifest.json"), "--scoped-plan-sha256", "e" * 64,
                             "--compiled-from-official-results", "--listed-only-retry"])
-                    self.assertEqual(code, 0 if retried else 65)
+                    self.assertEqual(code, 0 if retried and not retry_read_failed else 65)
                     self.assertEqual(len(invocations), 2 if retried else 1)
                     result = parse_summary((output / "summary.json").read_text())
                     actual = result["population"]["observed"][0]
-                    self.assertEqual(actual["outcome"], "flaky-passed" if retried else "failed")
+                    self.assertEqual(actual["outcome"], "flaky-passed" if retried and not retry_read_failed else "failed")
                     for field, value in diagnostics.items():
                         self.assertEqual(actual[field], value)
                         self.assertEqual(actual["attempts"][0][field], value)
                         rows = json.loads((output / "fixture-coverage.json").read_text())["tests"]
                         self.assertEqual(rows[0][field], value)
+                    if retry_read_failed:
+                        self.assertEqual((rows[-1]["identity"], rows[-1]["outcome"], rows[-1]["reason"]),
+                                         (missing, "not-run", "compiled but no official result"))
                     if retried:
                         self.assertNotIn("failure_phase", actual["attempts"][1])
 

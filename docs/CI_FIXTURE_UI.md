@@ -96,8 +96,11 @@ as zero collected reports in the runner output.
 The runner statically derives the selected default-plan population, enumerates
 the compiled tests and reads official xcresult outcomes. It emits the shared
 `summary.json` / `summary.md` contract plus `fixture-coverage.json` and
-`fixture-coverage.md`, one row per selected test and device. Missing results stay
-`not-run`; a skipped test never counts as fixture-covered. The JSON includes
+`fixture-coverage.md`, normally one row per selected test and device. Missing
+results stay `not-run`, except in listed-only runs after the first invocation's
+official result read fails: missing methods produce no coverage rows and are not
+recorded as `not-run` (see the [UI result-read contract](CI_UI.md#fixture-execution-retry-and-public-output)).
+A skipped test never counts as fixture-covered. The JSON includes
 `covered_selectors` for the tests observed passing, which is measurement output,
 not an approved exclusion policy.
 Before compiled enumeration completes, pre-seeded rows say `not attempted`.

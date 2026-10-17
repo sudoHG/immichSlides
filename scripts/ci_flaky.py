@@ -10,7 +10,6 @@ import argparse
 import copy
 import hashlib
 import json
-import math
 import os
 import re
 import subprocess
@@ -309,7 +308,7 @@ def official_result_step(phase):
         yield
     except subprocess.TimeoutExpired as error:
         elapsed = time.monotonic() - started
-        measurement = f"{elapsed:.3f}" if math.isfinite(elapsed) and 0 <= elapsed <= MAX_DIAGNOSTIC_SECONDS else "unavailable"
+        measurement = f"{elapsed:.3f}" if 0 <= elapsed <= MAX_DIAGNOSTIC_SECONDS else "unavailable"
         error.entry = {"code": "xcresult-export-timeout", "message":
                        f"Official result export exceeded its budget; phase={phase}; elapsed_seconds={measurement}"}
         raise

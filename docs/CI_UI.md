@@ -486,7 +486,7 @@ from the producer run metadata.
 An official-result read error records `official-result-read-failed` with its
 exception type and a bounded message. Validated completed cases survive an
 incomplete result. In pre-enumerated shards, missing method identities remain
-missing when the official result read fails, including in fixture coverage rows.
+missing when the first invocation's official result read fails, including in fixture coverage rows.
 An anonymous summary count does not establish a method's outcome or that it did
 not run. Exit 124 marks
 the invocation `timed-out` and records `xcodebuild-timeout`, so partial passes
