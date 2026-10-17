@@ -20,6 +20,8 @@ from datetime import date
 from pathlib import Path
 from typing import Callable, Mapping, Sequence, TextIO
 
+from ci_execution_diagnostics import IO_CAP_SECONDS, active, diagnostic_session, official_exports
+
 from run_offline_unit_tests import (
     CommandError as OfflineCommandError,
     TestResultsSummary,
@@ -622,6 +624,11 @@ class StrictRetryEvidence:
 def run_command(command: list[str], *, cwd: Path, environment: Mapping[str, str], log_path: Path,
                 timeout_seconds: int = XCODEBUILD_TIMEOUT_SECONDS) -> int:
     with log_path.open("w", encoding="utf-8") as log_file:
+        recorder = active()
+        started = time.monotonic()
+        sequence = recorder.next_sequence() if recorder else 0
+        if recorder:
+            recorder.event("xcode", "xcodebuild", "started", sequence)
         try:
             completed = subprocess.run(
                 command,
@@ -633,10 +640,17 @@ def run_command(command: list[str], *, cwd: Path, environment: Mapping[str, str]
                 timeout=timeout_seconds,
             )
         except subprocess.TimeoutExpired as error:
+            if recorder:
+                recorder.event("xcode", "xcodebuild", "timeout", sequence, elapsed=time.monotonic() - started)
+                bundles = [Path(command[command.index("-resultBundlePath") + 1])] if "-resultBundlePath" in command else []
+                recorder.xcode_snapshot("after-reap", started, sequence, log_path, bundles)
             raise CommandError(f"xcodebuild timed out after {timeout_seconds:.1f}s.") from error
+        if recorder and completed.returncode == 0:
+            recorder.event("xcode", "xcodebuild", "completed", sequence, elapsed=time.monotonic() - started)
     return completed.returncode
 
 
+@diagnostic_session
 def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: TextIO | None = None) -> int:
     stdout = sys.stdout if stdout is None else stdout
     stderr = sys.stderr if stderr is None else stderr
@@ -644,6 +658,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
     parser.add_argument("--platform", required=True, choices=sorted(PLATFORM_SETTINGS))
     parser.add_argument("--destination", required=True)
     parser.add_argument("--evidence-dir", type=Path, required=True)
+    parser.add_argument("--diagnostics-receipt", type=Path, help="shared job measurement ledger")
     parser.add_argument("--fixture-set", choices=("a", "b"), default="a")
     parser.add_argument("--scenario", choices=RUNNER_SCENARIOS, default="normal")
     parser.add_argument("--suite", choices=RUNNER_SUITES, default="smoke")
@@ -1279,6 +1294,12 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         for bundle, suffix in private_bundles:
             actions.append(("export_and_hold_bundle" + suffix, lambda b=bundle, s=suffix: export_and_hold_bundle(b, s)))
         cleanup_failures.extend(run_cleanup_actions(actions))
+
+        recorder = active()
+        if recorder is not None and recorder.xcode_timed_out:
+            exports = recorder.collect("xcode", lambda: official_exports(arguments.evidence_dir,
+                [bundle for bundle, _suffix in private_bundles]), cap=IO_CAP_SECONDS)
+            recorder.event("xcode", "official-export", "completed", recorder.next_sequence(), exports=exports)
 
         if owns_evidence_directory:
             if cleanup_failures:

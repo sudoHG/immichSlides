@@ -34,7 +34,8 @@ TOOL_FILES = ("ci_unit_tests.py", "ci_local.py", "ci_build_archive.py", "ci_summ
               "strict_e2e_filter_manifest.py", "strict_e2e_out_of_order_contract.py",
               "strict_e2e_p2_contract.py", "album_server_narrow_contract.py", "access_lifecycle_contract.py",
               "ci-pins.json", "ci_verdict.py", "ci_population.py", "ui_test_inventory.py", "ci-test-policy.json",
-              "ci_flaky.py", "ci_live_tests.py", "ci_failure_diagnostics.py", "ci_bounded_diagnostics.py")
+              "ci_flaky.py", "ci_live_tests.py", "ci_failure_diagnostics.py", "ci_bounded_diagnostics.py",
+              "ci_execution_diagnostics.py")
 
 # Post-boot enumeration calibration is distinct from the separately measured simulator startup.
 HOSTED_ENUMERATION_SAMPLES = {

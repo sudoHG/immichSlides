@@ -17,6 +17,7 @@ from pathlib import Path
 
 from ci_build_archive import file_hash, workspace_preflight
 from ci_failure_diagnostics import VALIDATOR_FAILURE_FIELD, public_validator_failure_message
+from ci_execution_diagnostics import Recorder, TRUNCATION_PREFIX, TRUNCATION_REASONS, report_truncation
 from ci_summary import decode, identity_key, observation, require, test_identity, write_summary
 from run_host_checks import GROUP_TERM_GRACE_SECONDS, group_has_live_members, run_identity, source_metadata, stop_group, toolchain
 from run_strict_e2e import (CommandError, FILTER_PERSON_SESSIONS, resolve_suite_selector,
@@ -121,7 +122,7 @@ class RunnerGroupCleanupError(RuntimeError):
     """Build paths must be retained if runner descendants cannot be stopped."""
 
 
-def run_runner(command, repo_root, log_path, *, timeout_seconds):
+def run_runner(command, repo_root, log_path, *, timeout_seconds, truncation_seen=None):
     with log_path.open("a+") as log:
         offset = log.tell()
         process = subprocess.Popen(command, cwd=repo_root, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
@@ -138,7 +139,14 @@ def run_runner(command, repo_root, log_path, *, timeout_seconds):
             except BaseException as error:
                 raise RunnerGroupCleanupError(f"Runner process group cleanup failed: {type(error).__name__}: {error}") from error
             log.seek(offset)
-            errors = [line for line in log.read().splitlines() if line.startswith(("CommandError: ", "OfflineCommandError: ", "InfrastructureTimeout: "))]
+            lines = log.read().splitlines()
+            truncation = next((line for line in lines if line.startswith(TRUNCATION_PREFIX)
+                               and line.removeprefix(TRUNCATION_PREFIX) in TRUNCATION_REASONS), None)
+            if truncation is not None:
+                if truncation_seen is not None:
+                    truncation_seen.set()
+                report_truncation(truncation.removeprefix(TRUNCATION_PREFIX))
+            errors = [line for line in lines if line.startswith(("CommandError: ", "OfflineCommandError: ", "InfrastructureTimeout: "))]
             if errors:
                 print(errors[-1], file=sys.stderr, flush=True)
     return code
@@ -168,6 +176,7 @@ def main(argv=None):
     parser.add_argument("--shard", help="nightly shard from the versioned matrix")
     parser.add_argument("--preparation-failed", action="store_true",
                         help="Record infrastructure failure with every case not-run; do not start builds or tests")
+    parser.add_argument("--preparation-diagnostics", type=Path, help="public preparation measurement receipt")
     args = parser.parse_args(argv)
     if args.cold_timeout_seconds <= 0 or args.warm_timeout_seconds <= 0 or args.min_free_gib < 0:
         parser.error("timeouts must be positive and free space nonnegative")
@@ -211,6 +220,11 @@ def main(argv=None):
         summary["hashes"]["policies"]["nightly"] = file_hash(ROOT / "scripts/nightly-policy.json")
     records = output / "records"
     records.mkdir()
+    diagnostics_path = output / "bounded-diagnostics.json"
+    diagnostics = Recorder()
+    if args.preparation_diagnostics:
+        diagnostics.load(args.preparation_diagnostics)
+    diagnostics.save(diagnostics_path)
     if args.preparation_failed:
         reason = "simulator preparation infrastructure failure before tracer execution"
         summary["infrastructure"].append({"code": "simulator-preparation-failed", "message": reason})
@@ -221,10 +235,12 @@ def main(argv=None):
         started = time.time()
         write_json(records / "trace.json", {"schema_version": 1, "cold": [], "warm": [],
             "exclusions": manifest["exclusions"], "started_epoch": started, "finished_epoch": time.time()})
+        diagnostics.attach(summary)
         write_summary(summary, records)
         return 1
     free_samples = [shutil.disk_usage("/System/Volumes/Data").free]
     stopped = threading.Event()
+    child_truncated = threading.Event()
 
     def sample_disk():
         while not stopped.wait(1):
@@ -241,6 +257,10 @@ def main(argv=None):
     completed = False
 
     def checkpoint():
+        diagnostics.load(diagnostics_path)
+        if child_truncated.is_set():
+            diagnostics.truncate("inherited")
+        diagnostics.save(diagnostics_path)
         free_samples.append(shutil.disk_usage("/System/Volumes/Data").free)
         samples = list(free_samples)
         trace["disk"] = {"before_free_gib": samples[0] / 1024**3, "after_free_gib": samples[-1] / 1024**3,
@@ -251,6 +271,7 @@ def main(argv=None):
         summary["population"]["observed"], summary["status"] = evaluate_tracer(identities, results,
             interrupted=bool(summary["infrastructure"]) or not completed,
             informational=[entry["suite"] for entry in manifest.get("informational", [])] if nightly else ())
+        diagnostics.attach(summary)
         write_summary(summary, records)
 
     def invoke(case, evidence, derived, warm):
@@ -258,6 +279,7 @@ def main(argv=None):
                    "--platform", args.platform, "--destination", args.destination, "--suite", case["suite"],
                    "--configuration", case["configuration"], "--scenario", case["scenario"], "--fixture-set", case["fixture"],
                    "--evidence-dir", str(evidence), "--derived-data-path", str(derived),
+                   "--diagnostics-receipt", str(diagnostics_path),
                    "--cloned-source-packages-path", str(output / "SourcePackages"),
                    "--cold-timeout-seconds", str(args.cold_timeout_seconds), "--warm-timeout-seconds", str(args.warm_timeout_seconds),
                    "--min-free-gib", str(args.min_free_gib), "--test-without-building" if warm else "--warm-up-only"]
@@ -267,6 +289,7 @@ def main(argv=None):
         try:
             invocations = len(FILTER_PERSON_SESSIONS) if warm and case["suite"] == "filter-person" else 1
             phase["exit_code"] = run_runner(command, ROOT, output / "runner.log",
+                truncation_seen=child_truncated,
                 timeout_seconds=((args.warm_timeout_seconds + SIMULATOR_READINESS_TIMEOUT_SECONDS) * invocations
                                  if warm else args.cold_timeout_seconds) + 240)
             return phase

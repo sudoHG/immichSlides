@@ -22,6 +22,8 @@ import urllib.request
 from pathlib import Path
 from typing import Callable, Mapping, Sequence, TextIO
 
+from ci_execution_diagnostics import active
+
 from run_offline_unit_tests import (
     CommandError as OfflineCommandError,
     TestResultsSummary,
@@ -281,14 +283,30 @@ class InfrastructureTimeout(CommandError):
 
 
 def simulator_command(command: list[str], phase: str, *, deadline: float | None = None,
-                      timeout_seconds: float = SIMULATOR_COMMAND_TIMEOUT_SECONDS):
+                      timeout_seconds: float = SIMULATOR_COMMAND_TIMEOUT_SECONDS,
+                      accepts_nonzero: Callable[[subprocess.CompletedProcess], bool] | None = None):
     budget = min(timeout_seconds, deadline - time.monotonic()) if deadline is not None else timeout_seconds
     if budget <= 0:
         raise InfrastructureTimeout(phase, 0)
+    recorder = active()
+    recorder = recorder if phase in ("simulator-boot", "simulator-bootstatus", "simulator-container") else None
+    started, cpu = time.monotonic(), time.process_time()
+    sequence = recorder.next_sequence() if recorder else 0
+    def mark(state):
+        if recorder:
+            recorder.event("preparation", phase, state, sequence, elapsed=time.monotonic() - started,
+                           cpu=time.process_time() - cpu)
+    mark("started")
     try:
-        return subprocess.run(command, capture_output=True, text=True, check=False, timeout=budget)
+        completed = subprocess.run(command, capture_output=True, text=True, check=False, timeout=budget)
     except subprocess.TimeoutExpired as error:
+        # run has already killed, waited and closed pipes; internal boundaries are unobserved.
+        mark("timeout")
+        mark("reap-completed")
         raise InfrastructureTimeout(phase, budget) from error
+    if completed.returncode == 0 or (accepts_nonzero is not None and accepts_nonzero(completed)):
+        mark("completed")
+    return completed
 
 
 def parse_xcconfig(content: str) -> dict[str, str]:
@@ -475,7 +493,8 @@ def boot_simulator(simulator_udid: str, *, report: Callable[[str], None] | None 
         outcome = "failed"
         try:
             completed = simulator_command(["xcrun", "simctl", step, simulator_udid, *(["-b"] if step == "bootstatus" else [])],
-                                          phase, deadline=deadline, timeout_seconds=cap)
+                                          phase, deadline=deadline, timeout_seconds=cap,
+                                          accepts_nonzero=lambda result: step == "boot" and _is_already_booted(result.stderr))
             lines.append(f"{step}_exit={completed.returncode}")
             if completed.returncode and not (step == "boot" and _is_already_booted(completed.stderr)):
                 message = "Simulator boot failed" if step == "boot" else "Simulator did not become available"
@@ -524,6 +543,10 @@ def _wait_for_simulator_response(query, phase: str, *, report: Callable[[str], N
     query_timeout = SIMULATOR_READINESS_INITIAL_QUERY_TIMEOUT_SECONDS
     outcome = "failed"
     lines = []
+    recorder = active() if phase == "simulator-readiness" else None
+    sequence = recorder.next_sequence() if recorder else 0
+    if recorder:
+        recorder.event("preparation", phase, "started", sequence)
     try:
         while True:
             remaining = deadline - time.monotonic()
@@ -547,6 +570,9 @@ def _wait_for_simulator_response(query, phase: str, *, report: Callable[[str], N
             break
     finally:
         elapsed = time.monotonic() - started
+        if recorder and (outcome == "passed" or isinstance(sys.exc_info()[1], InfrastructureTimeout)):
+            recorder.event("preparation", phase, "timeout" if outcome != "passed" else "completed", sequence,
+                           elapsed=elapsed)
         line = (f"{phase}: {outcome}; attempts={attempts}; elapsed={elapsed:.1f}s; "
                 f"total budget={budget:g}s; "
                 f"deadline_overrun={max(0, elapsed - budget):.1f}s")
@@ -559,10 +585,15 @@ def prepare_simulator(simulator_udid: str, bundle_id: str = "com.331works.immich
                       report: Callable[[str], None] | None = None, boot_submitted: bool = False) -> tuple[str | None, str]:
     """Absorb cold-device stalls before inventory, fixture health checks or reset mutations."""
     report = report or (lambda line: print(line, flush=True))
+    recorder = active()
+    initial_sample = recorder.sample("preparation", initial=True) if recorder else None
     started = time.monotonic()
     deadline = started + SIMULATOR_PREPARATION_TIMEOUT_SECONDS
     lines = [f"simulator_id={simulator_udid}"]
     outcome = "failed"
+    sequence = recorder.next_sequence() if recorder else 0
+    if recorder:
+        start_event = recorder.event("preparation", "simulator-preparation", "started", sequence)
     try:
         lines.extend(boot_simulator(simulator_udid, report=report, deadline=deadline, boot_submitted=boot_submitted).splitlines())
         container, readiness_log = wait_for_simulator_app_response(simulator_udid, bundle_id, report=report, deadline=deadline)
@@ -570,6 +601,12 @@ def prepare_simulator(simulator_udid: str, bundle_id: str = "com.331works.immich
         outcome = "passed"
     finally:
         elapsed = time.monotonic() - started
+        if recorder:
+            if outcome != "passed" and start_event is not None:
+                start_event["sample"] = initial_sample
+            if outcome == "passed" or isinstance(sys.exc_info()[1], InfrastructureTimeout):
+                recorder.event("preparation", "simulator-preparation", "timeout" if outcome != "passed" else "completed",
+                               sequence, elapsed=elapsed, sample=recorder.sample("preparation") if outcome != "passed" else None)
         line = (f"simulator-preparation: {outcome}; elapsed={elapsed:.1f}s; "
                 f"total budget={SIMULATOR_PREPARATION_TIMEOUT_SECONDS}s; "
                 f"deadline_overrun={max(0, elapsed - SIMULATOR_PREPARATION_TIMEOUT_SECONDS):.1f}s")
@@ -639,6 +676,7 @@ def simulator_app_container(simulator_udid: str, bundle_id: str, *, deadline: fl
     completed = simulator_command(
         ["xcrun", "simctl", "get_app_container", simulator_udid, bundle_id], "simulator-container", deadline=deadline,
         timeout_seconds=timeout_seconds,
+        accepts_nonzero=lambda result: result.returncode == 2,
     )
     path = completed.stdout.strip()
     if completed.returncode == 0 and path:

@@ -92,14 +92,14 @@ producer data, not its provenance or a trusted verdict.
 | `infrastructure` | Version 1 array of `{code, message}` diagnostics, never silently omitted; codes distinguish coverage, policy and population diagnostics from infrastructure outcomes |
 | `status` | Producer execution status: `passed`, `failed`, `unverified` |
 
-### Prepared bounded infrastructure diagnostics
+### Bounded infrastructure diagnostics
 
 The optional `bounded_diagnostics` object is measurement evidence only. Historical
 field-free records remain valid, and population, status, timeout and retry rules
-are unchanged. This is the reader-only rollout: no producer emits the field yet.
-Producers may enable it only after this reader reaches `main`, following
-[reader-first evolution](#reader-first-evolution). The isolated trusted reader and
-source-free unit tools carry `ci_bounded_diagnostics.py` with their other readers.
+are unchanged. Producers use the reader contract merged before activation,
+following [reader-first evolution](#reader-first-evolution). The isolated trusted
+reader carries `ci_bounded_diagnostics.py`; source-free unit tools also carry the
+separate `ci_execution_diagnostics.py` producer.
 
 The object has exactly `schema_version: 1`, `collection_seconds`, boolean
 `truncated`, and `events` (at most 512 entries). `collection_seconds` contains
@@ -146,15 +146,106 @@ collection costs, event count, truncation and the last retained phase per scope;
 measurements stay in the summary JSON. Trusted report failure/missing counts and
 issue decisions do not consume the measurements.
 
-Reader-only runtime cost is zero diagnostic subprocesses or collection waits.
-The approved producer ceilings are 25 preparation jobs × 5 s = 2.09 machine
-minutes/night (ideal two-job wall time at most 1.09 minutes), 10 s per failed
-Xcode job = 0.167 machine minutes (the investigation's one-failure sample adds
-under 0.2 minutes wall), and 18 UI jobs × 2 s = 0.6 machine minutes/night
-(two-job wall time at most 0.3 minutes). These are diagnostic ceilings and ideal
-parallel estimates, not hosted measurements or billing. The producers must keep
-the existing readiness, Xcode and service deadlines, and must not write ready
-early or delay its definition.
+Current producers collect preparation and Xcode diagnostics only. Fixture-scope
+events remain reader-compatible, but no fixture diagnostics are emitted or
+harvested; `collection_seconds.fixture` is always null. The fixture servers,
+startup environment and health deadline use their ordinary paths unchanged.
+
+Successful phases retain only started/completed events. At 512 events the oldest
+success is evicted first; incoming anomalies replace older anomalies only when
+no successes remain. Thus the latest timeout and export observations survive a
+full receipt. A truncated receipt is attached even when it contains no events.
+Preparation uses the same `subprocess.run` as ordinary execution: its internal
+spawn/communicate/kill boundaries are unobserved, and timeout/reap observations
+are taken after the call has killed, waited and closed its pipes. Start samples
+run before the preparation deadline starts; anomaly samples run after failure
+is decided, with no sampling inside the readiness retry loop. Successful runs
+discard their buffered start sample. Preparation `cpu_seconds` measures the
+runner's own process time, including diagnostic threads, not simctl CPU time.
+The nightly preparation step hands the same compact
+receipt to the tracer even with `--preparation-failed`. Serial strict children
+share the job ledger: each reserves its remaining collection allowance before
+starting, then returns unused allowance after completion. Missing or invalid
+accounting disables further collection instead of granting another budget.
+Ledger IO has a separate 1.5 s pool reserved once within the 5 s preparation
+ceiling, with a 0.1 s cap precharged per read or write. Completed IO refunds
+unused time in memory. Writes first persist the conservative balance, then
+persist a refund within the same worker deadline, reserving up to 10 ms for
+that final write. A failed or late refund leaves the conservative balance.
+The pool's unused reservation stays held for the job; only measured time
+enters collection costs. A child whose reservation fails skips its normal exit
+save. Instead it attempts a capped write of its loaded receipt with truncation
+set and the original scope allowances unchanged; IO still spends the shared
+pool. If that write also fails, the prior disk receipt remains authoritative.
+Each write uses a distinct temporary file, including overlapping timed-out workers.
+The refund deadline check precedes atomic replacement: a scheduling pause between
+them can commit after the caller times out. That window can undercount up to
+about 0.09 s per late commit; the caller still waits at most its 0.1 s IO cap.
+Exhausting preparation sampling never gates persistence of Xcode
+events. Start samples leave 0.5 s for anomaly sampling; the IO pool has its own
+exhaustion/truncation boundary rather than borrowing another scope's budget.
+A fresh process must read the ledger before learning that its inherited IO
+pool is exhausted. That first read can consume up to 0.1 s outside the exhausted
+pool's accounting; subsequent IO in that process is disabled. Long local runs
+can repeat this overhead across new children after exhaustion.
+The internal ledger stores the public receipt and remaining numeric allowances;
+allowances are distinct from observed `collection_seconds`. A lost child's
+collection measurements remain null rather than treating its reservation as an
+observation. Only the validated public receipt is attached to summaries.
+Every process sample has a 0.25 s cap, with 0.08 s subprocess deadlines; public
+Xcode progress reads have a 0.1 s cap. Capped daemon workers prevent a stuck diagnostic from blocking the
+runner. Retention and cumulative collection budgets stop additional work and
+mark truncation.
+The first truncation per process also starts a best-effort, non-waited stderr
+write: `bounded-diagnostics truncated: <reason>`. Reasons come from a closed set
+of collection/IO/retention code paths and inherited truncation; the line
+contains no values or paths and is never added to records. The daemon uses
+`os.write(2, ...)` directly, avoiding buffered stderr's interpreter-shutdown lock;
+a full stderr pipe blocks only that non-waited writer, which may outlive collection.
+The strict tracer forwards only the first exact prefix/allowlisted reason from
+each child's private runner log to job stderr, preserving its original exit code.
+It latches that signal and marks truncation after every subsequent checkpoint
+load, including when the child could not load or persist its own receipt.
+Out-of-range measurements become null (or zero for a required
+elapsed offset), and receipts are validated before attachment; invalid receipts
+are dropped without changing the verdict. Xcode timeout observations follow
+stdlib cleanup; they do not claim a pre-kill sample. They retain allowlisted
+process statistics, the last
+recognized public phase, and official-export existence booleans. Existing bundle
+export, retention and privacy rules still apply. Ready is written at the existing
+point after generation and bind; health and the 60 s deadline remain authoritative.
+
+The approved per-job ceilings apply across repeated preparations and Xcode invocations.
+Both the 25 strict jobs and 18 fixture UI jobs use the shared producers: at most
+43 × 5 s = 3.59 machine minutes/night for preparation. Xcode diagnostics add at
+most 10 s (0.167 machine minutes) per failed strict job. With one such failed
+job, the combined ceiling is 3.75 machine minutes/night and 2.00 minutes wall
+time at two jobs per matrix (13 strict waves
+and nine UI waves, conservatively summed). These are ceilings and ideal parallel
+estimates, not hosted measurements or billing. Existing readiness, Xcode and
+service deadlines remain unchanged.
+
+PR CI uses the same ceilings. For a six-shard functional `ci-ui` selection,
+6 × 5 s = 0.50 machine minutes/push; two `ci-strict-tracer` jobs add
+2 × 5 s = 0.167 machine minutes, plus 0.167 per failed strict job.
+With one failure the combined ceiling is 0.834 machine minutes/push. Two serial
+UI shards per device add at most 10 s wall time; the parallel strict jobs add
+at most 15 s with one failure, or 0.25 minutes of combined critical-path
+overhead when the tiers overlap. Selection/Cloud waits run no producers. Actual
+packing, runner queues and approval waits determine the full workflow wall time;
+these figures describe diagnostic overhead, not total CI duration.
+
+Direct strict invocations also activate an in-memory recorder: `ci-p2-review`
+runs two serial processes (warm build and test), each capped at 5 s plus
+10 s on an Xcode timeout, so that job adds at most 0.167 machine minutes and
+10 s wall time without timeouts, or 0.50 machine minutes and 30 s with both
+timed out. Direct helper calls in the iOS/tvOS access-lifecycle runners and
+`ci_flaky.run_ui` activate no session themselves; when called within an active
+strict session they share its existing ceiling. An explicitly wrapped independent
+invocation would add at most 0.25 machine minutes and 15 s wall time. These
+direct callers publish no bounded receipt themselves. They have no scheduled
+nightly frequency and are outside the 43-job nightly estimate above; add their
+per-invocation costs for any manual or additional workflow runs.
 
 ### Prepared strict identity failure receipt
 

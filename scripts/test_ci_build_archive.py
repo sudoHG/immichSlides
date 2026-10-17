@@ -319,6 +319,8 @@ class BuildArchiveTests(unittest.TestCase):
                                 self.assertTrue(kwargs['boot_submitted'])
                                 gate_finished.append(True)
                                 if preparation_fails:
+                                    from ci_execution_diagnostics import active
+                                    active().event('preparation', 'simulator-readiness', 'timeout', 1, elapsed=300)
                                     raise InfrastructureTimeout('simulator-readiness', 300)
                             def after_gate():
                                 self.assertTrue(gate_finished, 'context must wait for simulator readiness')
@@ -337,6 +339,7 @@ class BuildArchiveTests(unittest.TestCase):
                                 fixture_main.assert_not_called()
                             failed = json.loads((failed_output / 'summary.json').read_text())
                             self.assertEqual(failed['infrastructure'][0]['code'], 'simulator-readiness-timeout')
+                            self.assertEqual('timeout', failed['bounded_diagnostics']['events'][-1]['state'])
                             self.assertEqual(failed['population']['declared'], diagnostic['population']['declared'])
                             self.assertEqual(failed['population']['observed'], [])
                             preparation_fails = False

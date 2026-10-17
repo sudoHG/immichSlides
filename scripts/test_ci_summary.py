@@ -149,13 +149,19 @@ class SummaryContractTests(unittest.TestCase):
         summary["bounded_diagnostics"]["events"][0]["phase"] = "simulator-preparation"
         self.assertEqual(ci_summary.parse_summary(summary), summary)
         self.assertIn("simulator-preparation/timeout", ci_summary.render_markdown(summary))
+        summary["bounded_diagnostics"]["events"][3]["phase"] = "fixture-generation"
+        self.assertEqual(ci_summary.parse_summary(summary), summary)
+        summary["bounded_diagnostics"]["events"] = []
+        self.assertIn("Last retained phase: none", ci_summary.render_markdown(summary))
 
     def test_bounded_diagnostics_retains_over_budget_and_unavailable_collection_times(self):
         for measurements, details in (({"preparation": 5.001, "xcode": 10.001, "fixture": 2.001},
                                       ("preparation=5.001 s (over budget)", "xcode=10.001 s (over budget)",
                                        "fixture=2.001 s (over budget)")),
                                      ({"preparation": None, "xcode": None, "fixture": None},
-                                      ("preparation=unavailable", "xcode=unavailable", "fixture=unavailable"))):
+                                      ("preparation=unavailable", "xcode=unavailable", "fixture=unavailable")),
+                                     ({"preparation": 5, "xcode": 10, "fixture": 2},
+                                      ("preparation=5 s", "xcode=10 s", "fixture=2 s"))):
             with self.subTest(measurements=measurements):
                 summary = valid_summary()
                 summary["bounded_diagnostics"] = bounded_diagnostics_receipt()
@@ -164,6 +170,8 @@ class SummaryContractTests(unittest.TestCase):
                 rendered = ci_summary.render_markdown(summary)
                 for detail in details:
                     self.assertIn(detail, rendered)
+                if measurements == {"preparation": 5, "xcode": 10, "fixture": 2}:
+                    self.assertNotIn("(over budget)", rendered)
 
     def test_bounded_diagnostics_accepts_missing_sample_statistics_and_empty_processes(self):
         for processes in ([{"name": "simctl", "state": "unknown", "count": 1,
