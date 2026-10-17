@@ -28,6 +28,23 @@ unit/UI archives. They reuse the [archive workspace preflight](CI_BUILD_ARCHIVE.
 product inventory and signing inspection. No competing archive producer or artifact
 selection mechanism is introduced.
 
+The dual-server `filter-switch` (iOS/iPadOS) and `tvos-switch` contracts also carry
+the former standalone server-switch display guarantees. Each records A playback,
+B save success, the cleared filter editor and real B UI identifiers, then checks
+every A/B photo slot by glyph, color and axis. A continuous recording covers the
+flow. On B, real Next actions traverse at most one complete four-frame target-album
+candidate rotation; every sampled original is retained, and the first real
+multi-photo frame becomes `display-before.png`. Exhausting all candidates without
+a qualified frame fails. A real Settings change must produce a stable B single
+photo in the same live process. Candidate numbering, raw-byte identity, album
+membership and the finite denominator are checked by the display-policy contract.
+Fitted single-photo candidates retain their place in that rotation and use the
+existing matched-foreground/blurred-surround gate before slot reading; they never
+qualify as the multi-photo before frame.
+The nightly matrix runs only these merged identities; the standalone selectors
+and suites have been removed. This does not resolve the pixel-coverage limits
+tracked in #434.
+
 `filter-edit-switch` checks both the original whole-frame color identity and each
 full-span photo slot against the non-target album's A1–A5 classifier labels. Public
 background colors locate slots independently of glyphs along both rows and columns.
@@ -136,7 +153,7 @@ The tvOS wait latches a newer action/publication pair from one app snapshot, the
 checks the stable window within the same deadline. Index, render and manifest
 come from that snapshot; it neither wakes the bar nor queries its missing probe.
 
-These scene contracts, `tvos-edit-switch`, the A frame of server-switch, and
+These scene contracts, `tvos-edit-switch`, both A and B frames of server-switch, and
 `tvos-person`/`tvos-album` use the same reader. Uniformly across geometries, a
 segmentable single-photo frame retains #381's whole-frame color and visible
 public-texture judgement, including clipped glyphs. Collages require the strict
@@ -198,7 +215,11 @@ Single-photo surrounds are excluded only by the existing matched-original and
 blurred-surround checks. `album-empty` still requires both playback captures,
 at least two different target photos and different identity sets in the two
 captures. Empty-selection, controlled-empty-album, exact-copy and old-pool-photo
-rejection checks are unchanged. `tvos-album-empty` retains its whole-frame reader.
+rejection checks are unchanged. `tvos-album-empty` reads every playback slot with
+the shared scene reader (glyph, color and axis), including B3/B2 double images.
+It retains both required captures, different visual identity sets, target-album
+membership and every empty-result check. Its public failures retain the reader's
+slot/axis context without introducing new screenshot names into the receipt grammar.
 Only these two iOS contracts opt into measured system-overlay handling: the
 1640x2360 iPad home-indicator box (543,2330)-(1097,2349), or 1170x2532 iPhone
 box (373,2489)-(798,2512), is excluded from color sampling, with glyph pixels
@@ -703,8 +724,6 @@ New enum meanings and why the previous vocabulary cannot express them:
 | `The display mode's selected state must be read back.` | `display_policy` | `control_state` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
 | `No two distinct photos seen within four public album candidates; all failing originals are kept.` | `display_policy` | `scene_identity` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
 | `After the change, a still frame taken mid-transition must not pass` | `display_policy` | `scene_identity` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
-| `Before the change it must really be multi-photo; a full-frame single-photo MATCH does not count` | `display_policy` | `scene_identity` | [StrictE2EFilterIOSUITests.swift](../immichSlidesUITests/StrictE2EFilterIOSUITests.swift): requires a real multi-photo frame before the display-policy change. |
-| `After the change, wait for the current transition to end; the stable single photo must not be TRANSITION` | `display_policy` | `scene_identity` | [StrictE2EFilterIOSUITests.swift](../immichSlidesUITests/StrictE2EFilterIOSUITests.swift): rejects a transition frame after the display-policy change. |
 | `After changing the display mode, playback must still be on screen in the same live process.` | `display_policy` | `navigation` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
 | `No two distinct target-album photos were seen in one full four-frame candidate rotation; all candidate originals were kept.` | `display_policy` | `scene_identity` | [StrictE2EFilterIOSUITests.swift](../immichSlidesUITests/StrictE2EFilterIOSUITests.swift) |
 | `After the change it must be a stable single photo from the target album, not a transition or multi-photo` | `display_policy` | `scene_identity` | [StrictE2EFilterIOSUITests.swift](../immichSlidesUITests/StrictE2EFilterIOSUITests.swift) |

@@ -49,7 +49,7 @@ class AlbumServerRunnerTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         text = stdout.getvalue()
         self.assertIn("scripts/run_strict_e2e.py", text)
-        self.assertIn("server-switch-display", text)
+        self.assertIn("filter-switch", text)
         self.assertNotIn("xcodebuild", text)
 
 

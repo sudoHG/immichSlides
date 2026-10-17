@@ -59,6 +59,51 @@ from strict_e2e_filter_contract_test_fixtures import (
 )
 
 class DeviceFilterVisualIdentityTestsCases:
+    def test_merged_switch_requires_original_evidence_and_a_finite_multi_photo_before(self) -> None:
+        for suite in ("filter-switch", "tvos-switch"):
+            with self.subTest(suite=suite), tempfile.TemporaryDirectory() as raw:
+                evidence = Path(raw)
+                _write_switch_display_bridge(evidence)
+                (evidence / "switch-b-playback.png").write_bytes(_fixture_png("A1", "b"))
+                (evidence / "observed-ids-after-switch.json").write_bytes((evidence / "observed-ids.json").read_bytes())
+                (evidence / "empty-selection-after-switch.json").write_text(json.dumps({
+                    "selection_source": "accessibility_ui",
+                    "album_summary": "筛选相册 0 个相册 · 0 张照片",
+                    "person_summary": "筛选人物 0 个人物 · 0 张照片",
+                }))
+                payload_path = evidence / "display-policy.json"
+                payload = json.loads(payload_path.read_text())
+                payload["before_candidate_steps"] = [f"display-before-candidate-{index:02d}" for index in range(1, 5)]
+                payload["selected_before_step"] = payload["before_candidate_steps"][-1]
+                with Image.open(io.BytesIO(_fixture_png("A1", "b"))) as photo:
+                    scene = ImageOps.fit(photo.convert("RGB"), IPHONE_SCREEN).filter(ImageFilter.GaussianBlur(146.25))
+                    fitted = ImageOps.contain(photo, IPHONE_SCREEN)
+                    scene.paste(fitted, ((scene.width - fitted.width) // 2, (scene.height - fitted.height) // 2))
+                    buffer = io.BytesIO()
+                    scene.save(buffer, format="PNG")
+                for step in payload["before_candidate_steps"][:-1]:
+                    (evidence / f"{step}.png").write_bytes(buffer.getvalue())
+                (evidence / "display-before-candidate-04.png").write_bytes((evidence / "display-before.png").read_bytes())
+                payload_path.write_text(json.dumps(payload))
+                report = evaluate_filter_visual_identity(evidence, suite)
+                self.assertEqual(report["server_switch"]["display"]["finite_rotation"]["before_candidate_steps"],
+                                 payload["before_candidate_steps"])
+                for filename, replacement, message in (
+                    ("server-switch-a-play-1.png", None, "Missing screenshot of A's selected scope and photo"),
+                    ("screen-recording.mov", b"unfinished", "The server-switch recording was not finalized"),
+                    ("display-before.png", _fixture_png("A1", "b"), "The fixture yields no multi-photo screen"),
+                    ("display-before-candidate-04.png", None, "missing raw candidate screenshot display-before-candidate-04.png"),
+                    ("display-before-candidate-01.png", (evidence / "display-before.png").read_bytes(),
+                     "found extra candidate screenshots after the first one that met the condition"),
+                ):
+                    with self.subTest(filename=filename):
+                        path = evidence / filename
+                        original = path.read_bytes()
+                        path.unlink() if replacement is None else path.write_bytes(replacement)
+                        with self.assertRaisesRegex(FilterContractError, message):
+                            evaluate_filter_visual_identity(evidence, suite)
+                        path.write_bytes(original)
+
     def test_filter_album_unmeasured_geometry_keeps_the_main_result(self) -> None:
         for fixture_set in ("a", "b"):
             for shape, frame in (
@@ -318,7 +363,11 @@ class DeviceFilterVisualIdentityTestsCases:
             (evidence / "switch-b-play-2.png").write_bytes(_fixture_png("A2", "b"))
             _write_switch_display_bridge(evidence)
             (evidence / "observed-ids.json").write_text(
-                json.dumps({"ids": ["album-b-target", "person-b-normal", "asset-b-1"]}),
+                json.dumps({"identity_source": "ui_accessibility_identifier",
+                            "ids": ["album-b-target", "person-b-normal", "asset-b-1"],
+                            "raw_identifiers": ["albumFilter.album.album-b-target.button",
+                                                "personFilter.person.person-b-normal.button",
+                                                "asset-b-1"]}),
                 encoding="utf-8",
             )
             (evidence / "request-log-b.log").write_text(

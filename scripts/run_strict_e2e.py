@@ -31,7 +31,6 @@ from run_offline_unit_tests import (
 from album_server_narrow_contract import (
     AlbumServerContractError,
     evaluate_album_empty_evidence,
-    evaluate_server_switch_evidence,
 )
 from strict_e2e_filter_contract import (
     FILTER_VISUAL_SUITES,
@@ -92,7 +91,7 @@ from strict_e2e_runner_support import (
     SUCCESS_SUITES,
     DUAL_SERVER_SUITES,
     ALBUM_EMPTY_SUITES,
-    SERVER_SWITCH_DISPLAY_SUITES,
+    SERVER_SWITCH_RECORDING_SUITES,
     DISPLAY_POLICY_SUITES,
     FIXTURE_A_ONLY_FILTER_SUITES,
     SETTINGS_RESUME_SUITES,
@@ -1123,7 +1122,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             if case_manifest is not None:
                 case_manifest["command"] = shlex.join(command)
                 write_case_manifest(arguments.evidence_dir, case_manifest)
-            if (arguments.suite in P2_CASES and P2_CASES[arguments.suite].video) or arguments.suite in SERVER_SWITCH_DISPLAY_SUITES:
+            if (arguments.suite in P2_CASES and P2_CASES[arguments.suite].video) or arguments.suite in SERVER_SWITCH_RECORDING_SUITES:
                 recording_process, recording_started = start_screen_recording(
                     simulator_udid,
                     arguments.evidence_dir / RECORDING_FILE,

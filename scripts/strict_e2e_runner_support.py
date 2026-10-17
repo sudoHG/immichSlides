@@ -33,7 +33,6 @@ from run_offline_unit_tests import (
 from album_server_narrow_contract import (
     AlbumServerContractError,
     evaluate_album_empty_evidence,
-    evaluate_server_switch_evidence,
 )
 from strict_e2e_filter_contract import (
     FILTER_VISUAL_SUITES,
@@ -64,7 +63,7 @@ from strict_e2e_photo_identity import (
 )
 from access_lifecycle_contract import logical_bytes_contain
 from strict_e2e_server import PUBLIC_API_KEY, fixture_manifest
-from ci_flaky import SERVER_SWITCH_DISPLAY_SUITES
+from ci_flaky import SERVER_SWITCH_RECORDING_SUITES
 
 
 EXAMPLE_XCCONFIG = Path("Config/env.example.xcconfig")
@@ -129,7 +128,6 @@ IOS_FILTER_SUITES = {
     "filter-person-return": "immichSlidesUITests/StrictE2EFilterIOSUITests/testPersonSelectionStaysOnPersonPageAndReturnsToSummary",
     "filter-person-solo-persist": "immichSlidesUITests/StrictE2EFilterIOSUITests/testPersonSoloOnlyTogglePersistsAcrossReturn",
     "album-empty": "immichSlidesUITests/StrictE2EFilterIOSUITests/testTargetAlbumPlaysAndEmptyAlbumShowsEmptyResult",
-    "server-switch-display": "immichSlidesUITests/StrictE2EFilterIOSUITests/testServerSwitchDropsOldFiltersAndDisplayPolicyAppliesImmediately",
 }
 TVOS_FLOW_SUITES = {
     "tvos-flow": "immichSlidesUITests/StrictE2ETVOSFlowUITests/testTVOSFirstBootModeSelectionAndCorePlayback",
@@ -147,7 +145,6 @@ TVOS_FILTER_SUITES = {
     "tvos-person": "immichSlidesUITests/StrictE2EFilterTVOSUITests/testTVOSPersonRules",
     "tvos-switch": "immichSlidesUITests/StrictE2EFilterTVOSUITests/testTVOSServerSwitchIsolation",
     "tvos-album-empty": "immichSlidesUITests/StrictE2EFilterTVOSUITests/testTVOSTargetAlbumPlaysAndEmptyAlbumShowsEmptyResult",
-    "tvos-server-switch-display": "immichSlidesUITests/StrictE2EFilterTVOSUITests/testTVOSServerSwitchDropsOldFiltersAndDisplayPolicyAppliesImmediately",
 }
 IOS_LATE_IMAGE_SUITES = {
     "late-image": "immichSlidesUITests/StrictE2ELateImageIOSUITests/testLateImageKeepsCurrentSceneAfterLateRequest",
@@ -205,13 +202,11 @@ SUCCESS_SUITES = (
     "tvos-person",
     "tvos-switch",
     "album-empty",
-    "server-switch-display",
     "tvos-n1-cold",
     "tvos-album-empty",
-    "tvos-server-switch-display",
     *P2_CASES,
 )
-DUAL_SERVER_SUITES = ("filter-switch", "tvos-switch", "server-switch-display", "tvos-server-switch-display")
+DUAL_SERVER_SUITES = ("filter-switch", "tvos-switch")
 ALBUM_EMPTY_SUITES = ("album-empty", "tvos-album-empty")
 DISPLAY_POLICY_SUITES = ("display-policy", "tvos-display-policy")
 # The test selects fixture A ids and the Python evaluator checks marks against fixture A.
@@ -259,10 +254,8 @@ CASE_E2E_IDS = {
     "tvos-person": ["E2E-P0-05"],
     "tvos-switch": ["E2E-P0-06"],
     "album-empty": ["album-empty"],
-    "server-switch-display": ["server-switch"],
     "tvos-n1-cold": ["N1"],
     "tvos-album-empty": ["album-empty"],
-    "tvos-server-switch-display": ["server-switch"],
     "tvos-firstboot-failure": ["fail-html-200"],
     "late-image": ["E2E-P0-07"],
     **{suite: list(case.e2e_ids) for suite, case in P2_CASES.items()},
@@ -805,18 +798,6 @@ def require_visual_identity(evidence_dir: Path, suite: str, *, fixture_set: str 
     if suite in ALBUM_EMPTY_SUITES:
         try:
             payload = evaluate_album_empty_evidence(evidence_dir, fixture_set, read_stacked_slots=(suite == "album-empty"))
-        except (AlbumServerContractError, FilterContractError) as error:
-            failed = {"verdict": "FAIL", "suite": suite, "error": str(error)}
-            _write_visual_runner_report(evidence_dir, failed)
-            raise CommandError(f"Visual assertion failed; cannot mark SUCCESS: {error}", code=2) from error
-        if payload.get("verdict") != "PASS":
-            _write_visual_runner_report(evidence_dir, payload)
-            raise CommandError("Visual assertion did not pass; cannot mark SUCCESS.", code=2)
-        _write_visual_runner_report(evidence_dir, payload)
-        return payload
-    if suite in SERVER_SWITCH_DISPLAY_SUITES:
-        try:
-            payload = evaluate_server_switch_evidence(evidence_dir)
         except (AlbumServerContractError, FilterContractError) as error:
             failed = {"verdict": "FAIL", "suite": suite, "error": str(error)}
             _write_visual_runner_report(evidence_dir, failed)

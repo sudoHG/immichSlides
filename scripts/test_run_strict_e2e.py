@@ -204,8 +204,8 @@ class StrictE2ERunnerTests(StrictE2ERunnerTestsCasesConfiguration, StrictE2ERunn
 
     def test_recording_retry_is_rejected_before_any_device_or_evidence_work(self):
         from contextlib import redirect_stderr
-        from strict_e2e_runner_support import SERVER_SWITCH_DISPLAY_SUITES
-        suites = [suite for suite, case in P2_CASES.items() if case.video] + list(SERVER_SWITCH_DISPLAY_SUITES)
+        from strict_e2e_runner_support import SERVER_SWITCH_RECORDING_SUITES
+        suites = [suite for suite, case in P2_CASES.items() if case.video] + list(SERVER_SWITCH_RECORDING_SUITES)
         for suite in suites:
             with self.subTest(suite=suite), tempfile.TemporaryDirectory() as directory, redirect_stderr(io.StringIO()):
                 evidence = Path(directory) / "evidence"
@@ -750,8 +750,6 @@ class FailureDiagnosticsTests(unittest.TestCase):
             ("immichSlidesUITests/StrictE2EFilterTVOSUITests.swift", "The album list must show ", "unknown", "navigation"),
             ("immichSlidesUITests/StrictE2EFilterTVOSUITests+Support.swift", "The album list must show ", "unknown", "navigation"),
             ("immichSlidesUITests/StrictE2EFilterTVOSUITests.swift", "An empty album must show the frozen existing production empty-result copy and must not keep the old non-empty pool", "filter_edit", "scene_identity"),
-            ("immichSlidesUITests/StrictE2EFilterIOSUITests.swift", "Before the change it must really be multi-photo; a full-frame single-photo MATCH does not count", "display_policy", "scene_identity"),
-            ("immichSlidesUITests/StrictE2EFilterIOSUITests.swift", "After the change, wait for the current transition to end; the stable single photo must not be TRANSITION", "display_policy", "scene_identity"),
             ("immichSlidesUITests/StrictE2EFilterTVOSUITests.swift", "Start Playback must be disabled with an empty selection.", "filter_selection", "control_state"),
             ("immichSlidesUITests/StrictE2EFilterTVOSUITests.swift", "Start Playback must be disabled with 0 albums / 0 people.", "filter_selection", "control_state"),
             ("immichSlidesUITests/StrictE2EFilterTVOSUITests.swift", "Start Playback must be enabled after selecting the target album.", "filter_selection", "control_state"),
@@ -850,12 +848,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
                     wrappers = ('failed: caught error: "message(\\"',)
                 elif prefix == "The fixture must actually deliver a failing image response":
                     wrappers = ("XCTAssertGreaterThan failed: (PRIVATE_SENTINEL) - ",)
-                elif prefix == "Before the change it must really be multi-photo; a full-frame single-photo MATCH does not count":
-                    wrappers = ("XCTAssertGreaterThanOrEqual failed: (PRIVATE_SENTINEL) - ",)
-                elif prefix in (
-                    "After the change, a still frame taken mid-transition must not pass",
-                    "After the change, wait for the current transition to end; the stable single photo must not be TRANSITION",
-                ):
+                elif prefix == "After the change, a still frame taken mid-transition must not pass":
                     wrappers = ("XCTAssertNotEqual failed: (PRIVATE_SENTINEL) - ",)
                 else:
                     wrappers = ("XCTAssertTrue failed - ",)
@@ -1080,10 +1073,10 @@ class FailureDiagnosticsTests(unittest.TestCase):
             (evidence / "switch-b-play-1.png").write_bytes(
                 _side_by_side(_fixture_png("A1", "a"), _fixture_png("A1", "b")))
             with self.assertRaisesRegex(AlbumServerContractError,
-                                       "^switch-b-play-1 public pattern must be b, got None$") as raised:
+                                       "^unreadable public glyph slot: conflicting public background patterns; slot 1 \\(both axes\\); screenshot switch-b-play-1.png$") as raised:
                 evaluate_server_switch_evidence(evidence)
             pattern_message = str(raised.exception)
-            self.assertEqual(pattern_message + "; context unresolved", public_validator_failure_message(pattern_message))
+            self.assertEqual(pattern_message, public_validator_failure_message(pattern_message))
 
             _write_server_switch_pass(evidence)
             manifest_path = evidence / "member-manifest-b.json"
@@ -1099,15 +1092,15 @@ class FailureDiagnosticsTests(unittest.TestCase):
             _write_server_switch_pass(evidence)
             (evidence / "switch-b-play-1.png").write_bytes(b"unreadable public fixture")
             with self.assertRaisesRegex(FilterContractError,
-                                       "^Unrecognizable input cannot count as passing: status=UNRECOGNIZABLE mark=None$") as raised:
+                                       "^Unrecognizable input: unreadable public glyph slot: screenshot cannot be decoded; screenshot switch-b-play-1.png$") as raised:
                 evaluate_server_switch_evidence(evidence)
             identity_message = str(raised.exception)
-            self.assertEqual(identity_message + "; context unresolved", public_validator_failure_message(identity_message))
+            self.assertEqual(identity_message, public_validator_failure_message(identity_message))
         for message in (pattern_message.replace("switch-b-play-1", "private-screenshot"),
-                        pattern_message.replace("must be b", "must be private-pattern"),
-                        pattern_message.replace("got None", "got private-pattern"),
-                        identity_message.replace("UNRECOGNIZABLE", "private-status"),
-                        identity_message.replace("mark=None", "mark=private-mark")):
+                        pattern_message.replace("conflicting public background patterns", "private-pattern"),
+                        pattern_message.replace("slot 1", "slot private"),
+                        identity_message.replace("screenshot cannot be decoded", "private-status"),
+                        identity_message.replace("switch-b-play-1.png", "private-mark.png")):
             with self.subTest(message=message):
                 self.assertEqual("[redacted validator failure]", public_validator_failure_message(message))
 
@@ -1246,10 +1239,10 @@ class StrictCITracerTests(unittest.TestCase):
             self.assertEqual([], list(output.iterdir()))
 
     def _produce_validator_records(self, directory, error, *, verdict="FAIL", runner_exit=2,
-                                   receipt_suite="tvos-server-switch-display", nightly=False, child_load_timeout=False):
+                                   receipt_suite="tvos-switch", nightly=False, child_load_timeout=False):
         import run_strict_ci_tracer as tracer
-        case = {"platform": "tvos", "device": "tv", "configuration": "Debug",
-                "suite": "tvos-server-switch-display", "scenario": "normal", "fixture": "a"}
+        case = {"platform": "tvos", "device": "tv", "configuration": "Release",
+                "suite": "tvos-switch", "scenario": "normal", "fixture": "a"}
         identity = {"schema_version": 1, "event": "local", "repository": "sudoHG/immichSlides",
                     "commit_sha": "0" * 40, "tree_sha": "0" * 40, "dirty": False}
         output = directory / "trace"
@@ -1381,11 +1374,11 @@ raise SystemExit(65)
             (evidence / "switch-b-play-1.png").write_bytes(
                 _side_by_side(_fixture_png("A1", "a"), _fixture_png("A1", "b")))
             with self.assertRaisesRegex(AlbumServerContractError,
-                                       "^switch-b-play-1 public pattern must be b, got None$") as raised:
+                                       "^unreadable public glyph slot: conflicting public background patterns; slot 1 \\(both axes\\); screenshot switch-b-play-1.png$") as raised:
                 evaluate_server_switch_evidence(evidence)
             return str(raised.exception)
 
-        expected = "switch-b-play-1 public pattern must be b, got None; context unresolved"
+        expected = "unreadable public glyph slot: conflicting public background patterns; slot 1 (both axes); screenshot switch-b-play-1.png"
         with tempfile.TemporaryDirectory() as raw:
             exit_code, _records, trace, summary = self._produce_validator_records(Path(raw), fail_contract, nightly=True)
             self.assertEqual(1, exit_code)

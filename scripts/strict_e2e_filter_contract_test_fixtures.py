@@ -120,6 +120,12 @@ def _write_switch_display_bridge(
     mode_after: str = "singlePhoto",
     process_id_after: int = 44,
 ) -> None:
+    from test_album_server_narrow_contract import _write_server_switch_pass
+    observed_path = evidence / "observed-ids.json"
+    observed_bytes = observed_path.read_bytes() if observed_path.exists() else None
+    _write_server_switch_pass(evidence)
+    if observed_bytes is not None:
+        observed_path.write_bytes(observed_bytes)
     (evidence / "switch-b-single-after.png").write_bytes(
         _fixture_png("A1", "b") if screenshot is None else screenshot
     )

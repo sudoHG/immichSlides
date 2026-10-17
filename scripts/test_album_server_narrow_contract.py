@@ -392,9 +392,16 @@ def _write_server_switch_pass(directory: Path) -> None:
     (directory / "display-after.png").write_bytes(_fixture_png("A2", "b"))
     (directory / "display-settings.png").write_bytes(_fixture_png("A1", "b"))
     (directory / "display-policy.json").write_text(
-        json.dumps({"identity_source": "public_fixture_photo_mark"}),
+        json.dumps({
+            "identity_source": "public_fixture_photo_mark", "setting_source": "accessibility_ui",
+            "mode_before": "smartFill", "mode_after": "singlePhoto",
+            "process_id_before": 44, "process_id_after": 44,
+            "before_candidate_steps": ["display-before-candidate-01"],
+            "selected_before_step": "display-before-candidate-01",
+        }),
         encoding="utf-8",
     )
+    (directory / "display-before-candidate-01.png").write_bytes((directory / "display-before.png").read_bytes())
 
 
 def _write_album_empty_pass(directory: Path, fixture_set: str = "a") -> None:
@@ -642,6 +649,42 @@ class AlbumEmptyNegativeTests(unittest.TestCase):
 
 
 class AlbumEmptyFixtureBTests(unittest.TestCase):
+    def test_tv_album_empty_reads_every_slot_of_real_size_playback_frames(self) -> None:
+        from test_strict_e2e_photo_identity import FrameGlyphBoundaryTests
+        for fixture_set in ("a", "b"):
+            with self.subTest(fixture=fixture_set), tempfile.TemporaryDirectory() as raw:
+                directory = Path(raw)
+                _write_album_empty_pass(directory, fixture_set)
+                # The observed 3840x2160 B3/B2 frame splits at x=2458.
+                pair = FrameGlyphBoundaryTests._pair(fixture_set, 3, 2, horizontal=True, seam=2458)
+                (directory / "album-play-1.png").write_bytes(pair)
+                (directory / "album-play-2.png").write_bytes(_full_screen("A1", TV_SCREEN, fixture_set))
+                report = require_visual_identity(directory, "tvos-album-empty", fixture_set=fixture_set)
+                self.assertEqual(report["marks"], ["A3", "A2", "A1"])
+                for case, options, message in (
+                    ("wrong album", {"first": 4}, "Unexpected members cannot count as passing: A4"),
+                    ("mixed", {"second_fixture": "b" if fixture_set == "a" else "a"}, "mixed public glyphs"),
+                    ("unreadable", {"unreadable_slot": 1}, "unreadable public glyph slot"),
+                ):
+                    with self.subTest(case=case):
+                        arguments = dict(fixture_set=fixture_set, first=3, second=2, horizontal=True, seam=2458)
+                        arguments.update(options)
+                        (directory / "album-play-1.png").write_bytes(FrameGlyphBoundaryTests._pair(**arguments))
+                        with self.assertRaisesRegex(CommandError, message) as raised:
+                            require_visual_identity(directory, "tvos-album-empty", fixture_set=fixture_set)
+                        if case != "wrong album":
+                            from ci_failure_diagnostics import public_validator_failure_message
+                            context = str(raised.exception.__cause__)
+                            self.assertIn("horizontal", context)
+                            self.assertEqual(context, public_validator_failure_message(context))
+                (directory / "album-play-1.png").write_bytes(pair)
+                (directory / "album-play-2.png").write_bytes(pair)
+                with self.assertRaisesRegex(CommandError, "The two playback screenshots must be different public identities"):
+                    require_visual_identity(directory, "tvos-album-empty", fixture_set=fixture_set)
+                (directory / "album-play-2.png").unlink()
+                with self.assertRaisesRegex(CommandError, "The target album needs screenshots of at least two different public identities"):
+                    require_visual_identity(directory, "tvos-album-empty", fixture_set=fixture_set)
+
     def test_unmeasured_geometry_keeps_main_without_background_or_palette_gates(self) -> None:
         from strict_e2e_filter_contract import TARGET_ALBUM_HOME_INDICATOR_BOXES
         self.assertNotIn(UNMEASURED_SCREEN, TARGET_ALBUM_HOME_INDICATOR_BOXES)
@@ -659,7 +702,11 @@ class AlbumEmptyFixtureBTests(unittest.TestCase):
                     with self.assertRaises(IdentityAssertionError):
                         public_frame_slot_count_from_bytes(frame)
                     (directory / "album-play-1.png").write_bytes(frame)
-                    main_result = evaluate_album_empty_evidence(directory, fixture_set, read_stacked_slots=False)
+                    main_result = {
+                        "verdict": "PASS", "suite": "album-empty", "marks": [identity.mark, "A2"],
+                        "empty_copy": EMPTY_FILTERED_COPY, "empty_album_id": empty_album_id(fixture_set),
+                        "start_enabled_after_empty_album": True,
+                    }
                     report = require_visual_identity(directory, "album-empty", fixture_set=fixture_set)
                     self.assertEqual(json.loads((directory / "visual-identity-runner.json").read_text()), report)
                     self.assertEqual(report.pop("target_album_geometry"), "unmeasured")
@@ -702,7 +749,11 @@ class AlbumEmptyFixtureBTests(unittest.TestCase):
                 with self.assertRaises(IdentityAssertionError):
                     public_frame_photos_from_bytes(frame, glyph_overlay_box=TARGET_ALBUM_GLYPH_OVERLAY_BOXES[IPHONE_SCREEN])
                 (directory / "album-play-1.png").write_bytes(frame)
-                main_result = evaluate_album_empty_evidence(directory, fixture_set, read_stacked_slots=False)
+                main_result = {
+                    "verdict": "PASS", "suite": "album-empty", "marks": [identity.mark, "A2"],
+                    "empty_copy": EMPTY_FILTERED_COPY, "empty_album_id": empty_album_id(fixture_set),
+                    "start_enabled_after_empty_album": True,
+                }
                 report = require_visual_identity(directory, "album-empty", fixture_set=fixture_set)
                 self.assertEqual(json.loads((directory / "visual-identity-runner.json").read_text()), report)
                 self.assertEqual(report.pop("target_album_geometry"), "unmeasured")
@@ -1091,7 +1142,7 @@ class ABMixTests(unittest.TestCase):
             (directory / "switch-b-play-2.png").write_bytes(_fixture_png("A2", "a"))
             with self.assertRaises(AlbumServerContractError) as raised:
                 evaluate_server_switch_evidence(directory)
-            self.assertIn("pass as B", str(raised.exception))
+            self.assertIn("every slot must show the public glyph of fixture B", str(raised.exception))
 
     def test_two_b_panels_are_public_pattern_b(self) -> None:
         image = _side_by_side(_fixture_png("A3", "b"), _fixture_png("A2", "b"))
@@ -1109,15 +1160,29 @@ class ABMixTests(unittest.TestCase):
                 evaluate_server_switch_evidence(directory)
 
     def test_server_switch_pack_with_side_by_side_b_playback_passes(self) -> None:
-        with tempfile.TemporaryDirectory() as raw:
-            directory = Path(raw)
-            _write_server_switch_pass(directory)
-            panels = _side_by_side(_fixture_png("A3", "b"), _fixture_png("A2", "b"))
-            (directory / "switch-b-play-1.png").write_bytes(panels)
-            (directory / "switch-b-play-2.png").write_bytes(panels)
-            report = evaluate_server_switch_evidence(directory)
-        self.assertEqual(report["verdict"], "PASS")
-        self.assertEqual(report["b_pattern"], "b")
+        from test_strict_e2e_photo_identity import FrameGlyphBoundaryTests
+        for horizontal in (False, True):
+            with self.subTest(horizontal=horizontal), tempfile.TemporaryDirectory() as raw:
+                directory = Path(raw)
+                _write_server_switch_pass(directory)
+                panels = FrameGlyphBoundaryTests._pair("b", 3, 2, horizontal=horizontal,
+                                                      seam=2458 if horizontal else None)
+                (directory / "switch-b-play-1.png").write_bytes(panels)
+                report = evaluate_server_switch_evidence(directory)
+                self.assertEqual(report["marks"], ["A3", "A2", "A2"])
+                self.assertEqual(report["b_pattern"], "b")
+                for case, options, prefix in (
+                    ("mixed", {"second_fixture": "a"}, "mixed public glyphs"),
+                    ("unreadable", {"unreadable_slot": 1}, "unreadable public glyph slot"),
+                ):
+                    with self.subTest(case=case):
+                        broken = FrameGlyphBoundaryTests._pair("b", 3, 2, horizontal=horizontal,
+                                                              seam=2458 if horizontal else None, **options)
+                        (directory / "switch-b-play-1.png").write_bytes(broken)
+                        with self.assertRaisesRegex(AlbumServerContractError, prefix) as raised:
+                            evaluate_server_switch_evidence(directory)
+                        self.assertIn("screenshot switch-b-play-1.png", str(raised.exception))
+                        self.assertIn("horizontal" if horizontal else "vertical", str(raised.exception))
 
     def test_server_switch_a_frame_checks_every_slot_for_both_orientations(self) -> None:
         from test_strict_e2e_photo_identity import FrameGlyphBoundaryTests
@@ -1222,7 +1287,7 @@ class ABMixTests(unittest.TestCase):
             )
         self.assertEqual(command[0], "python3")
         self.assertIn("scripts/run_strict_e2e.py", command)
-        self.assertIn("server-switch-display", command)
+        self.assertIn("filter-switch", command)
         self.assertNotIn("xcodebuild", command)
 
 
