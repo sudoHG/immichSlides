@@ -65,7 +65,7 @@ B6–B8 use two RGB endpoints per identity, matched as a pair within tolerance 1
 in both the Python and Swift readers, rather than A1–A5's hue scoring. This adds
 endpoint-pair scoring and the shared A6–A8 color labels without changing the
 existing tolerances or confidence thresholds. A B frame rejected as
-`unreadable public glyph slot` or `mixed` can indicate a collision with system
+`unreadable public glyph slot` or `mixed public glyphs` can indicate a collision with system
 chrome: first compare the failing slot's pixels and surrounding controls/EXIF
 against both identity endpoints. Preserve the original frame and its slot/axis
 exception; do not change tolerances or exclude the frame. The measured collision

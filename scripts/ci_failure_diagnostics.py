@@ -141,7 +141,7 @@ VALIDATOR_MANIFEST_PREFIXES = (
     "Vision unavailable; soloOnly must not pass by accident",
     "An empty soloOnly result cannot pass by coincidence from an empty set",
 )
-# Retention readers still accept these retired messages; current validators never raise them.
+# Retention readers still accept these retired messages; no nightly validator raises them.
 VALIDATOR_HISTORICAL_PREFIXES = (
     "member-manifest labels do not match classify_screenshot: must cover all five photos",
     "member-manifest labels do not match classify_screenshot: all five must MATCH and tell A1–A5 apart",
@@ -152,6 +152,7 @@ VALIDATOR_HISTORICAL_PREFIXES = (
     "After the change the screen must be a stable single-photo public identity",
     "Still multi-photo after the change; cannot pass as single-photo",
     "Display policy did not take effect",
+    "server-switch-a-play-1: every slot must show the public pattern a",
 )
 VALIDATOR_FIXTURE_PATTERNS = ("a", "b", None)
 VALIDATOR_IDENTITY_STATUSES = ("UNRECOGNIZABLE", "BLACK", "BLANK", "TRANSITION", "MATCH")

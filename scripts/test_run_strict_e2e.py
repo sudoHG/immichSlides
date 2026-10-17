@@ -1056,6 +1056,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
             "After the change the screen must be a stable single-photo public identity",
             "Still multi-photo after the change; cannot pass as single-photo",
             "Display policy did not take effect",
+            "server-switch-a-play-1: every slot must show the public pattern a",
         )
         for prefix in historical_receipts:
             with self.subTest(historical_receipt=prefix):
@@ -1063,7 +1064,8 @@ class FailureDiagnosticsTests(unittest.TestCase):
                     diagnostics.validate_validator_failure_message(prefix + "; context unresolved")
                 except ValueError as error:
                     self.fail(f"Historical public receipt was rejected: {error}")
-                self.assertNotIn(prefix, live_messages, "Historical receipt must have no live raise site")
+                self.assertNotIn(prefix, live_messages, "Historical receipt must have no nightly validator raise site")
+        self.assertEqual(set(diagnostics.VALIDATOR_HISTORICAL_PREFIXES), set(historical_receipts))
         self.assertEqual(set(diagnostics.VALIDATOR_FIXED_PREFIXES),
                          set().union(*(fixed_messages(tree(name)) for name in original_modules)))
         self.assertEqual(set(diagnostics.VALIDATOR_MANIFEST_PREFIXES),
