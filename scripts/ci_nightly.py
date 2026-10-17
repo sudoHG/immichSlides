@@ -232,14 +232,14 @@ def validate_shard(raw, identity, run, hashes, expected):
     return summary
 
 
-def parse_identity_failure(raw, run, shard, declared):
+def parse_identity_failure(raw, run, shard, declared, *, job="nightly-strict"):
     """An untrusted early receipt explains missing cases; it proves no source or execution."""
     receipt = decode(raw)
     fields(receipt, {"schema_version", "run", "job", "shard", "phase", "reason", "declared"}, "identity failure receipt")
     require(type(receipt["schema_version"]) is int and receipt["schema_version"] == 1,
             "unsupported identity failure receipt")
     require(receipt["run"] == run and type(receipt["run"]["attempt"]) is int
-            and receipt["job"] == "nightly-strict" and receipt["shard"] == shard, "identity failure coordinates differ")
+            and receipt["job"] == job and receipt["shard"] == shard, "identity failure coordinates differ")
     require(receipt["phase"] == "identity-collection" and receipt["reason"] == "identity-collection-failed",
             "unsupported identity failure phase or reason")
     require(receipt["declared"] == declared, "identity failure cases differ from scheduling record")

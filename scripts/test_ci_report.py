@@ -724,6 +724,7 @@ class ReporterTests(unittest.TestCase):
         import hashlib
         from ci_nightly import aggregate_nightly
         from ci_nightly_ui import judge_ui
+        from ci_publish import json_member
         from strict_e2e_server import fixture_manifest
         api = type("API", (), {"repository": "sudoHG/immichSlides"})()
         run = {"id": 10, "workflow_id": 123, "run_attempt": 1, "created_at": "2026-10-01T10:00:00Z",
@@ -817,6 +818,78 @@ class ReporterTests(unittest.TestCase):
                              disconnected["diagnostics"]["missing"])
             self.assertIn(failed[0], disconnected["observed"])
             self.assertNotIn("private-detail", json.dumps(disconnected))
+            api.pages = lambda path, collection: lost_artifacts
+            missing_report = read_run(api, run, {})
+            import io
+            import zipfile
+            receipt_name = "nightly-ui-identity-iphone-default-10-1"
+            receipt = {"schema_version": 1, "run": plan["run"], "job": "ui-iphone", "shard": "default",
+                       "phase": "identity-collection", "reason": "identity-collection-failed",
+                       "declared": plan["shards"][0]["declared"]}
+            for defect in ("valid", "run", "attempt", "attempt-bool", "job", "shard", "version", "phase", "reason",
+                           "declared", "extra", "duplicate", "expired", "previous-attempt", "foreign-device",
+                           "corrupt", "missing-member", "unavailable", "summary-present", "records-present"):
+                with self.subTest(ui_identity_receipt=defect):
+                    supplied = copy.deepcopy(receipt)
+                    receipt_artifact = {"name": receipt_name, "id": 99, "size_in_bytes": 1024, "expired": False}
+                    candidate_artifacts = [*lost_artifacts, receipt_artifact]
+                    if defect in {"run", "attempt", "attempt-bool"}:
+                        supplied["run"]["id" if defect == "run" else "attempt"] = (
+                            "11" if defect == "run" else True if defect == "attempt-bool" else 2)
+                    for field, value in (("job", "ui-ipad"), ("shard", "navigation"), ("version", True),
+                                         ("phase", "archive-download"), ("reason", "private-reason"),
+                                         ("declared", []), ("extra", "private-path")):
+                        if defect == field:
+                            supplied["schema_version" if field == "version" else "path" if field == "extra" else field] = value
+                    if defect == "duplicate":
+                        candidate_artifacts.append(dict(receipt_artifact))
+                    if defect == "expired":
+                        receipt_artifact["expired"] = True
+                    if defect == "previous-attempt":
+                        receipt_artifact["name"] = receipt_name[:-1] + "2"
+                    if defect == "foreign-device":
+                        receipt_artifact["name"] = receipt_name.replace("iphone", "ipad")
+                    if defect == "summary-present":
+                        ui["capacity"] = retained_capacity
+                    if defect == "records-present":
+                        recorded = copy.deepcopy(summaries[0])
+                        recorded["population"]["observed"] = []
+                        members[("ui-iphone-default-10-1", "summary.json")] = recorded
+                        candidate_artifacts.append({"name": "ui-iphone-default-10-1", "expired": False})
+                        ui["verdict"] = judge_ui(plan, [recorded, *summaries[1:]], policy=policy, registry=registry,
+                            evaluated_on=date(2026, 10, 1), matrix_job_result="failure")
+                    packed = io.BytesIO()
+                    with zipfile.ZipFile(packed, "w") as zipped:
+                        zipped.writestr("other.json" if defect == "missing-member" else "identity-failure.json", json.dumps(supplied))
+                    def read_member(client, artifact, member):
+                        if member == "identity-failure.json":
+                            return json_member(client, artifact, member)
+                        return members[(artifact["name"], member)]
+                    def read_api(path, **options):
+                        if path.endswith("/zip"):
+                            if defect == "unavailable":
+                                raise OSError("private-download-error")
+                            return b"not a ZIP" if defect == "corrupt" else packed.getvalue()
+                        return {"total_count": 0, "jobs": []}
+                    api.pages = lambda path, collection: candidate_artifacts
+                    with patch("ci_publish.json_member", side_effect=read_member), \
+                            patch.object(api, "repo", side_effect=read_api, create=True):
+                        explained = read_run(api, run, {})
+                    expected_reason = "identity-collection-failed" if defect == "valid" else "nightly-ui-sample-missing"
+                    self.assertEqual("failed", explained["status"])
+                    self.assertEqual([{"identity": receipt["declared"][0], "reason": expected_reason}],
+                                     explained["diagnostics"]["missing"])
+                    self.assertEqual(missing_report["observed"], explained["observed"])
+                    self.assertEqual(missing_report["diagnostics"]["counts"], explained["diagnostics"]["counts"])
+                    self.assertNotIn("private-path", json.dumps(explained))
+                    self.assertNotIn("private-reason", json.dumps(explained))
+                    self.assertNotIn("private-download-error", json.dumps(explained))
+                    ui["capacity"] = {**retained_capacity, "shard_intervals": intervals[1:],
+                        "start_order_waves": [[item["shard"] for item in intervals[1:][index:index + 2]]
+                                              for index in range(0, len(intervals) - 1, 2)]}
+                    ui["verdict"] = judge_ui(plan, summaries[1:], policy=policy, registry=registry,
+                        evaluated_on=date(2026, 10, 1), matrix_job_result="failure")
+                    members[("ui-iphone-default-10-1", "summary.json")] = summaries[0]
             ui["verdict"], ui["capacity"] = retained_verdict, retained_capacity
             api.pages = lambda path, collection: artifacts
             history = ci_report.read_run(api, run, {})

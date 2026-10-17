@@ -634,10 +634,24 @@ def nightly_failure_reasons(api, run, attempt, artifacts, raw, missing):
     import subprocess
     absent = {identity_key(item["identity"]) for item in missing}
     reasons, jobs = {}, {}
-    for shard in raw.get("ui", {}).get("plan", {}).get("shards", []):
+    ui = raw.get("ui", {})
+    ui_summary_shards = {item["shard"] for item in ui.get("capacity", {}).get("shard_intervals", [])}
+    # nightly_ui_attempt has already bound this plan to tested source and available records.
+    for shard in ui.get("plan", {}).get("shards", []):
         job_name = f"ui-{shard['device']}-{shard['shard']}"
-        if not any(item["name"] == f"{job_name}-{run['id']}-{attempt}" for item in artifacts):
-            jobs[job_name] = {identity_key(item) for item in shard["declared"]}
+        keys = {identity_key(item) for item in shard["declared"]}
+        has_records = shard["device"] + "/" + shard["shard"] in ui_summary_shards or any(
+            item["name"] == f"{job_name}-{run['id']}-{attempt}" for item in artifacts)
+        if not has_records:
+            jobs[job_name] = keys
+        matches = [item for item in artifacts if item["name"] == f"nightly-ui-identity-{shard['device']}-{shard['shard']}-{run['id']}-{attempt}"]
+        if not has_records and len(matches) == 1 and not matches[0]["expired"]:
+            try:
+                receipt = parse_identity_failure(json_member(api, matches[0], "identity-failure.json"),
+                    {"id": str(run["id"]), "attempt": attempt}, shard["shard"], shard["declared"], job="ui-" + shard["device"])
+                reasons.update({key: receipt["reason"] for key in keys})
+            except (ContractError, KeyError, TypeError, ValueError, OSError, zipfile.BadZipFile):
+                pass  # Invalid untrusted diagnostics never replace missing evidence.
     plans = [item for item in artifacts if item["name"] == f"nightly-plan-{run['id']}-{attempt}"]
     summary_shards = {item["shard"] for item in raw["capacity"]["shard_intervals"]}
     if raw.get("diagnostic_shard") in {None, "strict-only"} and raw["matrix"].get("missing", []) and len(plans) == 1 and not plans[0]["expired"]:

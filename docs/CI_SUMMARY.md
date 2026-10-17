@@ -280,6 +280,25 @@ review export and the records artifact
 upload. The selected versioned matrix supplies the declared cases, while the
 reporter independently verifies their scheduling binding.
 
+### Prepared UI staging identity failure receipt
+
+The reader also accepts the same seven-field `identity-failure.json` in a separate
+`nightly-ui-identity-<device>-<shard>-<run>-<attempt>` artifact. Its `job` is exactly
+`ui-<device>`, its `shard` is the scheduled UI shard name, and `declared` is the
+UI plan's ordered method identities for that device/shard. The version, run,
+phase and reason fields follow the strict receipt contract above.
+
+The reporter first verifies the UI plan against the tested commit's tree, Swift
+sources, default plans, shard manifest and hashes, and recomputes the aggregate
+from available records. Only a shard with neither an interval summary nor a
+matching current-attempt UI records artifact is eligible. Unknown fields, malformed,
+duplicate, expired or foreign-attempt receipts retain the generic missing reason.
+Missing methods stay missing/NOT_RUN, the verdict stays failed, and other shards'
+formal results survive. The receipt is untrusted: it supplies no source identity,
+paths, environment SHAs, command output, compiled/executed evidence, pass night or
+issue closure. This reader-only contract does not enable a producer or upload;
+those must follow its merge to main.
+
 ### Prepared archive download receipt
 
 The optional top-level `archive_download` object is accepted only on version 1
