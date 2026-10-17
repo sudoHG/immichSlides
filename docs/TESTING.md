@@ -183,11 +183,16 @@ does not hide an already visible bar. The existing eight-second appearance budge
 starts after the first reveal and never restarts. Next/Previous/Play-Pause receive
 one real tap and return immediately; their callers retain their scene-change,
 Play/Pause and EXIF retry budgets. The shared helper does not compare their values.
-Only Settings verifies an outcome: a Settings entry or the playback toggle. Before
-another Settings attempt, its snapshot must still show playback and contain neither
-`global.back.button` nor any `settings.*` identifier. Observing either navigation
-signal permanently suppresses further taps while the helper waits for its outcome.
-Each retry reveals and takes a fresh snapshot. A late Settings outcome never passes.
+Only Settings verifies an outcome: a Settings entry or the playback toggle. Its
+existing five-second product appearance wait starts when the coordinate tap returns,
+so XCTest's idle wait does not consume the outcome window. This window stays fixed
+under every wait factor; an observation completing after it expires never passes.
+At most one retry is allowed, within the original eight-second control deadline.
+Before its reveal, a fresh snapshot in the same iteration must still show playback
+and contain neither the system `BackButton` nor any `settings.*` identifier.
+Observing either navigation signal permanently suppresses further taps. The retry
+then takes a new frame snapshot and checks the original control deadline before
+tapping; each returned Settings tap gets its own bounded appearance wait.
 Wait-only Settings callers refresh auto-hide once immediately before success and
 check the original deadline again afterward. A hidden streak permits one initial
 reveal and one further reveal if it lasts longer than one second; polls do not
@@ -197,6 +202,7 @@ text stays in the private suffix. Shared tap prefixes distinguish no tap and no
 Settings outcome. Private suffixes include the last sanitized observation,
 error count/code, iteration/tap counts, boolean
 Settings outcome/navigation fields and aggregate snapshot/reveal/tap/verify durations.
+The outcome field becomes true only after the wait accepts an observation within its window.
 Verify time includes its snapshot time; no extra diagnostic snapshot runs after
 timeout. Playback History Settings uses the same bounded snapshot waiter, without
 the generic waiter's final condition call. Playback History

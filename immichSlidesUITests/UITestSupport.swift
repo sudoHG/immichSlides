@@ -44,7 +44,7 @@ struct SlideshowControlBarButtonObservation {
     }
 
     var hasSettingsNavigationEvidence: Bool {
-        snapshots["global.back.button"] != nil || snapshots.keys.contains { $0.hasPrefix("settings.") }
+        snapshots["BackButton"] != nil || snapshots.keys.contains { $0.hasPrefix("settings.") }
     }
 
     var diagnostic: String {
@@ -171,27 +171,17 @@ extension XCUIApplication {
         timing.reveal(app: self)
         let deadline = Date().addingTimeInterval(UITestSupportWaitTiming.controlAppearanceTimeoutSeconds)
         var isTapAttemptPrepared = true
-        var shouldRevealForNextTap = false
         while Date() < deadline {
-            if shouldRevealForNextTap {
-                timing.reveal(app: self)
-                shouldRevealForNextTap = false
-                isTapAttemptPrepared = true
-                guard Date() < deadline else { break }
-            }
-            let verifyStartedAt = Date()
             let observation = timing.observe(app: self, identifier: identifier)
             if timing.tapCount > 0 {
-                timing.hasSettingsOutcome = observation?.hasSettingsOutcome ?? false
                 timing.didObserveSettingsNavigation =
                     timing.didObserveSettingsNavigation || observation?.hasSettingsNavigationEvidence == true
-                timing.verifySeconds += Date().timeIntervalSince(verifyStartedAt)
             }
             guard Date() < deadline else { break }
-            if timing.hasSettingsOutcome { return }
             if let observation {
                 // Once navigation starts, the first Settings tap is delivered; never tap an incoming page.
-                if !timing.didObserveSettingsNavigation, observation.isInsideWindow,
+                guard !timing.didObserveSettingsNavigation else { break }
+                if observation.isInsideWindow,
                     let button = observation.button
                 {
                     if isTapAttemptPrepared {
@@ -208,9 +198,26 @@ extension XCUIApplication {
                         // Callers own scene-change, Play/Pause and EXIF budgets after one real tap.
                         if !timing.shouldVerifySettingsOutcome { return }
                         isTapAttemptPrepared = false
+                        // XCTest's idle wait belongs to the tap, not the destination appearance window.
+                        let didObserveOutcome = TestWait.until(
+                            .product(UITestSupportWaitTiming.elementAppearanceTimeoutSeconds),
+                            pollIntervalSeconds: UITestSupportWaitTiming.identityPollSeconds
+                        ) {
+                            let verifyStartedAt = Date()
+                            let outcome = timing.observe(app: self, identifier: identifier)
+                            timing.didObserveSettingsNavigation =
+                                timing.didObserveSettingsNavigation || outcome?.hasSettingsNavigationEvidence == true
+                            timing.verifySeconds += Date().timeIntervalSince(verifyStartedAt)
+                            return outcome?.hasSettingsOutcome ?? false
+                        }
+                        timing.hasSettingsOutcome = didObserveOutcome
+                        if didObserveOutcome { return }
+                        guard timing.tapCount < 2 else { break }
                     } else if observation.hasPlaybackMarker {
-                        // The next attempt must reveal, then take a new frame snapshot before tapping.
-                        shouldRevealForNextTap = true
+                        // Confirm no navigation in this iteration before revealing for the one retry.
+                        timing.reveal(app: self)
+                        isTapAttemptPrepared = true
+                        continue
                     }
                 }
             }
