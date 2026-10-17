@@ -18,6 +18,103 @@ from run_fixture_ui_tests import clean_environment, compiled_tests, coverage_row
 
 
 class FixtureCoverageTests(unittest.TestCase):
+    def test_slow_official_result_steps_keep_phase_elapsed_and_missing_identities(self):
+        from types import SimpleNamespace
+        from ci_summary import parse_summary, test_identity
+        from ci_verdict import parse_policy
+        from test_ci_summary import archive_download_summary
+        for phase in ("tests-read", "export", "summary-read", "details-read", "attachments-export"):
+            with self.subTest(phase=phase), tempfile.TemporaryDirectory() as directory:
+                root, output = Path(directory, "checkout"), Path(directory, "output")
+                root.mkdir()
+                bundle = Path(directory, "private/result/fixture.xcresult")
+                bundle.mkdir(parents=True)
+                source = root / "Products/app.xctestrun"
+                source.parent.mkdir()
+                source.touch()
+                (source.parent / "Debug-iphonesimulator/immichSlides.app").mkdir(parents=True)
+                seed = archive_download_summary()
+                declared = [test_identity("ui", "NavigationUITests/testMethod" + str(index),
+                            platform="ios", device="ipad") for index in range(21)]
+                official = {"devices": [{"deviceId": "target", "modelName": "iPad Pro", "platform": "iOS Simulator"}],
+                    "testNodes": [{"nodeType": "UI test bundle", "name": "immichSlidesUITests", "children": [
+                        {"nodeType": "Test Case", "nodeIdentifier": entry["key"] + "()", "durationInSeconds": 1,
+                         "result": "Passed" if index == 0 else "Skipped"} for index, entry in enumerate(declared)]}]}
+                counts = {"totalTestCount": 21, "passedTests": 1, "failedTests": 0, "skippedTests": 20, "result": "Passed"}
+                policy = parse_policy((runner.ROOT / "scripts/ci-test-policy.json").read_text())
+                inputs = {"hashes": seed["hashes"], "population": dict(seed["population"], declared=declared,
+                    compiled=[], observed=[]), "policy": policy, "discovery_policy": policy, "deselections": [],
+                    "registry": {"schema_version": 1, "entries": []}, "registry_revision": "b" * 40}
+                inputs["hashes"]["policies"]["known-flaky"] = "f" * 64
+                clock, tests_reads, executions = [0.0], [], []
+                def process(command, **kwargs):
+                    if command[0] == "xcodebuild":
+                        if "-enumerate-tests" in command:
+                            enumeration = {"errors": [], "values": [{"enabledTests": [
+                                {"identifier": "immichSlidesUITests/" + entry["key"]} for entry in declared]}]}
+                            Path(command[command.index("-test-enumeration-output-path") + 1]).write_text(json.dumps(enumeration))
+                        else:
+                            executions.append(command)
+                    return SimpleNamespace(wait=lambda **kwargs: 0, pid=42)
+                def read(command, **kwargs):
+                    self.assertEqual(command[:2], ["xcrun", "xcresulttool"])
+                    self.assertEqual(kwargs["timeout"], 180)
+                    if command[4] == "tests":
+                        tests_reads.append(command)
+                    current = ("attachments-export" if command[2] == "export" else "details-read" if command[4] == "test-details"
+                               else "summary-read" if command[4] == "summary" else "tests-read" if len(tests_reads) == 1 else "export")
+                    if current == phase:
+                        clock[0] += 184.7
+                        raise subprocess.TimeoutExpired(command, kwargs["timeout"], output=b"PRIVATE_SENTINEL", stderr=b"PRIVATE_SENTINEL")
+                    clock[0] += 0.44
+                    detail = ({"testIdentifier": command[command.index("--test-id") + 1], "testResult": "Skipped", "testRuns": [
+                        {"nodeType": "Test Case Run", "result": "Skipped", "name": "Official skip"}]} if current == "details-read" else {})
+                    payload = json.dumps(counts if command[4] == "summary" else detail if current == "details-read" else official)
+                    return subprocess.CompletedProcess(command, 0, payload if kwargs.get("text") else payload.encode())
+                with contextlib.ExitStack() as stack:
+                    stack.enter_context(patch.dict(os.environ, {"GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "2"}))
+                    for name, value in (("ROOT", root), ("run_identity", seed["identity"]),
+                        ("source_metadata", (".github/workflows/ci-nightly.yml", False)), ("fixture_inputs", inputs),
+                        ("toolchain", seed["toolchain"]), ("prepare_fixture_result_bundle", bundle),
+                        ("prepare_simulator", None), ("verify_simulator_device", None), ("simulator_inventory", {}),
+                        ("wait_for_service", ("127.0.0.1", 1234)), ("disk_check", None), ("check_products", None),
+                        ("measure_signing", "adhoc"), ("prepare_test_run", source), ("reset_simulator_app", None),
+                        ("crash_report_directories", []), ("crash_report_snapshot", {}),
+                        ("stop_exact_process", None), ("finalize_fixture_run", [])):
+                        stack.enter_context(patch.object(runner, name, value if name == "ROOT" else unittest.mock.Mock(return_value=value)))
+                    stack.enter_context(patch.object(runner.subprocess, "Popen", side_effect=process))
+                    stack.enter_context(patch.object(runner.subprocess, "run", side_effect=read))
+                    stack.enter_context(patch.object(runner.time, "monotonic", side_effect=lambda: clock[0]))
+                    stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+                    stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
+                    code = runner.main(["--device", "ipad", "--destination", "platform=iOS Simulator,id=target",
+                        "--output-dir", str(output), "--xctestrun", str(source), "--shard", "navigation",
+                        "--shard-manifest", str(root / "manifest.json"), "--listed-only-retry",
+                        "--result-export-timeout-seconds", "180", "--failure-screenshots"])
+                self.assertEqual(code, 1)
+                result = parse_summary((output / "summary.json").read_text())
+                self.assertEqual(result["status"], "failed")
+                self.assertEqual(result["population"]["declared"], declared)
+                self.assertCountEqual(result["population"]["compiled"], declared)
+                self.assertIn("xcresult-export-timeout", [item["code"] for item in result["infrastructure"]], result["infrastructure"])
+                timeout = next(item for item in result["infrastructure"] if item["code"] == "xcresult-export-timeout")
+                self.assertEqual(timeout["message"], "Official result export exceeded its budget; phase=" + phase + "; elapsed_seconds=184.700")
+                self.assertEqual(len(executions), 1, "An official result timeout must not retry XCTest")
+                self.assertEqual(len(tests_reads), 1 if phase == "attachments-export" else 2,
+                                 "Result export is separate from normalized tests reading")
+                observed = result["population"]["observed"]
+                self.assertEqual(len(observed), 0 if phase == "tests-read" else 21)
+                self.assertFalse(any(item["outcome"] == "not-run" for item in observed))
+                rows = json.loads((output / "fixture-coverage.json").read_text())["tests"]
+                self.assertEqual(len(rows), len(observed))
+                self.assertNotIn(str(bundle), json.dumps(result["infrastructure"]))
+                self.assertNotIn("PRIVATE_SENTINEL", json.dumps(result))
+                if phase == "tests-read":
+                    self.assertTrue((output / "official-summary.json").exists(), result["infrastructure"])
+                    self.assertEqual(json.loads((output / "official-summary.json").read_text()), counts)
+                    self.assertEqual(json.loads((output / "export-read-timing.json").read_text())["attempts"][0]["elapsed_seconds"], 184.7)
+                    self.assertAlmostEqual(json.loads((output / "export-timing.json").read_text())["official_export_seconds"], 0.88)
+
     def test_inventory_timeouts_use_bounded_readiness_without_retrying_invalid_results(self):
         import strict_e2e_runner_support as support
         for state in ("recovered", "timeout", "late", "exit", "invalid"):

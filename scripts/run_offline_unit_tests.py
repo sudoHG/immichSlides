@@ -447,26 +447,28 @@ def format_test_results_summary(
 
 
 def read_official_test_results_summary(bundle_path: Path, *, timeout_seconds: float | None = None) -> TestResultsSummary:
+    from ci_flaky import official_result_step
     if not bundle_path.exists():
         raise CommandError(
             f"The test command succeeded, but this run's separate xcresult does not exist: {bundle_path}. Missing results cannot be treated as a pass."
         )
-    completed = subprocess.run(
-        [
-            "xcrun",
-            "xcresulttool",
-            "get",
-            "test-results",
-            "summary",
-            "--path",
-            str(bundle_path),
-            "--compact",
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-        **({"timeout": timeout_seconds} if timeout_seconds is not None else {}),
-    )
+    with official_result_step("summary-read"):
+        completed = subprocess.run(
+            [
+                "xcrun",
+                "xcresulttool",
+                "get",
+                "test-results",
+                "summary",
+                "--path",
+                str(bundle_path),
+                "--compact",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            **({"timeout": timeout_seconds} if timeout_seconds is not None else {}),
+        )
     if completed.returncode != 0:
         detail = completed.stderr.strip() or completed.stdout.strip() or f"exit {completed.returncode}"
         raise CommandError(f"Unable to read this run's official xcresult test summary; it is unparseable: {detail}")

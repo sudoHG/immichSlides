@@ -26,7 +26,7 @@ from ci_population import ui_identities
 from ci_summary import ContractError, observation, require, write_summary
 from ci_ui_shards import DEVICES, default_plan_population, shard_populations
 from ci_verdict import evaluate_population, parse_policy, tier_approved
-from ci_flaky import OfficialResultReadError, load_registry, registry_revision, run_xcode_attempts, read_xcode_observations
+from ci_flaky import OfficialResultReadError, load_registry, registry_revision, run_xcode_attempts, read_xcode_observations, official_result_step
 from run_host_checks import run_identity, source_metadata, toolchain
 from run_offline_unit_tests import CommandError as OfflineCommandError, _stop_process_group
 from run_strict_e2e import (export_private_result_bundle, finalize_private_result_bundle,
@@ -229,8 +229,9 @@ def problem_reason(payload, key):
 
 
 def read_problem_reason(bundle, key, *, export_timeout_seconds=60):
-    completed = subprocess.run(["xcrun", "xcresulttool", "get", "test-results", "test-details", "--path", str(bundle),
-                                "--test-id", key + "()", "--compact"], capture_output=True, check=False, timeout=export_timeout_seconds)
+    with official_result_step("details-read"):
+        completed = subprocess.run(["xcrun", "xcresulttool", "get", "test-results", "test-details", "--path", str(bundle),
+                                    "--test-id", key + "()", "--compact"], capture_output=True, check=False, timeout=export_timeout_seconds)
     require(completed.returncode == 0, "official problem detail export failed")
     require(not logical_bytes_contain(completed.stdout, [PUBLIC_API_KEY]), "official problem detail contains credentials")
     return problem_reason(json.loads(completed.stdout), key)
@@ -661,11 +662,12 @@ def main(argv=None, *, simulator_prepared=False):
                          (retry_result["invocations"][0]["exit_code"] == 65 and len(retry_result["invocations"]) > 1))):
                 code = 0
             observed = {entry["identity"]["key"]: entry for entry in retry_result["observed"]}
+            read_failed = any(entry["code"] == "official-result-read-failed" for entry in retry_result["infrastructure"])
             rows = [{"identity": entry, "device": args.device,
                      "outcome": observed[entry["key"]]["outcome"] if entry["key"] in observed else "not-run",
                      "duration_seconds": observed[entry["key"]]["duration_seconds"] if entry["key"] in observed else 0,
                      "reason": observed[entry["key"]]["attempts"][-1]["reason"] if entry["key"] in observed else "compiled but no official result"}
-                    for entry in selected]
+                    for entry in selected if not read_failed or entry["key"] in observed]
             from ci_failure_diagnostics import DIAGNOSTIC_FIELDS, unknown_diagnostics
             for row in rows:
                 if row["outcome"] in {"failed", "crashed", "flaky-passed"}:
@@ -689,9 +691,10 @@ def main(argv=None, *, simulator_prepared=False):
             if args.failure_screenshots:
                 attachment_root = output / "failure-screenshots" / ("attempt-" + str(number))
                 attachment_root.mkdir(parents=True, exist_ok=True)
-                subprocess.run(["xcrun", "xcresulttool", "export", "attachments", "--path", str(path),
-                                "--output-path", str(attachment_root), "--only-failures"],
-                               capture_output=True, check=True, timeout=args.result_export_timeout_seconds)
+                with official_result_step("attachments-export"):
+                    subprocess.run(["xcrun", "xcresulttool", "export", "attachments", "--path", str(path),
+                                    "--output-path", str(attachment_root), "--only-failures"],
+                                   capture_output=True, check=True, timeout=args.result_export_timeout_seconds)
             export_started = time.monotonic()
             digests[path] = export_private_result_bundle(path, output, [PUBLIC_API_KEY], suffix=suffix,
                 summary_timeout_seconds=args.result_export_timeout_seconds, export_timeout_seconds=args.result_export_timeout_seconds,
