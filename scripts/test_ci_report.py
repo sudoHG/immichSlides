@@ -823,9 +823,36 @@ class ReporterTests(unittest.TestCase):
             import io
             import zipfile
             receipt_name = "nightly-ui-identity-iphone-default-10-1"
-            receipt = {"schema_version": 1, "run": plan["run"], "job": "ui-iphone", "shard": "default",
-                       "phase": "identity-collection", "reason": "identity-collection-failed",
-                       "declared": plan["shards"][0]["declared"]}
+            import ci_ui_tests as ui_producer
+            for failure in (subprocess.CalledProcessError(128, ["git", "rev-parse", "HEAD^{tree}"],
+                                output="private identity output", stderr="private identity error"),
+                            subprocess.TimeoutExpired(["git", "rev-parse", "HEAD^{tree}"], 30,
+                                output="private identity output", stderr="private identity error")):
+                with tempfile.TemporaryDirectory() as directory:
+                    temporary = Path(directory)
+                    checkout = temporary / "source"
+                    for name, content in blobs.items():
+                        path = checkout / name
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_bytes(content)
+                    def identity_output(command, **options):
+                        self.assertEqual(30, options["timeout"])
+                        if command == ["git", "rev-parse", "HEAD"]:
+                            return "a" * 40
+                        self.assertEqual(["git", "rev-parse", "HEAD^{tree}"], command)
+                        raise failure
+                    environment = {"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "schedule", "GITHUB_REPOSITORY": api.repository,
+                        "GITHUB_SHA": "f" * 40, "GITHUB_REF": "refs/heads/main", "GITHUB_RUN_ID": "10", "GITHUB_RUN_ATTEMPT": "1",
+                        "RUNNER_TEMP": str(temporary)}
+                    with patch.dict(os.environ, environment, clear=True), patch.object(ui_producer, "ROOT", checkout), \
+                            patch("run_host_checks.subprocess.check_output", side_effect=identity_output) as git_process:
+                        self.assertEqual(1, ui_producer.main(["stage-download", "--device", "iphone", "--shard", "default"]))
+                    self.assertEqual(2, git_process.call_count)
+                    self.assertEqual(["ui-identity/identity-failure.json"],
+                        [path.relative_to(temporary).as_posix() for path in temporary.rglob("*") if path.is_file() and checkout not in path.parents])
+                    receipt = json.loads((temporary / "ui-identity/identity-failure.json").read_text())
+                    from ci_nightly import parse_identity_failure
+                    self.assertEqual(receipt, parse_identity_failure(receipt, plan["run"], "default", plan["shards"][0]["declared"], job="ui-iphone"))
             for defect in ("valid", "run", "attempt", "attempt-bool", "job", "shard", "version", "phase", "reason",
                            "declared", "extra", "duplicate", "expired", "previous-attempt", "foreign-device", "foreign-shard",
                            "corrupt", "invalid-json", "unavailable", "summary-present", "records-present"):

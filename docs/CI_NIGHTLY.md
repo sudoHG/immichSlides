@@ -79,14 +79,28 @@ In `--preparation-failed` accounting mode, an identity failure writes no receipt
 and preserves the generic missing-evidence reason: simulator preparation was the
 original failure, so accounting must not relabel it as an identity failure.
 
-The reader also prepares acceptance for a standalone
+The reader also accepts a standalone
 [UI staging identity failure receipt](CI_SUMMARY.md#prepared-ui-staging-identity-failure-receipt).
 It binds the current run, attempt, UI job, shard and ordered methods to the verified
 UI plan. A shard with an interval summary or matching UI records artifact retains
 its existing reason. Eligible missing methods receive only
 `identity-collection-failed`; they remain missing/NOT_RUN and the night stays failed.
-The UI staging producer and workflow upload remain deferred until this reader
-merges to main.
+Following the reader's merge to main, the nightly UI job invokes
+`ci_ui_tests.py stage-download --device <device> --shard <shard>`. Only a Git identity
+collection exception writes `ui-identity/identity-failure.json` under `RUNNER_TEMP`.
+The declared methods come from the same versioned Swift source, default plan and
+shard manifest as scheduling. This computation runs only on the failure path;
+successful identity collection retains the original staging outputs and writes no
+receipt. Cancellation and subsequent source metadata or staging allocation errors
+write no receipt. If diagnostic generation or writing fails, the original identity
+exception and exit remain intact, with ordinary missing evidence.
+
+An always-run existence probe gates the separate
+`nightly-ui-identity-<device>-<shard>-<run>-<attempt>` upload, with the strict
+receipt's seven-day retention. When it exists, the workflow skips `check-upload`,
+so no UI records artifact is uploaded and the receipt remains eligible. This does
+not fabricate a summary or compiled/executed record. The Git timeout, archive gate,
+job budgets, permissions, simulator ordering and retry behavior are unchanged.
 
 For missing strict or UI cases, the reporter can also associate the current
 attempt's GitHub job with its check-run annotations. A failure annotation with the

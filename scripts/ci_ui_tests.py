@@ -49,8 +49,27 @@ def write_json(path, value):
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def stage_download():
-    ctx = context()
+def stage_download(args=None):
+    def identity_failed():
+        from ci_population import ui_identities
+        ui_root = ROOT / "immichSlidesUITests"
+        sources = {path.relative_to(ui_root).as_posix(): path.read_text() for path in ui_root.rglob("*.swift")}
+        platform_name = DEVICES[args.device]
+        test_plan = ROOT / ("immichSlides-" + ("iOS" if platform_name == "ios" else "tvOS") + ".xctestplan")
+        declared = shard_populations(ui_identities(sources, platform_name), test_plan.read_text(),
+                                     (ROOT / MANIFEST_PATH).read_text(), args.device)[args.shard]
+        receipt = {"schema_version": 1, "run": {"id": os.environ.get("GITHUB_RUN_ID"),
+                   "attempt": int(os.environ.get("GITHUB_RUN_ATTEMPT", "1"))},
+                   "job": "ui-" + args.device, "shard": args.shard, "phase": "identity-collection",
+                   "reason": "identity-collection-failed", "declared": declared}
+        path = Path(os.environ["RUNNER_TEMP"]) / "ui-identity/identity-failure.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        write_json(path, receipt)
+
+    nightly = (args is not None and args.device is not None and args.shard is not None
+               and os.environ.get("GITHUB_ACTIONS") == "true"
+               and os.environ.get("GITHUB_EVENT_NAME") in {"schedule", "workflow_dispatch"})
+    ctx = context(on_identity_failure=identity_failed) if nightly else context()
     prefix = f"ui-download-{ctx['run']['id']}-{ctx['run']['attempt']}-"
     staging = tempfile.mkdtemp(prefix=prefix, dir=os.environ["RUNNER_TEMP"])
     output("staging_path", staging)
@@ -182,9 +201,17 @@ def git_blob(revision, path):
     return subprocess.check_output(["git", "show", revision + ":" + path], cwd=ROOT, timeout=60)
 
 
-def context():
+def context(*, on_identity_failure=None):
     ci = os.environ.get("GITHUB_ACTIONS") == "true"
-    identity = run_identity(os.environ, ci=ci)
+    try:
+        identity = run_identity(os.environ, ci=ci)
+    except Exception:
+        if on_identity_failure is not None:
+            try:
+                on_identity_failure()
+            except Exception:
+                pass  # A failed diagnostic must preserve the original identity failure.
+        raise
     require(identity["event"] in {"pull_request", "push", "local", "schedule", "workflow_dispatch"}, "unsupported UI producer event")
     expected_workflow = NIGHTLY_WORKFLOW if identity["event"] in {"schedule", "workflow_dispatch"} else WORKFLOW
     workflow, fork = source_metadata(identity, os.environ, expected_workflow if ci else None)
@@ -957,7 +984,9 @@ def reproduce(args):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("stage-download")
+    staging = commands.add_parser("stage-download")
+    staging.add_argument("--device", choices=DEVICES)
+    staging.add_argument("--shard")
     gate = commands.add_parser("gate-archive")
     gate.add_argument("--device", choices=DEVICES, required=True)
     gate.add_argument("--shard", required=True)
@@ -1025,7 +1054,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         if args.command == "stage-download":
-            return stage_download()
+            return stage_download(args)
         if args.command == "gate-archive":
             return gate_archive(args)
         require(not getattr(args, "scoped_ui_v2", False) or args.pack_scoped_ui,

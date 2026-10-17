@@ -21,7 +21,8 @@ class NightlyVerdictTests(unittest.TestCase):
         import tempfile
         import yaml
         root = Path(__file__).parent.parent
-        steps = yaml.safe_load((root / ".github/workflows/ci-nightly.yml").read_text())["jobs"]["strict"]["steps"]
+        jobs = yaml.safe_load((root / ".github/workflows/ci-nightly.yml").read_text())["jobs"]
+        steps = jobs["strict"]["steps"]
         probe = next(step for step in steps if step.get("id") == "identity_failure")
         upload = next(step for step in steps if step.get("with", {}).get("name", "").startswith("nightly-identity-"))
         records = next(step for step in steps if step.get("with", {}).get("name", "").startswith("nightly-strict-"))
@@ -50,6 +51,41 @@ class NightlyVerdictTests(unittest.TestCase):
                     receipt.write_text("{}")
                 outputs = temporary / "step-output"
                 completed = subprocess.run(["bash", "-eu", "-c", probe["run"]],
+                    env={**os.environ, "RUNNER_TEMP": str(temporary), "GITHUB_OUTPUT": str(outputs)},
+                    capture_output=True, text=True, timeout=5)
+                self.assertEqual(0, completed.returncode, completed.stderr)
+                self.assertEqual("exists=true\n" if exists else "", outputs.read_text() if outputs.exists() else "")
+
+        ui_steps = jobs["ui-shards"]["steps"]
+        ui_probe = next(step for step in ui_steps if step.get("id") == "identity_failure")
+        ui_upload = next(step for step in ui_steps if step.get("with", {}).get("name", "").startswith("nightly-ui-identity-"))
+        ui_records = next(step for step in ui_steps if step.get("with", {}).get("name", "").startswith("ui-${{ matrix.device }}-${{ matrix.shard }}-"))
+        staging = next(step for step in ui_steps if step.get("id") == "staging")
+        scan = next(step for step in ui_steps if step.get("id") == "scan")
+        ui_cleanup = next(step for step in ui_steps if "rm -rf" in step.get("run", ""))
+        self.assertIn("stage-download --device '${{ matrix.device }}' --shard '${{ matrix.shard }}'", staging["run"])
+        self.assertEqual("always()", ui_probe["if"])
+        self.assertEqual("always() && steps.identity_failure.outputs.exists == 'true'", ui_upload["if"])
+        self.assertEqual("always() && steps.identity_failure.outputs.exists != 'true'", scan["if"])
+        self.assertEqual("always() && steps.scan.outcome == 'success'", ui_records["if"])
+        self.assertEqual("nightly-ui-identity-${{ matrix.device }}-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}", ui_upload["with"]["name"])
+        self.assertEqual(upload["uses"], ui_upload["uses"])
+        self.assertEqual("${{ runner.temp }}/ui-identity/identity-failure.json", ui_upload["with"]["path"])
+        self.assertEqual(upload["with"]["retention-days"], ui_upload["with"]["retention-days"])
+        self.assertEqual("error", ui_upload["with"]["if-no-files-found"])
+        self.assertLess(ui_steps.index(staging), ui_steps.index(ui_probe))
+        self.assertLess(ui_steps.index(ui_probe), ui_steps.index(scan))
+        self.assertLess(ui_steps.index(ui_probe), ui_steps.index(ui_upload))
+        self.assertLess(ui_steps.index(ui_upload), ui_steps.index(ui_cleanup))
+        for exists in (False, True):
+            with self.subTest(ui_receipt_exists=exists), tempfile.TemporaryDirectory() as directory:
+                temporary = Path(directory)
+                receipt = temporary / "ui-identity/identity-failure.json"
+                receipt.parent.mkdir()
+                if exists:
+                    receipt.write_text("{}")
+                outputs = temporary / "step-output"
+                completed = subprocess.run(["bash", "-eu", "-c", ui_probe["run"]],
                     env={**os.environ, "RUNNER_TEMP": str(temporary), "GITHUB_OUTPUT": str(outputs)},
                     capture_output=True, text=True, timeout=5)
                 self.assertEqual(0, completed.returncode, completed.stderr)

@@ -42,6 +42,101 @@ def share_ui_source_fixture(test):
 
 
 class BuildArchiveTests(unittest.TestCase):
+    def test_staging_identity_failures_preserve_git_errors_and_only_write_scheduled_receipts(self):
+        import argparse
+        from ci_nightly import parse_identity_failure
+        from ci_nightly_ui import current_plan
+        share_ui_source_fixture(self)
+        for event, failure in (("schedule", subprocess.TimeoutExpired(["git", "rev-parse", "HEAD^{tree}"], 30,
+                                   output="private identity output", stderr="private identity error")),
+                               ("workflow_dispatch", subprocess.CalledProcessError(128, ["git", "rev-parse", "HEAD^{tree}"],
+                                   output="private identity output", stderr="private identity error"))):
+            with self.subTest(event=event), tempfile.TemporaryDirectory() as directory:
+                temporary = Path(directory)
+                environment = {"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": event, "GITHUB_REPOSITORY": "owner/repo",
+                    "GITHUB_SHA": "a" * 40, "GITHUB_REF": "refs/heads/main", "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "2",
+                    "GITHUB_WORKFLOW_REF": "owner/repo/.github/workflows/ci-nightly.yml@refs/heads/main", "RUNNER_TEMP": directory}
+                with patch.dict(os.environ, environment, clear=True), \
+                        patch("run_host_checks.subprocess.check_output", side_effect=["a" * 40, "b" * 40]):
+                    plan = current_plan(ui.ROOT)
+                scheduled = next(item for item in plan["shards"] if item["device"] == "ipad" and item["shard"] == "visual-b")
+                def git_output(command, **options):
+                    self.assertEqual(30, options["timeout"])
+                    if command == ["git", "rev-parse", "HEAD"]:
+                        return "a" * 40
+                    self.assertEqual(["git", "rev-parse", "HEAD^{tree}"], command)
+                    raise failure
+                with patch.dict(os.environ, environment, clear=True), \
+                        patch("run_host_checks.subprocess.check_output", side_effect=git_output) as git_process:
+                    try:
+                        ui.stage_download(argparse.Namespace(device="ipad", shard="visual-b"))
+                    except BaseException as raised:
+                        self.assertIs(failure, raised)
+                    else:
+                        self.fail("staging must preserve the identity exception")
+                self.assertEqual(2, git_process.call_count)
+                self.assertEqual(["ui-identity/identity-failure.json"],
+                                 [path.relative_to(temporary).as_posix() for path in temporary.rglob("*") if path.is_file()])
+                receipt = json.loads((temporary / "ui-identity/identity-failure.json").read_text())
+                expected = {"schema_version": 1, "run": plan["run"], "job": "ui-ipad", "shard": "visual-b",
+                    "phase": "identity-collection", "reason": "identity-collection-failed", "declared": scheduled["declared"]}
+                self.assertEqual(json.dumps(expected, sort_keys=True), json.dumps(receipt, sort_keys=True))
+                self.assertEqual(receipt, parse_identity_failure(receipt, plan["run"], "visual-b", scheduled["declared"], job="ui-ipad"))
+
+    def test_staging_success_cancellation_and_non_identity_failures_write_no_early_receipt(self):
+        import argparse
+        from ci_local import Interrupted
+        for mode in ("success", "cancelled", "metadata", "allocation", "non-nightly", "receipt-write"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory, contextlib.ExitStack() as stack:
+                temporary = Path(directory)
+                environment = {"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "pull_request" if mode == "non-nightly" else "schedule",
+                    "GITHUB_REPOSITORY": "owner/repo", "GITHUB_SHA": "a" * 40, "GITHUB_REF": "refs/heads/main",
+                    "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "2", "RUNNER_TEMP": directory,
+                    "GITHUB_WORKFLOW_REF": "foreign/repo/workflow@main" if mode == "metadata" else
+                        "owner/repo/.github/workflows/ci-nightly.yml@refs/heads/main", "GITHUB_OUTPUT": str(temporary / "outputs")}
+                failure = (Interrupted(signal.SIGTERM) if mode == "cancelled" else
+                           subprocess.TimeoutExpired(["git", "rev-parse", "HEAD^{tree}"], 30))
+                def git_output(command, **options):
+                    self.assertEqual(30, options["timeout"])
+                    if command == ["git", "rev-parse", "HEAD"]:
+                        return "a" * 40
+                    self.assertEqual(["git", "rev-parse", "HEAD^{tree}"], command)
+                    if mode in {"cancelled", "non-nightly", "receipt-write"}:
+                        raise failure
+                    return "b" * 40
+                stack.enter_context(patch.dict(os.environ, environment, clear=True))
+                git_process = stack.enter_context(patch("run_host_checks.subprocess.check_output", side_effect=git_output))
+                if mode == "allocation":
+                    stack.enter_context(patch.object(ui.tempfile, "mkdtemp", side_effect=OSError("staging allocation failed")))
+                if mode == "receipt-write":
+                    stack.enter_context(patch.object(ui, "write_json", side_effect=OSError("private receipt write failure")))
+                args = argparse.Namespace(device="ipad", shard="visual-b")
+                if mode == "success":
+                    self.assertEqual(0, ui.stage_download(args))
+                    outputs = dict(line.split("=", 1) for line in (temporary / "outputs").read_text().splitlines())
+                    self.assertEqual({"staging_path", "transfer_started"}, set(outputs))
+                    self.assertTrue(Path(outputs["staging_path"]).is_dir())
+                    self.assertTrue(Path(outputs["staging_path"]).name.startswith("ui-download-123-2-"))
+                    self.assertGreater(float(outputs["transfer_started"]), 0)
+                elif mode == "metadata":
+                    with self.assertRaisesRegex(ContractError, "GITHUB_WORKFLOW_REF does not identify this repository's workflow"):
+                        ui.stage_download(args)
+                elif mode == "allocation":
+                    with self.assertRaisesRegex(OSError, "staging allocation failed"):
+                        ui.stage_download(args)
+                else:
+                    try:
+                        ui.stage_download(args)
+                    except BaseException as raised:
+                        self.assertIs(failure, raised)
+                    else:
+                        self.fail("staging must preserve the identity exception")
+                self.assertEqual(2, git_process.call_count)
+                self.assertFalse((temporary / "ui-identity/identity-failure.json").exists())
+                self.assertFalse((temporary / "ui-records").exists())
+                if mode not in {"success", "receipt-write"}:
+                    self.assertEqual([], list(temporary.iterdir()))
+
     def test_nightly_gate_publishes_verified_archives_and_records_single_defect_refusals(self):
         from ci_summary import parse_summary
         from test_ci_summary import archive_download_summary

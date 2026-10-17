@@ -296,8 +296,16 @@ duplicate, expired or foreign-attempt receipts retain the generic missing reason
 Missing methods stay missing/NOT_RUN, the verdict stays failed, and other shards'
 formal results survive. The receipt is untrusted: it supplies no source identity,
 paths, environment SHAs, command output, compiled/executed evidence, pass night or
-issue closure. This reader-only contract does not enable a producer or upload;
-those must follow its merge to main.
+issue closure. Following the reader's merge to main, nightly UI staging emits
+this receipt only when its Git identity collection raises an exception. It
+derives the ordered methods from the same versioned Swift source, default plan
+and shard manifest used by scheduling, without collecting or substituting a
+source identity. The normal path does not compute or write a receipt. Cancellation,
+subsequent source metadata validation and archive staging allocation failures
+write no receipt. A diagnostic write failure preserves the original identity
+exception and exit. The workflow uploads the receipt separately with seven-day
+retention and skips the records scan/upload on that path; see
+[the nightly guide](CI_NIGHTLY.md#early-failure-diagnostics).
 
 ### Prepared archive download receipt
 
