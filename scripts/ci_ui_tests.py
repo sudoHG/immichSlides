@@ -28,6 +28,7 @@ from urllib.request import Request, build_opener
 from ci_build_archive import (artifact_name, check_products, extract_products, file_hash, measure_signing,
                               output, validate_artifact, validate_manifest, validated_tar_members, workspace_preflight)
 from ci_execution_diagnostics import active, diagnostic_session
+from ci_nightly_ui import default_plan_populations
 from ci_publish import ArtifactRedirect, RateLimitWaitingGitHub, json_member, rate_limit_wait, verify_workflow
 from ci_summary import (ContractError, decode, observation, parse_identity, parse_summary, require, test_identity, write_summary)
 from ci_summary import (ARCHIVE_DOWNLOAD_MAX_DISK_BYTES, ARCHIVE_DOWNLOAD_MAX_SECONDS, identity_key, validate_test_identity)
@@ -49,8 +50,21 @@ def write_json(path, value):
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def stage_download():
-    ctx = context()
+def stage_download(args=None):
+    def identity_failed():
+        declared = default_plan_populations(ROOT, (args.device,))[args.device][args.shard]
+        receipt = {"schema_version": 1, "run": {"id": os.environ.get("GITHUB_RUN_ID"),
+                   "attempt": int(os.environ.get("GITHUB_RUN_ATTEMPT", "1"))},
+                   "job": "ui-" + args.device, "shard": args.shard, "phase": "identity-collection",
+                   "reason": "identity-collection-failed", "declared": declared}
+        path = Path(os.environ["RUNNER_TEMP"]) / "ui-identity/identity-failure.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        write_json(path, receipt)
+
+    nightly = (args is not None and args.device is not None and args.shard is not None
+               and os.environ.get("GITHUB_ACTIONS") == "true"
+               and os.environ.get("GITHUB_EVENT_NAME") in {"schedule", "workflow_dispatch"})
+    ctx = context(on_identity_failure=identity_failed) if nightly else context()
     prefix = f"ui-download-{ctx['run']['id']}-{ctx['run']['attempt']}-"
     staging = tempfile.mkdtemp(prefix=prefix, dir=os.environ["RUNNER_TEMP"])
     output("staging_path", staging)
@@ -182,9 +196,17 @@ def git_blob(revision, path):
     return subprocess.check_output(["git", "show", revision + ":" + path], cwd=ROOT, timeout=60)
 
 
-def context():
+def context(*, on_identity_failure=None):
     ci = os.environ.get("GITHUB_ACTIONS") == "true"
-    identity = run_identity(os.environ, ci=ci)
+    try:
+        identity = run_identity(os.environ, ci=ci)
+    except Exception:
+        if on_identity_failure is not None:
+            try:
+                on_identity_failure()
+            except Exception:
+                pass  # A failed diagnostic must preserve the original identity failure.
+        raise
     require(identity["event"] in {"pull_request", "push", "local", "schedule", "workflow_dispatch"}, "unsupported UI producer event")
     expected_workflow = NIGHTLY_WORKFLOW if identity["event"] in {"schedule", "workflow_dispatch"} else WORKFLOW
     workflow, fork = source_metadata(identity, os.environ, expected_workflow if ci else None)
@@ -957,7 +979,9 @@ def reproduce(args):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("stage-download")
+    staging = commands.add_parser("stage-download")
+    staging.add_argument("--device", choices=DEVICES)
+    staging.add_argument("--shard")
     gate = commands.add_parser("gate-archive")
     gate.add_argument("--device", choices=DEVICES, required=True)
     gate.add_argument("--shard", required=True)
@@ -1025,7 +1049,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         if args.command == "stage-download":
-            return stage_download()
+            return stage_download(args)
         if args.command == "gate-archive":
             return gate_archive(args)
         require(not getattr(args, "scoped_ui_v2", False) or args.pack_scoped_ui,

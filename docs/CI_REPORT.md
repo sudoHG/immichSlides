@@ -80,8 +80,7 @@ The reporter accepts a separate, untrusted
 [strict identity failure receipt](CI_SUMMARY.md#prepared-strict-identity-failure-receipt)
 only for missing cases in its verified run/attempt scheduling record. These cases
 remain missing and NOT_RUN with `identity-collection-failed`; no receipt becomes
-a formal summary, compiled/executed result or recovery proof. This reader support
-does not activate the tracer producer.
+a formal summary, compiled/executed result or recovery proof.
 
 For UI shards, the equivalent
 [staging identity receipt](CI_SUMMARY.md#prepared-ui-staging-identity-failure-receipt)
@@ -89,8 +88,10 @@ is bound to the independently verified UI plan, including the tested tree,
 source-derived method population and hashes. Neither an interval summary nor a
 matching current-attempt UI records artifact may exist. Only eligible missing
 methods receive `identity-collection-failed`; counts, execution evidence, failed
-verdicts and issue recovery rules are unchanged. This reader does not activate the
-UI producer or upload workflow.
+verdicts and issue recovery rules are unchanged. Following this reader's merge,
+the [nightly staging producer](CI_NIGHTLY.md#early-failure-diagnostics) emits the
+standalone receipt only on identity collection failure and skips the corresponding
+records upload. Unavailable or malformed diagnostics retain the generic reason.
 
 For a missing strict or UI shard, current-attempt GitHub job metadata binds its
 check-run annotation endpoint. Candidates exclude strict shards with an interval

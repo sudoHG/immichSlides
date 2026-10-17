@@ -447,7 +447,8 @@ jobs:
       - name: Allocate this attempt's archive staging directory
         id: staging
         working-directory: ui-source
-        run: '"$PYTHON" -B scripts/ci_ui_tests.py stage-download'
+        run: |
+          "$PYTHON" -B scripts/ci_ui_tests.py stage-download --device '${{ matrix.device }}' --shard '${{ matrix.shard }}'
       - name: Download by verified immutable archive ID
         id: download
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -483,9 +484,16 @@ jobs:
             --download-receipt-path "$RUNNER_TEMP/ui-download.json" \
             --relocated-path "$RUNNER_TEMP/ui-relocated" --output-dir "$RUNNER_TEMP/ui-records" \
             --timeout-minutes 65 --total-timeout-minutes 85 --result-export-timeout-seconds 180 --wait-factor 2 --min-free-gib 30
+      - name: Check for a standalone UI identity failure receipt
+        id: identity_failure
+        if: always()
+        run: |
+          if test -f "$RUNNER_TEMP/ui-identity/identity-failure.json"; then
+            echo 'exists=true' >> "$GITHUB_OUTPUT"
+          fi
       - name: Recheck the sensitive scan before publishing
         id: scan
-        if: always()
+        if: always() && steps.identity_failure.outputs.exists != 'true'
         working-directory: ui-source
         run: |
           "$PYTHON" -B scripts/ci_ui_tests.py check-upload --output-dir "$RUNNER_TEMP/ui-records"
@@ -512,6 +520,14 @@ jobs:
             ${{ runner.temp }}/ui-records/sensitive-scan.json
           retention-days: ${{ github.event_name == 'pull_request' && 30 || 7 }}
           if-no-files-found: error
+      - name: Publish the standalone UI identity failure receipt
+        if: always() && steps.identity_failure.outputs.exists == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: nightly-ui-identity-${{ matrix.device }}-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ui-identity/identity-failure.json
+          retention-days: 7
+          if-no-files-found: error
       - name: Publish scanned public failure attachments
         if: always() && steps.scan.outcome == 'success' && steps.scan.outputs.has_screenshots == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -530,7 +546,7 @@ jobs:
             xcrun simctl shutdown "$UI_SIMULATOR" || true
             xcrun simctl delete "$UI_SIMULATOR"
           fi
-          rm -rf "$RUNNER_TEMP/ui-relocated" "$RUNNER_TEMP/ui-archive"
+          rm -rf "$RUNNER_TEMP/ui-relocated" "$RUNNER_TEMP/ui-archive" "$RUNNER_TEMP/ui-identity"
           if test -n "$ARCHIVE_STAGING"; then rm -rf "$ARCHIVE_STAGING"; fi
           rm -f "$RUNNER_TEMP/ui-download.json"
         env:
