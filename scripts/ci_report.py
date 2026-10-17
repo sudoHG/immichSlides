@@ -132,7 +132,7 @@ def historical_strict_population(summary):
 
 def method_observations(raw, trace):
     """A suite result never substitutes for an officially exported method result."""
-    from run_strict_e2e import FILTER_PERSON_SESSIONS, resolve_suite_selector
+    from run_strict_e2e import CommandError, FILTER_PERSON_SESSIONS, resolve_suite_selector
     from strict_e2e_p2_contract import P2_CASES
     summary = parse_summary(raw)
     phases = {identity_key(item["identity"]): item for item in trace["warm"]}
@@ -145,14 +145,20 @@ def method_observations(raw, trace):
         dimensions = case["dimensions"]
         suite = dimensions["suite"]
         platform = "tvos" if dimensions["device"] == "tv" else "ios"
-        historical_selector = HISTORICAL_STRICT_SELECTORS.get((platform, suite))
-        if historical_selector is not None:
-            if historical_cases is None:
-                historical_cases = historical_strict_population(summary)
-            if identity_key({"platform": platform, **dimensions}) not in historical_cases:
-                historical_selector = None
-        selectors = ([item["selector"] for item in FILTER_PERSON_SESSIONS] if suite == "filter-person"
-                     else [historical_selector or resolve_suite_selector(platform, suite)])
+        if suite == "filter-person":
+            selectors = [item["selector"] for item in FILTER_PERSON_SESSIONS]
+        else:
+            try:
+                selectors = [resolve_suite_selector(platform, suite)]
+            except CommandError as error:
+                historical_selector = HISTORICAL_STRICT_SELECTORS.get((platform, suite))
+                if historical_selector is None or str(error) != f"Unknown strict E2E suite: {suite}.":
+                    raise
+                if historical_cases is None:
+                    historical_cases = historical_strict_population(summary)
+                if identity_key({"platform": platform, **dimensions}) not in historical_cases:
+                    raise
+                selectors = [historical_selector]
         wanted = {selector.split("/", 1)[1]: test_identity("strict", selector.split("/", 1)[1], **dimensions)
                   for selector in selectors}
         phase = phases.get(identity_key(case), {})

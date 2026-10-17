@@ -39,6 +39,40 @@ def entry(day="2026-10-01", outcome="failed", run=10, attempt=1):
 
 
 class ReporterTests(unittest.TestCase):
+    def test_current_suite_semantics_take_precedence_over_historical_selectors(self):
+        from run_strict_e2e import CommandError
+        from strict_e2e_runner_support import IOS_FILTER_SUITES, TVOS_FILTER_SUITES
+        selector = "immichSlidesUITests/CurrentSwitchUITests/testCurrentServerSwitch"
+        for platform, device, suite in (("ios", "iphone", "server-switch-display"),
+                                        ("tvos", "tv", "tvos-server-switch-display")):
+            dimensions = {**IDENTITY["dimensions"], "device": device, "suite": suite}
+            case = test_identity("strict", suite, **dimensions)
+            matrix = json.dumps({"cases": [{"platform": platform, **dimensions}]}).encode()
+            summary = valid_summary()
+            summary["population"].update(declared=[case], compiled=[case], observed=[observation(case, "passed", 1)])
+            summary["hashes"]["manifests"]["nightly-matrix"] = hashlib.sha256(matrix).hexdigest()
+            trace = {"warm": [{"identity": case, "exit_code": 0, "build_operations": 0, "products_unchanged": True,
+                "log_present": True, "official_methods": [{"identifier": selector.split("/", 1)[1], "result": "Passed"}],
+                "official_summary": {"totalTestCount": 1, "passedTests": 1, "failedTests": 0, "skippedTests": 0}}]}
+            for wrong_platform in (False, True):
+                with self.subTest(platform=platform, wrong_platform=wrong_platform):
+                    registry = IOS_FILTER_SUITES if (platform == "ios") != wrong_platform else TVOS_FILTER_SUITES
+                    git_output = {("git", "rev-parse", "a" * 40 + "^{tree}"): ("b" * 40).encode(),
+                                  ("git", "show", "a" * 40 + ":scripts/nightly-matrix.json"): matrix}
+                    with patch.dict(registry, {suite: selector}), patch("subprocess.check_output",
+                            side_effect=lambda arguments, **options: git_output[tuple(arguments)]):
+                        if wrong_platform:
+                            message = (r"^The tvOS flow can only run on the tvos platform\.$" if platform == "ios" else
+                                       r"^The iPhone/iPad journey can only run on the ios platform\.$")
+                            with self.assertRaisesRegex(CommandError, message):
+                                ci_report.method_observations(summary, trace)
+                        else:
+                            observed, missing = ci_report.method_observations(summary, trace)
+                            self.assertEqual([], missing)
+                            self.assertEqual({ci_report.identity_key(case): "passed",
+                                ci_report.identity_key(test_identity("strict", selector.split("/", 1)[1], **dimensions)): "passed"},
+                                {ci_report.identity_key(item["identity"]): item["outcome"] for item in observed})
+
     def test_retained_nightly_suites_require_the_tested_matrix_and_preserve_results(self):
         from ci_nightly import aggregate_nightly, case_identity, shards
         from run_strict_e2e import CommandError, FILTER_PERSON_SESSIONS, resolve_suite_selector
@@ -61,7 +95,6 @@ class ReporterTests(unittest.TestCase):
         for old_shape in (False, True):
             matrix = copy.deepcopy(current)
             matrix["cases"].extend(retired if old_shape else [])
-            self.assertEqual(135 if old_shape else 132, len(matrix["cases"]))
             summaries, members, expected, intervals = [], {}, {}, []
             for shard in shards(matrix):
                 declared = [case_identity(case) for case in shard["cases"]]

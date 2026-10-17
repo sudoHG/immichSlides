@@ -64,8 +64,10 @@ versions are refused; strict version 1 remains supported.
 Per-shard non-test errors make the night incomplete even alongside real failures;
 incomplete nights cannot supply issue recovery evidence. Approved UI skips remain
 accepted, declared counts deduplicate identities, and raw messages/reasons are sanitized
-through every retained attempt. A failed Git-object read makes that attempt unavailable
-without aborting collection. The outer source's complete fields must match the UI plan
+through every retained attempt. A failed Git-object read in UI source binding makes
+that attempt unavailable. This handled UI failure does not abort collection; an
+undeclared retired strict suite still raises the original unknown-suite error and
+aborts collection. The outer source's complete fields must match the UI plan
 and shard sources, with `approval_based: false`. Fixture hashing requires the tested
 `strict_e2e_server.py` to equal the reader's copy; a difference is retained as
 `fixture-source-drift`, incomplete evidence that cannot count as a pass night.
@@ -120,12 +122,19 @@ from other shards remain available.
 Historical method interpretation is separate from the current runner population.
 The reader-only `HISTORICAL_STRICT_SELECTORS` retains `server-switch-display` (iOS)
 and `tvos-server-switch-display` (tvOS), with their original XCTest method names.
+The current runner registry takes precedence; historical lookup applies only when
+that registry reports an unknown suite, preserving current semantics for a reused name.
 The tested commit's `scripts/nightly-matrix.json` must match the summary's matrix
 hash and tested tree, and declare the complete platform/device/configuration/suite/
 scenario/fixture case before a retired selector can be used. A record that introduces
 an undeclared retired case still raises the original unknown-suite error. Original
 official results, case verdicts and validator receipts follow the ordinary reader;
 the registry does not schedule a suite or emit a new record format.
+Known limitation: every retained pre-#486 night is schema 2 and reaches the
+existing UI `fixture-source-drift` gate because the tested fixture server source
+differs from the reader's copy. The attempt is replaced by infrastructure evidence,
+so its original strict results do not reach the tables or issues. This fix prevents
+the historical-suite crash; those nights still cannot count as pass nights.
 These entries can be removed after the last pre-retirement nightly leaves the
 seven-day producer retention: 2026-10-24 UTC for the retained 2026-10-17 night
 (`39041728419`, aggregate expiry `2026-10-24T22:24:20Z`). A later retained attempt
