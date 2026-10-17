@@ -19,9 +19,9 @@ KEY_COLORS = {
     "A3": frozenset({"magenta", "brown"}),
     "A4": frozenset({"blue", "brown"}),
     "A5": frozenset({"green", "blue"}),
-    "A6": frozenset({"green"}),
-    "A7": frozenset({"magenta"}),
-    "A8": frozenset({"blue"}),
+    "A6": frozenset({"purple"}),
+    "A7": frozenset({"purple"}),
+    "A8": frozenset({"purple"}),
 }
 EXPECTED_EXIF_MODEL = {
     "A1": "Fixture 1",

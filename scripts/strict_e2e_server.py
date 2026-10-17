@@ -147,10 +147,11 @@ def _cached_fixture_data(name: str) -> dict[str, Any]:
     # The ordinary B target pool models normal use; the three-photo edge case remains tracked separately.
     if name == "b":
         png_dimensions += [(320, 180), (180, 320), (300, 300)]
+    # Each added identity keeps its own white-antialias trajectory, away from old hue pairs.
     additional_palettes = {
-        6: ((0, 245, 50), (80, 235, 20)),
-        7: ((245, 45, 150), (120, 30, 245)),
-        8: ((10, 145, 250), (70, 95, 245)),
+        6: ((180, 110, 250), (215, 110, 250)),
+        7: ((250, 110, 250), (250, 110, 215)),
+        8: ((250, 110, 180), (250, 110, 145)),
     }
     original_dimension_scale = 12
     delays = [LEGACY_FIXTURE_DELAY_MS, 0, 0, 0, 0]

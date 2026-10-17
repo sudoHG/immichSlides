@@ -488,27 +488,93 @@ class DisplayPolicyVisualContractTestsCases:
             main = directory / "main.swift"
             main.write_text('''import Foundation
 let root = URL(fileURLWithPath: CommandLine.arguments[1])
-let original = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[2]))
-let candidate = try StrictE2EFilterContract.displayCandidatePNG(original, evidenceDirectory: root)
+for offset in stride(from: 2, to: CommandLine.arguments.count, by: 2) {
+let path = CommandLine.arguments[offset]
+let mode = CommandLine.arguments[offset + 1]
+let original = try Data(contentsOf: URL(fileURLWithPath: path))
+let candidate = mode == "slot" ? original : try StrictE2EFilterContract.displayCandidatePNG(original, evidenceDirectory: root)
 let result = StrictE2EPhotoIdentity.classify(png: candidate)
-print("\\(candidate != original)|\\(result.status.rawValue)|\\(result.mark ?? "nil")")
+let raw = candidate == original ? result : StrictE2EPhotoIdentity.classify(png: original)
+let regions = mode == "regions" ? StrictE2EPhotoIdentity.classifyRegions(png: candidate).mapValues {
+    ["status": $0.status.rawValue, "mark": $0.mark ?? "nil"]
+} : [:]
+let report: [String: Any] = ["file": URL(fileURLWithPath: path).lastPathComponent,
+                           "cropped": candidate != original, "status": result.status.rawValue,
+                           "mark": result.mark ?? "nil", "rawStatus": raw.status.rawValue,
+                           "rawMark": raw.mark ?? "nil", "regions": regions]
+print(String(data: try JSONSerialization.data(withJSONObject: report), encoding: .utf8)!)
+}
 ''', encoding="utf-8")
             executable = directory / "recognize"
             subprocess.run([
                 "swiftc", str(SCRIPT_DIR.parent / "TestSupport/StrictE2EFilterContract.swift"),
                 str(SCRIPT_DIR.parent / "TestSupport/StrictE2EPhotoIdentity.swift"), str(main), "-o", str(executable),
             ], check=True, capture_output=True, text=True)
+            cases = []
             for fixture_set in ("a", "b"):
-                with self.subTest(fixture_set=fixture_set):
-                    photo = Image.open(io.BytesIO(_fixture_png("A1", fixture_set))).convert("RGB")
-                    scene = ImageOps.fit(photo, (320, 696)).filter(ImageFilter.GaussianBlur(40))
-                    scene.paste(photo, (0, 258))
-                    path = directory / f"{fixture_set}-raw.png"
-                    scene.save(path)
-                    original = path.read_bytes()
-                    result = subprocess.run([str(executable), str(directory), str(path)], check=True, capture_output=True, text=True)
-                    self.assertEqual(result.stdout.strip(), "true|MATCH|A1")
+                photo = Image.open(io.BytesIO(_fixture_png("A1", fixture_set))).convert("RGB")
+                scene = ImageOps.fit(photo, (320, 696)).filter(ImageFilter.GaussianBlur(40))
+                scene.paste(photo, (0, 258))
+                path = directory / f"{fixture_set}-raw.png"
+                scene.save(path)
+                cases.append((path, path.read_bytes(), "A1", False, True))
+            for fixture_set, count in (("a", 5), ("b", 8)):
+                for index in range(1, count + 1):
+                    photo = Image.open(io.BytesIO(_fixture_png(f"A{index}", fixture_set))).convert("RGB")
+                    canvases = ((1170, 2532), (1640, 2360), (3840, 2160)) if index in (6, 7, 8) else (
+                        (photo.width * 12, photo.height * 12),)
+                    for canvas in canvases:
+                        fitted = ImageOps.contain(photo, canvas, Image.Resampling.BILINEAR)
+                        scene = ImageOps.fit(photo, canvas).filter(ImageFilter.GaussianBlur(40 * canvas[0] / 320))
+                        scene.paste(fitted, ((canvas[0] - fitted.width) // 2, (canvas[1] - fitted.height) // 2))
+                        path = directory / f"{fixture_set}-{index}-{canvas[0]}-{canvas[1]}.png"
+                        scene.save(path)
+                        cases.append((path, path.read_bytes(), f"A{index}", index in (6, 7, 8), False))
+            for asset_id, source in _fixture_data("c")["images"].items():
+                path = directory / f"{asset_id}.png"
+                photo = Image.open(io.BytesIO(source)).convert("RGB")
+                photo.resize((photo.width * 12, photo.height * 12)).save(path)
+                cases.append((path, path.read_bytes(), None, False, False))
+            for added in (6, 7, 8):
+                for existing in range(1, added):
+                    for horizontal in (False, True):
+                        canvas = (3840, 2160) if horizontal else (1640, 2360)
+                        boundary = canvas[0 if horizontal else 1] // 2
+                        boxes = ((0, 0, boundary, canvas[1]), (boundary, 0, canvas[0], canvas[1])) if horizontal else (
+                            (0, 0, canvas[0], boundary), (0, boundary, canvas[0], canvas[1]))
+                        order = (added, existing) if horizontal else (existing, added)
+                        scene = Image.new("RGB", canvas)
+                        for index, box in zip(order, boxes):
+                            photo = Image.open(io.BytesIO(_fixture_png(f"A{index}", "b"))).convert("RGB")
+                            scene.paste(ImageOps.fit(photo, (box[2] - box[0], box[3] - box[1]),
+                                                     Image.Resampling.BILINEAR), box)
+                        for slot, (index, box) in enumerate(zip(order, boxes), start=1):
+                            path = directory / f"b-pair-{added}-{existing}-{horizontal}-slot-{slot}.png"
+                            scene.crop(box).save(path)
+                            cases.append((path, path.read_bytes(), f"A{index}", False, False))
+            arguments = [argument for path, _, mark, regions, _ in cases for argument in (
+                str(path), "slot" if "-slot-" in path.name else "regions" if regions else "single")]
+            result = subprocess.run([str(executable), str(directory), *arguments],
+                                    check=True, capture_output=True, text=True)
+            reports = [json.loads(line) for line in result.stdout.splitlines()]
+            self.assertEqual(len(reports), len(cases))
+            for (path, original, mark, checks_regions, expects_crop), report in zip(cases, reports):
+                with self.subTest(frame=path.name):
+                    self.assertEqual(report["file"], path.name)
                     self.assertEqual(path.read_bytes(), original)
+                    if mark is not None:
+                        self.assertEqual((report["status"], report["mark"]), ("MATCH", mark))
+                        if expects_crop:
+                            self.assertTrue(report["cropped"])
+                        else:
+                            self.assertEqual((report["rawStatus"], report["rawMark"]), ("MATCH", mark))
+                        if checks_regions:
+                            self.assertEqual(report["regions"]["center"], {"status": "MATCH", "mark": mark})
+                            self.assertTrue(all(region["mark"] == mark for region in report["regions"].values()
+                                                if region["status"] == "MATCH"), report["regions"])
+                        continue
+                    self.assertNotIn(report["rawMark"], ("A6", "A7", "A8"))
+                    self.assertNotIn(report["mark"], ("A6", "A7", "A8"))
 
 
     def test_smartfill_multi_to_single_requires_real_same_process_pngs(self) -> None:

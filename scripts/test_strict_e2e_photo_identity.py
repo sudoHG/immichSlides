@@ -209,6 +209,7 @@ def _with_exif_card(png: bytes, model: str) -> bytes:
 
 class FrameGlyphBoundaryTests(unittest.TestCase):
     def test_expanded_b_identities_do_not_confuse_existing_photos_in_real_size_frames(self) -> None:
+        from strict_e2e_photo_identity import public_scene_photos_from_bytes
         for fixture_set, count in (("a", 5), ("b", 8)):
             for index in range(1, count + 1):
                 with self.subTest(fixture=fixture_set, index=index):
@@ -220,14 +221,29 @@ class FrameGlyphBoundaryTests(unittest.TestCase):
                                      [(fixture_set.upper(), f"A{index}")])
                     self.assertEqual((classify_screenshot(frame).status, classify_screenshot(frame).mark),
                                      ("MATCH", f"A{index}"))
+                    if fixture_set == "b" and index in (6, 7, 8):
+                        for canvas in ((1170, 2532), (1640, 2360), (3840, 2160)):
+                            with self.subTest(fitted=index, canvas=canvas):
+                                fitted = ImageOps.contain(image, canvas, Image.Resampling.BILINEAR)
+                                scene = ImageOps.fit(image, canvas).filter(ImageFilter.GaussianBlur(40 * canvas[0] / 320))
+                                scene.paste(fitted, ((canvas[0] - fitted.width) // 2, (canvas[1] - fitted.height) // 2))
+                                png = _png(scene)
+                                identity = classify_screenshot(png)
+                                self.assertEqual((identity.status, identity.mark), ("MATCH", f"A{index}"))
+                                self.assertEqual([(p.letter, p.mark) for p in public_scene_photos_from_bytes(png)],
+                                                 [("B", f"A{index}")])
         for added in (6, 7, 8):
-            for existing in range(1, 6):
+            for existing in range(1, added):
                 for horizontal in (False, True):
                     with self.subTest(added=added, existing=existing, horizontal=horizontal):
                         order = (added, existing) if horizontal else (existing, added)
                         photos = public_frame_photos_from_bytes(self._pair("b", *order, horizontal=horizontal))
                         self.assertEqual([(photo.letter, photo.mark) for photo in photos],
                                          [("B", f"A{index}") for index in order])
+                        if existing <= 5:
+                            with self.assertRaisesRegex(IdentityAssertionError, r"^mixed public glyphs; 2 slots \((?:horizontal|vertical)\)$"):
+                                public_frame_photos_from_bytes(self._pair("b", added, existing,
+                                                                         horizontal=horizontal, second_fixture="a"))
         for asset_id, source in _fixture_data("c")["images"].items():
             with self.subTest(foreign=asset_id):
                 image = Image.open(io.BytesIO(source)).convert("RGB")

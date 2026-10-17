@@ -48,15 +48,15 @@ enum StrictE2EPhotoIdentity {
         "A3": ["magenta", "brown"],
         "A4": ["blue", "brown"],
         "A5": ["green", "blue"],
-        "A6": ["green"],
-        "A7": ["magenta"],
-        "A8": ["blue"]
+        "A6": ["purple"],
+        "A7": ["purple"],
+        "A8": ["purple"]
     ]
     // RGB pairs keep old-photo hue mixtures from being read as new B photos.
     private static let extendedPalettes: [String: [[Int]]] = [
-        "A6": [[0, 245, 50], [80, 235, 20]],
-        "A7": [[245, 45, 150], [120, 30, 245]],
-        "A8": [[10, 145, 250], [70, 95, 245]]
+        "A6": [[180, 110, 250], [215, 110, 250]],
+        "A7": [[250, 110, 250], [250, 110, 215]],
+        "A8": [[250, 110, 180], [250, 110, 145]]
     ]
     private static let extendedPaletteChannelTolerance = 12
     // Kept in sync with Python DISPLAY_REGION_BOXES. top/upper cover the case where motion cropping of the upper half
