@@ -347,17 +347,23 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
         moveFocus(.right, to: start, maximumPresses: 3, message: "Focus must be able to move to Start Playback.")
         XCUIRemote.shared.press(.select)
 
+        try capturePausedPlaybackPNGs(app: app, names: ["server-switch-a-play-1"])
         try changeServer(
             app: app,
             url: serverB,
             publicKey: input.publicKey
         )
+        try writeScreenshotPNG(
+            app: app, name: "server-switch-b-save-success", attachmentName: "server-switch-b-save-success")
         try openFilterEditorFromCurrentSurface(app: app)
+        try writeScreenshotPNG(
+            app: app, name: "server-switch-b-selection-cleared", attachmentName: "server-switch-b-selection-cleared")
         try assertStillInApp(app)
+        XCTAssertTrue(app.buttons["filter.editor.done.button"].isHittable, "The settings editor must have a Done entry")
         let albumSummary = app.buttons["filter.editor.album.entry"].label
         let personSummary = app.buttons["filter.editor.person.entry"].label
         // ui-label-lookup: Preserve the Simplified Chinese album-summary copy check after identifier lookup.
-        XCTAssertTrue(albumSummary.contains("0 个相册 · 0 张照片"), "Switching servers must clear the old album selection.")
+        XCTAssertTrue(albumSummary.contains("0 个相册 · 0 张照片"), "Server B must clear A's album selection")
         // ui-label-lookup: Preserve the Simplified Chinese person-summary copy check after identifier lookup.
         XCTAssertTrue(personSummary.contains("0 个人物 · 0 张照片"), "Switching servers must clear the old person selection.")
         try writeScreenshotPNG(app: app, name: "switch-b-empty-editor", attachmentName: "switch-b-empty-editor")
@@ -382,6 +388,9 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
         let ids = Array(Set(afterAlbum.ids + afterPeople.ids)).sorted()
         let raw = afterAlbum.raw + afterPeople.raw
         XCTAssertFalse(
+            ids.isEmpty,
+            "After switching servers, B's filter IDs must be collected from the UI, not assembled from the manifest")
+        XCTAssertFalse(
             ids.contains { $0.contains("-a-") },
             "After switching servers the UI must not keep server A album/person IDs: \(ids)")
         try StrictE2EVisualEvidence.writeRequiredJSON(
@@ -393,6 +402,9 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
             name: "observed-ids-after-switch.json"
         )
 
+        try StrictE2EVisualEvidence.writeRequiredJSON(
+            ["identity_source": "ui_accessibility_identifier", "ids": ids, "raw_identifiers": raw],
+            name: "observed-ids.json")
         XCTAssertTrue(
             app.buttons["filter.editor.album.entry"].waitForExistence(timeout: TestWait.seconds(.product(8))),
             "Returning from the people list must stay in the filter editor.")
@@ -404,13 +416,29 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
         moveFocusTo(doneB, directions: [.right, .down, .left], message: "Focus must reach Done.")
         XCUIRemote.shared.press(.select)
         try returnToSlideshowFromSettings(app: app)
-        try capturePausedPlaybackPNGs(app: app, names: ["switch-b-playback"])
+        try capturePausedPlaybackPNGs(app: app, names: ["switch-b-play-1", "switch-b-play-2"])
+        try writeScreenshotPNG(app: app, name: "switch-b-playback", attachmentName: "switch-b-playback")
+        try openPlaybackSettingsFromSlideshow(app: app)
+        try selectVerifiedDisplayMode(app: app, mode: "smartFill")
+        try writeScreenshotPNG(
+            app: app, name: "display-settings-smartFill", attachmentName: "display-settings-smartFill")
+        try returnToSlideshowFromSettings(app: app)
         let processBefore = try displayPolicyProcessID(app)
+        let steps = try captureMultiPhotoBefore(app: app)
         try openPlaybackSettingsFromSlideshow(app: app)
         try selectVerifiedDisplayMode(app: app, mode: "singlePhoto")
+        try writeScreenshotPNG(app: app, name: "display-settings", attachmentName: "display-settings")
         try returnToSlideshowFromSettings(app: app)
+        let playPause = app.buttons["slideshow.control.playPause.button"]
+        XCTAssertTrue(
+            playPause.waitForExistence(timeout: TestWait.seconds(.product(20))),
+            "After changing the display mode, playback must still be on screen in the same live process.")
         RunLoop.current.run(until: Date().addingTimeInterval(Timing.playbackSceneSettleSeconds))
+        let after = StrictE2EPhotoIdentity.classify(png: app.screenshot().pngRepresentation)
+        XCTAssertNotEqual(
+            after.status, .transition, "After the change, a still frame taken mid-transition must not pass")
         try writeScreenshotPNG(app: app, name: "switch-b-single-after", attachmentName: "switch-b-single-after")
+        try writeScreenshotPNG(app: app, name: "display-after", attachmentName: "display-after")
         try StrictE2EVisualEvidence.writeRequiredJSON(
             [
                 "identity_source": "public_fixture_photo_mark",
@@ -419,6 +447,13 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
                 "process_id_before": processBefore,
                 "process_id_after": try displayPolicyProcessID(app)
             ], name: "display-policy-after-switch.json")
+        try StrictE2EVisualEvidence.writeRequiredJSON(
+            [
+                "identity_source": "public_fixture_photo_mark", "setting_source": "accessibility_ui",
+                "mode_before": "smartFill", "mode_after": "singlePhoto",
+                "process_id_before": processBefore, "process_id_after": try displayPolicyProcessID(app),
+                "before_candidate_steps": steps, "selected_before_step": steps.last!
+            ], name: "display-policy.json")
     }
 
     @MainActor
@@ -440,6 +475,24 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
         try selectVerifiedDisplayMode(app: app, mode: "smartFill")
         try returnToSlideshowFromSettings(app: app)
         let processBefore = try displayPolicyProcessID(app)
+        let steps = try captureMultiPhotoBefore(app: app)
+
+        try openPlaybackSettingsFromSlideshow(app: app)
+        try selectVerifiedDisplayMode(app: app, mode: "singlePhoto")
+        try returnToSlideshowFromSettings(app: app)
+        RunLoop.current.run(until: Date().addingTimeInterval(Timing.playbackSceneSettleSeconds))
+        try writeScreenshotPNG(app: app, name: "display-after", attachmentName: "display-after")
+        try StrictE2EVisualEvidence.writeRequiredJSON(
+            [
+                "identity_source": "public_fixture_photo_mark", "setting_source": "accessibility_ui",
+                "mode_before": "smartFill", "mode_after": "singlePhoto",
+                "process_id_before": processBefore, "process_id_after": try displayPolicyProcessID(app),
+                "before_candidate_steps": steps, "selected_before_step": steps.last!
+            ], name: "display-policy.json")
+    }
+
+    @MainActor
+    func captureMultiPhotoBefore(app: XCUIApplication) throws -> [String] {
         let pause = app.buttons["slideshow.control.playPause.button"]
         ensureControlBarVisible(app: app, playPauseButton: pause)
         let value = String(describing: pause.value ?? "")
@@ -476,18 +529,7 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
                 "No two distinct photos seen within four public album candidates; all failing originals are kept.")
         }
         try StrictE2EVisualEvidence.writeRequiredPNG(selected, name: "display-before")
-        try openPlaybackSettingsFromSlideshow(app: app)
-        try selectVerifiedDisplayMode(app: app, mode: "singlePhoto")
-        try returnToSlideshowFromSettings(app: app)
-        RunLoop.current.run(until: Date().addingTimeInterval(Timing.playbackSceneSettleSeconds))
-        try writeScreenshotPNG(app: app, name: "display-after", attachmentName: "display-after")
-        try StrictE2EVisualEvidence.writeRequiredJSON(
-            [
-                "identity_source": "public_fixture_photo_mark", "setting_source": "accessibility_ui",
-                "mode_before": "smartFill", "mode_after": "singlePhoto",
-                "process_id_before": processBefore, "process_id_after": try displayPolicyProcessID(app),
-                "before_candidate_steps": steps, "selected_before_step": steps.last!
-            ], name: "display-policy.json")
+        return steps
     }
 
     func displayPolicyDistinctMarks(_ png: Data) throws -> Set<String> {
@@ -547,87 +589,6 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
             return pid
         }
         throw StrictE2EPhotoIdentity.AssertionError.message("Cannot read the actual process identity.")
-    }
-
-    @MainActor
-    func testTVOSServerSwitchDropsOldFiltersAndDisplayPolicyAppliesImmediately() throws {
-        guard UIDevice.current.userInterfaceIdiom == .tv else {
-            XCTFail("The tvOS filter flow must run on a tvOS Simulator.")
-            return
-        }
-        let input = try requireStrictE2EInput()
-        let serverB = try requireStrictE2EPeerServerURL()
-        let app = try launchStrictE2EApp()
-        defer { app.terminate() }
-
-        try configureServerThroughFirstBoot(app: app, input: input)
-        try enterFilteredSummary(app: app)
-        try selectAlbum(app: app, albumID: "album-a-target", neighborID: "album-a-non-target")
-        let start = app.buttons["filterSummary.startPlayback.button"]
-        XCTAssertTrue(start.isEnabled, "Start Playback must be enabled after saving filters on server A.")
-        moveFocus(.right, to: start, maximumPresses: 3, message: "Focus must be able to move to Start Playback.")
-        XCUIRemote.shared.press(.select)
-        try capturePausedPlaybackPNGs(app: app, names: ["server-switch-a-play-1"])
-
-        try changeServer(app: app, url: serverB, publicKey: input.publicKey)
-        try writeScreenshotPNG(
-            app: app, name: "server-switch-b-save-success", attachmentName: "server-switch-b-save-success")
-        try assertStillInApp(app)
-        try openFilterEditorFromCurrentSurface(app: app)
-        try assertStillInApp(app)
-        try writeScreenshotPNG(
-            app: app, name: "server-switch-b-selection-cleared", attachmentName: "server-switch-b-selection-cleared")
-        XCTAssertTrue(app.buttons["filter.editor.done.button"].isHittable, "The settings editor must have a Done entry")
-        let albumEntry = app.buttons["filter.editor.album.entry"]
-        // ui-label-lookup: Preserve the Simplified Chinese album-summary copy check after identifier lookup.
-        XCTAssertTrue(albumEntry.label.contains("0 个相册 · 0 张照片"), "Server B must clear A's album selection")
-        try openAlbumFilter(app: app)
-        try assertStillInApp(app)
-        let afterAlbum = collectFixtureIDs(app: app)
-        let ids = afterAlbum.ids
-        XCTAssertFalse(
-            ids.isEmpty,
-            "After switching servers, B's filter IDs must be collected from the UI, not assembled from the manifest")
-        XCTAssertFalse(
-            ids.contains { $0.contains("-a-") },
-            "After switching servers the UI must not keep server A album/person IDs: \(ids)")
-        try StrictE2EVisualEvidence.writeRequiredJSON(
-            [
-                "identity_source": "ui_accessibility_identifier",
-                "ids": ids,
-                "raw_identifiers": afterAlbum.raw
-            ],
-            name: "observed-ids.json"
-        )
-        try returnFromAlbumList(app: app)
-        try selectAlbum(app: app, albumID: "album-b-target", neighborID: "album-b-non-target")
-        let doneB = app.buttons["filter.editor.done.button"]
-        XCTAssertTrue(
-            doneB.waitForExistence(timeout: TestWait.seconds(.product(8))) && doneB.isHittable,
-            "Done in the B filter editor must return to settings")
-        moveFocusTo(doneB, directions: [.right, .down, .left], message: "Focus must reach Done")
-        XCUIRemote.shared.press(.select)
-        try returnToSlideshowFromSettings(app: app)
-        try capturePausedPlaybackPNGs(app: app, names: ["switch-b-play-1", "switch-b-play-2"])
-        try writeScreenshotPNG(app: app, name: "display-before", attachmentName: "display-before")
-
-        try openPlaybackSettingsFromSlideshow(app: app)
-        try selectVerifiedDisplayMode(app: app, mode: "singlePhoto")
-        try writeScreenshotPNG(app: app, name: "display-settings", attachmentName: "display-settings")
-        try StrictE2EVisualEvidence.writeRequiredJSON(
-            ["identity_source": "public_fixture_photo_mark"],
-            name: "display-policy.json"
-        )
-        try returnToSlideshowFromSettings(app: app)
-        let playPause = app.buttons["slideshow.control.playPause.button"]
-        XCTAssertTrue(
-            playPause.waitForExistence(timeout: TestWait.seconds(.product(20))),
-            "After changing the display mode, playback must still be on screen in the same live process.")
-        RunLoop.current.run(until: Date().addingTimeInterval(Timing.playbackSceneSettleSeconds))
-        let after = StrictE2EPhotoIdentity.classify(png: app.screenshot().pngRepresentation)
-        XCTAssertNotEqual(
-            after.status, .transition, "After the change, a still frame taken mid-transition must not pass")
-        try writeScreenshotPNG(app: app, name: "display-after", attachmentName: "display-after")
     }
 
     // With only a person selected, the allowed set comes from that person's own set. Consecutive captures must

@@ -12,13 +12,16 @@ from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
 
-MARKS = ("A1", "A2", "A3", "A4", "A5")
+MARKS = ("A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8")
 KEY_COLORS = {
     "A1": frozenset({"green", "purple"}),
     "A2": frozenset({"green", "gray"}),
     "A3": frozenset({"magenta", "brown"}),
     "A4": frozenset({"blue", "brown"}),
     "A5": frozenset({"green", "blue"}),
+    "A6": frozenset({"purple"}),
+    "A7": frozenset({"purple"}),
+    "A8": frozenset({"purple"}),
 }
 EXPECTED_EXIF_MODEL = {
     "A1": "Fixture 1",
@@ -26,6 +29,9 @@ EXPECTED_EXIF_MODEL = {
     "A3": "Fixture 3",
     "A4": None,
     "A5": "Fixture 5",
+    "A6": None,
+    "A7": "Fixture 7",
+    "A8": None,
 }
 JOURNEY_B_STEPS = (
     "history-start",
@@ -83,7 +89,7 @@ class PhotoIdentity:
 
 def overlay_model_from_text(overlay_text: str) -> str | None:
     text = overlay_text or ""
-    for model in ("Fixture 1", "Fixture 3", "Fixture 5"):
+    for model in ("Fixture 1", "Fixture 3", "Fixture 5", "Fixture 7"):
         if model in text:
             return model
     return None
@@ -120,6 +126,7 @@ def classify_screenshot(image_bytes: bytes) -> PhotoIdentity:
     pixels = list(sample.getdata())
     sample_w, sample_h = sample.size
     counts = {"green": 0, "gray": 0, "magenta": 0, "blue": 0, "brown": 0, "purple": 0}
+    extended_counts = {mark: [0, 0] for mark in ("A6", "A7", "A8")}
     luma_sum = 0.0
     chromatic = 0
     for index, (red, green, blue) in enumerate(pixels):
@@ -133,6 +140,10 @@ def classify_screenshot(image_bytes: bytes) -> PhotoIdentity:
         hue, saturation = _hue_saturation(red, green, blue)
         if luma < IDENTITY_MINIMUM_LUMA or luma > IDENTITY_MAXIMUM_LUMA:
             continue
+        # New marks require their own RGB pair; old-photo hue mixtures must not invent a new identity.
+        assignment = _public_palette_assignment((red, green, blue))
+        if assignment is not None and assignment[0] in extended_counts:
+            extended_counts[assignment[0]][assignment[1]] += 1
         if saturation < IDENTITY_GRAY_SATURATION_THRESHOLD:
             counts["gray"] += 1
             chromatic += 1
@@ -186,6 +197,7 @@ def classify_screenshot(image_bytes: bytes) -> PhotoIdentity:
             - 0.45 * fraction["brown"]
             - 0.25 * fraction["magenta"],
         ),
+        **{mark: min(count) / total for mark, count in extended_counts.items()},
     }
     ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)
     best_mark, best_score = ranked[0]
@@ -357,10 +369,12 @@ def _public_photo_palettes() -> dict[str, tuple[tuple[int, int, int], ...]]:
 
     Image = _pil_image()
     palettes = {}
-    for image_bytes in _fixture_data("a")["images"].values():
-        with Image.open(io.BytesIO(image_bytes)) as image:
-            rgb = image.convert("RGB")
-            palettes[classify_screenshot(image_bytes).mark] = tuple(sorted({color for color in rgb.getdata() if min(color) < 240}))
+    for fixture_set in ("a", "b"):
+        fixture = _fixture_data(fixture_set)
+        for asset in fixture["assets"]:
+            with Image.open(io.BytesIO(fixture["images"][asset["id"]])) as image:
+                rgb = image.convert("RGB")
+                palettes[asset["label"]] = tuple(sorted({color for color in rgb.getdata() if min(color) < 240}))
     return palettes
 
 

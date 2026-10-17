@@ -8,37 +8,33 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from access_lifecycle_contract import (
-    DISPLAY_REGION_BOXES,
-    _crop_png_bytes,
     classify_display_regions,
 )
 from strict_e2e_filter_contract import (
+    FilterContractError,
+    _display_foreground_png,
+    _evaluate_display_policy,
+    _scene_slot_marks,
     START_PLAYBACK_BUTTON_ID,
     assert_empty_selection_cannot_start,
     assert_foreign_server_ids_absent,
     assert_playback_marks_in_target,
     load_member_manifest,
     member_manifest,
-    require_photo_mark,
     target_album_frame_identity,
 )
 from strict_e2e_photo_identity import (
     MARKS,
-    classify_public_pattern,
     classify_screenshot,
-    public_letter_from_bytes,
-    public_scene_photos_from_bytes,
-    IdentityAssertionError,
 )
 from strict_e2e_server import PUBLIC_API_KEY, fixture_manifest
 
 
-class AlbumServerContractError(Exception):
+class AlbumServerContractError(FilterContractError):
     pass
 
 
 EMPTY_FILTERED_COPY = "当前筛选条件没有找到可播放照片，请换一组相册或人物再试。"
-ALLOWED_IDENTITY_SOURCE = "public_fixture_photo_mark"
 START_NOT_APPLICABLE_SETTINGS_EDITOR = "not_applicable_settings_editor"
 SETTINGS_FILTER_ENTRY_ID = "settings.playback.filterConfig.button"
 FORBIDDEN_IDENTITY_SOURCES = frozenset(
@@ -58,20 +54,20 @@ TVOS_PLAN = "StrictE2E-tvOS"
 
 IOS_FIRST_BOOT_COLD_RELAUNCH = "immichSlidesUITests/StrictE2EFirstBatchIOSUITests/testFirstBootSetupSurvivesColdRelaunch"
 IOS_ALBUM_EMPTY = "immichSlidesUITests/StrictE2EFilterIOSUITests/testTargetAlbumPlaysAndEmptyAlbumShowsEmptyResult"
-IOS_SERVER_SWITCH = "immichSlidesUITests/StrictE2EFilterIOSUITests/testServerSwitchDropsOldFiltersAndDisplayPolicyAppliesImmediately"
+IOS_SERVER_SWITCH = "immichSlidesUITests/StrictE2EFilterIOSUITests/testFilterServerSwitchIsolation"
 IOS_FAILURE = "immichSlidesUITests/StrictE2EFirstBatchIOSUITests/testFirstBootFailureStaysOnFirstBoot"
 TVOS_FIRST_BOOT_COLD_RELAUNCH = "immichSlidesUITests/StrictE2ETVOSFlowUITests/testTVOSFirstBootSaveAndConfiguredColdLaunch"
 TVOS_ALBUM_EMPTY = "immichSlidesUITests/StrictE2EFilterTVOSUITests/testTVOSTargetAlbumPlaysAndEmptyAlbumShowsEmptyResult"
-TVOS_SERVER_SWITCH = "immichSlidesUITests/StrictE2EFilterTVOSUITests/testTVOSServerSwitchDropsOldFiltersAndDisplayPolicyAppliesImmediately"
+TVOS_SERVER_SWITCH = "immichSlidesUITests/StrictE2EFilterTVOSUITests/testTVOSServerSwitchIsolation"
 TVOS_FAILURE = "immichSlidesUITests/StrictE2ETVOSFlowUITests/testTVOSAlbumServerFirstBootFailureHTML200"
 SERVER_SWITCH_RECORDING_FILE = "screen-recording.mov"
 SERVER_SWITCH_SAVE_SUCCESS_PNG = "server-switch-b-save-success.png"
 SERVER_SWITCH_SELECTION_CLEARED_PNG = "server-switch-b-selection-cleared.png"
 SERVER_SWITCH_OBSERVED_SOURCE = "ui_accessibility_identifier"
 SERVER_SWITCH_SUITE_BY_PLATFORM = {
-    "iphone": "server-switch-display",
-    "ipad": "server-switch-display",
-    "tvos": "tvos-server-switch-display",
+    "iphone": "filter-switch",
+    "ipad": "filter-switch",
+    "tvos": "tvos-switch",
 }
 SERVER_SWITCH_RUNNER_PLATFORM = {
     "iphone": "ios",
@@ -309,7 +305,7 @@ def _empty_album_start_state(payload: Mapping[str, Any]) -> bool | str:
 
 
 def evaluate_album_empty_evidence(evidence_dir: Path, fixture_set: str = "a", *,
-                                  read_stacked_slots: bool) -> dict[str, Any]:
+                                  use_ios_album_geometry: bool) -> dict[str, Any]:
     manifest = load_member_manifest(evidence_dir / "member-manifest.json")
     if str(manifest["fixture_set"]) != fixture_set:
         raise AlbumServerContractError("Album-empty member-manifest does not match the requested fixture")
@@ -333,11 +329,12 @@ def evaluate_album_empty_evidence(evidence_dir: Path, fixture_set: str = "a", *,
     frame_marks = []
     frame_geometry = {}
     for name in playback_names:
-        if read_stacked_slots:
+        if use_ios_album_geometry:
             marks, geometry = target_album_frame_identity((evidence_dir / f"{name}.png").read_bytes(), fixture_set)
             frame_geometry[name] = geometry
         else:
-            marks = (_classified_mark(evidence_dir, name),)
+            # tvOS uses the scene reader; iOS retains its measured/unmeasured boundary above.
+            marks = _scene_slot_marks((evidence_dir / f"{name}.png").read_bytes(), fixture_set)
         frame_marks.append(marks)
     marks = [mark for frame in frame_marks for mark in frame]
     if len(set(marks)) < 2 or len({frozenset(frame) for frame in frame_marks}) < 2:
@@ -365,44 +362,52 @@ def evaluate_album_empty_evidence(evidence_dir: Path, fixture_set: str = "a", *,
         "empty_album_id": empty_payload["album_id"],
         "start_enabled_after_empty_album": _empty_album_start_state(empty_payload),
     }
-    if read_stacked_slots:
+    if use_ios_album_geometry:
         report["target_album_geometry"] = "measured" if set(frame_geometry.values()) == {"measured"} else "unmeasured"
         report["target_album_frame_geometry"] = frame_geometry
     return report
 
 
-def evaluate_server_switch_evidence(evidence_dir: Path) -> dict[str, Any]:
+def evaluate_server_switch_evidence(evidence_dir: Path, *, suite: str = "filter-switch") -> dict[str, Any]:
     load_member_manifest(evidence_dir / "member-manifest-a.json")
     manifest_b = load_member_manifest(evidence_dir / "member-manifest-b.json")
     if not (evidence_dir / "server-switch-a-play-1.png").is_file():
         raise AlbumServerContractError("Missing screenshot of A's selected scope and photo")
     try:
-        a_photos = public_scene_photos_from_bytes((evidence_dir / "server-switch-a-play-1.png").read_bytes(),
-                                                 screenshot_name="server-switch-a-play-1.png")
-    except IdentityAssertionError as error:
+        a_marks = _scene_slot_marks((evidence_dir / "server-switch-a-play-1.png").read_bytes(), "a",
+                                    screenshot_name="server-switch-a-play-1.png")
+    except FilterContractError as error:
         raise AlbumServerContractError(str(error)) from error
-    if any(photo.letter != "A" for photo in a_photos):
-        raise AlbumServerContractError("server-switch-a-play-1: every slot must show the public pattern a")
-    assert_playback_marks_in_target([photo.mark for photo in a_photos], "a")
+    assert_playback_marks_in_target(a_marks, "a")
     b_names = [name for name in ("switch-b-play-1", "switch-b-play-2") if (evidence_dir / f"{name}.png").is_file()]
     if not b_names:
         raise AlbumServerContractError("After switching servers there must be a screenshot of B's public pattern")
-    marks = [_classified_mark(evidence_dir, name) for name in b_names]
-    assert_playback_marks_in_target(marks, str(manifest_b["fixture_set"]))
+    marks = []
     for name in b_names:
-        _require_public_pattern(evidence_dir, name, "b")
+        try:
+            marks.extend(_scene_slot_marks((evidence_dir / f"{name}.png").read_bytes(), "b",
+                                           screenshot_name=f"{name}.png"))
+        except FilterContractError as error:
+            raise AlbumServerContractError(str(error)) from error
+    assert_playback_marks_in_target(marks, str(manifest_b["fixture_set"]))
     a_bytes = (evidence_dir / "server-switch-a-play-1.png").read_bytes()
     b_bytes = (evidence_dir / f"{b_names[0]}.png").read_bytes()
     if a_bytes == b_bytes:
         raise AlbumServerContractError("After switching servers the screen is still the same as A")
-    if classify_public_pattern(b_bytes) == "a":
-        raise AlbumServerContractError("An A screen must not pass as B")
     _require_named_png(evidence_dir, SERVER_SWITCH_SAVE_SUCCESS_PNG, "Missing B save-success screen")
     _require_named_png(evidence_dir, SERVER_SWITCH_SELECTION_CLEARED_PNG, "Missing screen showing the old selection cleared")
     observed = _read_json(evidence_dir / "observed-ids.json", "observed-ids.json")
     assert_server_switch_observed_ids(observed, str(manifest_b["fixture_set"]))
     _require_server_switch_recording(evidence_dir)
-    display = evaluate_immediate_display_policy(evidence_dir)
+    finite_rotation = _evaluate_display_policy(evidence_dir, suite, manifest=manifest_b)
+    display = {
+        "verdict": finite_rotation["verdict"],
+        "before_marks": finite_rotation["before_marks"],
+        "after_mark": finite_rotation["after_mark"],
+        "before_status": classify_screenshot((evidence_dir / "display-before.png").read_bytes()).status,
+        "after_status": classify_screenshot(_display_foreground_png((evidence_dir / "display-after.png").read_bytes())).status,
+        "finite_rotation": finite_rotation,
+    }
     return {
         "verdict": "PASS",
         "suite": "server-switch",
@@ -431,17 +436,6 @@ def assert_server_switch_observed_ids(observed: Mapping[str, Any], fixture_set: 
     assert_foreign_server_ids_absent(observed_ids, fixture_set)
 
 
-def _require_public_pattern(evidence_dir: Path, name: str, expected: str) -> None:
-    path = evidence_dir / f"{name}.png"
-    if not path.is_file():
-        raise AlbumServerContractError(f"Missing screenshot {name}.png")
-    pattern = classify_public_pattern(path.read_bytes())
-    if pattern != expected:
-        if expected == "b" and pattern == "a":
-            raise AlbumServerContractError("An A screen must not pass as B")
-        raise AlbumServerContractError(f"{name} public pattern must be {expected}, got {pattern}")
-
-
 def _require_named_png(evidence_dir: Path, filename: str, message: str) -> None:
     path = evidence_dir / filename
     if not path.is_file() or path.stat().st_size == 0:
@@ -454,115 +448,6 @@ def _require_server_switch_recording(evidence_dir: Path) -> None:
         raise AlbumServerContractError("A server switch requires a non-empty continuous recording")
     if b"moov" not in path.read_bytes():
         raise AlbumServerContractError("The server-switch recording was not finalized")
-
-
-def evaluate_immediate_display_policy(evidence_dir: Path) -> dict[str, Any]:
-    payload_path = evidence_dir / "display-policy.json"
-    if payload_path.is_file():
-        payload = _read_json(payload_path, "display-policy.json")
-        source = str(payload.get("identity_source") or "")
-        if source in FORBIDDEN_IDENTITY_SOURCES or source != ALLOWED_IDENTITY_SOURCE:
-            raise AlbumServerContractError("Display policy cannot pass on enum/probe alone")
-        if payload.get("displayMode") and not (evidence_dir / "display-before.png").is_file():
-            raise AlbumServerContractError("Display policy cannot pass on enum/probe alone")
-    before_path = evidence_dir / "display-before.png"
-    after_path = evidence_dir / "display-after.png"
-    settings_path = evidence_dir / "display-settings.png"
-    if not before_path.is_file() or not after_path.is_file() or not settings_path.is_file():
-        raise AlbumServerContractError("Missing multi-photo before, real settings action, or stable single-photo after screenshot")
-    before = classify_screenshot(before_path.read_bytes())
-    after = classify_screenshot(after_path.read_bytes())
-    if after.status == "TRANSITION":
-        raise AlbumServerContractError("A still frame mid-transition cannot pass")
-    before_regions = classify_display_regions(before_path.read_bytes())
-    after_regions = classify_display_regions(after_path.read_bytes())
-    before_marks = _distinct_region_marks(before_regions, before_path.read_bytes())
-    after_marks = _distinct_region_marks(after_regions, after_path.read_bytes())
-    if len(before_marks) < 2:
-        raise AlbumServerContractError("The fixture yields no multi-photo screen; fix the fixture/preconditions first")
-    if after.status != "MATCH" or after.mark not in MARKS:
-        raise AlbumServerContractError("After the change the screen must be a stable single-photo public identity")
-    if len(after_marks) >= 2:
-        raise AlbumServerContractError("Still multi-photo after the change; cannot pass as single-photo")
-    if before_path.read_bytes() == after_path.read_bytes():
-        raise AlbumServerContractError("Display policy did not take effect")
-    return {
-        "verdict": "PASS",
-        "before_marks": before_marks,
-        "after_mark": after.mark,
-        "before_status": before.status,
-        "after_status": after.status,
-    }
-
-
-def _region_match_mark(regions: Mapping[str, Any], name: str) -> str | None:
-    identity = regions.get(name)
-    if identity is None:
-        return None
-    if identity.status == "MATCH" and identity.mark in MARKS:
-        return identity.mark
-    return None
-
-
-def _region_public_letter(image_bytes: bytes, name: str) -> str | None:
-    box = DISPLAY_REGION_BOXES.get(name)
-    if box is None:
-        return None
-    try:
-        crop = _crop_png_bytes(image_bytes, box)
-    except (OSError, ValueError):
-        return None
-    return public_letter_from_bytes(crop)
-
-
-def _distinct_region_marks(regions: Mapping[str, Any], image_bytes: bytes) -> list[str]:
-    # Left/right photos at the screen edges are judged by color. A middle or top/bottom split needs a public
-    # letter on each part; a blurred background cannot count as a second photo.
-    marks: list[str] = []
-
-    def add(mark: str | None) -> None:
-        if mark is not None and mark not in marks:
-            marks.append(mark)
-
-    left_mark = _region_match_mark(regions, "left")
-    right_mark = _region_match_mark(regions, "right")
-    if left_mark is not None and right_mark is not None and left_mark != right_mark:
-        add(left_mark)
-        add(right_mark)
-
-    for left_name, right_name in (("mid_left", "mid_right"), ("center", "bottom_half")):
-        pair_left = _region_match_mark(regions, left_name)
-        pair_right = _region_match_mark(regions, right_name)
-        if (
-            pair_left is not None
-            and pair_right is not None
-            and pair_left != pair_right
-            and _region_public_letter(image_bytes, left_name) in {"A", "B"}
-            and _region_public_letter(image_bytes, right_name) in {"A", "B"}
-        ):
-            add(pair_left)
-            add(pair_right)
-
-    top_half = _region_match_mark(regions, "top_half")
-    bottom_half = _region_match_mark(regions, "bottom_half")
-    center = _region_match_mark(regions, "center")
-    top = _region_match_mark(regions, "top")
-    # For a letterboxed single B1 the top is a black bar, so top_half must not fake a second color.
-    # iPhone portrait Smart Fill really shows two stacked photos; the center falls on the lower one,
-    # so center==bottom_half.
-    # Each stacked photo also needs its own public letter; a blurred background has no glyph.
-    real_stacked_halves = top is not None and top == top_half
-    if (
-        top_half is not None
-        and bottom_half is not None
-        and top_half != bottom_half
-        and (center != bottom_half or real_stacked_halves)
-        and _region_public_letter(image_bytes, "top_half") in {"A", "B"}
-        and _region_public_letter(image_bytes, "bottom_half") in {"A", "B"}
-    ):
-        add(top_half)
-        add(bottom_half)
-    return marks
 
 
 # Empty results only check the full screen and the main photo regions. top/upper/top_half are overlay strips,
@@ -594,14 +479,6 @@ def _empty_result_shows_fixture_photo(image_bytes: bytes) -> bool:
     regions = classify_display_regions(image_bytes)
     identities = [regions[name] for name in EMPTY_RESULT_PHOTO_REGIONS if name in regions]
     return any(item.status == "MATCH" and item.mark in MARKS for item in identities)
-
-
-def _classified_mark(evidence_dir: Path, name: str) -> str:
-    path = evidence_dir / f"{name}.png"
-    if not path.is_file():
-        raise AlbumServerContractError(f"Missing screenshot {name}.png")
-    identity = classify_screenshot(path.read_bytes())
-    return require_photo_mark(ALLOWED_IDENTITY_SOURCE, identity.status, identity.mark)
 
 
 def _read_json(path: Path, name: str) -> dict[str, Any]:

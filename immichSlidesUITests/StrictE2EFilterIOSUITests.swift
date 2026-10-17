@@ -402,41 +402,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         pausePlaybackIfNeeded(app: app)
         let processBefore = try strictE2EProcessID(app)
 
-        var candidateSteps: [String] = []
-        var selectedBefore: Data?
-        for index in 1...4 {
-            try waitForDisplayControlsToHide(app: app)
-            RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(1.0))))
-            let png = app.screenshot().pngRepresentation
-            let step = String(format: "display-before-candidate-%02d", index)
-            XCTAssertFalse(png.isEmpty, "Before-change candidate screenshot must not be empty: \(step)")
-            candidateSteps.append(step)
-            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
-            attachment.name = step
-            attachment.lifetime = .keepAlways
-            add(attachment)
-            try StrictE2EVisualEvidence.writeRequiredPNG(png, name: step)
-
-            let candidate = try displayCandidatePNG(png)
-            let marks = distinctRegionMarks(StrictE2EPhotoIdentity.classifyRegions(png: candidate))
-            if marks.count >= 2 {
-                XCTAssertTrue(
-                    Set(marks).isSubset(of: Set(targetMarks)),
-                    "Every photo in the before-change multi-photo frame must belong to the manifest target album: \(marks)"
-                )
-                selectedBefore = png
-                break
-            }
-            if index < 4 {
-                tapNext(app: app)
-            }
-        }
-        guard let selectedBefore, let selectedStep = candidateSteps.last else {
-            throw StrictE2EPhotoIdentity.AssertionError.message(
-                "No two distinct target-album photos were seen in one full four-frame candidate rotation; all candidate originals were kept."
-            )
-        }
-        try StrictE2EVisualEvidence.writeRequiredPNG(selectedBefore, name: "display-before")
+        let (candidateSteps, selectedStep) = try captureMultiPhotoBefore(app: app, targetMarks: targetMarks)
 
         openPlaybackSettingsFromSlideshow(app: app)
         selectSinglePhotoDisplayMode(app: app)
@@ -493,6 +459,47 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
     }
 
     @MainActor
+    func captureMultiPhotoBefore(app: XCUIApplication, targetMarks: [String]) throws -> ([String], String) {
+        var candidateSteps: [String] = []
+        var selectedBefore: Data?
+        for index in 1...4 {
+            try waitForDisplayControlsToHide(app: app)
+            RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(1.0))))
+            let png = app.screenshot().pngRepresentation
+            let step = String(format: "display-before-candidate-%02d", index)
+            XCTAssertFalse(png.isEmpty, "Before-change candidate screenshot must not be empty: \(step)")
+            candidateSteps.append(step)
+            let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+            attachment.name = step
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            try StrictE2EVisualEvidence.writeRequiredPNG(png, name: step)
+
+            let candidate = try displayCandidatePNG(png)
+            let marks = distinctRegionMarks(StrictE2EPhotoIdentity.classifyRegions(png: candidate))
+            if marks.count >= 2 {
+                XCTAssertTrue(
+                    Set(marks).isSubset(of: Set(targetMarks)),
+                    "Every photo in the before-change multi-photo frame must belong to the manifest target album: \(marks)"
+                )
+                selectedBefore = png
+                break
+            }
+            if index < 4 {
+                tapNext(app: app)
+            }
+        }
+        guard let selectedBefore, let selectedStep = candidateSteps.last else {
+            throw StrictE2EPhotoIdentity.AssertionError.message(
+                "No two distinct target-album photos were seen in one full four-frame candidate rotation; all candidate originals were kept."
+            )
+        }
+        try StrictE2EVisualEvidence.writeRequiredPNG(selectedBefore, name: "display-before")
+
+        return (candidateSteps, selectedStep)
+    }
+
+    @MainActor
     func waitForDisplayControlsToHide(app: XCUIApplication) throws {
         guard
             waitUntil(
@@ -520,6 +527,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         let manifestB = try loadEvidenceManifest(named: "member-manifest-b.json")
         let albumA = try stringValue(manifestA, keyPath: ["target_album", "id"])
         let albumB = try stringValue(manifestB, keyPath: ["target_album", "id"])
+        let targetMarksB = try stringArrayValue(manifestB, keyPath: ["target_album", "labels"])
         let app = try launchStrictE2EApp()
         defer { app.terminate() }
 
@@ -528,34 +536,65 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         openAlbumFilterHandlingSystemPrompt(app: app)
         setAlbumSelection(app: app, albumID: albumA, isSelectionRequested: true)
         returnFromAlbumFilter(app: app)
+        _ = captureNamedPNG(app: app, name: "server-switch-album-summary-\(albumA)")
+        let startA = app.buttons["filterSummary.startPlayback.button"]
+        XCTAssertTrue(
+            startA.waitForExistence(timeout: TestWait.seconds(.product(8))) && startA.isEnabled,
+            "Start Playback must be enabled after selecting the target album")
         startFilteredPlayback(app: app)
         pausePlaybackIfNeeded(app: app)
 
+        _ = capturePlaybackPNG(app: app, name: "server-switch-a-play-1")
         changeServerFromPlayback(app: app, serverURL: peerURL, publicKey: input.publicKey)
+        _ = captureNamedPNG(app: app, name: "server-switch-b-save-success")
         openFilterEditorFromSettings(app: app)
-        let observed = collectVisibleFilterIDs(app: app)
-        XCTAssertFalse(observed.contains(albumA), "After the server switch, the UI must not still list A's album ID")
-        for item in observed {
+        _ = captureNamedPNG(app: app, name: "server-switch-b-selection-cleared")
+        let collected = collectVisibleFilterEvidence(app: app)
+        XCTAssertFalse(
+            collected.ids.contains(albumA), "After the server switch, the UI must not still list A's album ID")
+        for item in collected.ids {
             XCTAssertFalse(
                 item.hasPrefix("album-a-") || item.hasPrefix("person-a-") || item.hasPrefix("asset-a-"),
                 "Old ID left in the UI after the server switch: \(item)")
         }
-
+        XCTAssertFalse(
+            collected.ids.isEmpty,
+            "After the server switch, B's filter IDs must be collected from the UI, not assembled from the manifest")
+        XCTAssertFalse(
+            collected.raw.isEmpty,
+            "After the server switch, UI identifiers must be recorded, not assembled from the expected manifest")
+        try StrictE2EVisualEvidence.writeRequiredJSON(
+            [
+                "identity_source": "ui_accessibility_identifier",
+                "ids": collected.ids,
+                "raw_identifiers": collected.raw
+            ],
+            name: "observed-ids.json"
+        )
         openAlbumFilterFromEditor(app: app)
         setAlbumSelection(app: app, albumID: albumB, isSelectionRequested: true)
         returnFromAlbumFilter(app: app)
+        _ = captureNamedPNG(app: app, name: "server-switch-album-summary-\(albumB)")
+        assertSettingsFilterEditorAfterServerSwitchAlbumSelection(app: app, expectedPhotoCount: targetMarksB.count)
         finishFilterEditor(app: app)
         returnToSlideshowFromSettings(app: app)
         pausePlaybackIfNeeded(app: app)
         _ = capturePlaybackPNG(app: app, name: "switch-b-play-1")
         tapNext(app: app)
         _ = capturePlaybackPNG(app: app, name: "switch-b-play-2")
-        try StrictE2EVisualEvidence.writeRequiredJSON(["ids": observed], name: "observed-ids.json")
 
-        let targetMarksB = try stringArrayValue(manifestB, keyPath: ["target_album", "labels"])
-        let processBefore = try strictE2EProcessID(app)
         openPlaybackSettingsFromSlideshow(app: app)
         selectSinglePhotoDisplayMode(app: app)
+        selectSmartFillDisplayMode(app: app)
+        try disableExifForDisplayEvidence(app: app)
+        _ = captureNamedPNG(app: app, name: "display-settings-smartFill")
+        returnToSlideshowFromSettings(app: app)
+        pausePlaybackIfNeeded(app: app)
+        let processBefore = try strictE2EProcessID(app)
+        let (candidateSteps, selectedStep) = try captureMultiPhotoBefore(app: app, targetMarks: targetMarksB)
+        openPlaybackSettingsFromSlideshow(app: app)
+        selectSinglePhotoDisplayMode(app: app)
+        _ = captureNamedPNG(app: app, name: "display-settings")
         try disableExifForDisplayEvidence(app: app)
         returnToSlideshowFromSettings(app: app)
         pausePlaybackIfNeeded(app: app)
@@ -588,6 +627,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         attachment.lifetime = .keepAlways
         add(attachment)
         try StrictE2EVisualEvidence.writeRequiredPNG(singleAfterSwitchPNG, name: "switch-b-single-after")
+        try StrictE2EVisualEvidence.writeRequiredPNG(singleAfterSwitchPNG, name: "display-after")
         let processAfter = try strictE2EProcessID(app)
         XCTAssertEqual(
             processAfter, processBefore,
@@ -602,97 +642,19 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
             ],
             name: "display-policy-after-switch.json"
         )
-    }
-
-    // Seam: switch to B after playing on A; old IDs must not reach B; the same live process switches
-    // Smart Fill to single photo.
-    @MainActor
-    func testServerSwitchDropsOldFiltersAndDisplayPolicyAppliesImmediately() throws {
-        let input = try requireStrictE2EInput()
-        let peerURL = try requireStrictE2EPeerServerURL()
-        XCTAssertNotEqual(input.serverURL, peerURL, "A and B must be two different server URLs")
-        let manifestA = try loadEvidenceManifest(named: "member-manifest-a.json")
-        let manifestB = try loadEvidenceManifest(named: "member-manifest-b.json")
-        let albumA = try stringValue(manifestA, keyPath: ["target_album", "id"])
-        let albumB = try stringValue(manifestB, keyPath: ["target_album", "id"])
-        let app = try launchStrictE2EApp()
-        defer { app.terminate() }
-
-        try completeFirstBootToModeSelection(app: app, input: input, evidencePrefix: "server-switch-a")
-        enterFilterSummary(app: app)
-        openAlbumFilterHandlingSystemPrompt(app: app)
-        selectAlbumHandlingSystemPrompt(app: app, albumID: albumA)
-        returnFromAlbumFilter(app: app)
-        _ = captureNamedPNG(app: app, name: "server-switch-album-summary-\(albumA)")
-        let startA = app.buttons["filterSummary.startPlayback.button"]
-        XCTAssertTrue(
-            startA.waitForExistence(timeout: TestWait.seconds(.product(8))) && startA.isEnabled,
-            "Start Playback must be enabled after selecting the target album")
-        startFilteredPlayback(app: app)
-        pausePlaybackIfNeeded(app: app)
-        _ = capturePlaybackPNG(app: app, name: "server-switch-a-play-1")
-
-        changeServerFromPlayback(app: app, serverURL: peerURL, publicKey: input.publicKey)
-        _ = captureNamedPNG(app: app, name: "server-switch-b-save-success")
-        openFilterEditorFromSettings(app: app)
-        _ = captureNamedPNG(app: app, name: "server-switch-b-selection-cleared")
-        let collected = collectVisibleFilterEvidence(app: app)
-        XCTAssertFalse(
-            collected.ids.contains(albumA), "After the server switch, the UI must not still list A's album ID")
-        for item in collected.ids {
-            XCTAssertFalse(
-                item.hasPrefix("album-a-") || item.hasPrefix("person-a-") || item.hasPrefix("asset-a-"),
-                "Old ID left in the UI after the server switch: \(item)")
-        }
-        XCTAssertFalse(
-            collected.ids.isEmpty,
-            "After the server switch, B's filter IDs must be collected from the UI, not assembled from the manifest")
-        XCTAssertFalse(
-            collected.raw.isEmpty,
-            "After the server switch, UI identifiers must be recorded, not assembled from the expected manifest")
         try StrictE2EVisualEvidence.writeRequiredJSON(
             [
-                "identity_source": "ui_accessibility_identifier",
-                "ids": collected.ids,
-                "raw_identifiers": collected.raw
+                "identity_source": "public_fixture_photo_mark",
+                "setting_source": "accessibility_ui",
+                "mode_before": "smartFill",
+                "mode_after": "singlePhoto",
+                "process_id_before": processBefore,
+                "process_id_after": processAfter,
+                "before_candidate_steps": candidateSteps,
+                "selected_before_step": selectedStep
             ],
-            name: "observed-ids.json"
-        )
-        openAlbumFilterFromEditor(app: app)
-        selectAlbumHandlingSystemPrompt(app: app, albumID: albumB)
-        returnFromAlbumFilter(app: app)
-        _ = captureNamedPNG(app: app, name: "server-switch-album-summary-\(albumB)")
-        assertSettingsFilterEditorAfterServerSwitchAlbumSelection(app: app)
-        finishFilterEditor(app: app)
-        returnToSlideshowFromSettings(app: app)
-        pausePlaybackIfNeeded(app: app)
-        _ = capturePlaybackPNG(app: app, name: "switch-b-play-1")
-        let beforeMarks = waitForDistinctRegionMarks(app: app, timeout: TestWait.seconds(.product(8)))
-        if beforeMarks.count < 2 {
-            tapNext(app: app)
-        }
-        let multiMarks = waitForDistinctRegionMarks(app: app, timeout: TestWait.seconds(.product(12)))
-        XCTAssertGreaterThanOrEqual(
-            multiMarks.count, 2,
-            "Before the change it must really be multi-photo; a full-frame single-photo MATCH does not count")
-        _ = capturePlaybackPNG(app: app, name: "display-before")
-        tapNext(app: app)
-        _ = capturePlaybackPNG(app: app, name: "switch-b-play-2")
-
-        openPlaybackSettingsFromSlideshow(app: app)
-        selectSinglePhotoDisplayMode(app: app)
-        _ = captureNamedPNG(app: app, name: "display-settings")
-        try StrictE2EVisualEvidence.writeRequiredJSON(
-            ["identity_source": "public_fixture_photo_mark"],
             name: "display-policy.json"
         )
-        returnToSlideshowFromSettings(app: app)
-        pausePlaybackIfNeeded(app: app)
-        let after = waitForStablePublicPhoto(app: app, timeout: TestWait.seconds(.product(20)))
-        XCTAssertEqual(
-            after?.status, .match,
-            "After the change, wait for the current transition to end; the stable single photo must not be TRANSITION")
-        _ = capturePlaybackPNG(app: app, name: "display-after")
     }
 
     // Seam: soloOnly Vision runs separately on a real device; the simulator may only report UNVERIFIED,

@@ -31,12 +31,12 @@ METHOD = re.compile(r"[A-Za-z_]\w*/test[A-Za-z_]\w*")
 ASSERTION_FAILURE = "Official XCTest assertion failure"
 # Keep recording eligibility dependency-free for the isolated base reader.
 # The strict runner and P2 contract import these same suite declarations.
-SERVER_SWITCH_DISPLAY_SUITES = ("server-switch-display", "tvos-server-switch-display")
+SERVER_SWITCH_RECORDING_SUITES = ("filter-switch", "tvos-switch")
 P2_RECORDING_SUITES = frozenset({"p2-reduce-motion", "p2-rotation"})
 
 
 def require_retryable_strict_suite(suite):
-    require(suite not in SERVER_SWITCH_DISPLAY_SUITES and suite not in P2_RECORDING_SUITES,
+    require(suite not in SERVER_SWITCH_RECORDING_SUITES and suite not in P2_RECORDING_SUITES,
             "recording suites cannot use listed-only retry")
 
 

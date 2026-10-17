@@ -36,6 +36,7 @@ from strict_e2e_photo_identity import (  # noqa: E402
 )
 from strict_e2e_server import GLYPHS, _fixture_data, _png as fixture_png  # noqa: E402
 from test_album_server_narrow_contract import IPHONE_SCREEN  # noqa: E402
+from strict_e2e_filter_contract_test_fixtures import PUBLIC_APP_CHROME_SAMPLES  # noqa: E402
 
 
 REVIEWED_SCREENSHOT_RELATIVE_PATHS = (
@@ -208,6 +209,63 @@ def _with_exif_card(png: bytes, model: str) -> bytes:
 
 
 class FrameGlyphBoundaryTests(unittest.TestCase):
+    def test_expanded_b_identities_do_not_confuse_existing_photos_in_real_size_frames(self) -> None:
+        from strict_e2e_photo_identity import public_scene_photos_from_bytes
+        for fixture_set, count in (("a", 5), ("b", 8)):
+            for index in range(1, count + 1):
+                with self.subTest(fixture=fixture_set, index=index):
+                    source = _fixture_data(fixture_set)["images"][f"asset-{fixture_set}-{index}"]
+                    image = Image.open(io.BytesIO(source)).convert("RGB")
+                    frame = _png(image.resize((image.width * 12, image.height * 12)))
+                    photos = public_frame_photos_from_bytes(frame)
+                    self.assertEqual([(photo.letter, photo.mark) for photo in photos],
+                                     [(fixture_set.upper(), f"A{index}")])
+                    self.assertEqual((classify_screenshot(frame).status, classify_screenshot(frame).mark),
+                                     ("MATCH", f"A{index}"))
+                    if fixture_set == "b" and index in (6, 7, 8):
+                        for canvas in ((1170, 2532), (1640, 2360), (3840, 2160)):
+                            with self.subTest(fitted=index, canvas=canvas):
+                                fitted = ImageOps.contain(image, canvas, Image.Resampling.BILINEAR)
+                                scene = ImageOps.fit(image, canvas).filter(ImageFilter.GaussianBlur(40 * canvas[0] / 320))
+                                scene.paste(fitted, ((canvas[0] - fitted.width) // 2, (canvas[1] - fitted.height) // 2))
+                                png = _png(scene)
+                                identity = classify_screenshot(png)
+                                self.assertEqual((identity.status, identity.mark), ("MATCH", f"A{index}"))
+                                self.assertEqual([(p.letter, p.mark) for p in public_scene_photos_from_bytes(png)],
+                                                 [("B", f"A{index}")])
+        for added in (6, 7, 8):
+            for existing in range(1, added):
+                for horizontal in (False, True):
+                    with self.subTest(added=added, existing=existing, horizontal=horizontal):
+                        order = (added, existing) if horizontal else (existing, added)
+                        photos = public_frame_photos_from_bytes(self._pair("b", *order, horizontal=horizontal))
+                        self.assertEqual([(photo.letter, photo.mark) for photo in photos],
+                                         [("B", f"A{index}") for index in order])
+                        if existing <= 5:
+                            with self.assertRaisesRegex(IdentityAssertionError, r"^mixed public glyphs; 2 slots \((?:horizontal|vertical)\)$"):
+                                public_frame_photos_from_bytes(self._pair("b", added, existing,
+                                                                         horizontal=horizontal, second_fixture="a"))
+        for name, (_, _, colors) in PUBLIC_APP_CHROME_SAMPLES.items():
+            with self.subTest(real_app_chrome=name):
+                chrome = Image.new("RGB", (320, len(colors) * 10))
+                draw = ImageDraw.Draw(chrome)
+                for row, color in enumerate(colors):
+                    draw.rectangle((0, row * 10, 319, row * 10 + 9), fill=color)
+                self.assertNotIn(classify_screenshot(_png(chrome)).mark, ("A6", "A7", "A8"))
+        with self.subTest(measured_ipad_control_bar=True):
+            scene = Image.open(io.BytesIO(self._pair("b", 6, 3, horizontal=False))).convert("RGB")
+            # Measured B6+B3 capture: preserve the bar position and sampled glass RGB.
+            ImageDraw.Draw(scene).rounded_rectangle((477, 2164, 1163, 2245), radius=40,
+                                                   fill=PUBLIC_APP_CHROME_SAMPLES["ipad-glass"][2][0])
+            photos = public_frame_photos_from_bytes(_png(scene))
+            self.assertEqual([(photo.letter, photo.mark) for photo in photos], [("B", "A6"), ("B", "A3")])
+        for asset_id, source in _fixture_data("c")["images"].items():
+            with self.subTest(foreign=asset_id):
+                image = Image.open(io.BytesIO(source)).convert("RGB")
+                frame = image.resize((image.width * 12, image.height * 12))
+                with self.assertRaisesRegex(IdentityAssertionError, "^(?:no public glyph|unreadable public glyph)"):
+                    public_frame_photos_from_bytes(_png(frame))
+
     def test_scene_judgement_converts_a_second_clear_background_photo_to_identity_failure(self) -> None:
         photo = Image.open(io.BytesIO(_fixture_png("A1"))).convert("RGB")
         scene = ImageOps.fit(photo, (320, 696)).filter(ImageFilter.GaussianBlur(40))

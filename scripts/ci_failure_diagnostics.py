@@ -40,10 +40,8 @@ VALIDATOR_FIXED_PREFIXES = (
     "Missing empty-album result screenshot",
     "After the empty album, photos from the old non-empty pool must not keep playing",
     "Missing screenshot of A's selected scope and photo",
-    "server-switch-a-play-1: every slot must show the public pattern a",
     "After switching servers there must be a screenshot of B's public pattern",
     "After switching servers the screen is still the same as A",
-    "An A screen must not pass as B",
     "Missing B save-success screen",
     "Missing screen showing the old selection cleared",
     "ids in observed-ids.json must be a list of strings",
@@ -51,13 +49,6 @@ VALIDATOR_FIXED_PREFIXES = (
     "Observations assembled from the expected manifest cannot pass",
     "A server switch requires a non-empty continuous recording",
     "The server-switch recording was not finalized",
-    "Display policy cannot pass on enum/probe alone",
-    "Missing multi-photo before, real settings action, or stable single-photo after screenshot",
-    "A still frame mid-transition cannot pass",
-    "The fixture yields no multi-photo screen; fix the fixture/preconditions first",
-    "After the change the screen must be a stable single-photo public identity",
-    "Still multi-photo after the change; cannot pass as single-photo",
-    "Display policy did not take effect",
     "Unrecognizable input: empty-album result screenshot cannot be decoded",
     "A server switch requires the B server URL",
     "A server switch must use the suite runner with screen recording",
@@ -89,6 +80,7 @@ VALIDATOR_FIXED_PREFIXES = (
     "display-policy screenshot identity must come from public fixture photo marks",
     "Display strategy must be set through the real UI",
     "display policy must change from SmartFill to single-photo mode",
+    "Missing multi-photo before, real settings action, or stable single-photo after screenshot",
     "missing the finite list of before-change candidate screenshots",
     "Before-change screenshot candidates exceed one complete finite rotation of the target album",
     "before-change candidate screenshots must be numbered consecutively in real order",
@@ -134,8 +126,8 @@ VALIDATOR_FIXED_PREFIXES = (
 VALIDATOR_MANIFEST_PREFIXES = (
     "a person filter must be a separate person_id + mode",
     "member manifest fixture set is unknown",
-    "member-manifest labels do not match classify_screenshot: must cover all five photos",
-    "member-manifest labels do not match classify_screenshot: all five must MATCH and tell A1–A5 apart",
+    "member-manifest labels do not match classify_screenshot: must cover every public fixture photo",
+    "member-manifest labels do not match classify_screenshot: every photo must MATCH a distinct classified label",
     "member-manifest labels do not match classify_screenshot: missing person_cases",
     "member-manifest independent object sets do not match fixture derivation",
     "fixture hash has drifted from the frozen contract",
@@ -149,9 +141,22 @@ VALIDATOR_MANIFEST_PREFIXES = (
     "Vision unavailable; soloOnly must not pass by accident",
     "An empty soloOnly result cannot pass by coincidence from an empty set",
 )
+# Retention readers still accept these retired messages; no nightly validator raises them.
+VALIDATOR_HISTORICAL_PREFIXES = (
+    "member-manifest labels do not match classify_screenshot: must cover all five photos",
+    "member-manifest labels do not match classify_screenshot: all five must MATCH and tell A1–A5 apart",
+    "An A screen must not pass as B",
+    "Display policy cannot pass on enum/probe alone",
+    "The fixture yields no multi-photo screen; fix the fixture/preconditions first",
+    "A still frame mid-transition cannot pass",
+    "After the change the screen must be a stable single-photo public identity",
+    "Still multi-photo after the change; cannot pass as single-photo",
+    "Display policy did not take effect",
+    "server-switch-a-play-1: every slot must show the public pattern a",
+)
 VALIDATOR_FIXTURE_PATTERNS = ("a", "b", None)
 VALIDATOR_IDENTITY_STATUSES = ("UNRECOGNIZABLE", "BLACK", "BLANK", "TRANSITION", "MATCH")
-VALIDATOR_IDENTITY_MARKS = ("A1", "A2", "A3", "A4", "A5", None)
+VALIDATOR_IDENTITY_MARKS = ("A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", None)
 
 # No arbitrary filename, exception suffix or pixel values.
 # See CI_STRICT_RUNNER.md#public-validator-failure-receipts for the public receipt contract.
@@ -178,7 +183,8 @@ _VALIDATOR_STATUS = "(?:" + "|".join(map(re.escape, VALIDATOR_IDENTITY_STATUSES)
 _VALIDATOR_MARK = "(?:" + "|".join(re.escape(str(value)) for value in VALIDATOR_IDENTITY_MARKS) + ")"
 _VALIDATOR_PREFIX = (
     "(?:" + _VALIDATOR_PREFIX + "|"
-    + "|".join(map(re.escape, VALIDATOR_FIXED_PREFIXES + VALIDATOR_MANIFEST_PREFIXES))
+    + "|".join(map(re.escape, VALIDATOR_FIXED_PREFIXES + VALIDATOR_MANIFEST_PREFIXES
+                   + VALIDATOR_HISTORICAL_PREFIXES))
     + rf"|{_VALIDATOR_SCREENSHOT_STEM} public pattern must be {_VALIDATOR_EXPECTED_PATTERN}, got {_VALIDATOR_PATTERN}"
     + rf"|Unrecognizable input cannot count as passing: status={_VALIDATOR_STATUS} mark={_VALIDATOR_MARK})"
 )
@@ -226,6 +232,7 @@ def public_validator_failure_message(value):
 # Source locations and enum meanings: docs/CI_STRICT_RUNNER.md#reviewed-prefix-table.
 # No activity marker exists in these flows. Suffixes (including values) are discarded.
 PREFIX_RULES = (
+    ("Editor album card must show the manifest-selected album and photo counts", "server_switch", "control_state"),
     ("The iOS slider must be settable to ", "interval_setup", "interval_readback"),
     ("The control bar is not hidden yet; cannot verify the first wake.", "hidden_controls", "hidden_controls"),
     ("The first wake should only bring up the control bar.", "hidden_controls", "hidden_controls"),
@@ -322,8 +329,6 @@ PREFIX_RULES = (
     ("The display mode's selected state must be read back.", "display_policy", "control_state"),
     ("No two distinct photos seen within four public album candidates; all failing originals are kept.", "display_policy", "scene_identity"),
     ("After the change, a still frame taken mid-transition must not pass", "display_policy", "scene_identity"),
-    ("Before the change it must really be multi-photo; a full-frame single-photo MATCH does not count", "display_policy", "scene_identity"),
-    ("After the change, wait for the current transition to end; the stable single photo must not be TRANSITION", "display_policy", "scene_identity"),
     ("After changing the display mode, playback must still be on screen in the same live process.", "display_policy", "navigation"),
     ("No two distinct target-album photos were seen in one full four-frame candidate rotation; all candidate originals were kept.", "display_policy", "scene_identity"),
     ("After the change it must be a stable single photo from the target album, not a transition or multi-photo", "display_policy", "scene_identity"),

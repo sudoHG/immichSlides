@@ -5,7 +5,7 @@ from __future__ import annotations
 from access_lifecycle_contract_test_fixtures import IPAD_SCREEN
 from test_album_server_narrow_contract import (
     IPHONE_SCREEN, TV_SCREEN, UNMEASURED_SCREEN, _cover, _full_screen, _iphone_control_split_frame,
-    _letterbox, _stacked_album_frame, _unmeasured_album_frame, _with_home_indicator,
+    _letterbox, _stacked_album_frame, _unmeasured_album_frame, _with_home_indicator, _write_server_switch_pass,
 )
 from strict_e2e_photo_identity import (
     IdentityAssertionError, public_frame_photos_from_bytes, public_frame_slot_count_from_bytes,
@@ -21,6 +21,7 @@ from strict_e2e_filter_contract_test_fixtures import (
     ImageFilter,
     ImageOps,
     PUBLIC_API_KEY,
+    PUBLIC_APP_CHROME_SAMPLES,
     Path,
     RunningServer,
     SCRIPT_DIR,
@@ -59,6 +60,114 @@ from strict_e2e_filter_contract_test_fixtures import (
 )
 
 class DeviceFilterVisualIdentityTestsCases:
+    def test_merged_switch_requires_original_evidence_and_a_finite_multi_photo_before(self) -> None:
+        for suite in ("filter-switch", "tvos-switch"):
+            with self.subTest(suite=suite), tempfile.TemporaryDirectory() as raw:
+                evidence = Path(raw)
+                _write_server_switch_pass(evidence)
+                _write_switch_display_bridge(evidence)
+                (evidence / "switch-b-playback.png").write_bytes(_fixture_png("A1", "b"))
+                (evidence / "observed-ids-after-switch.json").write_bytes((evidence / "observed-ids.json").read_bytes())
+                (evidence / "empty-selection-after-switch.json").write_text(json.dumps({
+                    "selection_source": "accessibility_ui",
+                    "album_summary": "筛选相册 0 个相册 · 0 张照片",
+                    "person_summary": "筛选人物 0 个人物 · 0 张照片",
+                }))
+                payload_path = evidence / "display-policy.json"
+                payload = json.loads(payload_path.read_text())
+                payload["before_candidate_steps"] = [f"display-before-candidate-{index:02d}" for index in range(1, 5)]
+                payload["selected_before_step"] = payload["before_candidate_steps"][-1]
+                with Image.open(io.BytesIO(_fixture_png("A1", "b"))) as photo:
+                    scene = ImageOps.fit(photo.convert("RGB"), IPHONE_SCREEN).filter(ImageFilter.GaussianBlur(146.25))
+                    fitted = ImageOps.contain(photo, IPHONE_SCREEN)
+                    scene.paste(fitted, ((scene.width - fitted.width) // 2, (scene.height - fitted.height) // 2))
+                    buffer = io.BytesIO()
+                    scene.save(buffer, format="PNG")
+                for step in payload["before_candidate_steps"][:-1]:
+                    (evidence / f"{step}.png").write_bytes(buffer.getvalue())
+                (evidence / "display-before-candidate-04.png").write_bytes((evidence / "display-before.png").read_bytes())
+                payload_path.write_text(json.dumps(payload))
+                report = evaluate_filter_visual_identity(evidence, suite)
+                self.assertEqual(report["server_switch"]["display"]["finite_rotation"]["before_candidate_steps"],
+                                 payload["before_candidate_steps"])
+                self.assertEqual(report["server_switch"]["display"]["finite_rotation"]["suite"], suite)
+                payload_path.write_text(json.dumps(payload | {
+                    "before_candidate_steps": payload["before_candidate_steps"] + ["display-before-candidate-05"],
+                }))
+                with self.assertRaisesRegex(FilterContractError, "Before-change screenshot candidates exceed one complete finite rotation"):
+                    evaluate_filter_visual_identity(evidence, suite)
+                payload_path.write_text(json.dumps(payload))
+                for filename, replacement, message in (
+                    ("server-switch-a-play-1.png", None, "Missing screenshot of A's selected scope and photo"),
+                    ("screen-recording.mov", b"unfinished", "The server-switch recording was not finalized"),
+                    ("display-before.png", _fixture_png("A1", "b"), "display-before.png must keep the raw screenshot of the first valid candidate"),
+                    ("display-before-candidate-04.png", None, "missing raw candidate screenshot display-before-candidate-04.png"),
+                    ("display-before-candidate-01.png", (evidence / "display-before.png").read_bytes(),
+                     "found extra candidate screenshots after the first one that met the condition"),
+                ):
+                    with self.subTest(filename=filename):
+                        path = evidence / filename
+                        original = path.read_bytes()
+                        path.unlink() if replacement is None else path.write_bytes(replacement)
+                        try:
+                            with self.assertRaisesRegex(FilterContractError, message):
+                                evaluate_filter_visual_identity(evidence, suite)
+                        finally:
+                            path.write_bytes(original)
+                from test_strict_e2e_photo_identity import FrameGlyphBoundaryTests
+                mixed = FrameGlyphBoundaryTests._pair("b", 3, 2, horizontal=True, seam=2458, second_fixture="a")
+                for filenames in (("display-before-candidate-04.png", "display-before.png"),
+                                  ("display-before-candidate-02.png",)):
+                    with self.subTest(mixed_candidate=filenames[0]):
+                        originals = {name: (evidence / name).read_bytes() for name in filenames}
+                        for name in filenames:
+                            (evidence / name).write_bytes(mixed)
+                        try:
+                            with self.assertRaisesRegex(
+                                FilterContractError,
+                                r"^mixed public glyphs; 2 slots \(horizontal\)$",
+                            ):
+                                evaluate_filter_visual_identity(evidence, suite)
+                        finally:
+                            for name, original in originals.items():
+                                (evidence / name).write_bytes(original)
+
+            # Real iPhone shape: the seam is above halfway, so old fixed half-region
+            # crops lose both letters even though both actual slots are readable.
+            with self.subTest(suite=suite, shape="B1+B8 portrait to fitted B1"), tempfile.TemporaryDirectory() as raw:
+                evidence = Path(raw)
+                _write_server_switch_pass(evidence)
+                _write_switch_display_bridge(evidence)
+                (evidence / "switch-b-playback.png").write_bytes(_fixture_png("A1", "b"))
+                (evidence / "observed-ids-after-switch.json").write_bytes((evidence / "observed-ids.json").read_bytes())
+                (evidence / "empty-selection-after-switch.json").write_text(json.dumps({
+                    "selection_source": "accessibility_ui",
+                    "album_summary": "筛选相册 0 个相册 · 0 张照片",
+                    "person_summary": "筛选人物 0 个人物 · 0 张照片",
+                }))
+                scene = Image.new("RGB", IPHONE_SCREEN)
+                for mark, box in (("A1", (0, 0, 1170, 910)), ("A8", (0, 910, 1170, 2532))):
+                    with Image.open(io.BytesIO(_fixture_png(mark, "b"))) as photo:
+                        scene.paste(ImageOps.fit(photo, (box[2], box[3] - box[1]), method=Image.Resampling.BILINEAR), box)
+                before = io.BytesIO()
+                scene.save(before, format="PNG")
+                first_step, selected_step = "display-before-candidate-01", "display-before-candidate-02"
+                (evidence / f"{first_step}.png").write_bytes(_full_screen("A2", IPHONE_SCREEN, "b"))
+                (evidence / f"{selected_step}.png").write_bytes(before.getvalue())
+                (evidence / "display-before.png").write_bytes(before.getvalue())
+                (evidence / "display-after.png").write_bytes(buffer.getvalue())
+                policy = evidence / "display-policy.json"
+                policy.write_text(json.dumps(json.loads(policy.read_text()) | {
+                    "before_candidate_steps": [first_step, selected_step], "selected_before_step": selected_step,
+                }))
+                report = evaluate_filter_visual_identity(evidence, suite)
+                display = report["server_switch"]["display"]
+                self.assertEqual(set(display), {"verdict", "before_marks", "after_mark", "before_status", "after_status", "finite_rotation"})
+                self.assertEqual(display["before_marks"], ["A1", "A8"])
+                self.assertEqual(display["after_mark"], "A1")
+                self.assertEqual(display["after_status"], "MATCH")
+                self.assertEqual(display["finite_rotation"]["before_candidate_steps"], [first_step, selected_step])
+
     def test_filter_album_unmeasured_geometry_keeps_the_main_result(self) -> None:
         for fixture_set in ("a", "b"):
             for shape, frame in (
@@ -311,6 +420,7 @@ class DeviceFilterVisualIdentityTestsCases:
     def test_filter_switch_rejects_old_ids_and_classifies_b_playback(self) -> None:
         with tempfile.TemporaryDirectory() as raw_directory:
             evidence = Path(raw_directory)
+            _write_server_switch_pass(evidence)
             write_member_manifest(evidence / "member-manifest.json", "b")
             write_member_manifest(evidence / "member-manifest-a.json", "a")
             write_member_manifest(evidence / "member-manifest-b.json", "b")
@@ -318,7 +428,11 @@ class DeviceFilterVisualIdentityTestsCases:
             (evidence / "switch-b-play-2.png").write_bytes(_fixture_png("A2", "b"))
             _write_switch_display_bridge(evidence)
             (evidence / "observed-ids.json").write_text(
-                json.dumps({"ids": ["album-b-target", "person-b-normal", "asset-b-1"]}),
+                json.dumps({"identity_source": "ui_accessibility_identifier",
+                            "ids": ["album-b-target", "person-b-normal", "asset-b-1"],
+                            "raw_identifiers": ["albumFilter.album.album-b-target.button",
+                                                "personFilter.person.person-b-normal.button",
+                                                "asset-b-1"]}),
                 encoding="utf-8",
             )
             (evidence / "request-log-b.log").write_text(
@@ -413,27 +527,100 @@ class DisplayPolicyVisualContractTestsCases:
             main = directory / "main.swift"
             main.write_text('''import Foundation
 let root = URL(fileURLWithPath: CommandLine.arguments[1])
-let original = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[2]))
-let candidate = try StrictE2EFilterContract.displayCandidatePNG(original, evidenceDirectory: root)
+for offset in stride(from: 2, to: CommandLine.arguments.count, by: 2) {
+let path = CommandLine.arguments[offset]
+let mode = CommandLine.arguments[offset + 1]
+let original = try Data(contentsOf: URL(fileURLWithPath: path))
+let candidate = mode == "slot" ? original : try StrictE2EFilterContract.displayCandidatePNG(original, evidenceDirectory: root)
 let result = StrictE2EPhotoIdentity.classify(png: candidate)
-print("\\(candidate != original)|\\(result.status.rawValue)|\\(result.mark ?? "nil")")
+let raw = candidate == original ? result : StrictE2EPhotoIdentity.classify(png: original)
+let regions = mode == "regions" ? StrictE2EPhotoIdentity.classifyRegions(png: candidate).mapValues {
+    ["status": $0.status.rawValue, "mark": $0.mark ?? "nil"]
+} : [:]
+let report: [String: Any] = ["file": URL(fileURLWithPath: path).lastPathComponent,
+                           "cropped": candidate != original, "status": result.status.rawValue,
+                           "mark": result.mark ?? "nil", "rawStatus": raw.status.rawValue,
+                           "rawMark": raw.mark ?? "nil", "regions": regions]
+print(String(data: try JSONSerialization.data(withJSONObject: report), encoding: .utf8)!)
+}
 ''', encoding="utf-8")
             executable = directory / "recognize"
             subprocess.run([
                 "swiftc", str(SCRIPT_DIR.parent / "TestSupport/StrictE2EFilterContract.swift"),
                 str(SCRIPT_DIR.parent / "TestSupport/StrictE2EPhotoIdentity.swift"), str(main), "-o", str(executable),
             ], check=True, capture_output=True, text=True)
+            cases = []
             for fixture_set in ("a", "b"):
-                with self.subTest(fixture_set=fixture_set):
-                    photo = Image.open(io.BytesIO(_fixture_png("A1", fixture_set))).convert("RGB")
-                    scene = ImageOps.fit(photo, (320, 696)).filter(ImageFilter.GaussianBlur(40))
-                    scene.paste(photo, (0, 258))
-                    path = directory / f"{fixture_set}-raw.png"
-                    scene.save(path)
-                    original = path.read_bytes()
-                    result = subprocess.run([str(executable), str(directory), str(path)], check=True, capture_output=True, text=True)
-                    self.assertEqual(result.stdout.strip(), "true|MATCH|A1")
+                photo = Image.open(io.BytesIO(_fixture_png("A1", fixture_set))).convert("RGB")
+                scene = ImageOps.fit(photo, (320, 696)).filter(ImageFilter.GaussianBlur(40))
+                scene.paste(photo, (0, 258))
+                path = directory / f"{fixture_set}-raw.png"
+                scene.save(path)
+                cases.append((path, path.read_bytes(), "A1", False, True))
+            for fixture_set, count in (("a", 5), ("b", 8)):
+                for index in range(1, count + 1):
+                    photo = Image.open(io.BytesIO(_fixture_png(f"A{index}", fixture_set))).convert("RGB")
+                    canvases = ((1170, 2532), (1640, 2360), (3840, 2160)) if index in (6, 7, 8) else (
+                        (photo.width * 12, photo.height * 12),)
+                    for canvas in canvases:
+                        fitted = ImageOps.contain(photo, canvas, Image.Resampling.BILINEAR)
+                        scene = ImageOps.fit(photo, canvas).filter(ImageFilter.GaussianBlur(40 * canvas[0] / 320))
+                        scene.paste(fitted, ((canvas[0] - fitted.width) // 2, (canvas[1] - fitted.height) // 2))
+                        path = directory / f"{fixture_set}-{index}-{canvas[0]}-{canvas[1]}.png"
+                        scene.save(path)
+                        cases.append((path, path.read_bytes(), f"A{index}", index in (6, 7, 8), False))
+            for asset_id, source in _fixture_data("c")["images"].items():
+                path = directory / f"{asset_id}.png"
+                photo = Image.open(io.BytesIO(source)).convert("RGB")
+                photo.resize((photo.width * 12, photo.height * 12)).save(path)
+                cases.append((path, path.read_bytes(), None, False, False))
+            for added in (6, 7, 8):
+                for existing in range(1, added):
+                    for horizontal in (False, True):
+                        canvas = (3840, 2160) if horizontal else (1640, 2360)
+                        boundary = canvas[0 if horizontal else 1] // 2
+                        boxes = ((0, 0, boundary, canvas[1]), (boundary, 0, canvas[0], canvas[1])) if horizontal else (
+                            (0, 0, canvas[0], boundary), (0, boundary, canvas[0], canvas[1]))
+                        order = (added, existing) if horizontal else (existing, added)
+                        scene = Image.new("RGB", canvas)
+                        for index, box in zip(order, boxes):
+                            photo = Image.open(io.BytesIO(_fixture_png(f"A{index}", "b"))).convert("RGB")
+                            scene.paste(ImageOps.fit(photo, (box[2] - box[0], box[3] - box[1]),
+                                                     Image.Resampling.BILINEAR), box)
+                        for slot, (index, box) in enumerate(zip(order, boxes), start=1):
+                            path = directory / f"b-pair-{added}-{existing}-{horizontal}-slot-{slot}.png"
+                            scene.crop(box).save(path)
+                            cases.append((path, path.read_bytes(), f"A{index}", False, False))
+            for name, (_, _, colors) in PUBLIC_APP_CHROME_SAMPLES.items():
+                scene = Image.new("RGB", (320, len(colors) * 10))
+                for row, color in enumerate(colors):
+                    scene.paste(color, (0, row * 10, 320, row * 10 + 10))
+                path = directory / f"chrome-{name}-slot-colors.png"
+                scene.save(path)
+                cases.append((path, path.read_bytes(), None, False, False))
+            arguments = [argument for path, _, mark, regions, _ in cases for argument in (
+                str(path), "slot" if "-slot-" in path.name else "regions" if regions else "single")]
+            result = subprocess.run([str(executable), str(directory), *arguments],
+                                    check=True, capture_output=True, text=True)
+            reports = [json.loads(line) for line in result.stdout.splitlines()]
+            self.assertEqual(len(reports), len(cases))
+            for (path, original, mark, checks_regions, expects_crop), report in zip(cases, reports):
+                with self.subTest(frame=path.name):
+                    self.assertEqual(report["file"], path.name)
                     self.assertEqual(path.read_bytes(), original)
+                    if mark is not None:
+                        self.assertEqual((report["status"], report["mark"]), ("MATCH", mark))
+                        if expects_crop:
+                            self.assertTrue(report["cropped"])
+                        else:
+                            self.assertEqual((report["rawStatus"], report["rawMark"]), ("MATCH", mark))
+                        if checks_regions:
+                            self.assertEqual(report["regions"]["center"], {"status": "MATCH", "mark": mark})
+                            self.assertTrue(all(region["mark"] == mark for region in report["regions"].values()
+                                                if region["status"] == "MATCH"), report["regions"])
+                        continue
+                    self.assertNotIn(report["rawMark"], ("A6", "A7", "A8"))
+                    self.assertNotIn(report["mark"], ("A6", "A7", "A8"))
 
 
     def test_smartfill_multi_to_single_requires_real_same_process_pngs(self) -> None:
@@ -447,11 +634,13 @@ print("\\(candidate != original)|\\(result.status.rawValue)|\\(result.mark ?? "n
                 after=_fixture_png("A3"),
             )
 
-            report = evaluate_filter_visual_identity(evidence, "display-policy")
-
-            self.assertEqual(report["verdict"], "PASS")
-            self.assertEqual(report["before_marks"], ["A1", "A2"])
-            self.assertEqual(report["after_mark"], "A3")
+            for suite in ("display-policy", "tvos-display-policy"):
+                with self.subTest(suite=suite):
+                    report = evaluate_filter_visual_identity(evidence, suite)
+                    self.assertEqual(report["verdict"], "PASS")
+                    self.assertEqual(report["suite"], suite)
+                    self.assertEqual(report["before_marks"], ["A1", "A2"])
+                    self.assertEqual(report["after_mark"], "A3")
 
 
     def test_display_policy_requires_same_live_process_and_bounded_candidate_rotation(self) -> None:

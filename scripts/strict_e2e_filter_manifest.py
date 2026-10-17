@@ -17,10 +17,10 @@ from strict_e2e_server import PUBLIC_API_KEY, _fixture_data, fixture_manifest, p
 
 
 # Hashes track the public fixture manifest fields.
-# The empty-album fixture B uses its own glyphs and bars.
+# Fixture B has eight distinct glyphs and bars; A retains its original five photos.
 FROZEN_FIXTURE_SHA256 = {
     "a": "44f9dc4b144e5fcc5dd14a98b76ba1bf1ca8829648555aebe738c3e2b3048989",
-    "b": "4eaeac910ff1abf6555225368882e989f7cd5d5fd568f2cccde20fab60bacf71",
+    "b": "9a0c084f5f6d5ed05186a47130a4ebbf7e1635d08374e26db9e822442cc5162a",
 }
 START_PLAYBACK_BUTTON_ID = "filterSummary.startPlayback.button"
 MEMBER_MANIFEST_KIND = "strict-e2e-member-manifest"
@@ -194,15 +194,16 @@ def _album_label_pairs(payload: Mapping[str, Any], key: str) -> list[tuple[str, 
 
 
 def _assert_labels_match_photo_identity(payload: Mapping[str, Any]) -> None:
-    # Index names A1–A5 cannot stand in for image identity;
+    # Index names cannot stand in for image identity;
     # both write and read check the public fixture images, fail-closed.
     fixture_set = payload.get("fixture_set")
     if not isinstance(fixture_set, str) or fixture_set not in FROZEN_FIXTURE_SHA256:
         raise FilterContractError("member manifest fixture set is unknown")
-    images = _fixture_data(str(fixture_set))["images"]
+    fixture = _fixture_data(str(fixture_set))
+    images = fixture["images"]
     pairs = _album_label_pairs(payload, "target_album") + _album_label_pairs(payload, "non_target_album")
-    if len(pairs) != 5:
-        raise FilterContractError("member-manifest labels do not match classify_screenshot: must cover all five photos")
+    if len(pairs) != len(images):
+        raise FilterContractError("member-manifest labels do not match classify_screenshot: must cover every public fixture photo")
     classified: list[str] = []
     for asset_id, expected in pairs:
         image = images.get(asset_id)
@@ -223,9 +224,9 @@ def _assert_labels_match_photo_identity(payload: Mapping[str, Any]) -> None:
                 f"{asset_id} pattern={pattern} set={fixture_set}"
             )
         classified.append(mark)
-    if len(set(classified)) != 5 or set(classified) != set(MARKS):
+    if len(set(classified)) != len(images) or set(classified) != {asset["label"] for asset in fixture["assets"]}:
         raise FilterContractError(
-            "member-manifest labels do not match classify_screenshot: all five must MATCH and tell A1–A5 apart"
+            "member-manifest labels do not match classify_screenshot: every photo must MATCH a distinct classified label"
         )
     label_by_id = dict(pairs)
     person_cases = payload.get("person_cases")

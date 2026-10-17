@@ -28,8 +28,62 @@ unit/UI archives. They reuse the [archive workspace preflight](CI_BUILD_ARCHIVE.
 product inventory and signing inspection. No competing archive producer or artifact
 selection mechanism is introduced.
 
+The dual-server `filter-switch` (iOS/iPadOS) and `tvos-switch` contracts also carry
+the former standalone server-switch display guarantees. Each records A playback,
+B save success, the cleared filter editor and real B UI identifiers, then checks
+every A/B photo slot by glyph, color and axis. A continuous recording covers the
+flow. On B, real Next actions traverse at most four target-album candidate frames;
+every sampled original is retained, and the first real
+multi-photo frame becomes `display-before.png`. Exhausting all candidates without
+a qualified frame fails. A real Settings change must produce a stable B single
+photo in the same live process. Candidate numbering, raw-byte identity, album
+membership and the finite denominator are checked by the display-policy contract.
+That finite-candidate validator is the sole display-policy authority for merged
+switch evidence. Merged switch runs require the original before, Settings and after
+screenshots; the report keeps its `display` fields and nested `finite_rotation` result. After
+identity is read from the validated foreground when the frame has its matching
+blurred surround, rather than from obsolete whole-frame color proxies.
+Standalone A uses its original before/after PNGs plus real-UI and same-process metadata.
+Fitted single-photo candidates retain their place in that rotation and use the
+existing matched-foreground/blurred-surround gate before slot reading; they never
+qualify as the multi-photo before frame.
+The merged switch contracts read every intermediate candidate per slot, including
+its server glyph. Mixed servers, unreadable slots and transitions fail the run
+immediately, even if a later candidate could qualify. The standalone display-policy
+contracts still treat an unqualified intermediate frame as a candidate to advance
+past; the merged switch rule is deliberately stricter.
+Fixture B contains eight distinct public synthetic photos. Its ordinary target
+album contains B1/B2/B3/B6/B7/B8; B4/B5 remain outside that album, and every person
+set is unchanged. B6/B7/B8 mirror A1/A2/A3's landscape, portrait and square sizes.
+The maintainer chose this larger pool to model normal usage: a three-photo pool
+is an extreme condition. The iPad small-pool limitation remains open in
+[#487](https://github.com/sudoHG/immichSlides/issues/487); this fixture change does
+not fix it. The four-candidate denominator, deadlines and isolation checks remain.
+A and C, and B1–B5's image bytes, remain unchanged.
+
+B6–B8 use two RGB endpoints per identity, matched as a pair within tolerance 12
+in both the Python and Swift readers, rather than A1–A5's hue scoring. This adds
+endpoint-pair scoring and the shared A6–A8 color labels without changing the
+existing tolerances or confidence thresholds. A B frame rejected as
+`unreadable public glyph slot` or `mixed public glyphs` can indicate a collision with system
+chrome: first compare the failing slot's pixels and surrounding controls/EXIF
+against both identity endpoints. Preserve the original frame and its slot/axis
+exception; do not change tolerances or exclude the frame. The measured collision
+history and corpus are in [#486](https://github.com/sudoHG/immichSlides/pull/486).
+
+Fixture-A suites also accept A6–A8 through the shared reader vocabulary even
+though fixture A contains only A1–A5. This is intentional for this change: the
+RGB-pair collision risk is low, and every A frame retained its original
+classification in the corpus. The access partner guard uses the actual fixture
+pool; the other shared-vocabulary membership checks are unchanged. Per-fixture
+membership checks remain a possible follow-up.
+
+The nightly matrix runs only these merged identities; the standalone selectors
+and suites have been removed. This does not resolve the pixel-coverage limits
+tracked in #434.
+
 `filter-edit-switch` checks both the original whole-frame color identity and each
-full-span photo slot against the non-target album's A1–A5 classifier labels. Public
+full-span photo slot against the non-target album's fixture-specific classifier labels. Public
 background colors locate slots independently of glyphs along both rows and columns.
 Only a clean partition into vertical stacks or horizontal neighbors is supported;
 two-dimensional grids, conflicting axes and mixed palettes fail unreadable. Obscured
@@ -136,7 +190,7 @@ The tvOS wait latches a newer action/publication pair from one app snapshot, the
 checks the stable window within the same deadline. Index, render and manifest
 come from that snapshot; it neither wakes the bar nor queries its missing probe.
 
-These scene contracts, `tvos-edit-switch`, the A frame of server-switch, and
+These scene contracts, `tvos-edit-switch`, both A and B frames of server-switch, and
 `tvos-person`/`tvos-album` use the same reader. Uniformly across geometries, a
 segmentable single-photo frame retains #381's whole-frame color and visible
 public-texture judgement, including clipped glyphs. Collages require the strict
@@ -198,7 +252,11 @@ Single-photo surrounds are excluded only by the existing matched-original and
 blurred-surround checks. `album-empty` still requires both playback captures,
 at least two different target photos and different identity sets in the two
 captures. Empty-selection, controlled-empty-album, exact-copy and old-pool-photo
-rejection checks are unchanged. `tvos-album-empty` retains its whole-frame reader.
+rejection checks are unchanged. `tvos-album-empty` reads every playback slot with
+the shared scene reader (glyph, color and axis), including B3/B2 double images.
+It retains both required captures, different visual identity sets, target-album
+membership and every empty-result check. Its public failures retain the reader's
+slot/axis context without introducing new screenshot names into the receipt grammar.
 Only these two iOS contracts opt into measured system-overlay handling: the
 1640x2360 iPad home-indicator box (543,2330)-(1097,2349), or 1170x2532 iPhone
 box (373,2489)-(798,2512), is excluded from color sampling, with glyph pixels
@@ -702,9 +760,8 @@ New enum meanings and why the previous vocabulary cannot express them:
 | `After switching servers the UI must not keep server A album/person IDs: ` | `server_switch` | `control_state` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
 | `The display mode's selected state must be read back.` | `display_policy` | `control_state` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
 | `No two distinct photos seen within four public album candidates; all failing originals are kept.` | `display_policy` | `scene_identity` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
+| `Editor album card must show the manifest-selected album and photo counts` | `server_switch` | `control_state` | [StrictE2EFilterIOSUITests+Navigation.swift](../immichSlidesUITests/StrictE2EFilterIOSUITests+Navigation.swift) |
 | `After the change, a still frame taken mid-transition must not pass` | `display_policy` | `scene_identity` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
-| `Before the change it must really be multi-photo; a full-frame single-photo MATCH does not count` | `display_policy` | `scene_identity` | [StrictE2EFilterIOSUITests.swift](../immichSlidesUITests/StrictE2EFilterIOSUITests.swift): requires a real multi-photo frame before the display-policy change. |
-| `After the change, wait for the current transition to end; the stable single photo must not be TRANSITION` | `display_policy` | `scene_identity` | [StrictE2EFilterIOSUITests.swift](../immichSlidesUITests/StrictE2EFilterIOSUITests.swift): rejects a transition frame after the display-policy change. |
 | `After changing the display mode, playback must still be on screen in the same live process.` | `display_policy` | `navigation` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
 | `No two distinct target-album photos were seen in one full four-frame candidate rotation; all candidate originals were kept.` | `display_policy` | `scene_identity` | [StrictE2EFilterIOSUITests.swift](../immichSlidesUITests/StrictE2EFilterIOSUITests.swift) |
 | `After the change it must be a stable single photo from the target album, not a transition or multi-photo` | `display_policy` | `scene_identity` | [StrictE2EFilterIOSUITests.swift](../immichSlidesUITests/StrictE2EFilterIOSUITests.swift) |

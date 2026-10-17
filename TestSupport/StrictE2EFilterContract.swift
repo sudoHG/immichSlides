@@ -19,8 +19,8 @@ enum StrictE2EFilterContract {
             let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
         else { return png }
         let references = evidenceDirectory.appendingPathComponent("public-reference-images")
-        for letter in ["A", "B"] {
-            for index in 1...5 {
+        for (letter, count) in [("A", 5), ("B", 8)] {
+            for index in 1...count {
                 let data = try Data(contentsOf: references.appendingPathComponent("\(letter)\(index).png"))
                 guard let referenceSource = CGImageSourceCreateWithData(data as CFData, nil),
                     let reference = CGImageSourceCreateImageAtIndex(referenceSource, 0, nil)
@@ -96,10 +96,10 @@ enum StrictE2EFilterContract {
     }
 
     static let startPlaybackButtonID = "filterSummary.startPlayback.button"
-    // The hash follows the public fixture manifest fields. The empty-album fixture B uses its own glyphs and bars.
+    // Hashes cover every public fixture field, including B's expanded ordinary target pool.
     static let frozenFixtureSHA256: [String: String] = [
         "a": "44f9dc4b144e5fcc5dd14a98b76ba1bf1ca8829648555aebe738c3e2b3048989",
-        "b": "4eaeac910ff1abf6555225368882e989f7cd5d5fd568f2cccde20fab60bacf71"
+        "b": "9a0c084f5f6d5ed05186a47130a4ebbf7e1635d08374e26db9e822442cc5162a"
     ]
 
     static func loadMemberManifest(from directory: URL) throws -> [String: Any] {

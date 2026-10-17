@@ -311,6 +311,21 @@ class DisplayStrategyContractTestsCases:
             )
         self.assertIn("unshown partner", str(raised.exception))
 
+        with self.assertRaisesRegex(AccessLifecycleContractError, "No unshown partner remains"):
+            assert_unshown_display_partners(
+                screenshot_order=[
+                    "pause", "after-next", "after-play", "before-background",
+                    "after-background", "before-wake", "after-wake", "display-before",
+                ],
+                scenes={
+                    "pause": "A1", "after_next": "A2", "after_play": "A3",
+                    "before_background": "A4", "after_background": "A5",
+                    "before_wake": "A6", "after_wake": "A7",
+                },
+                before_mark="A8",
+                fixture_set="b",
+            )
+
 
     def test_display_first_keeps_unshown_partners(self) -> None:
         assert_unshown_display_partners(
@@ -318,6 +333,21 @@ class DisplayStrategyContractTestsCases:
             scenes={"pause": "A1"},
             before_mark="A1",
         )
+
+        try:
+            assert_unshown_display_partners(
+                screenshot_order=["pause", "after-next", "after-play", "after-background", "display-before"],
+                scenes={"pause": "A1", "after_next": "A2", "after_play": "A3", "after_background": "A4"},
+                before_mark="A5",
+                fixture_set="b",
+            )
+        except AccessLifecycleContractError as error:
+            self.fail(f"B still has genuine unshown partners: {error}")
+
+        with self.assertRaisesRegex(AccessLifecycleContractError, "display-before must be a single public fixture photo"):
+            assert_unshown_display_partners(
+                screenshot_order=["display-before"], scenes={}, before_mark="A6",
+            )
 
 
 class PublicFixtureOriginalMetadataTestsCases:

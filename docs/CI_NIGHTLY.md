@@ -220,11 +220,13 @@ against current selector/scenario/fixture/scheme contracts; duplicates and missi
 cases fail. Runtime discovery cannot silently change the scheduled list. Inapplicable
 platforms/scenarios and P2 devices are outside the supported population.
 
-The initial 135 cases comprise 54 iPhone, 50 iPad and 31 Apple TV combinations.
-All 77 distinct device/suite/scenario identities in the historical local report remain.
+The 132 cases comprise 53 iPhone, 49 iPad and 30 Apple TV combinations,
+covering 74 distinct device/suite/scenario identities. Following issue #424,
+the three standalone server-switch-display identities were removed after their
+guarantees moved into filter-switch and tvos-switch.
 Repeat attempts are not new identities. New identities are iPhone/iPad image-failure-recovery.
-Both frozen fixtures run wherever permitted. The 25 explicit exclusions comprise two
-device exclusions and 23 fixture exclusions. iPad smoke is unsupported: the selected
+Both frozen fixtures run wherever permitted. The 22 explicit exclusions comprise two
+device exclusions and 20 fixture exclusions. iPad smoke is unsupported: the selected
 `StrictE2ESmokeUITests.testIOSStrictE2EConnectionSmoke` guards
 `userInterfaceIdiom == .phone` and skips iPad. The validator checks that guard against
 Swift code with comments/strings removed and fails when it changes, requiring a device

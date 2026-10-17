@@ -250,12 +250,8 @@ def _display_foreground_png(image_bytes: bytes) -> bytes:
                 ui_ink = Image.new("L", sample_size)
                 ui_ink.putdata([255 if min(pixel) > DISPLAY_UI_WHITE_CHANNEL_THRESHOLD or max(pixel) < DISPLAY_UI_BLACK_CHANNEL_THRESHOLD else 0 for pixel in sample.getdata()])
                 ui_ink_pixels = ui_ink.filter(ImageFilter.MaxFilter(DISPLAY_UI_INK_DILATION_PIXELS)).load()
-                palette = tuple(
-                    ((seed * 37 + block * 54) % 180,
-                     (seed * 61 + (1 - block) * 48) % 180,
-                     (seed * 19 + block * 72) % 180)
-                    for seed in range(1, 6) for block in (0, 1)
-                )
+                from strict_e2e_photo_identity import _public_photo_palettes
+                palette = tuple(color for colors in _public_photo_palettes().values() for color in colors)
 
                 def is_public_color(pixel: tuple[int, ...]) -> bool:
                     return any(max(abs(pixel[c] - color[c]) for c in range(3)) <= DISPLAY_PUBLIC_COLOR_CHANNEL_TOLERANCE for color in palette)
@@ -422,7 +418,10 @@ def _require_same_process(payload: Mapping[str, Any], label: str) -> int:
 
 
 def _display_photo_identity(image_bytes: bytes, *, fixture_set: str, labels: Sequence[str], label: str) -> str:
-    image_bytes = _display_foreground_png(image_bytes)
+    try:
+        image_bytes = _display_foreground_png(image_bytes)
+    except (OSError, ValueError) as error:
+        raise FilterContractError(f"{label} cannot use a transition or unknown frame as passing") from error
     identity = classify_screenshot(image_bytes)
     if identity.status != "MATCH" or identity.mark not in MARKS:
         raise FilterContractError(f"{label} cannot use a transition or unknown frame as passing")
@@ -432,13 +431,13 @@ def _display_photo_identity(image_bytes: bytes, *, fixture_set: str, labels: Seq
     return mark
 
 
-def _evaluate_display_policy(evidence_dir: Path, suite: str) -> dict[str, Any]:
-    manifest = load_member_manifest(evidence_dir / "member-manifest.json")
+def _evaluate_display_policy(evidence_dir: Path, suite: str, *, manifest: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    switched_server = manifest is not None
+    manifest = manifest if switched_server else load_member_manifest(evidence_dir / "member-manifest.json")
     fixture_set = str(manifest["fixture_set"])
-    if fixture_set != "a":
+    if not switched_server and fixture_set != "a":
         raise FilterContractError("standalone display-policy suite must use fixture A only")
     allowed = manifest["target_album"]["labels"]
-    visual_labels = manifest["target_album"]["visual_labels"]
     payload = _read_json_object(evidence_dir / "display-policy.json", "display-policy.json")
     if payload.get("identity_source") != "public_fixture_photo_mark":
         raise FilterContractError("display-policy screenshot identity must come from public fixture photo marks")
@@ -447,11 +446,16 @@ def _evaluate_display_policy(evidence_dir: Path, suite: str) -> dict[str, Any]:
     if payload.get("mode_before") != "smartFill" or payload.get("mode_after") != "singlePhoto":
         raise FilterContractError("display policy must change from SmartFill to single-photo mode")
     process_id = _require_same_process(payload, "display strategy run evidence")
+    if switched_server and any(not (evidence_dir / name).is_file() for name in (
+        "display-before.png", "display-settings.png", "display-after.png",
+    )):
+        raise FilterContractError("Missing multi-photo before, real settings action, or stable single-photo after screenshot")
 
     candidate_steps = payload.get("before_candidate_steps")
     if not isinstance(candidate_steps, list) or not candidate_steps:
         raise FilterContractError("missing the finite list of before-change candidate screenshots")
-    maximum_candidates = len(visual_labels) + 1
+    # The UI contract remains four real candidates when the ordinary B pool grows.
+    maximum_candidates = 4
     if len(candidate_steps) > maximum_candidates:
         raise FilterContractError("Before-change screenshot candidates exceed one complete finite rotation of the target album")
     expected_steps = [
@@ -471,12 +475,17 @@ def _evaluate_display_policy(evidence_dir: Path, suite: str) -> dict[str, Any]:
         image_bytes = path.read_bytes()
         candidate_bytes.append(image_bytes)
         regions = _classify_display_regions(image_bytes)
-        region_marks = _display_region_marks(regions)
+        if switched_server:
+            # Single candidates stay in the rotation; their surround must pass the existing display contract.
+            foreground = _display_foreground_png(image_bytes)
+            region_marks = list(dict.fromkeys(_scene_slot_marks(foreground, fixture_set)))
+        else:
+            region_marks = _display_region_marks(regions)
         if region_marks:
             for mark in region_marks:
                 if mark not in allowed:
                     raise FilterContractError(f"before-change multi-photo frame contains a photo outside the target album: {mark}")
-            if classify_public_pattern(image_bytes) not in (None, fixture_set):
+            if not switched_server and classify_public_pattern(image_bytes) not in (None, fixture_set):
                 raise FilterContractError(f"before-change multi-photo frame must not mix in another server fixture: {step}")
         candidate_marks.append(region_marks)
         candidate_regions.append(regions)
@@ -499,7 +508,7 @@ def _evaluate_display_policy(evidence_dir: Path, suite: str) -> dict[str, Any]:
         ):
             raise FilterContractError("Multiple before-change photos cannot be faked by a transition")
         raise FilterContractError("The before-change frame must actually show at least two different photos")
-    if classify_public_pattern(candidate_bytes[-1]) != fixture_set:
+    if not switched_server and classify_public_pattern(candidate_bytes[-1]) != fixture_set:
         raise FilterContractError("The before-change frame must contain only fixture A; do not mix fixtures A and B or unknown content")
 
     after_bytes = (evidence_dir / "display-after.png").read_bytes() if (evidence_dir / "display-after.png").is_file() else b""
@@ -635,8 +644,8 @@ def _evaluate_tvos_person(evidence_dir: Path, *, fixture_set: str | None = None)
 def _evaluate_tvos_switch(evidence_dir: Path) -> dict[str, Any]:
     manifest_b = load_member_manifest(evidence_dir / "member-manifest-b.json")
     identity = _classify_named_png(evidence_dir, "switch-b-playback")
-    mark = require_photo_mark("public_fixture_photo_mark", identity.status, identity.mark)
-    assert_playback_marks_in_target([mark], "b")
+    marks = _scene_slot_marks((evidence_dir / "switch-b-playback.png").read_bytes(), "b")
+    assert_playback_marks_in_target(marks, "b")
     observed = _read_json_object(evidence_dir / "observed-ids-after-switch.json", "observed-ids-after-switch.json")
     if observed.get("identity_source") not in (None, "ui_accessibility_identifier"):
         raise FilterContractError("Request logs, indexes, and probes cannot be used as identity truth")
@@ -659,11 +668,14 @@ def _evaluate_tvos_switch(evidence_dir: Path) -> dict[str, Any]:
         if counts != [("0", "0")]:
             raise FilterContractError(f"empty selection after server switch lacks real zero counts or keeps an old selection: {field}")
     bridge = _evaluate_switch_display_policy(evidence_dir, manifest_b)
+    from album_server_narrow_contract import evaluate_server_switch_evidence
+    server_switch = evaluate_server_switch_evidence(evidence_dir, suite="tvos-switch")
     return {
         "verdict": "PASS",
         "suite": "tvos-switch",
         "identity_source": "public_fixture_photo_mark",
-        "marks": [mark],
+        "marks": list(marks),
+        "server_switch": server_switch,
         "post_switch_single_photo": bridge,
         "steps": {"switch-b-playback": _step_payload("switch-b-playback", identity)},
     }
@@ -896,7 +908,9 @@ def _evaluate_filter_switch(evidence_dir: Path) -> dict[str, Any]:
     manifest_b = load_member_manifest(evidence_dir / "member-manifest-b.json")
     load_member_manifest(evidence_dir / "member-manifest-a.json")
     fixture_set = str(manifest_b["fixture_set"])
-    marks = [_classified_mark_from_png(evidence_dir, name) for name in FILTER_SWITCH_STEPS]
+    marks = [mark for name in FILTER_SWITCH_STEPS
+             for mark in _scene_slot_marks((evidence_dir / f"{name}.png").read_bytes(), fixture_set,
+                                            screenshot_name=f"{name}.png")]
     assert_playback_marks_in_target(marks, fixture_set)
 
     observed = _read_json_object(evidence_dir / "observed-ids.json", "observed-ids.json")
@@ -912,6 +926,8 @@ def _evaluate_filter_switch(evidence_dir: Path) -> dict[str, Any]:
         assert_foreign_server_ids_absent(_extract_ids_from_request_log(log_text), fixture_set)
 
     bridge = _evaluate_switch_display_policy(evidence_dir, manifest_b)
+    from album_server_narrow_contract import evaluate_server_switch_evidence
+    server_switch = evaluate_server_switch_evidence(evidence_dir, suite="filter-switch")
 
     return {
         "verdict": "PASS",
@@ -920,6 +936,7 @@ def _evaluate_filter_switch(evidence_dir: Path) -> dict[str, Any]:
         "fixture_set": fixture_set,
         "marks": marks,
         "post_switch_single_photo": bridge,
+        "server_switch": server_switch,
     }
 
 

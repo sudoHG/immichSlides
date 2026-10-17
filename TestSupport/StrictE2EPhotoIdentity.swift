@@ -31,21 +31,34 @@ enum StrictE2EPhotoIdentity {
         }
     }
 
-    private static let marks = ["A1", "A2", "A3", "A4", "A5"]
+    private static let marks = ["A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8"]
     private static let expectedExif: [String: String?] = [
         "A1": "Fixture 1",
         "A2": nil,
         "A3": "Fixture 3",
         "A4": nil,
-        "A5": "Fixture 5"
+        "A5": "Fixture 5",
+        "A6": nil,
+        "A7": "Fixture 7",
+        "A8": nil
     ]
     private static let keyColors: [String: Set<String>] = [
         "A1": ["green", "purple"],
         "A2": ["green", "gray"],
         "A3": ["magenta", "brown"],
         "A4": ["blue", "brown"],
-        "A5": ["green", "blue"]
+        "A5": ["green", "blue"],
+        "A6": ["purple"],
+        "A7": ["purple"],
+        "A8": ["purple"]
     ]
+    // RGB pairs keep old-photo hue mixtures from being read as new B photos.
+    private static let extendedPalettes: [String: [[Int]]] = [
+        "A6": [[180, 120, 250], [215, 120, 250]],
+        "A7": [[235, 100, 210], [235, 100, 175]],
+        "A8": [[255, 75, 255], [255, 75, 220]]
+    ]
+    private static let extendedPaletteChannelTolerance = 12
     // Kept in sync with Python DISPLAY_REGION_BOXES. top/upper cover the case where motion cropping of the upper half
     // makes top_half scan as TRANSITION.
     static let displayRegionBoxes: [(name: String, box: (CGFloat, CGFloat, CGFloat, CGFloat))] = [
@@ -107,7 +120,7 @@ enum StrictE2EPhotoIdentity {
     private static let maximumCloseScoreDifference: Double = 0.035
 
     static func overlayModel(from overlayText: String) -> String? {
-        for model in ["Fixture 1", "Fixture 3", "Fixture 5"] where overlayText.contains(model) {
+        for model in ["Fixture 1", "Fixture 3", "Fixture 5", "Fixture 7"] where overlayText.contains(model) {
             return model
         }
         return nil
@@ -151,6 +164,7 @@ enum StrictE2EPhotoIdentity {
         var counts: [String: Int] = [
             "green": 0, "gray": 0, "magenta": 0, "blue": 0, "brown": 0, "purple": 0
         ]
+        var extendedCounts = extendedPalettes.mapValues { _ in [0, 0] }
         var lumaSum = 0.0
         var chromatic = 0
         let observed = max(
@@ -172,6 +186,15 @@ enum StrictE2EPhotoIdentity {
                     / maximumChannelValue
                 lumaSum += luma
                 if luma < minimumColorLuminance || luma > maximumColorLuminance { continue }
+                let channels = [Int(red), Int(green), Int(blue)]
+                for (mark, palette) in extendedPalettes {
+                    for (index, reference) in palette.enumerated()
+                    where zip(channels, reference).allSatisfy({ pair in
+                        abs(pair.0 - pair.1) <= extendedPaletteChannelTolerance
+                    }) {
+                        extendedCounts[mark, default: [0, 0]][index] += 1
+                    }
+                }
                 let (hue, saturation) = hueSaturation(red: red, green: green, blue: blue)
                 if saturation < minimumColorSaturation || hue == nil {
                     counts["gray", default: 0] += 1
@@ -226,7 +249,10 @@ enum StrictE2EPhotoIdentity {
             "A5": max(
                 0,
                 min(green, blue) + fixtureA5BlueBonus * blue - fixtureA5BrownPenalty * brown
-                    - fixtureA5MagentaPenalty * magenta)
+                    - fixtureA5MagentaPenalty * magenta),
+            "A6": Double(extendedCounts["A6"]!.min()!) / total,
+            "A7": Double(extendedCounts["A7"]!.min()!) / total,
+            "A8": Double(extendedCounts["A8"]!.min()!) / total
         ]
         let ranked = scores.sorted { $0.value > $1.value }
         let best = ranked[0]

@@ -449,6 +449,7 @@ def evaluate_device_evidence(evidence_dir: Path, *, fixture_set: str) -> dict[st
             screenshot_order=raw.get("screenshot_order"),
             scenes=scenes,
             before_mark=str(inspection.get("before_mark") or ""),
+            fixture_set=fixture_set,
         )
 
         missing_settings = [

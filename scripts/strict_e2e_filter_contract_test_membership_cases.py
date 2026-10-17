@@ -55,7 +55,7 @@ class MemberManifestContractTestsCases:
         self.assertNotEqual(FROZEN_FIXTURE_SHA256["a"], FROZEN_FIXTURE_SHA256["b"])
 
 
-    def test_target_album_has_three_public_marks_and_is_independently_readable(self) -> None:
+    def test_target_album_has_fixture_specific_public_marks_and_is_independently_readable(self) -> None:
         with tempfile.TemporaryDirectory() as raw_directory:
             path = Path(raw_directory) / "member-manifest.json"
             written = write_member_manifest(path, "a")
@@ -70,7 +70,8 @@ class MemberManifestContractTestsCases:
         self.assertEqual(loaded["target_album"]["labels"], ["A1", "A2", "A3"])
         self.assertEqual(loaded["target_album"]["visual_labels"], ["A1", "A2", "A3"])
         self.assertEqual(loaded["non_target_album"]["labels"], ["A4", "A5"])
-        self.assertEqual(write_member_manifest(path.with_name("member-manifest-b.json"), "b")["target_album"]["visual_labels"], ["B1", "B2", "B3"])
+        self.assertEqual(write_member_manifest(path.with_name("member-manifest-b.json"), "b")["target_album"]["visual_labels"],
+                         ["B1", "B2", "B3", "B6", "B7", "B8"])
 
 
     def test_a_and_b_member_ids_stay_mutually_exclusive(self) -> None:
@@ -80,12 +81,12 @@ class MemberManifestContractTestsCases:
         self.assertTrue(set(server_a["all_album_ids"]).isdisjoint(server_b["all_album_ids"]))
         self.assertTrue(set(server_a["all_person_ids"]).isdisjoint(server_b["all_person_ids"]))
         self.assertEqual(server_b["target_album"]["id"], "album-b-target")
-        self.assertEqual(server_b["target_album"]["labels"], ["A1", "A2", "A3"])
+        self.assertEqual(server_b["target_album"]["labels"], ["A1", "A2", "A3", "A6", "A7", "A8"])
 
 
-    def test_a_and_b_five_images_match_unique_classified_labels(self) -> None:
-        expected = ["A1", "A2", "A3", "A4", "A5"]
+    def test_a_and_b_images_match_unique_classified_labels(self) -> None:
         for fixture_set in ("a", "b"):
+            expected = [f"A{index}" for index in range(1, 6 if fixture_set == "a" else 9)]
             with self.subTest(fixture_set=fixture_set):
                 with tempfile.TemporaryDirectory() as raw_directory:
                     path = Path(raw_directory) / f"member-manifest-{fixture_set}.json"
@@ -102,19 +103,34 @@ class MemberManifestContractTestsCases:
                         )
                     )
                 self.assertEqual(classified, expected)
-                self.assertEqual(len(set(classified)), 5)
-                self.assertEqual(
-                    written["target_album"]["labels"] + written["non_target_album"]["labels"],
-                    classified,
-                )
-                self.assertEqual(
-                    loaded["target_album"]["labels"] + loaded["non_target_album"]["labels"],
-                    classified,
-                )
+                self.assertEqual(len(set(classified)), len(expected))
+                for manifest in (written, loaded):
+                    observed = dict(zip(
+                        manifest["target_album"]["asset_ids"] + manifest["non_target_album"]["asset_ids"],
+                        manifest["target_album"]["labels"] + manifest["non_target_album"]["labels"],
+                    ))
+                    self.assertEqual(observed, {f"asset-{fixture_set}-{index}": mark
+                                                for index, mark in enumerate(classified, 1)})
 
 
     def test_missing_or_tampered_manifest_cannot_pass(self) -> None:
         with tempfile.TemporaryDirectory() as raw_directory:
+            path = Path(raw_directory) / "member-manifest-b.json"
+            for case in ("missing photo", "duplicate photo"):
+                with self.subTest(case=case):
+                    payload = write_member_manifest(path, "b")
+                    target = payload["target_album"]
+                    if case == "missing photo":
+                        target["asset_ids"].pop()
+                        target["labels"].pop()
+                        message = "must cover every public fixture photo"
+                    else:
+                        target["asset_ids"][-1] = target["asset_ids"][0]
+                        target["labels"][-1] = target["labels"][0]
+                        message = "every photo must MATCH a distinct classified label"
+                    path.write_text(json.dumps(payload))
+                    with self.assertRaisesRegex(FilterContractError, message):
+                        load_member_manifest(path)
             missing = Path(raw_directory) / "absent.json"
             with self.assertRaises(FilterContractError) as raised:
                 load_member_manifest(missing)

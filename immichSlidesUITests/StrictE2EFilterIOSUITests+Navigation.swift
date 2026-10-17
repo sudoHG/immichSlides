@@ -88,7 +88,7 @@ extension StrictE2EFilterIOSUITests {
 
     // For B, the album list returns to the editor in settings: it has Done and no Start Playback.
     @MainActor
-    func assertSettingsFilterEditorAfterServerSwitchAlbumSelection(app: XCUIApplication) {
+    func assertSettingsFilterEditorAfterServerSwitchAlbumSelection(app: XCUIApplication, expectedPhotoCount: Int) {
         XCTAssertTrue(
             app.staticTexts["filterEditor.page.title"].waitForExistence(timeout: TestWait.seconds(.product(8)))
                 || app.descendants(matching: .any)["filterEditor.page.title"].waitForExistence(
@@ -107,9 +107,9 @@ extension StrictE2EFilterIOSUITests {
         let doneElement = app.descendants(matching: .any)["filter.editor.done.button"]
         XCTAssertTrue(done.exists || doneElement.exists, "Editor must have Done")
         XCTAssertTrue(
-            editorAlbumCardShowsSelection(albumEntry, selectedAlbums: "1", pendingPhotos: "3")
-                || editorSummaryShowsSelection(app, selectedAlbums: "1", pendingPhotos: "3"),
-            "Editor album card must show 1 selected album and 3 photos to play"
+            editorAlbumCardShowsSelection(albumEntry, selectedAlbums: "1", pendingPhotos: String(expectedPhotoCount))
+                || editorSummaryShowsSelection(app, selectedAlbums: "1", pendingPhotos: String(expectedPhotoCount)),
+            "Editor album card must show the manifest-selected album and photo counts"
         )
     }
 
@@ -415,30 +415,6 @@ extension StrictE2EFilterIOSUITests {
             waitUntil(timeout: TestWait.seconds(.product(6))) { smartFill.isSelected },
             "After choosing it on the real settings page, Smart Fill must read back as selected"
         )
-    }
-
-    @MainActor
-    func waitForStablePublicPhoto(app: XCUIApplication, timeout: TimeInterval) -> StrictE2EPhotoIdentity.Result? {
-        var last: StrictE2EPhotoIdentity.Result?
-        _ = waitUntil(timeout: timeout) {
-            let png = app.screenshot().pngRepresentation
-            last = StrictE2EPhotoIdentity.classify(png: png)
-            return last?.status == .match
-        }
-        return last
-    }
-
-    // Server-switch multi-photo uses the same crops as Python _distinct_region_marks but checks only color
-    // classification and distinct marks; the Python contract additionally requires A/B letters in middle and stacked crops.
-    @MainActor
-    func waitForDistinctRegionMarks(app: XCUIApplication, timeout: TimeInterval) -> [String] {
-        var last: [String] = []
-        _ = waitUntil(timeout: timeout) {
-            let png = app.screenshot().pngRepresentation
-            last = self.distinctRegionMarks(StrictE2EPhotoIdentity.classifyRegions(png: png))
-            return last.count >= 2
-        }
-        return last
     }
 
     func distinctRegionMarks(_ regions: [String: StrictE2EPhotoIdentity.Result]) -> [String] {

@@ -12,6 +12,7 @@ from typing import Any, Callable, Iterator, Mapping, Sequence, Optional, Tuple
 
 from strict_e2e_filter_contract import FROZEN_FIXTURE_SHA256
 from strict_e2e_photo_identity import MARKS, PhotoIdentity, classify_screenshot
+from strict_e2e_server import fixture_manifest
 
 
 class AccessLifecycleContractError(Exception):
@@ -820,8 +821,10 @@ def assert_unshown_display_partners(
     screenshot_order: object,
     scenes: Mapping[str, Any],
     before_mark: str,
+    fixture_set: str = "a",
 ) -> None:
-    if before_mark not in MARKS:
+    fixture_marks = {str(asset["label"]) for asset in fixture_manifest(fixture_set)["assets"]}
+    if before_mark not in fixture_marks:
         raise AccessLifecycleContractError("display-before must be a single public fixture photo")
     names = [str(item) for item in screenshot_order] if isinstance(screenshot_order, list) else []
     display_at = names.index("display-before") if "display-before" in names else 0
@@ -831,9 +834,9 @@ def assert_unshown_display_partners(
         if key is None:
             continue
         mark = scenes.get(key)
-        if isinstance(mark, str) and mark in MARKS:
+        if isinstance(mark, str) and mark in fixture_marks:
             shown.add(mark)
-    remaining = set(MARKS) - shown - {before_mark}
+    remaining = fixture_marks - shown - {before_mark}
     if not remaining:
         raise AccessLifecycleContractError("No unshown partner remains after the current frame")
 
