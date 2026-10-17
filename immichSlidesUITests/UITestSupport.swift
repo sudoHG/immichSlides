@@ -200,16 +200,17 @@ extension XCUIApplication {
                         isTapAttemptPrepared = false
                         // XCTest's idle wait belongs to the tap, not the destination appearance window.
                         let didObserveOutcome = TestWait.until(
-                            .infrastructure(5), pollIntervalSeconds: UITestSupportWaitTiming.identityPollSeconds
+                            .product(UITestSupportWaitTiming.elementAppearanceTimeoutSeconds),
+                            pollIntervalSeconds: UITestSupportWaitTiming.identityPollSeconds
                         ) {
                             let verifyStartedAt = Date()
                             let outcome = timing.observe(app: self, identifier: identifier)
-                            timing.hasSettingsOutcome = outcome?.hasSettingsOutcome ?? false
                             timing.didObserveSettingsNavigation =
                                 timing.didObserveSettingsNavigation || outcome?.hasSettingsNavigationEvidence == true
                             timing.verifySeconds += Date().timeIntervalSince(verifyStartedAt)
-                            return timing.hasSettingsOutcome
+                            return outcome?.hasSettingsOutcome ?? false
                         }
+                        timing.hasSettingsOutcome = didObserveOutcome
                         if didObserveOutcome { return }
                         guard timing.tapCount < 2 else { break }
                     } else if observation.hasPlaybackMarker {
