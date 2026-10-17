@@ -45,9 +45,12 @@ class ReporterTests(unittest.TestCase):
         from strict_e2e_p2_contract import P2_CASES
         matrix_path = Path(__file__).with_name("nightly-matrix.json")
         matrix = matrix_path.read_bytes()
-        planned = shards(json.loads(matrix))
+        matrix_population = json.loads(matrix)
+        planned = shards(matrix_population)
         target = next(item for item in planned if item["id"] == "iphone-immichSlides-iOS-debug-1")
         cases = [case_identity(case) for case in target["cases"]]
+        # Derive the exact population independently of the reporter's execution count.
+        other_shard_case_count = len(matrix_population["cases"]) - len(cases)
         run = {"id": 10, "workflow_id": 123, "run_attempt": 1, "created_at": "2026-10-01T10:00:00Z",
                "head_sha": "a" * 40, "path": ci_report.NIGHTLY_PATH, "event": "schedule", "head_branch": "main",
                "head_repository": {"full_name": "sudoHG/immichSlides"}, "status": "completed", "conclusion": "failure"}
@@ -289,7 +292,8 @@ class ReporterTests(unittest.TestCase):
                     report = read_run(api, run, {})
                 self.assertEqual("failed", report["status"])
                 self.assertIn(failed_method, [item["identity"] for item in report["observed"] if item["outcome"] == "failed"])
-                expected_executed = 0 if variant == "matrix-empty" else 129 - len(informational_cases) if variant == "summary-not-run" else 129
+                expected_executed = (0 if variant == "matrix-empty" else
+                    other_shard_case_count - len(informational_cases) if variant == "summary-not-run" else other_shard_case_count)
                 self.assertEqual(expected_executed, report["diagnostics"]["counts"]["executed_cases"])
                 if variant == "matrix-empty":
                     self.assertEqual([], report["diagnostics"]["missing"])
