@@ -320,8 +320,6 @@ PREFIX_RULES = (
     ("The display mode's selected state must be read back.", "display_policy", "control_state"),
     ("No two distinct photos seen within four public album candidates; all failing originals are kept.", "display_policy", "scene_identity"),
     ("After the change, a still frame taken mid-transition must not pass", "display_policy", "scene_identity"),
-    ("Before the change it must really be multi-photo; a full-frame single-photo MATCH does not count", "display_policy", "scene_identity"),
-    ("After the change, wait for the current transition to end; the stable single photo must not be TRANSITION", "display_policy", "scene_identity"),
     ("After changing the display mode, playback must still be on screen in the same live process.", "display_policy", "navigation"),
     ("No two distinct target-album photos were seen in one full four-frame candidate rotation; all candidate originals were kept.", "display_policy", "scene_identity"),
     ("After the change it must be a stable single photo from the target album, not a transition or multi-photo", "display_policy", "scene_identity"),
