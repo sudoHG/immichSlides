@@ -747,6 +747,11 @@ class FailureDiagnosticsTests(unittest.TestCase):
             ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "With the control bar hidden, an arrow key must wake it again.", "hidden_controls", "hidden_controls"),
             ("immichSlidesUITests/StrictE2EFilterTVOSUITests.swift", "Default focus on the filter summary must land on the album filter.", "filter_selection", "focus"),
             ("immichSlidesUITests/StrictE2EFilterTVOSUITests.swift", "Focus must land on the target album.", "unknown", "focus"),
+            ("immichSlidesUITests/StrictE2EFilterTVOSUITests.swift", "The album list must show ", "unknown", "navigation"),
+            ("immichSlidesUITests/StrictE2EFilterTVOSUITests+Support.swift", "The album list must show ", "unknown", "navigation"),
+            ("immichSlidesUITests/StrictE2EFilterTVOSUITests.swift", "An empty album must show the frozen existing production empty-result copy and must not keep the old non-empty pool", "filter_edit", "scene_identity"),
+            ("immichSlidesUITests/StrictE2EFilterIOSUITests.swift", "Before the change it must really be multi-photo; a full-frame single-photo MATCH does not count", "display_policy", "scene_identity"),
+            ("immichSlidesUITests/StrictE2EFilterIOSUITests.swift", "After the change, wait for the current transition to end; the stable single photo must not be TRANSITION", "display_policy", "scene_identity"),
             ("immichSlidesUITests/StrictE2EFilterTVOSUITests.swift", "Start Playback must be disabled with an empty selection.", "filter_selection", "control_state"),
             ("immichSlidesUITests/StrictE2EFilterTVOSUITests.swift", "Start Playback must be disabled with 0 albums / 0 people.", "filter_selection", "control_state"),
             ("immichSlidesUITests/StrictE2EFilterTVOSUITests.swift", "Start Playback must be enabled after selecting the target album.", "filter_selection", "control_state"),
@@ -845,7 +850,12 @@ class FailureDiagnosticsTests(unittest.TestCase):
                     wrappers = ('failed: caught error: "message(\\"',)
                 elif prefix == "The fixture must actually deliver a failing image response":
                     wrappers = ("XCTAssertGreaterThan failed: (PRIVATE_SENTINEL) - ",)
-                elif prefix == "After the change, a still frame taken mid-transition must not pass":
+                elif prefix == "Before the change it must really be multi-photo; a full-frame single-photo MATCH does not count":
+                    wrappers = ("XCTAssertGreaterThanOrEqual failed: (PRIVATE_SENTINEL) - ",)
+                elif prefix in (
+                    "After the change, a still frame taken mid-transition must not pass",
+                    "After the change, wait for the current transition to end; the stable single photo must not be TRANSITION",
+                ):
                     wrappers = ("XCTAssertNotEqual failed: (PRIVATE_SENTINEL) - ",)
                 else:
                     wrappers = ("XCTAssertTrue failed - ",)
