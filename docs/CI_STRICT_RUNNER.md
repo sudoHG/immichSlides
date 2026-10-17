@@ -38,6 +38,9 @@ multi-photo frame becomes `display-before.png`. Exhausting all candidates withou
 a qualified frame fails. A real Settings change must produce a stable B single
 photo in the same live process. Candidate numbering, raw-byte identity, album
 membership and the finite denominator are checked by the display-policy contract.
+Fitted single-photo candidates retain their place in that rotation and use the
+existing matched-foreground/blurred-surround gate before slot reading; they never
+qualify as the multi-photo before frame.
 The nightly matrix runs only these merged identities; the standalone selectors
 and suites have been removed. This does not resolve the pixel-coverage limits
 tracked in #434.
@@ -212,7 +215,11 @@ Single-photo surrounds are excluded only by the existing matched-original and
 blurred-surround checks. `album-empty` still requires both playback captures,
 at least two different target photos and different identity sets in the two
 captures. Empty-selection, controlled-empty-album, exact-copy and old-pool-photo
-rejection checks are unchanged. `tvos-album-empty` retains its whole-frame reader.
+rejection checks are unchanged. `tvos-album-empty` reads every playback slot with
+the shared scene reader (glyph, color and axis), including B3/B2 double images.
+It retains both required captures, different visual identity sets, target-album
+membership and every empty-result check. Its public failures retain the reader's
+slot/axis context without introducing new screenshot names into the receipt grammar.
 Only these two iOS contracts opt into measured system-overlay handling: the
 1640x2360 iPad home-indicator box (543,2330)-(1097,2349), or 1170x2532 iPhone
 box (373,2489)-(798,2512), is excluded from color sampling, with glyph pixels

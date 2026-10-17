@@ -22,7 +22,6 @@ from strict_e2e_filter_contract import (
     assert_playback_marks_in_target,
     load_member_manifest,
     member_manifest,
-    require_photo_mark,
     target_album_frame_identity,
 )
 from strict_e2e_photo_identity import (
@@ -337,7 +336,8 @@ def evaluate_album_empty_evidence(evidence_dir: Path, fixture_set: str = "a", *,
             marks, geometry = target_album_frame_identity((evidence_dir / f"{name}.png").read_bytes(), fixture_set)
             frame_geometry[name] = geometry
         else:
-            marks = (_classified_mark(evidence_dir, name),)
+            # tvOS uses the scene reader; iOS retains its measured/unmeasured boundary above.
+            marks = _scene_slot_marks((evidence_dir / f"{name}.png").read_bytes(), fixture_set)
         frame_marks.append(marks)
     marks = [mark for frame in frame_marks for mark in frame]
     if len(set(marks)) < 2 or len({frozenset(frame) for frame in frame_marks}) < 2:
@@ -584,14 +584,6 @@ def _empty_result_shows_fixture_photo(image_bytes: bytes) -> bool:
     regions = classify_display_regions(image_bytes)
     identities = [regions[name] for name in EMPTY_RESULT_PHOTO_REGIONS if name in regions]
     return any(item.status == "MATCH" and item.mark in MARKS for item in identities)
-
-
-def _classified_mark(evidence_dir: Path, name: str) -> str:
-    path = evidence_dir / f"{name}.png"
-    if not path.is_file():
-        raise AlbumServerContractError(f"Missing screenshot {name}.png")
-    identity = classify_screenshot(path.read_bytes())
-    return require_photo_mark(ALLOWED_IDENTITY_SOURCE, identity.status, identity.mark)
 
 
 def _read_json(path: Path, name: str) -> dict[str, Any]:

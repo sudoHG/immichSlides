@@ -75,8 +75,14 @@ class DeviceFilterVisualIdentityTestsCases:
                 payload = json.loads(payload_path.read_text())
                 payload["before_candidate_steps"] = [f"display-before-candidate-{index:02d}" for index in range(1, 5)]
                 payload["selected_before_step"] = payload["before_candidate_steps"][-1]
+                with Image.open(io.BytesIO(_fixture_png("A1", "b"))) as photo:
+                    scene = ImageOps.fit(photo.convert("RGB"), IPHONE_SCREEN).filter(ImageFilter.GaussianBlur(146.25))
+                    fitted = ImageOps.contain(photo, IPHONE_SCREEN)
+                    scene.paste(fitted, ((scene.width - fitted.width) // 2, (scene.height - fitted.height) // 2))
+                    buffer = io.BytesIO()
+                    scene.save(buffer, format="PNG")
                 for step in payload["before_candidate_steps"][:-1]:
-                    (evidence / f"{step}.png").write_bytes(_fixture_png("A1", "b"))
+                    (evidence / f"{step}.png").write_bytes(buffer.getvalue())
                 (evidence / "display-before-candidate-04.png").write_bytes((evidence / "display-before.png").read_bytes())
                 payload_path.write_text(json.dumps(payload))
                 report = evaluate_filter_visual_identity(evidence, suite)
