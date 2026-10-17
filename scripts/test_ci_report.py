@@ -39,6 +39,159 @@ def entry(day="2026-10-01", outcome="failed", run=10, attempt=1):
 
 
 class ReporterTests(unittest.TestCase):
+    def test_current_suite_semantics_take_precedence_over_historical_selectors(self):
+        from run_strict_e2e import CommandError
+        from strict_e2e_runner_support import IOS_FILTER_SUITES, TVOS_FILTER_SUITES
+        selector = "immichSlidesUITests/CurrentSwitchUITests/testCurrentServerSwitch"
+        for platform, device, suite in (("ios", "iphone", "server-switch-display"),
+                                        ("tvos", "tv", "tvos-server-switch-display")):
+            dimensions = {**IDENTITY["dimensions"], "device": device, "suite": suite}
+            case = test_identity("strict", suite, **dimensions)
+            matrix = json.dumps({"cases": [{"platform": platform, **dimensions}]}).encode()
+            summary = valid_summary()
+            summary["population"].update(declared=[case], compiled=[case], observed=[observation(case, "passed", 1)])
+            summary["hashes"]["manifests"]["nightly-matrix"] = hashlib.sha256(matrix).hexdigest()
+            trace = {"warm": [{"identity": case, "exit_code": 0, "build_operations": 0, "products_unchanged": True,
+                "log_present": True, "official_methods": [{"identifier": selector.split("/", 1)[1], "result": "Passed"}],
+                "official_summary": {"totalTestCount": 1, "passedTests": 1, "failedTests": 0, "skippedTests": 0}}]}
+            for wrong_platform in (False, True):
+                with self.subTest(platform=platform, wrong_platform=wrong_platform):
+                    registry = IOS_FILTER_SUITES if (platform == "ios") != wrong_platform else TVOS_FILTER_SUITES
+                    git_output = {("git", "rev-parse", "a" * 40 + "^{tree}"): ("b" * 40).encode(),
+                                  ("git", "show", "a" * 40 + ":scripts/nightly-matrix.json"): matrix}
+                    with patch.dict(registry, {suite: selector}), patch("subprocess.check_output",
+                            side_effect=lambda arguments, **options: git_output[tuple(arguments)]):
+                        if wrong_platform:
+                            message = (r"^The tvOS flow can only run on the tvos platform\.$" if platform == "ios" else
+                                       r"^The iPhone/iPad journey can only run on the ios platform\.$")
+                            with self.assertRaisesRegex(CommandError, message):
+                                ci_report.method_observations(summary, trace)
+                        else:
+                            observed, missing = ci_report.method_observations(summary, trace)
+                            self.assertEqual([], missing)
+                            self.assertEqual({ci_report.identity_key(case): "passed",
+                                ci_report.identity_key(test_identity("strict", selector.split("/", 1)[1], **dimensions)): "passed"},
+                                {ci_report.identity_key(item["identity"]): item["outcome"] for item in observed})
+
+    def test_retained_nightly_suites_require_the_tested_matrix_and_preserve_results(self):
+        from ci_nightly import aggregate_nightly, case_identity, shards
+        from run_strict_e2e import CommandError, FILTER_PERSON_SESSIONS, resolve_suite_selector
+        from strict_e2e_p2_contract import P2_CASES
+        current = json.loads(Path(__file__).with_name("nightly-matrix.json").read_bytes())
+        retired = [dict(platform=platform, device=device, configuration="Debug", suite=suite,
+                        scenario="normal", fixture="a") for platform, device, suite in (
+            ("ios", "iphone", "server-switch-display"), ("ios", "ipad", "server-switch-display"),
+            ("tvos", "tv", "tvos-server-switch-display"))]
+        historical_methods = {
+            "ios": "StrictE2EFilterIOSUITests/testServerSwitchDropsOldFiltersAndDisplayPolicyAppliesImmediately",
+            "tvos": "StrictE2EFilterTVOSUITests/testTVOSServerSwitchDropsOldFiltersAndDisplayPolicyAppliesImmediately"}
+        api = type("API", (), {"repository": "sudoHG/immichSlides"})()
+        run = {"id": 10, "workflow_id": 123, "run_attempt": 1, "created_at": "2026-10-17T14:40:11Z",
+               "head_sha": "a" * 40, "path": ci_report.NIGHTLY_PATH, "event": "schedule", "head_branch": "main",
+               "head_repository": {"full_name": api.repository}, "status": "completed", "conclusion": "failure"}
+        identity = {"schema_version": 1, "repository": api.repository, "event": "schedule",
+                    "ref": "refs/heads/main", "commit_sha": run["head_sha"], "tree_sha": "b" * 40}
+        message = "Still multi-photo after the change; cannot pass as single-photo; context unresolved"
+        for old_shape in (False, True):
+            matrix = copy.deepcopy(current)
+            matrix["cases"].extend(retired if old_shape else [])
+            summaries, members, expected, intervals = [], {}, {}, []
+            for shard in shards(matrix):
+                declared = [case_identity(case) for case in shard["cases"]]
+                summary = valid_summary()
+                summary.update(identity=identity, source={**summary["source"], "event": "schedule",
+                    "workflow_path": ci_report.NIGHTLY_PATH}, run={"id": "10", "attempt": 1,
+                    "tier": "strict", "job": "nightly-strict", "shard": shard["id"]})
+                warm, observed = [], []
+                for case in declared:
+                    suite, device = case["dimensions"]["suite"], case["dimensions"]["device"]
+                    historical = suite in {"server-switch-display", "tvos-server-switch-display"}
+                    selectors = ([historical_methods[shard["platform"]]] if historical else
+                        [item["selector"].split("/", 1)[1] for item in FILTER_PERSON_SESSIONS] if suite == "filter-person" else
+                        [resolve_suite_selector(shard["platform"], suite).split("/", 1)[1]])
+                    outcome = ("failed" if historical and device in {"iphone", "tv"} else
+                               "needs-human-review" if suite in P2_CASES else "passed")
+                    failed = historical and device == "iphone"
+                    exit_code = 65 if failed else 2 if outcome == "failed" else 0
+                    observed.append(observation(case, outcome, 1, exit_code=exit_code))
+                    phase = {"identity": case, "exit_code": exit_code,
+                        "build_operations": 0, "products_unchanged": True, "log_present": True,
+                        "official_methods": [{"identifier": method, "result": "Failed" if failed else "Passed"}
+                                             for method in selectors],
+                        "official_summary": {"totalTestCount": len(selectors), "passedTests": 0 if failed else len(selectors),
+                                             "failedTests": len(selectors) if failed else 0, "skippedTests": 0}}
+                    if historical and device == "tv":
+                        phase.update(automated_contract_failed=True, validator_failure_message=message)
+                    warm.append(phase)
+                    if suite != "filter-vision":
+                        if not failed:
+                            expected[ci_report.identity_key(case)] = outcome
+                        for method in selectors:
+                            method_identity = test_identity("strict", method, **case["dimensions"])
+                            expected[ci_report.identity_key(method_identity)] = (
+                                "failed" if failed else "not-run" if outcome == "failed" else outcome)
+                summary["population"].update(declared=declared, compiled=declared, observed=observed)
+                summary["status"] = ("failed" if any(item["outcome"] == "failed" for item in observed) else
+                                     "unverified" if any(item["outcome"] == "needs-human-review" for item in observed) else "passed")
+                summaries.append(summary)
+                name = "nightly-strict-" + shard["id"] + "-10-1"
+                members[(name, "summary.json")] = summary
+                members[(name, "trace.json")] = {"cold": [], "warm": warm}
+                intervals.append({"shard": shard["id"]})
+            aggregate = aggregate_nightly([case_identity(case) for case in matrix["cases"]], summaries,
+                                           live_in_scope=False, informational=["filter-vision"])
+            aggregate.update(identity=identity, run={"id": "10", "attempt": 1}, source=summaries[0]["source"],
+                             capacity={"shard_intervals": intervals})
+            members[("nightly-aggregate-10-1", "nightly.json")] = aggregate
+            artifacts = [{"name": name, "expired": False} for name in sorted({name for name, _ in members})]
+            defects = [None] if not old_shape else [None, "undeclared-iphone", "undeclared-ipad", "undeclared-tv",
+                                                   "scenario", "fixture", "configuration", "tree", "hash", "unavailable"]
+            for defect in defects:
+                with self.subTest(old_shape=old_shape, defect=defect):
+                    retained = copy.deepcopy(matrix)
+                    if defect and defect.startswith("undeclared-"):
+                        retained["cases"].remove(next(case for case in retired if case["device"] == defect.split("-", 1)[1]))
+                    elif defect in {"scenario", "fixture", "configuration"}:
+                        target = next(case for case in retained["cases"] if case == retired[0])
+                        target[defect] = {"scenario": "auth-401", "fixture": "b", "configuration": "Release"}[defect]
+                    matrix_bytes = json.dumps(retained).encode()
+                    hashes = {"manifests": {"nightly-matrix": hashlib.sha256(matrix_bytes).hexdigest()}, "policies": {}}
+                    if defect == "hash":
+                        hashes["manifests"]["nightly-matrix"] = "c" * 64
+                    for summary in [*summaries, aggregate]:
+                        summary["hashes"] = hashes
+                    def tested_git(arguments, **options):
+                        if defect == "unavailable":
+                            raise subprocess.CalledProcessError(128, arguments)
+                        return {("git", "show", run["head_sha"] + ":scripts/nightly-matrix.json"): matrix_bytes,
+                                ("git", "rev-parse", run["head_sha"] + "^{tree}"):
+                                    (("c" if defect == "tree" else "b") * 40 + "\n").encode()}[tuple(arguments)]
+                    with patch("ci_publish.json_member", side_effect=lambda api, artifact, member: members[(artifact["name"], member)]), \
+                            patch("subprocess.check_output", side_effect=tested_git):
+                        if defect in {"tree", "hash", "unavailable"}:
+                            error = {"tree": "historical nightly tree differs from tested commit",
+                                     "hash": "historical nightly matrix hash differs from tested source",
+                                     "unavailable": "historical nightly tested source unavailable"}[defect]
+                            with self.assertRaisesRegex(ContractError, "^" + error + "$"):
+                                ci_report.nightly_attempt(api, run, 1, artifacts)
+                        elif defect:
+                            suite = "tvos-server-switch-display" if defect == "undeclared-tv" else "server-switch-display"
+                            with self.assertRaisesRegex(CommandError, "^Unknown strict E2E suite: " + suite + r"\.$"):
+                                ci_report.nightly_attempt(api, run, 1, artifacts)
+                        else:
+                            report = ci_report.nightly_attempt(api, run, 1, artifacts)
+                            self.assertEqual(aggregate["status"], report["status"])
+                            self.assertEqual(expected, {ci_report.identity_key(item["identity"]): item["outcome"]
+                                                        for item in report["observed"]})
+                            self.assertEqual([], report["diagnostics"]["missing"])
+                            self.assertEqual(len(matrix["cases"]), report["diagnostics"]["counts"]["scheduled_cases"])
+                            if old_shape:
+                                failed_case = next(item for item in report["observed"]
+                                                   if item["identity"] == case_identity(retired[2]))
+                                self.assertEqual(message, failed_case["validator_failure_message"])
+                                self.assertEqual((2, "strict-case-contract-failed"),
+                                    (failed_case["attempts"][0]["exit_code"], failed_case["attempts"][0]["reason"]))
+
     def test_early_identity_receipts_and_runner_annotations_only_explain_current_missing_cases(self):
         from ci_nightly import aggregate_nightly, case_identity, shards
         from ci_publish import json_member

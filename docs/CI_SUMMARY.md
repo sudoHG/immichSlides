@@ -484,6 +484,12 @@ failed/cancelled jobs, absent artifacts and other incomplete evidence.
 
 ### Reader-first evolution
 
+Retiring a producer identity must also preserve interpretation of its retained
+records. Keep historical selectors in the reader, gated by the night's verified
+scheduling evidence, until the last affected producer artifact expires; do not
+restore retired identities to current scheduling. See the
+[reporter's historical strict selectors](CI_REPORT.md#collection-and-retention).
+
 Summary and identity versions are independent. Readers dispatch only to explicitly
 installed validators in `SUMMARY_READERS`/`IDENTITY_READERS`. Identity version 1 and
 summary versions 1 and 2 are supported. Existing producers still emit version 1;

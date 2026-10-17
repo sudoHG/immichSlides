@@ -32,6 +32,13 @@ NIGHTLY_INFRASTRUCTURE = {"kind": "host", "key": "Nightly infrastructure", "dime
 EVIDENCE_DAYS = 7
 REQUEST_BUDGET = 150
 EARLY_FAILURE_REASONS = {"identity-collection-failed", "hosted-runner-disconnected"}
+# Reader-only; remove after the last pre-retirement night leaves seven-day retention (2026-10-24).
+HISTORICAL_STRICT_SELECTORS = {
+    ("ios", "server-switch-display"):
+        "immichSlidesUITests/StrictE2EFilterIOSUITests/testServerSwitchDropsOldFiltersAndDisplayPolicyAppliesImmediately",
+    ("tvos", "tvos-server-switch-display"):
+        "immichSlidesUITests/StrictE2EFilterTVOSUITests/testTVOSServerSwitchDropsOldFiltersAndDisplayPolicyAppliesImmediately",
+}
 
 
 class RateLimitLow(RuntimeError):
@@ -108,22 +115,50 @@ class ReportGitHub(GitHub):
         return result
 
 
+def historical_strict_population(summary):
+    """Bind retired identities to the night's tested matrix, never the current runner."""
+    import subprocess
+    commit = summary["identity"]["commit_sha"]
+    try:
+        tree = subprocess.check_output(["git", "rev-parse", commit + "^{tree}"], timeout=30).decode().strip()
+        matrix = subprocess.check_output(["git", "show", commit + ":scripts/nightly-matrix.json"], timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        raise ContractError("historical nightly tested source unavailable") from None
+    require(tree == summary["identity"]["tree_sha"], "historical nightly tree differs from tested commit")
+    require(hashlib.sha256(matrix).hexdigest() == summary["hashes"]["manifests"]["nightly-matrix"],
+            "historical nightly matrix hash differs from tested source")
+    return {identity_key(case) for case in decode(matrix.decode("utf-8"))["cases"]}
+
+
 def method_observations(raw, trace):
     """A suite result never substitutes for an officially exported method result."""
-    from run_strict_e2e import FILTER_PERSON_SESSIONS, resolve_suite_selector
+    from run_strict_e2e import CommandError, FILTER_PERSON_SESSIONS, resolve_suite_selector
     from strict_e2e_p2_contract import P2_CASES
     summary = parse_summary(raw)
     phases = {identity_key(item["identity"]): item for item in trace["warm"]}
     require(len(phases) == len(trace["warm"]), "duplicate nightly case trace")
     observed, missing = [], []
+    historical_cases = None
     compiled = {identity_key(item) for item in summary["population"]["compiled"]}
     outcomes = {identity_key(item["identity"]): item["outcome"] for item in summary["population"]["observed"]}
     for case in summary["population"]["declared"]:
         dimensions = case["dimensions"]
         suite = dimensions["suite"]
         platform = "tvos" if dimensions["device"] == "tv" else "ios"
-        selectors = ([item["selector"] for item in FILTER_PERSON_SESSIONS] if suite == "filter-person"
-                     else [resolve_suite_selector(platform, suite)])
+        if suite == "filter-person":
+            selectors = [item["selector"] for item in FILTER_PERSON_SESSIONS]
+        else:
+            try:
+                selectors = [resolve_suite_selector(platform, suite)]
+            except CommandError as error:
+                historical_selector = HISTORICAL_STRICT_SELECTORS.get((platform, suite))
+                if historical_selector is None or str(error) != f"Unknown strict E2E suite: {suite}.":
+                    raise
+                if historical_cases is None:
+                    historical_cases = historical_strict_population(summary)
+                if identity_key({"platform": platform, **dimensions}) not in historical_cases:
+                    raise
+                selectors = [historical_selector]
         wanted = {selector.split("/", 1)[1]: test_identity("strict", selector.split("/", 1)[1], **dimensions)
                   for selector in selectors}
         phase = phases.get(identity_key(case), {})
