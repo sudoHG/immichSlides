@@ -92,6 +92,9 @@ verdicts and issue recovery rules are unchanged. Following this reader's merge,
 the [nightly staging producer](CI_NIGHTLY.md#early-failure-diagnostics) emits the
 standalone receipt only on identity collection failure and skips the corresponding
 records upload. Unavailable or malformed diagnostics retain the generic reason.
+Truncated reads (`EOFError` or `http.client.HTTPException`, including
+`IncompleteRead`) of these receipts or the strict scheduling plan retain the same
+generic missing reason while preserving other shards' verified results.
 
 For a missing strict or UI shard, current-attempt GitHub job metadata binds its
 check-run annotation endpoint. Candidates exclude strict shards with an interval
