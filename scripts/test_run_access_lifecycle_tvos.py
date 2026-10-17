@@ -59,9 +59,9 @@ def _png_bytes(image: Image.Image) -> bytes:
     return buffer.getvalue()
 
 
-def _compose_smart_fill(center_label: str, partner_label: str) -> bytes:
-    with Image.open(io.BytesIO(_fixture_png(center_label))) as center_image, Image.open(
-        io.BytesIO(_fixture_png(partner_label))
+def _compose_smart_fill(center_label: str, partner_label: str, fixture_set: str = "a") -> bytes:
+    with Image.open(io.BytesIO(_fixture_png(center_label, fixture_set))) as center_image, Image.open(
+        io.BytesIO(_fixture_png(partner_label, fixture_set))
     ) as partner_image:
         width, height = 1920, 1080
         canvas = Image.new("RGB", (width, height), (0, 0, 0))
@@ -198,19 +198,21 @@ def _write_host_payload(root: Path) -> None:
     )
 
 
-def _write_required_pngs(root: Path, *, after_play: str = "A2", after_wake: str = "A2") -> None:
-    (root / "pause.png").write_bytes(_fixture_png("A1"))
-    (root / "after-next.png").write_bytes(_fixture_png("A2"))
-    (root / "after-play.png").write_bytes(_fixture_png(after_play))
-    (root / "before-background.png").write_bytes(_fixture_png("A2"))
-    (root / "after-background.png").write_bytes(_fixture_png("A2"))
-    (root / "before-wake.png").write_bytes(_fixture_png("A2"))
-    (root / "after-wake.png").write_bytes(_fixture_png(after_wake))
-    (root / "display-before.png").write_bytes(_fixture_png("A2"))
-    (root / "display-after.png").write_bytes(_compose_smart_fill("A2", "A3"))
-    (root / "pin-gate.png").write_bytes(_fixture_png("A1"))
-    (root / "settings-before-restart.png").write_bytes(_fixture_png("A2"))
-    (root / "settings-after-restart.png").write_bytes(_fixture_png("A2"))
+def _write_required_pngs(
+    root: Path, *, after_play: str = "A2", after_wake: str = "A2", fixture_set: str = "a",
+) -> None:
+    (root / "pause.png").write_bytes(_fixture_png("A1", fixture_set))
+    (root / "after-next.png").write_bytes(_fixture_png("A2", fixture_set))
+    (root / "after-play.png").write_bytes(_fixture_png(after_play, fixture_set))
+    (root / "before-background.png").write_bytes(_fixture_png("A2", fixture_set))
+    (root / "after-background.png").write_bytes(_fixture_png("A2", fixture_set))
+    (root / "before-wake.png").write_bytes(_fixture_png("A2", fixture_set))
+    (root / "after-wake.png").write_bytes(_fixture_png(after_wake, fixture_set))
+    (root / "display-before.png").write_bytes(_fixture_png("A2", fixture_set))
+    (root / "display-after.png").write_bytes(_compose_smart_fill("A2", "A3", fixture_set))
+    (root / "pin-gate.png").write_bytes(_fixture_png("A1", fixture_set))
+    (root / "settings-before-restart.png").write_bytes(_fixture_png("A2", fixture_set))
+    (root / "settings-after-restart.png").write_bytes(_fixture_png("A2", fixture_set))
 
 
 class PrintCommandTests(unittest.TestCase):
@@ -457,6 +459,21 @@ class PrintCommandTests(unittest.TestCase):
 
 
 class DeviceEvidenceTests(unittest.TestCase):
+    def test_actual_fixture_reaches_unshown_partner_guard(self) -> None:
+        for fixture_set in ("a", "b"):
+            with self.subTest(fixture_set=fixture_set), tempfile.TemporaryDirectory() as raw:
+                root = Path(raw)
+                _write_host_payload(root)
+                _write_required_pngs(root, fixture_set=fixture_set)
+                with patch.object(
+                    tvos_runner, "assert_unshown_display_partners",
+                    wraps=tvos_runner.assert_unshown_display_partners,
+                ) as guard:
+                    result = evaluate_device_evidence(root, fixture_set=fixture_set)
+                self.assertEqual(result["verdict"], "PASS")
+                self.assertEqual(result["fixture_set"], fixture_set)
+                self.assertEqual(guard.call_args.kwargs.get("fixture_set"), fixture_set)
+
     def test_valid_screenshots_and_payload_pass_without_claiming_apple_tv(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
