@@ -23,7 +23,6 @@ from pathlib import Path
 
 from ci_summary import (ContractError, decode, duration, fields, identity_key, observation,
                         require, string, test_identity, validate_observation, validate_test_identity)
-from ci_bounded_diagnostics import MAX_DIAGNOSTIC_SECONDS
 
 REGISTRY_PATH = "scripts/ci-known-flaky.json"
 EMPTY_REGISTRY = {"schema_version": 1, "entries": []}
@@ -302,6 +301,8 @@ class OfficialResultReadError(ContractError):
 @contextmanager
 def official_result_step(phase):
     """Annotate timeouts without changing subprocess execution or cleanup."""
+    # Policy-only base readers may not carry this optional diagnostic module.
+    from ci_bounded_diagnostics import MAX_DIAGNOSTIC_SECONDS
     phase = phase if phase in {"export", "tests-read", "summary-read", "legacy-read", "details-read", "attachments-export"} else "unknown"
     started = time.monotonic()
     try:
