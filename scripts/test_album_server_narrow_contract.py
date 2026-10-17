@@ -182,14 +182,6 @@ def _stacked_album_frame(fixture_set: str, top_mark: str = "A1", bottom_mark: st
     return _png(canvas)
 
 
-def _stacked_screen(top: str, bottom: str, screen: tuple[int, int], fixture_set: str = "a") -> bytes:
-    width, height = screen
-    canvas = Image.new("RGB", screen, (0, 0, 0))
-    canvas.paste(_cover(_fixture_image(top, fixture_set), (width, height // 2)), (0, 0))
-    canvas.paste(_cover(_fixture_image(bottom, fixture_set), (width, height - height // 2)), (0, height // 2))
-    return _png(canvas)
-
-
 def _with_home_indicator(frame: bytes, footer_patch: str | None = None) -> bytes:
     canvas = Image.open(io.BytesIO(frame)).convert("RGB")
     # Real iPad ink (547,2334)-(1093,2345), iPhone ink (377,2493)-(794,2508).
@@ -239,21 +231,6 @@ def _iphone_control_split_frame(fixture_set: str, *, foreign_bottom_half: bool =
     if outside_gap:
         canvas.paste(background.crop((0, 2010, 1170, 2045)), (0, 2010))
     return _png(canvas)
-
-
-def _side_by_side_screen(
-    left: str,
-    right: str,
-    screen: tuple[int, int],
-    left_share: float,
-    fixture_set: str = "a",
-) -> Image.Image:
-    width, height = screen
-    left_width = round(width * left_share)
-    canvas = Image.new("RGB", screen, (0, 0, 0))
-    canvas.paste(_cover(_fixture_image(left, fixture_set), (left_width, height)), (0, 0))
-    canvas.paste(_cover(_fixture_image(right, fixture_set), (width - left_width, height)), (left_width, 0))
-    return canvas
 
 
 def _empty_result_screen(screen: tuple[int, int]) -> bytes:

@@ -55,7 +55,7 @@ class MemberManifestContractTestsCases:
         self.assertNotEqual(FROZEN_FIXTURE_SHA256["a"], FROZEN_FIXTURE_SHA256["b"])
 
 
-    def test_target_album_has_three_public_marks_and_is_independently_readable(self) -> None:
+    def test_target_album_has_fixture_specific_public_marks_and_is_independently_readable(self) -> None:
         with tempfile.TemporaryDirectory() as raw_directory:
             path = Path(raw_directory) / "member-manifest.json"
             written = write_member_manifest(path, "a")

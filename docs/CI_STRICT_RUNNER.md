@@ -60,12 +60,30 @@ is an extreme condition. The iPad small-pool limitation remains open in
 [#487](https://github.com/sudoHG/immichSlides/issues/487); this fixture change does
 not fix it. The four-candidate denominator, deadlines and isolation checks remain.
 A and C, and B1–B5's image bytes, remain unchanged.
+
+B6–B8 use two RGB endpoints per identity, matched as a pair within tolerance 12
+in both the Python and Swift readers, rather than A1–A5's hue scoring. This adds
+endpoint-pair scoring and the shared A6–A8 color labels without changing the
+existing tolerances or confidence thresholds. A B frame rejected as
+`unreadable public glyph slot` or `mixed` can indicate a collision with system
+chrome: first compare the failing slot's pixels and surrounding controls/EXIF
+against both identity endpoints. Preserve the original frame and its slot/axis
+exception; do not change tolerances or exclude the frame. The measured collision
+history and corpus are in [#486](https://github.com/sudoHG/immichSlides/pull/486).
+
+Fixture-A suites also accept A6–A8 through the shared reader vocabulary even
+though fixture A contains only A1–A5. This is intentional for this change: the
+RGB-pair collision risk is low, and every A frame retained its original
+classification in the corpus. The access partner guard uses the actual fixture
+pool; the other shared-vocabulary membership checks are unchanged. Per-fixture
+membership checks remain a possible follow-up.
+
 The nightly matrix runs only these merged identities; the standalone selectors
 and suites have been removed. This does not resolve the pixel-coverage limits
 tracked in #434.
 
 `filter-edit-switch` checks both the original whole-frame color identity and each
-full-span photo slot against the non-target album's A1–A5 classifier labels. Public
+full-span photo slot against the non-target album's fixture-specific classifier labels. Public
 background colors locate slots independently of glyphs along both rows and columns.
 Only a clean partition into vertical stacks or horizontal neighbors is supported;
 two-dimensional grids, conflicting axes and mixed palettes fail unreadable. Obscured

@@ -128,9 +128,6 @@ VALIDATOR_MANIFEST_PREFIXES = (
     "member manifest fixture set is unknown",
     "member-manifest labels do not match classify_screenshot: must cover every public fixture photo",
     "member-manifest labels do not match classify_screenshot: every photo must MATCH a distinct classified label",
-    # Historical five-photo manifest receipts remain readable.
-    "member-manifest labels do not match classify_screenshot: must cover all five photos",
-    "member-manifest labels do not match classify_screenshot: all five must MATCH and tell A1–A5 apart",
     "member-manifest labels do not match classify_screenshot: missing person_cases",
     "member-manifest independent object sets do not match fixture derivation",
     "fixture hash has drifted from the frozen contract",
@@ -143,6 +140,18 @@ VALIDATOR_MANIFEST_PREFIXES = (
     "Simulator Vision cannot substitute for a device; soloOnly must not be marked PASS",
     "Vision unavailable; soloOnly must not pass by accident",
     "An empty soloOnly result cannot pass by coincidence from an empty set",
+)
+# Retention readers still accept these retired messages; current validators never raise them.
+VALIDATOR_HISTORICAL_PREFIXES = (
+    "member-manifest labels do not match classify_screenshot: must cover all five photos",
+    "member-manifest labels do not match classify_screenshot: all five must MATCH and tell A1–A5 apart",
+    "An A screen must not pass as B",
+    "Display policy cannot pass on enum/probe alone",
+    "The fixture yields no multi-photo screen; fix the fixture/preconditions first",
+    "A still frame mid-transition cannot pass",
+    "After the change the screen must be a stable single-photo public identity",
+    "Still multi-photo after the change; cannot pass as single-photo",
+    "Display policy did not take effect",
 )
 VALIDATOR_FIXTURE_PATTERNS = ("a", "b", None)
 VALIDATOR_IDENTITY_STATUSES = ("UNRECOGNIZABLE", "BLACK", "BLANK", "TRANSITION", "MATCH")
@@ -173,7 +182,8 @@ _VALIDATOR_STATUS = "(?:" + "|".join(map(re.escape, VALIDATOR_IDENTITY_STATUSES)
 _VALIDATOR_MARK = "(?:" + "|".join(re.escape(str(value)) for value in VALIDATOR_IDENTITY_MARKS) + ")"
 _VALIDATOR_PREFIX = (
     "(?:" + _VALIDATOR_PREFIX + "|"
-    + "|".join(map(re.escape, VALIDATOR_FIXED_PREFIXES + VALIDATOR_MANIFEST_PREFIXES))
+    + "|".join(map(re.escape, VALIDATOR_FIXED_PREFIXES + VALIDATOR_MANIFEST_PREFIXES
+                   + VALIDATOR_HISTORICAL_PREFIXES))
     + rf"|{_VALIDATOR_SCREENSHOT_STEM} public pattern must be {_VALIDATOR_EXPECTED_PATTERN}, got {_VALIDATOR_PATTERN}"
     + rf"|Unrecognizable input cannot count as passing: status={_VALIDATOR_STATUS} mark={_VALIDATOR_MARK})"
 )

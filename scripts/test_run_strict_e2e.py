@@ -1044,15 +1044,30 @@ class FailureDiagnosticsTests(unittest.TestCase):
 
         original_modules = ("album_server_narrow_contract.py", "strict_e2e_photo_identity.py",
                             "strict_e2e_filter_contract.py")
-        self.assertEqual(set(diagnostics.VALIDATOR_FIXED_PREFIXES),
-                         set().union(*(fixed_messages(tree(name)) for name in original_modules)))
-        # Retain exactly these closed prefixes for historical five-photo receipts.
-        historical_manifest_prefixes = {
+        live_messages = set().union(*(fixed_messages(tree(name)) for name in
+                                    original_modules + ("strict_e2e_filter_manifest.py",)))
+        historical_receipts = (
             "member-manifest labels do not match classify_screenshot: must cover all five photos",
             "member-manifest labels do not match classify_screenshot: all five must MATCH and tell A1–A5 apart",
-        }
+            "An A screen must not pass as B",
+            "Display policy cannot pass on enum/probe alone",
+            "The fixture yields no multi-photo screen; fix the fixture/preconditions first",
+            "A still frame mid-transition cannot pass",
+            "After the change the screen must be a stable single-photo public identity",
+            "Still multi-photo after the change; cannot pass as single-photo",
+            "Display policy did not take effect",
+        )
+        for prefix in historical_receipts:
+            with self.subTest(historical_receipt=prefix):
+                try:
+                    diagnostics.validate_validator_failure_message(prefix + "; context unresolved")
+                except ValueError as error:
+                    self.fail(f"Historical public receipt was rejected: {error}")
+                self.assertNotIn(prefix, live_messages, "Historical receipt must have no live raise site")
+        self.assertEqual(set(diagnostics.VALIDATOR_FIXED_PREFIXES),
+                         set().union(*(fixed_messages(tree(name)) for name in original_modules)))
         self.assertEqual(set(diagnostics.VALIDATOR_MANIFEST_PREFIXES),
-                         fixed_messages(tree("strict_e2e_filter_manifest.py")) | historical_manifest_prefixes)
+                         fixed_messages(tree("strict_e2e_filter_manifest.py")))
         identity_tree = tree("strict_e2e_photo_identity.py")
         classifier = next(node for node in identity_tree.body
                           if isinstance(node, ast.FunctionDef) and node.name == "classify_screenshot")

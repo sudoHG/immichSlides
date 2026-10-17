@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-from test_album_server_narrow_contract import _write_server_switch_pass
-
 from access_lifecycle_contract_test_fixtures import IPAD_SCREEN
 from test_album_server_narrow_contract import (
     IPHONE_SCREEN, TV_SCREEN, UNMEASURED_SCREEN, _cover, _full_screen, _iphone_control_split_frame,
-    _letterbox, _stacked_album_frame, _unmeasured_album_frame, _with_home_indicator,
+    _letterbox, _stacked_album_frame, _unmeasured_album_frame, _with_home_indicator, _write_server_switch_pass,
 )
 from strict_e2e_photo_identity import (
     IdentityAssertionError, public_frame_photos_from_bytes, public_frame_slot_count_from_bytes,
@@ -127,7 +125,7 @@ class DeviceFilterVisualIdentityTestsCases:
                         try:
                             with self.assertRaisesRegex(
                                 FilterContractError,
-                                "every slot must show the public glyph of fixture B|mixed public glyphs",
+                                r"^mixed public glyphs; 2 slots \(horizontal\)$",
                             ):
                                 evaluate_filter_visual_identity(evidence, suite)
                         finally:
