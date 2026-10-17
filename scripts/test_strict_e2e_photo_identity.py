@@ -208,6 +208,33 @@ def _with_exif_card(png: bytes, model: str) -> bytes:
 
 
 class FrameGlyphBoundaryTests(unittest.TestCase):
+    def test_expanded_b_identities_do_not_confuse_existing_photos_in_real_size_frames(self) -> None:
+        for fixture_set, count in (("a", 5), ("b", 8)):
+            for index in range(1, count + 1):
+                with self.subTest(fixture=fixture_set, index=index):
+                    source = _fixture_data(fixture_set)["images"][f"asset-{fixture_set}-{index}"]
+                    image = Image.open(io.BytesIO(source)).convert("RGB")
+                    frame = _png(image.resize((image.width * 12, image.height * 12)))
+                    photos = public_frame_photos_from_bytes(frame)
+                    self.assertEqual([(photo.letter, photo.mark) for photo in photos],
+                                     [(fixture_set.upper(), f"A{index}")])
+                    self.assertEqual((classify_screenshot(frame).status, classify_screenshot(frame).mark),
+                                     ("MATCH", f"A{index}"))
+        for added in (6, 7, 8):
+            for existing in range(1, 6):
+                for horizontal in (False, True):
+                    with self.subTest(added=added, existing=existing, horizontal=horizontal):
+                        order = (added, existing) if horizontal else (existing, added)
+                        photos = public_frame_photos_from_bytes(self._pair("b", *order, horizontal=horizontal))
+                        self.assertEqual([(photo.letter, photo.mark) for photo in photos],
+                                         [("B", f"A{index}") for index in order])
+        for asset_id, source in _fixture_data("c")["images"].items():
+            with self.subTest(foreign=asset_id):
+                image = Image.open(io.BytesIO(source)).convert("RGB")
+                frame = image.resize((image.width * 12, image.height * 12))
+                with self.assertRaisesRegex(IdentityAssertionError, "^(?:no public glyph|unreadable public glyph)"):
+                    public_frame_photos_from_bytes(_png(frame))
+
     def test_scene_judgement_converts_a_second_clear_background_photo_to_identity_failure(self) -> None:
         photo = Image.open(io.BytesIO(_fixture_png("A1"))).convert("RGB")
         scene = ImageOps.fit(photo, (320, 696)).filter(ImageFilter.GaussianBlur(40))

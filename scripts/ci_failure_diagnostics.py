@@ -132,6 +132,9 @@ VALIDATOR_FIXED_PREFIXES = (
 VALIDATOR_MANIFEST_PREFIXES = (
     "a person filter must be a separate person_id + mode",
     "member manifest fixture set is unknown",
+    "member-manifest labels do not match classify_screenshot: must cover every public fixture photo",
+    "member-manifest labels do not match classify_screenshot: every photo must MATCH a distinct classified label",
+    # Historical five-photo manifest receipts remain readable.
     "member-manifest labels do not match classify_screenshot: must cover all five photos",
     "member-manifest labels do not match classify_screenshot: all five must MATCH and tell A1–A5 apart",
     "member-manifest labels do not match classify_screenshot: missing person_cases",
@@ -149,7 +152,7 @@ VALIDATOR_MANIFEST_PREFIXES = (
 )
 VALIDATOR_FIXTURE_PATTERNS = ("a", "b", None)
 VALIDATOR_IDENTITY_STATUSES = ("UNRECOGNIZABLE", "BLACK", "BLANK", "TRANSITION", "MATCH")
-VALIDATOR_IDENTITY_MARKS = ("A1", "A2", "A3", "A4", "A5", None)
+VALIDATOR_IDENTITY_MARKS = ("A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", None)
 
 # No arbitrary filename, exception suffix or pixel values.
 # See CI_STRICT_RUNNER.md#public-validator-failure-receipts for the public receipt contract.
@@ -224,6 +227,7 @@ def public_validator_failure_message(value):
 # Source locations and enum meanings: docs/CI_STRICT_RUNNER.md#reviewed-prefix-table.
 # No activity marker exists in these flows. Suffixes (including values) are discarded.
 PREFIX_RULES = (
+    ("Editor album card must show the manifest-selected album and photo counts", "server_switch", "control_state"),
     ("The iOS slider must be settable to ", "interval_setup", "interval_readback"),
     ("The control bar is not hidden yet; cannot verify the first wake.", "hidden_controls", "hidden_controls"),
     ("The first wake should only bring up the control bar.", "hidden_controls", "hidden_controls"),

@@ -246,13 +246,13 @@ CASE_E2E_IDS = {
     "filter-edit-switch": ["E2E-P0-04"],
     "filter-empty": ["E2E-P0-04"],
     "filter-person": ["E2E-P0-05"],
-    "filter-switch": ["E2E-P0-06"],
+    "filter-switch": ["E2E-P0-06", "server-switch"],
     "filter-vision": ["E2E-P0-05"],
     "tvos-album": ["E2E-P0-04"],
     "tvos-display-policy": ["display-policy"],
     "tvos-edit-switch": ["E2E-P0-04"],
     "tvos-person": ["E2E-P0-05"],
-    "tvos-switch": ["E2E-P0-06"],
+    "tvos-switch": ["E2E-P0-06", "server-switch"],
     "album-empty": ["album-empty"],
     "tvos-n1-cold": ["N1"],
     "tvos-album-empty": ["album-empty"],
@@ -797,7 +797,7 @@ def require_visual_identity(evidence_dir: Path, suite: str, *, fixture_set: str 
         return payload
     if suite in ALBUM_EMPTY_SUITES:
         try:
-            payload = evaluate_album_empty_evidence(evidence_dir, fixture_set, read_stacked_slots=(suite == "album-empty"))
+            payload = evaluate_album_empty_evidence(evidence_dir, fixture_set, use_ios_album_geometry=(suite == "album-empty"))
         except (AlbumServerContractError, FilterContractError) as error:
             failed = {"verdict": "FAIL", "suite": suite, "error": str(error)}
             _write_visual_runner_report(evidence_dir, failed)

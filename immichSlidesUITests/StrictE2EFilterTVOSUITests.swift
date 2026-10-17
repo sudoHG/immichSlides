@@ -475,18 +475,6 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
         try selectVerifiedDisplayMode(app: app, mode: "smartFill")
         try returnToSlideshowFromSettings(app: app)
         let processBefore = try displayPolicyProcessID(app)
-        let pause = app.buttons["slideshow.control.playPause.button"]
-        ensureControlBarVisible(app: app, playPauseButton: pause)
-        let value = String(describing: pause.value ?? "")
-        if value.contains("暂停") || value.lowercased().contains("pause") {
-            moveFocusTo(pause, directions: [.right, .left], message: "Focus Pause.")
-            XCUIRemote.shared.press(.select)
-        }
-        XCTAssertTrue(
-            waitUntil(timeout: TestWait.seconds(.product(4))) {
-                let current = String(describing: pause.value ?? "")
-                return current.contains("播放") || current.lowercased() == "play"
-            }, "Playback must be paused before sampling candidates.")
         let steps = try captureMultiPhotoBefore(app: app)
 
         try openPlaybackSettingsFromSlideshow(app: app)
@@ -506,6 +494,17 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
     @MainActor
     func captureMultiPhotoBefore(app: XCUIApplication) throws -> [String] {
         let pause = app.buttons["slideshow.control.playPause.button"]
+        ensureControlBarVisible(app: app, playPauseButton: pause)
+        let value = String(describing: pause.value ?? "")
+        if value.contains("暂停") || value.lowercased().contains("pause") {
+            moveFocusTo(pause, directions: [.right, .left], message: "Focus Pause.")
+            XCUIRemote.shared.press(.select)
+        }
+        XCTAssertTrue(
+            waitUntil(timeout: TestWait.seconds(.product(4))) {
+                let current = String(describing: pause.value ?? "")
+                return current.contains("播放") || current.lowercased() == "play"
+            }, "Playback must be paused before sampling candidates.")
         var steps: [String] = []
         var selected: Data?
         for index in 1...StrictE2EFilterTVOSUITestsCalibration.displayCandidateFrameLimit {

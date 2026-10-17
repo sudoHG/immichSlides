@@ -250,12 +250,8 @@ def _display_foreground_png(image_bytes: bytes) -> bytes:
                 ui_ink = Image.new("L", sample_size)
                 ui_ink.putdata([255 if min(pixel) > DISPLAY_UI_WHITE_CHANNEL_THRESHOLD or max(pixel) < DISPLAY_UI_BLACK_CHANNEL_THRESHOLD else 0 for pixel in sample.getdata()])
                 ui_ink_pixels = ui_ink.filter(ImageFilter.MaxFilter(DISPLAY_UI_INK_DILATION_PIXELS)).load()
-                palette = tuple(
-                    ((seed * 37 + block * 54) % 180,
-                     (seed * 61 + (1 - block) * 48) % 180,
-                     (seed * 19 + block * 72) % 180)
-                    for seed in range(1, 6) for block in (0, 1)
-                )
+                from strict_e2e_photo_identity import _public_photo_palettes
+                palette = tuple(color for colors in _public_photo_palettes().values() for color in colors)
 
                 def is_public_color(pixel: tuple[int, ...]) -> bool:
                     return any(max(abs(pixel[c] - color[c]) for c in range(3)) <= DISPLAY_PUBLIC_COLOR_CHANNEL_TOLERANCE for color in palette)
@@ -439,7 +435,6 @@ def _evaluate_display_policy(evidence_dir: Path, suite: str, *, manifest: Mappin
     if not switched_server and fixture_set != "a":
         raise FilterContractError("standalone display-policy suite must use fixture A only")
     allowed = manifest["target_album"]["labels"]
-    visual_labels = manifest["target_album"]["visual_labels"]
     payload = _read_json_object(evidence_dir / "display-policy.json", "display-policy.json")
     if payload.get("identity_source") != "public_fixture_photo_mark":
         raise FilterContractError("display-policy screenshot identity must come from public fixture photo marks")
@@ -452,7 +447,8 @@ def _evaluate_display_policy(evidence_dir: Path, suite: str, *, manifest: Mappin
     candidate_steps = payload.get("before_candidate_steps")
     if not isinstance(candidate_steps, list) or not candidate_steps:
         raise FilterContractError("missing the finite list of before-change candidate screenshots")
-    maximum_candidates = len(visual_labels) + 1
+    # The UI contract remains four real candidates when the ordinary B pool grows.
+    maximum_candidates = 4
     if len(candidate_steps) > maximum_candidates:
         raise FilterContractError("Before-change screenshot candidates exceed one complete finite rotation of the target album")
     expected_steps = [
@@ -666,7 +662,7 @@ def _evaluate_tvos_switch(evidence_dir: Path) -> dict[str, Any]:
             raise FilterContractError(f"empty selection after server switch lacks real zero counts or keeps an old selection: {field}")
     bridge = _evaluate_switch_display_policy(evidence_dir, manifest_b)
     from album_server_narrow_contract import evaluate_server_switch_evidence
-    server_switch = evaluate_server_switch_evidence(evidence_dir)
+    server_switch = evaluate_server_switch_evidence(evidence_dir, suite="tvos-switch")
     return {
         "verdict": "PASS",
         "suite": "tvos-switch",
@@ -924,7 +920,7 @@ def _evaluate_filter_switch(evidence_dir: Path) -> dict[str, Any]:
 
     bridge = _evaluate_switch_display_policy(evidence_dir, manifest_b)
     from album_server_narrow_contract import evaluate_server_switch_evidence
-    server_switch = evaluate_server_switch_evidence(evidence_dir)
+    server_switch = evaluate_server_switch_evidence(evidence_dir, suite="filter-switch")
 
     return {
         "verdict": "PASS",

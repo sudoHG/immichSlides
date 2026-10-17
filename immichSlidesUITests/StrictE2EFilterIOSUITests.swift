@@ -527,6 +527,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         let manifestB = try loadEvidenceManifest(named: "member-manifest-b.json")
         let albumA = try stringValue(manifestA, keyPath: ["target_album", "id"])
         let albumB = try stringValue(manifestB, keyPath: ["target_album", "id"])
+        let targetMarksB = try stringArrayValue(manifestB, keyPath: ["target_album", "labels"])
         let app = try launchStrictE2EApp()
         defer { app.terminate() }
 
@@ -574,7 +575,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         setAlbumSelection(app: app, albumID: albumB, isSelectionRequested: true)
         returnFromAlbumFilter(app: app)
         _ = captureNamedPNG(app: app, name: "server-switch-album-summary-\(albumB)")
-        assertSettingsFilterEditorAfterServerSwitchAlbumSelection(app: app)
+        assertSettingsFilterEditorAfterServerSwitchAlbumSelection(app: app, expectedPhotoCount: targetMarksB.count)
         finishFilterEditor(app: app)
         returnToSlideshowFromSettings(app: app)
         pausePlaybackIfNeeded(app: app)
@@ -582,7 +583,6 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         tapNext(app: app)
         _ = capturePlaybackPNG(app: app, name: "switch-b-play-2")
 
-        let targetMarksB = try stringArrayValue(manifestB, keyPath: ["target_album", "labels"])
         openPlaybackSettingsFromSlideshow(app: app)
         selectSinglePhotoDisplayMode(app: app)
         selectSmartFillDisplayMode(app: app)

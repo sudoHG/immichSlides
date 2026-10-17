@@ -308,7 +308,7 @@ def _empty_album_start_state(payload: Mapping[str, Any]) -> bool | str:
 
 
 def evaluate_album_empty_evidence(evidence_dir: Path, fixture_set: str = "a", *,
-                                  read_stacked_slots: bool) -> dict[str, Any]:
+                                  use_ios_album_geometry: bool) -> dict[str, Any]:
     manifest = load_member_manifest(evidence_dir / "member-manifest.json")
     if str(manifest["fixture_set"]) != fixture_set:
         raise AlbumServerContractError("Album-empty member-manifest does not match the requested fixture")
@@ -332,7 +332,7 @@ def evaluate_album_empty_evidence(evidence_dir: Path, fixture_set: str = "a", *,
     frame_marks = []
     frame_geometry = {}
     for name in playback_names:
-        if read_stacked_slots:
+        if use_ios_album_geometry:
             marks, geometry = target_album_frame_identity((evidence_dir / f"{name}.png").read_bytes(), fixture_set)
             frame_geometry[name] = geometry
         else:
@@ -365,13 +365,13 @@ def evaluate_album_empty_evidence(evidence_dir: Path, fixture_set: str = "a", *,
         "empty_album_id": empty_payload["album_id"],
         "start_enabled_after_empty_album": _empty_album_start_state(empty_payload),
     }
-    if read_stacked_slots:
+    if use_ios_album_geometry:
         report["target_album_geometry"] = "measured" if set(frame_geometry.values()) == {"measured"} else "unmeasured"
         report["target_album_frame_geometry"] = frame_geometry
     return report
 
 
-def evaluate_server_switch_evidence(evidence_dir: Path) -> dict[str, Any]:
+def evaluate_server_switch_evidence(evidence_dir: Path, *, suite: str = "filter-switch") -> dict[str, Any]:
     load_member_manifest(evidence_dir / "member-manifest-a.json")
     manifest_b = load_member_manifest(evidence_dir / "member-manifest-b.json")
     if not (evidence_dir / "server-switch-a-play-1.png").is_file():
@@ -403,7 +403,7 @@ def evaluate_server_switch_evidence(evidence_dir: Path) -> dict[str, Any]:
     assert_server_switch_observed_ids(observed, str(manifest_b["fixture_set"]))
     _require_server_switch_recording(evidence_dir)
     display = evaluate_immediate_display_policy(evidence_dir)
-    display["finite_rotation"] = _evaluate_display_policy(evidence_dir, "filter-switch", manifest=manifest_b)
+    display["finite_rotation"] = _evaluate_display_policy(evidence_dir, suite, manifest=manifest_b)
     return {
         "verdict": "PASS",
         "suite": "server-switch",

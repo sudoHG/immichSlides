@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from test_album_server_narrow_contract import _write_server_switch_pass
+
 from strict_e2e_filter_contract_test_fixtures import (
     DISPLAY_POLICY_CANDIDATE_PREFIX,
     FILTER_VISUAL_SUITES,
@@ -50,6 +52,8 @@ from strict_e2e_filter_contract_test_fixtures import (
 
 class SwiftContractMirrorTestsCases:
     def test_swift_helper_keeps_frozen_ids_and_button(self) -> None:
+        import re
+        from strict_e2e_photo_identity import FRAME_PALETTE_CHANNEL_TOLERANCE
         source = (SCRIPT_DIR.parent / "TestSupport" / "StrictE2EFilterContract.swift").read_text(
             encoding="utf-8"
         )
@@ -58,12 +62,25 @@ class SwiftContractMirrorTestsCases:
         self.assertIn(START_PLAYBACK_BUTTON_ID, source)
         self.assertIn(FROZEN_FIXTURE_SHA256["a"], source)
         self.assertIn(FROZEN_FIXTURE_SHA256["b"], source)
+        identity_source = (SCRIPT_DIR.parent / "TestSupport" / "StrictE2EPhotoIdentity.swift").read_text()
+        rows = re.findall(r'"(A[678])": \[\[([\d, ]+)\], \[([\d, ]+)\]\]', identity_source)
+        observed = {mark: {tuple(map(int, first.split(","))), tuple(map(int, second.split(",")))}
+                    for mark, first, second in rows}
+        expected = {}
+        for index in (6, 7, 8):
+            with Image.open(io.BytesIO(_fixture_png(f"A{index}", "b"))) as image:
+                expected[f"A{index}"] = {color for color in image.convert("RGB").getdata() if min(color) < 240}
+        self.assertEqual(observed, expected)
+        tolerance = re.search(r'extendedPaletteChannelTolerance = (\d+)', identity_source)
+        self.assertIsNotNone(tolerance)
+        self.assertEqual(int(tolerance.group(1)), FRAME_PALETTE_CHANNEL_TOLERANCE)
 
 
 class FilterVisualIdentityFromScreenshotsTestsCases:
     def test_switch_rejects_unobserved_or_nonempty_editor_selection(self) -> None:
         with tempfile.TemporaryDirectory() as raw_directory:
             evidence = Path(raw_directory)
+            _write_server_switch_pass(evidence)
             write_member_manifest(evidence / "member-manifest-b.json", "b")
             (evidence / "switch-b-playback.png").write_bytes(_fixture_png("A1", "b"))
             (evidence / "observed-ids-after-switch.json").write_text(
@@ -375,6 +392,7 @@ class FilterVisualIdentityFromScreenshotsTestsCases:
     def test_switch_suite_rejects_old_server_tokens_in_ui_or_log(self) -> None:
         with tempfile.TemporaryDirectory() as raw_directory:
             evidence = Path(raw_directory)
+            _write_server_switch_pass(evidence)
             write_member_manifest(evidence / "member-manifest-b.json", "b")
             (evidence / "switch-b-playback.png").write_bytes(_fixture_png("A1", "b"))
             (evidence / "observed-ids-after-switch.json").write_text(
@@ -463,6 +481,7 @@ class FilterVisualIdentityFromScreenshotsTestsCases:
         for invalid in invalid_bridges:
             with self.subTest(name=invalid["name"]), tempfile.TemporaryDirectory() as raw_directory:
                 evidence = Path(raw_directory)
+                _write_server_switch_pass(evidence)
                 write_member_manifest(evidence / "member-manifest-b.json", "b")
                 (evidence / "switch-b-playback.png").write_bytes(_fixture_png("A1", "b"))
                 (evidence / "observed-ids-after-switch.json").write_text(

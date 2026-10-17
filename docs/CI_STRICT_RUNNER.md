@@ -32,8 +32,8 @@ The dual-server `filter-switch` (iOS/iPadOS) and `tvos-switch` contracts also ca
 the former standalone server-switch display guarantees. Each records A playback,
 B save success, the cleared filter editor and real B UI identifiers, then checks
 every A/B photo slot by glyph, color and axis. A continuous recording covers the
-flow. On B, real Next actions traverse at most one complete four-frame target-album
-candidate rotation; every sampled original is retained, and the first real
+flow. On B, real Next actions traverse at most four target-album candidate frames;
+every sampled original is retained, and the first real
 multi-photo frame becomes `display-before.png`. Exhausting all candidates without
 a qualified frame fails. A real Settings change must produce a stable B single
 photo in the same live process. Candidate numbering, raw-byte identity, album
@@ -41,6 +41,19 @@ membership and the finite denominator are checked by the display-policy contract
 Fitted single-photo candidates retain their place in that rotation and use the
 existing matched-foreground/blurred-surround gate before slot reading; they never
 qualify as the multi-photo before frame.
+The merged switch contracts read every intermediate candidate per slot, including
+its server glyph. Mixed servers, unreadable slots and transitions fail the run
+immediately, even if a later candidate could qualify. The standalone display-policy
+contracts still treat an unqualified intermediate frame as a candidate to advance
+past; the merged switch rule is deliberately stricter.
+Fixture B contains eight distinct public synthetic photos. Its ordinary target
+album contains B1/B2/B3/B6/B7/B8; B4/B5 remain outside that album, and every person
+set is unchanged. B6/B7/B8 mirror A1/A2/A3's landscape, portrait and square sizes.
+The maintainer chose this larger pool to model normal usage: a three-photo pool
+is an extreme condition. The iPad small-pool limitation remains open in
+[#487](https://github.com/sudoHG/immichSlides/issues/487); this fixture change does
+not fix it. The four-candidate denominator, deadlines and isolation checks remain.
+A and C, and B1–B5's image bytes, remain unchanged.
 The nightly matrix runs only these merged identities; the standalone selectors
 and suites have been removed. This does not resolve the pixel-coverage limits
 tracked in #434.
@@ -723,6 +736,7 @@ New enum meanings and why the previous vocabulary cannot express them:
 | `After switching servers the UI must not keep server A album/person IDs: ` | `server_switch` | `control_state` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
 | `The display mode's selected state must be read back.` | `display_policy` | `control_state` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
 | `No two distinct photos seen within four public album candidates; all failing originals are kept.` | `display_policy` | `scene_identity` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
+| `Editor album card must show the manifest-selected album and photo counts` | `server_switch` | `control_state` | [StrictE2EFilterIOSUITests+Navigation.swift](../immichSlidesUITests/StrictE2EFilterIOSUITests+Navigation.swift) |
 | `After the change, a still frame taken mid-transition must not pass` | `display_policy` | `scene_identity` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
 | `After changing the display mode, playback must still be on screen in the same live process.` | `display_policy` | `navigation` | [StrictE2EFilterTVOSUITests.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests.swift) |
 | `No two distinct target-album photos were seen in one full four-frame candidate rotation; all candidate originals were kept.` | `display_policy` | `scene_identity` | [StrictE2EFilterIOSUITests.swift](../immichSlidesUITests/StrictE2EFilterIOSUITests.swift) |

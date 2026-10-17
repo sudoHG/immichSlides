@@ -386,16 +386,17 @@ class StrictE2EServerContractTests(unittest.TestCase):
         server_b = fixture_manifest("b")
 
         self.assertEqual(server_a["asset_ids"], [f"asset-a-{index}" for index in range(1, 6)])
-        self.assertEqual(server_b["asset_ids"], [f"asset-b-{index}" for index in range(1, 6)])
+        self.assertEqual(server_b["asset_ids"], [f"asset-b-{index}" for index in range(1, 9)])
         self.assertEqual([asset["label"] for asset in server_a["assets"]], ["A1", "A2", "A3", "A4", "A5"])
-        self.assertEqual([asset["label"] for asset in server_b["assets"]], ["A1", "A2", "A3", "A4", "A5"])
+        self.assertEqual([asset["label"] for asset in server_b["assets"]],
+                         ["A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8"])
         from strict_e2e_server import public_visual_label, _fixture_data
 
         live_a = _fixture_data("a")
         live_b = _fixture_data("b")
         self.assertEqual(
-            [public_visual_label("b", index) for index in range(1, 6)],
-            ["B1", "B2", "B3", "B4", "B5"],
+            [public_visual_label("b", index) for index in range(1, 9)],
+            ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8"],
         )
         self.assertNotEqual(live_a["images"]["asset-a-1"], live_b["images"]["asset-b-1"])
         self.assertNotEqual(live_a["assets"][0]["sha256"], live_b["assets"][0]["sha256"])

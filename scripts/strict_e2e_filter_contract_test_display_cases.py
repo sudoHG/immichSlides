@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from test_album_server_narrow_contract import _write_server_switch_pass
+
 from access_lifecycle_contract_test_fixtures import IPAD_SCREEN
 from test_album_server_narrow_contract import (
     IPHONE_SCREEN, TV_SCREEN, UNMEASURED_SCREEN, _cover, _full_screen, _iphone_control_split_frame,
@@ -63,6 +65,7 @@ class DeviceFilterVisualIdentityTestsCases:
         for suite in ("filter-switch", "tvos-switch"):
             with self.subTest(suite=suite), tempfile.TemporaryDirectory() as raw:
                 evidence = Path(raw)
+                _write_server_switch_pass(evidence)
                 _write_switch_display_bridge(evidence)
                 (evidence / "switch-b-playback.png").write_bytes(_fixture_png("A1", "b"))
                 (evidence / "observed-ids-after-switch.json").write_bytes((evidence / "observed-ids.json").read_bytes())
@@ -88,6 +91,13 @@ class DeviceFilterVisualIdentityTestsCases:
                 report = evaluate_filter_visual_identity(evidence, suite)
                 self.assertEqual(report["server_switch"]["display"]["finite_rotation"]["before_candidate_steps"],
                                  payload["before_candidate_steps"])
+                self.assertEqual(report["server_switch"]["display"]["finite_rotation"]["suite"], suite)
+                payload_path.write_text(json.dumps(payload | {
+                    "before_candidate_steps": payload["before_candidate_steps"] + ["display-before-candidate-05"],
+                }))
+                with self.assertRaisesRegex(FilterContractError, "Before-change screenshot candidates exceed one complete finite rotation"):
+                    evaluate_filter_visual_identity(evidence, suite)
+                payload_path.write_text(json.dumps(payload))
                 for filename, replacement, message in (
                     ("server-switch-a-play-1.png", None, "Missing screenshot of A's selected scope and photo"),
                     ("screen-recording.mov", b"unfinished", "The server-switch recording was not finalized"),
@@ -103,6 +113,21 @@ class DeviceFilterVisualIdentityTestsCases:
                         with self.assertRaisesRegex(FilterContractError, message):
                             evaluate_filter_visual_identity(evidence, suite)
                         path.write_bytes(original)
+                from test_strict_e2e_photo_identity import FrameGlyphBoundaryTests
+                mixed = FrameGlyphBoundaryTests._pair("b", 3, 2, horizontal=True, seam=2458, second_fixture="a")
+                for filenames in (("display-before-candidate-04.png", "display-before.png"),
+                                  ("display-before-candidate-02.png",)):
+                    with self.subTest(mixed_candidate=filenames[0]):
+                        originals = {name: (evidence / name).read_bytes() for name in filenames}
+                        for name in filenames:
+                            (evidence / name).write_bytes(mixed)
+                        with self.assertRaisesRegex(
+                            FilterContractError,
+                            "every slot must show the public glyph of fixture B|mixed public glyphs",
+                        ):
+                            evaluate_filter_visual_identity(evidence, suite)
+                        for name, original in originals.items():
+                            (evidence / name).write_bytes(original)
 
     def test_filter_album_unmeasured_geometry_keeps_the_main_result(self) -> None:
         for fixture_set in ("a", "b"):
@@ -356,6 +381,7 @@ class DeviceFilterVisualIdentityTestsCases:
     def test_filter_switch_rejects_old_ids_and_classifies_b_playback(self) -> None:
         with tempfile.TemporaryDirectory() as raw_directory:
             evidence = Path(raw_directory)
+            _write_server_switch_pass(evidence)
             write_member_manifest(evidence / "member-manifest.json", "b")
             write_member_manifest(evidence / "member-manifest-a.json", "a")
             write_member_manifest(evidence / "member-manifest-b.json", "b")

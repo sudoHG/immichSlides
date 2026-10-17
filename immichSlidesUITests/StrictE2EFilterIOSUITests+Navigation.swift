@@ -88,7 +88,7 @@ extension StrictE2EFilterIOSUITests {
 
     // For B, the album list returns to the editor in settings: it has Done and no Start Playback.
     @MainActor
-    func assertSettingsFilterEditorAfterServerSwitchAlbumSelection(app: XCUIApplication) {
+    func assertSettingsFilterEditorAfterServerSwitchAlbumSelection(app: XCUIApplication, expectedPhotoCount: Int) {
         XCTAssertTrue(
             app.staticTexts["filterEditor.page.title"].waitForExistence(timeout: TestWait.seconds(.product(8)))
                 || app.descendants(matching: .any)["filterEditor.page.title"].waitForExistence(
@@ -107,9 +107,9 @@ extension StrictE2EFilterIOSUITests {
         let doneElement = app.descendants(matching: .any)["filter.editor.done.button"]
         XCTAssertTrue(done.exists || doneElement.exists, "Editor must have Done")
         XCTAssertTrue(
-            editorAlbumCardShowsSelection(albumEntry, selectedAlbums: "1", pendingPhotos: "3")
-                || editorSummaryShowsSelection(app, selectedAlbums: "1", pendingPhotos: "3"),
-            "Editor album card must show 1 selected album and 3 photos to play"
+            editorAlbumCardShowsSelection(albumEntry, selectedAlbums: "1", pendingPhotos: String(expectedPhotoCount))
+                || editorSummaryShowsSelection(app, selectedAlbums: "1", pendingPhotos: String(expectedPhotoCount)),
+            "Editor album card must show the manifest-selected album and photo counts"
         )
     }
 

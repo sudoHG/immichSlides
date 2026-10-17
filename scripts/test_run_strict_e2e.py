@@ -204,16 +204,18 @@ class StrictE2ERunnerTests(StrictE2ERunnerTestsCasesConfiguration, StrictE2ERunn
 
     def test_recording_retry_is_rejected_before_any_device_or_evidence_work(self):
         from contextlib import redirect_stderr
-        from strict_e2e_runner_support import SERVER_SWITCH_RECORDING_SUITES
-        suites = [suite for suite, case in P2_CASES.items() if case.video] + list(SERVER_SWITCH_RECORDING_SUITES)
+        suites = [suite for suite, case in P2_CASES.items() if case.video] + ["filter-switch", "tvos-switch"]
         for suite in suites:
-            with self.subTest(suite=suite), tempfile.TemporaryDirectory() as directory, redirect_stderr(io.StringIO()):
+            stderr = io.StringIO()
+            with self.subTest(suite=suite), tempfile.TemporaryDirectory() as directory, redirect_stderr(stderr):
                 evidence = Path(directory) / "evidence"
                 with self.assertRaises(SystemExit) as error:
-                    runner_main(["--platform", "ios", "--destination", "platform=iOS Simulator,id=" + P2_UDID,
-                        "--suite", suite, "--test-without-building", "--listed-retry-device", "iphone",
+                    runner_main(["--platform", "tvos" if suite == "tvos-switch" else "ios",
+                        "--destination", "platform=iOS Simulator,id=" + P2_UDID,
+                        "--suite", suite, "--test-without-building", "--listed-retry-device", "tv" if suite == "tvos-switch" else "iphone",
                         "--derived-data-path", str(Path(directory) / "derived"), "--evidence-dir", str(evidence)])
                 self.assertEqual(error.exception.code, 2)
+                self.assertIn("recording suites cannot use listed-only retry", stderr.getvalue())
                 self.assertFalse(evidence.exists())
 
     def test_retry_cannot_borrow_first_attempt_out_of_order_timeline_or_screenshots(self):
@@ -766,6 +768,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
             ("immichSlidesUITests/StrictE2EFilterTVOSUITests.swift", "After Clear, both target and non-target albums must really become unselected; re-tapping each card must not stand in for the clear result", "filter_edit", "control_state"),
             ("immichSlidesUITests/StrictE2EFilterTVOSUITests.swift", "The filter settings editor must offer a Done entry", "filter_edit", "navigation"),
             ("immichSlidesUITests/StrictE2EFilterTVOSUITests.swift", "Finishing the edit must return to the real playback settings screen", "filter_edit", "navigation"),
+            ("immichSlidesUITests/StrictE2EFilterIOSUITests+Navigation.swift", "Editor album card must show the manifest-selected album and photo counts", "server_switch", "control_state"),
             ("immichSlidesUITests/StrictE2EFilterTVOSUITests.swift", "Server B must clear A's album selection", "server_switch", "control_state"),
             ("immichSlidesUITests/StrictE2EFilterTVOSUITests.swift", "After switching servers the UI must not keep server A album/person IDs: ", "server_switch", "control_state"),
             ("immichSlidesUITests/StrictE2EFilterTVOSUITests.swift", "The display mode's selected state must be read back.", "display_policy", "control_state"),
@@ -1043,8 +1046,13 @@ class FailureDiagnosticsTests(unittest.TestCase):
                             "strict_e2e_filter_contract.py")
         self.assertEqual(set(diagnostics.VALIDATOR_FIXED_PREFIXES),
                          set().union(*(fixed_messages(tree(name)) for name in original_modules)))
+        # Retain exactly these closed prefixes for historical five-photo receipts.
+        historical_manifest_prefixes = {
+            "member-manifest labels do not match classify_screenshot: must cover all five photos",
+            "member-manifest labels do not match classify_screenshot: all five must MATCH and tell A1–A5 apart",
+        }
         self.assertEqual(set(diagnostics.VALIDATOR_MANIFEST_PREFIXES),
-                         fixed_messages(tree("strict_e2e_filter_manifest.py")))
+                         fixed_messages(tree("strict_e2e_filter_manifest.py")) | historical_manifest_prefixes)
         identity_tree = tree("strict_e2e_photo_identity.py")
         classifier = next(node for node in identity_tree.body
                           if isinstance(node, ast.FunctionDef) and node.name == "classify_screenshot")

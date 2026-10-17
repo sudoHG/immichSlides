@@ -283,65 +283,6 @@ extension StrictE2EFilterIOSUITests {
         )
     }
 
-    // During server switching, the system "Save Password?" prompt can cover the albums. Tap only "Not Now",
-    // wait until the album is hittable before tapping, and never tap through the prompt by coordinates.
-    @MainActor
-    func selectAlbumHandlingSystemPrompt(app: XCUIApplication, albumID: String) {
-        if isSystemSavePasswordPromptVisible(app: app) {
-            XCTAssertTrue(
-                dismissSystemSavePasswordPromptIfPresent(app: app, timeout: TestWait.seconds(.product(6))),
-                "The system Save Password prompt must be closed with 'Not Now'; test credentials must not be saved"
-            )
-        }
-        _ = captureNamedPNG(app: app, name: "server-switch-album-before-select-\(albumID)")
-        tapAlbumWhenHittable(app: app, albumID: albumID)
-        if !isAlbumCardSelected(albumCard(app: app, albumID: albumID))
-            && isSystemSavePasswordPromptVisible(app: app)
-        {
-            _ = captureNamedPNG(app: app, name: "server-switch-save-password-late-\(albumID)")
-            XCTAssertTrue(
-                dismissSystemSavePasswordPromptIfPresent(app: app, timeout: TestWait.seconds(.product(6))),
-                "A late Save Password prompt allows only this one retry, backed by evidence"
-            )
-            tapAlbumWhenHittable(app: app, albumID: albumID)
-        }
-        XCTAssertTrue(
-            waitUntil(timeout: TestWait.seconds(.product(4))) {
-                self.isAlbumCardSelected(self.albumCard(app: app, albumID: albumID))
-            },
-            "Target album must be selected; no blind taps while the prompt covers it"
-        )
-        _ = captureNamedPNG(app: app, name: "server-switch-album-after-select-\(albumID)")
-    }
-
-    @MainActor
-    func tapAlbumWhenHittable(app: XCUIApplication, albumID: String) {
-        if isSystemSavePasswordPromptVisible(app: app) {
-            XCTAssertTrue(
-                dismissSystemSavePasswordPromptIfPresent(app: app, timeout: TestWait.seconds(.product(6))),
-                "Do not tap the album while the prompt covers it"
-            )
-        }
-        let identifier = "albumFilter.album.\(albumID).button"
-        XCTAssertTrue(
-            waitUntil(timeout: TestWait.seconds(.product(12))) {
-                if self.isSystemSavePasswordPromptVisible(app: app) {
-                    _ = self.dismissSystemSavePasswordPromptIfPresent(
-                        app: app, timeout: TestWait.seconds(.product(2)))
-                    return false
-                }
-                let button = app.buttons[identifier]
-                return button.exists && button.isHittable
-            },
-            "After closing the Save Password prompt, a fresh query must find the target album hittable"
-        )
-        let button = app.buttons[identifier]
-        XCTAssertFalse(isSystemSavePasswordPromptVisible(app: app), "Do not tap the album while the prompt covers it")
-        XCTAssertTrue(button.isHittable, "Target album must be hittable; no coordinate fallback")
-        if isAlbumCardSelected(button) { return }
-        button.tap()
-    }
-
     @MainActor
     func albumCard(app: XCUIApplication, albumID: String) -> XCUIElement {
         app.buttons["albumFilter.album.\(albumID).button"]

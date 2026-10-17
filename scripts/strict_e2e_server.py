@@ -79,7 +79,8 @@ def public_visual_label(fixture_set: str, index: int) -> str:
     return f"{letter}{index}"
 
 
-def _png(width: int, height: int, seed: int, label: str, *, striped: bool = False) -> bytes:
+def _png(width: int, height: int, seed: int, label: str, *, striped: bool = False,
+         palette: tuple[tuple[int, int, int], tuple[int, int, int]] | None = None) -> bytes:
     """Keep on-screen fixture identity deterministic without fonts or third-party image generators."""
     scale = max(8, min(width // 18, height // 10))
     label_width = (len(label) * 5 + len(label) - 1) * scale
@@ -109,7 +110,7 @@ def _png(width: int, height: int, seed: int, label: str, *, striped: bool = Fals
                 # A uses a checkerboard and B horizontal stripes; hue seeds are unchanged, so color
                 # identification still recognizes A1-A5.
                 block = (y // 48) % 2 if striped else ((x // 48) + (y // 48)) % 2
-                rows.extend(
+                rows.extend(palette[block] if palette is not None else
                     (
                         (seed * 37 + block * 54) % 180,
                         (seed * 61 + (1 - block) * 48) % 180,
@@ -143,8 +144,18 @@ def _cached_fixture_data(name: str) -> dict[str, Any]:
     # Public PNGs keep small identity color blocks; the API width/height are scaled 12x to simulate 4K-class
     # originals.
     png_dimensions = [(320, 180), (180, 320), (300, 300), (360, 240), (240, 360)]
+    # The ordinary B target pool models normal use; the three-photo edge case remains tracked separately.
+    if name == "b":
+        png_dimensions += [(320, 180), (180, 320), (300, 300)]
+    additional_palettes = {
+        6: ((0, 245, 50), (80, 235, 20)),
+        7: ((245, 45, 150), (120, 30, 245)),
+        8: ((10, 145, 250), (70, 95, 245)),
+    }
     original_dimension_scale = 12
     delays = [LEGACY_FIXTURE_DELAY_MS, 0, 0, 0, 0]
+    if name == "b":
+        delays += [0, 0, 0]
     people = [
         {
             "id": f"person-{name}-normal",
@@ -177,16 +188,20 @@ def _cached_fixture_data(name: str) -> dict[str, Any]:
     ]
     asset_people = [[people[0]], [people[1]], [people[1], people[2]], [people[3]], [people[1]]]
     unassigned_faces = [[], [], [], [], [{"id": f"unassigned-{name}-1"}]]
+    if name == "b":
+        asset_people += [[], [], []]
+        unassigned_faces += [[], [], []]
     assets: list[dict[str, Any]] = []
     images: dict[str, bytes] = {}
     for index, ((png_width, png_height), delay) in enumerate(zip(png_dimensions, delays), start=1):
         asset_id = f"asset-{name}-{index}"
-        # Color identity stays A1-A5 for screenshot classification; B screens use the B glyph and stripes.
+        # Logical color marks use A numbers; B screens have their own visible glyphs and stripes.
         label = f"A{index}"
         visual_label = public_visual_label(name, index)
         width = png_width * original_dimension_scale
         height = png_height * original_dimension_scale
-        image = _png(png_width, png_height, index, visual_label, striped=(name == "b"))
+        image = _png(png_width, png_height, index, visual_label, striped=(name == "b"),
+                     palette=additional_palettes.get(index))
         images[asset_id] = image
         exif_info = (
             {
@@ -229,24 +244,26 @@ def _cached_fixture_data(name: str) -> dict[str, Any]:
             }
         )
 
+    target_assets = assets[:3] + assets[5:]
+    non_target_assets = assets[3:5]
     albums = [
         {
             "id": f"album-{name}-target",
             "albumName": "Target Synthetic Album B" if name == "b" else "Target Synthetic Album",
             "fixture_role": "target",
             "albumThumbnailAssetId": assets[0]["id"],
-            "assetCount": 3,
+            "assetCount": len(target_assets),
             "assets": [],
-            "assetIds": [asset["id"] for asset in assets[:3]],
+            "assetIds": [asset["id"] for asset in target_assets],
         },
         {
             "id": f"album-{name}-non-target",
             "albumName": "Non-target Synthetic Album B" if name == "b" else "Non-target Synthetic Album",
             "fixture_role": "non_target",
             "albumThumbnailAssetId": assets[3]["id"],
-            "assetCount": 2,
+            "assetCount": len(non_target_assets),
             "assets": [],
-            "assetIds": [asset["id"] for asset in assets[3:]],
+            "assetIds": [asset["id"] for asset in non_target_assets],
         },
         {
             "id": f"album-{name}-empty",
