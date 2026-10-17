@@ -472,8 +472,12 @@ def _evaluate_display_policy(evidence_dir: Path, suite: str, *, manifest: Mappin
         image_bytes = path.read_bytes()
         candidate_bytes.append(image_bytes)
         regions = _classify_display_regions(image_bytes)
-        region_marks = (list(dict.fromkeys(_scene_slot_marks(image_bytes, fixture_set))) if switched_server
-                        else _display_region_marks(regions))
+        if switched_server:
+            # Single candidates stay in the rotation; their surround must pass the existing display contract.
+            foreground = _display_foreground_png(image_bytes)
+            region_marks = list(dict.fromkeys(_scene_slot_marks(foreground, fixture_set)))
+        else:
+            region_marks = _display_region_marks(regions)
         if region_marks:
             for mark in region_marks:
                 if mark not in allowed:
