@@ -445,6 +445,9 @@ enum StrictE2EPhotoIdentity {
         }
         guard (2...3).contains(slots.count) else { return [] }
         let canvas = slots.reduce(CGRect.null) { $0.union($1.rect) }
+        guard (canvas.width == CGFloat(width) || canvas.height == CGFloat(height)),
+            canvas.contains(CGPoint(x: CGFloat(width) / 2, y: CGFloat(height) / 2))
+        else { return [] }
         guard slots.reduce(CGFloat(0), { $0 + $1.rect.width * $1.rect.height }) == canvas.width * canvas.height,
             !slots.indices.contains(where: { index in
                 slots.dropFirst(index + 1).contains { slots[index].rect.intersects($0.rect) }

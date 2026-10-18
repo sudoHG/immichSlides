@@ -537,6 +537,9 @@ def capture_identity(image_bytes: bytes) -> PhotoIdentity:
                 return full
             canvas = (min(box[0] for _, box in slots), min(box[1] for _, box in slots),
                       max(box[2] for _, box in slots), max(box[3] for _, box in slots))
+            if not ((canvas[2] - canvas[0] == rgb.width or canvas[3] - canvas[1] == rgb.height)
+                    and canvas[0] <= rgb.width / 2 < canvas[2] and canvas[1] <= rgb.height / 2 < canvas[3]):
+                return full
             area = lambda box: (box[2] - box[0]) * (box[3] - box[1])
             if sum(area(box) for _, box in slots) != area(canvas) or any(
                     max(a[0], b[0]) < min(a[2], b[2]) and max(a[1], b[1]) < min(a[3], b[3])

@@ -75,8 +75,9 @@ The Swift `captureIdentity` and Python `capture_identity` readers locate each
 photo's palette rectangle, rather than assuming equal quadrants or full-span strips. They use
 the public fixture RGB pairs, the same tolerance 12 and minimum 18 matching pixels
 per line, and a nearest-neighbour sample capped at 480 pixels wide. A composite
-requires two or three distinct, non-overlapping rectangles that tile their canvas,
-clean rows and columns within each slot, and an independent interior color match.
+requires two or three distinct, non-overlapping rectangles that tile their canvas.
+That canvas must cover the image center and fill at least one image axis; each
+slot needs clean rows and columns and an independent interior color match.
 This covers unequal doubles, balanced triples and the four primary-plus-pair
 triple orientations. Missing interior lines can join only matching neighbours;
 an entirely black outer edge contributes no identity. Mixed slot lines, overlaps

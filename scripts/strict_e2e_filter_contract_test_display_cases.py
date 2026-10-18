@@ -675,10 +675,15 @@ print(String(data: try JSONSerialization.data(withJSONObject: report), encoding:
                 capture_cases.append((name, scene, ("MATCH", expected)))
             first = Image.open(io.BytesIO(_fixture_png("A5", "a"))).convert("RGB").resize(TV_SCREEN)
             second = Image.open(io.BytesIO(_fixture_png("A3", "a"))).convert("RGB").resize(TV_SCREEN)
+            black_inset = Image.new("RGB", (480, 270))
+            for mark, box in (("A5", (160, 121, 240, 149)), ("A3", (240, 121, 320, 149))):
+                photo = Image.open(io.BytesIO(_fixture_png(mark, "a"))).convert("RGB")
+                black_inset.paste(ImageOps.fit(photo, (box[2] - box[0], box[3] - box[1])), box)
             capture_cases.extend((
                 ("transition", Image.blend(second, first, 0.3), ("TRANSITION", "nil")),
                 ("single", first, ("MATCH", "A5")),
                 ("black", Image.new("RGB", TV_SCREEN), ("BLACK", "nil")),
+                ("black-inset", black_inset, ("TRANSITION", "nil")),
             ))
             capture_arguments = []
             for name, scene, _ in capture_cases:
