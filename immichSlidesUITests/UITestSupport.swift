@@ -33,7 +33,7 @@ extension XCUIApplication {
         }
         func waitForFocus(_ condition: ([String: XCUIElementSnapshot]) -> Bool) -> Bool {
             let movementDeadline = min(
-                deadline, Date().addingTimeInterval(UITestSupportWaitTiming.stateChangeTimeoutSeconds))
+                deadline, Date().addingTimeInterval(UITestSupportWaitTiming.readbackTimeoutSeconds))
             while Date() < movementDeadline {
                 let snapshots = evidenceSnapshotsByIdentifier()
                 if condition(snapshots) { return Date() < movementDeadline }
@@ -45,7 +45,7 @@ extension XCUIApplication {
             let snapshots = evidenceSnapshotsByIdentifier()
             if let focusedIdentifier = controlIdentifiers.first(where: { snapshots[$0]?.hasFocus == true }) {
                 guard Date() < deadline else { return false }
-                // Up is consumed by the visible bar. Moving focus refreshes auto-hide; preserve the original focus.
+                // Moving focus refreshes auto-hide; round trips restore the last attempt's enabled control. Callers verify focus.
                 let direction: XCUIRemote.Button =
                     focusedIdentifier == "slideshow.control.next.button" ? .left : .right
                 XCUIRemote.shared.press(direction)
