@@ -28,13 +28,37 @@ extension XCUIApplication {
 extension XCUIApplication {
     func refreshTVOSSlideshowControlBar(timeout: TimeInterval) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
+        let controlIdentifiers = ["settings", "previous", "playPause", "next"].map {
+            "slideshow.control.\($0).button"
+        }
+        func waitForFocus(_ condition: ([String: XCUIElementSnapshot]) -> Bool) -> Bool {
+            while Date() < deadline {
+                let snapshots = evidenceSnapshotsByIdentifier()
+                if condition(snapshots) { return Date() < deadline }
+                RunLoop.current.run(until: Date().addingTimeInterval(Timing.focusSettle))
+            }
+            return false
+        }
         while Date() < deadline {
             let snapshots = evidenceSnapshotsByIdentifier()
-            if snapshots["slideshow.control.playPause.button"] != nil
-                || snapshots["slideshow.hiddenWakeReceiver"]?.hasFocus == true
-            {
+            if let focusedIdentifier = controlIdentifiers.first(where: { snapshots[$0]?.hasFocus == true }) {
                 guard Date() < deadline else { return false }
-                // A visible bar may be about to expire; every interaction needs a fresh remote reveal.
+                // Up is consumed by the visible bar. Moving focus refreshes auto-hide; preserve the original focus.
+                let direction: XCUIRemote.Button =
+                    focusedIdentifier == "slideshow.control.next.button" ? .left : .right
+                XCUIRemote.shared.press(direction)
+                guard
+                    waitForFocus({ observation in
+                        controlIdentifiers.contains {
+                            $0 != focusedIdentifier && observation[$0]?.hasFocus == true
+                        }
+                    })
+                else { return false }
+                XCUIRemote.shared.press(direction == .left ? .right : .left)
+                return waitForFocus { $0[focusedIdentifier]?.hasFocus == true }
+            }
+            if snapshots["slideshow.hiddenWakeReceiver"]?.hasFocus == true {
+                guard Date() < deadline else { return false }
                 XCUIRemote.shared.press(.up)
                 let remaining = max(0, deadline.timeIntervalSinceNow)
                 return buttons["slideshow.control.playPause.button"].waitForExistence(timeout: remaining)
