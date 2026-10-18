@@ -246,13 +246,23 @@ class SummaryContractTests(unittest.TestCase):
         receipt["screenshot"]["status"] = "validated-input"
         self.assertEqual(ci_summary.parse_summary(json.dumps(scoped)), scoped)
     def test_first_failure_scanner_checks_nested_duplicate_escaped_and_broken_json(self):
+        from ci_ui_tests import main as ui_main
         from run_strict_e2e import CommandError, write_sensitive_scan
         receipt = first_failure_receipt()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             path = root / "diagnostic.json"
             path.write_text(json.dumps({"nested": [{"first_failure": receipt}]}))
-            write_sensitive_scan(root, ["synthetic-secret"])
+            summary = archive_download_summary()
+            summary.pop("archive_download")
+            identity = summary["population"]["declared"][0]
+            failed = ci_summary.observation(identity, "failed", 1, exit_code=65)
+            failed["first_failure"] = failed["attempts"][0]["first_failure"] = receipt
+            summary["population"]["observed"] = [failed]
+            summary["status"] = "failed"
+            ci_summary.write_summary(summary, root)
+            with patch("ci_ui_tests.output"):
+                self.assertEqual(0, ui_main(["check-upload", "--output-dir", str(root)]))
             self.assertEqual("PASS", json.loads((root / "sensitive-scan.json").read_text())["result"])
             for raw in ('{"first_failure":' + json.dumps(receipt).replace('"source": "xctest"',
                         '"source": "private", "source": "xctest"') + '}',
