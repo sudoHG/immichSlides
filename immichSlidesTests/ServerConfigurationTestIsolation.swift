@@ -145,7 +145,7 @@ enum LiveTestTraffic {
                     return (index, asset)
                 }
             }
-            for _ in 0..<4 { addNext() }
+            for _ in 0..<LiveVerificationLimiter.maximumInFlight { addNext() }
             while let (index, asset) = try await group.next() {
                 loaded[index] = asset
                 addNext()
@@ -156,7 +156,7 @@ enum LiveTestTraffic {
 }
 
 private actor LiveVerificationLimiter {
-    private let maximumInFlight = 4
+    static let maximumInFlight = 4
     private let minimumStartGap: Duration = .seconds(TestWait.seconds(.infrastructure(0.07)))
     private let clock = ContinuousClock()
     private var nextStart: ContinuousClock.Instant?
@@ -164,7 +164,7 @@ private actor LiveVerificationLimiter {
     private var waiters: [CheckedContinuation<Void, Never>] = []
 
     func acquire() async throws {
-        if inFlight == maximumInFlight {
+        if inFlight == Self.maximumInFlight {
             await withCheckedContinuation { waiters.append($0) }
         } else {
             inFlight += 1
