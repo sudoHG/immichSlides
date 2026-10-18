@@ -20,8 +20,13 @@ private final class LiveRequestObserver: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) private static var concurrencyLimited = false
     nonisolated(unsafe) private static var inFlight = 0
     nonisolated(unsafe) private static var peakInFlight = 0
+    private static let forwardingSession: URLSession = {
+        let configuration = URLSession.shared.configuration
+        // Reuse connections and the original cache policy without recursively intercepting the forwarding session.
+        configuration.protocolClasses = []
+        return URLSession(configuration: configuration)
+    }()
     private var forwardingTask: URLSessionDataTask?
-    private var forwardingSession: URLSession?
 
     static func begin() {
         lock.withLock {
@@ -69,12 +74,7 @@ private final class LiveRequestObserver: URLProtocol, @unchecked Sendable {
             Self.inFlight += 1
             Self.peakInFlight = max(Self.peakInFlight, Self.inFlight)
         }
-        let configuration = URLSessionConfiguration.ephemeral
-        // Explicit protocols avoid recursively intercepting the observer's forwarded request.
-        configuration.protocolClasses = []
-        let session = URLSession(configuration: configuration)
-        forwardingSession = session
-        forwardingTask = session.dataTask(with: request) { [self] data, response, error in
+        forwardingTask = Self.forwardingSession.dataTask(with: request) { [self] data, response, error in
             Self.lock.withLock {
                 Self.inFlight -= 1
                 switch (response as? HTTPURLResponse)?.statusCode {
@@ -86,18 +86,16 @@ private final class LiveRequestObserver: URLProtocol, @unchecked Sendable {
             if let error {
                 client?.urlProtocol(self, didFailWithError: error)
             } else if let response {
-                client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+                client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .allowed)
                 if let data { client?.urlProtocol(self, didLoad: data) }
                 client?.urlProtocolDidFinishLoading(self)
             }
-            session.finishTasksAndInvalidate()
         }
         forwardingTask?.resume()
     }
 
     override func stopLoading() {
         forwardingTask?.cancel()
-        forwardingSession?.invalidateAndCancel()
     }
 }
 
