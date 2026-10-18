@@ -487,7 +487,7 @@ extension StrictE2EFilterTVOSUITests {
     @MainActor
     func openPlaybackSettingsFromSlideshow(app: XCUIApplication) throws {
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
-        if revealControlBar(app: app, playPauseButton: playPauseButton, timeout: TestWait.seconds(.product(8))) {
+        if app.refreshTVOSSlideshowControlBar(timeout: TestWait.seconds(.product(8))) {
             ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
             let settingsButton = app.buttons["slideshow.control.settings.button"]
             moveFocus(
