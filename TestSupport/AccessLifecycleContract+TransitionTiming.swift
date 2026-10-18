@@ -1,6 +1,58 @@
 import Foundation
 
 extension AccessLifecycleContract {
+    static func assertTVOSPauseTimingEvidence(
+        continueMark: String,
+        baselineLuma: Double,
+        samples: [ContinueWatchSample],
+        intervalSeconds: TimeInterval
+    ) throws -> (start: ContinueWatchSample, stable: ContinueWatchSample) {
+        guard intervalSeconds.isFinite, intervalSeconds > 0,
+            baselineLuma.isFinite, baselineLuma > minimumBaselineLuminance,
+            samples.isEmpty == false,
+            samples.enumerated().allSatisfy({ index, sample in
+                sample.requestElapsed.isFinite && sample.requestElapsed >= 0
+                    && sample.returnElapsed.isFinite && sample.returnElapsed >= sample.requestElapsed
+                    && sample.classifiedElapsed.isFinite && sample.classifiedElapsed >= sample.returnElapsed
+                    && sample.meanLuma.isFinite
+                    && (index == 0 || sample.requestElapsed >= samples[index - 1].returnElapsed)
+            })
+        else {
+            throw AssertionError.message(
+                "No automatic photo change was captured within T±2; invalid timing or original photo brightness evidence"
+            )
+        }
+        guard let stable = firstStableNewImage(continueMark: continueMark, samples: samples) else {
+            throw AssertionError.message(
+                "After about a full T, it must switch to the next scene; no stable new public photo was confirmed")
+        }
+        let threshold = baselineLuma * sustainedDimmingLuminanceRatio
+        let startIndex = samples.indices.first { index in
+            let sample = samples[index]
+            if sample.status == "MATCH", isUsableSceneMark(sample.mark), sample.mark != continueMark {
+                return true
+            }
+            // A recovered old photo invalidates a dimming/transition proxy before the actual new photo.
+            let recovered = samples.dropFirst(index + 1).prefix {
+                $0.requestElapsed <= stable.requestElapsed
+            }.contains { $0.status == "MATCH" && $0.mark == continueMark && $0.meanLuma >= threshold }
+            if recovered { return false }
+            if sample.status == "TRANSITION" || sample.mark == "TRANSITION" { return true }
+            guard index > 0, sample.status == "MATCH", sample.mark == continueMark,
+                sample.meanLuma < threshold,
+                samples[index - 1].status == "MATCH", samples[index - 1].mark == continueMark,
+                samples[index - 1].isControlBarVisible == sample.isControlBarVisible
+            else { return false }
+            return hasSustainedDimming(from: index, continueMark: continueMark, threshold: threshold, samples: samples)
+        }
+        let start = startIndex.map { samples[$0] } ?? stable
+        try assertContinueAutoAdvanceInWindow(
+            continueMark: continueMark, laterMark: stable.mark,
+            elapsedSeconds: start.requestElapsed, intervalSeconds: intervalSeconds
+        )
+        return (start, stable)
+    }
+
     static func assertContinueEarlyStillSameScene(
         continueMark: String,
         earlyMark: String,
@@ -274,7 +326,7 @@ extension AccessLifecycleContract {
                 sample.status == "MATCH"
                 && sample.mark == continueMark
                 && sample.meanLuma < dimmingThreshold
-                && hasSustainedIPadDimming(
+                && hasSustainedDimming(
                     from: index,
                     continueMark: continueMark,
                     threshold: dimmingThreshold,
@@ -338,7 +390,7 @@ extension AccessLifecycleContract {
         )
     }
 
-    static func hasSustainedIPadDimming(
+    static func hasSustainedDimming(
         from startIndex: Int,
         continueMark: String,
         threshold: Double,

@@ -11,6 +11,9 @@ enumeration and aggregation are documented in [Skeleton nightly](CI_NIGHTLY.md).
 Explicit warm runs can opt into [listed-only retries](TESTING.md#known-flaky-registry-and-listed-only-retries)
 with `--listed-retry-device`; the tracer and skeleton nightly continue to run once.
 Signed visual-review promotion remains separate work.
+The lifecycle pause flows distinguish transition onset from stable new-photo
+confirmation; the shared definition and the unchanged platform-specific timing
+bounds are documented in [Testing conventions](TESTING.md#running-controlled-integration-and-end-to-end-tests).
 Simulator preparation and official exports have explicit phase deadlines; timeout
 records and private quarantine follow the [nightly infrastructure policy](CI_NIGHTLY.md#population-and-capacity).
 The shared preparation gate caps `simctl boot` at 60 seconds and gives boot,
