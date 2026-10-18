@@ -362,7 +362,8 @@ extension FilterSummaryTVOSVisualUITests {
 
     @MainActor
     func testTVOSSlideShowControlBarFocusStatesScreenshot() throws {
-        let app = try launchIntoSlideShow()
+        // Freeze the initial history boundary while focus and screenshots are sampled.
+        let app = try launchIntoSlideShow(shouldForceAutoPlayOff: true)
         let settingsButton = app.buttons["slideshow.control.settings.button"]
         let previousButton = app.buttons["slideshow.control.previous.button"]
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
