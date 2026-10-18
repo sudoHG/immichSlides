@@ -441,7 +441,10 @@ participate in outcome, population, retry or verdict evaluation.
 
 `first_failure` is reader-only until its accepting reader is merged into main.
 It is accepted in both summary versions, recursively checked by the publication
-scanner, and retained by aggregation and compact history. A receipt cannot be
+scanner, and retained by aggregation and per-night artifacts. Compact reporter
+history omits receipt objects, including all nested copies, to avoid growth
+against its 16 MiB hard cap; the measured baseline and budget are documented in
+[first-failure evidence](CI_STRICT_RUNNER.md#prepared-first-failure-evidence). A receipt cannot be
 attached to a passing attempt or a host/unit observation. The observation must
 equal its first failing attempt's receipt; an existing listed retry cannot replace
 that first receipt with the retry's state. Preparation receipts belong to

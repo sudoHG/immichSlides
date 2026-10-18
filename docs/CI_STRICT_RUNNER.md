@@ -633,13 +633,16 @@ Existing probes may be absent, especially on Release/tvOS; absence does not prov
 zero history, hidden controls or a stable scene. Preparation receipts cannot
 claim a captured App image. A post-test validator may retain its actual public
 input image as `validated-input`; it cannot reconstruct failure-instant App
-state after the App exits. Neither evidence type changes its original result.
+state after the App exits and cannot claim `observation: failure-snapshot`.
+Neither evidence type changes its original result.
 
 Future XCTest capture is allowed only on the failure path of an explicitly
 configured public loopback fixture run, on an allowed foreground App surface.
 Live/private runs, first-boot credential/PIN pages, Settings.app and SpringBoard
 cannot produce public images. The scanner does not inspect pixel semantics;
 proven public fixture provenance and producer capture guards are required.
+The reader also refuses captured images when the waited element or focus target
+is a first-boot credential element, even if the reported surface is allowed.
 Successful tests must add no AX query, screenshot or public receipt. A synchronous
 XCTest screenshot has no independent hard five-second bound: its actual overhead
 must be measured, with existing runner/watchdog limits remaining authoritative.
@@ -662,6 +665,11 @@ size and digest. Symlinks, extra files, trailing data and metadata are refused;
 the manifest is capped at 32 KiB. This reader grants no visual or human PASS.
 Ordinary UI media will reuse the existing scanned `ui-failures-*` artifact.
 `records/` remains unscanned, so validated projection must precede producer writes.
+PR 2 must call `read_failure_package` as a mandatory gate in `export-shard`
+before diagnostic media can reach the existing upload step. PR 2 must also
+apply the same dimensions, byte, metadata and canonical-image validation to
+UI failure screenshots before publication. These UI bounds currently depend
+on the future producer; this reader-only PR does not enforce them at UI upload.
 
 Producer budgets and measured costs will be documented when activated. The
 approved target is zero public bytes for a passing method and at most 1 MiB image
@@ -669,6 +677,25 @@ plus 8 KiB receipt for a failing method: 19 failures would add at most 19 MiB pl
 152 KiB, before existing artifact compression. New host collection has a proposed
 five-second cumulative allowance per job (43 jobs: at most 215 seconds/night),
 separate from the synchronous XCTest limitation and existing export budgets.
+
+Full receipts remain in the per-night shard summaries and traces under the
+existing artifact retention. Compact reporter history keeps **zero** receipt
+copies, including nested attempts, `diagnostics.failures` and `attempt_history`;
+merging also removes receipt objects from previously saved dates. The existing
+issue-state `first_failure` date string is unchanged. Receipt growth in the
+16 MiB `history.json` budget is therefore zero bytes, including in the worst
+case; identity, verdict and timing history remain available without the receipt.
+
+Measured baseline: [reporter run 39119552754](https://github.com/sudoHG/immichSlides/actions/runs/39119552754),
+artifact `ci-report-daily-39119552754-1` (ID `12133468385`, producer head
+`696316746a6f73bf0b24fa20dcc93b3c2ed23e16`). Its ZIP is 339,865 bytes;
+all extracted members total 3,827,272 bytes and `history.json` is 1,918,413 bytes
+uncompressed (11 dates, October 8–18). Against the 16,777,216-byte history cap,
+current headroom is 14,858,803 bytes (14.170 MiB). This is a measured baseline,
+not a forecast of unrelated history growth. The cutoff of 89 days before today
+can retain 90 calendar dates: keeping three 8 KiB copies for 19 nightly failures
+would alone add 42,024,960 bytes (40.078 MiB), before attempt-history copies.
+Removing all compact receipt copies avoids that growth without raising the cap.
 
 ### Public failure diagnostics
 

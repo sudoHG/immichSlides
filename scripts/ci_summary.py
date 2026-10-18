@@ -385,11 +385,13 @@ def render_markdown(payload):
         message = "; ".join(detail for attempt in entry["attempts"]
                             for detail in (attempt["reason"], attempt["message"]) if detail)
         lines.append(f"| {markdown_text(entry['identity']['key'])} | {entry['outcome']} | {entry['duration_seconds']:.3f} | {markdown_text(message)} |")
-        if "first_failure" in entry:
-            from ci_failure_diagnostics import render_first_failure
-            lines.append("\nFirst failure: " + markdown_text(render_first_failure(entry["first_failure"])) + "\n")
     for entry in population["deselected"]:
         lines.append(f"| {markdown_text(entry['identity']['key'])} | deselected | — | {markdown_text(entry['reason'])}; owned by {markdown_text(entry['owning_tier'])} |")
+    for entry in population["observed"]:
+        if "first_failure" in entry:
+            from ci_failure_diagnostics import render_first_failure
+            lines.append("\nFirst failure: " + markdown_text(entry["identity"]["key"]) + ": "
+                         + markdown_text(render_first_failure(entry["first_failure"])) + "\n")
     for entry in payload["infrastructure"]:
         category = NON_INFRASTRUCTURE_DIAGNOSTICS.get(entry["code"], "Infrastructure")
         lines.append(f"\n{category}: {markdown_text(entry['code'])}: {markdown_text(entry['message'])}")

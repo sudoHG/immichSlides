@@ -161,6 +161,10 @@ class ReviewPackageTests(unittest.TestCase):
             with mock.patch("sys.stdout", new=io.StringIO()):
                 self.assertEqual(0, main(["read-failure", "--package", str(package), "--summary", str(root / "summary.json")]))
             self.assertEqual(manifest, read_failure_package(package, summary))
+            linked = root / "linked-failure"
+            linked.symlink_to(package, target_is_directory=True)
+            with self.assertRaisesRegex(ContractError, "^invalid first failure package directory$"):
+                read_failure_package(linked, summary)
             _write_json(package / "first-failure.json", {**manifest, "extra": "unexpected"})
             with self.assertRaisesRegex(ContractError, "^first failure package: expected fields "):
                 read_failure_package(package, summary)

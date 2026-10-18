@@ -107,10 +107,13 @@ def validate_first_failure(receipt):
             "first failure: screenshot measurements do not match status")
     if screenshot["status"] == "captured":
         require(receipt["source"] == "xctest" and state["app"] == "running-foreground"
-                and state["surface"] in ("playback", "cache", "playback-settings", "mode"),
+                and state["surface"] in ("playback", "cache", "playback-settings", "mode")
+                and not receipt["element"].startswith("firstboot.") and not state["focus"].startswith("firstboot."),
                 "first failure: screenshot is not an allowed app window")
     if screenshot["status"] == "validated-input":
         require(receipt["source"] == "validator", "first failure: validated input requires validator source")
+    if receipt["source"] == "validator":
+        require(state["observation"] != "failure-snapshot", "first failure: validator cannot claim a failure snapshot")
     if receipt["source"] == "preparation":
         require(screenshot["status"] == "not-applicable" and state["app"] == "unknown"
                 and state["observation"] == "unavailable" and state["history_count"] is None

@@ -116,6 +116,23 @@ def first_failure_receipt():
 
 
 class SummaryContractTests(unittest.TestCase):
+    def test_first_failure_lines_follow_all_summary_table_rows(self):
+        summary = archive_download_summary()
+        summary.pop("archive_download")
+        first = summary["population"]["declared"][0]
+        second = {**first, "key": first["key"] + "Second"}
+        deselected = {**first, "key": first["key"] + "Elsewhere"}
+        summary["population"].update(declared=[first, second, deselected], compiled=[first, second],
+            deselected=[{"identity": deselected, "reason": "Owned elsewhere", "owning_tier": "strict"}],
+            observed=[ci_summary.observation(identity, "failed", 1, exit_code=65) for identity in (first, second)])
+        summary["status"] = "failed"
+        row = summary["population"]["observed"][0]
+        row["first_failure"] = row["attempts"][0]["first_failure"] = first_failure_receipt()
+        rendered = ci_summary.render_markdown(summary)
+        table_end = rendered.index("| " + deselected["key"] + " |")
+        self.assertGreater(rendered.index("First failure:"), table_end)
+        self.assertIn("First failure: " + first["key"], rendered)
+
     def test_first_failure_survives_summary_aggregation_and_flaky_first_attempt(self):
         summary = archive_download_summary()
         summary.pop("archive_download")
@@ -129,6 +146,19 @@ class SummaryContractTests(unittest.TestCase):
             read = ci_summary.parse_summary((Path(directory) / "summary.json").read_text())
         self.assertEqual(read["population"]["observed"], [failed])
         self.assertIn("query-element", ci_summary.render_markdown(read))
+        from ci_flaky import merge_retry
+        second = ci_summary.observation(identity, "failed", 2, exit_code=65)
+        later_receipt = first_failure_receipt()
+        later_receipt["step"] = "capture-frame"
+        second["first_failure"] = second["attempts"][0]["first_failure"] = later_receipt
+        merged = merge_retry(failed, second)
+        self.assertEqual("failed", merged["outcome"])
+        self.assertEqual(failed["first_failure"], merged["first_failure"])
+        self.assertEqual(later_receipt, merged["attempts"][1]["first_failure"])
+        changed = copy.deepcopy(merged)
+        changed["first_failure"] = later_receipt
+        with self.assertRaisesRegex(ci_summary.ContractError, "^first failure must match the first failing attempt$"):
+            ci_summary.validate_observation(changed)
         # Existing retry semantics retain the first receipt, without attaching it to the passing attempt.
         failed.update(outcome="flaky-passed", duration_seconds=2)
         failed["attempts"].append({**ci_summary.observation(identity, "passed", 1)["attempts"][0], "number": 2})
@@ -158,6 +188,7 @@ class SummaryContractTests(unittest.TestCase):
             (("action",), "https://private.invalid", "first failure: invalid action"),
             (("timing", "deadline_seconds"), True, "first failure timing: invalid number"),
             (("timing", "wait_elapsed_seconds"), float("inf"), "first failure timing: invalid number"),
+            (("timing", "deadline_seconds"), 86401, "first failure timing: invalid number"),
             (("timing", "state_age_seconds"), -1, "first failure timing: invalid number"),
             (("timing",), {}, "first failure timing: invalid fields"),
             (("timing", "capture_return_seconds"), 0, "first failure: capture times out of order"),
@@ -168,6 +199,7 @@ class SummaryContractTests(unittest.TestCase):
             (("state", "control_bar"), True, "first failure: invalid control bar"),
             (("state", "focus"), "private-focus", "first failure: invalid focus"),
             (("state", "history_count"), 2**31, "first failure state: invalid number"),
+            (("state", "history_count"), 3.5, "first failure state: invalid number"),
             (("state", "autoplay"), True, "first failure: invalid autoplay"),
             (("state", "orientation"), "private", "first failure: invalid orientation"),
             (("state", "scene_status"), "asset-private", "first failure: invalid scene status"),
@@ -186,6 +218,10 @@ class SummaryContractTests(unittest.TestCase):
             (("validator",), {"kind": "glyph", "slot": None, "axis": "unknown"},
                 "first failure: validator context requires validator source"),
             (("state", "surface"), "firstboot", "first failure: screenshot is not an allowed app window"),
+            (("state", "app"), "background", "first failure: screenshot is not an allowed app window"),
+            (("source",), "validator", "first failure: screenshot is not an allowed app window"),
+            (("element",), "firstboot.serverURL.field", "first failure: screenshot is not an allowed app window"),
+            (("state", "focus"), "firstboot.apiKey.field", "first failure: screenshot is not an allowed app window"),
         ]
         self.assertEqual(ci_summary.parse_summary(summary), summary)
         for path, value, message in cases:
@@ -197,9 +233,10 @@ class SummaryContractTests(unittest.TestCase):
                 for component in path[:-1]:
                     target = target[component]
                 target[path[-1]] = value
-            with self.subTest(path=path), self.assertRaisesRegex(ci_summary.ContractError, "^" + message + "$") as error:
-                ci_summary.parse_summary(changed)
-            self.assertNotIn("private", str(error.exception))
+            with self.subTest(path=path):
+                with self.assertRaisesRegex(ci_summary.ContractError, "^" + message + "$") as error:
+                    ci_summary.parse_summary(changed)
+                self.assertNotIn("private", str(error.exception))
         for level in ("observation", "attempt"):
             changed = copy.deepcopy(summary)
             target = changed["population"]["observed"][0]
@@ -236,9 +273,19 @@ class SummaryContractTests(unittest.TestCase):
         changed["population"]["observed"][0]["attempts"][0]["outcome"] = "failed"
         with self.assertRaisesRegex(ci_summary.ContractError, "^first failure source must match execution state$"):
             ci_summary.parse_summary(changed)
-        receipt["state"]["app"] = "running-foreground"
-        with self.assertRaisesRegex(ci_summary.ContractError, "^first failure: preparation cannot claim app evidence$"):
-            ci_summary.parse_summary(summary)
+        for section, key, value in (("state", "app", "running-foreground"),
+                ("state", "observation", "cached"), ("state", "history_count", 1),
+                ("state", "surface", "playback"), ("state", "control_bar", "hidden"),
+                ("state", "focus", "slideshow.hiddenWakeReceiver"), ("state", "autoplay", "off"),
+                ("state", "orientation", "landscape"), ("state", "scene_status", "MATCH"),
+                ("screenshot", "status", "unavailable")):
+            changed = copy.deepcopy(summary)
+            row = changed["population"]["observed"][0]
+            for current in (row["first_failure"], row["attempts"][0]["first_failure"]):
+                current[section][key] = value
+            with self.subTest(section=section, key=key), self.assertRaisesRegex(ci_summary.ContractError,
+                    "^first failure: preparation cannot claim app evidence$"):
+                ci_summary.parse_summary(changed)
         scoped = discovery_summary()
         receipt = first_failure_receipt()
         item = scoped["population"]["observed"][0]
@@ -251,6 +298,10 @@ class SummaryContractTests(unittest.TestCase):
         receipt.update(source="validator", validator={"kind": "glyph", "slot": 2, "axis": "vertical"})
         receipt["screenshot"]["status"] = "validated-input"
         self.assertEqual(ci_summary.parse_summary(json.dumps(scoped)), scoped)
+        receipt["state"]["observation"] = "failure-snapshot"
+        with self.assertRaisesRegex(ci_summary.ContractError, "^first failure: validator cannot claim a failure snapshot$"):
+            ci_summary.parse_summary(scoped)
+
     def test_first_failure_scanner_checks_nested_duplicate_escaped_and_broken_json(self):
         from ci_ui_tests import main as ui_main
         from run_strict_e2e import CommandError, write_sensitive_scan

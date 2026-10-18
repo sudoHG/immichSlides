@@ -39,7 +39,7 @@ def entry(day="2026-10-01", outcome="failed", run=10, attempt=1):
 
 
 class ReporterTests(unittest.TestCase):
-    def test_first_failure_reaches_nightly_aggregate_compact_history_and_report(self):
+    def test_first_failure_reaches_nightly_artifacts_and_report_without_growing_compact_history(self):
         from ci_nightly import aggregate_nightly
         case = test_identity("strict", "smoke", **IDENTITY["dimensions"])
         shard = valid_summary()
@@ -62,11 +62,29 @@ class ReporterTests(unittest.TestCase):
         report = entry()
         report["observed"] = observed
         report["diagnostics"] = summary_diagnostics([shard])
+        report["attempt_history"] = [copy.deepcopy(report)]
         compact = ci_report.compact_entry(report, set())
-        self.assertEqual(receipt, compact["observed"][0]["first_failure"])
-        self.assertEqual(receipt, compact["diagnostics"]["failures"][0]["first_failure"])
-        self.assertIn("query-element", render_entry(compact))
-        self.assertIn("wait=5.1s", render_entry(compact))
+        self.assertNotIn('"first_failure": {', json.dumps(compact))
+        self.assertEqual(receipt, report["observed"][0]["first_failure"])
+        rendered = render_entry(report)
+        self.assertIn("First failure: " + ci_report.text(ci_report.identity_key(case)), rendered)
+        self.assertIn("query-element", rendered)
+        self.assertIn("wait=5.1s", rendered)
+        prior_report = copy.deepcopy(report)
+        prior_report["run"]["id"] = 9
+        previous = {"schema_version": 2, "days": {"2026-10-01": daily_rollup("2026-10-01", [prior_report])},
+                    "issue_index": {"old": {"first_failure": "2026-10-01"}}}
+        snapshot = ci_report.merge_snapshot(previous, [report], date(2026, 10, 2))
+        self.assertNotIn('"first_failure": {', json.dumps(snapshot))
+        self.assertEqual("2026-10-01", snapshot["issue_index"]["old"]["first_failure"])
+        foreign = copy.deepcopy(receipt)
+        foreign["source"] = "validator"
+        foreign["screenshot"]["status"] = "validated-input"
+        phase["official_methods"][0]["first_failure"] = foreign
+        observed, missing = ci_report.method_observations(shard, {"warm": [phase]})
+        self.assertEqual([], missing)
+        self.assertEqual("failed", observed[0]["outcome"])
+        self.assertNotIn("first_failure", observed[0])
         phase["official_methods"][0]["first_failure"] = {**receipt, "element": "private-id"}
         observed, missing = ci_report.method_observations(shard, {"warm": [phase]})
         self.assertEqual([], missing)
@@ -603,6 +621,17 @@ class ReporterTests(unittest.TestCase):
                  "official_summary": {"totalTestCount": 1, "passedTests": 1, "failedTests": 0, "skippedTests": 0}}
         historical, _ = ci_report.method_observations(shard, {"warm": [phase]})
         self.assertTrue(all("validator_failure_message" not in item for item in historical))
+        invalid_phase_receipt = first_failure_receipt()
+        invalid_phase_receipt.update(source="validator", element="private-id")
+        invalid_phase_receipt["screenshot"]["status"] = "validated-input"
+        for supplied in (first_failure_receipt(), invalid_phase_receipt):
+            warm = {**phase, "first_failure": supplied}
+            observed, missing = ci_report.method_observations(shard, {"warm": [warm]})
+            failed = next(item for item in observed if item["identity"] == case)
+            self.assertEqual([], missing)
+            self.assertEqual(("failed", 2), (failed["outcome"], failed["attempts"][0]["exit_code"]))
+            self.assertNotIn("first_failure", failed)
+            self.assertNotIn("private-id", json.dumps(observed))
         overlong = ("no public glyph; screenshot person-normal.png" + "; context unresolved" * 16
                     + "; slot 1 (horizontal)" * 7).replace("slot 1 (", "slot 10 (", 1)
         cases = ((message, message), (None, "unresolved"),

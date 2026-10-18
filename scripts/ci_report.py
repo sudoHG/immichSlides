@@ -475,7 +475,8 @@ def render_entry(entry):
                  f"{text(item['validator_failure_message']) if 'validator_failure_message' in item else '—'} |"
                  for item in diagnostics["failures"][:50])
     from ci_failure_diagnostics import FIRST_FAILURE_FIELD, render_first_failure
-    lines.extend("First failure: " + text(render_first_failure(item[FIRST_FAILURE_FIELD])) + "."
+    lines.extend("\nFirst failure: " + text(identity_key(item["identity"])) + ": "
+                 + text(render_first_failure(item[FIRST_FAILURE_FIELD])) + "."
                  for item in diagnostics["failures"][:50] if FIRST_FAILURE_FIELD in item)
     lines.extend(f"Missing evidence: {text(identity_key(item['identity']))}: {item['reason']}."
                  for item in diagnostics["missing"][:50])
@@ -1178,6 +1179,16 @@ def synchronize_issues(api, entries, registry, *, label=LABEL, errors=None, inve
     return receipts, {number: issue["state"] for number, issue in by_number.items()}
 
 
+def without_first_failure_receipts(value):
+    # Per-night shard/trace artifacts retain receipts; the 89-day snapshot retains none.
+    if isinstance(value, dict):
+        return {key: without_first_failure_receipts(item) for key, item in value.items()
+                if key != "first_failure" or not isinstance(item, dict)}
+    if isinstance(value, list):
+        return [without_first_failure_receipts(item) for item in value]
+    return value
+
+
 def compact_entry(entry, tracked):
     tracked = tracked | {identity_token(item["identity"]) for attempt in entry.get("attempt_history", [entry])
                          for item in attempt["observed"] if item["outcome"] in FAILURES}
@@ -1196,12 +1207,12 @@ def compact_entry(entry, tracked):
         result["evaluation"] = {key: entry["evaluation"][key] for key in ("state", "description") if key in entry["evaluation"]}
     if "attempt_history" in entry:
         result["attempt_history"] = [compact_entry(value, tracked) for value in entry["attempt_history"]]
-    return result
+    return without_first_failure_receipts(result)
 
 
 def merge_snapshot(previous, entries, now):
     from ci_health import first_execution_metrics
-    snapshot = copy.deepcopy(previous) if previous else {"schema_version": 2, "days": {}, "issue_index": {}}
+    snapshot = without_first_failure_receipts(previous) if previous else {"schema_version": 2, "days": {}, "issue_index": {}}
     require(snapshot["schema_version"] == 2 and isinstance(snapshot["days"], dict), "invalid prior snapshot")
     cutoff = (now - timedelta(days=89)).isoformat()
     snapshot["days"] = {day: value for day, value in snapshot["days"].items() if iso_day(day) >= cutoff}
@@ -1216,7 +1227,7 @@ def merge_snapshot(previous, entries, now):
             continue
         if old and old.get("identity") and entry.get("identity"):
             require(old["identity"] == entry["identity"], "saved producer identity changed")
-        replacement = copy.deepcopy(entry)
+        replacement = without_first_failure_receipts(entry)
         first = first_execution_metrics(old)
         if first["first_attempt_failures"] is not None:
             replacement["first_execution_health"] = first
