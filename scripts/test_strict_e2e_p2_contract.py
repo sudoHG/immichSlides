@@ -220,7 +220,10 @@ class ReviewPackageTests(unittest.TestCase):
                 exif = Image.Exif()
                 exif[0x010E] = "private-metadata"
                 original.save(metadata_image, format="PNG", exif=exif)
-            for payload in (b"not-an-image", png + b"trailing-data", metadata_image.getvalue()):
+            profile_image = io.BytesIO()
+            with Image.open(io.BytesIO(png)) as original:
+                original.save(profile_image, format="PNG", icc_profile=b"private-profile")
+            for payload in (b"not-an-image", png + b"trailing-data", metadata_image.getvalue(), profile_image.getvalue()):
                 changed = copy.deepcopy(manifest)
                 changed["first_failure"]["screenshot"]["bytes"] = len(payload)
                 changed["image_sha256"] = hashlib.sha256(payload).hexdigest()
