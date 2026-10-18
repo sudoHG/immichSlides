@@ -460,7 +460,9 @@ extension AccessLifecycleTVOSUITests {
                 )
             }
         }
-        try writePNG(app: app, name: "after-auto-advance")
+        if let lastFrame = capturedFrames.last {
+            try persistTVOSCapturedPNG(lastFrame.png, name: "after-auto-advance")
+        }
         try AccessLifecycleContract.assertSamplesStayOnSceneBeforeAdvanceWindow(
             continueMark: continueMark,
             samples: samples,

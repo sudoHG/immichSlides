@@ -614,6 +614,7 @@ extension FilterSummaryTVOSVisualUITests {
         let initialPlayPauseValue = (playPauseButton.value as? String) ?? ""
         XCTAssertFalse(initialPlayPauseValue.isEmpty, "The Play/Pause button should expose its current state value")
         XCTAssertEqual(initialPlayPauseValue, "play", "The initial history boundary must stay paused during discovery")
+        let firstPlayPauseSelectAt = Date()
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
             waitUntil(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.stateChangeDeadlineSeconds) {
@@ -622,12 +623,11 @@ extension FilterSummaryTVOSVisualUITests {
             "Pressing Select on the Play/Pause button should toggle the current playback state"
         )
         // Exercise both Select actions and restore pause before comparing retained scenes.
-        refreshTVOSSlideshowControlBarFocus(
-            app: app, on: playPauseButton, direction: .left,
-            failureMessage:
-                "Previous is disabled at the initial history boundary, so moving right should focus Play/Pause"
-        )
+        let secondPlayPauseSelectAt = Date()
         XCUIRemote.shared.press(.select)
+        print(
+            "TVOS_PLAY_PAUSE_SELECT_INTERVAL_SECONDS=\(secondPlayPauseSelectAt.timeIntervalSince(firstPlayPauseSelectAt))"
+        )
         XCTAssertTrue(
             waitUntil(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.stateChangeDeadlineSeconds) {
                 ((playPauseButton.value as? String) ?? "") == initialPlayPauseValue
@@ -833,10 +833,31 @@ extension FilterSummaryTVOSVisualUITests {
     ) {
         ensureTVOSSlideshowControlBarVisible(app: app)
         // A hidden-bar wake starts on Play/Pause; restore the step's target before continuing its route.
+        let targetIdentifier = button.identifier
+        let controlIdentifiers = ["settings", "previous", "playPause", "next"].map {
+            "slideshow.control.\($0).button"
+        }
         let maximumFocusPresses = 4
         for _ in 0..<maximumFocusPresses {
-            if button.hasFocus { break }
+            let snapshots = app.evidenceSnapshotsByIdentifier()
+            if snapshots[targetIdentifier]?.hasFocus == true { break }
+            guard let focusedIdentifier = controlIdentifiers.first(where: { snapshots[$0]?.hasFocus == true }) else {
+                break
+            }
             XCUIRemote.shared.press(direction)
+            let movementTimeout = FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeDeadlineSeconds
+            let movementDeadline = Date().addingTimeInterval(movementTimeout)
+            guard
+                waitUntil(
+                    timeout: movementTimeout,
+                    condition: {
+                        let observation = app.evidenceSnapshotsByIdentifier()
+                        return Date() < movementDeadline
+                            && controlIdentifiers.contains {
+                                $0 != focusedIdentifier && observation[$0]?.hasFocus == true
+                            }
+                    })
+            else { break }
         }
         waitForButtonToGainFocus(
             button,
