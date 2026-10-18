@@ -26,7 +26,6 @@ extension XCUIApplication {
 
 #if os(tvOS)
 extension XCUIApplication {
-    @MainActor
     func refreshTVOSSlideshowControlBar(timeout: TimeInterval) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
