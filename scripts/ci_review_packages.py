@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import os
 import shutil
@@ -253,6 +254,57 @@ def read_package(directory):
     return manifest
 
 
+def read_failure_package(directory, summary):
+    """Read diagnostic media separately from a completed P2 review; it grants no verdict."""
+    from ci_failure_diagnostics import FIRST_FAILURE_MAX_IMAGE_BYTES, FIRST_FAILURE_MAX_IMAGE_SIDE
+    from PIL import Image
+    summary = parse_summary(summary)
+    require(directory.is_dir() and not directory.is_symlink(), "invalid first failure package directory")
+    require({path.name for path in directory.iterdir()} == {"first-failure.json", "first-failure.png"},
+            "unexpected first failure package content")
+    manifest_path, image_path = (directory / name for name in ("first-failure.json", "first-failure.png"))
+    for path in (manifest_path, image_path):
+        require(path.is_file() and not path.is_symlink(), "nonregular first failure package input")
+    require(manifest_path.stat().st_size <= 32768, "first failure package manifest exceeds bound")
+    require(0 < image_path.stat().st_size <= FIRST_FAILURE_MAX_IMAGE_BYTES, "first failure package image exceeds bound")
+    manifest = decode(manifest_path.read_text())
+    fields(manifest, {"schema_version", "source_identity", "run", "identity", "attempt", "fixture_sha256",
+                      "first_failure", "image_sha256"}, "first failure package")
+    require(type(manifest["schema_version"]) is int and manifest["schema_version"] == 1, "unsupported first failure package")
+    require(manifest["source_identity"] == summary["identity"] and manifest["run"] == summary["run"],
+            "first failure package provenance differs")
+    validate_test_identity(manifest["identity"])
+    identity = manifest["identity"]
+    fixture = identity["dimensions"].get("fixture")
+    require(identity["kind"] == "strict" and fixture in FROZEN_FIXTURE_SHA256
+            and manifest["fixture_sha256"] == FROZEN_FIXTURE_SHA256[fixture], "first failure package fixture differs")
+    entries = [entry for entry in summary["population"]["observed"] if entry["identity"] == identity]
+    require(len(entries) == 1, "first failure package identity differs")
+    number = manifest["attempt"]
+    require(type(number) is int and 1 <= number <= len(entries[0]["attempts"]), "first failure package attempt differs")
+    attempt = entries[0]["attempts"][number - 1]
+    require(attempt.get("first_failure") == manifest["first_failure"], "first failure package receipt differs")
+    receipt = manifest["first_failure"]
+    require(receipt["screenshot"]["status"] in {"captured", "validated-input"}, "first failure package has no retained image")
+    data = image_path.read_bytes()
+    require(hashlib.sha256(data).hexdigest() == manifest["image_sha256"]
+            and len(data) == receipt["screenshot"]["bytes"], "first failure package image differs")
+    try:
+        with Image.open(image_path) as image:
+            require(image.format == "PNG" and not image.info and image.n_frames == 1,
+                    "first failure package image contains unsupported data")
+            require(image.size == (receipt["screenshot"]["width"], receipt["screenshot"]["height"])
+                    and max(image.size) <= FIRST_FAILURE_MAX_IMAGE_SIDE, "first failure package image dimensions differ")
+            image.load()
+            canonical = io.BytesIO()
+            image.save(canonical, format="PNG")
+            require(canonical.getvalue() == data, "first failure package image contains unsupported data")
+    except (OSError, Image.DecompressionBombError):
+        raise ValueError("first failure package image cannot be decoded") from None
+    scan(directory)
+    return manifest
+
+
 def record_path(record):
     validate_key(record["context"], record["case"])
     case = record["case"]
@@ -403,6 +455,9 @@ def main(argv=None):
     validate = commands.add_parser("validate-record")
     validate.add_argument("--record", type=Path, required=True)
     validate.add_argument("--package", type=Path)
+    failure = commands.add_parser("read-failure")
+    failure.add_argument("--package", type=Path, required=True)
+    failure.add_argument("--summary", type=Path, required=True)
     read = commands.add_parser("read")
     read.add_argument("--records-dir", type=Path, default=ROOT / "review-records")
     read.add_argument("--sha", required=True)
@@ -412,6 +467,10 @@ def main(argv=None):
     read.add_argument("--bindings", type=Path, help="Retained shard bindings or nightly.json")
     args = parser.parse_args(argv)
     try:
+        if args.command == "read-failure":
+            read_failure_package(args.package, args.summary.read_text())
+            print("Public first-failure diagnostic read; original verdict unchanged.")
+            return 0
         if args.command == "export-case":
             from run_host_checks import run_identity, source_metadata
             identity = run_identity(os.environ, ci=os.environ.get("GITHUB_ACTIONS") == "true")

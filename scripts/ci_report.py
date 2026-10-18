@@ -166,9 +166,9 @@ def method_observations(raw, trace):
         require(isinstance(methods, list), "invalid official method list")
         seen, counts = set(), Counter()
         for method in methods:
-            from ci_failure_diagnostics import DIAGNOSTIC_FIELDS, validate_diagnostic_fields
-            validate_diagnostic_fields(method)
-            require(set(method) == {"identifier", "result"} | (DIAGNOSTIC_FIELDS & method.keys()) and method["identifier"] in wanted
+            from ci_failure_diagnostics import DIAGNOSTIC_FIELDS, FIRST_FAILURE_FIELD, validate_diagnostic_fields
+            validate_diagnostic_fields({key: value for key, value in method.items() if key != FIRST_FAILURE_FIELD})
+            require(set(method) == {"identifier", "result"} | ((DIAGNOSTIC_FIELDS | {FIRST_FAILURE_FIELD}) & method.keys()) and method["identifier"] in wanted
                     and method["identifier"] not in seen and method["result"] in {"Passed", "Failed", "Skipped"},
                     "unexpected or duplicate official method")
             seen.add(method["identifier"])
@@ -192,9 +192,14 @@ def method_observations(raw, trace):
             from ci_failure_diagnostics import unknown_diagnostics
             diagnostics = ({field: method[field] for field in DIAGNOSTIC_FIELDS}
                            if DIAGNOSTIC_FIELDS <= method.keys() else unknown_diagnostics())
-            observed.append(observation(wanted[method["identifier"]], outcome, 0,
+            result = observation(wanted[method["identifier"]], outcome, 0,
                 exit_code=phase.get("exit_code"), reason="Official test was skipped" if outcome == "skipped" else None,
-                failure_diagnostics=diagnostics if outcome == "failed" else None))
+                failure_diagnostics=diagnostics if outcome == "failed" else None)
+            from ci_failure_diagnostics import public_first_failure
+            receipt = public_first_failure(method.get(FIRST_FAILURE_FIELD)) if outcome == "failed" else None
+            if receipt is not None and receipt["source"] == "xctest":
+                result[FIRST_FAILURE_FIELD] = result["attempts"][0][FIRST_FAILURE_FIELD] = copy.deepcopy(receipt)
+            observed.append(result)
         missing.extend({"identity": wanted[key], "reason": "official-method-not-observed"} for key in sorted(wanted.keys() - seen))
         case_outcome = outcomes.get(identity_key(case))
         if case_outcome in FAILURES and not counts["Failed"]:
@@ -209,6 +214,10 @@ def method_observations(raw, trace):
                 if case_outcome == "failed" and VALIDATOR_FAILURE_FIELD in phase:
                     message = public_validator_failure_message(phase[VALIDATOR_FAILURE_FIELD])
                     failure[VALIDATOR_FAILURE_FIELD] = failure["attempts"][0][VALIDATOR_FAILURE_FIELD] = message
+                from ci_failure_diagnostics import FIRST_FAILURE_FIELD, public_first_failure
+                receipt = public_first_failure(phase.get(FIRST_FAILURE_FIELD))
+                if receipt is not None and receipt["source"] == "validator":
+                    failure[FIRST_FAILURE_FIELD] = failure["attempts"][0][FIRST_FAILURE_FIELD] = copy.deepcopy(receipt)
                 observed.append(failure)
             else:
                 missing.append({"identity": case, "reason": "strict-case-infrastructure-or-unverified-failure"})
@@ -441,11 +450,13 @@ def text(value):
 
 
 def failure_details(item):
-    from ci_failure_diagnostics import VALIDATOR_FAILURE_FIELD
+    from ci_failure_diagnostics import FIRST_FAILURE_FIELD, VALIDATOR_FAILURE_FIELD
     details = {"identity": item["identity"], "outcome": item["outcome"],
                "exit_codes": [attempt["exit_code"] for attempt in item["attempts"]]}
     if VALIDATOR_FAILURE_FIELD in item:
         details[VALIDATOR_FAILURE_FIELD] = item[VALIDATOR_FAILURE_FIELD]
+    if FIRST_FAILURE_FIELD in item:
+        details[FIRST_FAILURE_FIELD] = copy.deepcopy(item[FIRST_FAILURE_FIELD])
     return details
 
 
@@ -465,6 +476,10 @@ def render_entry(entry):
     lines.extend(f"| {text(identity_key(item['identity']))} | {item['outcome']} | {text(item['exit_codes'])} | "
                  f"{text(item['validator_failure_message']) if 'validator_failure_message' in item else '—'} |"
                  for item in diagnostics["failures"][:50])
+    from ci_failure_diagnostics import FIRST_FAILURE_FIELD, render_first_failure
+    lines.extend("\nFirst failure: " + text(identity_key(item["identity"])) + ": "
+                 + text(render_first_failure(item[FIRST_FAILURE_FIELD])) + "."
+                 for item in diagnostics["failures"][:50] if FIRST_FAILURE_FIELD in item)
     lines.extend(f"Missing evidence: {text(identity_key(item['identity']))}: {item['reason']}."
                  for item in diagnostics["missing"][:50])
     lines.extend(f"Infrastructure: {text(item)}." for item in diagnostics["infrastructure"])
@@ -1166,6 +1181,16 @@ def synchronize_issues(api, entries, registry, *, label=LABEL, errors=None, inve
     return receipts, {number: issue["state"] for number, issue in by_number.items()}
 
 
+def without_first_failure_receipts(value):
+    # Per-night shard/trace artifacts retain receipts; the 89-day snapshot retains none.
+    if isinstance(value, dict):
+        return {key: without_first_failure_receipts(item) for key, item in value.items()
+                if key != "first_failure" or not isinstance(item, dict)}
+    if isinstance(value, list):
+        return [without_first_failure_receipts(item) for item in value]
+    return value
+
+
 def compact_entry(entry, tracked):
     tracked = tracked | {identity_token(item["identity"]) for attempt in entry.get("attempt_history", [entry])
                          for item in attempt["observed"] if item["outcome"] in FAILURES}
@@ -1184,12 +1209,12 @@ def compact_entry(entry, tracked):
         result["evaluation"] = {key: entry["evaluation"][key] for key in ("state", "description") if key in entry["evaluation"]}
     if "attempt_history" in entry:
         result["attempt_history"] = [compact_entry(value, tracked) for value in entry["attempt_history"]]
-    return result
+    return without_first_failure_receipts(result)
 
 
 def merge_snapshot(previous, entries, now):
     from ci_health import first_execution_metrics
-    snapshot = copy.deepcopy(previous) if previous else {"schema_version": 2, "days": {}, "issue_index": {}}
+    snapshot = without_first_failure_receipts(previous) if previous else {"schema_version": 2, "days": {}, "issue_index": {}}
     require(snapshot["schema_version"] == 2 and isinstance(snapshot["days"], dict), "invalid prior snapshot")
     cutoff = (now - timedelta(days=89)).isoformat()
     snapshot["days"] = {day: value for day, value in snapshot["days"].items() if iso_day(day) >= cutoff}
@@ -1204,7 +1229,7 @@ def merge_snapshot(previous, entries, now):
             continue
         if old and old.get("identity") and entry.get("identity"):
             require(old["identity"] == entry["identity"], "saved producer identity changed")
-        replacement = copy.deepcopy(entry)
+        replacement = without_first_failure_receipts(entry)
         first = first_execution_metrics(old)
         if first["first_attempt_failures"] is not None:
             replacement["first_execution_health"] = first

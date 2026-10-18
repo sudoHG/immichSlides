@@ -1,6 +1,7 @@
 """Fixed public diagnostics; private XCTest messages never leave this mapper."""
 
 import json
+import math
 import re
 
 from ci_summary import BOUNDED_DIAGNOSTICS_FIELD
@@ -18,6 +19,127 @@ DIAGNOSTIC_FIELDS = frozenset({"failure_phase", "failure_class"})
 VALIDATOR_FAILURE_FIELD = "validator_failure_message"
 VALIDATOR_FAILURE_MAX_LENGTH = 512
 VALIDATOR_FAILURE_REDACTED = "[redacted validator failure]"
+FIRST_FAILURE_FIELD = "first_failure"
+FIRST_FAILURE_MAX_BYTES = 8192
+FIRST_FAILURE_MAX_SECONDS = 86400
+FIRST_FAILURE_MAX_IMAGE_BYTES = 1024 * 1024
+FIRST_FAILURE_MAX_IMAGE_SIDE = 1536
+# The only reviewed element table. Fixture runners supply this vocabulary to the test-only recorder.
+FIRST_FAILURE_ELEMENTS = (
+    "unknown", "app-window", "system.reduce-motion", "simulator",
+    "firstboot.serverURL.field", "firstboot.apiKey.field", "firstboot.testConnection.button",
+    "firstboot.saveConfig.button", "mode.random.button", "mode.filtered.button", "mode.continue.button",
+    "slideshow.control.settings.button", "slideshow.control.previous.button", "slideshow.control.playPause.button",
+    "slideshow.control.next.button", "slideshow.hiddenWakeReceiver", "slideshow.currentAssetId.flag",
+    "slideshow.scenePresentation.contract.summary", "slideshow.smartfill.currentManifest.flag",
+    "slideshow.smartfill.manifest.flag", "slideshow.requestLifecycle.summary.flag",
+    "slideshow.historyLedger.summary.flag", "settings.item.playback", "settings.item.cache",
+    "settings.playback.autoPlay.toggle", "settings.playback.interval.slider",
+    "settings.playback.showExif.toggle", "settings.playback.displayMode.picker",
+    "settings.playback.displayMode.singlePhoto.option", "settings.playback.displayMode.smartFill.option",
+    "settings.cache.clearDisk.button", "BackButton",
+)
+FIRST_FAILURE_STEPS = ("unknown", "launch-app", "reveal-controls", "query-element", "select", "capture-frame",
+    "settings-readback", "focus", "history-readback", "rotate", "wait-scene", "simulator-boot",
+    "simulator-bootstatus", "simulator-readiness")
+FIRST_FAILURE_ACTIONS = ("unknown", "none", "tap", "select", "up", "down", "left", "right", "back", "home",
+    "play-pause", "rotate", "launch", "activate", "terminate", "type", "adjust")
+FIRST_FAILURE_TIMING_FIELDS = ("since_action_issued_seconds", "since_action_returned_seconds", "action_duration_seconds",
+    "wait_elapsed_seconds", "deadline_seconds", "capture_request_seconds", "capture_return_seconds", "state_age_seconds")
+
+
+def validate_first_failure(receipt):
+    """Validate a fixed public projection, never a raw assertion, AX tree or probe."""
+    from ci_summary import require
+    def exact(value, keys, where):
+        require(isinstance(value, dict) and set(value) == set(keys), where + ": invalid fields")
+    def choice(value, choices, where):
+        require(isinstance(value, str) and value in choices, "first failure: invalid " + where)
+    def number(value, maximum, where, *, minimum=0, integral=False):
+        require(value is None or (type(value) in ((int,) if integral else (int, float))
+                and minimum <= value <= maximum and math.isfinite(value)), where + ": invalid number")
+    exact(receipt, {"schema_version", "source", "step", "element", "action", "timing", "state", "validator", "screenshot"},
+          "first failure")
+    require(type(receipt["schema_version"]) is int and receipt["schema_version"] == 1, "first failure: unsupported version")
+    choice(receipt["source"], ("xctest", "validator", "preparation"), "source")
+    choice(receipt["step"], FIRST_FAILURE_STEPS, "step")
+    choice(receipt["element"], FIRST_FAILURE_ELEMENTS, "element")
+    choice(receipt["action"], FIRST_FAILURE_ACTIONS, "action")
+    timing = receipt["timing"]
+    exact(timing, FIRST_FAILURE_TIMING_FIELDS, "first failure timing")
+    for value in timing.values():
+        number(value, FIRST_FAILURE_MAX_SECONDS, "first failure timing")
+    start, end = (timing[key] for key in ("capture_request_seconds", "capture_return_seconds"))
+    require(end is None or start is not None and end >= start, "first failure: capture times out of order")
+    issued, returned = (timing[key] for key in ("since_action_issued_seconds", "since_action_returned_seconds"))
+    require(returned is None or issued is not None and issued >= returned, "first failure: action times out of order")
+    state = receipt["state"]
+    exact(state, {"app", "surface", "observation", "control_bar", "focus", "history_count", "autoplay",
+                  "orientation", "scene_status", "query_error_code"}, "first failure state")
+    for key, choices, label in (
+            ("app", ("unknown", "not-running", "background", "running-foreground"), "app state"),
+            ("surface", ("unknown", "playback", "cache", "playback-settings", "mode", "firstboot", "system-settings"), "surface"),
+            ("observation", ("unavailable", "cached", "failure-snapshot"), "state observation"),
+            ("control_bar", ("visible", "hidden", "unknown"), "control bar"),
+            ("focus", FIRST_FAILURE_ELEMENTS, "focus"),
+            ("autoplay", ("on", "off", "unknown"), "autoplay"),
+            ("orientation", ("portrait", "landscape", "not_applicable", "unknown"), "orientation"),
+            ("scene_status", ("MATCH", "TRANSITION", "BLACK", "BLANK", "UNRECOGNIZABLE", "unknown"), "scene status")):
+        choice(state[key], choices, label)
+    number(state["history_count"], 2**31 - 1, "first failure state", integral=True)
+    number(state["query_error_code"], 2**31 - 1, "first failure state", minimum=-(2**31), integral=True)
+    validator = receipt["validator"]
+    if validator is not None:
+        exact(validator, {"kind", "slot", "axis"}, "first failure validator")
+        choice(validator["kind"], ("unknown", "public-scene", "glyph", "fixture-pattern", "timing", "missing-evidence"), "validator kind")
+        number(validator["slot"], 64, "first failure validator", minimum=1, integral=True)
+        choice(validator["axis"], ("horizontal", "vertical", "both", "unknown"), "validator axis")
+        require(receipt["source"] == "validator", "first failure: validator context requires validator source")
+    screenshot = receipt["screenshot"]
+    exact(screenshot, {"status", "width", "height", "bytes"}, "first failure screenshot")
+    choice(screenshot["status"], ("captured", "validated-input", "unavailable", "withheld-privacy", "size-limit", "not-applicable"),
+           "screenshot status")
+    for key in ("width", "height"):
+        number(screenshot[key], FIRST_FAILURE_MAX_IMAGE_SIDE, "first failure screenshot", minimum=1, integral=True)
+    number(screenshot["bytes"], FIRST_FAILURE_MAX_IMAGE_BYTES, "first failure screenshot", minimum=1, integral=True)
+    retained = screenshot["status"] in ("captured", "validated-input")
+    require(all(screenshot[key] is not None if retained else screenshot[key] is None for key in ("width", "height", "bytes")),
+            "first failure: screenshot measurements do not match status")
+    if screenshot["status"] == "captured":
+        require(receipt["source"] == "xctest" and state["app"] == "running-foreground"
+                and state["surface"] in ("playback", "cache", "playback-settings", "mode")
+                and not receipt["element"].startswith("firstboot.") and not state["focus"].startswith("firstboot."),
+                "first failure: screenshot is not an allowed app window")
+    if screenshot["status"] == "validated-input":
+        require(receipt["source"] == "validator", "first failure: validated input requires validator source")
+    if receipt["source"] == "validator":
+        require(state["observation"] != "failure-snapshot", "first failure: validator cannot claim a failure snapshot")
+    if receipt["source"] == "preparation":
+        require(screenshot["status"] == "not-applicable" and state["app"] == "unknown"
+                and state["observation"] == "unavailable" and state["history_count"] is None
+                and all(state[key] == "unknown" for key in ("surface", "control_bar", "focus", "autoplay", "orientation", "scene_status")),
+                "first failure: preparation cannot claim app evidence")
+    require(len(json.dumps(receipt, ensure_ascii=True, allow_nan=False).encode()) <= FIRST_FAILURE_MAX_BYTES,
+            "first failure: receipt exceeds size bound")
+
+
+def render_first_failure(receipt):
+    validate_first_failure(receipt)
+    timing = receipt["timing"]
+    def measured(key):
+        value = timing[key]
+        return "unavailable" if value is None else f"{value:g}s"
+    return (f"{receipt['source']}/{receipt['step']}; {receipt['element']}; "
+            f"since action={measured('since_action_issued_seconds')}; wait={measured('wait_elapsed_seconds')}; "
+            f"deadline={measured('deadline_seconds')}; screenshot={receipt['screenshot']['status']}")
+
+
+def public_first_failure(receipt):
+    try:
+        validate_first_failure(receipt)
+    except (ValueError, TypeError, OverflowError):
+        return None
+    return receipt
 
 # Fixed raise arguments and _require_named_png messages from the reviewed public contracts.
 # Source synchronization guards keep these literal and closed-set copies current
@@ -428,6 +550,8 @@ def test_node_diagnostics(payload):
 def validate_diagnostic_fields(value):
     """Reject free text, unpaired fields and non-string values, without echoing them."""
     if isinstance(value, dict):
+        if FIRST_FAILURE_FIELD in value:
+            validate_first_failure(value[FIRST_FAILURE_FIELD])
         if BOUNDED_DIAGNOSTICS_FIELD in value:
             from ci_bounded_diagnostics import validate_receipt
             validate_receipt(value[BOUNDED_DIAGNOSTICS_FIELD])
@@ -447,11 +571,12 @@ def validate_diagnostic_fields(value):
 
 
 def scan_diagnostic_json(data):
-    diagnostic_fields = DIAGNOSTIC_FIELDS | {VALIDATOR_FAILURE_FIELD, BOUNDED_DIAGNOSTICS_FIELD}
+    diagnostic_fields = DIAGNOSTIC_FIELDS | {VALIDATOR_FAILURE_FIELD, BOUNDED_DIAGNOSTICS_FIELD, FIRST_FAILURE_FIELD}
     bounded_seen = False
+    first_failure_seen = False
     duplicate_seen = False
     def object_pairs(pairs):
-        nonlocal bounded_seen, duplicate_seen
+        nonlocal bounded_seen, first_failure_seen, duplicate_seen
         value = {}
         for key, child in pairs:
             if key in diagnostic_fields and key in value:
@@ -459,14 +584,17 @@ def scan_diagnostic_json(data):
             duplicate_seen |= key in value
             value[key] = child
         bounded_seen |= BOUNDED_DIAGNOSTICS_FIELD in value
+        first_failure_seen |= FIRST_FAILURE_FIELD in value
         validate_diagnostic_fields(value)
         return value
     try:
         json.loads(data, object_pairs_hook=object_pairs)
         if bounded_seen and duplicate_seen:
             raise ValueError("duplicate bounded diagnostic JSON key")
+        if first_failure_seen and duplicate_seen:
+            raise ValueError("duplicate first failure JSON key")
     except (json.JSONDecodeError, UnicodeDecodeError):
         ascii_keys = re.sub(rb"\\u00([0-9a-fA-F]{2})", lambda match: bytes([int(match[1], 16)]), data)
-        if ('"' + BOUNDED_DIAGNOSTICS_FIELD + '"').encode() in ascii_keys or any(
+        if any(('"' + field + '"').encode() in ascii_keys for field in (BOUNDED_DIAGNOSTICS_FIELD, FIRST_FAILURE_FIELD)) or any(
                 ('"' + field + '"').encode() in data for field in DIAGNOSTIC_FIELDS | {VALIDATOR_FAILURE_FIELD}):
             raise ValueError("invalid failure diagnostic JSON")

@@ -103,7 +103,233 @@ def bounded_diagnostics_receipt():
              "official_exports": None}]}
 
 
+def first_failure_receipt():
+    return {"schema_version": 1, "source": "xctest", "step": "query-element",
+        "element": "slideshow.control.playPause.button", "action": "select",
+        "timing": {"since_action_issued_seconds": 8.28, "since_action_returned_seconds": 8.1,
+            "action_duration_seconds": 0.18, "wait_elapsed_seconds": 5.1, "deadline_seconds": 5,
+            "capture_request_seconds": 0.01, "capture_return_seconds": 0.3, "state_age_seconds": 0.1},
+        "state": {"app": "running-foreground", "surface": "playback", "observation": "cached",
+            "control_bar": "hidden", "focus": "slideshow.hiddenWakeReceiver", "history_count": 3,
+            "autoplay": "on", "orientation": "landscape", "scene_status": "MATCH", "query_error_code": -25202},
+        "validator": None, "screenshot": {"status": "captured", "width": 1536, "height": 864, "bytes": 1000}}
+
+
 class SummaryContractTests(unittest.TestCase):
+    def test_first_failure_lines_follow_all_summary_table_rows(self):
+        summary = archive_download_summary()
+        summary.pop("archive_download")
+        first = summary["population"]["declared"][0]
+        second = {**first, "key": first["key"] + "Second"}
+        deselected = {**first, "key": first["key"] + "Elsewhere"}
+        summary["population"].update(declared=[first, second, deselected], compiled=[first, second],
+            deselected=[{"identity": deselected, "reason": "Owned elsewhere", "owning_tier": "strict"}],
+            observed=[ci_summary.observation(identity, "failed", 1, exit_code=65) for identity in (first, second)])
+        summary["status"] = "failed"
+        row = summary["population"]["observed"][0]
+        row["first_failure"] = row["attempts"][0]["first_failure"] = first_failure_receipt()
+        rendered = ci_summary.render_markdown(summary)
+        table_end = rendered.index("| " + deselected["key"] + " |")
+        self.assertGreater(rendered.index("First failure:"), table_end)
+        self.assertIn("First failure: " + first["key"], rendered)
+
+    def test_first_failure_survives_summary_aggregation_and_flaky_first_attempt(self):
+        summary = archive_download_summary()
+        summary.pop("archive_download")
+        identity = summary["population"]["declared"][0]
+        failed = ci_summary.observation(identity, "failed", 1, exit_code=65)
+        failed["first_failure"] = failed["attempts"][0]["first_failure"] = first_failure_receipt()
+        summary["population"]["observed"] = [failed]
+        summary["status"] = "failed"
+        with tempfile.TemporaryDirectory() as directory:
+            ci_summary.write_summary(summary, Path(directory))
+            read = ci_summary.parse_summary((Path(directory) / "summary.json").read_text())
+        self.assertEqual(read["population"]["observed"], [failed])
+        self.assertIn("query-element", ci_summary.render_markdown(read))
+        from ci_flaky import merge_retry
+        second = ci_summary.observation(identity, "failed", 2, exit_code=65)
+        later_receipt = first_failure_receipt()
+        later_receipt["step"] = "capture-frame"
+        second["first_failure"] = second["attempts"][0]["first_failure"] = later_receipt
+        merged = merge_retry(failed, second)
+        self.assertEqual("failed", merged["outcome"])
+        self.assertEqual(failed["first_failure"], merged["first_failure"])
+        self.assertEqual(later_receipt, merged["attempts"][1]["first_failure"])
+        changed = copy.deepcopy(merged)
+        changed["first_failure"] = later_receipt
+        with self.assertRaisesRegex(ci_summary.ContractError, "^first failure must match the first failing attempt$"):
+            ci_summary.validate_observation(changed)
+        # Existing retry semantics retain the first receipt, without attaching it to the passing attempt.
+        failed.update(outcome="flaky-passed", duration_seconds=2)
+        failed["attempts"].append({**ci_summary.observation(identity, "passed", 1)["attempts"][0], "number": 2})
+        summary["status"] = "passed"
+        self.assertEqual(ci_summary.parse_summary(json.dumps(summary)), summary)
+        failed["first_failure"]["timing"]["deadline_seconds"] = 6
+        with self.assertRaisesRegex(ci_summary.ContractError, "^first failure must match the first failing attempt$"):
+            # Break aliasing to change only the observation receipt.
+            changed = copy.deepcopy(summary)
+            changed["population"]["observed"][0]["attempts"][0]["first_failure"] = first_failure_receipt()
+            ci_summary.parse_summary(json.dumps(changed))
+
+    def test_first_failure_rejects_one_private_unbounded_or_misbound_field(self):
+        summary = archive_download_summary()
+        summary.pop("archive_download")
+        identity = summary["population"]["declared"][0]
+        item = ci_summary.observation(identity, "failed", 1, exit_code=65)
+        item["first_failure"] = item["attempts"][0]["first_failure"] = first_failure_receipt()
+        summary["population"]["observed"] = [item]
+        summary["status"] = "failed"
+        cases = [
+            (("raw_assertion",), "private", "first failure: invalid fields"),
+            (("schema_version",), True, "first failure: unsupported version"),
+            (("source",), "private-server", "first failure: invalid source"),
+            (("step",), "raw assertion", "first failure: invalid step"),
+            (("element",), "album.private-id", "first failure: invalid element"),
+            (("action",), "https://private.invalid", "first failure: invalid action"),
+            (("timing", "deadline_seconds"), True, "first failure timing: invalid number"),
+            (("timing", "wait_elapsed_seconds"), float("inf"), "first failure timing: invalid number"),
+            (("timing", "deadline_seconds"), 86401, "first failure timing: invalid number"),
+            (("timing", "state_age_seconds"), -1, "first failure timing: invalid number"),
+            (("timing",), {}, "first failure timing: invalid fields"),
+            (("timing", "capture_return_seconds"), 0, "first failure: capture times out of order"),
+            (("timing", "since_action_returned_seconds"), 9, "first failure: action times out of order"),
+            (("state", "app"), "private", "first failure: invalid app state"),
+            (("state", "surface"), "private", "first failure: invalid surface"),
+            (("state", "observation"), "private", "first failure: invalid state observation"),
+            (("state", "control_bar"), True, "first failure: invalid control bar"),
+            (("state", "focus"), "private-focus", "first failure: invalid focus"),
+            (("state", "history_count"), 2**31, "first failure state: invalid number"),
+            (("state", "history_count"), 3.5, "first failure state: invalid number"),
+            (("state", "autoplay"), True, "first failure: invalid autoplay"),
+            (("state", "orientation"), "private", "first failure: invalid orientation"),
+            (("state", "scene_status"), "asset-private", "first failure: invalid scene status"),
+            (("state", "query_error_code"), -(2**31)-1, "first failure state: invalid number"),
+            (("state", "raw_probe"), "layerIDs=private", "first failure state: invalid fields"),
+            (("screenshot", "width"), 1537, "first failure screenshot: invalid number"),
+            (("screenshot", "status"), "private", "first failure: invalid screenshot status"),
+            (("screenshot", "height"), None, "first failure: screenshot measurements do not match status"),
+            (("screenshot", "status"), "validated-input", "first failure: validated input requires validator source"),
+            (("screenshot", "bytes"), 1048577, "first failure screenshot: invalid number"),
+            (("screenshot", "path"), "/tmp/private.png", "first failure screenshot: invalid fields"),
+            (("validator",), {"kind": "raw error", "slot": None, "axis": "unknown"}, "first failure: invalid validator kind"),
+            (("validator",), {"kind": "glyph", "slot": None, "axis": "private"}, "first failure: invalid validator axis"),
+            (("validator",), {"kind": "glyph", "slot": 0, "axis": "unknown"}, "first failure validator: invalid number"),
+            (("validator",), {}, "first failure validator: invalid fields"),
+            (("validator",), {"kind": "glyph", "slot": None, "axis": "unknown"},
+                "first failure: validator context requires validator source"),
+            (("state", "surface"), "firstboot", "first failure: screenshot is not an allowed app window"),
+            (("state", "app"), "background", "first failure: screenshot is not an allowed app window"),
+            (("source",), "validator", "first failure: screenshot is not an allowed app window"),
+            (("element",), "firstboot.serverURL.field", "first failure: screenshot is not an allowed app window"),
+            (("state", "focus"), "firstboot.apiKey.field", "first failure: screenshot is not an allowed app window"),
+        ]
+        self.assertEqual(ci_summary.parse_summary(summary), summary)
+        for path, value, message in cases:
+            changed = copy.deepcopy(summary)
+            # Keep the two receipts equal; each negative changes one receipt field only.
+            for receipt in (changed["population"]["observed"][0]["first_failure"],
+                            changed["population"]["observed"][0]["attempts"][0]["first_failure"]):
+                target = receipt
+                for component in path[:-1]:
+                    target = target[component]
+                target[path[-1]] = value
+            with self.subTest(path=path):
+                with self.assertRaisesRegex(ci_summary.ContractError, "^" + message + "$") as error:
+                    ci_summary.parse_summary(changed)
+                self.assertNotIn("private", str(error.exception))
+        for level in ("observation", "attempt"):
+            changed = copy.deepcopy(summary)
+            target = changed["population"]["observed"][0]
+            if level == "attempt":
+                target = target["attempts"][0]
+            target["outcome"] = "passed"
+            with self.subTest(level=level), self.assertRaisesRegex(ci_summary.ContractError,
+                    "^first failure requires a failing strict or UI " + level + "$"):
+                ci_summary.parse_summary(changed)
+        for kind in ("host", "swift"):
+            changed = copy.deepcopy(summary)
+            changed["population"]["observed"][0]["identity"]["kind"] = kind
+            with self.subTest(kind=kind), self.assertRaisesRegex(ci_summary.ContractError,
+                    "^first failure requires a failing strict or UI observation$"):
+                ci_summary.parse_summary(changed)
+
+    def test_first_failure_supports_unavailable_preparation_validator_and_scoped_ui_records(self):
+        receipt = first_failure_receipt()
+        receipt.update(source="preparation", step="simulator-boot", element="simulator", action="none")
+        receipt["timing"] = dict.fromkeys(receipt["timing"])
+        receipt["timing"].update(wait_elapsed_seconds=60.2, deadline_seconds=60)
+        receipt["state"].update(app="unknown", observation="unavailable", history_count=None,
+            surface="unknown", control_bar="unknown", focus="unknown", autoplay="unknown", orientation="unknown", scene_status="unknown")
+        receipt["screenshot"] = {"status": "not-applicable", "width": None, "height": None, "bytes": None}
+        summary = archive_download_summary()
+        summary.pop("archive_download")
+        identity = summary["population"]["declared"][0]
+        failed = ci_summary.observation(identity, "not-run", 0, exit_code=124)
+        failed["first_failure"] = failed["attempts"][0]["first_failure"] = receipt
+        summary["population"].update(observed=[failed], compiled=[])
+        summary["status"] = "failed"
+        self.assertEqual(ci_summary.parse_summary(json.dumps(summary)), summary)
+        changed = copy.deepcopy(summary)
+        changed["population"]["observed"][0]["attempts"][0]["outcome"] = "failed"
+        with self.assertRaisesRegex(ci_summary.ContractError, "^first failure source must match execution state$"):
+            ci_summary.parse_summary(changed)
+        for section, key, value in (("state", "app", "running-foreground"),
+                ("state", "observation", "cached"), ("state", "history_count", 1),
+                ("state", "surface", "playback"), ("state", "control_bar", "hidden"),
+                ("state", "focus", "slideshow.hiddenWakeReceiver"), ("state", "autoplay", "off"),
+                ("state", "orientation", "landscape"), ("state", "scene_status", "MATCH"),
+                ("screenshot", "status", "unavailable")):
+            changed = copy.deepcopy(summary)
+            row = changed["population"]["observed"][0]
+            for current in (row["first_failure"], row["attempts"][0]["first_failure"]):
+                current[section][key] = value
+            with self.subTest(section=section, key=key), self.assertRaisesRegex(ci_summary.ContractError,
+                    "^first failure: preparation cannot claim app evidence$"):
+                ci_summary.parse_summary(changed)
+        scoped = discovery_summary()
+        receipt = first_failure_receipt()
+        item = scoped["population"]["observed"][0]
+        item["outcome"] = item["attempts"][0]["outcome"] = scoped["status"] = "failed"
+        item["attempts"][0]["exit_code"] = scoped["compiled_evidence"]["first_exit_code"] = 65
+        item["first_failure"] = item["attempts"][0]["first_failure"] = receipt
+        scoped["compiled_evidence"]["official_tests"]["testNodes"][0]["children"][0]["result"] = "Failed"
+        refresh_discovery_hash(scoped)
+        self.assertEqual(ci_summary.parse_summary(json.dumps(scoped)), scoped)
+        receipt.update(source="validator", validator={"kind": "glyph", "slot": 2, "axis": "vertical"})
+        receipt["screenshot"]["status"] = "validated-input"
+        self.assertEqual(ci_summary.parse_summary(json.dumps(scoped)), scoped)
+        receipt["state"]["observation"] = "failure-snapshot"
+        with self.assertRaisesRegex(ci_summary.ContractError, "^first failure: validator cannot claim a failure snapshot$"):
+            ci_summary.parse_summary(scoped)
+
+    def test_first_failure_scanner_checks_nested_duplicate_escaped_and_broken_json(self):
+        from ci_ui_tests import main as ui_main
+        from run_strict_e2e import CommandError, write_sensitive_scan
+        receipt = first_failure_receipt()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "diagnostic.json"
+            path.write_text(json.dumps({"nested": [{"first_failure": receipt}]}))
+            summary = archive_download_summary()
+            summary.pop("archive_download")
+            identity = summary["population"]["declared"][0]
+            failed = ci_summary.observation(identity, "failed", 1, exit_code=65)
+            failed["first_failure"] = failed["attempts"][0]["first_failure"] = receipt
+            summary["population"]["observed"] = [failed]
+            summary["status"] = "failed"
+            ci_summary.write_summary(summary, root)
+            with patch("ci_ui_tests.output"):
+                self.assertEqual(0, ui_main(["check-upload", "--output-dir", str(root)]))
+            self.assertEqual("PASS", json.loads((root / "sensitive-scan.json").read_text())["result"])
+            for raw in ('{"first_failure":' + json.dumps(receipt).replace('"source": "xctest"',
+                        '"source": "private", "source": "xctest"') + '}',
+                        '{"first_failure":', '{"first_\\u0066ailure":',
+                        json.dumps({"first_failure": {**receipt, "element": "private-id"}})):
+                path.write_text(raw)
+                with self.subTest(raw=raw[:40]), self.assertRaisesRegex(CommandError,
+                        "^The evidence redaction scan found API Key values or invalid public failure diagnostics:"):
+                    write_sensitive_scan(root, ["synthetic-secret"])
+
     def test_bounded_diagnostic_scanner_refuses_nested_private_duplicate_and_broken_receipts(self):
         from ci_failure_diagnostics import scan_diagnostic_json
         receipt = bounded_diagnostics_receipt()
