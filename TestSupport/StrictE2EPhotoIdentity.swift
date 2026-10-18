@@ -72,8 +72,9 @@ enum StrictE2EPhotoIdentity {
         ("top_half", (0.0, 0.0, 1.0, 0.50)),
         ("bottom_half", (0.0, 0.50, 1.0, 1.0))
     ]
-    // Mirror Python's public palette axis scan; SmartFill slots need not divide the canvas equally.
+    // Mirror Python's public palette rectangles; SmartFill slots need not divide the canvas equally.
     private static let captureSampleWidthPixels = 480
+    private static let captureEdgeBandRawPixels = 8
     private static let capturePalettes: [String: [[Int]]] = [
         "A1": [[37, 109, 19], [91, 61, 91]],
         "A2": [[74, 170, 38], [128, 122, 110]],
@@ -310,11 +311,11 @@ enum StrictE2EPhotoIdentity {
 
     static func captureIdentity(png: Data) -> Result {
         let full = classify(png: png)
-        let pairedMarks = captureSlotMarks(png: png)
-        if pairedMarks.count >= 2 {
+        let slotMarks = captureSlotMarks(png: png)
+        if slotMarks.count >= 2 {
             return Result(
                 status: .match,
-                mark: pairedMarks.joined(separator: "+"),
+                mark: slotMarks.joined(separator: "+"),
                 scores: full.scores,
                 meanLuma: full.meanLuma,
                 notes: ["photo-slot-axis-match"] + full.notes
@@ -396,79 +397,114 @@ enum StrictE2EPhotoIdentity {
         }
         guard didDraw else { return [] }
         var paletteCache: [Int: String] = [:]
+        var edgeCache: [Int: String] = [:]
+        let edgeWidth = captureEdgeBandRawPixels * width / image.width
+        let edgeHeight = captureEdgeBandRawPixels * height / image.height
         let assignments: [String] = stride(from: 0, to: pixels.count, by: pixelChannelCount).map { offset in
             let key = Int(pixels[offset]) << 16 | Int(pixels[offset + 1]) << 8 | Int(pixels[offset + 2])
-            if let cached = paletteCache[key] { return cached }
-            let matches = capturePalettes.compactMap { mark, palette in
-                palette.contains { reference in
-                    (0..<3).allSatisfy {
-                        abs(Int(pixels[offset + $0]) - reference[$0]) <= extendedPaletteChannelTolerance
-                    }
-                } ? mark : nil
+            var mark = paletteCache[key]
+            if mark == nil {
+                let matches = capturePalettes.compactMap { mark, palette in
+                    palette.contains { reference in
+                        (0..<3).allSatisfy {
+                            abs(Int(pixels[offset + $0]) - reference[$0]) <= extendedPaletteChannelTolerance
+                        }
+                    } ? mark : nil
+                }
+                mark = matches.count == 1 ? matches[0] : ""
+                paletteCache[key] = mark
             }
-            let mark = matches.count == 1 ? matches[0] : ""
-            paletteCache[key] = mark
+            let column = offset / pixelChannelCount % width
+            let row = offset / pixelChannelCount / width
+            if mark == "",
+                column < edgeWidth || column >= width - edgeWidth || row < edgeHeight || row >= height - edgeHeight
+            {
+                if let cached = edgeCache[key] { return cached }
+                let edgeMark = captureEdgeMark((0..<3).map { Double(pixels[offset + $0]) })
+                edgeCache[key] = edgeMark
+                return edgeMark
+            }
+            return mark ?? ""
+        }
+        let markIndices = Dictionary(uniqueKeysWithValues: marks.enumerated().map { ($1, $0) })
+        var rowCounts = marks.map { _ in [Int](repeating: 0, count: height) }
+        var columnCounts = marks.map { _ in [Int](repeating: 0, count: width) }
+        for (index, mark) in assignments.enumerated() {
+            if let markIndex = markIndices[mark] {
+                rowCounts[markIndex][index / width] += 1
+                columnCounts[markIndex][index % width] += 1
+            }
+        }
+        var slots: [(mark: String, rect: CGRect)] = []
+        for (markIndex, mark) in marks.enumerated() {
+            let rows = (0..<height).filter { rowCounts[markIndex][$0] >= minimumChromaticPixelCount }
+            let columns = (0..<width).filter { columnCounts[markIndex][$0] >= minimumChromaticPixelCount }
+            if let top = rows.first, let bottom = rows.last, let left = columns.first, let right = columns.last {
+                slots.append((mark, CGRect(x: left, y: top, width: right - left + 1, height: bottom - top + 1)))
+            }
+        }
+        guard (2...3).contains(slots.count) else { return [] }
+        let canvas = slots.reduce(CGRect.null) { $0.union($1.rect) }
+        guard slots.reduce(CGFloat(0), { $0 + $1.rect.width * $1.rect.height }) == canvas.width * canvas.height,
+            !slots.indices.contains(where: { index in
+                slots.dropFirst(index + 1).contains { slots[index].rect.intersects($0.rect) }
+            }),
+            (0..<(width * height)).allSatisfy({ index in
+                canvas.contains(CGPoint(x: index % width, y: index / width))
+                    || (pixels[index * pixelChannelCount] == 0 && pixels[index * pixelChannelCount + 1] == 0
+                        && pixels[index * pixelChannelCount + 2] == 0)
+            })
+        else { return [] }
+        for slot in slots {
+            guard isCaptureSlotReadable(assignments, width: width, rect: slot.rect, mark: slot.mark) else { return [] }
+            let box = (
+                (slot.rect.minX + 0.28 * slot.rect.width) / CGFloat(width),
+                (slot.rect.minY + 0.18 * slot.rect.height) / CGFloat(height),
+                (slot.rect.minX + 0.72 * slot.rect.width) / CGFloat(width),
+                (slot.rect.minY + 0.82 * slot.rect.height) / CGFloat(height)
+            )
+            guard capturePhotoMark(png: png, box: box) == slot.mark else { return [] }
+        }
+        return slots.sorted {
+            $0.rect.minY == $1.rect.minY ? $0.rect.minX < $1.rect.minX : $0.rect.minY < $1.rect.minY
+        }.map(\.mark)
+    }
+
+    private static func captureEdgeMark(_ channels: [Double]) -> String {
+        let matches = capturePalettes.compactMap { mark, palette -> String? in
+            let first = palette[0].map(Double.init)
+            let delta = zip(palette[1], palette[0]).map { Double($0.0 - $0.1) }
+            let fraction =
+                zip(zip(channels, first), delta).reduce(0.0) { $0 + ($1.0.0 - $1.0.1) * $1.1 }
+                / delta.reduce(0.0) { $0 + $1 * $1 }
+            guard fraction > 0, fraction < 1,
+                (0..<3).allSatisfy({
+                    abs(channels[$0] - (first[$0] + fraction * delta[$0])) <= Double(extendedPaletteChannelTolerance)
+                })
+            else { return nil }
             return mark
         }
+        return matches.count == 1 ? matches[0] : ""
+    }
+
+    private static func isCaptureSlotReadable(_ assignments: [String], width: Int, rect: CGRect, mark: String) -> Bool {
         for horizontal in [false, true] {
-            let extent = horizontal ? width : height
-            let span = horizontal ? height : width
-            var hasMixedLine = false
-            let lineMarks: [String?] = (0..<extent).map { line in
+            let lines = horizontal ? Int(rect.minX)..<Int(rect.maxX) : Int(rect.minY)..<Int(rect.maxY)
+            let offsets = horizontal ? Int(rect.minY)..<Int(rect.maxY) : Int(rect.minX)..<Int(rect.maxX)
+            var matches: [Bool] = []
+            for line in lines {
                 var counts: [String: Int] = [:]
-                for offset in 0..<span {
-                    let index = horizontal ? offset * width + line : line * width + offset
-                    let mark = assignments[index]
-                    if !mark.isEmpty { counts[mark, default: 0] += 1 }
+                for offset in offsets {
+                    let observed = assignments[horizontal ? offset * width + line : line * width + offset]
+                    if !observed.isEmpty { counts[observed, default: 0] += 1 }
                 }
-                let matches = counts.filter { $0.value >= minimumChromaticPixelCount }.map(\.key)
-                if matches.count > 1 { hasMixedLine = true }
-                return matches.count == 1 ? matches[0] : nil
+                if counts.contains(where: { $0.key != mark && $0.value >= minimumChromaticPixelCount }) { return false }
+                matches.append((counts[mark] ?? 0) >= minimumChromaticPixelCount)
             }
-            // A mixed line must invalidate the axis, rather than borrowing its neighbours' identity.
-            if hasMixedLine { continue }
-            var slots: [(mark: String, start: Int, end: Int)] = []
-            var isReadable = true
-            for line in 0..<extent {
-                var mark = lineMarks[line]
-                if mark == nil {
-                    let preceding = lineMarks[..<line].last { $0 != nil } ?? nil
-                    let following = lineMarks[(line + 1)...].first { $0 != nil } ?? nil
-                    let isBlackEdge =
-                        (preceding == nil || following == nil)
-                        && (0..<span).allSatisfy { offset in
-                            let index = (horizontal ? offset * width + line : line * width + offset) * pixelChannelCount
-                            return pixels[index] == 0 && pixels[index + 1] == 0 && pixels[index + 2] == 0
-                        }
-                    if isBlackEdge { continue }
-                    guard let preceding, preceding == following else {
-                        isReadable = false
-                        break
-                    }
-                    mark = preceding
-                }
-                guard let mark else { continue }
-                if slots.last?.mark == mark {
-                    slots[slots.count - 1].end = line + 1
-                } else {
-                    slots.append((mark, line, line + 1))
-                }
-            }
-            guard isReadable, (2...3).contains(slots.count), Set(slots.map(\.mark)).count == slots.count else {
-                continue
-            }
-            let verified = slots.allSatisfy { slot in
-                let start = CGFloat(slot.start) / CGFloat(extent)
-                let length = CGFloat(slot.end - slot.start) / CGFloat(extent)
-                let box =
-                    horizontal
-                    ? (start + 0.28 * length, 0.18, start + 0.72 * length, 0.82)
-                    : (0.28, start + 0.18 * length, 0.72, start + 0.82 * length)
-                return capturePhotoMark(png: png, box: box) == slot.mark
-            }
-            if verified { return slots.map(\.mark) }
+            // Missing interior lines can borrow only from the same independently identified photo on both sides.
+            guard matches.first == true, matches.last == true else { return false }
         }
-        return []
+        return true
     }
 
     private static func capturePhotoMark(

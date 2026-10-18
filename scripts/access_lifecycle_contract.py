@@ -14,7 +14,8 @@ from typing import Any, Callable, Iterator, Mapping, Sequence, Optional, Tuple
 from strict_e2e_filter_contract import FROZEN_FIXTURE_SHA256
 from strict_e2e_photo_identity import (
     MARKS, IdentityAssertionError, PhotoIdentity, classify_screenshot,
-    _public_axis_slots, _public_frame_sample,
+    IDENTITY_MINIMUM_CHROMATIC_PIXEL_COUNT, _public_frame_sample, _public_palette_assignment,
+    _public_palette_edge_assignment, _public_frame_edge_band,
 )
 from strict_e2e_server import fixture_manifest
 
@@ -503,7 +504,7 @@ def classify_display_regions(image_bytes: bytes) -> dict[str, PhotoIdentity]:
 
 
 def capture_identity(image_bytes: bytes) -> PhotoIdentity:
-    # Mirror Swift: discover full-span slots first, then verify each slot's own interior.
+    # Mirror Swift: discover palette rectangles first, including SmartFill's T-shaped triples.
     import io
     from PIL import Image
 
@@ -511,27 +512,69 @@ def capture_identity(image_bytes: bytes) -> PhotoIdentity:
     try:
         with Image.open(io.BytesIO(image_bytes)) as image:
             rgb = _public_frame_sample(image)
-            for horizontal in (False, True):
-                try:
-                    slots = _public_axis_slots(rgb, None, horizontal=horizontal, allow_black_edges=True)
-                except IdentityAssertionError:
-                    continue
-                marks = [mark for mark, _ in slots]
-                if not 2 <= len(marks) <= 3 or len(set(marks)) != len(marks):
-                    continue
-                verified = []
-                for mark, (left, top, right, bottom) in slots:
-                    box = (int((left + (right - left) * 0.28) * image.width / rgb.width),
-                           int((top + (bottom - top) * 0.18) * image.height / rgb.height),
-                           math.ceil((left + (right - left) * 0.72) * image.width / rgb.width),
-                           math.ceil((top + (bottom - top) * 0.82) * image.height / rgb.height))
-                    output = io.BytesIO()
-                    image.crop(box).save(output, format="PNG")
-                    identity = classify_screenshot(output.getvalue())
-                    verified.append(identity.status == "MATCH" and identity.mark == mark)
-                if all(verified):
-                    return PhotoIdentity("MATCH", "+".join(marks), dict(full.scores), full.mean_luma,
-                                         ("photo-slot-axis-match",) + tuple(full.notes))
+            row_counts = {mark: [0] * rgb.height for mark in MARKS}
+            column_counts = {mark: [0] * rgb.width for mark in MARKS}
+            edge_width, edge_height = _public_frame_edge_band(image.size, rgb.size)
+            assignments = []
+            for index, color in enumerate(rgb.getdata()):
+                assignment = _public_palette_assignment(color)
+                row, column = divmod(index, rgb.width)
+                mark = assignment[0] if assignment is not None else None
+                if mark is None and (column < edge_width or column >= rgb.width - edge_width
+                                     or row < edge_height or row >= rgb.height - edge_height):
+                    mark = _public_palette_edge_assignment(color)
+                assignments.append(mark)
+                if mark is not None:
+                    row_counts[mark][row] += 1
+                    column_counts[mark][column] += 1
+            slots = []
+            for mark in MARKS:
+                rows = [index for index, count in enumerate(row_counts[mark]) if count >= IDENTITY_MINIMUM_CHROMATIC_PIXEL_COUNT]
+                columns = [index for index, count in enumerate(column_counts[mark]) if count >= IDENTITY_MINIMUM_CHROMATIC_PIXEL_COUNT]
+                if rows and columns:
+                    slots.append((mark, (columns[0], rows[0], columns[-1] + 1, rows[-1] + 1)))
+            if not 2 <= len(slots) <= 3:
+                return full
+            canvas = (min(box[0] for _, box in slots), min(box[1] for _, box in slots),
+                      max(box[2] for _, box in slots), max(box[3] for _, box in slots))
+            area = lambda box: (box[2] - box[0]) * (box[3] - box[1])
+            if sum(area(box) for _, box in slots) != area(canvas) or any(
+                    max(a[0], b[0]) < min(a[2], b[2]) and max(a[1], b[1]) < min(a[3], b[3])
+                    for index, (_, a) in enumerate(slots) for _, b in slots[index + 1:]):
+                return full
+            if any(color != (0, 0, 0) and not (canvas[0] <= index % rgb.width < canvas[2]
+                                             and canvas[1] <= index // rgb.width < canvas[3])
+                   for index, color in enumerate(rgb.getdata())):
+                return full
+            for mark, (left, top, right, bottom) in slots:
+                for horizontal in (False, True):
+                    lines = range(left, right) if horizontal else range(top, bottom)
+                    offsets = range(top, bottom) if horizontal else range(left, right)
+                    matches = []
+                    for line in lines:
+                        counts = dict.fromkeys(MARKS, 0)
+                        for offset in offsets:
+                            observed = assignments[offset * rgb.width + line if horizontal else line * rgb.width + offset]
+                            if observed is not None:
+                                counts[observed] += 1
+                        if any(count >= IDENTITY_MINIMUM_CHROMATIC_PIXEL_COUNT and observed != mark
+                               for observed, count in counts.items()):
+                            return full
+                        matches.append(counts[mark] >= IDENTITY_MINIMUM_CHROMATIC_PIXEL_COUNT)
+                    if not matches[0] or not matches[-1]:
+                        return full
+                box = (int((left + (right - left) * 0.28) * image.width / rgb.width),
+                       int((top + (bottom - top) * 0.18) * image.height / rgb.height),
+                       math.ceil((left + (right - left) * 0.72) * image.width / rgb.width),
+                       math.ceil((top + (bottom - top) * 0.82) * image.height / rgb.height))
+                output = io.BytesIO()
+                image.crop(box).save(output, format="PNG")
+                identity = classify_screenshot(output.getvalue())
+                if identity.status != "MATCH" or identity.mark != mark:
+                    return full
+            ordered = [mark for mark, _ in sorted(slots, key=lambda item: (item[1][1], item[1][0]))]
+            return PhotoIdentity("MATCH", "+".join(ordered), dict(full.scores), full.mean_luma,
+                                 ("photo-slot-axis-match",) + tuple(full.notes))
     except (OSError, ValueError, IdentityAssertionError):
         pass
     return full

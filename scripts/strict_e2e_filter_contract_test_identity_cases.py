@@ -53,7 +53,7 @@ from strict_e2e_filter_contract_test_fixtures import (
 class SwiftContractMirrorTestsCases:
     def test_swift_helper_keeps_frozen_ids_and_button(self) -> None:
         import re
-        from strict_e2e_photo_identity import FRAME_PALETTE_CHANNEL_TOLERANCE
+        from strict_e2e_photo_identity import FRAME_PALETTE_CHANNEL_TOLERANCE, FRAME_PALETTE_EDGE_BAND_RAW_PIXELS
         source = (SCRIPT_DIR.parent / "TestSupport" / "StrictE2EFilterContract.swift").read_text(
             encoding="utf-8"
         )
@@ -74,6 +74,9 @@ class SwiftContractMirrorTestsCases:
         tolerance = re.search(r'extendedPaletteChannelTolerance = (\d+)', identity_source)
         self.assertIsNotNone(tolerance)
         self.assertEqual(int(tolerance.group(1)), FRAME_PALETTE_CHANNEL_TOLERANCE)
+        edge_band = re.search(r'captureEdgeBandRawPixels = (\d+)', identity_source)
+        self.assertIsNotNone(edge_band)
+        self.assertEqual(int(edge_band.group(1)), FRAME_PALETTE_EDGE_BAND_RAW_PIXELS)
         capture_rows = re.findall(r'"(A[1-5])": \[\[([\d, ]+)\], \[([\d, ]+)\]\]', identity_source)
         capture_palettes = {mark: {tuple(map(int, first.split(","))), tuple(map(int, second.split(",")))}
                             for mark, first, second in capture_rows}

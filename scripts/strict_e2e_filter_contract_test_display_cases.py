@@ -646,6 +646,33 @@ print(String(data: try JSONSerialization.data(withJSONObject: report), encoding:
                             start = end
                         capture_cases.append((f"{fixture_set}-{canvas[0]}-{len(marks)}", scene,
                                               ("MATCH", "+".join(f"A{index}" for index in marks))))
+                    for name, boxes, expected in (
+                        ("left-stack", ((0, 0, .6, 1), (.6, 0, 1, .5), (.6, .5, 1, 1)), "A1+A5+A3"),
+                        ("right-stack", ((.4, 0, 1, 1), (0, 0, .4, .5), (0, .5, .4, 1)), "A5+A1+A3"),
+                        ("top-pair", ((0, 0, 1, .6), (0, .6, .5, 1), (.5, .6, 1, 1)), "A1+A5+A3"),
+                        ("bottom-pair", ((0, .4, 1, 1), (0, 0, .5, .4), (.5, 0, 1, .4)), "A5+A3+A1"),
+                    ):
+                        scene = Image.new("RGB", canvas)
+                        for index, relative in zip((1, 5, 3), boxes):
+                            box = tuple(round(value * canvas[axis % 2]) for axis, value in enumerate(relative))
+                            photo = Image.open(io.BytesIO(_fixture_png(f"A{index}", fixture_set))).convert("RGB")
+                            scene.paste(ImageOps.fit(photo, (box[2] - box[0], box[3] - box[1]),
+                                                     Image.Resampling.BILINEAR, centering=(0.4, 0.4)), box)
+                        capture_cases.append((f"{fixture_set}-{canvas[0]}-{name}", scene, ("MATCH", expected)))
+            gap = capture_cases[0][1].copy()
+            gap.paste((0, 0, 0), (1488, 0, 1584, 2160))
+            overlap = capture_cases[0][1].copy()
+            overlay = Image.open(io.BytesIO(_fixture_png("A2", "a"))).convert("RGB")
+            overlap.paste(ImageOps.fit(overlay, (384, 324)), (192, 108))
+            capture_cases.extend((("gap", gap, ("TRANSITION", "nil")),
+                                  ("overlap", overlap, ("TRANSITION", "nil"))))
+            from access_lifecycle_contract_test_fixtures import _stand_in_png
+            for name, parts, expected in (
+                ("clipped-edge", ("iphone", "failure-late-frames", "late-178.png"), "A3+A5"),
+                ("black-top", ("iphone-pause-next-play", "after-next.png"), "A1+A5"),
+            ):
+                scene = Image.open(io.BytesIO(_stand_in_png(*parts))).convert("RGB")
+                capture_cases.append((name, scene, ("MATCH", expected)))
             first = Image.open(io.BytesIO(_fixture_png("A5", "a"))).convert("RGB").resize(TV_SCREEN)
             second = Image.open(io.BytesIO(_fixture_png("A3", "a"))).convert("RGB").resize(TV_SCREEN)
             capture_cases.extend((
@@ -659,7 +686,7 @@ print(String(data: try JSONSerialization.data(withJSONObject: report), encoding:
                 scene.save(path)
                 capture_arguments.extend((str(path), "capture"))
             captured = subprocess.run([str(executable), str(directory), *capture_arguments],
-                                      check=True, capture_output=True, text=True)
+                                      check=True, capture_output=True, text=True, timeout=300)
             self.assertEqual(len(captured.stdout.splitlines()), len(capture_cases))
             for (name, _, expected), line in zip(capture_cases, captured.stdout.splitlines()):
                 with self.subTest(capture=name):
