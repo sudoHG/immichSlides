@@ -47,11 +47,16 @@ def environment_failure_marker(node):
 def read_live_results(records, platform):
     rows, counts = units.read_results(records, platform)
     # Inspect every issue before the generic unit parser's first-message truncation can hide a 429/503.
-    markers = {function_identity(test_identity("swift", units.UNIT_TARGET + "/" + node["nodeIdentifier"], platform=platform))["key"]:
-               environment_failure_marker(node)
-               for node in units.official_cases(decode((records / "official-tests.json").read_text()))}
+    markers = {}
+    for node in units.official_cases(decode((records / "official-tests.json").read_text())):
+        key = function_identity(test_identity("swift", units.UNIT_TARGET + "/" + node["nodeIdentifier"], platform=platform))["key"]
+        markers[(key, None)] = environment_failure_marker(node)
+        for child in node.get("children", []):
+            if child.get("nodeType") in {"Test Case Run", "Arguments"}:
+                parameter = child.get("nodeIdentifier") or child.get("nodeIdentifierURL")
+                markers[(key, parameter)] = environment_failure_marker(child)
     for row in rows:
-        marker = markers.get(function_identity(row["identity"])["key"])
+        marker = markers.get((function_identity(row["identity"])["key"], row["identity"]["dimensions"].get("parameter")))
         if row["outcome"] == "failed" and marker:
             row["attempts"][0]["message"] = marker
     return rows, counts
