@@ -113,7 +113,7 @@ extension StrictE2EFilterTVOSUITests {
             moveFocus(
                 .right, to: playPauseButton, maximumPresses: 3, message: "Focus must be able to move to Play/Pause.")
         }
-        ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
+        ensureControlBarVisible(app: app)
         moveFocusTo(
             playPauseButton, directions: [.left, .right],
             message: "Focus must be able to move to Play/Pause.")
@@ -133,10 +133,10 @@ extension StrictE2EFilterTVOSUITests {
 
         let nextButton = app.buttons["slideshow.control.next.button"]
         for (index, name) in names.enumerated() {
-            ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
+            ensureControlBarVisible(app: app)
             try writeScreenshotPNG(app: app, name: name, attachmentName: name)
             if index + 1 < names.count {
-                ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
+                ensureControlBarVisible(app: app)
                 moveFocus(.right, to: nextButton, maximumPresses: 3, message: "Focus must be able to move to Next.")
                 XCUIRemote.shared.press(.select)
                 RunLoop.current.run(until: Date().addingTimeInterval(Timing.playbackSceneSettleSeconds))
@@ -150,7 +150,7 @@ extension StrictE2EFilterTVOSUITests {
         XCTAssertTrue(
             playPauseButton.waitForExistence(timeout: TestWait.seconds(.product(20))),
             "The playback screen must be open before switching servers.")
-        ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
+        ensureControlBarVisible(app: app)
         let settingsButton = app.buttons["slideshow.control.settings.button"]
         moveFocus(
             .left, to: settingsButton, maximumPresses: 4,
@@ -352,7 +352,7 @@ extension StrictE2EFilterTVOSUITests {
     }
 
     @MainActor
-    func ensureControlBarVisible(app: XCUIApplication, playPauseButton: XCUIElement) {
+    func ensureControlBarVisible(app: XCUIApplication) {
         XCTAssertTrue(
             app.refreshTVOSSlideshowControlBar(timeout: TestWait.seconds(.product(5))),
             "A direction key must bring up the playback control bar.")
@@ -486,9 +486,7 @@ extension StrictE2EFilterTVOSUITests {
     // Go from the playback control bar to the settings home, then into playback settings, avoiding UI_TEST injection.
     @MainActor
     func openPlaybackSettingsFromSlideshow(app: XCUIApplication) throws {
-        let playPauseButton = app.buttons["slideshow.control.playPause.button"]
         if app.refreshTVOSSlideshowControlBar(timeout: TestWait.seconds(.product(8))) {
-            ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
             let settingsButton = app.buttons["slideshow.control.settings.button"]
             moveFocus(
                 .left, to: settingsButton, maximumPresses: 4,

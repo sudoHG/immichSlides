@@ -330,8 +330,10 @@ Adding a test to a nightly-default area is a CI-trusted map change; list every s
 method in the PR for maintainer approval. The settings-family screenshots also capture
 the slideshow frame before opening settings. Its localized content is the control bar,
 which belongs to `localization-settings`. The slideshow host files
-(`SlideShowViewIOS.swift`, `SlideShowViewTV.swift`) define no identifier those tests
-reach, so they select only the playback family's entry-hint screenshots.
+(`SlideShowViewIOS.swift`, `SlideShowViewTV.swift`) continue to select only the playback
+family's entry-hint screenshots. `SlideShowViewTV.swift` is also a reviewed navigation
+source for tvOS about/settings localization flows that wake the controls before
+opening settings; those routes retain their captured leaf-screen memberships.
 
 ### Identifier-to-flow check
 

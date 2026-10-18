@@ -32,9 +32,11 @@ extension XCUIApplication {
             "slideshow.control.\($0).button"
         }
         func waitForFocus(_ condition: ([String: XCUIElementSnapshot]) -> Bool) -> Bool {
-            while Date() < deadline {
+            let movementDeadline = min(
+                deadline, Date().addingTimeInterval(UITestSupportWaitTiming.stateChangeTimeoutSeconds))
+            while Date() < movementDeadline {
                 let snapshots = evidenceSnapshotsByIdentifier()
-                if condition(snapshots) { return Date() < deadline }
+                if condition(snapshots) { return Date() < movementDeadline }
                 RunLoop.current.run(until: Date().addingTimeInterval(Timing.focusSettle))
             }
             return false
@@ -47,26 +49,28 @@ extension XCUIApplication {
                 let direction: XCUIRemote.Button =
                     focusedIdentifier == "slideshow.control.next.button" ? .left : .right
                 XCUIRemote.shared.press(direction)
+                // Auto-hide can consume a focus move as a wake; retry from a fresh snapshot in the same budget.
                 guard
                     waitForFocus({ observation in
                         controlIdentifiers.contains {
                             $0 != focusedIdentifier && observation[$0]?.hasFocus == true
                         }
                     })
-                else { return false }
+                else { continue }
                 // Previous can retain focus just after Select disables it at the history boundary.
                 if snapshots[focusedIdentifier]?.isEnabled == false {
-                    return waitForFocus { $0["slideshow.control.playPause.button"]?.hasFocus == true }
+                    if waitForFocus({ $0["slideshow.control.playPause.button"]?.hasFocus == true }) { return true }
+                    continue
                 }
                 XCUIRemote.shared.press(direction == .left ? .right : .left)
-                return waitForFocus { $0[focusedIdentifier]?.hasFocus == true }
+                if waitForFocus({ $0[focusedIdentifier]?.hasFocus == true }) { return true }
+                continue
             }
             if snapshots["slideshow.hiddenWakeReceiver"]?.hasFocus == true {
                 guard Date() < deadline else { return false }
                 XCUIRemote.shared.press(.up)
-                let remaining = max(0, deadline.timeIntervalSinceNow)
-                return buttons["slideshow.control.playPause.button"].waitForExistence(timeout: remaining)
-                    && Date() < deadline
+                if waitForFocus({ $0["slideshow.control.playPause.button"] != nil }) { return true }
+                continue
             }
             RunLoop.current.run(until: Date().addingTimeInterval(Timing.focusSettle))
         }

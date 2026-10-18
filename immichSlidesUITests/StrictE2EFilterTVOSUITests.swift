@@ -494,7 +494,7 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
     @MainActor
     func captureMultiPhotoBefore(app: XCUIApplication) throws -> [String] {
         let pause = app.buttons["slideshow.control.playPause.button"]
-        ensureControlBarVisible(app: app, playPauseButton: pause)
+        ensureControlBarVisible(app: app)
         let value = String(describing: pause.value ?? "")
         if value.contains("暂停") || value.lowercased().contains("pause") {
             moveFocusTo(pause, directions: [.right, .left], message: "Focus Pause.")
@@ -519,7 +519,7 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
             }
             if index < StrictE2EFilterTVOSUITestsCalibration.displayCandidateFrameLimit {
                 let next = app.buttons["slideshow.control.next.button"]
-                ensureControlBarVisible(app: app, playPauseButton: pause)
+                ensureControlBarVisible(app: app)
                 moveFocusTo(next, directions: [.right, .left], message: "Focus Next.")
                 XCUIRemote.shared.press(.select)
             }

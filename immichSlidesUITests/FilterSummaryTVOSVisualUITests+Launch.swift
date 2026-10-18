@@ -303,11 +303,11 @@ extension FilterSummaryTVOSVisualUITests {
 
             guard index < expectedCount - 1 else { continue }
 
+            ensureTVOSSlideshowControlBarVisible(app: app)
             let indexProbe = app.otherElements["slideshow.control.indexProbe"]
             let indexSnapshot = app.evidenceSnapshotsByIdentifier()["slideshow.control.indexProbe"]
             let currentIndexValue = indexSnapshot.map { String(describing: $0.value ?? "") } ?? ""
             let currentDateLabel = currentTVOSExifDateLabel(app: app)
-            ensureTVOSSlideshowControlBarVisible(app: app)
             moveFocusToTVOSSlideshowNextButton(app: app)
             XCUIRemote.shared.press(.select)
 
