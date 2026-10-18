@@ -16,8 +16,8 @@ private final class LiveRequestObserver: URLProtocol, @unchecked Sendable {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var host: String?
     nonisolated(unsafe) private static var starts: [TimeInterval] = []
-    nonisolated(unsafe) private static var rateLimited = false
-    nonisolated(unsafe) private static var concurrencyLimited = false
+    nonisolated(unsafe) private static var isRateLimited = false
+    nonisolated(unsafe) private static var isConcurrencyLimited = false
     nonisolated(unsafe) private static var inFlight = 0
     nonisolated(unsafe) private static var peakInFlight = 0
     private static let forwardingSession: URLSession = {
@@ -31,13 +31,13 @@ private final class LiveRequestObserver: URLProtocol, @unchecked Sendable {
     static func begin() {
         lock.withLock {
             host = TestServerConfiguration.current.flatMap { URL(string: $0.serverURL)?.host }
-            rateLimited = false
-            concurrencyLimited = false
+            isRateLimited = false
+            isConcurrencyLimited = false
         }
         URLProtocol.registerClass(Self.self)
     }
 
-    static func finish() -> (rateLimited: Bool, concurrencyLimited: Bool) {
+    static func finish() -> (isRateLimited: Bool, isConcurrencyLimited: Bool) {
         lock.withLock {
             host = nil
             if let first = starts.first {
@@ -58,7 +58,7 @@ private final class LiveRequestObserver: URLProtocol, @unchecked Sendable {
                     "LIVE_REQUEST_COUNTS total=\(starts.count) peakRollingMinute=\(peak) peakRollingSecond=\(peakSecond) peakInFlight=\(peakInFlight) minutes=\(buckets)"
                 )
             }
-            return (rateLimited, concurrencyLimited)
+            return (isRateLimited, isConcurrencyLimited)
         }
     }
 
@@ -78,8 +78,8 @@ private final class LiveRequestObserver: URLProtocol, @unchecked Sendable {
             Self.lock.withLock {
                 Self.inFlight -= 1
                 switch (response as? HTTPURLResponse)?.statusCode {
-                case 429: Self.rateLimited = true
-                case 503: Self.concurrencyLimited = true
+                case 429: Self.isRateLimited = true
+                case 503: Self.isConcurrencyLimited = true
                 default: break
                 }
             }
@@ -106,10 +106,10 @@ enum LiveTestTraffic {
         LiveRequestObserver.begin()
         defer {
             let limits = LiveRequestObserver.finish()
-            if limits.rateLimited {
+            if limits.isRateLimited {
                 Issue.record("TEST_SERVER_RATE_LIMITED: test server rate limited")
             }
-            if limits.concurrencyLimited {
+            if limits.isConcurrencyLimited {
                 Issue.record("TEST_SERVER_CONCURRENCY_LIMITED: gateway concurrency limit")
             }
         }
