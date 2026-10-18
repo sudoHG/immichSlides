@@ -700,6 +700,11 @@ class FailureDiagnosticsTests(unittest.TestCase):
         self.assertEqual(FAILURE_CLASSES, {kind for _, _, kind in PREFIX_RULES})
         # Fixed expectations catch missing/misclassified rows; source checks catch stale prefixes.
         cases = (
+            ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "tvOS pause-continue evidence is invalid;", "continue_timing", "evidence_capture"),
+            ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "tvOS new photo must be stably identifiable within 4 s of transition start", "continue_timing", "scene_identity"),
+            ("TestSupport/AccessLifecycleContract.swift", "All black must not count as a pass", "unknown", "scene_identity"),
+            ("TestSupport/AccessLifecycleContract.swift", "Blank must not count as a pass", "unknown", "scene_identity"),
+            ("TestSupport/AccessLifecycleContract.swift", "Unrecognizable input must not count as a pass", "unknown", "scene_identity"),
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift", "The first-boot page must show the Save Settings button.", "firstboot_setup", "navigation"),
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift", "After a successful save, the app must reach mode selection.", "firstboot_setup", "navigation"),
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift", "A fresh install must reach the normal first-boot page.", "firstboot_setup", "navigation"),

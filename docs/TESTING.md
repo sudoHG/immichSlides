@@ -438,7 +438,7 @@ threshold prevents control-bar disappearance from being mistaken for photo dimmi
 also requires Settings to remain hittable after its screenshot, before timing starts.
 This pixel reader is limited to the controlled fixture flow and stable screen
 geometry. The screenshot gap, ordering, Continue origin and transition/stability contracts
-remain unchanged. The tvOS pause flow does not use this dense capture path.
+remain unchanged. The tvOS continuation watch uses the same calibrated pixel reader.
 
 On iOS, `PlaybackIntervalSliderIOS` drives the real interval slider for both
 `IOSDriver` and the lifecycle flows. It reads only `settings.playback.interval.value`.
@@ -455,6 +455,35 @@ assertion uses that displayed T; T±2 tolerances, capture deadlines relative to 
 hidden-control and visible-scene checks stay unchanged. First-wake requires exactly
 30 seconds, and `IOSDriver` continues to require its exact 15/30 second settings.
 Unreadable values and values outside the timing window fail.
+
+Pause/continue timing distinguishes transition onset from stable new-photo confirmation.
+tvOS shares the iPad iOS observer's sustained-dimming predicate and constants in
+`AccessLifecycleContract`: the identified old photo drops below 95% of its baseline
+luminance for three consecutive, strictly decreasing samples, with the control-bar
+state unchanged and gaps between screenshot return and the next request no greater
+than the existing 0.1-second poll cadence plus its tolerance. An isolated black
+frame, a constant whole-screen dim or a dimming sequence that recovers the old
+photo's brightness cannot establish the tvOS start. A transition identity or a
+different identified photo remains direct onset evidence. iPad's existing
+conservative screenshot bounds and one-second stable-photo requirement are unchanged.
+
+The tvOS T±2 check uses the detected onset's screenshot-request offset, independently
+of when the new photo becomes readable. A different public photo must then remain
+identified and bright for the shared 0.8-second stable confirmation window; no new
+photo means failure. Dense capture continues through the shared T+2+4-second
+look-ahead, before classification, so a designed fade beginning inside T±2 can pass
+when the new photo becomes stable after T+2. Like iPad, tvOS requires stable-photo
+confirmation to return within four seconds of the onset request, using the same
+deadline check and constant. Every screenshot requested before T−2 (including the
+existing timing tolerance) must still identify the old photo: black, blank,
+unrecognizable, transition and different-photo frames fail, even if they recover.
+Detected starts before T−2 or after T+2 also fail. Evidence records the onset,
+stable new photo and request/return/classification
+times separately, retaining the matching cached PNGs. Pause-hold equality and the
+first-half-window old-photo check are unchanged.
+Continue issued is zero, aligning tvOS with iOS `press.issued`; the remote Select
+return time is recorded separately and never becomes the screenshot-request
+clock's origin. This intentionally replaces tvOS's former Select-return origin.
 
 The combined access-protection flow requests 12 seconds and narrows its window to
 12–15 seconds. Its lower bound is rounded up from the product's 8-second control

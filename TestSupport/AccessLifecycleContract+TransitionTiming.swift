@@ -1,6 +1,70 @@
 import Foundation
 
 extension AccessLifecycleContract {
+    static func assertTVOSPauseTimingEvidence(
+        continueMark: String,
+        baselineLuma: Double,
+        samples: [ContinueWatchSample],
+        intervalSeconds: TimeInterval
+    ) throws -> (start: ContinueWatchSample, stable: ContinueWatchSample) {
+        guard intervalSeconds.isFinite, intervalSeconds > 0,
+            baselineLuma.isFinite, baselineLuma > minimumBaselineLuminance,
+            samples.isEmpty == false,
+            samples.enumerated().allSatisfy({ index, sample in
+                sample.requestElapsed.isFinite && sample.requestElapsed >= 0
+                    && sample.returnElapsed.isFinite && sample.returnElapsed >= sample.requestElapsed
+                    && sample.classifiedElapsed.isFinite && sample.classifiedElapsed >= sample.returnElapsed
+                    && sample.meanLuma.isFinite
+                    && (index == 0 || sample.requestElapsed >= samples[index - 1].returnElapsed)
+            })
+        else {
+            throw AssertionError.message(
+                "tvOS pause-continue evidence is invalid; invalid timing or original photo brightness evidence"
+            )
+        }
+        try assertSamplesStayOnSceneBeforeAdvanceWindow(
+            continueMark: continueMark,
+            samples: samples.map { (elapsed: $0.requestElapsed, mark: $0.mark) },
+            intervalSeconds: intervalSeconds
+        )
+        guard let stable = firstStableNewImage(continueMark: continueMark, samples: samples) else {
+            throw AssertionError.message(
+                "After about a full T, it must switch to the next scene; no stable new public photo was confirmed")
+        }
+        let threshold = baselineLuma * sustainedDimmingLuminanceRatio
+        let startIndex = samples.indices.first { index in
+            let sample = samples[index]
+            if sample.status == "MATCH", isUsableSceneMark(sample.mark), sample.mark != continueMark {
+                return true
+            }
+            // A recovered old photo invalidates a dimming/transition proxy before the actual new photo.
+            let recovered = samples.dropFirst(index + 1).prefix {
+                $0.requestElapsed <= stable.requestElapsed
+            }.contains { $0.status == "MATCH" && $0.mark == continueMark && $0.meanLuma >= threshold }
+            if recovered { return false }
+            if sample.status == "TRANSITION" || sample.mark == "TRANSITION" { return true }
+            guard index > 0, sample.status == "MATCH", sample.mark == continueMark,
+                sample.meanLuma < threshold,
+                samples[index - 1].status == "MATCH", samples[index - 1].mark == continueMark,
+                samples[index - 1].isControlBarVisible == sample.isControlBarVisible
+            else { return false }
+            return hasSustainedDimming(from: index, continueMark: continueMark, threshold: threshold, samples: samples)
+        }
+        guard let startIndex else {
+            throw AssertionError.message("tvOS pause-continue evidence is invalid; no transition start was detected")
+        }
+        let start = samples[startIndex]
+        try assertContinueAutoAdvanceInWindow(
+            continueMark: continueMark, laterMark: stable.mark,
+            elapsedSeconds: start.requestElapsed, intervalSeconds: intervalSeconds
+        )
+        try assertStableImageWithinTransitionDeadline(
+            start: start, stable: stable,
+            failureMessage: "tvOS new photo must be stably identifiable within 4 s of transition start"
+        )
+        return (start, stable)
+    }
+
     static func assertContinueEarlyStillSameScene(
         continueMark: String,
         earlyMark: String,
@@ -50,15 +114,6 @@ extension AccessLifecycleContract {
             && mark != "BLANK"
             && mark != "UNRECOGNIZABLE"
             && mark != "TRANSITION"
-    }
-
-    static func firstUsableAdvance(
-        continueMark: String,
-        samples: [(elapsed: TimeInterval, mark: String)]
-    ) -> (elapsed: TimeInterval, mark: String)? {
-        samples.first { sample in
-            isUsableSceneMark(sample.mark) && sample.mark != continueMark
-        }
     }
 
     static func assertSamplesStayOnSceneBeforeAdvanceWindow(
@@ -274,7 +329,7 @@ extension AccessLifecycleContract {
                 sample.status == "MATCH"
                 && sample.mark == continueMark
                 && sample.meanLuma < dimmingThreshold
-                && hasSustainedIPadDimming(
+                && hasSustainedDimming(
                     from: index,
                     continueMark: continueMark,
                     threshold: dimmingThreshold,
@@ -322,23 +377,32 @@ extension AccessLifecycleContract {
         else {
             throw AssertionError.message("iPad must keep identifying a different new photo for at least 1 second")
         }
-        let stableImageDelaySeconds = stable.returnElapsed - start.requestElapsed
-        if !stableImageDelaySeconds.isFinite || stableImageDelaySeconds < 0
-            || stableImageDelaySeconds > ipadStableImageDeadlineAfterTransition + timingToleranceSeconds
-        {
-            throw AssertionError.message("iPad new photo must be stably identifiable within 4 s of transition start")
-        }
+        try assertStableImageWithinTransitionDeadline(
+            start: start, stable: stable,
+            failureMessage: "iPad new photo must be stably identifiable within 4 s of transition start"
+        )
         return IPadPauseTimingEvidence(
             earliestTransitionElapsed: earliestTransitionElapsed,
             latestTransitionElapsed: latestTransitionElapsed,
             transitionStartRequestElapsed: start.requestElapsed,
             stableImageRequestElapsed: stable.requestElapsed,
             stableImageReturnElapsed: stable.returnElapsed,
-            stableImageDelaySeconds: stableImageDelaySeconds
+            stableImageDelaySeconds: stable.returnElapsed - start.requestElapsed
         )
     }
 
-    static func hasSustainedIPadDimming(
+    private static func assertStableImageWithinTransitionDeadline(
+        start: ContinueWatchSample,
+        stable: ContinueWatchSample,
+        failureMessage: String
+    ) throws {
+        let delay = stable.returnElapsed - start.requestElapsed
+        if !delay.isFinite || delay < 0 || delay > ipadStableImageDeadlineAfterTransition + timingToleranceSeconds {
+            throw AssertionError.message(failureMessage)
+        }
+    }
+
+    static func hasSustainedDimming(
         from startIndex: Int,
         continueMark: String,
         threshold: Double,

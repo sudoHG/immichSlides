@@ -335,6 +335,8 @@ extension AccessLifecycleTVOSUITests {
             didUseProgressProbe: false,
             didUseControlValueOnly: false
         )
+        ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
+        let controlBarReference = try captureTVOSControlBarReference(app: app)
 
         let holdStart = Date()
         let holdTarget = interval + AccessLifecycleContract.pauseHoldBeyondIntervalSeconds
@@ -357,120 +359,162 @@ extension AccessLifecycleTVOSUITests {
 
         ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
         moveFocus(.left, to: playPauseButton, maximumPresses: 3, message: "Focus must return to play/pause after next.")
-        XCUIRemote.shared.press(.select)
-        record("playback.play")
         let continueAt = Date()
+        XCUIRemote.shared.press(.select)
+        let pressReturnedElapsed = Date().timeIntervalSince(continueAt)
+        record("playback.play")
+        try AccessLifecycleContract.assertClickTimesRecordedSeparately(
+            pressIssuedElapsed: 0, pressReturnedElapsed: pressReturnedElapsed,
+            continueOriginElapsed: 0, didUseReturnedAsOrigin: false
+        )
         let continueWatch = try watchTVOSContinueToFirstAdvance(
             app: app,
             continueAt: continueAt,
             continueMark: afterNext.mark,
-            interval: interval
+            interval: interval,
+            controlBarReference: controlBarReference
         )
         return [
             ["name": "before_pause", "mark": beforePause.mark],
             ["name": "after_next", "mark": afterNext.mark],
             ["name": "pause_hold_end", "elapsed": holdSeconds, "mark": holdMark],
+            ["name": "continue_press", "issued_elapsed": 0, "returned_elapsed": pressReturnedElapsed],
             ["name": "continue_early", "elapsed": continueWatch.earlyElapsed, "mark": continueWatch.earlyMark],
-            ["name": "after_auto_advance", "elapsed": continueWatch.advancedElapsed, "mark": continueWatch.advancedMark]
+            [
+                "name": "first_transition_start", "status": "detected", "official_signed": true,
+                "elapsed": continueWatch.start.requestElapsed, "request_elapsed": continueWatch.start.requestElapsed,
+                "return_elapsed": continueWatch.start.returnElapsed, "mark": continueWatch.start.mark,
+                "identity_status": continueWatch.start.mark == afterNext.mark ? "DIMMING" : continueWatch.start.status
+            ],
+            [
+                "name": "new_image_confirmation", "elapsed": continueWatch.advanced.requestElapsed,
+                "request_elapsed": continueWatch.advanced.requestElapsed,
+                "return_elapsed": continueWatch.advanced.returnElapsed,
+                "mark": continueWatch.advanced.mark
+            ],
+            [
+                "name": "after_auto_advance", "elapsed": continueWatch.advanced.requestElapsed,
+                "mark": continueWatch.advanced.mark
+            ],
+            [
+                "name": "continue_watch_samples",
+                "samples": continueWatch.samples.map { sample in
+                    [
+                        "request_elapsed": sample.requestElapsed, "return_elapsed": sample.returnElapsed,
+                        "classified_elapsed": sample.classifiedElapsed, "status": sample.status,
+                        "mark": sample.mark, "mean_luma": sample.meanLuma,
+                        "control_bar_visible": sample.isControlBarVisible
+                    ] as [String: Any]
+                }
+            ]
         ]
     }
 
-    // Capture on the original clock; defer pixel classification so it cannot consume the sampling window.
-    // The criteria remain ≤T/2 and a first transition at T±2.
+    struct TVOSContinueWatchResult {
+        let earlyMark: String
+        let earlyElapsed: TimeInterval
+        let start: AccessLifecycleContract.ContinueWatchSample
+        let advanced: AccessLifecycleContract.ContinueWatchSample
+        let samples: [AccessLifecycleContract.ContinueWatchSample]
+    }
+
+    // T±2 judges the shared transition onset; stable new-photo evidence may follow that window.
     @MainActor
     func watchTVOSContinueToFirstAdvance(
         app: XCUIApplication,
         continueAt: Date,
         continueMark: String,
-        interval: TimeInterval
-    ) throws -> (earlyMark: String, earlyElapsed: TimeInterval, advancedMark: String, advancedElapsed: TimeInterval) {
-        let earliestAdvance = interval - AccessLifecycleContract.continueCaptureSlackSeconds
-        let latest = interval + AccessLifecycleContract.continueCaptureSlackSeconds
-        var capturedFrames: [(elapsed: TimeInterval, png: Data)] = []
-        while Date().timeIntervalSince(continueAt) <= latest {
-            let elapsed = Date().timeIntervalSince(continueAt)
+        interval: TimeInterval,
+        controlBarReference: StrictE2EPhotoIdentity.ControlBarReference
+    ) throws -> TVOSContinueWatchResult {
+        let captureUntil = AccessLifecycleContract.continueWatchDenseCaptureDeadline(intervalSeconds: interval)
+        var capturedFrames: [(request: TimeInterval, returned: TimeInterval, png: Data)] = []
+        while Date().timeIntervalSince(continueAt) <= captureUntil {
+            let request = Date().timeIntervalSince(continueAt)
             let png = app.screenshot().pngRepresentation
-            capturedFrames.append((elapsed, png))
-            RunLoop.current.run(
-                until: Date().addingTimeInterval(AccessLifecycleTVOSUITestsWaitTiming.readbackPollSeconds))
+            let returned = Date().timeIntervalSince(continueAt)
+            capturedFrames.append((request, returned, png))
         }
-        var samples: [(elapsed: TimeInterval, mark: String)] = []
+        var samples: [AccessLifecycleContract.ContinueWatchSample] = []
         var earlyMark = ""
         var earlyElapsed: TimeInterval = TestWait.seconds(.product(0))
-        for (elapsed, png) in capturedFrames {
-            let mark = contractTVOSMark(StrictE2EPhotoIdentity.captureIdentity(png: png))
-            samples.append((elapsed, mark))
-            if earlyMark.isEmpty {
-                if elapsed > interval / 2 {
-                    throw AccessLifecycleContract.AssertionError.message(
-                        "Early-half-window evidence after continue crossed the window; record a test timing failure"
-                    )
-                }
-                if isUsableTVOSMark(mark) && mark == continueMark {
-                    earlyMark = mark
-                    earlyElapsed = elapsed
-                    try persistTVOSCapturedPNG(png, name: "continue-early")
-                    try AccessLifecycleContract.assertContinueEarlyStillSameScene(
-                        continueMark: continueMark,
-                        earlyMark: earlyMark,
-                        elapsedSeconds: earlyElapsed,
-                        intervalSeconds: interval
-                    )
-                }
-            }
-            if elapsed + 0.001 < earliestAdvance {
-                try AccessLifecycleContract.assertSamplesStayOnSceneBeforeAdvanceWindow(
-                    continueMark: continueMark,
-                    samples: [(elapsed, mark)],
-                    intervalSeconds: interval
+        var baselineLuma: Double?
+        do {
+            for frame in capturedFrames {
+                let identity = StrictE2EPhotoIdentity.captureIdentity(png: frame.png)
+                let mark = contractTVOSMark(identity)
+                let sample = AccessLifecycleContract.ContinueWatchSample(
+                    requestElapsed: frame.request, returnElapsed: frame.returned,
+                    classifiedElapsed: Date().timeIntervalSince(continueAt), status: identity.status.rawValue,
+                    mark: mark, meanLuma: identity.meanLuma,
+                    isControlBarVisible: try XCTUnwrap(controlBarReference.isVisible(png: frame.png))
                 )
-            } else if AccessLifecycleContract.isUsableSceneMark(mark) && mark != continueMark {
-                try persistTVOSCapturedPNG(png, name: "after-auto-advance")
-                try AccessLifecycleContract.assertSamplesStayOnSceneBeforeAdvanceWindow(
-                    continueMark: continueMark,
-                    samples: samples,
-                    intervalSeconds: interval
-                )
-                guard
-                    let first = AccessLifecycleContract.firstUsableAdvance(
-                        continueMark: continueMark,
-                        samples: samples
-                    )
-                else {
-                    throw AccessLifecycleContract.AssertionError.message(
-                        "No auto advance within T±2; if the idle wait crossed the window, it is a test timing failure"
-                    )
-                }
-                try AccessLifecycleContract.assertContinueAutoAdvanceInWindow(
-                    continueMark: continueMark,
-                    laterMark: first.mark,
-                    elapsedSeconds: first.elapsed,
-                    intervalSeconds: interval
-                )
+                samples.append(sample)
                 if earlyMark.isEmpty {
-                    throw AccessLifecycleContract.AssertionError.message(
-                        "Early-half-window evidence after continue crossed the window; record a test timing failure"
-                    )
+                    if frame.request > interval / 2 {
+                        throw AccessLifecycleContract.AssertionError.message(
+                            "The first-half evidence window after Continue crossed its bounds; classify this as a test timing failure"
+                        )
+                    }
+                    if isUsableTVOSMark(mark) && mark == continueMark {
+                        earlyMark = mark
+                        earlyElapsed = frame.request
+                        baselineLuma = identity.meanLuma
+                        try persistTVOSCapturedPNG(frame.png, name: "continue-early")
+                        try AccessLifecycleContract.assertContinueEarlyStillSameScene(
+                            continueMark: continueMark, earlyMark: earlyMark,
+                            elapsedSeconds: earlyElapsed, intervalSeconds: interval
+                        )
+                    }
                 }
-                return (
-                    earlyMark: earlyMark,
-                    earlyElapsed: earlyElapsed,
-                    advancedMark: first.mark,
-                    advancedElapsed: first.elapsed
+                if AccessLifecycleContract.firstStableNewImage(continueMark: continueMark, samples: samples) != nil {
+                    break
+                }
+            }
+            guard let baselineLuma else {
+                throw AccessLifecycleContract.AssertionError.message(
+                    "The first-half evidence window after Continue crossed its bounds; missing original photo evidence"
                 )
             }
+            let evidence = try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
+                continueMark: continueMark, baselineLuma: baselineLuma, samples: samples, intervalSeconds: interval
+            )
+            for (sample, name) in [(evidence.start, "first-transition-start"), (evidence.stable, "after-auto-advance")]
+            {
+                if let frame = capturedFrames.first(where: { $0.request == sample.requestElapsed }) {
+                    try persistTVOSCapturedPNG(frame.png, name: name)
+                }
+            }
+            return TVOSContinueWatchResult(
+                earlyMark: earlyMark, earlyElapsed: earlyElapsed,
+                start: evidence.start, advanced: evidence.stable, samples: samples
+            )
+        } catch {
+            if let lastFrame = capturedFrames.last {
+                try? persistTVOSCapturedPNG(lastFrame.png, name: "after-auto-advance")
+            }
+            throw error
         }
-        if let lastFrame = capturedFrames.last {
-            try persistTVOSCapturedPNG(lastFrame.png, name: "after-auto-advance")
+    }
+
+    @MainActor
+    private func captureTVOSControlBarReference(app: XCUIApplication) throws
+        -> StrictE2EPhotoIdentity.ControlBarReference
+    {
+        let settings = app.buttons["slideshow.control.settings.button"]
+        let frame = try settings.snapshot().frame
+        let bounds = app.frame
+        let normalizedRect = CGRect(
+            x: (frame.minX - bounds.minX) / bounds.width, y: (frame.minY - bounds.minY) / bounds.height,
+            width: frame.width / bounds.width, height: frame.height / bounds.height
+        )
+        let png = app.screenshot().pngRepresentation
+        guard settings.isHittable else {
+            throw AccessLifecycleContract.AssertionError.message(
+                "Playback page should show the settings button: control-bar calibration requires Settings to remain hittable after the screenshot"
+            )
         }
-        try AccessLifecycleContract.assertSamplesStayOnSceneBeforeAdvanceWindow(
-            continueMark: continueMark,
-            samples: samples,
-            intervalSeconds: interval
-        )
-        throw AccessLifecycleContract.AssertionError.message(
-            "No auto advance within T±2; if the idle wait crossed the window, it is a test timing failure"
-        )
+        return try XCTUnwrap(StrictE2EPhotoIdentity.ControlBarReference(png: png, normalizedRect: normalizedRect))
     }
 
     @MainActor

@@ -1,6 +1,238 @@
 import XCTest
 
 extension SettingsResumeContractTests {
+    func testTVOSPauseJudgesSharedSustainedFadeBeforeLateNewPhoto() throws {
+        for start in [10.0, 13.2, 14.0] {
+            let evidence = try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
+                continueMark: "A5", baselineLuma: 0.53,
+                samples: tvosFadeSamples(start: start), intervalSeconds: 12
+            )
+            XCTAssertEqual(evidence.start.requestElapsed, start, accuracy: 0.001)
+            XCTAssertEqual(evidence.start.mark, "A5")
+            XCTAssertEqual(evidence.stable.mark, "A1")
+            if start >= 13.2 {
+                XCTAssertGreaterThan(evidence.stable.requestElapsed, 14)
+            }
+        }
+    }
+
+    func testTVOSPauseRejectsEarlyAndLateFadeStarts() {
+        for (start, message) in [
+            (
+                9.3,
+                "Automatic photo change occurred before T-2; first check test timing and image recognition instead of immediately calling it a product bug"
+            ),
+            (
+                14.1,
+                "No automatic photo change was captured within T±2; if waiting for idleness crossed the window, classify this as a test timing failure"
+            )
+        ] {
+            XCTAssertThrowsError(
+                try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
+                    continueMark: "A5", baselineLuma: 0.53,
+                    samples: tvosFadeSamples(start: start), intervalSeconds: 12
+                )
+            ) { error in
+                XCTAssertEqual(error.localizedDescription, message)
+            }
+        }
+    }
+
+    func testTVOSPauseRejectsDimWithoutStableNewPhoto() {
+        let samples = tvosFadeSamples(start: 13.2)
+        let dimOnly = samples.map { sample in
+            watchSample(
+                request: sample.requestElapsed, mark: sample.mark == "A1" ? "A5" : sample.mark,
+                status: sample.status, luma: sample.meanLuma, returnLag: 0.28
+            )
+        }
+        for invalid in [dimOnly, Array(samples.dropLast(4))] {
+            XCTAssertThrowsError(
+                try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
+                    continueMark: "A5", baselineLuma: 0.53, samples: invalid, intervalSeconds: 12
+                )
+            ) { error in
+                XCTAssertEqual(
+                    error.localizedDescription,
+                    "After about a full T, it must switch to the next scene; no stable new public photo was confirmed"
+                )
+            }
+        }
+    }
+
+    func testTVOSPauseRejectsLongBlackAfterInWindowFade() {
+        let oldAndFade = tvosFadeSamples(start: 10).filter { $0.requestElapsed < 10.9 }
+        let black = (0...10).map { index in
+            watchSample(
+                request: 10.9 + Double(index) * 0.3, mark: "BLACK", status: "BLACK",
+                luma: 0.01, returnLag: 0.28
+            )
+        }
+        for firstNewRequest in [12.52, 12.522, 14.2] {
+            let newPhoto = (0...5).map { index in
+                watchSample(
+                    request: firstNewRequest + Double(index) * 0.3, mark: "A1", luma: 0.47, returnLag: 0.28
+                )
+            }
+            let samples = oldAndFade + black.filter { $0.returnElapsed <= firstNewRequest } + newPhoto
+            if firstNewRequest == 12.52 {
+                XCTAssertNoThrow(
+                    try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
+                        continueMark: "A5", baselineLuma: 0.53, samples: samples, intervalSeconds: 10
+                    )
+                )
+            } else {
+                XCTAssertThrowsError(
+                    try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
+                        continueMark: "A5", baselineLuma: 0.53, samples: samples, intervalSeconds: 10
+                    )
+                ) { error in
+                    XCTAssertEqual(
+                        error.localizedDescription,
+                        "tvOS new photo must be stably identifiable within 4 s of transition start"
+                    )
+                }
+            }
+        }
+    }
+
+    func testTVOSPauseRejectsEarlyFadeWithoutThreeDimmingFrames() {
+        let samples = tvosFadeSamples(start: 7).map { sample in
+            if abs(sample.requestElapsed - 7.6) < 0.001 {
+                return watchSample(
+                    request: sample.requestElapsed, mark: "UNRECOGNIZABLE", status: "UNRECOGNIZABLE",
+                    luma: sample.meanLuma, returnLag: 0.28
+                )
+            }
+            return sample
+        }
+        XCTAssertThrowsError(
+            try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
+                continueMark: "A5", baselineLuma: 0.53, samples: samples, intervalSeconds: 10
+            )
+        ) { error in
+            XCTAssertEqual(error.localizedDescription, "Unrecognizable input must not count as a pass")
+        }
+    }
+
+    func testTVOSPauseRejectsEveryInvalidFrameBeforeAdvanceWindow() {
+        for (mark, message) in [
+            ("BLACK", "All black must not count as a pass"),
+            ("BLANK", "Blank must not count as a pass"),
+            ("UNRECOGNIZABLE", "Unrecognizable input must not count as a pass"),
+            ("TRANSITION", "Unrecognizable input must not count as a pass"),
+            (
+                "A2",
+                "Automatic photo change occurred before T-2; first check test timing and image recognition instead of immediately calling it a product bug"
+            )
+        ] {
+            let samples = tvosFadeSamples(start: 10).map { sample in
+                if abs(sample.requestElapsed - 4.9) < 0.001 {
+                    return watchSample(
+                        request: sample.requestElapsed, mark: mark, status: mark == "A2" ? "MATCH" : mark,
+                        luma: 0.01, returnLag: 0.28
+                    )
+                }
+                return sample
+            }
+            XCTAssertThrowsError(
+                try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
+                    continueMark: "A5", baselineLuma: 0.53, samples: samples, intervalSeconds: 10
+                ), mark
+            ) { error in
+                XCTAssertEqual(error.localizedDescription, message, mark)
+            }
+        }
+    }
+
+    func testTVOSPauseRejectsBlackUniformDimRecoveredDimAndControlBarAsStart() {
+        let start = 13.2
+        let valid = tvosFadeSamples(start: start)
+        for mutation in ["isolated_black", "uniform_dim", "recovered_dim", "controls", "only_two_dim_frames"] {
+            let samples = valid.map { sample in
+                let offset = sample.requestElapsed - start
+                var mark = sample.mark
+                var status = sample.status
+                var luma = sample.meanLuma
+                if offset >= -0.001 && offset < 0.9 - 0.001 {
+                    if mutation == "isolated_black" { luma = 0.53 }
+                    if mutation == "isolated_black" && abs(offset) < 0.001 {
+                        mark = "BLACK"
+                        status = "BLACK"
+                        luma = 0.01
+                    }
+                    if mutation == "uniform_dim" { luma = 0.35 }
+                    if mutation == "only_two_dim_frames" && offset > 0.5 {
+                        mark = "UNRECOGNIZABLE"
+                        status = "UNRECOGNIZABLE"
+                    }
+                }
+                if mutation == "recovered_dim" && abs(offset - 0.9) < 0.001 {
+                    mark = "A5"
+                    status = "MATCH"
+                    luma = 0.53
+                }
+                if mutation == "isolated_black" && abs(offset - 0.9) < 0.001 {
+                    mark = "A5"
+                    status = "MATCH"
+                    luma = 0.53
+                }
+                return watchSample(
+                    request: sample.requestElapsed, mark: mark, status: status, luma: luma,
+                    isControlBarVisible: mutation != "controls" || offset < -0.001,
+                    returnLag: 0.28
+                )
+            }
+            XCTAssertThrowsError(
+                try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
+                    continueMark: "A5", baselineLuma: 0.53, samples: samples, intervalSeconds: 12
+                ), mutation
+            ) { error in
+                XCTAssertEqual(
+                    error.localizedDescription,
+                    "No automatic photo change was captured within T±2; if waiting for idleness crossed the window, classify this as a test timing failure",
+                    "\(mutation): \(error.localizedDescription)"
+                )
+            }
+        }
+    }
+
+    func testTVOSPauseRejectsInvalidRequestClockOrBaseline() {
+        let valid = tvosFadeSamples(start: 13.2)
+        let invalidTime = [watchSample(request: .nan, mark: "A5")] + valid
+        for (baseline, interval, samples) in [
+            (Double.nan, 12.0, valid), (0.0, 12.0, valid), (0.53, 0.0, valid),
+            (0.53, 12.0, invalidTime), (0.53, 12.0, []), (0.53, 12.0, Array(valid.reversed()))
+        ] {
+            XCTAssertThrowsError(
+                try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
+                    continueMark: "A5", baselineLuma: baseline, samples: samples, intervalSeconds: interval
+                )
+            ) { error in
+                XCTAssertEqual(
+                    error.localizedDescription,
+                    "tvOS pause-continue evidence is invalid; invalid timing or original photo brightness evidence"
+                )
+            }
+        }
+    }
+
+    func tvosFadeSamples(start: TimeInterval) -> [AccessLifecycleContract.ContinueWatchSample] {
+        let oldCount = Int(start / 0.3)
+        let old = (1...oldCount).reversed().map { index in
+            watchSample(request: start - Double(index) * 0.3, mark: "A5", luma: 0.53, returnLag: 0.28)
+        }
+        let fade = [0.49, 0.35, 0.16].enumerated().map { index, luma in
+            watchSample(request: start + Double(index) * 0.3, mark: "A5", luma: luma, returnLag: 0.28)
+        }
+        let black = watchSample(request: start + 0.9, mark: "BLACK", status: "BLACK", luma: 0.01, returnLag: 0.28)
+        let darkNew = watchSample(request: start + 1.2, mark: "A1", luma: 0.15, returnLag: 0.28)
+        let stable = (0...5).map { index in
+            watchSample(request: start + 1.5 + Double(index) * 0.3, mark: "A1", luma: 0.47, returnLag: 0.28)
+        }
+        return old + fade + [black, darkNew] + stable
+    }
+
     func testFirstTransitionStartRejectsEarlyLateBlackAndCrossWindow() {
         let early = [
             watchSample(request: 5.0, mark: "A2"),
