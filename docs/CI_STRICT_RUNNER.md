@@ -81,8 +81,11 @@ slot needs clean rows and columns and an independent interior color match.
 This covers unequal doubles, balanced triples and the four primary-plus-pair
 triple orientations. Missing interior lines can join only matching neighbours;
 an entirely black outer edge contributes no identity. Mixed slot lines, overlaps
-and gaps reject the composite. Identities use top-to-bottom, then left-to-right
-rectangle order. Otherwise the original whole-frame verdict is preserved,
+and gaps reject the composite. A fractional slot boundary may leave one sampled
+row or column between rectangles: every pixel must be an interpolation of its
+immediate neighbours in two distinct slots, within the existing RGB tolerance.
+Black seams and wider gaps remain rejected. Identities use top-to-bottom, then
+left-to-right rectangle order. Otherwise the original whole-frame verdict is preserved,
 so single-photo, black and transition frames gain no composite identity. These
 helpers ship only in test targets; the glyph/texture validators and their
 acceptance requirements are unchanged.

@@ -77,6 +77,10 @@ class SwiftContractMirrorTestsCases:
         edge_band = re.search(r'captureEdgeBandRawPixels = (\d+)', identity_source)
         self.assertIsNotNone(edge_band)
         self.assertEqual(int(edge_band.group(1)), FRAME_PALETTE_EDGE_BAND_RAW_PIXELS)
+        from access_lifecycle_contract import CAPTURE_INNER_BOX
+        inner_box = re.search(r'captureInnerBox: .*? = \(([\d., ]+)\)', identity_source)
+        self.assertIsNotNone(inner_box)
+        self.assertEqual(tuple(map(float, inner_box.group(1).split(","))), CAPTURE_INNER_BOX)
         capture_rows = re.findall(r'"(A[1-5])": \[\[([\d, ]+)\], \[([\d, ]+)\]\]', identity_source)
         capture_palettes = {mark: {tuple(map(int, first.split(","))), tuple(map(int, second.split(",")))}
                             for mark, first, second in capture_rows}

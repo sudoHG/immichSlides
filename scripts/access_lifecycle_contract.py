@@ -14,8 +14,8 @@ from typing import Any, Callable, Iterator, Mapping, Sequence, Optional, Tuple
 from strict_e2e_filter_contract import FROZEN_FIXTURE_SHA256
 from strict_e2e_photo_identity import (
     MARKS, IdentityAssertionError, PhotoIdentity, classify_screenshot,
-    IDENTITY_MINIMUM_CHROMATIC_PIXEL_COUNT, _public_frame_sample, _public_palette_assignment,
-    _public_palette_edge_assignment, _public_frame_edge_band,
+    IDENTITY_MINIMUM_CHROMATIC_PIXEL_COUNT, FRAME_PALETTE_CHANNEL_TOLERANCE,
+    sample_public_frame, public_palette_assignment, public_palette_edge_assignment, public_frame_edge_band,
 )
 from strict_e2e_server import fixture_manifest
 
@@ -503,6 +503,39 @@ def classify_display_regions(image_bytes: bytes) -> dict[str, PhotoIdentity]:
     return regions
 
 
+CAPTURE_INNER_BOX = (0.28, 0.18, 0.72, 0.82)
+
+
+def _capture_canvas_tiled(boxes: list[tuple[int, int, int, int]], canvas: tuple[int, int, int, int], rgb: Any) -> bool:
+    if sum((right - left) * (bottom - top) for left, top, right, bottom in boxes) == (
+            canvas[2] - canvas[0]) * (canvas[3] - canvas[1]):
+        return True
+
+    def containing(x: int, y: int) -> int | None:
+        return next((index for index, (left, top, right, bottom) in enumerate(boxes)
+                     if left <= x < right and top <= y < bottom), None)
+
+    for y in range(canvas[1], canvas[3]):
+        for x in range(canvas[0], canvas[2]):
+            if containing(x, y) is not None:
+                continue
+            # Match Swift: only one sampled boundary line with independently located slots on both sides.
+            for dx, dy in ((1, 0), (0, 1)):
+                before, after = containing(x - dx, y - dy), containing(x + dx, y + dy)
+                if before is None or after is None or before == after:
+                    continue
+                first, second, color = rgb.getpixel((x - dx, y - dy)), rgb.getpixel((x + dx, y + dy)), rgb.getpixel((x, y))
+                delta = tuple(b - a for a, b in zip(first, second))
+                squared_length = sum(d * d for d in delta)
+                fraction = sum((c - a) * d for c, a, d in zip(color, first, delta)) / squared_length if squared_length else 0.5
+                if (0 < fraction < 1 and max(abs(c - (a + fraction * d)) for c, a, d in zip(color, first, delta))
+                        <= FRAME_PALETTE_CHANNEL_TOLERANCE):
+                    break
+            else:
+                return False
+    return True
+
+
 def capture_identity(image_bytes: bytes) -> PhotoIdentity:
     # Mirror Swift: discover palette rectangles first, including SmartFill's T-shaped triples.
     import io
@@ -511,18 +544,18 @@ def capture_identity(image_bytes: bytes) -> PhotoIdentity:
     full = classify_screenshot(image_bytes)
     try:
         with Image.open(io.BytesIO(image_bytes)) as image:
-            rgb = _public_frame_sample(image)
+            rgb = sample_public_frame(image)
             row_counts = {mark: [0] * rgb.height for mark in MARKS}
             column_counts = {mark: [0] * rgb.width for mark in MARKS}
-            edge_width, edge_height = _public_frame_edge_band(image.size, rgb.size)
+            edge_width, edge_height = public_frame_edge_band(image.size, rgb.size)
             assignments = []
             for index, color in enumerate(rgb.getdata()):
-                assignment = _public_palette_assignment(color)
+                assignment = public_palette_assignment(color)
                 row, column = divmod(index, rgb.width)
                 mark = assignment[0] if assignment is not None else None
                 if mark is None and (column < edge_width or column >= rgb.width - edge_width
                                      or row < edge_height or row >= rgb.height - edge_height):
-                    mark = _public_palette_edge_assignment(color)
+                    mark = public_palette_edge_assignment(color)
                 assignments.append(mark)
                 if mark is not None:
                     row_counts[mark][row] += 1
@@ -540,8 +573,7 @@ def capture_identity(image_bytes: bytes) -> PhotoIdentity:
             if not ((canvas[2] - canvas[0] == rgb.width or canvas[3] - canvas[1] == rgb.height)
                     and canvas[0] <= rgb.width / 2 < canvas[2] and canvas[1] <= rgb.height / 2 < canvas[3]):
                 return full
-            area = lambda box: (box[2] - box[0]) * (box[3] - box[1])
-            if sum(area(box) for _, box in slots) != area(canvas) or any(
+            if not _capture_canvas_tiled([box for _, box in slots], canvas, rgb) or any(
                     max(a[0], b[0]) < min(a[2], b[2]) and max(a[1], b[1]) < min(a[3], b[3])
                     for index, (_, a) in enumerate(slots) for _, b in slots[index + 1:]):
                 return full
@@ -566,10 +598,10 @@ def capture_identity(image_bytes: bytes) -> PhotoIdentity:
                         matches.append(counts[mark] >= IDENTITY_MINIMUM_CHROMATIC_PIXEL_COUNT)
                     if not matches[0] or not matches[-1]:
                         return full
-                box = (int((left + (right - left) * 0.28) * image.width / rgb.width),
-                       int((top + (bottom - top) * 0.18) * image.height / rgb.height),
-                       math.ceil((left + (right - left) * 0.72) * image.width / rgb.width),
-                       math.ceil((top + (bottom - top) * 0.82) * image.height / rgb.height))
+                box = (int((left + (right - left) * CAPTURE_INNER_BOX[0]) * image.width / rgb.width),
+                       int((top + (bottom - top) * CAPTURE_INNER_BOX[1]) * image.height / rgb.height),
+                       math.ceil((left + (right - left) * CAPTURE_INNER_BOX[2]) * image.width / rgb.width),
+                       math.ceil((top + (bottom - top) * CAPTURE_INNER_BOX[3]) * image.height / rgb.height))
                 output = io.BytesIO()
                 image.crop(box).save(output, format="PNG")
                 identity = classify_screenshot(output.getvalue())

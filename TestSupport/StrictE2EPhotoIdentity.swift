@@ -75,6 +75,7 @@ enum StrictE2EPhotoIdentity {
     // Mirror Python's public palette rectangles; SmartFill slots need not divide the canvas equally.
     private static let captureSampleWidthPixels = 480
     private static let captureEdgeBandRawPixels = 8
+    private static let captureInnerBox: (CGFloat, CGFloat, CGFloat, CGFloat) = (0.28, 0.18, 0.72, 0.82)
     private static let capturePalettes: [String: [[Int]]] = [
         "A1": [[37, 109, 19], [91, 61, 91]],
         "A2": [[74, 170, 38], [128, 122, 110]],
@@ -448,7 +449,7 @@ enum StrictE2EPhotoIdentity {
         guard (canvas.width == CGFloat(width) || canvas.height == CGFloat(height)),
             canvas.contains(CGPoint(x: CGFloat(width) / 2, y: CGFloat(height) / 2))
         else { return [] }
-        guard slots.reduce(CGFloat(0), { $0 + $1.rect.width * $1.rect.height }) == canvas.width * canvas.height,
+        guard isCaptureCanvasTiled(slots.map(\.rect), canvas: canvas, pixels: pixels, width: width),
             !slots.indices.contains(where: { index in
                 slots.dropFirst(index + 1).contains { slots[index].rect.intersects($0.rect) }
             }),
@@ -461,16 +462,49 @@ enum StrictE2EPhotoIdentity {
         for slot in slots {
             guard isCaptureSlotReadable(assignments, width: width, rect: slot.rect, mark: slot.mark) else { return [] }
             let box = (
-                (slot.rect.minX + 0.28 * slot.rect.width) / CGFloat(width),
-                (slot.rect.minY + 0.18 * slot.rect.height) / CGFloat(height),
-                (slot.rect.minX + 0.72 * slot.rect.width) / CGFloat(width),
-                (slot.rect.minY + 0.82 * slot.rect.height) / CGFloat(height)
+                (slot.rect.minX + captureInnerBox.0 * slot.rect.width) / CGFloat(width),
+                (slot.rect.minY + captureInnerBox.1 * slot.rect.height) / CGFloat(height),
+                (slot.rect.minX + captureInnerBox.2 * slot.rect.width) / CGFloat(width),
+                (slot.rect.minY + captureInnerBox.3 * slot.rect.height) / CGFloat(height)
             )
             guard capturePhotoMark(png: png, box: box) == slot.mark else { return [] }
         }
         return slots.sorted {
             $0.rect.minY == $1.rect.minY ? $0.rect.minX < $1.rect.minX : $0.rect.minY < $1.rect.minY
         }.map(\.mark)
+    }
+
+    private static func isCaptureCanvasTiled(_ rects: [CGRect], canvas: CGRect, pixels: [UInt8], width: Int) -> Bool {
+        if rects.reduce(CGFloat(0), { $0 + $1.width * $1.height }) == canvas.width * canvas.height { return true }
+        for y in Int(canvas.minY)..<Int(canvas.maxY) {
+            for x in Int(canvas.minX)..<Int(canvas.maxX) {
+                let point = CGPoint(x: x, y: y)
+                if rects.contains(where: { $0.contains(point) }) { continue }
+                // A fractional edge may leave one sampled line, backed by distinct slots immediately on both sides.
+                let isBlendedBoundary = [CGPoint(x: 1, y: 0), CGPoint(x: 0, y: 1)].contains { step in
+                    let before = CGPoint(x: point.x - step.x, y: point.y - step.y)
+                    let after = CGPoint(x: point.x + step.x, y: point.y + step.y)
+                    guard let first = rects.firstIndex(where: { $0.contains(before) }),
+                        let second = rects.firstIndex(where: { $0.contains(after) }), first != second
+                    else { return false }
+                    let index = (y * width + x) * pixelChannelCount
+                    let offset = (Int(step.y) * width + Int(step.x)) * pixelChannelCount
+                    let a = (0..<3).map { Double(pixels[index - offset + $0]) }
+                    let delta = (0..<3).map { Double(pixels[index + offset + $0]) - a[$0] }
+                    let color = (0..<3).map { Double(pixels[index + $0]) }
+                    let squaredLength = delta.reduce(0.0) { $0 + $1 * $1 }
+                    let fraction =
+                        squaredLength == 0
+                        ? 0.5 : (0..<3).reduce(0.0) { $0 + (color[$1] - a[$1]) * delta[$1] } / squaredLength
+                    return fraction > 0 && fraction < 1
+                        && (0..<3).allSatisfy {
+                            abs(color[$0] - (a[$0] + fraction * delta[$0])) <= Double(extendedPaletteChannelTolerance)
+                        }
+                }
+                if !isBlendedBoundary { return false }
+            }
+        }
+        return true
     }
 
     private static func captureEdgeMark(_ channels: [Double]) -> String {
