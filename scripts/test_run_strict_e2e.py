@@ -1204,6 +1204,113 @@ class FailureDiagnosticsTests(unittest.TestCase):
 
 
 class StrictCITracerTests(unittest.TestCase):
+    def test_pause_timing_signature_survives_runner_tracer_nightly_and_method_reporting(self):
+        import copy
+        import ci_report
+        import run_strict_ci_tracer as tracer
+        from ci_nightly import aggregate_nightly, case_identity, parse_manifest, shards
+
+        signed = {"name": "first_transition_start", "status": "detected", "official_signed": True,
+                  "request_elapsed": 15.2, "elapsed": 15.2, "mark": "A5", "identity_status": "MATCH"}
+        pending = {"name": "first_transition_start", "status": "pending_video_review", "official_signed": False,
+                   "reason": "No usable start in window; post-window new photo does not count"}
+        variants = [("signed", signed, 0, "passed"), ("pending", pending, 0, "needs-human-review"),
+                    ("unsigned detected", dict(signed, official_signed=False), 0, "needs-human-review"),
+                    ("pending signed", dict(pending, official_signed=True), 0, "needs-human-review"),
+                    ("nonboolean signature", dict(signed, official_signed=1), 0, "needs-human-review"),
+                    ("missing signature", {key: value for key, value in signed.items() if key != "official_signed"}, 0, "needs-human-review"),
+                    ("wrong start name", dict(signed, name="other"), 0, "needs-human-review"),
+                    ("duplicate start", signed, 0, "needs-human-review"),
+                    ("wrong receipt suite", signed, 0, "needs-human-review"),
+                    ("unreadable receipt", signed, 0, "needs-human-review"),
+                    ("missing receipt", None, 0, "needs-human-review"),
+                    ("runner failed", pending, 65, "failed")]
+        for device, nightly in (("iphone", False), ("iphone", True), ("ipad", True)):
+            for label, start, runner_exit, outcome in variants:
+                with self.subTest(device=device, nightly=nightly, defect=label), tempfile.TemporaryDirectory() as raw:
+                    root = Path(raw)
+                    case = dict(platform="ios", device=device, configuration="Release", suite="ios-lifecycle-pause",
+                                scenario="normal", fixture="a")
+                    matrix = json.loads((tracer.ROOT / "scripts/nightly-matrix.json").read_text())
+                    matrix["shard_size"] = 1
+                    selected = next(shard for shard in shards(parse_manifest(matrix)) if shard["cases"] == [case])
+                    manifest = root / "manifest.json"
+                    manifest.write_text(json.dumps(matrix if nightly else {"cases": [case], "exclusions": []}))
+                    identity = {"schema_version": 1, "event": "schedule" if nightly else "local",
+                                "repository": "sudoHG/immichSlides", "commit_sha": "a" * 40, "tree_sha": "b" * 40}
+                    identity.update({"ref": "refs/heads/main"} if nightly else {"dirty": False})
+                    counts = {"totalTestCount": 1, "passedTests": 1, "failedTests": 0, "skippedTests": 0, "result": "Passed"}
+                    method = "AccessLifecycleIOSUITests/testPauseNextContinueVisibleTiming"
+                    receipt = {"suite": "pause-next-continue", "status": "PASS", "device": device,
+                               "interval_requested": 15, "interval_actual": 15, "desktop_closeout_required": False,
+                               "timeline": [{"name": "continue_press", "issued_elapsed": 0, "returned_elapsed": .339},
+                                            start, {"name": "new_image_confirmation", "mark": "A5", "request_elapsed": 18.322}]}
+                    if label == "duplicate start":
+                        receipt["timeline"].append(dict(start))
+                    if label == "wrong receipt suite":
+                        receipt["suite"] = "other"
+
+                    def runner(command, *_args, **_kwargs):
+                        evidence = Path(command[command.index("--evidence-dir") + 1])
+                        derived = Path(command[command.index("--derived-data-path") + 1])
+                        if "--warm-up-only" in command:
+                            derived.mkdir(parents=True)
+                            (derived / "strict-warm-build.json").write_text(json.dumps({"signing_mode": "adhoc"}))
+                            return 0
+                        evidence.mkdir(parents=True)
+                        if start is not None:
+                            (evidence / "pause-next-continue.json").write_text("{" if label == "unreadable receipt" else json.dumps(receipt))
+                        visual = require_visual_identity(evidence, case["suite"])
+                        self.assertEqual("PASS" if outcome == "passed" else "UNVERIFIED", visual["verdict"])
+                        (evidence / "case-manifest.json").write_text(json.dumps({"visual_identity": visual}))
+                        (evidence / "xcodebuild.log").write_text("test-without-building\n")
+                        (evidence / "xcodebuild-reuse.json").write_text(json.dumps({"products_unchanged": True}))
+                        (evidence / "official-summary.json").write_text(json.dumps(counts))
+                        (evidence / "official-tests.json").write_text(json.dumps({"testNodes": [{
+                            "nodeType": "Unit test bundle", "name": "immichSlidesUITests", "children": [{
+                                "nodeType": "Test Case", "nodeIdentifier": method + "()", "result": "Passed"}]}]}))
+                        return runner_exit
+
+                    output = root / "trace"
+                    with mock.patch.object(tracer, "run_runner", side_effect=runner), \
+                            mock.patch.object(tracer, "workspace_preflight"), mock.patch.object(tracer, "run_identity", return_value=identity), \
+                            mock.patch.object(tracer, "source_metadata", return_value=(ci_report.NIGHTLY_PATH if nightly else None, False)), \
+                            mock.patch.object(tracer.shutil, "disk_usage", return_value=mock.Mock(total=200 * 1024**3, free=100 * 1024**3)), \
+                            mock.patch.object(tracer, "toolchain", return_value={"versions": {"python": "test"}, "signing_mode": "not-applicable"}), \
+                            mock.patch.dict(os.environ, {"GITHUB_RUN_ID": "10", "GITHUB_RUN_ATTEMPT": "1"}):
+                        code = tracer.main(["--platform", "ios", "--destination", "unused", "--manifest", str(manifest),
+                            "--output-dir", str(output)] + (["--shard", selected["id"]] if nightly else []))
+                    self.assertEqual(int(runner_exit != 0), code)
+                    summary = json.loads((output / "records/summary.json").read_text())
+                    trace = json.loads((output / "records/trace.json").read_text())
+                    self.assertEqual(outcome, summary["population"]["observed"][0]["outcome"])
+                    if outcome == "needs-human-review":
+                        self.assertEqual("Pause timing requires signed transition-start evidence",
+                                         summary["population"]["observed"][0]["attempts"][0]["reason"])
+                    self.assertEqual("unverified" if outcome == "needs-human-review" else outcome, summary["status"])
+                    self.assertEqual(counts, trace["warm"][0]["official_summary"])
+                    self.assertEqual(runner_exit, trace["warm"][0]["exit_code"])
+                    self.assertEqual([{"identifier": method, "result": "Passed"}], trace["warm"][0]["official_methods"])
+                    aggregate = aggregate_nightly([case_identity(case)], [summary], live_in_scope=False)
+                    self.assertEqual("failed" if runner_exit else "passed", aggregate["status"])
+                    self.assertEqual([case_identity(case)] if outcome == "needs-human-review" else [], aggregate["needs_human_review"])
+                    if nightly and not runner_exit:
+                        aggregate.update(identity=identity, hashes=summary["hashes"], run={"id": "10", "attempt": 1},
+                            source=summary["source"], capacity={"shard_intervals": [{"shard": selected["id"]}]})
+                        members = {("nightly-aggregate-10-1", "nightly.json"): aggregate,
+                                   (f"nightly-strict-{selected['id']}-10-1", "summary.json"): summary,
+                                   (f"nightly-strict-{selected['id']}-10-1", "trace.json"): trace}
+                        artifacts = [{"name": name, "expired": False} for name in sorted({name for name, _ in members})]
+                        run = {"id": 10, "workflow_id": 123, "run_attempt": 1, "created_at": "2026-10-18T00:00:00Z",
+                               "head_sha": identity["commit_sha"], "path": ci_report.NIGHTLY_PATH, "event": "schedule",
+                               "head_branch": "main", "head_repository": {"full_name": identity["repository"]},
+                               "status": "completed", "conclusion": "success"}
+                        with mock.patch("ci_publish.json_member", side_effect=lambda _api, artifact, name: copy.deepcopy(members[(artifact["name"], name)])):
+                            report = ci_report.nightly_attempt(type("API", (), {"repository": identity["repository"]})(), run, 1, artifacts)
+                        self.assertEqual([], report["diagnostics"]["missing"])
+                        self.assertEqual({method, case["suite"]}, {item["identity"]["key"] for item in report["observed"]})
+                        self.assertEqual([outcome, outcome], [item["outcome"] for item in report["observed"]])
+
     def test_identity_success_writes_no_early_failure_receipt_even_when_a_later_case_fails(self):
         for nightly, runner_exit in ((True, 0), (True, 2)):
             with self.subTest(nightly=nightly, runner_exit=runner_exit), tempfile.TemporaryDirectory() as directory:

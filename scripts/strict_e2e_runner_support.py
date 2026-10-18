@@ -782,7 +782,24 @@ def audit_out_of_order_runner_inputs(
         raise CommandError(str(error), code=2) from error
 
 
+def pause_timing_verdict(evidence_dir: Path) -> str:
+    """Read the existing timing signature without reinterpreting screenshot samples."""
+    try:
+        receipt = json.loads((evidence_dir / "pause-next-continue.json").read_text())
+        timeline = receipt.get("timeline")
+        starts = [item for item in timeline if isinstance(item, dict) and item.get("name") == "first_transition_start"]
+        signed = (receipt.get("suite") == "pause-next-continue" and len(starts) == 1
+                  and starts[0].get("status") == "detected" and starts[0].get("official_signed") is True)
+    except (OSError, ValueError, TypeError, AttributeError):
+        signed = False
+    return "PASS" if signed else "UNVERIFIED"
+
+
 def require_visual_identity(evidence_dir: Path, suite: str, *, fixture_set: str = "a") -> dict[str, object]:
+    if suite == "ios-lifecycle-pause":
+        payload = {"verdict": pause_timing_verdict(evidence_dir), "suite": suite}
+        _write_visual_runner_report(evidence_dir, payload)
+        return payload
     if suite in OUT_OF_ORDER_VISUAL_SUITES:
         try:
             payload = evaluate_out_of_order_identity(evidence_dir)

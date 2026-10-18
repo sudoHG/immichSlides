@@ -185,8 +185,10 @@ def method_observations(raw, trace):
                     or phase.get("log_present") is not True or outcomes.get(identity_key(case)) not in {"passed", "needs-human-review"}
                     and not counts["Failed"]):
                 outcome = "not-run"
-            if outcome == "passed" and suite in P2_CASES:
-                outcome = "needs-human-review" if outcomes.get(identity_key(case)) == "needs-human-review" else "not-run"
+            if outcome == "passed" and outcomes.get(identity_key(case)) == "needs-human-review":
+                outcome = "needs-human-review"
+            elif outcome == "passed" and suite in P2_CASES:
+                outcome = "not-run"
             from ci_failure_diagnostics import unknown_diagnostics
             diagnostics = ({field: method[field] for field in DIAGNOSTIC_FIELDS}
                            if DIAGNOSTIC_FIELDS <= method.keys() else unknown_diagnostics())
