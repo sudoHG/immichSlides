@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import lzma
+import math
 import os
 import zlib
 from pathlib import Path
@@ -11,7 +12,10 @@ from typing import Any, Callable, Iterator, Mapping, Sequence, Optional, Tuple
 
 
 from strict_e2e_filter_contract import FROZEN_FIXTURE_SHA256
-from strict_e2e_photo_identity import MARKS, PhotoIdentity, classify_screenshot
+from strict_e2e_photo_identity import (
+    MARKS, IdentityAssertionError, PhotoIdentity, classify_screenshot,
+    _public_axis_slots, _public_frame_sample,
+)
 from strict_e2e_server import fixture_manifest
 
 
@@ -64,8 +68,6 @@ DISPLAY_REGION_BOXES = {
     "top_half": (0.0, 0.0, 1.0, 0.50),
     "bottom_half": (0.0, 0.50, 1.0, 1.0),
 }
-CAPTURE_STACK_REGIONS = ("top", "upper", "top_half", "bottom_half")
-CAPTURE_SIDE_REGIONS = ("left", "right")
 # Crops that are too small cannot be identified; 8px matches classify_screenshot's minimum edge length.
 MIN_DISPLAY_CROP_EDGE_PIXELS = 8
 # A 16:9 A1 fills the screen, so no second public fixture shows; A5 at the pool end is alone.
@@ -500,46 +502,38 @@ def classify_display_regions(image_bytes: bytes) -> dict[str, PhotoIdentity]:
     return regions
 
 
-def _ordered_match_marks(
-    regions: Mapping[str, PhotoIdentity],
-    names: Sequence[str],
-) -> list[str]:
-    marks: list[str] = []
-    for name in names:
-        identity = regions.get(name)
-        if (
-            identity is not None
-            and identity.status == "MATCH"
-            and identity.mark in MARKS
-            and identity.mark not in marks
-        ):
-            marks.append(identity.mark)
-    return marks
-
-
 def capture_identity(image_bytes: bytes) -> PhotoIdentity:
-    # A combined identity needs at least two region MATCHes; a full-screen TRANSITION/BLACK/BLANK or no region MATCH
-    # must not be promoted.
-    regions = classify_display_regions(image_bytes)
-    full = regions["full"]
-    stack_marks = _ordered_match_marks(regions, CAPTURE_STACK_REGIONS)
-    if len(stack_marks) >= 2:
-        return PhotoIdentity(
-            "MATCH",
-            "+".join(stack_marks),
-            dict(full.scores),
-            full.mean_luma,
-            ("stack-region-match",) + tuple(full.notes),
-        )
-    side_marks = _ordered_match_marks(regions, CAPTURE_SIDE_REGIONS)
-    if len(side_marks) >= 2:
-        return PhotoIdentity(
-            "MATCH",
-            "+".join(side_marks),
-            dict(full.scores),
-            full.mean_luma,
-            ("side-region-match",) + tuple(full.notes),
-        )
+    # Mirror Swift: discover full-span slots first, then verify each slot's own interior.
+    import io
+    from PIL import Image
+
+    full = classify_screenshot(image_bytes)
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            rgb = _public_frame_sample(image)
+            for horizontal in (False, True):
+                try:
+                    slots = _public_axis_slots(rgb, None, horizontal=horizontal, allow_black_edges=True)
+                except IdentityAssertionError:
+                    continue
+                marks = [mark for mark, _ in slots]
+                if not 2 <= len(marks) <= 3 or len(set(marks)) != len(marks):
+                    continue
+                verified = []
+                for mark, (left, top, right, bottom) in slots:
+                    box = (int((left + (right - left) * 0.28) * image.width / rgb.width),
+                           int((top + (bottom - top) * 0.18) * image.height / rgb.height),
+                           math.ceil((left + (right - left) * 0.72) * image.width / rgb.width),
+                           math.ceil((top + (bottom - top) * 0.82) * image.height / rgb.height))
+                    output = io.BytesIO()
+                    image.crop(box).save(output, format="PNG")
+                    identity = classify_screenshot(output.getvalue())
+                    verified.append(identity.status == "MATCH" and identity.mark == mark)
+                if all(verified):
+                    return PhotoIdentity("MATCH", "+".join(marks), dict(full.scores), full.mean_luma,
+                                         ("photo-slot-axis-match",) + tuple(full.notes))
+    except (OSError, ValueError, IdentityAssertionError):
+        pass
     return full
 
 

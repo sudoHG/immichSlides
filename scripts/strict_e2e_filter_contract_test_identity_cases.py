@@ -74,6 +74,13 @@ class SwiftContractMirrorTestsCases:
         tolerance = re.search(r'extendedPaletteChannelTolerance = (\d+)', identity_source)
         self.assertIsNotNone(tolerance)
         self.assertEqual(int(tolerance.group(1)), FRAME_PALETTE_CHANNEL_TOLERANCE)
+        capture_rows = re.findall(r'"(A[1-5])": \[\[([\d, ]+)\], \[([\d, ]+)\]\]', identity_source)
+        capture_palettes = {mark: {tuple(map(int, first.split(","))), tuple(map(int, second.split(",")))}
+                            for mark, first, second in capture_rows}
+        for index in range(1, 6):
+            with Image.open(io.BytesIO(_fixture_png(f"A{index}", "a"))) as image:
+                self.assertEqual(capture_palettes[f"A{index}"],
+                                 {color for color in image.convert("RGB").getdata() if min(color) < 240})
 
 
 class FilterVisualIdentityFromScreenshotsTestsCases:

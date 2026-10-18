@@ -72,12 +72,15 @@ enum StrictE2EPhotoIdentity {
         ("top_half", (0.0, 0.0, 1.0, 0.50)),
         ("bottom_half", (0.0, 0.50, 1.0, 1.0))
     ]
-    // Composite identification needs the four central quadrants to match in pairs along one axis, away from controls
-    // and the divider.
-    private static let captureUpperLeftBox: (CGFloat, CGFloat, CGFloat, CGFloat) = (0.28, 0.18, 0.48, 0.42)
-    private static let captureUpperRightBox: (CGFloat, CGFloat, CGFloat, CGFloat) = (0.52, 0.18, 0.72, 0.42)
-    private static let captureLowerLeftBox: (CGFloat, CGFloat, CGFloat, CGFloat) = (0.28, 0.58, 0.48, 0.82)
-    private static let captureLowerRightBox: (CGFloat, CGFloat, CGFloat, CGFloat) = (0.52, 0.58, 0.72, 0.82)
+    // Mirror Python's public palette axis scan; SmartFill slots need not divide the canvas equally.
+    private static let captureSampleWidthPixels = 480
+    private static let capturePalettes: [String: [[Int]]] = [
+        "A1": [[37, 109, 19], [91, 61, 91]],
+        "A2": [[74, 170, 38], [128, 122, 110]],
+        "A3": [[111, 51, 57], [165, 3, 129]],
+        "A4": [[22, 64, 148], [148, 112, 76]],
+        "A5": [[5, 173, 95], [59, 125, 167]]
+    ].merging(extendedPalettes) { first, _ in first }
     private static let minDisplayCropEdgePixels = 8
     private static let sampleWidthPixels: Int = 96
     private static let minimumSampleHeightPixels: Int = 8
@@ -307,14 +310,14 @@ enum StrictE2EPhotoIdentity {
 
     static func captureIdentity(png: Data) -> Result {
         let full = classify(png: png)
-        let pairedMarks = pairedCaptureMarks(png: png)
+        let pairedMarks = captureSlotMarks(png: png)
         if pairedMarks.count >= 2 {
             return Result(
                 status: .match,
                 mark: pairedMarks.joined(separator: "+"),
                 scores: full.scores,
                 meanLuma: full.meanLuma,
-                notes: ["paired-photo-quadrant-match"] + full.notes
+                notes: ["photo-slot-axis-match"] + full.notes
             )
         }
         return full
@@ -369,21 +372,101 @@ enum StrictE2EPhotoIdentity {
         }
     }
 
-    private static func pairedCaptureMarks(png: Data) -> [String] {
-        let upperLeft = capturePhotoMark(png: png, box: captureUpperLeftBox)
-        let upperRight = capturePhotoMark(png: png, box: captureUpperRightBox)
-        let lowerLeft = capturePhotoMark(png: png, box: captureLowerLeftBox)
-        let lowerRight = capturePhotoMark(png: png, box: captureLowerRightBox)
-
-        if let upperLeft, let upperRight, let lowerLeft, let lowerRight,
-            upperLeft == upperRight, lowerLeft == lowerRight, upperLeft != lowerLeft
-        {
-            return [upperLeft, lowerLeft]
+    private static func captureSlotMarks(png: Data) -> [String] {
+        guard let source = CGImageSourceCreateWithData(png as CFData, nil),
+            let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
+            image.width >= minDisplayCropEdgePixels, image.height >= minDisplayCropEdgePixels
+        else { return [] }
+        let width = min(captureSampleWidthPixels, image.width)
+        let height = max(
+            minDisplayCropEdgePixels,
+            Int((Double(width) * Double(image.height) / Double(image.width)).rounded(.toNearestOrEven)))
+        var pixels = [UInt8](repeating: 0, count: width * height * pixelChannelCount)
+        let didDraw = pixels.withUnsafeMutableBytes { buffer -> Bool in
+            guard
+                let context = CGContext(
+                    data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8,
+                    bytesPerRow: width * pixelChannelCount, space: CGColorSpaceCreateDeviceRGB(),
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                )
+            else { return false }
+            context.interpolationQuality = .none
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
         }
-        if let upperLeft, let upperRight, let lowerLeft, let lowerRight,
-            upperLeft == lowerLeft, upperRight == lowerRight, upperLeft != upperRight
-        {
-            return [upperLeft, upperRight]
+        guard didDraw else { return [] }
+        var paletteCache: [Int: String] = [:]
+        let assignments: [String] = stride(from: 0, to: pixels.count, by: pixelChannelCount).map { offset in
+            let key = Int(pixels[offset]) << 16 | Int(pixels[offset + 1]) << 8 | Int(pixels[offset + 2])
+            if let cached = paletteCache[key] { return cached }
+            let matches = capturePalettes.compactMap { mark, palette in
+                palette.contains { reference in
+                    (0..<3).allSatisfy {
+                        abs(Int(pixels[offset + $0]) - reference[$0]) <= extendedPaletteChannelTolerance
+                    }
+                } ? mark : nil
+            }
+            let mark = matches.count == 1 ? matches[0] : ""
+            paletteCache[key] = mark
+            return mark
+        }
+        for horizontal in [false, true] {
+            let extent = horizontal ? width : height
+            let span = horizontal ? height : width
+            var hasMixedLine = false
+            let lineMarks: [String?] = (0..<extent).map { line in
+                var counts: [String: Int] = [:]
+                for offset in 0..<span {
+                    let index = horizontal ? offset * width + line : line * width + offset
+                    let mark = assignments[index]
+                    if !mark.isEmpty { counts[mark, default: 0] += 1 }
+                }
+                let matches = counts.filter { $0.value >= minimumChromaticPixelCount }.map(\.key)
+                if matches.count > 1 { hasMixedLine = true }
+                return matches.count == 1 ? matches[0] : nil
+            }
+            // A mixed line must invalidate the axis, rather than borrowing its neighbours' identity.
+            if hasMixedLine { continue }
+            var slots: [(mark: String, start: Int, end: Int)] = []
+            var isReadable = true
+            for line in 0..<extent {
+                var mark = lineMarks[line]
+                if mark == nil {
+                    let preceding = lineMarks[..<line].last { $0 != nil } ?? nil
+                    let following = lineMarks[(line + 1)...].first { $0 != nil } ?? nil
+                    let isBlackEdge =
+                        (preceding == nil || following == nil)
+                        && (0..<span).allSatisfy { offset in
+                            let index = (horizontal ? offset * width + line : line * width + offset) * pixelChannelCount
+                            return pixels[index] == 0 && pixels[index + 1] == 0 && pixels[index + 2] == 0
+                        }
+                    if isBlackEdge { continue }
+                    guard let preceding, preceding == following else {
+                        isReadable = false
+                        break
+                    }
+                    mark = preceding
+                }
+                guard let mark else { continue }
+                if slots.last?.mark == mark {
+                    slots[slots.count - 1].end = line + 1
+                } else {
+                    slots.append((mark, line, line + 1))
+                }
+            }
+            guard isReadable, (2...3).contains(slots.count), Set(slots.map(\.mark)).count == slots.count else {
+                continue
+            }
+            let verified = slots.allSatisfy { slot in
+                let start = CGFloat(slot.start) / CGFloat(extent)
+                let length = CGFloat(slot.end - slot.start) / CGFloat(extent)
+                let box =
+                    horizontal
+                    ? (start + 0.28 * length, 0.18, start + 0.72 * length, 0.82)
+                    : (0.28, start + 0.18 * length, 0.72, start + 0.82 * length)
+                return capturePhotoMark(png: png, box: box) == slot.mark
+            }
+            if verified { return slots.map(\.mark) }
         }
         return []
     }

@@ -404,7 +404,8 @@ def _public_frame_edge_band(original_size: tuple[int, int], sample_size: tuple[i
 
 
 def _public_axis_slots(rgb: object, color_exclusion_box: tuple[int, int, int, int] | None,
-                       *, horizontal: bool, edge_band_pixels: int = 0) -> list[tuple[str, tuple[int, int, int, int]]]:
+                       *, horizontal: bool, edge_band_pixels: int = 0,
+                       allow_black_edges: bool = False) -> list[tuple[str, tuple[int, int, int, int]]]:
     """A clean axis must identify one palette along every full-span line."""
     palettes = _public_photo_palettes()
     slots: list[tuple[str, int, int]] = []
@@ -447,6 +448,12 @@ def _public_axis_slots(rgb: object, color_exclusion_box: tuple[int, int, int, in
         if mark is None:
             following = next((item for item in exact_row_marks[y + 1:] if item is not None), None)
             preceding = next((item for item in reversed(exact_row_marks[:y]) if item is not None), None)
+            # Capture historically ignores the black edge outside a visible photo (for example rotation chrome).
+            # Interior missing lines still require matching neighbours; black alone supplies no photo identity.
+            if allow_black_edges and (preceding is None or following is None) and all(
+                    pixels[y, offset] == (0, 0, 0) if horizontal else pixels[offset, y] == (0, 0, 0)
+                    for offset in range(span)):
+                continue
             # Bilinear texture edges and overlay ink can obscure a row. Keep it in the
             # same slot only when both surrounding rows independently identify that photo.
             if preceding is None or preceding != following:

@@ -71,6 +71,18 @@ against both identity endpoints. Preserve the original frame and its slot/axis
 exception; do not change tolerances or exclude the frame. The measured collision
 history and corpus are in [#486](https://github.com/sudoHG/immichSlides/pull/486).
 
+The Swift `captureIdentity` and Python `capture_identity` readers locate contiguous
+photo slots along both canvas axes, rather than assuming equal quadrants. They use
+the public fixture RGB pairs, the same tolerance 12 and minimum 18 matching pixels
+per line, and a nearest-neighbour sample capped at 480 pixels wide. A composite
+requires two or three distinct slots on a clean axis and an independent color
+match inside every detected slot. Missing interior lines can join only matching
+neighbours; an entirely black outer edge contributes no identity. Mixed lines
+invalidate that axis. Otherwise the original whole-frame verdict is preserved,
+so single-photo, black and transition frames gain no composite identity. These
+helpers ship only in test targets; the glyph/texture validators and their
+acceptance requirements are unchanged.
+
 Fixture-A suites also accept A6–A8 through the shared reader vocabulary even
 though fixture A contains only A1–A5. This is intentional for this change: the
 RGB-pair collision risk is low, and every A frame retained its original

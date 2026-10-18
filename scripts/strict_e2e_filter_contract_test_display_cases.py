@@ -531,6 +531,12 @@ for offset in stride(from: 2, to: CommandLine.arguments.count, by: 2) {
 let path = CommandLine.arguments[offset]
 let mode = CommandLine.arguments[offset + 1]
 let original = try Data(contentsOf: URL(fileURLWithPath: path))
+if mode == "capture" {
+let result = StrictE2EPhotoIdentity.captureIdentity(png: original)
+print(String(data: try JSONSerialization.data(withJSONObject: ["status": result.status.rawValue,
+    "mark": result.mark ?? "nil"]), encoding: .utf8)!)
+continue
+}
 let candidate = mode == "slot" ? original : try StrictE2EFilterContract.displayCandidatePNG(original, evidenceDirectory: root)
 let result = StrictE2EPhotoIdentity.classify(png: candidate)
 let raw = candidate == original ? result : StrictE2EPhotoIdentity.classify(png: original)
@@ -621,6 +627,46 @@ print(String(data: try JSONSerialization.data(withJSONObject: report), encoding:
                         continue
                     self.assertNotIn(report["rawMark"], ("A6", "A7", "A8"))
                     self.assertNotIn(report["mark"], ("A6", "A7", "A8"))
+
+            # The TV A5+A3 40% split straddled the old upper-left quadrant.
+            # Use the same public frames for both readers, including one-defect negatives.
+            from access_lifecycle_contract import capture_identity
+            capture_cases = []
+            for fixture_set in ("a", "b"):
+                for horizontal, canvas in ((True, (3840, 2160)), (False, IPAD_SCREEN), (False, IPHONE_SCREEN)):
+                    for marks, shares in (((5, 3), (0.4, 1.0)), ((1, 5, 3), (0.25, 0.65, 1.0))):
+                        scene = Image.new("RGB", canvas)
+                        start = 0
+                        for index, share in zip(marks, shares):
+                            end = round(canvas[0 if horizontal else 1] * share)
+                            box = (start, 0, end, canvas[1]) if horizontal else (0, start, canvas[0], end)
+                            photo = Image.open(io.BytesIO(_fixture_png(f"A{index}", fixture_set))).convert("RGB")
+                            scene.paste(ImageOps.fit(photo, (box[2] - box[0], box[3] - box[1]),
+                                                     Image.Resampling.BILINEAR, centering=(0.4, 0.4)), box)
+                            start = end
+                        capture_cases.append((f"{fixture_set}-{canvas[0]}-{len(marks)}", scene,
+                                              ("MATCH", "+".join(f"A{index}" for index in marks))))
+            first = Image.open(io.BytesIO(_fixture_png("A5", "a"))).convert("RGB").resize(TV_SCREEN)
+            second = Image.open(io.BytesIO(_fixture_png("A3", "a"))).convert("RGB").resize(TV_SCREEN)
+            capture_cases.extend((
+                ("transition", Image.blend(second, first, 0.3), ("TRANSITION", "nil")),
+                ("single", first, ("MATCH", "A5")),
+                ("black", Image.new("RGB", TV_SCREEN), ("BLACK", "nil")),
+            ))
+            capture_arguments = []
+            for name, scene, _ in capture_cases:
+                path = directory / f"capture-{name}.png"
+                scene.save(path)
+                capture_arguments.extend((str(path), "capture"))
+            captured = subprocess.run([str(executable), str(directory), *capture_arguments],
+                                      check=True, capture_output=True, text=True)
+            self.assertEqual(len(captured.stdout.splitlines()), len(capture_cases))
+            for (name, _, expected), line in zip(capture_cases, captured.stdout.splitlines()):
+                with self.subTest(capture=name):
+                    report = json.loads(line)
+                    self.assertEqual((report["status"], report["mark"]), expected)
+                    identity = capture_identity((directory / f"capture-{name}.png").read_bytes())
+                    self.assertEqual((identity.status, identity.mark or "nil"), expected)
 
 
     def test_smartfill_multi_to_single_requires_real_same_process_pngs(self) -> None:
