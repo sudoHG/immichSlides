@@ -32,7 +32,8 @@ TOKEN_RE = re.compile(r"\b[A-Za-z_]\w*\b")
 DELEGATE_RE = re.compile(r"AccessibilityI(?:D|dentifier)$")
 LEXEME_START = re.compile(r"[`\"'/#]")
 EVIDENCE_CAPTURE = ("immichSlidesUITests/UITestSupport.swift", "FirstFailureEvidence", "capture")
-UI_ACTION = re.compile(r"^(?:tap|doubleTap|twoFingerTap|press|typeText|adjust|coordinate|launch|activate|terminate|swipe\w*|pinch\w*|rotate\w*|drag\w*)$")
+UI_ACTION = re.compile(r"^(?:tap|doubleTap|twoFingerTap|press|typeText|adjust|coordinate|launch|activate|terminate|open|swipe\w*|pinch\w*|rotate\w*|drag\w*)$")
+UI_ORIENTATION_ASSIGNMENT = re.compile(r"\bXCUIDevice\s*\.\s*shared\s*\.\s*orientation\s*=(?!=)")
 
 
 def identifier_literals(text):
@@ -175,7 +176,6 @@ class FlowGraph:
                     self.symbols.setdefault(match[1], []).append(
                         (False, source.owner(match.start()), source, start, literal_or_comment_end(text, start)))
 
-
     def resolve(self, name, called, receiver, caller):
         candidates = [symbol for symbol in self.symbols.get(name, []) if symbol[0] == called]
         if receiver == "other":
@@ -199,7 +199,7 @@ class FlowGraph:
         return self.cache[key]
 
     def validate_evidence_capture(self):
-        """The excluded recorder body and every helper it calls must remain read-only."""
+        """Reject listed UI actions and orientation writes in the excluded helper graph."""
         if self.evidence_capture is None:
             return
         source, start, end = self.evidence_capture
@@ -211,6 +211,9 @@ class FlowGraph:
                 if key in seen:
                     continue
                 seen.add(key)
+                for match in UI_ORIENTATION_ASSIGNMENT.finditer(current.code, body_start, body_end):
+                    if platform in current.platforms_at(match.start()):
+                        raise ValueError(f"{current.name}: evidence-only FirstFailureEvidence.capture reaches UI action orientation assignment")
                 references = sorted(current.references(body_start, body_end, platform), key=lambda item: item[0])
                 for name, called, _receiver in references:
                     if called and UI_ACTION.fullmatch(name):

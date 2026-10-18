@@ -346,8 +346,13 @@ shared helpers outside other test classes; a call on another receiver may reach 
 definition with that name. `#if os(...)` branches follow the platform, and an
 interpolation matches any text. Only `FirstFailureEvidence.capture` in
 `immichSlidesUITests/UITestSupport.swift` is excluded as evidence-only; the same
-check recursively rejects UI interactions in that body and any helper it reaches.
-Other recorder code and ordinary helpers retain the existing reachability rules.
+check rejects calls to the listed XCTest actions in that body and any helper it
+reaches on either platform: `tap`, `doubleTap`, `twoFingerTap`, `press`, `typeText`,
+`adjust`, `coordinate`, `launch`, `activate`, `terminate`, `open`, and names starting
+with `swipe`, `pinch`, `rotate` or `drag`. It also rejects direct assignments to
+`XCUIDevice.shared.orientation`. Helpers reached only through `capture` are also
+excluded from identifier reachability; other recorder code and helpers reached
+through ordinary test paths retain the existing reachability rules.
 An app Swift file compiled on that platform defines an
 identifier when it contains a matching literal or calls a function whose name ends in
 `AccessibilityID`/`AccessibilityIdentifier` that returns one. The test must belong to

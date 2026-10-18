@@ -214,7 +214,9 @@ class FixtureCoverageTests(unittest.TestCase):
                 (True, False, True, True, False), (True, False, True, False, True)):
             for diagnostics in ({"failure_phase": "interval_setup", "failure_class": "interval_readback"},
                                 {"failure_phase": "unknown", "failure_class": "unknown"}):
-                with self.subTest(retried=retried, retry_read_failed=retry_read_failed, diagnostics=diagnostics), tempfile.TemporaryDirectory() as directory:
+                with self.subTest(retried=retried, retry_read_failed=retry_read_failed, retry_two=retry_two,
+                                  configure_failed=configure_failed, first_missing=first_missing,
+                                  diagnostics=diagnostics), tempfile.TemporaryDirectory() as directory:
                     root = Path(directory, "checkout").resolve()
                     root.mkdir()
                     output = Path(directory, "output")

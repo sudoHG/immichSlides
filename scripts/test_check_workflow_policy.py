@@ -192,18 +192,24 @@ final class LocaleUITests: XCTestCase {
 
         action_mutations = (
             ("tap", "button.tap()"),
+            ("doubleTap", "button.doubleTap()"),
+            ("twoFingerTap", "button.twoFingerTap()"),
             ("press", "button.press(forDuration: 1)"),
             ("typeText", 'field.typeText("x")'),
             ("swipeUp", "button.swipeUp()"),
+            ("pinch", "button.pinch(withScale: 2, velocity: 1)"),
+            ("rotate", "button.rotate(0.5, withVelocity: 1)"),
+            ("drag", "pointer.drag(from: .zero, to: .zero)"),
             ("adjust", "slider.adjust(toNormalizedSliderPosition: 0.5)"),
             ("coordinate", "button.coordinate(withNormalizedOffset: .zero)"),
             ("launch", "app.launch()"),
             ("activate", "app.activate()"),
             ("terminate", "app.terminate()"),
+            ("open", 'XCUIApplication.open(URL(string: "fixture")!)'),
+            ("orientation assignment", "XCUIDevice.shared.orientation = .landscapeLeft"),
         )
         for action, expression in action_mutations:
             with self.subTest(action=action):
-                tests["immichSlidesUITests/UITestSupport.swift"] = recorder
                 tests["immichSlidesUITests/UITestSupport.swift"] = recorder.replace(
                     'let identifier = "settings.cache.clearDisk.button" }',
                     f'let identifier = "settings.cache.clearDisk.button"; {expression} }}')
@@ -212,6 +218,19 @@ final class LocaleUITests: XCTestCase {
                     rf"UITestSupport\.swift: evidence-only FirstFailureEvidence\.capture reaches UI action {action}",
                 ):
                     flow_violations(json.dumps(area_map), exceptions, app, tests, populations, plans)
+
+        tests["immichSlidesUITests/UITestSupport.swift"] = recorder.replace(
+            'let identifier = "settings.cache.clearDisk.button" }',
+            'let identifier = "settings.cache.clearDisk.button"\n'
+            '#if os(tvOS)\n'
+            '    XCUIRemote.shared.press(.select)\n'
+            '#endif\n'
+            '  }')
+        with self.subTest(platform="tvos"), self.assertRaisesRegex(
+            ValueError,
+            r"UITestSupport\.swift: evidence-only FirstFailureEvidence\.capture reaches UI action press",
+        ):
+            flow_violations(json.dumps(area_map), exceptions, app, tests, populations, plans)
 
         tests["immichSlidesUITests/UITestSupport.swift"] = recorder.replace(
             'static func capture() { let identifier = "settings.cache.clearDisk.button" }',
