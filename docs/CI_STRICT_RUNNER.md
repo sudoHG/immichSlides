@@ -601,6 +601,75 @@ Valid messages survive aggregation and compact history and appear in
 the [nightly failure table](CI_REPORT.md#method-identities-and-reruns).
 Historical traces and summaries without the field remain valid and gain no new claim.
 
+### Prepared first-failure evidence
+
+This reader contract precedes producer activation. Historical records without
+`first_failure` remain valid. No App code, workflow, assertion, deadline, retry,
+threshold, verdict or population changes. The accepting reader must be on main
+before a producer PR uses the field; see [reader-first evolution](CI_SUMMARY.md#reader-first-evolution).
+
+The optional receipt has exactly `schema_version: 1`, `source` (`xctest`,
+`validator`, `preparation`), `step`, `element`, `action`, `timing`, `state`,
+`validator`, and `screenshot`. All strings are closed vocabularies in
+`ci_failure_diagnostics.py`; `FIRST_FAILURE_ELEMENTS` is the single reviewed
+element table, supplied by fixture runners to the future test-only recorder.
+Unknown elements become `unknown`, never arbitrary identifiers. Unknown numbers
+remain null. No assertion text, paths, commands, URLs, asset identifiers, AX trees
+or raw probe labels are accepted. Exact fields, finite numbers and range checks
+bound the canonical receipt below 8 KiB. Duplicate keys, including nested keys,
+and malformed JSON containing the field are refused without echoing candidates.
+
+| Object | Exact fields and meaning |
+| --- | --- |
+| `timing` | `since_action_issued_seconds`, `since_action_returned_seconds`, `action_duration_seconds`, `wait_elapsed_seconds`, `deadline_seconds`, `capture_request_seconds`, `capture_return_seconds`, `state_age_seconds`; finite 0–86,400 seconds or null |
+| `state` | `app`, `surface`, `observation`, `control_bar`, `focus`, `history_count`, `autoplay`, `orientation`, `scene_status`, `query_error_code`; enums and bounded integers/null only |
+| `validator` | Null, or exactly closed `kind`, integer/null `slot` (1–64), and closed `axis`; requires validator source |
+| `screenshot` | `status`, `width`, `height`, `bytes`; a retained image needs positive dimensions <=1,536 and bytes <=1 MiB; unavailable images have null measurements |
+
+Capture offsets refer to the first failure's monotonic timestamp; they expose
+request/return lag rather than claiming an instantaneous image. `observation`
+distinguishes cached evidence, a failure snapshot, and unavailable state.
+Existing probes may be absent, especially on Release/tvOS; absence does not prove
+zero history, hidden controls or a stable scene. Preparation receipts cannot
+claim a captured App image. A post-test validator may retain its actual public
+input image as `validated-input`; it cannot reconstruct failure-instant App
+state after the App exits. Neither evidence type changes its original result.
+
+Future XCTest capture is allowed only on the failure path of an explicitly
+configured public loopback fixture run, on an allowed foreground App surface.
+Live/private runs, first-boot credential/PIN pages, Settings.app and SpringBoard
+cannot produce public images. The scanner does not inspect pixel semantics;
+proven public fixture provenance and producer capture guards are required.
+Successful tests must add no AX query, screenshot or public receipt. A synchronous
+XCTest screenshot has no independent hard five-second bound: its actual overhead
+must be measured, with existing runner/watchdog limits remaining authoritative.
+
+Strict diagnostic media will use a separate failure-only directory inside the
+existing scanned `p2-review-*` artifact, never a completed P2 review package.
+The reader command is:
+
+```bash
+python3 scripts/ci_review_packages.py read-failure --package <directory> --summary <summary.json>
+```
+
+The directory contains exactly `first-failure.json` and `first-failure.png`.
+Its manifest has exactly `schema_version: 1`, `source_identity`, `run`, `identity`,
+`attempt`, `fixture_sha256`, `first_failure`, `image_sha256`. Existing source/run/
+identity fields bind it to the supplied strict summary and failed attempt; the
+fixture hash must match the frozen public A/B fixture. The PNG is a single,
+metadata-free canonical PNG encoded with Pillow, with exact receipt dimensions,
+size and digest. Symlinks, extra files, trailing data and metadata are refused;
+the manifest is capped at 32 KiB. This reader grants no visual or human PASS.
+Ordinary UI media will reuse the existing scanned `ui-failures-*` artifact.
+`records/` remains unscanned, so validated projection must precede producer writes.
+
+Producer budgets and measured costs will be documented when activated. The
+approved target is zero public bytes for a passing method and at most 1 MiB image
+plus 8 KiB receipt for a failing method: 19 failures would add at most 19 MiB plus
+152 KiB, before existing artifact compression. New host collection has a proposed
+five-second cumulative allowance per job (43 jobs: at most 215 seconds/night),
+separate from the synchronous XCTest limitation and existing export budgets.
+
 ### Public failure diagnostics
 
 Failed method nodes in `official-tests*.json` and the tracer's

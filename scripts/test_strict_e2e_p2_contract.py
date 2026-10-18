@@ -129,6 +129,103 @@ class VerifyCommandLineTests(VerifyCommandLineTestsCases, unittest.TestCase):
 
 
 class ReviewPackageTests(unittest.TestCase):
+    def test_failure_diagnostic_reader_binds_one_bounded_image_to_the_failed_attempt(self):
+        import copy
+        from PIL import Image
+        from ci_review_packages import main, read_failure_package
+        from ci_summary import ContractError, observation, test_identity
+        from test_ci_summary import first_failure_receipt, valid_summary
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            package = root / "failure"
+            package.mkdir()
+            image = io.BytesIO()
+            with Image.open(io.BytesIO(IMAGES["asset-a-3"])) as original:
+                original.resize((320, 180)).save(image, format="PNG")
+            png = image.getvalue()
+            (package / "first-failure.png").write_bytes(png)
+            summary = valid_summary()
+            identity = test_identity("strict", "smoke", device="iphone", configuration="Debug", suite="smoke",
+                                     scenario="normal", fixture="a")
+            receipt = first_failure_receipt()
+            receipt["screenshot"].update(width=320, height=180, bytes=len(png))
+            failed = observation(identity, "failed", 1, exit_code=65)
+            failed["first_failure"] = failed["attempts"][0]["first_failure"] = receipt
+            summary["population"].update(declared=[identity], compiled=[identity], observed=[failed])
+            summary["status"] = "failed"
+            _write_json(root / "summary.json", summary)
+            manifest = {"schema_version": 1, "source_identity": summary["identity"], "run": summary["run"],
+                "identity": identity, "attempt": 1, "fixture_sha256": FROZEN_FIXTURE_SHA256["a"],
+                "first_failure": receipt, "image_sha256": hashlib.sha256(png).hexdigest()}
+            _write_json(package / "first-failure.json", manifest)
+            with mock.patch("sys.stdout", new=io.StringIO()):
+                self.assertEqual(0, main(["read-failure", "--package", str(package), "--summary", str(root / "summary.json")]))
+            self.assertEqual(manifest, read_failure_package(package, summary))
+            cases = [
+                (("schema_version",), True, "unsupported first failure package"),
+                (("source_identity", "tree_sha"), "e" * 40, "first failure package provenance differs"),
+                (("run", "attempt"), 2, "first failure package provenance differs"),
+                (("attempt",), 2, "first failure package attempt differs"),
+                (("identity", "key"), "other-case", "first failure package identity differs"),
+                (("fixture_sha256",), "e" * 64, "first failure package fixture differs"),
+                (("first_failure", "timing", "deadline_seconds"), 6, "first failure package receipt differs"),
+                (("image_sha256",), "e" * 64, "first failure package image differs"),
+            ]
+            for path, value, message in cases:
+                changed = copy.deepcopy(manifest)
+                target = changed
+                for component in path[:-1]:
+                    target = target[component]
+                target[path[-1]] = value
+                _write_json(package / "first-failure.json", changed)
+                with self.subTest(path=path), self.assertRaisesRegex(ContractError, "^" + message + "$"):
+                    read_failure_package(package, summary)
+            _write_json(package / "first-failure.json", manifest)
+            changed = copy.deepcopy(manifest)
+            changed["first_failure"]["screenshot"]["width"] = 321
+            changed_summary = copy.deepcopy(summary)
+            row = changed_summary["population"]["observed"][0]
+            row["first_failure"] = row["attempts"][0]["first_failure"] = changed["first_failure"]
+            _write_json(package / "first-failure.json", changed)
+            with self.assertRaisesRegex(ContractError, "^first failure package image dimensions differ$"):
+                read_failure_package(package, changed_summary)
+            _write_json(package / "first-failure.json", manifest)
+            with self.assertRaisesRegex(ContractError, "^invalid first failure package directory$"):
+                read_failure_package(package / "first-failure.png", summary)
+            (package / "first-failure.json").write_text(json.dumps(manifest) + " " * 32768)
+            with self.assertRaisesRegex(ContractError, "^first failure package manifest exceeds bound$"):
+                read_failure_package(package, summary)
+            _write_json(package / "first-failure.json", manifest)
+            (package / "unexpected.png").write_bytes(png)
+            with self.assertRaisesRegex(ContractError, "^unexpected first failure package content$"):
+                read_failure_package(package, summary)
+            (package / "unexpected.png").unlink()
+            (package / "first-failure.png").write_bytes(png + b"extra")
+            with self.assertRaisesRegex(ContractError, "^first failure package image differs$"):
+                read_failure_package(package, summary)
+            for payload in (b"not-an-image", png + b"trailing-data"):
+                changed = copy.deepcopy(manifest)
+                changed["first_failure"]["screenshot"]["bytes"] = len(payload)
+                changed["image_sha256"] = hashlib.sha256(payload).hexdigest()
+                changed_summary = copy.deepcopy(summary)
+                row = changed_summary["population"]["observed"][0]
+                row["first_failure"] = row["attempts"][0]["first_failure"] = changed["first_failure"]
+                _write_json(package / "first-failure.json", changed)
+                (package / "first-failure.png").write_bytes(payload)
+                message = ("first failure package image cannot be decoded" if payload == b"not-an-image" else
+                           "first failure package image contains unsupported data")
+                with self.subTest(payload=payload[:12]), self.assertRaisesRegex(ValueError, "^" + message + "$"):
+                    read_failure_package(package, changed_summary)
+            _write_json(package / "first-failure.json", manifest)
+            (package / "first-failure.png").write_bytes(b"x" * (1048576 + 1))
+            with self.assertRaisesRegex(ContractError, "^first failure package image exceeds bound$"):
+                read_failure_package(package, summary)
+            (package / "first-failure.png").unlink()
+            (root / "original.png").write_bytes(png)
+            (package / "first-failure.png").symlink_to(root / "original.png")
+            with self.assertRaisesRegex(ContractError, "^nonregular first failure package input$"):
+                read_failure_package(package, summary)
+
     def _package(self, root, fixture="a", suite="p2-cache"):
         from ci_review_packages import build_package
         evidence = build_evidence(root, suite, "iphone", review=False)

@@ -147,16 +147,20 @@ def observation(identity, outcome, duration_seconds, *, reason=None, message=Non
 
 
 def validate_observation(entry):
-    from ci_failure_diagnostics import DIAGNOSTIC_FIELDS, VALIDATOR_FAILURE_FIELD, validate_diagnostic_fields
+    from ci_failure_diagnostics import DIAGNOSTIC_FIELDS, VALIDATOR_FAILURE_FIELD, FIRST_FAILURE_FIELD, validate_diagnostic_fields
     require(isinstance(entry, dict), "observation must be an object")
     try:
         validate_diagnostic_fields(entry)
     except ValueError as error:
         raise ContractError(str(error)) from error
-    optional = DIAGNOSTIC_FIELDS | {VALIDATOR_FAILURE_FIELD}
+    optional = DIAGNOSTIC_FIELDS | {VALIDATOR_FAILURE_FIELD, FIRST_FAILURE_FIELD}
     fields(entry, {"identity", "outcome", "duration_seconds", "attempts"} | (optional & entry.keys()), "observation")
     validate_test_identity(entry["identity"])
     require(entry["outcome"] in OUTCOMES, "invalid outcome")
+    if FIRST_FAILURE_FIELD in entry:
+        require(entry["identity"]["kind"] in {"strict", "ui"}
+                and entry["outcome"] in {"failed", "flaky-passed", "crashed", "timed-out", "not-run"},
+                "first failure requires a failing strict or UI observation")
     if VALIDATOR_FAILURE_FIELD in entry:
         require(entry["identity"]["kind"] == "strict" and entry["outcome"] == "failed",
                 "validator failure message requires a failed strict observation")
@@ -166,6 +170,12 @@ def validate_observation(entry):
         require(isinstance(attempt, dict), "attempt must be an object")
         fields(attempt, {"number", "outcome", "duration_seconds", "exit_code", "reason", "message"}
                | (optional & attempt.keys()), "attempt")
+        if FIRST_FAILURE_FIELD in attempt:
+            require(entry["identity"]["kind"] in {"strict", "ui"}
+                    and attempt["outcome"] in {"failed", "crashed", "timed-out", "not-run"},
+                    "first failure requires a failing strict or UI attempt")
+            require((attempt["outcome"] == "not-run") == (attempt[FIRST_FAILURE_FIELD]["source"] == "preparation"),
+                    "first failure source must match execution state")
         if VALIDATOR_FAILURE_FIELD in attempt:
             require(entry["identity"]["kind"] == "strict" and attempt["outcome"] == "failed",
                     "validator failure message requires a failed strict attempt")
@@ -182,6 +192,11 @@ def validate_observation(entry):
             require(attempt["exit_code"] in (0, None), "passed attempt cannot have a failing exit")
     require(math.isclose(entry["duration_seconds"], sum(a["duration_seconds"] for a in entry["attempts"]), abs_tol=0.001),
             "total duration must account for every attempt")
+    first = next((attempt for attempt in entry["attempts"] if attempt["outcome"] in {"failed", "crashed", "timed-out", "not-run"}), {})
+    if FIRST_FAILURE_FIELD in entry or any(FIRST_FAILURE_FIELD in attempt for attempt in entry["attempts"]):
+        require(FIRST_FAILURE_FIELD in entry and FIRST_FAILURE_FIELD in first
+                and entry[FIRST_FAILURE_FIELD] == first[FIRST_FAILURE_FIELD],
+                "first failure must match the first failing attempt")
     if entry["outcome"] == "flaky-passed":
         require(len(entry["attempts"]) == 2 and entry["attempts"][0]["outcome"] == "failed"
                 and entry["attempts"][1]["outcome"] == "passed", "flaky pass requires failed then passed attempts")
@@ -370,6 +385,9 @@ def render_markdown(payload):
         message = "; ".join(detail for attempt in entry["attempts"]
                             for detail in (attempt["reason"], attempt["message"]) if detail)
         lines.append(f"| {markdown_text(entry['identity']['key'])} | {entry['outcome']} | {entry['duration_seconds']:.3f} | {markdown_text(message)} |")
+        if "first_failure" in entry:
+            from ci_failure_diagnostics import render_first_failure
+            lines.append("\nFirst failure: " + markdown_text(render_first_failure(entry["first_failure"])) + "\n")
     for entry in population["deselected"]:
         lines.append(f"| {markdown_text(entry['identity']['key'])} | deselected | — | {markdown_text(entry['reason'])}; owned by {markdown_text(entry['owning_tier'])} |")
     for entry in payload["infrastructure"]:

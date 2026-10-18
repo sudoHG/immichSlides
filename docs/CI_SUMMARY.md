@@ -429,6 +429,7 @@ nonnegative finite `duration_seconds`, integer or null `exit_code`, string or nu
 | `failure_phase` | String from the fixed [public failure diagnostics](CI_STRICT_RUNNER.md#public-failure-diagnostics) allowlist; paired with `failure_class` |
 | `failure_class` | String from the same contract's fixed class allowlist; paired with `failure_phase` |
 | `validator_failure_message` | Optional bounded public text on failed strict observations/attempts; see [public validator failure receipts](CI_STRICT_RUNNER.md#public-validator-failure-receipts) |
+| `first_failure` | Prepared optional fixed-vocabulary receipt on a failing strict/UI observation and its first failing attempt; see [first-failure evidence](CI_STRICT_RUNNER.md#prepared-first-failure-evidence) |
 
 The paired `failure_phase` and `failure_class` enums are optional in both summary versions 1 and 2. When either is
 present on an observation or attempt, both must be present and allowlisted strings;
@@ -437,6 +438,14 @@ records without the pair remain valid. Strict/UI producers label failed methods,
 use `unknown` for unavailable or ambiguous diagnostics, and retain the first
 failure's labels on an observation after a listed retry passes. The enums do not
 participate in outcome, population, retry or verdict evaluation.
+
+`first_failure` is reader-only until its accepting reader is merged into main.
+It is accepted in both summary versions, recursively checked by the publication
+scanner, and retained by aggregation and compact history. A receipt cannot be
+attached to a passing attempt or a host/unit observation. The observation must
+equal its first failing attempt's receipt; an existing listed retry cannot replace
+that first receipt with the retry's state. Preparation receipts belong to
+`not-run` attempts. No producer emits the field in this reader change.
 
 The strict tracer emits the optional `validator_failure_message` field for failed
 cases with an explicit failing validator receipt, on both the observation and attempt.

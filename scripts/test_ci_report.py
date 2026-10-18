@@ -20,7 +20,7 @@ from ci_summary import ContractError, observation, test_identity
 from ci_report import (daily_rollup, identity_token, issue_decision, registry_checks,
                        render_entry, summary_diagnostics, synchronize_issues, read_state,
                        read_run, check_context, NIGHTLY_INFRASTRUCTURE)
-from test_ci_summary import archive_download_summary, valid_summary
+from test_ci_summary import archive_download_summary, first_failure_receipt, valid_summary
 
 
 IDENTITY = {"kind": "strict", "key": "ExampleUITests/testPlayback",
@@ -39,6 +39,41 @@ def entry(day="2026-10-01", outcome="failed", run=10, attempt=1):
 
 
 class ReporterTests(unittest.TestCase):
+    def test_first_failure_reaches_nightly_aggregate_compact_history_and_report(self):
+        from ci_nightly import aggregate_nightly
+        case = test_identity("strict", "smoke", **IDENTITY["dimensions"])
+        shard = valid_summary()
+        shard["population"].update(declared=[case], compiled=[case], observed=[observation(case, "failed", 1, exit_code=65)])
+        shard["status"] = "failed"
+        receipt = first_failure_receipt()
+        phase = {"identity": case, "exit_code": 65, "build_operations": 0, "products_unchanged": True,
+            "log_present": True, "official_methods": [{"identifier": "StrictE2ESmokeUITests/testIOSStrictE2EConnectionSmoke",
+                "result": "Failed", "first_failure": receipt}],
+            "official_summary": {"totalTestCount": 1, "passedTests": 0, "failedTests": 1, "skippedTests": 0}}
+        observed, missing = ci_report.method_observations(shard, {"warm": [phase]})
+        self.assertEqual([], missing)
+        self.assertEqual(receipt, observed[0]["first_failure"])
+        self.assertEqual(receipt, observed[0]["attempts"][0]["first_failure"])
+        self.assertEqual(("failed", 65), (observed[0]["outcome"], observed[0]["attempts"][0]["exit_code"]))
+        shard["population"]["observed"][0]["first_failure"] = receipt
+        shard["population"]["observed"][0]["attempts"][0]["first_failure"] = receipt
+        aggregate = aggregate_nightly([case], [shard], live_in_scope=False)
+        self.assertEqual(receipt, aggregate["observed"][0]["first_failure"])
+        report = entry()
+        report["observed"] = observed
+        report["diagnostics"] = summary_diagnostics([shard])
+        compact = ci_report.compact_entry(report, set())
+        self.assertEqual(receipt, compact["observed"][0]["first_failure"])
+        self.assertEqual(receipt, compact["diagnostics"]["failures"][0]["first_failure"])
+        self.assertIn("query-element", render_entry(compact))
+        self.assertIn("wait=5.1s", render_entry(compact))
+        phase["official_methods"][0]["first_failure"] = {**receipt, "element": "private-id"}
+        observed, missing = ci_report.method_observations(shard, {"warm": [phase]})
+        self.assertEqual([], missing)
+        self.assertEqual("failed", observed[0]["outcome"])
+        self.assertNotIn("first_failure", observed[0])
+        self.assertNotIn("private-id", json.dumps(observed))
+
     def test_current_suite_semantics_take_precedence_over_historical_selectors(self):
         from run_strict_e2e import CommandError
         from strict_e2e_runner_support import IOS_FILTER_SUITES, TVOS_FILTER_SUITES
@@ -578,11 +613,17 @@ class ReporterTests(unittest.TestCase):
             with self.subTest(supplied=supplied):
                 warm = dict(phase)
                 warm["validator_failure_message"] = supplied
+                receipt = first_failure_receipt()
+                receipt.update(source="validator", validator={"kind": "glyph", "slot": 1, "axis": "horizontal"})
+                receipt["screenshot"]["status"] = "validated-input"
+                warm["first_failure"] = receipt
                 observed, missing = ci_report.method_observations(shard, {"warm": [warm]})
                 self.assertEqual([], missing)
                 failed = next(item for item in observed if item["identity"] == case)
                 self.assertEqual(expected, failed["validator_failure_message"])
                 self.assertEqual(expected, failed["attempts"][0]["validator_failure_message"])
+                self.assertEqual(receipt, failed["first_failure"])
+                self.assertEqual(receipt, failed["attempts"][0]["first_failure"])
                 self.assertEqual(("failed", 2, "strict-case-contract-failed"),
                     (failed["outcome"], failed["attempts"][0]["exit_code"], failed["attempts"][0]["reason"]))
                 shard["population"]["observed"] = [failed]
