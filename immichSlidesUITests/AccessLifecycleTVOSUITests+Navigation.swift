@@ -399,7 +399,9 @@ extension AccessLifecycleTVOSUITests {
         }
         XCTAssertTrue(
             app.refreshTVOSSlideshowControlBar(
-                timeout: AccessLifecycleTVOSUITestsWaitTiming.navigationTimeoutSeconds),
+                timeout: AccessLifecycleTVOSUITestsWaitTiming.navigationTimeoutSeconds)
+                && settingsButton.waitForExistence(
+                    timeout: AccessLifecycleTVOSUITestsWaitTiming.navigationTimeoutSeconds),
             "Playback page must show the settings button.")
         for _ in 0..<6 where settingsButton.hasFocus == false {
             XCUIRemote.shared.press(.left)

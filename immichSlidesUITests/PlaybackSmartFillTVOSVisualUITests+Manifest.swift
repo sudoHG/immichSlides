@@ -6,7 +6,8 @@ extension PlaybackSmartFillTVOSVisualUITests {
     func pressNext(app: XCUIApplication) {
         let nextButton = app.buttons["slideshow.control.next.button"]
         XCTAssertTrue(
-            app.refreshTVOSSlideshowControlBar(timeout: TestWait.seconds(.product(6))),
+            app.refreshTVOSSlideshowControlBar(timeout: TestWait.seconds(.product(6)))
+                && nextButton.waitForExistence(timeout: TestWait.seconds(.product(6))),
             "Apple TV playback page should show the Next button")
 
         for _ in 0..<6 {
