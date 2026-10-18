@@ -54,6 +54,10 @@ extension XCUIApplication {
                         }
                     })
                 else { return false }
+                // Previous can retain focus just after Select disables it at the history boundary.
+                if snapshots[focusedIdentifier]?.isEnabled == false {
+                    return waitForFocus { $0["slideshow.control.playPause.button"]?.hasFocus == true }
+                }
                 XCUIRemote.shared.press(direction == .left ? .right : .left)
                 return waitForFocus { $0[focusedIdentifier]?.hasFocus == true }
             }

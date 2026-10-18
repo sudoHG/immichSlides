@@ -211,7 +211,8 @@ fallible application snapshot per poll and reveal an absent control within the o
 
 On tvOS, `refreshTVOSSlideshowControlBar` refreshes controls before dependent reads
 and Select actions. The visible bar consumes Up, so the helper moves focus to an
-adjacent control and back, confirming both moves. A visible snapshot alone does
+adjacent control and back, confirming both moves. A just-disabled Previous cannot
+regain focus, so that boundary refresh confirms Play/Pause instead. A visible snapshot alone does
 not refresh auto-hide. If hidden, the helper waits for the wake receiver to have
 focus and sends Up, within the caller's existing appearance deadline.
 Callers then confirm the intended control's focus before Select. Repeat this
