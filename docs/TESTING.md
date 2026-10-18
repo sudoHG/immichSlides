@@ -472,12 +472,18 @@ of when the new photo becomes readable. A different public photo must then remai
 identified and bright for the shared 0.8-second stable confirmation window; no new
 photo means failure. Dense capture continues through the shared T+2+4-second
 look-ahead, before classification, so a designed fade beginning inside T±2 can pass
-when the new photo becomes stable after T+2. Starts before T−2 or after T+2 still
-fail. Evidence records the onset, stable new photo and request/return/classification
+when the new photo becomes stable after T+2. Like iPad, tvOS requires stable-photo
+confirmation to return within four seconds of the onset request, using the same
+deadline check and constant. Every screenshot requested before T−2 (including the
+existing timing tolerance) must still identify the old photo: black, blank,
+unrecognizable, transition and different-photo frames fail, even if they recover.
+Detected starts before T−2 or after T+2 also fail. Evidence records the onset,
+stable new photo and request/return/classification
 times separately, retaining the matching cached PNGs. Pause-hold equality and the
 first-half-window old-photo check are unchanged.
-Continue issued is zero; the remote Select return time is recorded separately
-and never becomes the screenshot-request clock's origin.
+Continue issued is zero, aligning tvOS with iOS `press.issued`; the remote Select
+return time is recorded separately and never becomes the screenshot-request
+clock's origin. This intentionally replaces tvOS's former Select-return origin.
 
 The combined access-protection flow requests 12 seconds and narrows its window to
 12–15 seconds. Its lower bound is rounded up from the product's 8-second control

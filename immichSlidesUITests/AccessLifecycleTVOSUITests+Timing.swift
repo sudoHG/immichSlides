@@ -491,7 +491,7 @@ extension AccessLifecycleTVOSUITests {
             )
         } catch {
             if let lastFrame = capturedFrames.last {
-                try persistTVOSCapturedPNG(lastFrame.png, name: "after-auto-advance")
+                try? persistTVOSCapturedPNG(lastFrame.png, name: "after-auto-advance")
             }
             throw error
         }

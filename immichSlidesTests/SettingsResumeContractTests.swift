@@ -410,19 +410,6 @@ final class SettingsResumeContractTests: XCTestCase {
                 intervalSeconds: 12
             )
         )
-        let firstStay = AccessLifecycleContract.firstUsableAdvance(
-            continueMark: "A2",
-            samples: stayedThenAdvanced
-        )
-        XCTAssertEqual(firstStay?.elapsed, 12)
-        XCTAssertEqual(firstStay?.mark, "A3")
-        try AccessLifecycleContract.assertContinueAutoAdvanceInWindow(
-            continueMark: "A2",
-            laterMark: firstStay!.mark,
-            elapsedSeconds: firstStay!.elapsed,
-            intervalSeconds: 12
-        )
-
         let jumpedEarly: [(elapsed: TimeInterval, mark: String)] = [
             (7.0, "A3"),
             (12.0, "A3")
@@ -431,19 +418,6 @@ final class SettingsResumeContractTests: XCTestCase {
             try AccessLifecycleContract.assertSamplesStayOnSceneBeforeAdvanceWindow(
                 continueMark: "A2",
                 samples: jumpedEarly,
-                intervalSeconds: 12
-            )
-        )
-        let firstEarly = AccessLifecycleContract.firstUsableAdvance(
-            continueMark: "A2",
-            samples: jumpedEarly
-        )
-        XCTAssertEqual(firstEarly?.elapsed, 7)
-        XCTAssertThrowsError(
-            try AccessLifecycleContract.assertContinueAutoAdvanceInWindow(
-                continueMark: "A2",
-                laterMark: firstEarly!.mark,
-                elapsedSeconds: firstEarly!.elapsed,
                 intervalSeconds: 12
             )
         )

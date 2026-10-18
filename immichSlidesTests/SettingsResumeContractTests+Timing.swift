@@ -17,9 +17,15 @@ extension SettingsResumeContractTests {
     }
 
     func testTVOSPauseRejectsEarlyAndLateFadeStarts() {
-        for (start, prefix) in [
-            (9.3, "Automatic photo change occurred before T-2;"),
-            (14.1, "No automatic photo change was captured within T±2;")
+        for (start, message) in [
+            (
+                9.3,
+                "Automatic photo change occurred before T-2; first check test timing and image recognition instead of immediately calling it a product bug"
+            ),
+            (
+                14.1,
+                "No automatic photo change was captured within T±2; if waiting for idleness crossed the window, classify this as a test timing failure"
+            )
         ] {
             XCTAssertThrowsError(
                 try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
@@ -27,7 +33,7 @@ extension SettingsResumeContractTests {
                     samples: tvosFadeSamples(start: start), intervalSeconds: 12
                 )
             ) { error in
-                XCTAssertTrue(error.localizedDescription.hasPrefix(prefix), error.localizedDescription)
+                XCTAssertEqual(error.localizedDescription, message)
             }
         }
     }
@@ -50,6 +56,91 @@ extension SettingsResumeContractTests {
                     error.localizedDescription,
                     "After about a full T, it must switch to the next scene; no stable new public photo was confirmed"
                 )
+            }
+        }
+    }
+
+    func testTVOSPauseRejectsLongBlackAfterInWindowFade() {
+        let oldAndFade = tvosFadeSamples(start: 10).filter { $0.requestElapsed < 10.9 }
+        let black = (0...10).map { index in
+            watchSample(
+                request: 10.9 + Double(index) * 0.3, mark: "BLACK", status: "BLACK",
+                luma: 0.01, returnLag: 0.28
+            )
+        }
+        for firstNewRequest in [12.52, 12.522, 14.2] {
+            let newPhoto = (0...5).map { index in
+                watchSample(
+                    request: firstNewRequest + Double(index) * 0.3, mark: "A1", luma: 0.47, returnLag: 0.28
+                )
+            }
+            let samples = oldAndFade + black.filter { $0.returnElapsed <= firstNewRequest } + newPhoto
+            if firstNewRequest == 12.52 {
+                XCTAssertNoThrow(
+                    try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
+                        continueMark: "A5", baselineLuma: 0.53, samples: samples, intervalSeconds: 10
+                    )
+                )
+            } else {
+                XCTAssertThrowsError(
+                    try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
+                        continueMark: "A5", baselineLuma: 0.53, samples: samples, intervalSeconds: 10
+                    )
+                ) { error in
+                    XCTAssertEqual(
+                        error.localizedDescription,
+                        "tvOS new photo must be stably identifiable within 4 s of transition start"
+                    )
+                }
+            }
+        }
+    }
+
+    func testTVOSPauseRejectsEarlyFadeWithoutThreeDimmingFrames() {
+        let samples = tvosFadeSamples(start: 7).map { sample in
+            if abs(sample.requestElapsed - 7.6) < 0.001 {
+                return watchSample(
+                    request: sample.requestElapsed, mark: "UNRECOGNIZABLE", status: "UNRECOGNIZABLE",
+                    luma: sample.meanLuma, returnLag: 0.28
+                )
+            }
+            return sample
+        }
+        XCTAssertThrowsError(
+            try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
+                continueMark: "A5", baselineLuma: 0.53, samples: samples, intervalSeconds: 10
+            )
+        ) { error in
+            XCTAssertEqual(error.localizedDescription, "Unrecognizable input must not count as a pass")
+        }
+    }
+
+    func testTVOSPauseRejectsEveryInvalidFrameBeforeAdvanceWindow() {
+        for (mark, message) in [
+            ("BLACK", "All black must not count as a pass"),
+            ("BLANK", "Blank must not count as a pass"),
+            ("UNRECOGNIZABLE", "Unrecognizable input must not count as a pass"),
+            ("TRANSITION", "Unrecognizable input must not count as a pass"),
+            (
+                "A2",
+                "Automatic photo change occurred before T-2; first check test timing and image recognition instead of immediately calling it a product bug"
+            )
+        ] {
+            let samples = tvosFadeSamples(start: 10).map { sample in
+                if abs(sample.requestElapsed - 4.9) < 0.001 {
+                    return watchSample(
+                        request: sample.requestElapsed, mark: mark, status: mark == "A2" ? "MATCH" : mark,
+                        luma: 0.01, returnLag: 0.28
+                    )
+                }
+                return sample
+            }
+            XCTAssertThrowsError(
+                try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
+                    continueMark: "A5", baselineLuma: 0.53, samples: samples, intervalSeconds: 10
+                ), mark
+            ) { error in
+                XCTAssertEqual(error.localizedDescription, message, mark)
             }
         }
     }
@@ -97,8 +188,9 @@ extension SettingsResumeContractTests {
                     continueMark: "A5", baselineLuma: 0.53, samples: samples, intervalSeconds: 12
                 ), mutation
             ) { error in
-                XCTAssertTrue(
-                    error.localizedDescription.hasPrefix("No automatic photo change was captured within T±2;"),
+                XCTAssertEqual(
+                    error.localizedDescription,
+                    "No automatic photo change was captured within T±2; if waiting for idleness crossed the window, classify this as a test timing failure",
                     "\(mutation): \(error.localizedDescription)"
                 )
             }
@@ -119,7 +211,7 @@ extension SettingsResumeContractTests {
             ) { error in
                 XCTAssertEqual(
                     error.localizedDescription,
-                    "No automatic photo change was captured within T±2; invalid timing or original photo brightness evidence"
+                    "tvOS pause-continue evidence is invalid; invalid timing or original photo brightness evidence"
                 )
             }
         }

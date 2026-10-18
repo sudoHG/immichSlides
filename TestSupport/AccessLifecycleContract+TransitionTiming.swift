@@ -19,9 +19,14 @@ extension AccessLifecycleContract {
             })
         else {
             throw AssertionError.message(
-                "No automatic photo change was captured within T±2; invalid timing or original photo brightness evidence"
+                "tvOS pause-continue evidence is invalid; invalid timing or original photo brightness evidence"
             )
         }
+        try assertSamplesStayOnSceneBeforeAdvanceWindow(
+            continueMark: continueMark,
+            samples: samples.map { (elapsed: $0.requestElapsed, mark: $0.mark) },
+            intervalSeconds: intervalSeconds
+        )
         guard let stable = firstStableNewImage(continueMark: continueMark, samples: samples) else {
             throw AssertionError.message(
                 "After about a full T, it must switch to the next scene; no stable new public photo was confirmed")
@@ -45,10 +50,17 @@ extension AccessLifecycleContract {
             else { return false }
             return hasSustainedDimming(from: index, continueMark: continueMark, threshold: threshold, samples: samples)
         }
-        let start = startIndex.map { samples[$0] } ?? stable
+        guard let startIndex else {
+            throw AssertionError.message("tvOS pause-continue evidence is invalid; no transition start was detected")
+        }
+        let start = samples[startIndex]
         try assertContinueAutoAdvanceInWindow(
             continueMark: continueMark, laterMark: stable.mark,
             elapsedSeconds: start.requestElapsed, intervalSeconds: intervalSeconds
+        )
+        try assertStableImageWithinTransitionDeadline(
+            start: start, stable: stable,
+            failureMessage: "tvOS new photo must be stably identifiable within 4 s of transition start"
         )
         return (start, stable)
     }
@@ -102,15 +114,6 @@ extension AccessLifecycleContract {
             && mark != "BLANK"
             && mark != "UNRECOGNIZABLE"
             && mark != "TRANSITION"
-    }
-
-    static func firstUsableAdvance(
-        continueMark: String,
-        samples: [(elapsed: TimeInterval, mark: String)]
-    ) -> (elapsed: TimeInterval, mark: String)? {
-        samples.first { sample in
-            isUsableSceneMark(sample.mark) && sample.mark != continueMark
-        }
     }
 
     static func assertSamplesStayOnSceneBeforeAdvanceWindow(
@@ -374,20 +377,29 @@ extension AccessLifecycleContract {
         else {
             throw AssertionError.message("iPad must keep identifying a different new photo for at least 1 second")
         }
-        let stableImageDelaySeconds = stable.returnElapsed - start.requestElapsed
-        if !stableImageDelaySeconds.isFinite || stableImageDelaySeconds < 0
-            || stableImageDelaySeconds > ipadStableImageDeadlineAfterTransition + timingToleranceSeconds
-        {
-            throw AssertionError.message("iPad new photo must be stably identifiable within 4 s of transition start")
-        }
+        try assertStableImageWithinTransitionDeadline(
+            start: start, stable: stable,
+            failureMessage: "iPad new photo must be stably identifiable within 4 s of transition start"
+        )
         return IPadPauseTimingEvidence(
             earliestTransitionElapsed: earliestTransitionElapsed,
             latestTransitionElapsed: latestTransitionElapsed,
             transitionStartRequestElapsed: start.requestElapsed,
             stableImageRequestElapsed: stable.requestElapsed,
             stableImageReturnElapsed: stable.returnElapsed,
-            stableImageDelaySeconds: stableImageDelaySeconds
+            stableImageDelaySeconds: stable.returnElapsed - start.requestElapsed
         )
+    }
+
+    private static func assertStableImageWithinTransitionDeadline(
+        start: ContinueWatchSample,
+        stable: ContinueWatchSample,
+        failureMessage: String
+    ) throws {
+        let delay = stable.returnElapsed - start.requestElapsed
+        if !delay.isFinite || delay < 0 || delay > ipadStableImageDeadlineAfterTransition + timingToleranceSeconds {
+            throw AssertionError.message(failureMessage)
+        }
     }
 
     static func hasSustainedDimming(
