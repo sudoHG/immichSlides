@@ -11,7 +11,7 @@ import Testing
 @testable import immichSlides
 
 @MainActor
-@Suite(.sharedRuntimeIsolation)
+@Suite(.serialized, .sharedRuntimeIsolation)
 struct PlaybackPoolResolverLiveIntegrationTests {
 
     private nonisolated static let liveConfiguration = TestServerConfiguration.current
@@ -30,7 +30,7 @@ struct PlaybackPoolResolverLiveIntegrationTests {
     private func runWithIsolatedLiveServer<T>(_ body: @escaping () async throws -> T) async rethrows -> T {
         try await ServerConfigurationTestIsolation.run {
             configureLiveServer()
-            return try await body()
+            return try await LiveTestTraffic.observe(body)
         }
     }
 
@@ -68,7 +68,9 @@ struct PlaybackPoolResolverLiveIntegrationTests {
         request.timeoutInterval = 10
         ImmichHTTPHeaders.applyAPIKey(headerKey, to: &request)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await LiveTestTraffic.verificationRequest {
+            try await URLSession.shared.data(for: request)
+        }
         let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
         guard statusCode == 200 else {
             throw ImmichError.unknownError(
@@ -88,7 +90,7 @@ struct PlaybackPoolResolverLiveIntegrationTests {
         api: ImmichAPIService
     ) async throws -> [Asset] {
         let ids = result.map(\.id)
-        let loaded = try await api.getAssets(ids: ids)
+        let loaded = try await LiveTestTraffic.independentlyLoadedAssets(ids: ids, api: api)
         #expect(loaded.map(\.id) == ids)
         return loaded
     }

@@ -1806,6 +1806,103 @@ class ArchiveUnitResultTests(unittest.TestCase):
 
 
 class LiveBoundaryTests(unittest.TestCase):
+    def test_live_rate_limit_category_is_public_but_never_changes_a_failed_verdict(self):
+        import ci_live_tests as live
+        from ci_summary import test_identity
+        identity = test_identity('swift', 'ExampleLiveTests/works', platform='tvos')
+        for diagnostic, other_failure, expected in (
+                ('Issue recorded: TEST_SERVER_RATE_LIMITED: test server rate limited private-host private-key',
+                 False, 'test server rate limited'),
+                ('Issue recorded: TEST_SERVER_RATE_LIMITED: test server rate limited private-host private-key',
+                 True, 'test server rate limited; another test failure was recorded'),
+                ('HTTP 429 private-host private-key', False, 'Live test failed; private diagnostic withheld.'),
+                ('Issue recorded: TEST_SERVER_CONCURRENCY_LIMITED: gateway concurrency limit private-host private-key',
+                 False, 'gateway concurrency limit'),
+                ('Issue recorded: TEST_SERVER_CONCURRENCY_LIMITED: gateway concurrency limit private-host private-key',
+                 True, 'gateway concurrency limit; another test failure was recorded'),
+                ('HTTP 503 private-host private-key', False, 'Live test failed; private diagnostic withheld.'),
+                ('TEST_SERVER_RATE_LIMITED_OTHER: private-host', False, 'Live test failed; private diagnostic withheld.')):
+            with self.subTest(diagnostic=diagnostic):
+                # The environment issue may follow an earlier assertion and a long private message.
+                issues = ([{'nodeType': 'Failure Message', 'name': 'private-' + 'x' * 250}] if other_failure else [])
+                issues.append({'nodeType': 'Failure Message', 'name': diagnostic})
+                payload = {'testNodes': [{'nodeType': 'Unit test bundle', 'name': 'immichSlidesTests', 'children': [
+                    {'nodeType': 'Test Case', 'nodeIdentifier': 'ExampleLiveTests/works()', 'result': 'Failed',
+                     'children': issues}]}]}
+                with tempfile.TemporaryDirectory() as directory:
+                    records = Path(directory)
+                    (records / 'official-tests.json').write_text(json.dumps(payload))
+                    (records / 'official-summary.json').write_text(json.dumps(
+                        {'totalTestCount': 1, 'passedTests': 0, 'failedTests': 1, 'skippedTests': 0, 'result': 'Failed'}))
+                    rows, _ = live.read_live_results(records, 'tvos')
+                public = live.sanitized_outcomes([identity], rows)
+                self.assertEqual(public[0]['attempts'][0]['message'], expected)
+                self.assertEqual(public[0]['outcome'], 'failed')
+                self.assertEqual(public[0]['attempts'][0]['exit_code'], 1)
+                self.assertNotIn('private-', json.dumps(public))
+        children = []
+        for status, marker in ((429, 'TEST_SERVER_RATE_LIMITED: test server rate limited'),
+                               (503, 'TEST_SERVER_CONCURRENCY_LIMITED: gateway concurrency limit')):
+            parameter = f'private-case-{status}'
+            children.append({'nodeType': 'Arguments', 'nodeIdentifierURL': parameter, 'result': 'Failed',
+                             'children': [{'nodeType': 'Failure Message', 'name': 'Issue recorded: ' + marker}]})
+        payload = {'testNodes': [{'nodeType': 'Unit test bundle', 'name': 'immichSlidesTests', 'children': [
+            {'nodeType': 'Test Case', 'nodeIdentifier': 'ExampleLiveTests/works()', 'result': 'Failed', 'children': children}]}]}
+        with tempfile.TemporaryDirectory() as directory:
+            records = Path(directory)
+            (records / 'official-tests.json').write_text(json.dumps(payload))
+            (records / 'official-summary.json').write_text(json.dumps(
+                {'totalTestCount': 1, 'passedTests': 0, 'failedTests': 1, 'skippedTests': 0, 'result': 'Failed'}))
+            rows, _ = live.read_live_results(records, 'tvos')
+        public = live.sanitized_outcomes([identity], rows)
+        self.assertEqual([row['attempts'][0]['message'] for row in public],
+                         ['test server rate limited; another test failure was recorded',
+                          'test server rate limited', 'gateway concurrency limit'])
+        self.assertTrue(all(row['outcome'] == 'failed' for row in public))
+        self.assertNotIn('private-', json.dumps(public))
+
+    def test_live_skipped_environment_issue_is_failed_through_the_official_reader(self):
+        import ci_live_tests as live
+        from ci_summary import test_identity
+        identity = test_identity('swift', 'ExampleLiveTests/works', platform='tvos')
+        # The only defect added to an ordinary skipped result is an emitted environment issue.
+        for marker in (None, *live.ENVIRONMENT_FAILURE_MARKERS):
+            with self.subTest(marker=marker), tempfile.TemporaryDirectory() as directory:
+                records = Path(directory)
+                children = [{'nodeType': 'Skip Message', 'name': 'private skip reason'},
+                            {'nodeType': 'Arguments', 'nodeIdentifierURL': 'private-case-1', 'result': 'Skipped',
+                             'children': [{'nodeType': 'Failure Message', 'name': 'Issue recorded: ' + marker}]
+                             if marker else []}]
+                (records / 'official-tests.json').write_text(json.dumps({'testNodes': [
+                    {'nodeType': 'Unit test bundle', 'name': 'immichSlidesTests', 'children': [
+                        {'nodeType': 'Test Case', 'nodeIdentifier': 'ExampleLiveTests/works()',
+                         'result': 'Skipped', 'children': children}]}]}))
+                (records / 'official-summary.json').write_text(json.dumps(
+                    {'totalTestCount': 1, 'passedTests': 0, 'failedTests': 0, 'skippedTests': 1, 'result': 'Passed'}))
+                rows, counts = live.read_live_results(records, 'tvos')
+                public = live.sanitized_outcomes([identity], rows)
+                self.assertEqual(len(public), 2)
+                for row in public:
+                    self.assertEqual(row['outcome'], 'failed' if marker else 'skipped')
+                    self.assertEqual(row['attempts'][0]['outcome'], row['outcome'])
+                    self.assertEqual(row['attempts'][0]['message'], live.ENVIRONMENT_FAILURE_MARKERS[marker] if marker else None)
+                    self.assertEqual(row['attempts'][0]['exit_code'], 1)
+                self.assertNotIn('private-case', json.dumps(public))
+                self.assertNotIn('private skip reason', json.dumps(public))
+                self.assertEqual(counts.skipped_tests, 1)
+                # Official counts remain unchanged; normalization must not obscure their provenance.
+                live.validate_outcome_population([identity], {'ExampleLiveTests/works()'}, rows, counts)
+
+    def test_live_swift_status_mapping_matches_the_public_environment_markers(self):
+        import re
+        import ci_live_tests as live
+        source = (live.ROOT / 'immichSlidesTests/ServerConfigurationTestIsolation.swift').read_text()
+        flags = dict(re.findall(r'if limits\.(\w+)\s*\{\s*Issue.record\("([^"]+)"\)', source))
+        self.assertEqual(set(flags.values()), set(live.ENVIRONMENT_FAILURE_MARKERS))
+        statuses = re.findall(r'case (429|503):[^\n]*\.(\w+) = true', source)
+        mapped = {int(status): live.ENVIRONMENT_FAILURE_MARKERS[flags[flag]] for status, flag in statuses}
+        self.assertEqual(mapped, {429: 'test server rate limited', 503: 'gateway concurrency limit'})
+
     def test_live_scope_selects_from_the_full_catalog_but_refuses_unowned_or_missing_live_tests(self):
         import ci_live_tests as live
         from ci_summary import test_identity

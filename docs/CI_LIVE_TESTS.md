@@ -43,6 +43,9 @@ Real live execution is GitHub-only. Never use a private configuration symlink,
 local/LAN runner or real server secrets to reproduce it. Pre-merge live acceptance
 is **NOT_RUN** because the environment permits `main` only, including solo-only
 Vision rules on hosted virtual-Mac simulators. Local unit verification is offline.
+An explicitly approved LAN mock measurement may run the targeted suites locally
+with private configuration; it measures request pacing, not hosted acceptance or
+public-server data correctness. Never contact the public server for that measurement.
 
 ## Archive and test selection
 
@@ -90,6 +93,43 @@ literal, a property name (`github.event.inputs.secrets`) or a longer identifier
 (`inputs.check-secrets`) is allowed.
 
 ## Results and privacy
+
+The live suites declare `.serialized` and retain their shared cross-suite runtime
+lock. That lock and the API's sequential `getAssets` loop already prevented
+overlapping verification loops; faster sequential completion can still burst.
+Test-owned asset-detail, album-membership and person-statistics probes share one
+request gate: at most four requests in flight and at least 70 ms between starts
+(at most 15 starts per rolling second, approximately 14.3 requests/s). Every existing
+asset is still independently fetched and checked; results reach the assertions in
+their original order, without sampling, reusing the resolver's assets as the oracle,
+or retrying requests.
+App requests and rendering are unchanged. There is no whole-job request cap:
+App traffic is additional, so the total peak must be measured separately.
+For the current maximum of 1,000 person-statistics probes, 700 resolver asset
+details, 200 album-membership probes and 100 view-model asset details, the gate
+adds at most about 140 seconds of pacing (2,000 × 70 ms), plus request latency and
+test work. The existing 900-second execution bound and 40-minute job cap remain.
+Request count and payload volume are unchanged; pacing reduces bursts, not the
+server's paid traffic volume. A depleted traffic quota can still slow responses.
+
+A test-only observer counts `URLSession.shared` requests to the configured live host
+and detects HTTP 429 and 503 on that traffic, including responses consumed by the App.
+SDWebImage uses independent sessions: image downloads and their 429/503 responses
+are not observed. Measured peaks are therefore lower bounds on server traffic.
+Counters accumulate across all observed tests in one process run; each printed line
+contains the cumulative elapsed-minute buckets, rolling-second/minute peaks and peak
+concurrency since the first request, not a per-test reset. A 429 records
+`TEST_SERVER_RATE_LIMITED: test server rate limited` as a failing test issue;
+publication maps only that exact marker to the fixed public message
+`test server rate limited`; a 503 records `TEST_SERVER_CONCURRENCY_LIMITED: gateway concurrency limit`
+and publishes `gateway concurrency limit`. If another failure issue coexists, the fixed
+public category appends `; another test failure was recorded`; private details remain
+withheld. A skipped result carrying an environment marker is normalized to failed
+while preserving the exported official counts. Each observer instance captures its
+test token, so late responses from a finished test cannot mark a subsequent test.
+The test and nightly stay failed; the observer neither retries nor throttles App requests.
+It reuses one forwarding session with the shared session's configuration, rather
+than creating a transport session and fresh connections for every request.
 
 All live subprocess output is captured privately. Raw bundles and exports stay
 private until parsing. The runner deletes its captures, bundle, DerivedData and

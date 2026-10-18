@@ -26,6 +26,55 @@ WORKFLOW = ".github/workflows/ci-nightly.yml"
 REPOSITORY = "sudoHG/immichSlides"
 SUITES = ("PlaybackPoolResolverLiveIntegrationTests", "SlideShowViewModelLiveIntegrationTests", "FaceBoxLiveProbeTests")
 ROOT = Path(__file__).resolve().parent.parent
+ENVIRONMENT_FAILURE_MARKERS = {
+    "TEST_SERVER_RATE_LIMITED: test server rate limited": "test server rate limited",
+    "TEST_SERVER_CONCURRENCY_LIMITED: gateway concurrency limit": "gateway concurrency limit",
+}
+ADDITIONAL_FAILURE_MARKER = "OTHER_TEST_FAILURE_RECORDED"
+
+
+def environment_failure_marker(node):
+    if node.get("nodeType") == "Failure Message":
+        for marker in ENVIRONMENT_FAILURE_MARKERS:
+            if re.search(r'\b' + re.escape(marker) + r'\b', node.get("name", "")):
+                return marker
+    for child in node.get("children", []):
+        marker = environment_failure_marker(child)
+        if marker:
+            return marker
+    return None
+
+
+def read_live_results(records, platform):
+    rows, counts = units.read_results(records, platform)
+    # Inspect every issue before the generic unit parser's first-message truncation can hide a 429/503.
+    markers = {}
+    for node in units.official_cases(decode((records / "official-tests.json").read_text())):
+        key = function_identity(test_identity("swift", units.UNIT_TARGET + "/" + node["nodeIdentifier"], platform=platform))["key"]
+        markers[(key, None)] = environment_failure_details(node)
+        for child in node.get("children", []):
+            if child.get("nodeType") in {"Test Case Run", "Arguments"}:
+                parameter = child.get("nodeIdentifier") or child.get("nodeIdentifierURL")
+                markers[(key, parameter)] = environment_failure_details(child)
+    for row in rows:
+        marker, other_failure = markers.get((function_identity(row["identity"])["key"],
+                                            row["identity"]["dimensions"].get("parameter")), (None, False))
+        if row["outcome"] in {"failed", "skipped"} and marker:
+            # Preserve native count provenance while making the published verdict strictly stronger.
+            row["official_outcome"] = row["outcome"]
+            row["outcome"] = "failed"
+            row["attempts"][0].update(outcome="failed", exit_code=1, reason=None,
+                                      message=marker + ("\n" + ADDITIONAL_FAILURE_MARKER if other_failure else ""))
+    return rows, counts
+
+
+def environment_failure_details(node):
+    marker = environment_failure_marker(node)
+    def is_other_issue(issue):
+        if issue.get("nodeType") == "Failure Message":
+            return environment_failure_marker(issue) != marker
+        return any(is_other_issue(child) for child in issue.get("children", []))
+    return marker, bool(marker and is_other_issue(node))
 
 
 def live_declarations(declared):
@@ -130,9 +179,10 @@ def validate_outcome_population(declared, compiled, rows, counts):
     require(set(tokens([row["identity"] for row in functions], functions=True)) == set(expected)
             and len(functions) == len(expected), "live compiled/executed mismatch")
     require(counts.total_test_count == len(functions) and
-            counts.passed_tests == sum(row['outcome'] == 'passed' for row in functions) and
-            counts.failed_tests == sum(row['outcome'] == 'failed' for row in functions) and
-            counts.skipped_tests == sum(row['outcome'] == 'skipped' for row in functions), 'live official counts mismatch')
+            counts.passed_tests == sum(row.get('official_outcome', row['outcome']) == 'passed' for row in functions) and
+            counts.failed_tests == sum(row.get('official_outcome', row['outcome']) == 'failed' for row in functions) and
+            counts.skipped_tests == sum(row.get('official_outcome', row['outcome']) == 'skipped' for row in functions),
+            'live official counts mismatch')
 
 
 def public_outcomes(declared, compiled, rows, counts, code):
@@ -157,13 +207,19 @@ def sanitized_outcomes(declared, rows):
                       and function_identity(row["identity"]) == identity]
         outcome = functions[0]["outcome"] if len(functions) == 1 else "not-run"
         require(outcome in {"passed", "failed", "skipped", "not-run"}, "unknown live outcome")
-        entries = [(identity, outcome, functions[0]["duration_seconds"] if len(functions) == 1 else 0)]
+        entries = [(identity, outcome, functions[0]["duration_seconds"] if len(functions) == 1 else 0,
+                    functions[0] if len(functions) == 1 else {})]
         entries.extend((dict(identity, dimensions=dict(identity["dimensions"], parameter=f"case-{index}")),
-                        row["outcome"], row["duration_seconds"]) for index, row in enumerate(parameters))
-        for test, outcome, seconds in entries:
+                        row["outcome"], row["duration_seconds"], row) for index, row in enumerate(parameters))
+        for test, outcome, seconds, private_row in entries:
+            category = next((category + suffix for marker, category in ENVIRONMENT_FAILURE_MARKERS.items()
+                             for suffix, private_suffix in (("", ""),
+                                 ("; another test failure was recorded", "\n" + ADDITIONAL_FAILURE_MARKER))
+                             if any(attempt.get("message") == marker + private_suffix
+                                    for attempt in private_row.get("attempts", []))), None)
             result.append(observation(test, outcome, seconds,
                           reason="Live test skipped; private reason withheld." if outcome == "skipped" else None,
-                          message="Live test failed; private diagnostic withheld." if outcome == "failed" else None,
+                          message=(category or "Live test failed; private diagnostic withheld.") if outcome == "failed" else None,
                           exit_code=0 if outcome == "passed" else None if outcome == "not-run" else 1))
     return result
 
@@ -286,7 +342,7 @@ def execute_live(args, selection):
             # stderr is private too; malformed or failed exports cannot be used as evidence.
             require(capture(["xcrun", "xcresulttool", "get", "test-results", kind, "--path", str(bundle), "--compact"],
                             private / ("official-" + kind + ".json"), env=clean, timeout=60) == 0, "live export failed")
-        rows, counts = units.read_results(private, platform)
+        rows, counts = read_live_results(private, platform)
         population["observed"] = sanitized_outcomes(declared, rows)
         provenance["official_counts"] = {"total": counts.total_test_count, "passed": counts.passed_tests,
                                      "failed": counts.failed_tests, "skipped": counts.skipped_tests}

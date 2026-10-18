@@ -10,7 +10,7 @@ import Testing
 @testable import immichSlides
 
 @MainActor
-@Suite(.sharedRuntimeIsolation)
+@Suite(.serialized, .sharedRuntimeIsolation)
 struct SlideShowViewModelLiveIntegrationTests {
     private let albumQueryLimit: Int = 5
     private let personQueryLimit: Int = 1000
@@ -64,7 +64,7 @@ struct SlideShowViewModelLiveIntegrationTests {
 
         try await ServerConfigurationTestIsolation.run {
             configureLiveServer()
-            return try await body()
+            return try await LiveTestTraffic.observe(body)
         }
     }
 
@@ -567,7 +567,9 @@ struct SlideShowViewModelLiveIntegrationTests {
             let name = person.name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard name.isEmpty == false, nameCounts[name] == 1 else { continue }
             counts[person.id] = try await Self.redactingLiveFailure("getPersonAssetsCount") {
-                try await api.getPersonAssetsCount(id: person.id)
+                try await LiveTestTraffic.verificationRequest {
+                    try await api.getPersonAssetsCount(id: person.id)
+                }
             }
         }
         return counts
@@ -579,7 +581,7 @@ struct SlideShowViewModelLiveIntegrationTests {
     ) async throws -> [Asset] {
         let ids = assets.map(\.id)
         let loaded = try await Self.redactingLiveFailure("getAssets") {
-            try await api.getAssets(ids: ids)
+            try await LiveTestTraffic.independentlyLoadedAssets(ids: ids, api: api)
         }
         #expect(loaded.map(\.id) == ids)
         return loaded
