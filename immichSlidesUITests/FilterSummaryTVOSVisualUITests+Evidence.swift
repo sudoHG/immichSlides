@@ -74,15 +74,16 @@ extension FilterSummaryTVOSVisualUITests {
         let sheet = app.descendants(matching: .any)["server.apiKey.help.sheet"]
         // Focus starts on the server URL: API Key -> Test Connection -> Help.
 
-        XCUIRemote.shared.press(.down)
+        FirstFailureRemote.press(.down)
         waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
-        XCUIRemote.shared.press(.down)
+        FirstFailureRemote.press(.down)
         waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
-        XCUIRemote.shared.press(.left)
+        FirstFailureRemote.press(.left)
         waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
-            sheet.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.shortInteractionTimeoutSeconds),
+            sheet.waitForFailureEvidence(
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.shortInteractionTimeoutSeconds),
             "\(context) should open the API Key help sheet after the help entry is selected", file: file, line: line)
         if shouldVerifySimplifiedChineseContent {
             let title = app.staticTexts["server.apiKey.help.sheet"]
@@ -90,31 +91,31 @@ extension FilterSummaryTVOSVisualUITests {
             let permissionsTitle = app.staticTexts["server.apiKey.help.section.checklist.title"]
             let securityTitle = app.staticTexts["server.apiKey.help.section.key.fill.title"]
             XCTAssertTrue(
-                title.waitForExistence(
+                title.waitForFailureEvidence(
                     timeout: FilterSummaryTVOSVisualUITestsWaitTiming.shortInteractionTimeoutSeconds),
                 "\(context) help sheet should show the title", file: file, line: line)
             // ui-label-lookup: These assertions verify translated help copy after identifier lookup.
             XCTAssertEqual(title.label, "如何创建 Immich API Key", file: file, line: line)
             XCTAssertTrue(
-                stepsTitle.waitForExistence(
+                stepsTitle.waitForFailureEvidence(
                     timeout: FilterSummaryTVOSVisualUITestsWaitTiming.shortInteractionTimeoutSeconds),
                 "\(context) help sheet should show the creation steps",
                 file: file, line: line)
             XCTAssertEqual(stepsTitle.label, "创建步骤", file: file, line: line)
             XCTAssertTrue(
-                permissionsTitle.waitForExistence(
+                permissionsTitle.waitForFailureEvidence(
                     timeout: FilterSummaryTVOSVisualUITestsWaitTiming.shortInteractionTimeoutSeconds),
                 "\(context) help sheet should show the permissions section",
                 file: file, line: line)
             XCTAssertEqual(permissionsTitle.label, "需要勾选的权限", file: file, line: line)
-            if !securityTitle.waitForExistence(
+            if !securityTitle.waitForFailureEvidence(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.briefElementTimeoutSeconds)
             {
-                XCUIRemote.shared.press(.down)
+                FirstFailureRemote.press(.down)
                 waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
             }
             XCTAssertTrue(
-                securityTitle.waitForExistence(
+                securityTitle.waitForFailureEvidence(
                     timeout: FilterSummaryTVOSVisualUITestsWaitTiming.readbackDeadlineSeconds),
                 "\(context) help sheet should show the security reminder",
                 file: file, line: line)
@@ -133,9 +134,9 @@ extension FilterSummaryTVOSVisualUITests {
             file: file,
             line: line
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertFalse(
-            sheet.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.briefElementDeadlineSeconds),
+            sheet.waitForFailureEvidence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.briefElementDeadlineSeconds),
             "\(context) should not stay on the help sheet after closing",
             file: file, line: line)
         XCTAssertTrue(
@@ -197,7 +198,7 @@ extension FilterSummaryTVOSVisualUITests {
     }
 
     func attachScreenshot(app: XCUIApplication, name: String) {
-        let screenshot = app.screenshot()
+        let screenshot = app.screenshotForFailureEvidence()
         let attachment = XCTAttachment(screenshot: screenshot)
         attachment.name = name
         attachment.lifetime = .keepAlways
@@ -246,7 +247,7 @@ extension FilterSummaryTVOSVisualUITests {
 
         let onboardingTitle = app.staticTexts["mode.onboarding.title"]
         XCTAssertTrue(
-            onboardingTitle.waitForExistence(
+            onboardingTitle.waitForFailureEvidence(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeTimeoutSeconds),
             "Mode selection page should keep using the minimal capsule to show the user is still in first-time setup")
         assertText(
@@ -259,7 +260,8 @@ extension FilterSummaryTVOSVisualUITests {
 
         let pageTitle = app.staticTexts["mode.page.title"]
         XCTAssertTrue(
-            pageTitle.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeTimeoutSeconds),
+            pageTitle.waitForFailureEvidence(
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeTimeoutSeconds),
             "Mode selection main title should describe this step's task, not repeat the wizard capsule's flow level"
         )
         assertText(
@@ -277,7 +279,7 @@ extension FilterSummaryTVOSVisualUITests {
 
         let onboardingTitle = app.staticTexts["filterSummary.onboarding.title"]
         XCTAssertTrue(
-            onboardingTitle.waitForExistence(
+            onboardingTitle.waitForFailureEvidence(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeTimeoutSeconds),
             "Filter summary page should show the minimal capsule to indicate the user is still in first-time setup")
         assertText(
@@ -290,7 +292,8 @@ extension FilterSummaryTVOSVisualUITests {
 
         let pageTitle = app.staticTexts["filterSummary.page.title"]
         XCTAssertTrue(
-            pageTitle.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeTimeoutSeconds),
+            pageTitle.waitForFailureEvidence(
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeTimeoutSeconds),
             "Filter summary main title should describe this step's task, not repeat the top-left wizard's meaning"
         )
         assertText(

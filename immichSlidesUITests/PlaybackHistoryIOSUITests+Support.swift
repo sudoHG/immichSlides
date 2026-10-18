@@ -71,7 +71,8 @@ extension PlaybackHistoryIOSUITests {
 
         let playbackEntry: XCUIElement
         if UIDevice.current.userInterfaceIdiom == .pad {
-            if app.switches["settings.playback.autoPlay.toggle"].waitForExistence(
+            if app.switches["settings.playback.autoPlay.toggle"].waitForPublicElement(
+                "settings.playback.autoPlay.toggle",
                 timeout: TestWait.seconds(.infrastructure(2)))
             {
                 return
@@ -85,14 +86,17 @@ extension PlaybackHistoryIOSUITests {
             playbackEntry = app.buttons["settings.item.playback"]
         }
         XCTAssertTrue(
-            playbackEntry.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            playbackEntry.waitForFailureEvidence(timeout: TestWait.seconds(.infrastructure(8))),
             "The settings list must provide the Playback Settings entry")
         tapElement(playbackEntry)
     }
 
     func requireAutoPlayToggle(app: XCUIApplication) throws -> XCUIElement {
         let toggle = app.switches["settings.playback.autoPlay.toggle"]
-        guard toggle.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))) else {
+        guard
+            toggle.waitForPublicElement(
+                "settings.playback.autoPlay.toggle", timeout: TestWait.seconds(.infrastructure(8)))
+        else {
             throw NSError(
                 domain: "PlaybackHistoryIOSUITests",
                 code: 8,
@@ -121,9 +125,9 @@ extension PlaybackHistoryIOSUITests {
                 .filter { $0.exists && $0.isHittable && $0.identifier != "ToggleSidebar" }
                 .first
             if let backButton {
-                backButton.tap()
+                backButton.tapForFailureEvidence()
             } else {
-                app.tap()
+                app.tapForFailureEvidence()
             }
             RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.3))))
         }
@@ -154,7 +158,7 @@ extension PlaybackHistoryIOSUITests {
             }
             guard Date() < deadline else { break }
             if didReadSnapshot, button == nil {
-                app.tap()
+                app.tapForFailureEvidence()
             }
             RunLoop.current.run(until: min(deadline, Date().addingTimeInterval(TestWait.seconds(.product(0.2)))))
         }
@@ -456,20 +460,21 @@ extension PlaybackHistoryIOSUITests {
     func startRandomPlaybackFromModeSelection(app: XCUIApplication) {
         let randomButton = app.buttons["mode.random.button"]
         XCTAssertTrue(
-            randomButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(5))),
+            randomButton.waitForPublicElement("mode.random.button", timeout: TestWait.seconds(.infrastructure(5))),
             "The mode selection page should show the Random Playback entry")
         tapElement(randomButton)
 
         let continueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            continueButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(5))),
+            continueButton.waitForPublicElement("mode.continue.button", timeout: TestWait.seconds(.infrastructure(5))),
             "The mode selection page should show the Continue button")
         XCTAssertTrue(
             continueButton.isEnabled, "After choosing Random Playback, the Continue button should be tappable")
         tapElement(continueButton)
 
         XCTAssertTrue(
-            app.buttons["slideshow.control.settings.button"].waitForExistence(
+            app.buttons["slideshow.control.settings.button"].waitForPublicElement(
+                "slideshow.control.settings.button",
                 timeout: TestWait.seconds(.infrastructure(25))),
             "After entering random playback, the playback control bar should be shown"
         )
@@ -478,13 +483,13 @@ extension PlaybackHistoryIOSUITests {
     func startFilteredPlaybackFromModeSelection(app: XCUIApplication) {
         let filteredButton = app.buttons["mode.filtered.button"]
         XCTAssertTrue(
-            filteredButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(5))),
+            filteredButton.waitForPublicElement("mode.filtered.button", timeout: TestWait.seconds(.infrastructure(5))),
             "The filtered-playback harness should show the Filtered Playback entry")
         tapElement(filteredButton)
 
         let continueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            continueButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(5))),
+            continueButton.waitForPublicElement("mode.continue.button", timeout: TestWait.seconds(.infrastructure(5))),
             "Filtered playback should show the Continue button")
         XCTAssertTrue(
             continueButton.isEnabled, "The Continue button in the filtered-playback harness should be tappable")
@@ -492,7 +497,7 @@ extension PlaybackHistoryIOSUITests {
 
         let startButton = app.buttons["filterSummary.startPlayback.button"]
         XCTAssertTrue(
-            startButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(12))),
+            startButton.waitForFailureEvidence(timeout: TestWait.seconds(.infrastructure(12))),
             "The filtered playback summary should show the Start Playback button")
         // Starting before the page swaps in the real album and person would play an empty pool.
         let selectionReady = app.staticTexts["filterSummary.visual.ready"]
@@ -506,7 +511,8 @@ extension PlaybackHistoryIOSUITests {
         tapElement(startButton)
 
         XCTAssertTrue(
-            app.buttons["slideshow.control.settings.button"].waitForExistence(
+            app.buttons["slideshow.control.settings.button"].waitForPublicElement(
+                "slideshow.control.settings.button",
                 timeout: TestWait.seconds(.infrastructure(45))),
             "The filtered-playback harness should reach the real playback control bar"
         )
@@ -715,14 +721,14 @@ extension PlaybackHistoryIOSUITests {
         attachment.lifetime = .keepAlways
         add(attachment)
 
-        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        let screenshot = XCTAttachment(screenshot: app.screenshotForFailureEvidence())
         screenshot.name = "\(name)-screenshot"
         screenshot.lifetime = .keepAlways
         add(screenshot)
     }
 
     func attachScreenshot(app: XCUIApplication, name: String) {
-        let attachment = XCTAttachment(screenshot: app.screenshot())
+        let attachment = XCTAttachment(screenshot: app.screenshotForFailureEvidence())
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
@@ -730,10 +736,10 @@ extension PlaybackHistoryIOSUITests {
 
     func tapElement(_ element: XCUIElement) {
         if element.isHittable {
-            element.tap()
+            element.tapForFailureEvidence()
             return
         }
-        element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tapForFailureEvidence()
     }
 
     // Callers resolve the TestWait budget once; polling cadence stays fixed.

@@ -11,6 +11,26 @@
   "defaultOptions" : {
     "environmentVariableEntries" : [
       {
+        "key" : "STRICT_E2E_FIRST_FAILURE_ENABLED",
+        "value" : "$(STRICT_E2E_FIRST_FAILURE_ENABLED)"
+      },
+      {
+        "key" : "STRICT_E2E_FIRST_FAILURE_DIR",
+        "value" : "$(STRICT_E2E_FIRST_FAILURE_DIR)"
+      },
+      {
+        "key" : "STRICT_E2E_FIRST_FAILURE_TESTS",
+        "value" : "$(STRICT_E2E_FIRST_FAILURE_TESTS)"
+      },
+      {
+        "key" : "STRICT_E2E_FIRST_FAILURE_ELEMENTS",
+        "value" : "$(STRICT_E2E_FIRST_FAILURE_ELEMENTS)"
+      },
+      {
+        "key" : "STRICT_E2E_FIRST_FAILURE_SCREENSHOT",
+        "value" : "$(STRICT_E2E_FIRST_FAILURE_SCREENSHOT)"
+      },
+      {
         "key" : "STRICT_E2E_INPUT_SERVER_URL",
         "value" : "$(STRICT_E2E_INPUT_SERVER_URL)"
       },

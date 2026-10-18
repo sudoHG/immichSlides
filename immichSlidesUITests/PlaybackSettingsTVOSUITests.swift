@@ -13,6 +13,16 @@ enum PlaybackSettingsTVOSUITestsWaitTiming {
 
 #if os(tvOS)
 final class PlaybackSettingsTVOSUITests: XCTestCase {
+    override func invokeTest() {
+        FirstFailureContext.reset()
+        super.invokeTest()
+    }
+
+    override func record(_ issue: XCTIssue) {
+        FirstFailureEvidence.record(self, issue: issue)
+        super.record(issue)
+    }
+
     override func setUpWithError() throws {
         // Stop at the first key assertion failure so later remote steps do not run on the wrong page.
 
@@ -55,10 +65,11 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
         app.launchEnvironment["UI_TEST_SERVER_URL"] = config.url
         app.launchEnvironment["UI_TEST_API_KEY"] = config.apiKey
         app.launchEnvironment["UI_TEST_FORCE_SLIDESHOW_RECOVERY_MESSAGE"] = "1"
-        app.launch()
+        app.launchForFailureEvidence()
 
         XCTAssertTrue(
-            app.buttons["slideshow.control.settings.button"].waitForExistence(
+            app.buttons["slideshow.control.settings.button"].waitForPublicElement(
+                "slideshow.control.settings.button",
                 timeout: TestWait.seconds(.infrastructure(18))),
             "After entering the slideshow, the control bar settings button should be visible"
         )
@@ -95,7 +106,7 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
             failureMessage: "The Autoplay entry should take the default focus on the Playback Settings page"
         )
 
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let onButton = waitForSettingsControl(
             app: app,
@@ -116,14 +127,14 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
             failureMessage: "After entering the Autoplay subpage, default focus should land on the first item"
         )
 
-        XCUIRemote.shared.press(.down)
+        FirstFailureRemote.press(.down)
         waitForFocusableElementToGainFocus(
             offButton,
             timeout: TestWait.seconds(.product(8)),
             failureMessage: "One move down on the Autoplay subpage should focus 'Turn Off Autoplay'"
         )
 
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         waitForElementValueToContain(
             offButton,
             // The option button value is the localized "selected/not selected" text, not the English word "selected".
@@ -148,7 +159,7 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
             failureMessage: "Moving down from the Playback Settings main page should reach 'Autoplay Interval'"
         )
 
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let intervalButton = waitForSettingsControl(
             app: app,
@@ -177,7 +188,7 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
             failureMessage: "Moving down from the Playback Settings main page should reach 'Default Playback Mode'"
         )
 
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let randomButton = waitForSettingsControl(
             app: app,
@@ -198,7 +209,7 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
             failureMessage: "Entering the Default Playback Mode subpage should put default focus on the first item"
         )
 
-        XCUIRemote.shared.press(.down)
+        FirstFailureRemote.press(.down)
         waitForFocusableElementToGainFocus(
             filteredButton,
             timeout: TestWait.seconds(.product(8)),
@@ -220,7 +231,7 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
             failureMessage: "The Playback Settings main page should reach the 'Display Mode' entry"
         )
 
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let smartFillButton = waitForSettingsControl(
             app: app,
@@ -241,13 +252,13 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
             failureMessage: "After entering the Display Mode subpage, default focus should land on 'Smart Fill' first"
         )
 
-        XCUIRemote.shared.press(.down)
+        FirstFailureRemote.press(.down)
         waitForFocusableElementToGainFocus(
             singlePhotoButton,
             timeout: TestWait.seconds(.product(8)),
             failureMessage: "One move down on the Display Mode subpage should focus 'Single Photo Mode'"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         waitForElementValueToContain(
             singlePhotoButton,
             expectedFragment: "已选中",
@@ -298,7 +309,7 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
             timeout: TestWait.seconds(.product(8)),
             failureMessage: "Entering the filter editor main page should put default focus on the 'Albums' entry first"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         XCTAssertTrue(
             waitUntil(timeout: PlaybackSettingsTVOSUITestsWaitTiming.navigationTimeoutSeconds) {
@@ -327,7 +338,7 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
             timeout: TestWait.seconds(.product(6)),
             failureMessage: "On the filter editor main page, the 'People' entry should be able to take focus"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         XCTAssertTrue(
             waitUntil(timeout: PlaybackSettingsTVOSUITestsWaitTiming.navigationTimeoutSeconds) {
@@ -366,14 +377,14 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
         )
 
         for _ in 0..<3 {
-            XCUIRemote.shared.press(.right)
+            FirstFailureRemote.press(.right)
             waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
             XCTAssertTrue(
                 isAnySettingsControlFocused(app: app, identifier: doneIdentifier),
                 "After moving right from 'People', focus should settle on the 'Done' button"
             )
 
-            XCUIRemote.shared.press(.left)
+            FirstFailureRemote.press(.left)
             waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
             XCTAssertTrue(
                 isAnySettingsControlFocused(app: app, identifier: peopleIdentifier),
@@ -381,7 +392,7 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
             )
         }
 
-        XCUIRemote.shared.press(.right)
+        FirstFailureRemote.press(.right)
         waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.24)))
 
         XCTAssertTrue(
@@ -407,7 +418,7 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
             failureMessage: "Moving down from the Playback Settings main page should reach the 'Display Items' entry"
         )
 
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let exifLink = waitForSettingsControl(
             app: app,
@@ -421,7 +432,7 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
             failureMessage: "Entering the Display Items subpage should put default focus on the 'EXIF Info' entry first"
         )
 
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let exifOnButton = waitForSettingsControl(
             app: app,
@@ -450,7 +461,7 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
             failureMessage: "Moving down from the Playback Settings main page should reach the 'Display Items' entry"
         )
 
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         _ = moveFocusToSettingsControl(
             app: app,
@@ -459,7 +470,7 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
             failureMessage: "Moving down on the Display Items subpage should reach the 'Debug Panel' entry"
         )
 
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let debugOnButton = waitForSettingsControl(
             app: app,
@@ -488,7 +499,7 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
             failureMessage: "Moving down from the Playback Settings main page should reach the 'Display Items' entry"
         )
 
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let exifLink = waitForSettingsControl(
             app: app,
@@ -503,7 +514,8 @@ final class PlaybackSettingsTVOSUITests: XCTestCase {
         )
 
         XCTAssertFalse(
-            app.buttons["settings.playback.showDebug.link"].waitForExistence(timeout: TestWait.seconds(.product(1.5))),
+            app.buttons["settings.playback.showDebug.link"].waitForFailureEvidence(
+                timeout: TestWait.seconds(.product(1.5))),
             "With the debug entry explicitly off, the Display Items subpage should not expose 'Debug Panel'"
         )
 

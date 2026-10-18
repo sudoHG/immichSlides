@@ -2,11 +2,21 @@ import XCTest
 
 #if os(iOS)
 final class VisualAuditMatrixUITests: XCTestCase {
+    override func invokeTest() {
+        FirstFailureContext.reset()
+        super.invokeTest()
+    }
+
+    override func record(_ issue: XCTIssue) {
+        FirstFailureEvidence.record(self, issue: issue)
+        super.record(issue)
+    }
+
     override func setUpWithError() throws {
         continueAfterFailure = false
         // Return to portrait before each test so a previous landscape test cannot affect first-launch input.
 
-        XCUIDevice.shared.orientation = .portrait
+        FirstFailureOrientation.set(.portrait)
     }
 
     @MainActor
@@ -20,17 +30,18 @@ final class VisualAuditMatrixUITests: XCTestCase {
         for scheme in schemes {
             for orientation in orientations {
                 let app = launchApp(shouldResetState: true, colorScheme: scheme)
-                XCUIDevice.shared.orientation = orientation.value
+                FirstFailureOrientation.set(orientation.value)
 
                 XCTAssertTrue(
-                    app.textFields["firstboot.serverURL.field"].waitForExistence(
+                    app.textFields["firstboot.serverURL.field"].waitForPublicElement(
+                        "firstboot.serverURL.field",
                         timeout: TestWait.seconds(.infrastructure(8))))
                 attachScreenshot(app: app, name: "audit-matrix-firstboot-\(scheme)-\(orientation.name)-\(deviceTag())")
-                app.terminate()
+                app.terminateForFailureEvidence()
             }
         }
 
-        XCUIDevice.shared.orientation = .portrait
+        FirstFailureOrientation.set(.portrait)
     }
 
     @MainActor
@@ -42,22 +53,24 @@ final class VisualAuditMatrixUITests: XCTestCase {
         ]
 
         for scheme in schemes {
-            XCUIDevice.shared.orientation = .portrait
+            FirstFailureOrientation.set(.portrait)
             let app = try launchConfiguredAppAtModeSelection(shouldResetState: true, colorScheme: scheme)
 
             for orientation in orientations {
-                XCUIDevice.shared.orientation = orientation.value
+                FirstFailureOrientation.set(orientation.value)
                 let randomButton = app.buttons["mode.random.button"]
-                XCTAssertTrue(randomButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))))
+                XCTAssertTrue(
+                    randomButton.waitForPublicElement(
+                        "mode.random.button", timeout: TestWait.seconds(.infrastructure(8))))
                 tapElement(randomButton)
                 attachScreenshot(
                     app: app, name: "audit-matrix-mode-random-selected-\(scheme)-\(orientation.name)-\(deviceTag())")
             }
 
-            app.terminate()
+            app.terminateForFailureEvidence()
         }
 
-        XCUIDevice.shared.orientation = .portrait
+        FirstFailureOrientation.set(.portrait)
     }
 }
 
@@ -79,7 +92,7 @@ private extension VisualAuditMatrixUITests {
             app.launchEnvironment["UI_TEST_EXPECTED_CONNECTION_SERVER_URL"] = config.serverURL
             app.launchEnvironment["UI_TEST_EXPECTED_CONNECTION_API_KEY"] = config.apiKey
         }
-        app.launch()
+        app.launchForFailureEvidence()
         return app
     }
 
@@ -100,17 +113,18 @@ private extension VisualAuditMatrixUITests {
         app.launchEnvironment["UI_TEST_FORCE_MODE_SELECTION"] = "1"
         app.launchEnvironment["UI_TEST_SERVER_URL"] = config.url
         app.launchEnvironment["UI_TEST_API_KEY"] = config.apiKey
-        app.launch()
+        app.launchForFailureEvidence()
 
         XCTAssertTrue(
-            app.buttons["mode.continue.button"].waitForExistence(timeout: TestWait.seconds(.infrastructure(10))),
+            app.buttons["mode.continue.button"].waitForPublicElement(
+                "mode.continue.button", timeout: TestWait.seconds(.infrastructure(10))),
             "After the visual matrix injects the test server, the app should go straight to the mode selection page"
         )
         return app
     }
 
     func attachScreenshot(app: XCUIApplication, name: String) {
-        let attachment = XCTAttachment(screenshot: app.screenshot())
+        let attachment = XCTAttachment(screenshot: app.screenshotForFailureEvidence())
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
@@ -118,10 +132,10 @@ private extension VisualAuditMatrixUITests {
 
     func tapElement(_ element: XCUIElement) {
         if element.isHittable {
-            element.tap()
+            element.tapForFailureEvidence()
             return
         }
-        element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tapForFailureEvidence()
     }
 
     func deviceTag() -> String {

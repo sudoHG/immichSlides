@@ -237,7 +237,7 @@ def read_problem_reason(bundle, key, *, export_timeout_seconds=60):
     return problem_reason(json.loads(completed.stdout), key)
 
 
-def prepare_test_run(source, directory, inputs, *, failure_screenshots=False):
+def prepare_test_run(source, directory, inputs, *, failure_screenshots=False, first_failure_spool=None):
     payload = plistlib.loads(source.read_bytes())
     def relocate(value):
         if isinstance(value, str):
@@ -256,6 +256,10 @@ def prepare_test_run(source, directory, inputs, *, failure_screenshots=False):
             target[field] = clean_environment(target.get(field, {}))
         if target.get("BlueprintName") == "immichSlidesUITests":
             target["EnvironmentVariables"].update(inputs)
+            if first_failure_spool is not None:
+                from ci_failure_diagnostics import first_failure_environment
+                spool, selectors = first_failure_spool
+                target["EnvironmentVariables"].update(first_failure_environment(spool, selectors, screenshots=failure_screenshots))
             if failure_screenshots:
                 # Archives default to video; export requires real failure images.
                 target["PreferredScreenCaptureFormat"] = "screenshots"
@@ -478,6 +482,7 @@ def main(argv=None, *, simulator_prepared=False):
     args = parser.parse_args(argv)
     output = args.output_dir.resolve()
     code, service, bundle, digest, summary = 1, None, None, None, None
+    first_failure_root = None
     rows = []
     bundles, digests = [], {}
     try:
@@ -582,7 +587,10 @@ def main(argv=None, *, simulator_prepared=False):
                   "IMMICH_TEST_EXIF_DIAGNOSTIC_ALBUM_ID": "album-c-exif",
                   "TEST_RUNNER_SCENE_PRESENTATION_CONTRACT_RUN_DIR": str(output / "scene-contracts")}
         inputs[FACTOR_ENVIRONMENT_KEY] = str(waits["infrastructure_factor"])
-        run = prepare_test_run(source_run, work, inputs, failure_screenshots=args.failure_screenshots)
+        first_failure_root = work / "first-failure-spool"
+        first_failure_selectors = [entry["key"] for entry in declared]
+        run = prepare_test_run(source_run, work, inputs, failure_screenshots=args.failure_screenshots,
+                               first_failure_spool=(first_failure_root / "attempt-1", first_failure_selectors))
         base = ["xcodebuild", "test-without-building", "-xctestrun", str(run), "-destination", args.destination,
                 "-derivedDataPath", str(work / "xcode-data"),
                 "-parallel-testing-enabled", "NO", "-collect-test-diagnostics", "never"]
@@ -641,6 +649,14 @@ def main(argv=None, *, simulator_prepared=False):
                 bundles.append(path)
                 return path
             def attempt(call):
+                from ci_failure_diagnostics import configure_first_failure_attempt
+                try:
+                    configured, _prepared = configure_first_failure_attempt(call,
+                        first_failure_root / ("attempt-" + str(len(bundles))), first_failure_selectors,
+                        screenshots=args.failure_screenshots)
+                    call[:] = configured
+                except (OSError, ValueError, TypeError, KeyError):
+                    pass
                 started = time.monotonic()
                 raw_code = execute(call, "test-" + str(len(bundles)))
                 if official_mode and len(bundles) == 1:
@@ -698,9 +714,16 @@ def main(argv=None, *, simulator_prepared=False):
                                     "--output-path", str(attachment_root), "--only-failures"],
                                    capture_output=True, check=True, timeout=args.result_export_timeout_seconds)
             export_started = time.monotonic()
-            digests[path] = export_private_result_bundle(path, output, [PUBLIC_API_KEY], suffix=suffix,
-                summary_timeout_seconds=args.result_export_timeout_seconds, export_timeout_seconds=args.result_export_timeout_seconds,
-                enrich_failure_diagnostics=True)
+            try:
+                digests[path] = export_private_result_bundle(path, output, [PUBLIC_API_KEY], suffix=suffix,
+                    summary_timeout_seconds=args.result_export_timeout_seconds, export_timeout_seconds=args.result_export_timeout_seconds,
+                    enrich_failure_diagnostics=True,
+                    first_failure_spool=(first_failure_root / ("attempt-" + str(number)), first_failure_selectors),
+                    first_failure_images=output / "failure-screenshots" / ("first-failure-attempt-" + str(1 if number == 1 else 2)))
+            finally:
+                if args.failure_screenshots:
+                    from ci_failure_diagnostics import normalize_ui_failure_images
+                    normalize_ui_failure_images(attachment_root)
             write_json(output / ("export-timing" + suffix + ".json"), {"schema_version": 1,
                 "official_export_seconds": time.monotonic() - export_started, "timeout_seconds": args.result_export_timeout_seconds})
             official = json.loads((output / ("official-tests" + suffix + ".json")).read_text())
@@ -720,6 +743,12 @@ def main(argv=None, *, simulator_prepared=False):
                                                   failure_diagnostics={field: row[field] for field in ("failure_phase", "failure_class")}
                                                   if row["outcome"] == "failed" else None)
                                                  for row in rows]
+        from ci_failure_diagnostics import attach_first_failures
+        for number in range(1, len(bundles) + 1):
+            suffix = "" if number == 1 else "-attempt-" + str(number)
+            path = output / ("official-tests" + suffix + ".json")
+            if path.is_file():
+                attach_first_failures(summary["population"]["observed"], json.loads(path.read_text()), 1 if number == 1 else 2)
         if code == 0:
             summary["status"] = "unverified" if any(row["outcome"] == "skipped" for row in rows) else "passed"
         if official_mode:
@@ -785,6 +814,8 @@ def main(argv=None, *, simulator_prepared=False):
                 summary["infrastructure"].append({"code": "sensitive-scan-failed", "message": str(error)[:200]})
                 write_fixture_summary(summary, output)
             failures = []
+            if first_failure_root is not None:
+                shutil.rmtree(first_failure_root, ignore_errors=True)
             for number, path in reversed(list(enumerate(bundles, 1))):
                 disposal_output = output if number == 1 else output / ("disposal-attempt-" + str(number))
                 disposal_output.mkdir(exist_ok=True)

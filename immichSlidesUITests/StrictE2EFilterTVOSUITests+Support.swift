@@ -6,19 +6,19 @@ extension StrictE2EFilterTVOSUITests {
     func assertTVOSDefaultMode(app: XCUIApplication, expected: String) throws {
         let modeLink = app.buttons["settings.playback.mode.link"]
         XCTAssertTrue(
-            modeLink.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            modeLink.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
             "The real playback settings screen must offer the default mode entry"
         )
         moveFocusTo(modeLink, directions: [.up, .down], message: "Focus must be able to reach the default mode entry")
         XCTAssertTrue(modeLink.hasFocus, "The default mode entry must actually receive remote focus")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         let random = app.buttons["settings.playback.mode.random.button"]
         let filtered = app.buttons["settings.playback.mode.filtered.button"]
         XCTAssertTrue(
-            random.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            random.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
             "The default mode screen must offer Random Playback")
         XCTAssertTrue(
-            filtered.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            filtered.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
             "The default mode screen must offer Filtered Playback")
         let expectedButton = expected == "filtered" ? filtered : random
         let unexpectedButton = expected == "filtered" ? random : filtered
@@ -39,9 +39,9 @@ extension StrictE2EFilterTVOSUITests {
             name: "album-edit-switch-mode-\(expected)",
             attachmentName: "album-edit-switch-mode-\(expected)"
         )
-        XCUIRemote.shared.press(.menu)
+        FirstFailureRemote.press(.menu)
         XCTAssertTrue(
-            modeLink.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            modeLink.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
             "Going back from the default mode screen must return to playback settings")
     }
 
@@ -59,7 +59,7 @@ extension StrictE2EFilterTVOSUITests {
                 message: "Focus must be able to move to the person to deselect.")
             let value = String(describing: other.value ?? "")
             if value.contains("已选中") || value.contains("单人") {
-                XCUIRemote.shared.press(.select)
+                FirstFailureRemote.press(.select)
                 RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.4))))
             }
             let after = String(describing: other.value ?? "")
@@ -74,7 +74,7 @@ extension StrictE2EFilterTVOSUITests {
     func focusAndConfigurePerson(app: XCUIApplication, personID: String, isSoloOnly: Bool) throws {
         let button = app.buttons["personFilter.person.\(personID).button"]
         XCTAssertTrue(
-            button.waitForExistence(timeout: TestWait.seconds(.infrastructure(15))),
+            button.waitForFailureEvidence(timeout: TestWait.seconds(.infrastructure(15))),
             "The people list must show \(personID).")
         isolatePersonSelection(app: app, keeping: personID)
         moveFocusTo(button, directions: [.down, .right, .left], message: "Focus must land on the target person.")
@@ -92,11 +92,11 @@ extension StrictE2EFilterTVOSUITests {
         let value = String(describing: button.value ?? "")
         if isSoloOnly {
             if !value.contains("单人") {
-                XCUIRemote.shared.press(.playPause)
+                FirstFailureRemote.press(.playPause)
                 RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.4))))
             }
         } else if !value.contains("已选中") {
-            XCUIRemote.shared.press(.select)
+            FirstFailureRemote.press(.select)
         }
     }
 
@@ -104,10 +104,12 @@ extension StrictE2EFilterTVOSUITests {
     func capturePausedPlaybackPNGs(app: XCUIApplication, names: [String]) throws {
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
         XCTAssertTrue(
-            playPauseButton.waitForExistence(timeout: TestWait.seconds(.product(30))),
+            playPauseButton.waitForPublicElement(
+                "slideshow.control.playPause.button", timeout: TestWait.seconds(.product(30))),
             "Start Playback must open the playback screen.")
         let settingsButton = app.buttons["slideshow.control.settings.button"]
-        if settingsButton.waitForExistence(timeout: TestWait.seconds(.product(6))),
+        if settingsButton.waitForPublicElement(
+            "slideshow.control.settings.button", timeout: TestWait.seconds(.product(6))),
             waitForFocus(on: settingsButton, timeout: TestWait.seconds(.product(3)))
         {
             moveFocus(
@@ -122,7 +124,7 @@ extension StrictE2EFilterTVOSUITests {
             moveFocusTo(
                 playPauseButton, directions: [.left, .right],
                 message: "Focus must be able to move to Play/Pause.")
-            XCUIRemote.shared.press(.select)
+            FirstFailureRemote.press(.select)
         }
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(4))) {
@@ -138,7 +140,7 @@ extension StrictE2EFilterTVOSUITests {
             if index + 1 < names.count {
                 ensureControlBarVisible(app: app)
                 moveFocus(.right, to: nextButton, maximumPresses: 3, message: "Focus must be able to move to Next.")
-                XCUIRemote.shared.press(.select)
+                FirstFailureRemote.press(.select)
                 RunLoop.current.run(until: Date().addingTimeInterval(Timing.playbackSceneSettleSeconds))
             }
         }
@@ -148,31 +150,32 @@ extension StrictE2EFilterTVOSUITests {
     func changeServer(app: XCUIApplication, url: String, publicKey: String) throws {
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
         XCTAssertTrue(
-            playPauseButton.waitForExistence(timeout: TestWait.seconds(.product(20))),
+            playPauseButton.waitForPublicElement(
+                "slideshow.control.playPause.button", timeout: TestWait.seconds(.product(20))),
             "The playback screen must be open before switching servers.")
         ensureControlBarVisible(app: app)
         let settingsButton = app.buttons["slideshow.control.settings.button"]
         moveFocus(
             .left, to: settingsButton, maximumPresses: 4,
             message: "Focus on the playback control bar must be able to move to Settings.")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         let serverItem = app.buttons["settings.item.server"]
         XCTAssertTrue(
-            serverItem.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            serverItem.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
             "The settings screen must show the server entry.")
         moveFocusTo(serverItem, directions: [.down], message: "Focus must be able to move to server settings.")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let serverField = app.textFields["firstboot.serverURL.field"]
         XCTAssertTrue(
-            serverField.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            serverField.waitForPublicElement("firstboot.serverURL.field", timeout: TestWait.seconds(.product(8))),
             "Server settings must show the URL field.")
         moveFocusTo(serverField, directions: [.up, .down], message: "Focus must land on the server URL.")
         replaceFocusedText(in: serverField, app: app, with: url)
 
         let apiKeyField = app.secureTextFields["firstboot.apiKey.field"]
         XCTAssertTrue(
-            apiKeyField.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            apiKeyField.waitForPublicElement("firstboot.apiKey.field", timeout: TestWait.seconds(.product(8))),
             "Server settings must show the API Key.")
         moveFocus(.down, to: apiKeyField, maximumPresses: 2, message: "Focus must be able to move down to the API Key.")
         replaceFocusedText(in: apiKeyField, app: app, with: publicKey)
@@ -184,7 +187,7 @@ extension StrictE2EFilterTVOSUITests {
         moveFocusTo(
             testConnectionButton, directions: [.down, .right], message: "Focus must be able to move to Test Connection."
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         waitForTVOSServerConnectionSuccess(
             app: app,
             timeout: TestWait.seconds(.infrastructure(45)),
@@ -196,15 +199,15 @@ extension StrictE2EFilterTVOSUITests {
             identifier: "firstboot.saveConfig.button"
         )
         XCTAssertTrue(
-            saveButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(5))) && saveButton.isEnabled,
+            saveButton.waitForFailureEvidence(timeout: TestWait.seconds(.infrastructure(5))) && saveButton.isEnabled,
             "After a successful connection, the configuration must be savable.")
         moveFocusTo(saveButton, directions: [.down, .right], message: "Focus must be able to move to Save Settings.")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         let saveFeedback = app.descendants(matching: .any)["settings.server.feedback.save.success"]
         let saveFeedbackText = app.staticTexts["settings.server.feedback.save.success"]
         XCTAssertTrue(
-            saveFeedback.waitForExistence(timeout: TestWait.seconds(.product(20)))
-                || saveFeedbackText.waitForExistence(timeout: TestWait.seconds(.product(2))),
+            saveFeedback.waitForFailureEvidence(timeout: TestWait.seconds(.product(20)))
+                || saveFeedbackText.waitForFailureEvidence(timeout: TestWait.seconds(.product(2))),
             "Saving server B must show save success."
         )
     }
@@ -213,13 +216,14 @@ extension StrictE2EFilterTVOSUITests {
     func configureServerThroughFirstBoot(app: XCUIApplication, input: StrictE2EInput) throws {
         let serverField = app.textFields["firstboot.serverURL.field"]
         XCTAssertTrue(
-            serverField.waitForExistence(timeout: TestWait.seconds(.infrastructure(12))),
+            serverField.waitForPublicElement(
+                "firstboot.serverURL.field", timeout: TestWait.seconds(.infrastructure(12))),
             "A clean install must open the first-launch form.")
         replaceFocusedText(in: serverField, app: app, with: input.serverURL)
 
         let apiKeyField = app.secureTextFields["firstboot.apiKey.field"]
         XCTAssertTrue(
-            apiKeyField.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            apiKeyField.waitForPublicElement("firstboot.apiKey.field", timeout: TestWait.seconds(.infrastructure(8))),
             "The first-launch form must show the API Key field.")
         moveFocus(
             .down, to: apiKeyField, maximumPresses: 2,
@@ -231,14 +235,14 @@ extension StrictE2EFilterTVOSUITests {
             identifier: "firstboot.testConnection.button"
         )
         XCTAssertTrue(
-            testConnectionButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(5))),
+            testConnectionButton.waitForFailureEvidence(timeout: TestWait.seconds(.infrastructure(5))),
             "The first-launch form must show the Test Connection button.")
-        XCUIRemote.shared.press(.down)
-        XCUIRemote.shared.press(.right)
+        FirstFailureRemote.press(.down)
+        FirstFailureRemote.press(.right)
         attachFocusAudit(app: app, name: "tvos-filter-firstboot-before-test-connection")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
-            app.staticTexts["firstboot.connection.success"].waitForExistence(
+            app.staticTexts["firstboot.connection.success"].waitForFailureEvidence(
                 timeout: TestWait.seconds(.infrastructure(45))),
             "Once the real controlled server is reachable, connection test passed must be shown.")
 
@@ -247,34 +251,34 @@ extension StrictE2EFilterTVOSUITests {
             identifier: "firstboot.saveConfig.button"
         )
         XCTAssertTrue(
-            saveButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(5))) && saveButton.isEnabled,
+            saveButton.waitForFailureEvidence(timeout: TestWait.seconds(.infrastructure(5))) && saveButton.isEnabled,
             "Save Settings must be enabled after a successful connection.")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
     }
 
     @MainActor
     func replaceFocusedText(in field: XCUIElement, app: XCUIApplication, with value: String) {
         XCTAssertTrue(
             waitForFocus(on: field, timeout: TestWait.seconds(.product(4))), "The field must be focused before typing.")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         if let existing = field.value as? String, !existing.isEmpty {
-            app.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: existing.count + 8))
+            app.typeForFailureEvidence(String(repeating: XCUIKeyboardKey.delete.rawValue, count: existing.count + 8))
         }
-        app.typeText(value)
+        app.typeForFailureEvidence(value)
 
         let submit = app.buttons.matching(
             // ui-label-lookup: Match the simulator-localized system keyboard submit key.
             NSPredicate(format: "label IN %@", ["下一项", "Next", "完成", "Done"])
         ).firstMatch
         XCTAssertTrue(
-            submit.waitForExistence(timeout: TestWait.seconds(.product(4))),
+            submit.waitForFailureEvidence(timeout: TestWait.seconds(.product(4))),
             "The system keyboard must show Next or Done.")
         for _ in 0..<6 where !submit.hasFocus {
-            XCUIRemote.shared.press(.down)
+            FirstFailureRemote.press(.down)
         }
         XCTAssertTrue(submit.hasFocus, "The system keyboard's submit button must be focused before submitting text.")
-        XCUIRemote.shared.press(.select)
-        XCUIRemote.shared.press(.menu)
+        FirstFailureRemote.press(.select)
+        FirstFailureRemote.press(.menu)
         XCTAssertTrue(
             waitForFocus(on: field, timeout: TestWait.seconds(.product(4))),
             "After submitting text, focus must return to the original field.")
@@ -313,7 +317,7 @@ extension StrictE2EFilterTVOSUITests {
         let focused = app.descendants(matching: .any)
             .matching(NSPredicate(format: "hasFocus == %@", NSNumber(value: true))).firstMatch
         let previous = try? focused.snapshot()
-        XCUIRemote.shared.press(direction)
+        FirstFailureRemote.press(direction)
         guard let previous, previous.hasFocus, !previous.identifier.isEmpty else {
             RunLoop.current.run(until: Date().addingTimeInterval(Timing.focusMovementSettleSeconds))
             // Unidentifiable focus retains the legacy cadence without declaring a directional edge.
@@ -392,7 +396,7 @@ extension StrictE2EFilterTVOSUITests {
 
     @MainActor
     func writeScreenshotPNG(app: XCUIApplication, name: String, attachmentName: String) throws {
-        let png = app.screenshot().pngRepresentation
+        let png = app.screenshotForFailureEvidence().pngRepresentation
         let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
         attachment.name = attachmentName
         attachment.lifetime = .keepAlways
@@ -401,7 +405,7 @@ extension StrictE2EFilterTVOSUITests {
     }
 
     func attachScreenshot(app: XCUIApplication, name: String) {
-        let attachment = XCTAttachment(screenshot: app.screenshot())
+        let attachment = XCTAttachment(screenshot: app.screenshotForFailureEvidence())
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
@@ -471,13 +475,13 @@ extension StrictE2EFilterTVOSUITests {
             NSPredicate(format: "identifier BEGINSWITH 'albumFilter.album.'")
         ).firstMatch
         XCTAssertTrue(
-            albumList.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            albumList.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
             "Must still be on the album list to return to the filter screen")
-        XCUIRemote.shared.press(.menu)
+        FirstFailureRemote.press(.menu)
         try assertStillInApp(app)
         XCTAssertTrue(
-            app.buttons["filterSummary.album.button"].waitForExistence(timeout: TestWait.seconds(.product(10)))
-                || app.buttons["filter.editor.album.entry"].waitForExistence(
+            app.buttons["filterSummary.album.button"].waitForFailureEvidence(timeout: TestWait.seconds(.product(10)))
+                || app.buttons["filter.editor.album.entry"].waitForFailureEvidence(
                     timeout: TestWait.seconds(.product(2))),
             "Going back from the album list must return to the filter screen"
         )
@@ -491,14 +495,14 @@ extension StrictE2EFilterTVOSUITests {
             moveFocus(
                 .left, to: settingsButton, maximumPresses: 4,
                 message: "Focus on the playback control bar must be able to move to Settings.")
-            XCUIRemote.shared.press(.select)
+            FirstFailureRemote.press(.select)
         }
         let playbackItem = app.buttons["settings.item.playback"]
         XCTAssertTrue(
-            playbackItem.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            playbackItem.waitForPublicElement("settings.item.playback", timeout: TestWait.seconds(.product(8))),
             "The settings screen must show the playback entry.")
         moveFocusTo(playbackItem, directions: [.up, .down], message: "Focus must be able to move to playback settings.")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
     }
 
     // After switching servers, reach the filter editor entry in playback settings from the current real screen,
@@ -516,12 +520,13 @@ extension StrictE2EFilterTVOSUITests {
         if app.textFields["firstboot.serverURL.field"].exists
             || app.descendants(matching: .any)["settings.server.feedback.save.success"].exists
         {
-            XCUIRemote.shared.press(.menu)
+            FirstFailureRemote.press(.menu)
             RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.8))))
             try assertStillInApp(app)
             XCTAssertTrue(
-                app.buttons["settings.item.playback"].waitForExistence(timeout: TestWait.seconds(.product(8)))
-                    || app.buttons["settings.item.server"].waitForExistence(
+                app.buttons["settings.item.playback"].waitForPublicElement(
+                    "settings.item.playback", timeout: TestWait.seconds(.product(8)))
+                    || app.buttons["settings.item.server"].waitForFailureEvidence(
                         timeout: TestWait.seconds(.product(2))),
                 "Going back from server settings must stay on the settings home screen"
             )
@@ -534,7 +539,7 @@ extension StrictE2EFilterTVOSUITests {
         }
         let playbackItem = app.buttons["settings.item.playback"]
         XCTAssertTrue(
-            playbackItem.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            playbackItem.waitForPublicElement("settings.item.playback", timeout: TestWait.seconds(.product(8))),
             "The filter editor must be entered through the settings playback entry")
         try assertStillInApp(app)
         if !app.buttons["settings.playback.filterConfig.button"].exists
@@ -542,7 +547,7 @@ extension StrictE2EFilterTVOSUITests {
         {
             moveFocusTo(
                 playbackItem, directions: [.up, .down], message: "Focus must be able to move to playback settings.")
-            XCUIRemote.shared.press(.select)
+            FirstFailureRemote.press(.select)
             try assertStillInApp(app)
         }
         try openFilterConfigFromPlaybackSettings(app: app)
@@ -559,23 +564,23 @@ extension StrictE2EFilterTVOSUITests {
     @MainActor
     func openFilterConfigFromPlaybackSettings(app: XCUIApplication) throws {
         let filterConfig = app.buttons["settings.playback.filterConfig.button"]
-        if filterConfig.waitForExistence(timeout: TestWait.seconds(.product(2))) {
+        if filterConfig.waitForFailureEvidence(timeout: TestWait.seconds(.product(2))) {
             try selectFilterConfigOnPlaybackSettings(app: app, filterConfig: filterConfig)
             return
         }
 
         let modeLink = app.buttons["settings.playback.mode.link"]
         XCTAssertTrue(
-            modeLink.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            modeLink.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
             "Playback settings must offer Default Playback Mode.")
         moveFocusTo(modeLink, directions: [.up, .down], message: "Focus must be able to move to Default Playback Mode.")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         let filtered = app.buttons["settings.playback.mode.filtered.button"]
         XCTAssertTrue(
-            filtered.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            filtered.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
             "Filtered Playback must be selectable.")
         moveFocus(.down, to: filtered, maximumPresses: 4, message: "Focus must land on Filtered Playback.")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
         if let alert = namedFilterModeBlockedAlert(in: app) {
@@ -589,12 +594,12 @@ extension StrictE2EFilterTVOSUITests {
         if app.buttons["settings.playback.mode.filtered.button"].exists
             && !app.buttons["settings.playback.filterConfig.button"].exists
         {
-            XCUIRemote.shared.press(.menu)
+            FirstFailureRemote.press(.menu)
             RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.8))))
         }
         let returnedConfig = app.buttons["settings.playback.filterConfig.button"]
         XCTAssertTrue(
-            returnedConfig.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            returnedConfig.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
             "Once the default mode can switch, playback settings must return with the filter editor entry.")
         try selectFilterConfigOnPlaybackSettings(app: app, filterConfig: returnedConfig)
     }
@@ -610,7 +615,7 @@ extension StrictE2EFilterTVOSUITests {
         )
         moveFocusTo(filterConfig, directions: [.down, .up], message: "Focus must be able to move to Edit Filters.")
         XCTAssertTrue(filterConfig.hasFocus, "Edit Filters must have hasFocus before Select.")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         try waitForFilterEditorSurface(app: app, message: "The filter editor must open")
     }
 
@@ -662,7 +667,7 @@ extension StrictE2EFilterTVOSUITests {
                 var remaining = 4
                 while remaining > 0 {
                     if configureActionHasFocus(configureQuery) { break }
-                    XCUIRemote.shared.press(direction)
+                    FirstFailureRemote.press(direction)
                     RunLoop.current.run(until: Date().addingTimeInterval(Timing.focusMovementSettleSeconds))
                     remaining -= 1
                 }
@@ -676,7 +681,7 @@ extension StrictE2EFilterTVOSUITests {
         )
         XCTAssertTrue(
             configureActionHasFocus(configureQuery), "Before Select, focus must belong to the Set Up Filters action")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
     }
 
     @MainActor
@@ -721,13 +726,13 @@ extension StrictE2EFilterTVOSUITests {
                 message: "Focus must be able to move to the album to deselect.")
             let value = String(describing: other.value ?? "")
             if value.contains("已选中") {
-                XCUIRemote.shared.press(.select)
+                FirstFailureRemote.press(.select)
                 RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.4))))
             }
         }
         let target = app.buttons["albumFilter.album.\(emptyAlbumID).button"]
         XCTAssertTrue(
-            target.waitForExistence(timeout: TestWait.seconds(.infrastructure(15))),
+            target.waitForFailureEvidence(timeout: TestWait.seconds(.infrastructure(15))),
             "The album list must show the controlled empty album \(emptyAlbumID)."
         )
         moveFocusTo(target, directions: [.down, .right, .left], message: "Focus must land on the empty album.")
@@ -737,9 +742,9 @@ extension StrictE2EFilterTVOSUITests {
         }
         let value = String(describing: target.value ?? "")
         if !value.contains("已选中") {
-            XCUIRemote.shared.press(.select)
+            FirstFailureRemote.press(.select)
         }
-        XCUIRemote.shared.press(.menu)
+        FirstFailureRemote.press(.menu)
     }
 
     // Menu returns to playback or the empty-pool copy screen; the empty pool has no control bar, so do not wait
@@ -752,7 +757,7 @@ extension StrictE2EFilterTVOSUITests {
             {
                 return
             }
-            XCUIRemote.shared.press(.menu)
+            FirstFailureRemote.press(.menu)
             RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.6))))
         }
         XCTFail("Cannot return from settings to the playback screen.")

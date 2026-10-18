@@ -6,13 +6,15 @@ extension AccessLifecycleTVOSUITests {
     func configureServerThroughFirstBoot(app: XCUIApplication, input: StrictE2EInput) throws {
         let serverField = app.textFields["firstboot.serverURL.field"]
         XCTAssertTrue(
-            serverField.waitForExistence(timeout: TestWait.seconds(.infrastructure(12))),
+            serverField.waitForPublicElement(
+                "firstboot.serverURL.field", timeout: TestWait.seconds(.infrastructure(12))),
             "A clean install must open the first-boot form.")
         replaceFocusedText(in: serverField, app: app, with: input.serverURL)
 
         let apiKeyField = app.secureTextFields["firstboot.apiKey.field"]
         XCTAssertTrue(
-            apiKeyField.waitForExistence(timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+            apiKeyField.waitForPublicElement(
+                "firstboot.apiKey.field", timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "First-boot form must show the API Key field.")
         moveFocus(.down, to: apiKeyField, maximumPresses: 2, message: "URL submitted; focus must move down to API Key.")
         replaceFocusedText(in: apiKeyField, app: app, with: input.publicKey)
@@ -22,16 +24,16 @@ extension AccessLifecycleTVOSUITests {
             identifier: "firstboot.testConnection.button"
         )
         XCTAssertTrue(
-            testConnectionButton.waitForExistence(
+            testConnectionButton.waitForFailureEvidence(
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.elementAppearanceTimeoutSeconds),
             "First-boot form must show Test Connection.")
-        XCUIRemote.shared.press(.down)
-        XCUIRemote.shared.press(.right)
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.down)
+        FirstFailureRemote.press(.right)
+        FirstFailureRemote.press(.select)
 
         let success = app.staticTexts["firstboot.connection.success"]
         XCTAssertTrue(
-            success.waitForExistence(timeout: TestWait.seconds(.infrastructure(45))),
+            success.waitForFailureEvidence(timeout: TestWait.seconds(.infrastructure(45))),
             "With the real controlled service reachable, the connection test must show as passed."
         )
 
@@ -40,26 +42,28 @@ extension AccessLifecycleTVOSUITests {
             identifier: "firstboot.saveConfig.button"
         )
         XCTAssertTrue(
-            saveButton.waitForExistence(timeout: AccessLifecycleTVOSUITestsWaitTiming.elementAppearanceTimeoutSeconds),
+            saveButton.waitForFailureEvidence(
+                timeout: AccessLifecycleTVOSUITestsWaitTiming.elementAppearanceTimeoutSeconds),
             "After connecting, the Save Settings button must show.")
         XCTAssertTrue(saveButton.isEnabled, "After a successful connection, Save Settings must be enabled.")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
     }
 
     @MainActor
     func enterRandomPlayback(app: XCUIApplication) throws {
         let randomButton = app.buttons["mode.random.button"]
         XCTAssertTrue(
-            randomButton.waitForExistence(timeout: TestWait.seconds(.product(15))),
+            randomButton.waitForPublicElement("mode.random.button", timeout: TestWait.seconds(.product(15))),
             "After saving settings, mode selection must open.")
         XCTAssertTrue(
             waitForFocus(
                 on: randomButton, timeout: AccessLifecycleTVOSUITestsWaitTiming.elementAppearanceTimeoutSeconds),
             "Mode selection focus must start on random playback.")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         let continueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            continueButton.waitForExistence(
+            continueButton.waitForPublicElement(
+                "mode.continue.button",
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.elementAppearanceTimeoutSeconds),
             "After choosing random play, Continue must show.")
         XCTAssertTrue(continueButton.isEnabled, "After choosing random play, Continue must be enabled.")
@@ -69,7 +73,7 @@ extension AccessLifecycleTVOSUITests {
             maximumPresses: 2,
             message: "After choosing random play, focus must move down to Continue."
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
     }
 
     @MainActor
@@ -79,13 +83,14 @@ extension AccessLifecycleTVOSUITests {
 
         let playbackItem = app.buttons["settings.item.playback"]
         XCTAssertTrue(
-            playbackItem.waitForExistence(
+            playbackItem.waitForPublicElement(
+                "settings.item.playback",
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Settings home must show playback settings.")
         XCTAssertTrue(
             waitForFocus(on: playbackItem, timeout: AccessLifecycleTVOSUITestsWaitTiming.settingsChangeTimeoutSeconds),
             "Settings home must first focus playback settings.")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         selectPlaybackToggle(
             app: app,
@@ -112,26 +117,28 @@ extension AccessLifecycleTVOSUITests {
         record("settings.save.display_mode")
 
         moveFocusToSettingsControl(app: app, identifier: "settings.playback.display.link", maxSteps: 7)
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         let exifLink = app.buttons["settings.playback.showExif.link"]
         XCTAssertTrue(
-            exifLink.waitForExistence(timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+            exifLink.waitForFailureEvidence(
+                timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Display items page must have the EXIF entry.")
         XCTAssertTrue(
             waitForFocus(on: exifLink, timeout: AccessLifecycleTVOSUITestsWaitTiming.settingsChangeTimeoutSeconds),
             "Default focus on display items must be on EXIF.")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         let exifOff = app.buttons["settings.playback.showExif.off.button"]
         XCTAssertTrue(
-            exifOff.waitForExistence(timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+            exifOff.waitForFailureEvidence(
+                timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "EXIF subpage must have the off option.")
         moveFocus(.down, to: exifOff, maximumPresses: 3, message: "Must be able to focus EXIF off.")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(valueContainsSelected(exifOff), "After turning EXIF off, that option must be selected.")
         record("settings.save.exif")
-        XCUIRemote.shared.press(.menu)
+        FirstFailureRemote.press(.menu)
         waitForFocusVisualSettle()
-        XCUIRemote.shared.press(.menu)
+        FirstFailureRemote.press(.menu)
         waitForFocusVisualSettle()
 
         try writePNG(app: app, name: "settings-before-restart")
@@ -145,34 +152,35 @@ extension AccessLifecycleTVOSUITests {
         record("settings.open")
         let accessProtectionItem = app.buttons["settings.item.accessProtection"]
         XCTAssertTrue(
-            accessProtectionItem.waitForExistence(
+            accessProtectionItem.waitForFailureEvidence(
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Settings home must show access protection.")
         moveFocus(.down, to: accessProtectionItem, maximumPresses: 3, message: "Must move down to access protection.")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let enableInput = app.buttons["settings.pin.input.enable"]
         XCTAssertTrue(
-            enableInput.waitForExistence(timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+            enableInput.waitForFailureEvidence(
+                timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Access protection page must have the Set PIN entry.")
         XCTAssertTrue(
             waitForFocus(on: enableInput, timeout: AccessLifecycleTVOSUITestsWaitTiming.settingsChangeTimeoutSeconds),
             "Default focus must be on Set PIN.")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         enterPin(app: app, digit: 1, shouldExpectDismiss: true)
         record("settings.pin.enable")
 
         let confirmInput = app.buttons["settings.pin.input.enableConfirm"]
         moveFocus(.down, to: confirmInput, maximumPresses: 3, message: "Must be able to focus confirm PIN.")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         enterPin(app: app, digit: 1, shouldExpectDismiss: true)
         record("settings.pin.confirm")
 
         let enableButton = app.buttons["settings.pin.enable.button"]
         moveFocus(.down, to: enableButton, maximumPresses: 4, message: "Must focus enable access protection.")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
-            app.buttons["settings.pin.disable.button"].waitForExistence(
+            app.buttons["settings.pin.disable.button"].waitForFailureEvidence(
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "After enabling PIN, the page must switch to the disable-access-protection actions."
         )
@@ -185,7 +193,7 @@ extension AccessLifecycleTVOSUITests {
     func exercisePinWrongRetryAndCancel(app: XCUIApplication) throws {
         openSettingsFromSlideShow(app: app)
         XCTAssertTrue(
-            app.buttons["pinEntry.close.button"].waitForExistence(
+            app.buttons["pinEntry.close.button"].waitForFailureEvidence(
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "With PIN enabled, opening settings must show the PIN gate first."
         )
@@ -194,12 +202,13 @@ extension AccessLifecycleTVOSUITests {
 
         enterPin(app: app, digit: 0, shouldExpectDismiss: false)
         XCTAssertTrue(
-            app.buttons["pinEntry.close.button"].waitForExistence(
+            app.buttons["pinEntry.close.button"].waitForFailureEvidence(
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.stateChangeTimeoutSeconds),
             "A wrong PIN must not open settings; the overlay must remain."
         )
         XCTAssertFalse(
-            app.buttons["settings.item.playback"].waitForExistence(
+            app.buttons["settings.item.playback"].waitForPublicElement(
+                "settings.item.playback",
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.briefElementTimeoutSeconds),
             "A wrong PIN must not reveal settings home."
         )
@@ -210,7 +219,8 @@ extension AccessLifecycleTVOSUITests {
         enterPin(app: app, digit: 1, shouldExpectDismiss: true)
         record("settings.pin.unlock")
         XCTAssertTrue(
-            app.buttons["settings.item.playback"].waitForExistence(
+            app.buttons["settings.item.playback"].waitForPublicElement(
+                "settings.item.playback",
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Retrying the correct PIN in the same overlay after a wrong one must open settings."
         )
@@ -218,7 +228,7 @@ extension AccessLifecycleTVOSUITests {
 
         openSettingsFromSlideShow(app: app)
         XCTAssertTrue(
-            app.buttons["pinEntry.close.button"].waitForExistence(
+            app.buttons["pinEntry.close.button"].waitForFailureEvidence(
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Opening settings again must still require the PIN."
         )
@@ -228,14 +238,15 @@ extension AccessLifecycleTVOSUITests {
             openSettingsFromSlideShow(app: app)
         }
         XCTAssertTrue(
-            app.buttons["pinEntry.close.button"].waitForExistence(
+            app.buttons["pinEntry.close.button"].waitForFailureEvidence(
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "After cancel, protection must remain and opening settings again still requires the PIN."
         )
         enterPin(app: app, digit: 1, shouldExpectDismiss: true)
         record("settings.pin.unlock")
         XCTAssertTrue(
-            app.buttons["settings.item.playback"].waitForExistence(
+            app.buttons["settings.item.playback"].waitForPublicElement(
+                "settings.item.playback",
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "The correct PIN must open settings."
         )
@@ -248,34 +259,35 @@ extension AccessLifecycleTVOSUITests {
         record("settings.open")
         let accessProtectionItem = app.buttons["settings.item.accessProtection"]
         XCTAssertTrue(
-            accessProtectionItem.waitForExistence(
+            accessProtectionItem.waitForFailureEvidence(
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Settings home must show access protection.")
         moveFocus(.down, to: accessProtectionItem, maximumPresses: 3, message: "Must move down to access protection.")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let enableInput = app.buttons["settings.pin.input.enable"]
         XCTAssertTrue(
-            enableInput.waitForExistence(timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+            enableInput.waitForFailureEvidence(
+                timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Access protection page must have the Set PIN entry.")
         XCTAssertTrue(
             waitForFocus(on: enableInput, timeout: AccessLifecycleTVOSUITestsWaitTiming.settingsChangeTimeoutSeconds),
             "Default focus must be on Set PIN.")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         enterPrivatePIN(app: app, pin: pin, shouldExpectDismiss: true)
         record("settings.pin.enable")
 
         let confirmInput = app.buttons["settings.pin.input.enableConfirm"]
         moveFocus(.down, to: confirmInput, maximumPresses: 3, message: "Must be able to focus confirm PIN.")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         enterPrivatePIN(app: app, pin: pin, shouldExpectDismiss: true)
         record("settings.pin.confirm")
 
         let enableButton = app.buttons["settings.pin.enable.button"]
         moveFocus(.down, to: enableButton, maximumPresses: 4, message: "Must focus enable access protection.")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
-            app.buttons["settings.pin.disable.button"].waitForExistence(
+            app.buttons["settings.pin.disable.button"].waitForFailureEvidence(
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "After enabling PIN, the page must switch to the disable-access-protection actions."
         )
@@ -292,19 +304,21 @@ extension AccessLifecycleTVOSUITests {
         try relaunchStrictE2EApp(app)
         let settingsButton = app.buttons["slideshow.control.settings.button"]
         XCTAssertTrue(
-            settingsButton.waitForExistence(
+            settingsButton.waitForPublicElement(
+                "slideshow.control.settings.button",
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.playbackStartupTimeoutSeconds),
             "After terminate and relaunch, must return to playback, not first boot."
         )
         XCTAssertFalse(
-            app.textFields["firstboot.serverURL.field"].waitForExistence(
+            app.textFields["firstboot.serverURL.field"].waitForPublicElement(
+                "firstboot.serverURL.field",
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.readbackTimeoutSeconds),
             "Must not return to first boot after relaunch."
         )
 
         openSettingsFromSlideShow(app: app)
         XCTAssertTrue(
-            app.buttons["pinEntry.close.button"].waitForExistence(
+            app.buttons["pinEntry.close.button"].waitForFailureEvidence(
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "After relaunch, opening a protected entry must show the gate."
         )
@@ -313,12 +327,13 @@ extension AccessLifecycleTVOSUITests {
 
         enterPrivatePIN(app: app, pin: pins.wrong, shouldExpectDismiss: false)
         XCTAssertTrue(
-            app.buttons["pinEntry.close.button"].waitForExistence(
+            app.buttons["pinEntry.close.button"].waitForFailureEvidence(
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.stateChangeTimeoutSeconds),
             "A wrong PIN must not open settings; the overlay must remain."
         )
         XCTAssertFalse(
-            app.buttons["settings.item.playback"].waitForExistence(
+            app.buttons["settings.item.playback"].waitForPublicElement(
+                "settings.item.playback",
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.briefElementTimeoutSeconds),
             "A wrong PIN must not reveal settings home."
         )
@@ -328,7 +343,8 @@ extension AccessLifecycleTVOSUITests {
         enterPrivatePIN(app: app, pin: pins.correct, shouldExpectDismiss: true)
         record("settings.pin.unlock")
         XCTAssertTrue(
-            app.buttons["settings.item.playback"].waitForExistence(
+            app.buttons["settings.item.playback"].waitForPublicElement(
+                "settings.item.playback",
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Retrying the correct PIN in the same overlay after a wrong one must open settings."
         )
@@ -338,7 +354,7 @@ extension AccessLifecycleTVOSUITests {
 
         openSettingsFromSlideShow(app: app)
         XCTAssertTrue(
-            app.buttons["pinEntry.close.button"].waitForExistence(
+            app.buttons["pinEntry.close.button"].waitForFailureEvidence(
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Opening settings again must still require the PIN."
         )
@@ -347,7 +363,8 @@ extension AccessLifecycleTVOSUITests {
         if app.buttons["pinEntry.close.button"].exists == false {
             XCTAssertTrue(
                 isOnSlideShowLayer(app: app)
-                    || app.buttons["slideshow.control.settings.button"].waitForExistence(
+                    || app.buttons["slideshow.control.settings.button"].waitForPublicElement(
+                        "slideshow.control.settings.button",
                         timeout: AccessLifecycleTVOSUITestsWaitTiming.stateChangeTimeoutSeconds),
                 "After cancel, should return to a safe page; the gate need not stay on screen."
             )
@@ -359,7 +376,7 @@ extension AccessLifecycleTVOSUITests {
             openSettingsFromSlideShow(app: app)
         }
         XCTAssertTrue(
-            app.buttons["pinEntry.close.button"].waitForExistence(
+            app.buttons["pinEntry.close.button"].waitForFailureEvidence(
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "After cancel, protection must remain and opening settings again still requires the PIN."
         )
@@ -372,7 +389,7 @@ extension AccessLifecycleTVOSUITests {
     @MainActor
     func enterPrivatePIN(app: XCUIApplication, pin: String, shouldExpectDismiss: Bool) {
         XCTAssertTrue(
-            app.buttons["pinEntry.digit.1.button"].waitForExistence(
+            app.buttons["pinEntry.digit.1.button"].waitForFailureEvidence(
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "PIN overlay must show the digit keys."
         )
@@ -398,7 +415,7 @@ extension AccessLifecycleTVOSUITests {
             }
             let digitButton = app.buttons["pinEntry.digit.\(digit).button"]
             XCTAssertTrue(
-                digitButton.waitForExistence(
+                digitButton.waitForFailureEvidence(
                     timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
                 "PIN overlay must show the digit keys.")
             if digitButton.hasFocus == false {
@@ -407,7 +424,7 @@ extension AccessLifecycleTVOSUITests {
             XCTAssertTrue(
                 waitForFocus(on: digitButton, timeout: AccessLifecycleTVOSUITestsWaitTiming.stateChangeTimeoutSeconds),
                 "The digit key must be focused before input.")
-            XCUIRemote.shared.press(.select)
+            FirstFailureRemote.press(.select)
             RunLoop.current.run(
                 until: Date().addingTimeInterval(AccessLifecycleTVOSUITestsWaitTiming.pinDigitSettleSeconds))
         }
@@ -445,13 +462,13 @@ extension AccessLifecycleTVOSUITests {
         let horizontal: XCUIRemote.Button = destination.x >= from.x ? .right : .left
         for _ in 0..<abs(destination.x - from.x) {
             if targetButton.hasFocus { return }
-            XCUIRemote.shared.press(horizontal)
+            FirstFailureRemote.press(horizontal)
             waitForFocusVisualSettle()
         }
         let vertical: XCUIRemote.Button = destination.y >= from.y ? .down : .up
         for _ in 0..<abs(destination.y - from.y) {
             if targetButton.hasFocus { return }
-            XCUIRemote.shared.press(vertical)
+            FirstFailureRemote.press(vertical)
             waitForFocusVisualSettle()
         }
     }
@@ -519,7 +536,7 @@ extension AccessLifecycleTVOSUITests {
         if playbackItem.hasFocus == false {
             moveFocus(.up, to: playbackItem, maximumPresses: 4, message: "Must return to playback settings.")
         }
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         selectPlaybackToggle(
             app: app,
             link: "settings.playback.autoPlay.link",
@@ -535,19 +552,21 @@ extension AccessLifecycleTVOSUITests {
         try relaunchStrictE2EApp(app)
         let settingsButton = app.buttons["slideshow.control.settings.button"]
         XCTAssertTrue(
-            settingsButton.waitForExistence(
+            settingsButton.waitForPublicElement(
+                "slideshow.control.settings.button",
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.playbackStartupTimeoutSeconds),
             "After terminate and relaunch, must return to playback, not first boot."
         )
         XCTAssertFalse(
-            app.textFields["firstboot.serverURL.field"].waitForExistence(
+            app.textFields["firstboot.serverURL.field"].waitForPublicElement(
+                "firstboot.serverURL.field",
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.readbackTimeoutSeconds),
             "Must not return to first boot after relaunch."
         )
 
         openSettingsFromSlideShow(app: app)
         XCTAssertTrue(
-            app.buttons["pinEntry.close.button"].waitForExistence(
+            app.buttons["pinEntry.close.button"].waitForFailureEvidence(
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "After relaunch, opening settings must still require the PIN."
         )
@@ -558,13 +577,14 @@ extension AccessLifecycleTVOSUITests {
 
         let playbackItem = app.buttons["settings.item.playback"]
         XCTAssertTrue(
-            playbackItem.waitForExistence(
+            playbackItem.waitForPublicElement(
+                "settings.item.playback",
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Playback settings must be visible after unlock.")
         XCTAssertTrue(
             waitForFocus(on: playbackItem, timeout: AccessLifecycleTVOSUITestsWaitTiming.settingsChangeTimeoutSeconds),
             "Unlock should default focus to playback settings.")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         assertSelectedOption(
             app: app,
@@ -589,20 +609,22 @@ extension AccessLifecycleTVOSUITests {
         )
 
         moveFocusToSettingsControl(app: app, identifier: "settings.playback.display.link", maxSteps: 7)
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         let exifLink = app.buttons["settings.playback.showExif.link"]
         XCTAssertTrue(
-            exifLink.waitForExistence(timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+            exifLink.waitForFailureEvidence(
+                timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "After relaunch, display items must still have EXIF.")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         let exifOff = app.buttons["settings.playback.showExif.off.button"]
         XCTAssertTrue(
-            exifOff.waitForExistence(timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+            exifOff.waitForFailureEvidence(
+                timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "After relaunch, the EXIF subpage must still exist.")
         XCTAssertTrue(valueContainsSelected(exifOff), "After relaunch, EXIF must still be off.")
-        XCUIRemote.shared.press(.menu)
+        FirstFailureRemote.press(.menu)
         waitForFocusVisualSettle()
-        XCUIRemote.shared.press(.menu)
+        FirstFailureRemote.press(.menu)
         waitForFocusVisualSettle()
 
         try writePNG(app: app, name: "settings-after-restart")

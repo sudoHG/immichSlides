@@ -16,6 +16,16 @@ private enum WaitTiming {
 
 #if os(tvOS)
 final class ServerConfigFormTVOSUITests: XCTestCase {
+    override func invokeTest() {
+        FirstFailureContext.reset()
+        super.invokeTest()
+    }
+
+    override func record(_ issue: XCTIssue) {
+        FirstFailureEvidence.record(self, issue: issue)
+        super.record(issue)
+    }
+
     override func setUpWithError() throws {
         continueAfterFailure = false
         try requireTVOSDestination()
@@ -28,7 +38,7 @@ final class ServerConfigFormTVOSUITests: XCTestCase {
 
         let saveButton = firstBootSaveButton(in: app)
         XCTAssertTrue(
-            saveButton.waitForExistence(
+            saveButton.waitForFailureEvidence(
                 timeout: TestWait.seconds(.infrastructure(WaitTiming.elementAppearanceTimeoutSeconds))))
         XCTAssertFalse(saveButton.isEnabled, "Before the connection is tested, the save button should stay disabled")
 
@@ -44,13 +54,13 @@ final class ServerConfigFormTVOSUITests: XCTestCase {
         let testConnectionButton = firstBootTestConnectionButton(in: app)
         let saveButton = firstBootSaveButton(in: app)
         XCTAssertTrue(
-            helpButton.waitForExistence(timeout: WaitTiming.elementAppearanceTimeoutSeconds),
+            helpButton.waitForFailureEvidence(timeout: WaitTiming.elementAppearanceTimeoutSeconds),
             "The tvOS first-launch action row should provide a focusable help entry")
         XCTAssertTrue(
-            testConnectionButton.waitForExistence(timeout: WaitTiming.elementAppearanceTimeoutSeconds),
+            testConnectionButton.waitForFailureEvidence(timeout: WaitTiming.elementAppearanceTimeoutSeconds),
             "The tvOS first-launch action row should provide the Test Connection button")
         XCTAssertTrue(
-            saveButton.waitForExistence(timeout: WaitTiming.elementAppearanceTimeoutSeconds),
+            saveButton.waitForFailureEvidence(timeout: WaitTiming.elementAppearanceTimeoutSeconds),
             "The tvOS first-launch action row should provide the Save Settings button")
         // ui-label-lookup: These assertions verify localized copy after finding each control by identifier.
         XCTAssertEqual(helpButton.label, "需要帮助？")
@@ -65,22 +75,22 @@ final class ServerConfigFormTVOSUITests: XCTestCase {
 
         let sheet = app.descendants(matching: .any)["server.apiKey.help.sheet"]
 
-        XCUIRemote.shared.press(.down)
+        FirstFailureRemote.press(.down)
         XCTAssertTrue(
-            firstBootApiField(in: app).waitForExistence(timeout: WaitTiming.shortInteractionTimeoutSeconds),
+            firstBootApiField(in: app).waitForFailureEvidence(timeout: WaitTiming.shortInteractionTimeoutSeconds),
             "The first-launch page should keep the API Key input row")
 
-        XCUIRemote.shared.press(.down)
-        XCUIRemote.shared.press(.left)
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.down)
+        FirstFailureRemote.press(.left)
+        FirstFailureRemote.press(.select)
 
         XCTAssertTrue(
-            sheet.waitForExistence(timeout: WaitTiming.shortInteractionTimeoutSeconds),
+            sheet.waitForFailureEvidence(timeout: WaitTiming.shortInteractionTimeoutSeconds),
             "After tapping the help entry, the API Key help sheet should be shown")
         let helpTitle = app.staticTexts["server.apiKey.help.sheet"]
         let stepsTitle = app.staticTexts["server.apiKey.help.section.list.number.title"]
         let permissionsTitle = app.staticTexts["server.apiKey.help.section.checklist.title"]
-        XCTAssertTrue(helpTitle.waitForExistence(timeout: WaitTiming.shortInteractionTimeoutSeconds))
+        XCTAssertTrue(helpTitle.waitForFailureEvidence(timeout: WaitTiming.shortInteractionTimeoutSeconds))
         // ui-label-lookup: These checks verify translated help copy after identifier lookup.
         XCTAssertEqual(helpTitle.label, "如何创建 Immich API Key")
         XCTAssertTrue(stepsTitle.exists)
@@ -91,13 +101,14 @@ final class ServerConfigFormTVOSUITests: XCTestCase {
 
         let closeButton = app.buttons["server.apiKey.help.close.button"]
         XCTAssertTrue(
-            closeButton.waitForExistence(timeout: WaitTiming.shortInteractionTimeoutSeconds),
+            closeButton.waitForFailureEvidence(timeout: WaitTiming.shortInteractionTimeoutSeconds),
             "The tvOS help sheet must have a clear close button")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertFalse(
-            sheet.waitForExistence(timeout: WaitTiming.briefElementTimeoutSeconds),
+            sheet.waitForFailureEvidence(timeout: WaitTiming.briefElementTimeoutSeconds),
             "After closing the help sheet, the app should not stay on the sheet")
-        XCTAssertTrue(firstBootApiField(in: app).waitForExistence(timeout: WaitTiming.shortInteractionTimeoutSeconds))
+        XCTAssertTrue(
+            firstBootApiField(in: app).waitForFailureEvidence(timeout: WaitTiming.shortInteractionTimeoutSeconds))
     }
 
     @MainActor
@@ -105,15 +116,15 @@ final class ServerConfigFormTVOSUITests: XCTestCase {
         let app = launchApp(shouldResetState: true)
         assertFirstBootCoreElements(app: app)
 
-        XCUIRemote.shared.press(.down)
-        XCUIRemote.shared.press(.down)
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.down)
+        FirstFailureRemote.press(.down)
+        FirstFailureRemote.press(.select)
 
         // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
         let alert = app.alerts["连接测试失败"]
         XCTAssertTrue(
             // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
-            alert.waitForExistence(timeout: WaitTiming.shortInteractionTimeoutSeconds),
+            alert.waitForFailureEvidence(timeout: WaitTiming.shortInteractionTimeoutSeconds),
             "Select on Test Connection should show the validation alert at once on this page, not only after going back"
         )
         XCTAssertTrue(
@@ -132,8 +143,8 @@ final class ServerConfigFormTVOSUITests: XCTestCase {
         let serverField = firstBootServerField(in: app)
         let apiField = firstBootApiField(in: app)
 
-        XCTAssertTrue(serverField.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds))
-        XCTAssertTrue(apiField.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds))
+        XCTAssertTrue(serverField.waitForFailureEvidence(timeout: WaitTiming.controlAppearanceTimeoutSeconds))
+        XCTAssertTrue(apiField.waitForFailureEvidence(timeout: WaitTiming.controlAppearanceTimeoutSeconds))
 
         let serverFrame = serverField.frame
         let apiFrame = apiField.frame
@@ -192,7 +203,7 @@ final class ServerConfigFormTVOSUITests: XCTestCase {
         let statusCard = app.otherElements["firstboot.status.card"].firstMatch
 
         XCTAssertFalse(
-            statusCard.waitForExistence(timeout: WaitTiming.briefElementTimeoutSeconds),
+            statusCard.waitForFailureEvidence(timeout: WaitTiming.briefElementTimeoutSeconds),
             "The idle state should not render the status card, or light mode shows an extra blank rectangle"
         )
 
@@ -232,7 +243,7 @@ private extension ServerConfigFormTVOSUITests {
                 "-AppleLocale", "en_US"
             ]
         }
-        app.launch()
+        app.launchForFailureEvidence()
         return app
     }
 
@@ -273,7 +284,7 @@ private extension ServerConfigFormTVOSUITests {
     }
 
     func attachScreenshot(app: XCUIApplication, name: String) {
-        let screenshot = app.screenshot()
+        let screenshot = app.screenshotForFailureEvidence()
         let attachment = XCTAttachment(screenshot: screenshot)
         attachment.name = name
         attachment.lifetime = .keepAlways
@@ -313,7 +324,7 @@ private extension ServerConfigFormTVOSUITests {
         let wizardTitle = app.staticTexts["onboardingWizard.title"]
 
         XCTAssertTrue(
-            wizardTitle.waitForExistence(timeout: WaitTiming.elementAppearanceTimeoutSeconds),
+            wizardTitle.waitForFailureEvidence(timeout: WaitTiming.elementAppearanceTimeoutSeconds),
             "The first-launch page should show the setup progress capsule in the top-left corner")
         XCTAssertEqual(wizardTitle.label, expectedWizardTitle)
         XCTAssertLessThan(
@@ -325,17 +336,19 @@ private extension ServerConfigFormTVOSUITests {
 
         let pageTitle = app.staticTexts["firstboot.page.title"]
         XCTAssertTrue(
-            pageTitle.waitForExistence(timeout: WaitTiming.elementAppearanceTimeoutSeconds),
+            pageTitle.waitForFailureEvidence(timeout: WaitTiming.elementAppearanceTimeoutSeconds),
             "The first-launch main title should describe the current step, not repeat a welcome or wizard message")
         XCTAssertEqual(pageTitle.label, expectedPageTitle)
         XCTAssertTrue(
-            firstBootServerField(in: app).waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds))
-        XCTAssertTrue(firstBootApiField(in: app).waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds))
+            firstBootServerField(in: app).waitForFailureEvidence(timeout: WaitTiming.controlAppearanceTimeoutSeconds))
         XCTAssertTrue(
-            firstBootTestConnectionButton(in: app).waitForExistence(timeout: WaitTiming.elementAppearanceTimeoutSeconds)
+            firstBootApiField(in: app).waitForFailureEvidence(timeout: WaitTiming.controlAppearanceTimeoutSeconds))
+        XCTAssertTrue(
+            firstBootTestConnectionButton(in: app).waitForFailureEvidence(
+                timeout: WaitTiming.elementAppearanceTimeoutSeconds)
         )
         XCTAssertTrue(
-            firstBootSaveButton(in: app).waitForExistence(timeout: WaitTiming.elementAppearanceTimeoutSeconds))
+            firstBootSaveButton(in: app).waitForFailureEvidence(timeout: WaitTiming.elementAppearanceTimeoutSeconds))
     }
 }
 #endif

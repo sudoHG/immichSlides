@@ -1088,6 +1088,8 @@ def main(argv=None):
                 diagnostic["schema_version"] = 1
                 parse_summary(diagnostic)
             write_sensitive_scan(args.output_dir, [PUBLIC_API_KEY])
+            from ci_failure_diagnostics import validate_ui_first_failure_images
+            validate_ui_first_failure_images(args.output_dir / "failure-screenshots", summary)
             output("has_screenshots", str(any(path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".ips", ".crash"}
                     for path in (args.output_dir / "failure-screenshots").rglob("*"))).lower())
             return 0

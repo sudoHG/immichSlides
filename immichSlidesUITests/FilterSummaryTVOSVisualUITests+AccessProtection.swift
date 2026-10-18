@@ -10,18 +10,18 @@ extension FilterSummaryTVOSVisualUITests {
 
         let accessProtectionItem = app.buttons["settings.item.accessProtection"]
         XCTAssertTrue(
-            accessProtectionItem.waitForExistence(
+            accessProtectionItem.waitForFailureEvidence(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "After opening settings, the home page should show the 'Access Protection' entry")
 
-        XCUIRemote.shared.press(.down)
+        FirstFailureRemote.press(.down)
         waitForSettingsHomeItemFocus(
             button: accessProtectionItem,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "In light mode, moving down on the home page should also reliably focus 'Access Protection'"
         )
 
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         let enablePinInput = waitForSettingsControl(
             app: app,
             identifier: "settings.pin.input.enable",
@@ -53,7 +53,7 @@ extension FilterSummaryTVOSVisualUITests {
                 "With large text, settings home should reliably reach the 'Access Protection' entry with direction keys"
         )
 
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         let enablePinInput = waitForSettingsControl(
             app: app,
             identifier: "settings.pin.input.enable",
@@ -84,7 +84,7 @@ extension FilterSummaryTVOSVisualUITests {
             failureMessage:
                 "With large text, settings home should reliably reach the 'Access Protection' entry with direction keys"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let enablePinInput = waitForSettingsControl(
             app: app,
@@ -98,7 +98,7 @@ extension FilterSummaryTVOSVisualUITests {
             failureMessage:
                 "With large text, entering the access protection page should focus the 'Set PIN' input entry first"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let digitOneButton = app.buttons["pinEntry.digit.1.button"]
         let closeButton = app.buttons["pinEntry.close.button"]
@@ -106,19 +106,19 @@ extension FilterSummaryTVOSVisualUITests {
         let deleteButton = app.buttons["pinEntry.delete.button"]
 
         XCTAssertTrue(
-            closeButton.waitForExistence(
+            closeButton.waitForFailureEvidence(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds),
             "With large text, the opened PIN sheet should show the close button")
         XCTAssertTrue(
-            digitOneButton.waitForExistence(
+            digitOneButton.waitForFailureEvidence(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds),
             "With large text, the opened PIN sheet should show the number pad")
         XCTAssertTrue(
-            zeroButton.waitForExistence(
+            zeroButton.waitForFailureEvidence(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds),
             "With large text, the PIN sheet should show digit 0")
         XCTAssertTrue(
-            deleteButton.waitForExistence(
+            deleteButton.waitForFailureEvidence(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds),
             "With large text, the PIN sheet should show the delete button")
 
@@ -128,23 +128,23 @@ extension FilterSummaryTVOSVisualUITests {
             failureMessage: "With large text, default focus in the opened PIN sheet should land on digit 1"
         )
 
-        XCUIRemote.shared.press(.down)
-        XCUIRemote.shared.press(.down)
-        XCUIRemote.shared.press(.down)
+        FirstFailureRemote.press(.down)
+        FirstFailureRemote.press(.down)
+        FirstFailureRemote.press(.down)
         waitForButtonToGainFocus(
             closeButton,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "With large text, moving down three times from digit 1 should land focus on 'Close'"
         )
 
-        XCUIRemote.shared.press(.right)
+        FirstFailureRemote.press(.right)
         waitForButtonToGainFocus(
             zeroButton,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "With large text, moving right from 'Close' should move focus to digit 0"
         )
 
-        XCUIRemote.shared.press(.right)
+        FirstFailureRemote.press(.right)
         waitForButtonToGainFocus(
             deleteButton,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
@@ -162,18 +162,18 @@ extension FilterSummaryTVOSVisualUITests {
 
         let accessProtectionItem = app.buttons["settings.item.accessProtection"]
         XCTAssertTrue(
-            accessProtectionItem.waitForExistence(
+            accessProtectionItem.waitForFailureEvidence(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Settings home page should show the 'Access Protection' entry")
 
-        XCUIRemote.shared.press(.down)
+        FirstFailureRemote.press(.down)
         waitForSettingsHomeItemFocus(
             button: accessProtectionItem,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "After moving down, focus should reach 'Access Protection'"
         )
 
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let enablePinInput = waitForSettingsControl(
             app: app,
@@ -188,7 +188,7 @@ extension FilterSummaryTVOSVisualUITests {
                 "On entering the access protection page, focus should land on the 'Set PIN' input entry first"
         )
 
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let digitOneButton = app.buttons["pinEntry.digit.1.button"]
         let digitTwoButton = app.buttons["pinEntry.digit.2.button"]
@@ -197,23 +197,23 @@ extension FilterSummaryTVOSVisualUITests {
         let deleteButton = app.buttons["pinEntry.delete.button"]
 
         XCTAssertTrue(
-            closeButton.waitForExistence(
+            closeButton.waitForFailureEvidence(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds),
             "The opened PIN sheet should show the close button")
         XCTAssertTrue(
-            digitOneButton.waitForExistence(
+            digitOneButton.waitForFailureEvidence(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds),
             "The opened PIN sheet should show the number pad")
         XCTAssertTrue(
-            digitTwoButton.waitForExistence(
+            digitTwoButton.waitForFailureEvidence(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds),
             "The opened PIN sheet should show digit 2")
         XCTAssertTrue(
-            zeroButton.waitForExistence(
+            zeroButton.waitForFailureEvidence(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds),
             "The PIN sheet should show digit 0")
         XCTAssertTrue(
-            deleteButton.waitForExistence(
+            deleteButton.waitForFailureEvidence(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds),
             "The PIN sheet should show the delete button")
 
@@ -224,37 +224,37 @@ extension FilterSummaryTVOSVisualUITests {
             failureMessage: "When the PIN sheet opens, default focus should land on digit 1"
         )
 
-        XCUIRemote.shared.press(.right)
+        FirstFailureRemote.press(.right)
         waitForButtonToGainFocus(
             digitTwoButton,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "Moving right from digit 1, focus should reach digit 2"
         )
 
-        XCUIRemote.shared.press(.left)
+        FirstFailureRemote.press(.left)
         waitForButtonToGainFocus(
             digitOneButton,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "Moving left from digit 2, focus should return to digit 1"
         )
 
-        XCUIRemote.shared.press(.down)
-        XCUIRemote.shared.press(.down)
-        XCUIRemote.shared.press(.down)
+        FirstFailureRemote.press(.down)
+        FirstFailureRemote.press(.down)
+        FirstFailureRemote.press(.down)
         waitForButtonToGainFocus(
             closeButton,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "Moving down three times from digit 1, focus should land reliably on 'Close'"
         )
 
-        XCUIRemote.shared.press(.right)
+        FirstFailureRemote.press(.right)
         waitForButtonToGainFocus(
             zeroButton,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "Moving right from 'Close', focus should reach digit 0"
         )
 
-        XCUIRemote.shared.press(.right)
+        FirstFailureRemote.press(.right)
         waitForButtonToGainFocus(
             deleteButton,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
@@ -272,17 +272,17 @@ extension FilterSummaryTVOSVisualUITests {
 
         let accessProtectionItem = app.buttons["settings.item.accessProtection"]
         XCTAssertTrue(
-            accessProtectionItem.waitForExistence(
+            accessProtectionItem.waitForFailureEvidence(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Settings home page should show the 'Access Protection' entry")
 
-        XCUIRemote.shared.press(.down)
+        FirstFailureRemote.press(.down)
         waitForSettingsHomeItemFocus(
             button: accessProtectionItem,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "After moving down, focus should reach 'Access Protection'"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let enablePinInput = waitForSettingsControl(
             app: app,
@@ -308,26 +308,26 @@ extension FilterSummaryTVOSVisualUITests {
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "On the access protection page, default focus should land on the 'Set PIN' input entry"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         enterSixDigitsInPinSheetUsingDigitOne(app: app, operationName: "Set PIN")
 
-        XCUIRemote.shared.press(.down)
+        FirstFailureRemote.press(.down)
         waitForButtonToGainFocus(
             enablePinConfirmInput,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "After filling 'Set PIN', moving down should focus 'Confirm PIN'"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         enterSixDigitsInPinSheetUsingDigitOne(app: app, operationName: "Confirm PIN")
 
-        XCUIRemote.shared.press(.down)
+        FirstFailureRemote.press(.down)
         waitForButtonToGainFocus(
             enableProtectionButton,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage:
                 "After entering and confirming the PIN, moving down should focus the 'Enable Access Protection' button"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         XCTAssertTrue(
             waitForSettingsControlExists(
@@ -357,17 +357,17 @@ extension FilterSummaryTVOSVisualUITests {
 
         let accessProtectionItem = app.buttons["settings.item.accessProtection"]
         XCTAssertTrue(
-            accessProtectionItem.waitForExistence(
+            accessProtectionItem.waitForFailureEvidence(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Settings home page should show the 'Access Protection' entry")
 
-        XCUIRemote.shared.press(.down)
+        FirstFailureRemote.press(.down)
         waitForSettingsHomeItemFocus(
             button: accessProtectionItem,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "After moving down, focus should reach 'Access Protection'"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let enablePinInput = waitForSettingsControl(
             app: app,
@@ -393,26 +393,26 @@ extension FilterSummaryTVOSVisualUITests {
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "On the access protection page, default focus should land on the 'Set PIN' input entry"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         enterSixDigitsInPinSheetUsingDigitOne(app: app, operationName: "Set PIN")
 
-        XCUIRemote.shared.press(.down)
+        FirstFailureRemote.press(.down)
         waitForButtonToGainFocus(
             enablePinConfirmInput,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "After filling 'Set PIN', moving down should focus 'Confirm PIN'"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         enterSixDigitsInPinSheetUsingDigitOne(app: app, operationName: "Confirm PIN")
 
-        XCUIRemote.shared.press(.down)
+        FirstFailureRemote.press(.down)
         waitForButtonToGainFocus(
             enableProtectionButton,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage:
                 "After entering and confirming the PIN, moving down should focus the 'Enable Access Protection' button"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let disableCurrentPinInput = waitForSettingsControl(
             app: app,
@@ -434,17 +434,17 @@ extension FilterSummaryTVOSVisualUITests {
             failureMessage:
                 "After access protection is enabled, default focus should be on the 'Enter current PIN' entry"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         enterSixDigitsInPinSheetUsingDigitOne(app: app, operationName: "Enter current PIN")
 
-        XCUIRemote.shared.press(.down)
+        FirstFailureRemote.press(.down)
         waitForButtonToGainFocus(
             disableProtectionButton,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage:
                 "After entering the current PIN, moving down should focus the 'Disable Access Protection' button"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         XCTAssertTrue(
             waitForSettingsControlExists(

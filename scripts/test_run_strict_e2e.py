@@ -692,6 +692,91 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
 
 
 class FailureDiagnosticsTests(unittest.TestCase):
+    def test_validator_failure_retains_its_actual_input_without_claiming_an_app_snapshot(self):
+        from unittest.mock import patch
+        from PIL import Image
+        import run_strict_e2e as runner
+        from ci_failure_diagnostics import public_fixture_validator_scope, validate_first_failure, validate_first_failure_image
+        from strict_e2e_p2_contract_test_fixtures import build_evidence, _facts, UDID
+        with tempfile.TemporaryDirectory() as directory:
+            evidence = build_evidence(Path(directory), "p2-cache", "iphone", review=False)
+            Image.new("RGB", (320, 180), "black").save(evidence / "cache-returned.png", format="PNG")
+            with patch.object(runner, "read_xcresult_facts", return_value=_facts("p2-cache", "iphone")):
+                with self.assertRaises(runner.CommandError) as raised:
+                    with public_fixture_validator_scope(evidence, screenshots=True):
+                        runner.require_p2_evidence(evidence, suite="p2-cache", platform="ios", simulator_udid=UDID,
+                            fixture_set="a", result_bundle_path=evidence / "strict-p2-cache.xcresult")
+            self.assertEqual(2, raised.exception.code)
+            receipt = json.loads((evidence / "first-failure-validator.json").read_text())
+            validate_first_failure(receipt)
+            self.assertEqual(("validator", "unavailable", "unknown", "validated-input"),
+                (receipt["source"], receipt["state"]["observation"], receipt["state"]["app"], receipt["screenshot"]["status"]))
+            self.assertTrue(all(value is None for value in receipt["timing"].values()))
+            path = evidence / "first-failure-validator.png"
+            validate_first_failure_image(path, receipt)
+            with Image.open(path) as image:
+                self.assertEqual(((0, 0), (0, 0), (0, 0)), image.getextrema())
+            runner.write_sensitive_scan(evidence, ["PRIVATE_SENTINEL"])
+
+    def test_export_retains_only_a_valid_official_fixture_failure_and_canonical_image(self):
+        import io
+        import ci_execution_diagnostics as diagnostics
+        from unittest.mock import patch
+        import run_strict_e2e as runner
+        from PIL import Image
+        from test_ci_summary import first_failure_receipt
+        selector = "immichSlidesUITests/FlowUITests/testPlayback"
+        for defect in (None, "private-element", "passed", "oversized-receipt", "symlink", "image-budget", "invalid-image", "wrong-source"):
+            with self.subTest(defect=defect), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                spool, output = root / "private-spool", root / "public"
+                spool.mkdir()
+                output.mkdir()
+                image = io.BytesIO()
+                Image.new("RGB", (64, 32), "blue").save(image, format="PNG", icc_profile=b"PRIVATE_PROFILE")
+                raw = image.getvalue()
+                receipt = first_failure_receipt()
+                receipt["screenshot"].update(width=64, height=32, bytes=len(raw))
+                if defect == "private-element":
+                    receipt["element"] = "PRIVATE_SENTINEL"
+                if defect == "wrong-source":
+                    from ci_failure_diagnostics import unavailable_first_failure
+                    receipt = unavailable_first_failure("validator")
+                receipt_path = spool / "0.json"
+                receipt_path.write_text(json.dumps(receipt).ljust(8193) if defect == "oversized-receipt" else json.dumps(receipt))
+                if defect == "symlink":
+                    receipt_path.rename(spool / "other.json")
+                    receipt_path.symlink_to(spool / "other.json")
+                (spool / "0.png").write_bytes(b"not an image" if defect == "invalid-image" else raw)
+                official = {"testNodes": [{"nodeType": "Test Case", "nodeIdentifier": "FlowUITests/testPlayback()",
+                    "result": "Passed" if defect == "passed" else "Failed"}]}
+                (output / "official-summary.json").write_text("{}")
+                def export(command, **kwargs):
+                    payload = official if "tests" in command else {}
+                    return subprocess.CompletedProcess(command, 0, json.dumps(payload).encode())
+                with diagnostics.session() as recorder, patch.object(runner.subprocess, "run", side_effect=export):
+                    if defect == "image-budget":
+                        recorder.charged["xcode"] = 5
+                    runner.export_private_result_bundle(root / "test.xcresult", output, [], enrich_failure_diagnostics=True,
+                        first_failure_spool=(spool, [selector]))
+                node = json.loads((output / "official-tests.json").read_text())["testNodes"][0]
+                if defect in {"image-budget", "invalid-image"}:
+                    self.assertEqual(receipt["timing"], node["first_failure"]["timing"])
+                    self.assertEqual({"status": "unavailable", "width": None, "height": None, "bytes": None},
+                                     node["first_failure"]["screenshot"])
+                    self.assertFalse((output / "first-failure/0.png").exists())
+                elif defect is not None:
+                    self.assertNotIn("first_failure", node)
+                    self.assertFalse((output / "first-failure/0.png").exists())
+                else:
+                    kept = node["first_failure"]
+                    public_image = output / "first-failure/0.png"
+                    self.assertEqual(kept["screenshot"]["bytes"], public_image.stat().st_size)
+                    self.assertEqual(kept["timing"], receipt["timing"])
+                    with Image.open(public_image) as picture:
+                        self.assertEqual(picture.info, {})
+                    runner.write_sensitive_scan(output, ["PRIVATE_SENTINEL", "PRIVATE_PROFILE"])
+
     def test_hosted_flow_prefixes_publish_only_the_reviewed_phase_and_class(self):
         from ci_failure_diagnostics import (
             FAILURE_CLASSES, FAILURE_PHASES, PREFIX_RULES, classify_messages, unknown_diagnostics,
@@ -1607,6 +1692,14 @@ raise SystemExit(65)
             self.assertEqual(expected, [entry["identity"] for entry in summary["population"]["observed"]])
             self.assertEqual("failed", summary["status"])
             self.assertEqual("simulator-preparation-failed", summary["infrastructure"][0]["code"])
+            for item in summary["population"]["observed"]:
+                receipt = item["first_failure"]
+                self.assertEqual(receipt, item["attempts"][0]["first_failure"])
+                self.assertEqual(("preparation", "simulator-readiness", 301.5, None),
+                    (receipt["source"], receipt["step"], receipt["timing"]["wait_elapsed_seconds"],
+                     receipt["timing"]["deadline_seconds"]))
+                self.assertEqual("not-applicable", receipt["screenshot"]["status"])
+                self.assertEqual("unknown", receipt["state"]["app"])
             events = summary["bounded_diagnostics"]["events"]
             self.assertIsNone(summary["bounded_diagnostics"]["collection_seconds"]["fixture"])
             self.assertTrue(any(event["phase"] == "simulator-readiness" and event["state"] == "timeout"

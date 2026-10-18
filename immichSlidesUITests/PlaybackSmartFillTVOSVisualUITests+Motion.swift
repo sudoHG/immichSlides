@@ -12,7 +12,7 @@ extension PlaybackSmartFillTVOSVisualUITests {
         name: String,
         shouldAttachToXCTest: Bool
     ) -> (path: String, captureTimestamp: String)? {
-        let screenshot = app.screenshot()
+        let screenshot = app.screenshotForFailureEvidence()
         if shouldAttachToXCTest {
             let attachment = XCTAttachment(screenshot: screenshot)
             attachment.name = name

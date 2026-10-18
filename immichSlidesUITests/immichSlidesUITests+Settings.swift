@@ -13,11 +13,11 @@ extension immichSlidesUITests {
 
         let playbackModePicker = app.segmentedControls["settings.playback.mode.picker"]
         XCTAssertTrue(
-            playbackModePicker.waitForExistence(timeout: TestWait.seconds(.infrastructure(6))))
+            playbackModePicker.waitForFailureEvidence(timeout: TestWait.seconds(.infrastructure(6))))
         let filteredModeSegment = playbackModePicker.buttons.element(boundBy: 1)
         XCTAssertTrue(
-            filteredModeSegment.waitForExistence(timeout: TestWait.seconds(.infrastructure(3))))
-        filteredModeSegment.tap()
+            filteredModeSegment.waitForFailureEvidence(timeout: TestWait.seconds(.infrastructure(3))))
+        filteredModeSegment.tapForFailureEvidence()
 
         // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
         let blockedAlertTitle = findFirstExistingStaticText(
@@ -41,19 +41,19 @@ extension immichSlidesUITests {
 
         let displayModePicker = app.segmentedControls["settings.playback.displayMode.picker"]
         XCTAssertTrue(
-            displayModePicker.waitForExistence(timeout: TestWait.seconds(.infrastructure(6))),
+            displayModePicker.waitForFailureEvidence(timeout: TestWait.seconds(.infrastructure(6))),
             "Playback settings should show the display mode segmented control")
 
         let smartFillSegment = displayModePicker.buttons["settings.playback.displayMode.smartFill.option"]
         let singlePhotoSegment = displayModePicker.buttons["settings.playback.displayMode.singlePhoto.option"]
         XCTAssertTrue(
-            smartFillSegment.waitForExistence(timeout: TestWait.seconds(.infrastructure(3))),
+            smartFillSegment.waitForFailureEvidence(timeout: TestWait.seconds(.infrastructure(3))),
             "Display mode should offer Smart Fill")
         XCTAssertTrue(
-            singlePhotoSegment.waitForExistence(timeout: TestWait.seconds(.infrastructure(3))),
+            singlePhotoSegment.waitForFailureEvidence(timeout: TestWait.seconds(.infrastructure(3))),
             "Display mode should offer Single Photo")
 
-        singlePhotoSegment.tap()
+        singlePhotoSegment.tapForFailureEvidence()
         attachScreenshot(app: app, name: "ios-settings-playback-display-mode-single-photo")
 
         XCTAssertTrue(
@@ -72,13 +72,16 @@ extension immichSlidesUITests {
         openSettingsSection(app: app, sectionID: "settings.item.server")
 
         let serverField = app.textFields["firstboot.serverURL.field"]
-        XCTAssertTrue(serverField.waitForExistence(timeout: TestWait.seconds(.infrastructure(6))))
-        serverField.tap()
+        XCTAssertTrue(
+            serverField.waitForPublicElement("firstboot.serverURL.field", timeout: TestWait.seconds(.infrastructure(6)))
+        )
+        serverField.tapForFailureEvidence()
         serverField.immichSlidesUITestsClearAndType(text: "foo://invalid-host")
 
         let testConnectionButton = app.buttons["firstboot.testConnection.button"]
         XCTAssertTrue(
-            testConnectionButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(6))))
+            testConnectionButton.waitForPublicElement(
+                "firstboot.testConnection.button", timeout: TestWait.seconds(.infrastructure(6))))
         dismissKeyboardIfNeeded(app: app)
         tapElement(testConnectionButton)
 
@@ -106,44 +109,46 @@ extension immichSlidesUITests {
 
         let serverField = app.textFields["firstboot.serverURL.field"]
         XCTAssertTrue(
-            serverField.waitForExistence(timeout: TestWait.seconds(.infrastructure(6))),
+            serverField.waitForPublicElement(
+                "firstboot.serverURL.field", timeout: TestWait.seconds(.infrastructure(6))),
             "Server settings should show the server address field")
 
         let helpButton = app.buttons["server.apiKey.help.button"]
         XCTAssertTrue(
-            helpButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(6))),
+            helpButton.waitForFailureEvidence(timeout: TestWait.seconds(.infrastructure(6))),
             "Server settings should show the help entry next to the API Key title")
         tapElement(helpButton)
 
         let sheet = app.descendants(matching: .any)["server.apiKey.help.sheet"]
         XCTAssertTrue(
-            sheet.waitForExistence(timeout: TestWait.seconds(.infrastructure(3))),
+            sheet.waitForFailureEvidence(timeout: TestWait.seconds(.infrastructure(3))),
             "Tapping the help entry should show the API Key help sheet")
         XCTAssertTrue(
-            app.staticTexts["server.apiKey.help.sheet"].waitForExistence(
+            app.staticTexts["server.apiKey.help.sheet"].waitForFailureEvidence(
                 timeout: TestWait.seconds(.infrastructure(3))))
         XCTAssertTrue(app.staticTexts["server.apiKey.help.section.list.number.title"].exists)
         XCTAssertTrue(app.staticTexts["server.apiKey.help.section.checklist.title"].exists)
 
         if !app.staticTexts["server.apiKey.help.section.key.fill.title"].exists {
-            sheet.swipeUp()
+            sheet.swipeUpForFailureEvidence()
         }
         XCTAssertTrue(
-            app.staticTexts["server.apiKey.help.section.key.fill.title"].waitForExistence(
+            app.staticTexts["server.apiKey.help.section.key.fill.title"].waitForFailureEvidence(
                 timeout: TestWait.seconds(.infrastructure(2))))
         attachScreenshot(app: app, name: "ios-settings-server-api-key-help-sheet")
 
         let closeButton = app.buttons["server.apiKey.help.close.button"]
         XCTAssertTrue(
-            closeButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(3))),
+            closeButton.waitForFailureEvidence(timeout: TestWait.seconds(.infrastructure(3))),
             "Help sheet should provide a tappable close button")
         tapElement(closeButton)
 
         XCTAssertFalse(
-            sheet.waitForExistence(timeout: TestWait.seconds(.product(1))),
+            sheet.waitForFailureEvidence(timeout: TestWait.seconds(.product(1))),
             "The help sheet should be gone after closing it")
         XCTAssertTrue(
-            serverField.waitForExistence(timeout: TestWait.seconds(.infrastructure(3))),
+            serverField.waitForPublicElement(
+                "firstboot.serverURL.field", timeout: TestWait.seconds(.infrastructure(3))),
             "After closing the help sheet, the server settings form should be back")
         XCTAssertTrue(app.secureTextFields["firstboot.apiKey.field"].exists)
     }
@@ -158,8 +163,9 @@ extension immichSlidesUITests {
 
         let clearDiskButton = app.buttons["settings.cache.clearDisk.button"]
         XCTAssertTrue(
-            clearDiskButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(6))))
-        clearDiskButton.tap()
+            clearDiskButton.waitForPublicElement(
+                "settings.cache.clearDisk.button", timeout: TestWait.seconds(.infrastructure(6))))
+        clearDiskButton.tapForFailureEvidence()
 
         // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
         let confirmAlertTitle = findFirstExistingStaticText(
@@ -178,17 +184,19 @@ extension immichSlidesUITests {
         let app = try launchConfiguredAppAtModeSelection(shouldResetState: true)
         startRandomPlaybackFromModeSelection(app: app)
         XCTAssertTrue(
-            app.buttons["slideshow.control.settings.button"].waitForExistence(
+            app.buttons["slideshow.control.settings.button"].waitForPublicElement(
+                "slideshow.control.settings.button",
                 timeout: TestWait.seconds(.infrastructure(10))))
 
-        app.terminate()
+        app.terminateForFailureEvidence()
         // Clear the server injection when verifying reset, otherwise it is written back after the wipe.
         app.launchEnvironment.removeAll()
         app.launchEnvironment["UI_TEST_RESET_STATE"] = "1"
-        app.launch()
+        app.launchForFailureEvidence()
 
         XCTAssertTrue(
-            app.textFields["firstboot.serverURL.field"].waitForExistence(
+            app.textFields["firstboot.serverURL.field"].waitForPublicElement(
+                "firstboot.serverURL.field",
                 timeout: TestWait.seconds(.infrastructure(8))),
             "UI_TEST_RESET_STATE=1 should force a return to first-boot setup"
         )
@@ -204,9 +212,10 @@ extension immichSlidesUITests {
 
         let autoPlayToggle = app.switches["settings.playback.autoPlay.toggle"]
         XCTAssertTrue(
-            autoPlayToggle.waitForExistence(timeout: TestWait.seconds(.infrastructure(6))))
+            autoPlayToggle.waitForPublicElement(
+                "settings.playback.autoPlay.toggle", timeout: TestWait.seconds(.infrastructure(6))))
         if isToggleOn(autoPlayToggle) {
-            autoPlayToggle.tap()
+            autoPlayToggle.tapForFailureEvidence()
         }
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(4))) {
@@ -236,8 +245,9 @@ extension immichSlidesUITests {
 
         let clearDiskButton = app.buttons["settings.cache.clearDisk.button"]
         XCTAssertTrue(
-            clearDiskButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(6))))
-        clearDiskButton.tap()
+            clearDiskButton.waitForPublicElement(
+                "settings.cache.clearDisk.button", timeout: TestWait.seconds(.infrastructure(6))))
+        clearDiskButton.tapForFailureEvidence()
 
         // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
         let confirmAlertTitles = [
@@ -261,7 +271,7 @@ extension immichSlidesUITests {
 
         let successStatus = app.staticTexts["settings.cache.status.message"]
         XCTAssertTrue(
-            successStatus.waitForExistence(timeout: TestWait.seconds(.product(10))),
+            successStatus.waitForFailureEvidence(timeout: TestWait.seconds(.product(10))),
             "Success status message should show after clearing")
         attachScreenshot(app: app, name: "Desktop-cache-clear-success")
     }
@@ -269,7 +279,7 @@ extension immichSlidesUITests {
     @MainActor
     func testLaunchPerformance() throws {
         measure(metrics: [XCTApplicationLaunchMetric()]) {
-            XCUIApplication().launch()
+            XCUIApplication().launchForFailureEvidence()
         }
     }
 }

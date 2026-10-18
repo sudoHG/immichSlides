@@ -9,6 +9,15 @@ import XCTest
 
 #if os(iOS)
 final class immichSlidesUITestsLaunchTests: XCTestCase {
+    override func invokeTest() {
+        FirstFailureContext.reset()
+        super.invokeTest()
+    }
+
+    override func record(_ issue: XCTIssue) {
+        FirstFailureEvidence.record(self, issue: issue)
+        super.record(issue)
+    }
 
     override class var runsForEachTargetApplicationUIConfiguration: Bool {
         false
@@ -16,7 +25,7 @@ final class immichSlidesUITestsLaunchTests: XCTestCase {
 
     override func setUpWithError() throws {
         continueAfterFailure = false
-        XCUIDevice.shared.orientation = .portrait
+        FirstFailureOrientation.set(.portrait)
     }
 
     @MainActor
@@ -26,15 +35,16 @@ final class immichSlidesUITestsLaunchTests: XCTestCase {
 
         app.launchEnvironment["UI_TEST_RESET_STATE"] = "1"
         app.launchEnvironment["UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT"] = "1"
-        app.launch()
+        app.launchForFailureEvidence()
 
         XCTAssertTrue(
-            app.textFields["firstboot.serverURL.field"].waitForExistence(
+            app.textFields["firstboot.serverURL.field"].waitForPublicElement(
+                "firstboot.serverURL.field",
                 timeout: TestWait.seconds(.infrastructure(10))),
             "After launch, the app should reliably open the first-launch setup page"
         )
 
-        let attachment = XCTAttachment(screenshot: app.screenshot())
+        let attachment = XCTAttachment(screenshot: app.screenshotForFailureEvidence())
         attachment.name = "Launch Screen"
         attachment.lifetime = .keepAlways
         add(attachment)

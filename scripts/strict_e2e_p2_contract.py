@@ -319,7 +319,9 @@ def _png_size(data: bytes, name: str) -> tuple[int, int]:
 
 
 def _require_png(evidence_dir: Path, name: str) -> bytes:
+    from ci_failure_diagnostics import remember_validator_input
     data = _read_required(evidence_dir, name)
+    remember_validator_input(data)
     _png_size(data, name)
     return data
 

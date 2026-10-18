@@ -11,7 +11,7 @@ extension AccessLifecycleTVOSUITests {
         ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
         moveFocus(.right, to: playPauseButton, maximumPresses: 3, message: "Focus must reach play/pause.")
         let playingValue = String(describing: playPauseButton.value ?? "")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
             waitUntil(timeout: AccessLifecycleTVOSUITestsWaitTiming.stateChangeTimeoutSeconds) {
                 String(describing: playPauseButton.value ?? "") != playingValue
@@ -25,7 +25,7 @@ extension AccessLifecycleTVOSUITests {
 
         ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
         moveFocus(.right, to: nextButton, maximumPresses: 3, message: "After pause, focus must reach next.")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         record("playback.next")
         RunLoop.current.run(until: Date().addingTimeInterval(Timing.sceneSettle))
         ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
@@ -35,7 +35,7 @@ extension AccessLifecycleTVOSUITests {
         ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
         moveFocus(.left, to: playPauseButton, maximumPresses: 3, message: "Focus must return to play/pause after next.")
         let pausedValue = String(describing: playPauseButton.value ?? "")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
             waitUntil(timeout: AccessLifecycleTVOSUITestsWaitTiming.stateChangeTimeoutSeconds) {
                 String(describing: playPauseButton.value ?? "") != pausedValue
@@ -68,7 +68,7 @@ extension AccessLifecycleTVOSUITests {
             didHomeLeaveAppRunning,
             "If the process exits after Home, activation launches a new process and must not count as the same process returning."
         )
-        app.activate()
+        app.activateForFailureEvidence()
         systemPauseActivation = AccessLifecycleContract.allowedSystemPauseActivation
         record("playback.foreground")
         if app.state == .notRunning {
@@ -110,7 +110,7 @@ extension AccessLifecycleTVOSUITests {
             AccessLifecycleContract.hiddenControlBarPlaybackIdentifier
         ]
         XCTAssertTrue(
-            wakeReceiver.waitForExistence(timeout: AccessLifecycleTVOSUITestsWaitTiming.stateChangeTimeoutSeconds)
+            wakeReceiver.waitForFailureEvidence(timeout: AccessLifecycleTVOSUITestsWaitTiming.stateChangeTimeoutSeconds)
                 || playPauseButton.exists == false,
             "After waiting for auto-hide, the control bar must hide or the wake receiver must appear."
         )
@@ -121,10 +121,10 @@ extension AccessLifecycleTVOSUITests {
         )
         try writePNG(app: app, name: "before-wake")
         attachScreenshot(app: app, name: "tvos-access-lifecycle-before-wake")
-        XCUIRemote.shared.press(.up)
+        FirstFailureRemote.press(.up)
         record("playback.wake_controls")
         XCTAssertTrue(
-            playPauseButton.waitForExistence(
+            playPauseButton.waitForFailureEvidence(
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.settingsChangeTimeoutSeconds),
             "First directional press must only wake controls.")
         try writePNG(app: app, name: "after-wake")
@@ -146,16 +146,17 @@ extension AccessLifecycleTVOSUITests {
         )
         let playPauseValue = String(describing: playPauseButton.value ?? "")
         if playPauseValue.contains("暂停") || playPauseValue.lowercased().contains("pause") {
-            XCUIRemote.shared.press(.select)
+            FirstFailureRemote.press(.select)
             record("playback.pause")
         }
         // The first 16:9 photo A1 fills the screen, hiding the second public fixture; press next only once to
         // portrait A2, not to the pool end A5.
         XCTAssertTrue(
-            nextButton.waitForExistence(timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+            nextButton.waitForFailureEvidence(
+                timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "The next button must exist before the comparison.")
         moveFocus(.right, to: nextButton, maximumPresses: 3, message: "Must reach next before the comparison.")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         record("playback.next")
         XCTAssertTrue(
             waitForSlideshowTransitionComplete(
@@ -181,7 +182,7 @@ extension AccessLifecycleTVOSUITests {
         if playbackItem.exists && playbackItem.hasFocus == false {
             moveFocus(.up, to: playbackItem, maximumPresses: 4, message: "Must return to playback settings.")
         }
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         selectPlaybackToggle(
             app: app,
             link: "settings.playback.displayMode.link",
@@ -214,7 +215,7 @@ extension AccessLifecycleTVOSUITests {
         if restorePlayback.exists && restorePlayback.hasFocus == false {
             moveFocus(.up, to: restorePlayback, maximumPresses: 4, message: "Must return to playback settings.")
         }
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         selectPlaybackToggle(
             app: app,
             link: "settings.playback.displayMode.link",
@@ -238,18 +239,18 @@ extension AccessLifecycleTVOSUITests {
         stepsToLink: Int
     ) {
         moveFocusToSettingsControl(app: app, identifier: link, maxSteps: max(stepsToLink, 6))
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         let optionButton = app.buttons[option]
         XCTAssertTrue(
-            optionButton.waitForExistence(
+            optionButton.waitForFailureEvidence(
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Settings subpage must show target option \(option).")
         if optionButton.hasFocus == false {
             moveFocus(.down, to: optionButton, maximumPresses: 6, message: "Must be able to focus \(option).")
         }
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(valueContainsSelected(optionButton), "After choosing \(option), it must be selected.")
-        XCUIRemote.shared.press(.menu)
+        FirstFailureRemote.press(.menu)
         waitForFocusVisualSettle()
     }
 
@@ -262,13 +263,13 @@ extension AccessLifecycleTVOSUITests {
         message: String
     ) {
         moveFocusToSettingsControl(app: app, identifier: link, maxSteps: max(stepsToLink, 6))
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         let optionButton = app.buttons[option]
         XCTAssertTrue(
-            optionButton.waitForExistence(
+            optionButton.waitForFailureEvidence(
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds), message)
         XCTAssertTrue(valueContainsSelected(optionButton), message)
-        XCUIRemote.shared.press(.menu)
+        FirstFailureRemote.press(.menu)
         waitForFocusVisualSettle()
     }
 
@@ -277,7 +278,8 @@ extension AccessLifecycleTVOSUITests {
         let identifier = "pinEntry.digit.\(digit).button"
         let digitButton = app.buttons[identifier]
         XCTAssertTrue(
-            digitButton.waitForExistence(timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+            digitButton.waitForFailureEvidence(
+                timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "PIN overlay must show the digit keys.")
         if digit == 0 {
             focusPinZero(app: app)
@@ -288,7 +290,7 @@ extension AccessLifecycleTVOSUITests {
             waitForFocus(on: digitButton, timeout: AccessLifecycleTVOSUITestsWaitTiming.stateChangeTimeoutSeconds),
             "The digit key must be focused before input.")
         for _ in 0..<AccessLifecycleTVOSUITestsCalibration.pinDigitCount {
-            XCUIRemote.shared.press(.select)
+            FirstFailureRemote.press(.select)
             RunLoop.current.run(
                 until: Date().addingTimeInterval(AccessLifecycleTVOSUITestsWaitTiming.pinDigitSettleSeconds))
         }
@@ -307,11 +309,11 @@ extension AccessLifecycleTVOSUITests {
         let zero = app.buttons["pinEntry.digit.0.button"]
         let closeButton = app.buttons["pinEntry.close.button"]
         for _ in 0..<4 where closeButton.hasFocus == false && zero.hasFocus == false {
-            XCUIRemote.shared.press(.down)
+            FirstFailureRemote.press(.down)
             waitForFocusVisualSettle()
         }
         if zero.hasFocus { return }
-        XCUIRemote.shared.press(.right)
+        FirstFailureRemote.press(.right)
         waitForFocusVisualSettle()
         XCTAssertTrue(
             waitForFocus(on: zero, timeout: AccessLifecycleTVOSUITestsWaitTiming.stateChangeTimeoutSeconds),
@@ -322,14 +324,14 @@ extension AccessLifecycleTVOSUITests {
     func focusPinOne(app: XCUIApplication) {
         let one = app.buttons["pinEntry.digit.1.button"]
         XCTAssertTrue(
-            one.waitForExistence(timeout: AccessLifecycleTVOSUITestsWaitTiming.settingsChangeTimeoutSeconds),
+            one.waitForFailureEvidence(timeout: AccessLifecycleTVOSUITestsWaitTiming.settingsChangeTimeoutSeconds),
             "PIN overlay must still have digit 1.")
         for _ in 0..<5 where one.hasFocus == false {
-            XCUIRemote.shared.press(.up)
+            FirstFailureRemote.press(.up)
             waitForFocusVisualSettle()
         }
         if one.hasFocus == false {
-            XCUIRemote.shared.press(.left)
+            FirstFailureRemote.press(.left)
             waitForFocusVisualSettle()
         }
         XCTAssertTrue(
@@ -341,20 +343,21 @@ extension AccessLifecycleTVOSUITests {
     func focusPinCloseAndSelect(app: XCUIApplication) {
         let closeButton = app.buttons["pinEntry.close.button"]
         XCTAssertTrue(
-            closeButton.waitForExistence(timeout: AccessLifecycleTVOSUITestsWaitTiming.settingsChangeTimeoutSeconds),
+            closeButton.waitForFailureEvidence(
+                timeout: AccessLifecycleTVOSUITestsWaitTiming.settingsChangeTimeoutSeconds),
             "PIN overlay must have a close button.")
         for _ in 0..<6 where closeButton.hasFocus == false {
-            XCUIRemote.shared.press(.down)
+            FirstFailureRemote.press(.down)
             waitForFocusVisualSettle()
         }
         if closeButton.hasFocus == false {
-            XCUIRemote.shared.press(.left)
+            FirstFailureRemote.press(.left)
             waitForFocusVisualSettle()
         }
         XCTAssertTrue(
             waitForFocus(on: closeButton, timeout: AccessLifecycleTVOSUITestsWaitTiming.stateChangeTimeoutSeconds),
             "Close must be focused before cancel.")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         waitForFocusVisualSettle()
     }
 
@@ -383,7 +386,8 @@ extension AccessLifecycleTVOSUITests {
             record("settings.pin.unlock")
         }
         XCTAssertTrue(
-            playbackItem.waitForExistence(
+            playbackItem.waitForPublicElement(
+                "settings.item.playback",
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds), message)
     }
 
@@ -400,11 +404,12 @@ extension AccessLifecycleTVOSUITests {
         XCTAssertTrue(
             app.refreshTVOSSlideshowControlBar(
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.navigationTimeoutSeconds)
-                && settingsButton.waitForExistence(
+                && settingsButton.waitForPublicElement(
+                    "slideshow.control.settings.button",
                     timeout: AccessLifecycleTVOSUITestsWaitTiming.navigationTimeoutSeconds),
             "Playback page must show the settings button.")
         for _ in 0..<6 where settingsButton.hasFocus == false {
-            XCUIRemote.shared.press(.left)
+            FirstFailureRemote.press(.left)
             RunLoop.current.run(
                 until: Date().addingTimeInterval(AccessLifecycleTVOSUITestsWaitTiming.pollIntervalSeconds))
         }
@@ -412,7 +417,7 @@ extension AccessLifecycleTVOSUITests {
             waitForFocus(
                 on: settingsButton, timeout: AccessLifecycleTVOSUITestsWaitTiming.settingsChangeTimeoutSeconds),
             "Settings button must have focus before opening.")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
             waitUntil(timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds) {
                 app.buttons["settings.item.playback"].exists
@@ -432,7 +437,7 @@ extension AccessLifecycleTVOSUITests {
                 finishReturnToSlideShow(app: app)
                 return
             }
-            XCUIRemote.shared.press(.menu)
+            FirstFailureRemote.press(.menu)
             RunLoop.current.run(
                 until: Date().addingTimeInterval(AccessLifecycleTVOSUITestsWaitTiming.navigationFocusSettleSeconds))
         }
@@ -497,8 +502,8 @@ extension AccessLifecycleTVOSUITests {
             return
         }
         attachScreenshot(app: app, name: "tvos-access-lifecycle-\(beforeName)")
-        XCUIRemote.shared.press(.up)
-        let didWake = visibleControl.waitForExistence(
+        FirstFailureRemote.press(.up)
+        let didWake = visibleControl.waitForFailureEvidence(
             timeout: AccessLifecycleTVOSUITestsWaitTiming.navigationTimeoutSeconds)
         do {
             try writePNG(app: app, name: afterName)
@@ -632,11 +637,12 @@ extension AccessLifecycleTVOSUITests {
     func moveFocusToSettingsControl(app: XCUIApplication, identifier: String, maxSteps: Int) {
         let target = app.buttons[identifier]
         XCTAssertTrue(
-            target.waitForExistence(timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+            target.waitForFailureEvidence(
+                timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Settings page must have \(identifier).")
         for _ in 0...maxSteps {
             if target.hasFocus { return }
-            XCUIRemote.shared.press(.down)
+            FirstFailureRemote.press(.down)
             waitForFocusVisualSettle()
         }
         XCTAssertTrue(
@@ -665,21 +671,21 @@ extension AccessLifecycleTVOSUITests {
         XCTAssertTrue(
             waitForFocus(on: field, timeout: AccessLifecycleTVOSUITestsWaitTiming.stateChangeTimeoutSeconds),
             "The field must be focused before input.")
-        XCUIRemote.shared.press(.select)
-        app.typeText(value)
+        FirstFailureRemote.press(.select)
+        app.typeForFailureEvidence(value)
         let submit = app.buttons.matching(
             // ui-label-lookup: Match the simulator-localized system keyboard submit key.
             NSPredicate(format: "label IN %@", ["下一项", "Next", "完成", "Done"])
         ).firstMatch
         XCTAssertTrue(
-            submit.waitForExistence(timeout: AccessLifecycleTVOSUITestsWaitTiming.stateChangeTimeoutSeconds),
+            submit.waitForFailureEvidence(timeout: AccessLifecycleTVOSUITestsWaitTiming.stateChangeTimeoutSeconds),
             "System keyboard must show Next or Done.")
         for _ in 0..<6 where submit.hasFocus == false {
-            XCUIRemote.shared.press(.down)
+            FirstFailureRemote.press(.down)
         }
         XCTAssertTrue(submit.hasFocus, "Must focus the system keyboard submit button before submitting text.")
-        XCUIRemote.shared.press(.select)
-        XCUIRemote.shared.press(.menu)
+        FirstFailureRemote.press(.select)
+        FirstFailureRemote.press(.menu)
         XCTAssertTrue(
             waitForFocus(on: field, timeout: AccessLifecycleTVOSUITestsWaitTiming.stateChangeTimeoutSeconds),
             "After submitting text, focus must return to the field.")
@@ -693,7 +699,7 @@ extension AccessLifecycleTVOSUITests {
     ) -> Bool {
         for _ in 0..<maximumPresses {
             if element.exists && element.hasFocus { return true }
-            XCUIRemote.shared.press(direction)
+            FirstFailureRemote.press(direction)
             RunLoop.current.run(until: Date().addingTimeInterval(Timing.focusSettle))
         }
         return element.exists && element.hasFocus
@@ -738,7 +744,7 @@ extension AccessLifecycleTVOSUITests {
 
     @MainActor
     func writePNG(app: XCUIApplication, name: String) throws {
-        let png = app.screenshot().pngRepresentation
+        let png = app.screenshotForFailureEvidence().pngRepresentation
         let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
         attachment.name = name
         attachment.lifetime = .keepAlways
@@ -758,7 +764,7 @@ extension AccessLifecycleTVOSUITests {
     }
 
     func attachScreenshot(app: XCUIApplication, name: String) {
-        let attachment = XCTAttachment(screenshot: app.screenshot())
+        let attachment = XCTAttachment(screenshot: app.screenshotForFailureEvidence())
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)

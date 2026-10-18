@@ -266,6 +266,10 @@ class StrictE2EP2RunnerTestsCases:
                 self.assertNotIn("Traceback", stderr)
                 manifest = json.loads((evidence / "case-manifest.json").read_text(encoding="utf-8"))
                 self.assertEqual(manifest["result"], "FAILED")
+                diagnostic = json.loads((evidence / "first-failure-validator.json").read_text())
+                self.assertEqual(diagnostic["source"], "validator")
+                self.assertEqual(diagnostic["state"]["observation"], "unavailable")
+                self.assertNotEqual(diagnostic["screenshot"]["status"], "captured")
                 if label == "Missing PNG":
                     self.assertIn("exif-off.png", stderr)
                     report = json.loads((evidence / "visual-identity-runner.json").read_text(encoding="utf-8"))

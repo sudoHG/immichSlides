@@ -97,10 +97,11 @@ extension PlaybackSmartFillTVOSVisualUITests {
             app.launchEnvironment["UI_TEST_SEED_FILTER_SELECTION"] = "1"
             app.launchEnvironment["UI_TEST_FILTER_SELECTION_JSON"] = selectionJSON
         }
-        app.launch()
+        app.launchForFailureEvidence()
 
         XCTAssertTrue(
-            app.buttons["mode.continue.button"].waitForExistence(timeout: TestWait.seconds(.infrastructure(15))),
+            app.buttons["mode.continue.button"].waitForPublicElement(
+                "mode.continue.button", timeout: TestWait.seconds(.infrastructure(15))),
             "After injecting the test server, Apple TV should go straight to mode selection"
         )
         return app
@@ -109,27 +110,28 @@ extension PlaybackSmartFillTVOSVisualUITests {
     func startRandomPlaybackFromModeSelection(app: XCUIApplication) {
         let randomButton = app.buttons["mode.random.button"]
         XCTAssertTrue(
-            randomButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            randomButton.waitForPublicElement("mode.random.button", timeout: TestWait.seconds(.infrastructure(8))),
             "Apple TV mode selection should show the random playback option")
         if randomButton.hasFocus == false {
-            XCUIRemote.shared.press(.left)
+            FirstFailureRemote.press(.left)
             RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.16))))
         }
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let continueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            continueButton.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            continueButton.waitForPublicElement("mode.continue.button", timeout: TestWait.seconds(.product(8))),
             "Continue button should appear after choosing random playback")
         if continueButton.hasFocus == false {
-            XCUIRemote.shared.press(.down)
+            FirstFailureRemote.press(.down)
             RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.16))))
         }
         XCTAssertTrue(continueButton.hasFocus, "In the Apple TV random playback flow, focus should move to Continue")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         XCTAssertTrue(
-            app.buttons["slideshow.control.settings.button"].waitForExistence(
+            app.buttons["slideshow.control.settings.button"].waitForPublicElement(
+                "slideshow.control.settings.button",
                 timeout: TestWait.seconds(.product(30))),
             "After starting Apple TV random playback, the playback control bar should appear"
         )
@@ -142,53 +144,54 @@ extension PlaybackSmartFillTVOSVisualUITests {
     func startFilteredPlaybackFromModeSelection(app: XCUIApplication) {
         let filteredButton = app.buttons["mode.filtered.button"]
         XCTAssertTrue(
-            filteredButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            filteredButton.waitForPublicElement("mode.filtered.button", timeout: TestWait.seconds(.infrastructure(8))),
             "Apple TV mode selection should show the filtered playback option")
         for _ in 0..<4 {
             if filteredButton.hasFocus { break }
-            XCUIRemote.shared.press(.right)
+            FirstFailureRemote.press(.right)
             RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.16))))
         }
         XCTAssertTrue(
             filteredButton.hasFocus, "Apple TV mode selection focus should move to the filtered playback option")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let continueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            continueButton.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            continueButton.waitForPublicElement("mode.continue.button", timeout: TestWait.seconds(.product(8))),
             "Continue button should appear after choosing filtered playback")
         for _ in 0..<4 {
             if continueButton.hasFocus { break }
-            XCUIRemote.shared.press(.down)
+            FirstFailureRemote.press(.down)
             RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.16))))
         }
         XCTAssertTrue(continueButton.hasFocus, "In the Apple TV filtered playback flow, focus should move to Continue")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let startButton = app.buttons["filterSummary.startPlayback.button"]
         XCTAssertTrue(
-            startButton.waitForExistence(timeout: TestWait.seconds(.product(20))),
+            startButton.waitForFailureEvidence(timeout: TestWait.seconds(.product(20))),
             "Apple TV filter summary should show the Start playback button")
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(20))) { startButton.isEnabled },
             "After seeding the people filter, Apple TV Start playback should be enabled")
         for _ in 0..<10 {
             if startButton.hasFocus { break }
-            XCUIRemote.shared.press(.down)
+            FirstFailureRemote.press(.down)
             RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.16))))
         }
         if startButton.hasFocus == false {
             for _ in 0..<10 {
                 if startButton.hasFocus { break }
-                XCUIRemote.shared.press(.right)
+                FirstFailureRemote.press(.right)
                 RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.16))))
             }
         }
         XCTAssertTrue(startButton.hasFocus, "Apple TV filter summary focus should move to Start playback")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         XCTAssertTrue(
-            app.buttons["slideshow.control.settings.button"].waitForExistence(
+            app.buttons["slideshow.control.settings.button"].waitForPublicElement(
+                "slideshow.control.settings.button",
                 timeout: TestWait.seconds(.product(45))),
             "After starting Apple TV people-filter playback, the playback control bar should appear"
         )

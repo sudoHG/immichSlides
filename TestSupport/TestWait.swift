@@ -1,5 +1,120 @@
 import Foundation
 
+/// A test-only timeline. Completed waits stop at return; action age continues until the failure.
+struct FirstFailureTimeline {
+    var action = "none"
+    private var issuedAt: TimeInterval?
+    private var returnedAt: TimeInterval?
+    private var waitStartedAt: TimeInterval?
+    private var waitReturnedAt: TimeInterval?
+    private var waitDeadlineSeconds: TimeInterval?
+    private var activeWaits: [(startedAt: TimeInterval, deadlineSeconds: TimeInterval)] = []
+
+    mutating func actionIssued(_ action: String, at time: TimeInterval) {
+        self.action = action
+        issuedAt = time
+        returnedAt = nil
+        if waitReturnedAt != nil {
+            waitStartedAt = nil
+            waitReturnedAt = nil
+            waitDeadlineSeconds = nil
+        }
+    }
+
+    mutating func actionReturned(at time: TimeInterval) { returnedAt = time }
+
+    mutating func waitStarted(seconds: TimeInterval, at time: TimeInterval) {
+        activeWaits.append((time, seconds))
+        waitStartedAt = time
+        waitReturnedAt = nil
+        waitDeadlineSeconds = seconds
+    }
+
+    mutating func waitReturned(at time: TimeInterval) {
+        guard activeWaits.popLast() != nil else { return }
+        if let outer = activeWaits.last {
+            waitStartedAt = outer.startedAt
+            waitDeadlineSeconds = outer.deadlineSeconds
+            waitReturnedAt = nil
+        } else {
+            waitReturnedAt = time
+        }
+    }
+
+    func timing(at time: TimeInterval) -> [String: Any] {
+        func measured(_ value: TimeInterval?) -> Any {
+            guard let value, value.isFinite, (0...86_400).contains(value) else { return NSNull() }
+            return value
+        }
+        return [
+            "since_action_issued_seconds": measured(issuedAt.map { time - $0 }),
+            "since_action_returned_seconds": measured(returnedAt.map { time - $0 }),
+            "action_duration_seconds": measured(issuedAt.flatMap { issued in returnedAt.map { $0 - issued } }),
+            "wait_elapsed_seconds": measured(waitStartedAt.map { (waitReturnedAt ?? time) - $0 }),
+            "deadline_seconds": measured(waitDeadlineSeconds),
+            "capture_request_seconds": NSNull(), "capture_return_seconds": NSNull(), "state_age_seconds": NSNull()
+        ]
+    }
+}
+
+enum FirstFailureContext {
+    static let isEnabled = ProcessInfo.processInfo.environment["STRICT_E2E_FIRST_FAILURE_ENABLED"] == "1"
+    private static let lock = NSLock()
+    private static var timeline = FirstFailureTimeline()
+    private static var step = "unknown"
+    private static var element = "unknown"
+
+    static func reset() {
+        guard isEnabled else { return }
+        lock.lock()
+        defer { lock.unlock() }
+        timeline = FirstFailureTimeline()
+        step = "unknown"
+        element = "unknown"
+    }
+
+    static func snapshot() -> (timeline: FirstFailureTimeline, step: String, element: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (timeline, step, element)
+    }
+
+    static func mark(_ step: String, element: String = "unknown") {
+        guard isEnabled else { return }
+        lock.lock()
+        defer { lock.unlock() }
+        self.step = step
+        self.element = element
+    }
+
+    static func beginWait(seconds: TimeInterval) {
+        guard isEnabled else { return }
+        lock.lock()
+        defer { lock.unlock() }
+        timeline.waitStarted(seconds: seconds, at: ProcessInfo.processInfo.systemUptime)
+    }
+
+    static func endWait() {
+        guard isEnabled else { return }
+        lock.lock()
+        defer { lock.unlock() }
+        timeline.waitReturned(at: ProcessInfo.processInfo.systemUptime)
+    }
+
+    static func action<T>(_ name: String, _ operation: () throws -> T) rethrows -> T {
+        guard isEnabled else { return try operation() }
+        lock.lock()
+        timeline.actionIssued(name, at: ProcessInfo.processInfo.systemUptime)
+        lock.unlock()
+        defer {
+            lock.lock()
+            timeline.actionReturned(at: ProcessInfo.processInfo.systemUptime)
+            lock.unlock()
+        }
+        return try operation()
+    }
+}
+
 /// Test-target-only budgets. Product deadlines and observation windows always use their base duration.
 enum TestWait {
     enum Budget {
@@ -39,6 +154,8 @@ enum TestWait {
         _ budget: Budget, pollIntervalSeconds: TimeInterval = defaultPollIntervalSeconds, _ condition: () -> Bool
     ) -> Bool {
         precondition(pollIntervalSeconds.isFinite && pollIntervalSeconds > 0)
+        FirstFailureContext.beginWait(seconds: seconds(budget))
+        defer { FirstFailureContext.endWait() }
         let deadline = ProcessInfo.processInfo.systemUptime + seconds(budget)
         while true {
             guard ProcessInfo.processInfo.systemUptime < deadline else { return false }
@@ -57,6 +174,8 @@ enum TestWait {
         _ condition: () -> Bool
     ) -> Bool {
         precondition(pollIntervalSeconds.isFinite && pollIntervalSeconds > 0)
+        FirstFailureContext.beginWait(seconds: seconds(.product(duration)))
+        defer { FirstFailureContext.endWait() }
         let deadline = ProcessInfo.processInfo.systemUptime + seconds(.product(duration))
         while true {
             guard condition() else { return false }

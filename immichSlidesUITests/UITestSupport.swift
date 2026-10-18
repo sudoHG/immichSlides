@@ -2,9 +2,304 @@ import ImageIO
 import UIKit
 import XCTest
 
+/// Only public fixture runners enable this recorder. Its spool is private until the host validates it.
+enum FirstFailureEvidence {
+    private static let maximumReceiptBytes = 8192
+    private static let maximumImageBytes = 1_048_576
+    private static let maximumSnapshotNodes = 4096
+    private static let thumbnailSides = [1536, 1024, 768, 512]
+    private static let lock = NSLock()
+    private static var recorded = Set<String>()
+
+    static func record(_ test: XCTestCase, issue: XCTIssue) {
+        guard issue.isFailure, FirstFailureContext.isEnabled else { return }
+        let environment = ProcessInfo.processInfo.environment
+        let server = environment["STRICT_E2E_INPUT_SERVER_URL"] ?? environment["IMMICH_TEST_SERVER_URL"] ?? ""
+        let key = environment["STRICT_E2E_INPUT_PUBLIC_KEY"] ?? environment["IMMICH_TEST_API_KEY"] ?? ""
+        guard let url = URL(string: server), url.scheme == "http", ["127.0.0.1", "localhost"].contains(url.host ?? ""),
+            url.path == "/api", ["immichslides-public-e2e-key", "immichslides-public-e2e-wrong-key"].contains(key)
+        else { return }
+        guard let root = environment["STRICT_E2E_FIRST_FAILURE_DIR"],
+            let testsData = environment["STRICT_E2E_FIRST_FAILURE_TESTS"]?.data(using: .utf8),
+            let tests = try? JSONDecoder().decode([String: Int].self, from: testsData),
+            let elementsData = environment["STRICT_E2E_FIRST_FAILURE_ELEMENTS"]?.data(using: .utf8),
+            let elements = try? JSONDecoder().decode([String].self, from: elementsData)
+        else { return }
+        let method =
+            test.name.split(separator: " ").last.map(String.init)?
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-[]()"))
+            .split(separator: ".").last.map(String.init) ?? ""
+        let testKey = "\(String(describing: type(of: test)))/\(method)"
+        guard let index = tests[testKey], index >= 0 else { return }
+        lock.lock()
+        let isFirst = recorded.insert(testKey).inserted
+        lock.unlock()
+        guard isFirst else { return }
+        let failedAt = ProcessInfo.processInfo.systemUptime
+        let context = FirstFailureContext.snapshot()
+        let vocabulary = Set(elements)
+        var receipt: [String: Any] = [
+            "schema_version": 1, "source": "xctest", "step": context.step,
+            "element": vocabulary.contains(context.element) ? context.element : "unknown",
+            "action": context.timeline.action, "timing": context.timeline.timing(at: failedAt),
+            "state": [
+                "app": "unknown", "surface": "unknown", "observation": "unavailable",
+                "control_bar": "unknown", "focus": "unknown", "history_count": NSNull(),
+                "autoplay": "unknown", "orientation": "unknown", "scene_status": "unknown", "query_error_code": NSNull()
+            ],
+            "validator": NSNull(), "screenshot": imageStatus("unavailable")
+        ]
+        let directory = URL(fileURLWithPath: root, isDirectory: true)
+        // Persist the safe core before another XCTest query can fail or the runner can be stopped.
+        do {
+            let initial = try JSONSerialization.data(withJSONObject: receipt, options: [.sortedKeys])
+            guard initial.count <= maximumReceiptBytes else { return }
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try initial.write(to: directory.appendingPathComponent("\(index).json"), options: .atomic)
+        } catch { return }
+        var png: Data?
+        if Thread.isMainThread {
+            MainActor.assumeIsolated {
+                png = capture(receipt: &receipt, failedAt: failedAt, vocabulary: vocabulary)
+            }
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: receipt, options: [.sortedKeys]),
+            data.count <= maximumReceiptBytes
+        else { return }
+        do {
+            if let png { try png.write(to: directory.appendingPathComponent("\(index).png"), options: .atomic) }
+            try data.write(to: directory.appendingPathComponent("\(index).json"), options: .atomic)
+        } catch {
+            // Evidence availability must not replace the original XCTest failure.
+        }
+    }
+
+    private static func imageStatus(_ status: String) -> [String: Any] {
+        ["status": status, "width": NSNull(), "height": NSNull(), "bytes": NSNull()]
+    }
+
+    @MainActor
+    private static func capture(receipt: inout [String: Any], failedAt: TimeInterval, vocabulary: Set<String>) -> Data?
+    {
+        let app = XCUIApplication()
+        var state = receipt["state"] as! [String: Any]
+        var timing = receipt["timing"] as! [String: Any]
+        defer { receipt["state"] = state; receipt["timing"] = timing }
+        switch app.state {
+        case .runningForeground: state["app"] = "running-foreground"
+        case .notRunning: state["app"] = "not-running"
+        case .runningBackground, .runningBackgroundSuspended: state["app"] = "background"
+        default: break
+        }
+        guard state["app"] as? String == "running-foreground" else { return nil }
+        let window = app.windows.firstMatch
+        let snapshot: XCUIElementSnapshot
+        do { snapshot = try window.snapshot() } catch {
+            let code = (error as NSError).code
+            if (-2_147_483_648...2_147_483_647).contains(code) { state["query_error_code"] = code }
+            return nil
+        }
+        state["observation"] = "failure-snapshot"
+        let observedAt = ProcessInfo.processInfo.systemUptime
+        var nodes: [String: XCUIElementSnapshot] = [:]
+        var pending = [snapshot]
+        var count = 0
+        var hasPrivateSurface = false
+        while count < maximumSnapshotNodes, let node = pending.popLast() {
+            count += 1
+            let identifier = node.identifier
+            if node.elementType == .secureTextField || identifier.hasPrefix("firstboot.")
+                || identifier.hasPrefix("settings.server") || identifier.hasPrefix("server.")
+                || identifier.hasPrefix("pinEntry.") || identifier.hasPrefix("settings.pin.")
+            {
+                hasPrivateSurface = true
+            }
+            if !identifier.isEmpty { nodes[identifier] = node }
+            if node.hasFocus, vocabulary.contains(identifier) { state["focus"] = identifier }
+            pending.append(contentsOf: node.children)
+        }
+        let render = SharedSceneEvidenceManifest.parseKeyValueFields(
+            nodes["slideshow.scenePresentation.contract.summary"]?.label ?? "")
+        let runtime = SharedSceneEvidenceManifest.parseKeyValueFields(
+            nodes["slideshow.smartfill.currentManifest.flag"]?.label ?? "")
+        if let history = Int(render["historyCount"] ?? ""), (0...2_147_483_647).contains(history) {
+            state["history_count"] = history
+        }
+        if let visible = runtime["controlBarVisible"], ["true", "false"].contains(visible) {
+            state["control_bar"] = visible == "true" ? "visible" : "hidden"
+        }
+        if let value = nodes["settings.playback.autoPlay.toggle"]?.value {
+            let setting = String(describing: value)
+            if ["1", "0"].contains(setting) { state["autoplay"] = setting == "1" ? "on" : "off" }
+        }
+        #if os(iOS)
+        switch XCUIDevice.shared.orientation {
+        case .portrait, .portraitUpsideDown: state["orientation"] = "portrait"
+        case .landscapeLeft, .landscapeRight: state["orientation"] = "landscape"
+        default: break
+        }
+        #else
+        state["orientation"] = "not_applicable"
+        #endif
+        if nodes["settings.cache.clearDisk.button"] != nil {
+            state["surface"] = "cache"
+        } else if nodes.keys.contains(where: { $0.hasPrefix("settings.playback.") }) {
+            state["surface"] = "playback-settings"
+        } else if nodes["slideshow.control.playPause.button"] != nil || nodes["slideshow.hiddenWakeReceiver"] != nil
+            || nodes["slideshow.currentAssetId.flag"] != nil
+        {
+            state["surface"] = "playback"
+        } else if nodes["mode.random.button"] != nil {
+            state["surface"] = "mode"
+        }
+        let element = receipt["element"] as? String ?? "unknown"
+        let focus = state["focus"] as? String ?? "unknown"
+        guard !hasPrivateSurface, pending.isEmpty, state["surface"] as? String != "unknown",
+            !element.hasPrefix("firstboot."), !focus.hasPrefix("firstboot.")
+        else {
+            receipt["screenshot"] = imageStatus("withheld-privacy")
+            return nil
+        }
+        guard ProcessInfo.processInfo.environment["STRICT_E2E_FIRST_FAILURE_SCREENSHOT"] == "1" else { return nil }
+        timing["state_age_seconds"] = ProcessInfo.processInfo.systemUptime - observedAt
+        timing["capture_request_seconds"] = ProcessInfo.processInfo.systemUptime - failedAt
+        let screenshot = window.screenshot().pngRepresentation
+        timing["capture_return_seconds"] = ProcessInfo.processInfo.systemUptime - failedAt
+        var didExceedSizeLimit = false
+        if let source = CGImageSourceCreateWithData(screenshot as CFData, nil) {
+            for side in thumbnailSides {
+                guard
+                    let image = CGImageSourceCreateThumbnailAtIndex(
+                        source, 0,
+                        [
+                            kCGImageSourceCreateThumbnailFromImageAlways: true,
+                            kCGImageSourceThumbnailMaxPixelSize: side,
+                            kCGImageSourceCreateThumbnailWithTransform: true
+                        ] as CFDictionary), let png = UIImage(cgImage: image).pngData()
+                else { continue }
+                guard png.count <= maximumImageBytes else {
+                    didExceedSizeLimit = true
+                    continue
+                }
+                state["scene_status"] = StrictE2EPhotoIdentity.classify(png: png).status.rawValue
+                receipt["screenshot"] = [
+                    "status": "captured", "width": image.width, "height": image.height, "bytes": png.count
+                ]
+                return png
+            }
+        }
+        receipt["screenshot"] = imageStatus(didExceedSizeLimit ? "size-limit" : "unavailable")
+        return nil
+    }
+}
+
+extension XCUIScreenshotProviding {
+    func screenshotForFailureEvidence() -> XCUIScreenshot {
+        FirstFailureContext.mark("capture-frame", element: self is XCUIApplication ? "app-window" : "unknown")
+        return screenshot()
+    }
+}
+
+extension XCUIElement {
+    #if os(iOS)
+    func tapForFailureEvidence() {
+        FirstFailureContext.mark("select", element: FirstFailureContext.snapshot().element)
+        FirstFailureContext.action("tap") { tap() }
+    }
+    #endif
+
+    func typeForFailureEvidence(_ text: String) {
+        FirstFailureContext.mark("select", element: FirstFailureContext.snapshot().element)
+        FirstFailureContext.action("type") { typeText(text) }
+    }
+
+    func adjustForFailureEvidence(toNormalizedSliderPosition position: CGFloat) {
+        FirstFailureContext.mark("select", element: FirstFailureContext.snapshot().element)
+        FirstFailureContext.action("adjust") { adjust(toNormalizedSliderPosition: position) }
+    }
+
+    #if os(iOS)
+    func swipeUpForFailureEvidence() { FirstFailureContext.action("unknown") { swipeUp() } }
+    func swipeDownForFailureEvidence() { FirstFailureContext.action("unknown") { swipeDown() } }
+    func swipeLeftForFailureEvidence() { FirstFailureContext.action("unknown") { swipeLeft() } }
+    func swipeRightForFailureEvidence() { FirstFailureContext.action("unknown") { swipeRight() } }
+    #endif
+
+    func waitForPublicElement(_ identifier: String, timeout: TimeInterval) -> Bool {
+        FirstFailureContext.mark("query-element", element: identifier)
+        FirstFailureContext.beginWait(seconds: timeout)
+        defer { FirstFailureContext.endWait() }
+        return waitForExistence(timeout: timeout)
+    }
+
+    func waitForFailureEvidence(timeout: TimeInterval) -> Bool {
+        waitForPublicElement("unknown", timeout: timeout)
+    }
+}
+
+extension XCUIApplication {
+    func launchForFailureEvidence() {
+        FirstFailureContext.mark("launch-app", element: "app-window")
+        FirstFailureContext.action("launch") { launch() }
+    }
+
+    func activateForFailureEvidence() {
+        FirstFailureContext.action("activate") { activate() }
+    }
+
+    func terminateForFailureEvidence() {
+        FirstFailureContext.action("terminate") { terminate() }
+    }
+}
+
+#if os(iOS)
+extension XCUICoordinate {
+    func tapForFailureEvidence() {
+        FirstFailureContext.mark("select", element: FirstFailureContext.snapshot().element)
+        FirstFailureContext.action("tap") { tap() }
+    }
+}
+
+enum FirstFailureOrientation {
+    static func set(_ orientation: UIDeviceOrientation) {
+        FirstFailureContext.mark("rotate", element: "app-window")
+        FirstFailureContext.action("rotate") { XCUIDevice.shared.orientation = orientation }
+    }
+}
+#endif
+
+#if os(tvOS)
+enum FirstFailureRemote {
+    static func press(_ button: XCUIRemote.Button, forDuration duration: TimeInterval? = nil) {
+        let action: String
+        switch button {
+        case .select: action = "select"
+        case .up: action = "up"
+        case .down: action = "down"
+        case .left: action = "left"
+        case .right: action = "right"
+        case .menu: action = "back"
+        case .home: action = "home"
+        case .playPause: action = "play-pause"
+        default: action = "unknown"
+        }
+        FirstFailureContext.mark(
+            action == "select" ? "select" : "focus", element: FirstFailureContext.snapshot().element)
+        FirstFailureContext.action(action) {
+            if let duration {
+                XCUIRemote.shared.press(button, forDuration: duration)
+            } else {
+                XCUIRemote.shared.press(button)
+            }
+        }
+    }
+}
+#endif
+
 extension XCUIApplication {
     // Keep evidence reads in one tree so auto-hidden controls cannot disappear between queries.
     func evidenceSnapshotsByIdentifier(onSnapshotFailure: ((Error) -> Void)? = nil) -> [String: XCUIElementSnapshot] {
+        FirstFailureContext.mark("query-element", element: "app-window")
         let root: XCUIElementSnapshot
         do {
             root = try snapshot()
@@ -27,6 +322,12 @@ extension XCUIApplication {
 #if os(tvOS)
 extension XCUIApplication {
     func refreshTVOSSlideshowControlBar(timeout: TimeInterval) -> Bool {
+        FirstFailureContext.mark("reveal-controls", element: "slideshow.control.playPause.button")
+        FirstFailureContext.beginWait(seconds: timeout)
+        defer {
+            FirstFailureContext.endWait()
+            FirstFailureContext.mark("reveal-controls", element: "slideshow.control.playPause.button")
+        }
         let deadline = Date().addingTimeInterval(timeout)
         let controlIdentifiers = ["settings", "previous", "playPause", "next"].map {
             "slideshow.control.\($0).button"
@@ -48,7 +349,7 @@ extension XCUIApplication {
                 // Moving focus refreshes auto-hide; round trips restore the last attempt's enabled control. Callers verify focus.
                 let direction: XCUIRemote.Button =
                     focusedIdentifier == "slideshow.control.next.button" ? .left : .right
-                XCUIRemote.shared.press(direction)
+                FirstFailureRemote.press(direction)
                 // Auto-hide can consume a focus move as a wake; retry from a fresh snapshot in the same budget.
                 guard
                     waitForFocus({ observation in
@@ -62,13 +363,13 @@ extension XCUIApplication {
                     if waitForFocus({ $0["slideshow.control.playPause.button"]?.hasFocus == true }) { return true }
                     continue
                 }
-                XCUIRemote.shared.press(direction == .left ? .right : .left)
+                FirstFailureRemote.press(direction == .left ? .right : .left)
                 if waitForFocus({ $0[focusedIdentifier]?.hasFocus == true }) { return true }
                 continue
             }
             if snapshots["slideshow.hiddenWakeReceiver"]?.hasFocus == true {
                 guard Date() < deadline else { return false }
-                XCUIRemote.shared.press(.up)
+                FirstFailureRemote.press(.up)
                 if waitForFocus({ $0["slideshow.control.playPause.button"] != nil }) { return true }
                 continue
             }
@@ -131,12 +432,14 @@ struct SlideshowControlBarTiming {
     }
 
     mutating func reveal(app: XCUIApplication) {
+        FirstFailureContext.mark("reveal-controls", element: "slideshow.control.playPause.button")
         let startedAt = Date()
-        app.tap()
+        FirstFailureContext.action("tap") { app.tap() }
         revealSeconds += Date().timeIntervalSince(startedAt)
     }
 
     mutating func observe(app: XCUIApplication, identifier: String) -> SlideshowControlBarButtonObservation? {
+        FirstFailureContext.mark("query-element", element: identifier)
         let startedAt = Date()
         defer { snapshotSeconds += Date().timeIntervalSince(startedAt) }
         iterations += 1
@@ -174,6 +477,9 @@ extension XCUIApplication {
     func waitForSlideshowSettingsSnapshot(
         timeout: TimeInterval, pollSeconds: TimeInterval, onTimeout: (String) -> Void
     ) -> Bool {
+        FirstFailureContext.mark("reveal-controls", element: "slideshow.control.settings.button")
+        FirstFailureContext.beginWait(seconds: timeout)
+        defer { FirstFailureContext.endWait() }
         let deadline = Date().addingTimeInterval(timeout)
         var timing = SlideshowControlBarTiming()
         var hiddenSince: Date?
@@ -212,9 +518,9 @@ extension XCUIApplication {
     // Use only for functional checks, never to verify control-bar visibility or auto-hide timing.
     func waitForSlideshowControlBarButton(identifier: String, timeout: TimeInterval) -> Bool {
         if descendants(matching: .any)["slideshow.currentAssetId.flag"].exists {
-            tap()
+            FirstFailureContext.action("tap") { tap() }
         }
-        return buttons[identifier].waitForExistence(timeout: timeout)
+        return buttons[identifier].waitForPublicElement(identifier, timeout: timeout)
     }
 
     func tapSlideshowControlBarButton(
@@ -248,7 +554,7 @@ extension XCUIApplication {
                                 CGVector(
                                     dx: frame.midX - observation.windowFrame.minX,
                                     dy: frame.midY - observation.windowFrame.minY)
-                            ).tap()
+                            ).tapForFailureEvidence()
                         timing.tapSeconds += Date().timeIntervalSince(startedAt)
                         // Callers own scene-change, Play/Pause and EXIF budgets after one real tap.
                         if !timing.shouldVerifySettingsOutcome { return }
@@ -358,6 +664,8 @@ struct Failure: LocalizedError {
 enum Wait {
     @MainActor
     static func until(timeout: TimeInterval, _ condition: () -> Bool) -> Bool {
+        FirstFailureContext.beginWait(seconds: timeout)
+        defer { FirstFailureContext.endWait() }
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if condition() { return true }
@@ -369,6 +677,8 @@ enum Wait {
     // The condition must hold continuously for hold seconds within timeout; the timer restarts if it fails midway.
     @MainActor
     static func held(timeout: TimeInterval, hold: TimeInterval, _ condition: () -> Bool) -> Bool {
+        FirstFailureContext.beginWait(seconds: timeout + hold)
+        defer { FirstFailureContext.endWait() }
         let deadline = Date().addingTimeInterval(timeout + hold)
         var heldSince: Date?
         while Date() < deadline {
@@ -399,9 +709,12 @@ final class Evidence {
         timeout: TimeInterval = Timing.stableIdentityTimeout,
         accept: (StrictE2EPhotoIdentity.Result) -> Bool = { _ in true }
     ) throws -> StrictE2EPhotoIdentity.Result {
+        FirstFailureContext.mark("capture-frame", element: "app-window")
+        FirstFailureContext.beginWait(seconds: timeout)
+        defer { FirstFailureContext.endWait() }
         let deadline = Date().addingTimeInterval(timeout)
         var capturedAt = Date()
-        var png = app.screenshot().pngRepresentation
+        var png = app.screenshotForFailureEvidence().pngRepresentation
         var identity = StrictE2EPhotoIdentity.classify(png: png)
         // No retakes past the deadline, so a last round cannot push later watermarks out of the contract window.
         while !accept(identity) {
@@ -409,7 +722,7 @@ final class Evidence {
             guard retryAt < deadline else { break }
             RunLoop.current.run(until: retryAt)
             capturedAt = Date()
-            png = app.screenshot().pngRepresentation
+            png = app.screenshotForFailureEvidence().pngRepresentation
             identity = StrictE2EPhotoIdentity.classify(png: png)
         }
         guard accept(identity) else {
@@ -529,7 +842,7 @@ struct StableFrame {
     // In landscape, an app-element screenshot is cropped at the wrong offset and a full-screen screenshot is the
     // native portrait framebuffer; redraw it using the system's imageOrientation to match what the user sees.
     static func uprightScreenPNG() -> Data {
-        let screenshot = XCUIScreen.main.screenshot()
+        let screenshot = XCUIScreen.main.screenshotForFailureEvidence()
         let image = screenshot.image
         guard image.imageOrientation != .up else { return screenshot.pngRepresentation }
         let format = UIGraphicsImageRendererFormat()
@@ -621,7 +934,7 @@ extension PlaybackDriver {
         var unchanged: String?
         while Date() < deadline {
             try checkEachPoll()
-            let identity = StrictE2EPhotoIdentity.classify(png: app.screenshot().pngRepresentation)
+            let identity = StrictE2EPhotoIdentity.classify(png: app.screenshotForFailureEvidence().pngRepresentation)
             let mark = identity.status == .match ? identity.mark : nil
             if let mark, mark == last {
                 if mark != previous { return mark }
@@ -672,7 +985,7 @@ extension PlaybackDriver {
             ["schema": "strict-e2e-multi-scene-search-v1", "observations": observations],
             name: "multi-scene-search-diagnostic.json"
         )
-        try Evidence().reject("multi-scene-search", png: app.screenshot().pngRepresentation)
+        try Evidence().reject("multi-scene-search", png: app.screenshotForFailureEvidence().pngRepresentation)
         throw Failure(
             "Public fixture: no 2/3-photo scene within \(maxNextPresses) next presses; too few multi-photo frames.")
     }

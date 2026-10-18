@@ -2,11 +2,21 @@ import XCTest
 
 #if os(iOS)
 final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
+    override func invokeTest() {
+        FirstFailureContext.reset()
+        super.invokeTest()
+    }
+
+    override func record(_ issue: XCTIssue) {
+        FirstFailureEvidence.record(self, issue: issue)
+        super.record(issue)
+    }
+
     private let lateRequestSettleSeconds: TimeInterval = TestWait.seconds(.product(1.5))
 
     override func setUpWithError() throws {
         continueAfterFailure = false
-        XCUIDevice.shared.orientation = .portrait
+        FirstFailureOrientation.set(.portrait)
     }
 
     // Seam: the public frame after the second next, before and after an explicitly released old response.
@@ -14,7 +24,7 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
     func testLateImageKeepsCurrentSceneAfterLateRequest() throws {
         let input = try requireStrictE2EInput()
         let app = try launchStrictE2EApp(recordSceneSequence: true)
-        defer { app.terminate() }
+        defer { app.terminateForFailureEvidence() }
 
         try completeFirstBootToModeSelection(app: app, input: input, evidencePrefix: "late-image")
         dismissSavePasswordPromptIfShown(app: app)
@@ -58,7 +68,7 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
         let continueButton = firstBootControl(in: app, identifier: "mode.continue.button")
         if (try? continueButton.snapshot())?.isEnabled != true {
             XCTAssertTrue(
-                modeButton.waitForExistence(timeout: TestWait.seconds(.product(8))),
+                modeButton.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
                 "The mode page must provide mode.random.button.")
             tapElement(modeButton)
             XCTAssertTrue(
@@ -68,10 +78,10 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
                 "After selecting random, Continue must be enabled."
             )
         }
-        continueButton.tap()
+        continueButton.tapForFailureEvidence()
         let next = app.buttons["slideshow.control.next.button"]
         XCTAssertTrue(
-            next.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            next.waitForPublicElement("slideshow.control.next.button", timeout: TestWait.seconds(.product(8))),
             "Next must be tappable twice right after entering the slideshow, before old image requests finish.")
         let banner = app.descendants(matching: .any)["slideshow.entryHint.banner"]
         if (try? banner.snapshot()) != nil { tapElement(banner) }
@@ -116,7 +126,7 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
             if let next = app.evidenceSnapshotsByIdentifier()["slideshow.control.next.button"], next.isEnabled {
                 return ProcessInfo.processInfo.systemUptime < deadline
             }
-            app.tap()
+            app.tapForFailureEvidence()
             return false
         }
     }
@@ -125,7 +135,7 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
     private func captureRequiredIdentity(app: XCUIApplication, name: String) throws -> StrictE2EPhotoIdentity.Result {
         dismissSavePasswordPromptIfShown(app: app)
         let before = strictSceneFrameObservation(app: app)
-        let png = app.screenshot().pngRepresentation
+        let png = app.screenshotForFailureEvidence().pngRepresentation
         let after = strictSceneFrameObservation(app: app)
         XCTAssertFalse(png.isEmpty, "The playback screenshot must not be empty: \(name)")
         let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")

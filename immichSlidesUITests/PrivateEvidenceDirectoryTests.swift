@@ -1,6 +1,16 @@
 import XCTest
 
 final class PrivateEvidenceDirectoryTests: XCTestCase {
+    override func invokeTest() {
+        FirstFailureContext.reset()
+        super.invokeTest()
+    }
+
+    override func record(_ issue: XCTIssue) {
+        FirstFailureEvidence.record(self, issue: issue)
+        super.record(issue)
+    }
+
     func testMissingRootDoesNotCreateImplicitRepositoryFallback() throws {
         let directory = try PrivateEvidenceDirectory.resolve(
             rootPath: nil,

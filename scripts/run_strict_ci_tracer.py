@@ -109,6 +109,10 @@ def evaluate_tracer(declared, results, *, interrupted=False, informational=()):
         # The collector only adds receipts to failed phases; keep this check as defence in depth.
         if outcome == "failed" and VALIDATOR_FAILURE_FIELD in result:
             observed[-1][VALIDATOR_FAILURE_FIELD] = observed[-1]["attempts"][0][VALIDATOR_FAILURE_FIELD] = result[VALIDATOR_FAILURE_FIELD]
+        from ci_failure_diagnostics import FIRST_FAILURE_FIELD, public_first_failure
+        receipt = public_first_failure(result.get(FIRST_FAILURE_FIELD))
+        if outcome == "failed" and receipt is not None and receipt["source"] in {"xctest", "validator"}:
+            observed[-1][FIRST_FAILURE_FIELD] = observed[-1]["attempts"][0][FIRST_FAILURE_FIELD] = receipt
     declared_keys = {identity_key(item) for item in declared}
     observed_keys = {identity_key(item["identity"]) for item in observed}
     complete = bool(declared) and declared_keys == observed_keys and len(results) == len(declared)
@@ -235,6 +239,10 @@ def main(argv=None):
         summary["population"]["observed"] = [
             dict(observation(item, "not-run", 0, reason=reason, exit_code=None), outcome="failed")
             for item in identities]
+        from ci_failure_diagnostics import preparation_first_failure
+        for item in summary["population"]["observed"]:
+            receipt = preparation_first_failure(diagnostics.receipt())
+            item["first_failure"] = item["attempts"][0]["first_failure"] = receipt
         started = time.time()
         write_json(records / "trace.json", {"schema_version": 1, "cold": [], "warm": [],
             "exclusions": manifest["exclusions"], "started_epoch": started, "finished_epoch": time.time()})
@@ -344,6 +352,20 @@ def main(argv=None):
                 # records/ is uploaded unscanned; sanitize before copying the candidate.
                 # The existing CommandError relay can still expose raw errors in public job logs.
                 phase[VALIDATOR_FAILURE_FIELD] = public_validator_failure_message(contract.get("error"))
+        from ci_failure_diagnostics import FIRST_FAILURE_FIELD, public_first_failure
+        for method in phase["official_methods"]:
+            receipt = public_first_failure(method.get(FIRST_FAILURE_FIELD))
+            if method["result"] == "Failed" and receipt is not None and receipt["source"] == "xctest":
+                phase[FIRST_FAILURE_FIELD] = receipt
+                break
+        if contract_failed and FIRST_FAILURE_FIELD not in phase:
+            path = evidence / "first-failure-validator.json"
+            try:
+                receipt = public_first_failure(decode(path.read_text())) if path.is_file() and path.stat().st_size <= 8192 else None
+            except (OSError, ValueError, TypeError, KeyError):
+                receipt = None
+            if receipt is not None and receipt["source"] == "validator":
+                phase[FIRST_FAILURE_FIELD] = receipt
         results.append(phase)
         if official is not None and official["totalTestCount"] > 0:
             summary["population"]["compiled"].append(phase["identity"])

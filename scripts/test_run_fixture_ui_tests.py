@@ -206,8 +206,9 @@ class FixtureCoverageTests(unittest.TestCase):
         from ci_summary import observation, parse_summary
         from ci_verdict import parse_policy
         from test_ci_flaky import registry
-        from test_ci_summary import discovery_summary
-        for retried, retry_read_failed in ((False, False), (True, False), (True, True)):
+        from test_ci_summary import discovery_summary, first_failure_receipt
+        for retried, retry_read_failed, retry_two in ((False, False, False), (True, False, False),
+                                                     (True, True, False), (True, False, True)):
             for diagnostics in ({"failure_phase": "interval_setup", "failure_class": "interval_readback"},
                                 {"failure_phase": "unknown", "failure_class": "unknown"}):
                 with self.subTest(retried=retried, retry_read_failed=retry_read_failed, diagnostics=diagnostics), tempfile.TemporaryDirectory() as directory:
@@ -225,9 +226,17 @@ class FixtureCoverageTests(unittest.TestCase):
                         seed["population"]["declared"].append(missing)
                     official = seed["compiled_evidence"]["official_tests"]
                     official["testNodes"][0]["children"][0].update(result="Failed", **diagnostics)
+                    if retry_two:
+                        second = dict(entry, key=entry["key"] + "Second")
+                        seed["population"]["declared"].append(second)
+                        official["testNodes"][0]["children"].append({"nodeType": "Test Case",
+                            "nodeIdentifier": second["key"] + "()", "result": "Failed", "durationInSeconds": 1, **diagnostics})
                     trusted = registry()
                     trusted["entries"][0]["identity"] = dict(entry, dimensions={"platform": "ios"})
                     trusted["entries"][0]["review_by"] = "2099-01-01"
+                    if retry_two:
+                        trusted["entries"].append(copy.deepcopy(trusted["entries"][0]))
+                        trusted["entries"][-1]["identity"] = dict(second, dimensions={"platform": "ios"})
                     if not retried:
                         trusted["entries"] = []
                     policy = parse_policy((runner.ROOT / "scripts/ci-test-policy.json").read_text())
@@ -238,6 +247,14 @@ class FixtureCoverageTests(unittest.TestCase):
                     failed = observation(entry, "failed", 1, exit_code=65, reason=ASSERTION_FAILURE,
                                          failure_diagnostics=diagnostics)
                     passed = observation(entry, "passed", 1)
+                    first_receipt = first_failure_receipt()
+                    first_receipt["screenshot"] = {"status": "unavailable", "width": None, "height": None, "bytes": None}
+                    if retry_two:
+                        from PIL import Image
+                        pixels = io.BytesIO()
+                        Image.new("RGB", (64, 32), "blue").save(pixels, format="PNG")
+                        first_receipt["screenshot"] = {"status": "captured", "width": 64, "height": 32,
+                                                       "bytes": len(pixels.getvalue())}
                     bundles, invocations = [], []
                     def allocate():
                         bundle = Path(directory, "private", str(len(bundles)), "fixture.xcresult")
@@ -247,18 +264,31 @@ class FixtureCoverageTests(unittest.TestCase):
                     def process(command, **kwargs):
                         if command[0] == "xcodebuild":
                             invocations.append(command)
-                        code = 65 if len(invocations) == 1 else 0
+                        code = 65 if len(invocations) == 1 or retry_two else 0
                         return SimpleNamespace(wait=lambda **kwargs: code, pid=42)
                     def export(bundle, *args, **kwargs):
                         self.assertIs(kwargs["enrich_failure_diagnostics"], True)
                         self.assertEqual(kwargs["export_timeout_seconds"], 60)
                         suffix = kwargs["suffix"]
                         payload = copy.deepcopy(official)
+                        for node in payload["testNodes"][0]["children"]:
+                            node["first_failure"] = copy.deepcopy(first_receipt)
                         if bundle != bundles[0]:
+                            retried_entry = second if retry_two and bundle == bundles[2] else entry
                             payload["testNodes"][0]["children"][0] = {
-                                "nodeType": "Test Case", "nodeIdentifier": entry["key"] + "()",
-                                "result": "Passed", "durationInSeconds": 1}
+                                "nodeType": "Test Case", "nodeIdentifier": retried_entry["key"] + "()",
+                                "result": "Failed" if retry_two else "Passed", "durationInSeconds": 1}
+                            payload["testNodes"][0]["children"] = payload["testNodes"][0]["children"][:1]
+                            if retry_two:
+                                payload["testNodes"][0]["children"][0]["first_failure"] = {
+                                    **copy.deepcopy(first_receipt), "step": "capture-frame"}
                         (output / ("official-tests" + suffix + ".json")).write_text(json.dumps(payload))
+                        if retry_two:
+                            for node in payload["testNodes"][0]["children"]:
+                                index = 1 if node["nodeIdentifier"] == second["key"] + "()" else 0
+                                image = kwargs["first_failure_images"] / (str(index) + ".png")
+                                image.parent.mkdir(parents=True, exist_ok=True)
+                                image.write_bytes(pixels.getvalue())
                         return "f" * 64
                     # Test-details text disagrees with legacy summaries; it must never replace their labels.
                     detail = ("Failed to get matching snapshot: private detail" if diagnostics["failure_phase"] != "unknown"
@@ -277,10 +307,14 @@ class FixtureCoverageTests(unittest.TestCase):
                             stack.enter_context(patch.object(runner, name, value if name == "ROOT"
                                                             else unittest.mock.Mock(return_value=value)))
                         stack.enter_context(patch.object(runner, "prepare_fixture_result_bundle", side_effect=allocate))
-                        stack.enter_context(patch.object(runner, "read_xcode_observations",
-                            side_effect=[copy.deepcopy([failed]), subprocess.TimeoutExpired("xcresulttool", 60)
-                                         if retry_read_failed else [passed]]))
+                        reads = ([copy.deepcopy([failed, observation(second, "failed", 1, exit_code=65, reason=ASSERTION_FAILURE,
+                                   failure_diagnostics=diagnostics)]), [observation(entry, "failed", 1, exit_code=65)],
+                                   [observation(second, "failed", 1, exit_code=65)]] if retry_two else
+                                 [copy.deepcopy([failed]), subprocess.TimeoutExpired("xcresulttool", 60)
+                                  if retry_read_failed else [passed]])
+                        stack.enter_context(patch.object(runner, "read_xcode_observations", side_effect=reads))
                         stack.enter_context(patch.object(runner.subprocess, "Popen", side_effect=process))
+                        stack.enter_context(patch.object(runner.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, b"{}")))
                         stack.enter_context(patch.object(runner, "simulator_inventory", return_value={}))
                         stack.enter_context(patch.object(runner, "export_private_result_bundle", side_effect=export))
                         stack.enter_context(patch.object(runner, "finalize_fixture_run", return_value=[]))
@@ -290,12 +324,21 @@ class FixtureCoverageTests(unittest.TestCase):
                         code = runner.main(["--device", "iphone", "--destination", "platform=iOS Simulator,id=target",
                             "--output-dir", str(output), "--xctestrun", str(source), "--shard", "scoped-a",
                             "--shard-manifest", str(root / "manifest.json"), "--scoped-plan-sha256", "e" * 64,
-                            "--compiled-from-official-results", "--listed-only-retry"])
-                    self.assertEqual(code, 0 if retried and not retry_read_failed else 65)
-                    self.assertEqual(len(invocations), 2 if retried else 1)
+                            "--compiled-from-official-results", "--listed-only-retry", *(["--failure-screenshots"] if retry_two else [])])
+                    self.assertEqual(code, 0 if retried and not retry_read_failed and not retry_two else 65)
+                    self.assertEqual(len(invocations), 3 if retry_two else 2 if retried else 1)
                     result = parse_summary((output / "summary.json").read_text())
                     actual = result["population"]["observed"][0]
-                    self.assertEqual(actual["outcome"], "flaky-passed" if retried and not retry_read_failed else "failed")
+                    self.assertEqual(actual["outcome"], "flaky-passed" if retried and not retry_read_failed and not retry_two else "failed")
+                    self.assertEqual(first_receipt, actual["first_failure"])
+                    if retry_two:
+                        self.assertEqual(2, len(result["population"]["observed"]))
+                        for record in result["population"]["observed"]:
+                            self.assertEqual(first_receipt, record["first_failure"])
+                            self.assertEqual("capture-frame", record["attempts"][1]["first_failure"]["step"])
+                        import ci_ui_tests
+                        with patch.object(ci_ui_tests, "output"), contextlib.redirect_stderr(io.StringIO()):
+                            self.assertEqual(0, ci_ui_tests.main(["check-upload", "--output-dir", str(output)]))
                     for field, value in diagnostics.items():
                         self.assertEqual(actual[field], value)
                         self.assertEqual(actual["attempts"][0][field], value)
@@ -461,6 +504,10 @@ class FixtureCoverageTests(unittest.TestCase):
                             raise subprocess.TimeoutExpired(command, kwargs["timeout"])
                     if "attachments" in command:
                         attachments.append(command)
+                        from PIL import Image
+                        exported = Path(command[command.index("--output-path") + 1]) / "legacy.png"
+                        exported.parent.mkdir(parents=True, exist_ok=True)
+                        Image.new("RGB", (2000, 100), "blue").save(exported, format="PNG", icc_profile=b"PRIVATE_PROFILE")
                     return SimpleNamespace(returncode=0, stdout=b"{}")
                 stderr = io.StringIO()
                 with contextlib.ExitStack() as stack:
@@ -493,6 +540,12 @@ class FixtureCoverageTests(unittest.TestCase):
                 self.assertEqual(len(tests), 1)
                 self.assertNotIn("-enumerate-tests", tests[0])
                 self.assertEqual(len(attachments), 1)
+                from PIL import Image
+                exported = output / "failure-screenshots/attempt-1/legacy.png"
+                with Image.open(exported) as image:
+                    self.assertLessEqual(max(image.size), 1536)
+                    self.assertEqual({}, image.info)
+                self.assertLessEqual(exported.stat().st_size, 1048576)
                 scan.assert_called_once()
                 dispose.assert_called_once()
                 self.assertEqual(code, 0 if raw == 0 and shape in {"complete", "expected-skip"} else raw or 1)
@@ -574,8 +627,14 @@ class FixtureCoverageTests(unittest.TestCase):
             source.write_bytes(original)
             screenshots = root / "screenshots"
             screenshots.mkdir()
-            prepared = runner.prepare_test_run(source, screenshots, {"IMMICH_TEST_API_KEY": "public-fixture-input"}, failure_screenshots=True)
+            prepared = runner.prepare_test_run(source, screenshots, {"IMMICH_TEST_API_KEY": "public-fixture-input"},
+                failure_screenshots=True, first_failure_spool=(root / "private-spool", ["FlowUITests/testPlayback"]))
             targets = plistlib.loads(prepared.read_bytes())["TestConfigurations"][0]["TestTargets"]
+            environment = targets[0]["EnvironmentVariables"]
+            self.assertEqual(environment["STRICT_E2E_FIRST_FAILURE_ENABLED"], "1")
+            self.assertEqual(environment["STRICT_E2E_FIRST_FAILURE_DIR"], str(root / "private-spool"))
+            self.assertEqual(json.loads(environment["STRICT_E2E_FIRST_FAILURE_TESTS"]), {"FlowUITests/testPlayback": 0})
+            self.assertNotIn("STRICT_E2E_FIRST_FAILURE_ENABLED", targets[0]["UITargetAppEnvironmentVariables"])
             self.assertEqual(targets[1], payload["TestConfigurations"][0]["TestTargets"][1])
             self.assertEqual(source.read_bytes(), original)
 

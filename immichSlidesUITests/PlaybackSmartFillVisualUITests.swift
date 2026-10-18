@@ -262,9 +262,19 @@ func requireEvidenceWrite(_ write: () throws -> Void) {
 
 #if os(iOS)
 final class PlaybackSmartFillVisualUITests: XCTestCase {
+    override func invokeTest() {
+        FirstFailureContext.reset()
+        super.invokeTest()
+    }
+
+    override func record(_ issue: XCTIssue) {
+        FirstFailureEvidence.record(self, issue: issue)
+        super.record(issue)
+    }
+
     override func setUpWithError() throws {
         continueAfterFailure = false
-        XCUIDevice.shared.orientation = .portrait
+        FirstFailureOrientation.set(.portrait)
     }
 
     func testScreenshotWriterRejectsUnwritableDestination() throws {
@@ -454,18 +464,20 @@ final class PlaybackSmartFillVisualUITests: XCTestCase {
         }
 
         RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(1.0))))
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tapForFailureEvidence()
         recordAction("tap-image-show-control-bar")
         let settingsButton = app.buttons["slideshow.control.settings.button"]
         XCTAssertTrue(
-            settingsButton.waitForExistence(timeout: TestWait.seconds(.product(4))),
+            settingsButton.waitForPublicElement(
+                "slideshow.control.settings.button", timeout: TestWait.seconds(.product(4))),
             "\(scenario) tapping the photo must show the control bar"
         )
 
         RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(1.5))))
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
         XCTAssertTrue(
-            playPauseButton.waitForExistence(timeout: TestWait.seconds(.product(4))),
+            playPauseButton.waitForPublicElement(
+                "slideshow.control.playPause.button", timeout: TestWait.seconds(.product(4))),
             "\(scenario) pause/resume button must be found while the control bar is visible"
         )
         tapElement(playPauseButton)
@@ -473,7 +485,8 @@ final class PlaybackSmartFillVisualUITests: XCTestCase {
 
         RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(1.2))))
         XCTAssertTrue(
-            playPauseButton.waitForExistence(timeout: TestWait.seconds(.product(4))),
+            playPauseButton.waitForPublicElement(
+                "slideshow.control.playPause.button", timeout: TestWait.seconds(.product(4))),
             "\(scenario) resume button must still be found after pause"
         )
         tapElement(playPauseButton)
@@ -624,7 +637,8 @@ final class PlaybackSmartFillVisualUITests: XCTestCase {
             return
         }
         XCTAssertTrue(
-            app.buttons["slideshow.control.next.button"].waitForExistence(timeout: TestWait.seconds(.product(4))),
+            app.buttons["slideshow.control.next.button"].waitForPublicElement(
+                "slideshow.control.next.button", timeout: TestWait.seconds(.product(4))),
             "Control bar should still work after the EXIF overlay appear/disappear check"
         )
     }
@@ -664,7 +678,7 @@ final class PlaybackSmartFillVisualUITests: XCTestCase {
 
     @MainActor
     func testSmartFillRandomLandscapePlaybackTwentyScenes() throws {
-        XCUIDevice.shared.orientation = .landscapeLeft
+        FirstFailureOrientation.set(.landscapeLeft)
         let app = try launchConfiguredAppAtModeSelection()
         startRandomPlaybackFromModeSelection(app: app)
 
@@ -689,7 +703,7 @@ final class PlaybackSmartFillVisualUITests: XCTestCase {
 
     @MainActor
     func testSmartFillPeopleFilterLandscapePlaybackTwentyScenes() async throws {
-        XCUIDevice.shared.orientation = .landscapeLeft
+        FirstFailureOrientation.set(.landscapeLeft)
         let personID = try await findEligiblePersonID(minimumAssetCount: EvidenceCalibration.minimumPersonAssetCount)
         let selectionJSON = makePersonFilterSelectionJSON(personID: personID)
         let app = try launchConfiguredAppAtModeSelection(selectionJSON: selectionJSON)
@@ -716,7 +730,7 @@ final class PlaybackSmartFillVisualUITests: XCTestCase {
 
     @MainActor
     func testSmartFillFixedAlbumLandscapePlaybackTwentyScenes() throws {
-        XCUIDevice.shared.orientation = .landscapeLeft
+        FirstFailureOrientation.set(.landscapeLeft)
         let albumID = try requireFixedAlbumID()
         let selectionJSON = makeAlbumFilterSelectionJSON(albumID: albumID)
         let app = try launchConfiguredAppAtModeSelection(selectionJSON: selectionJSON)

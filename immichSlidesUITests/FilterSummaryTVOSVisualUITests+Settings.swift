@@ -13,7 +13,7 @@ extension FilterSummaryTVOSVisualUITests {
             downStepsFromPlayback: FilterSummaryTVOSVisualUITestsSettingsNavigation.serverSteps,
             failureMessage: "Settings home should reliably reach the 'Server' entry with direction keys"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         XCTAssertTrue(
             waitForSettingsControlExists(
@@ -90,7 +90,7 @@ extension FilterSummaryTVOSVisualUITests {
             downStepsFromPlayback: FilterSummaryTVOSVisualUITestsSettingsNavigation.serverSteps,
             failureMessage: "Settings home should reliably reach the 'Server' entry with direction keys"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         XCTAssertTrue(
             waitForSettingsControlExists(
@@ -107,7 +107,7 @@ extension FilterSummaryTVOSVisualUITests {
         )
         for _ in 0..<4 {
             if testConnectionButton.hasFocus { break }
-            XCUIRemote.shared.press(.down)
+            FirstFailureRemote.press(.down)
             RunLoop.current.run(
                 until: Date().addingTimeInterval(FilterSummaryTVOSVisualUITestsWaitTiming.shortFocusSettleSeconds))
         }
@@ -117,13 +117,13 @@ extension FilterSummaryTVOSVisualUITests {
             failureMessage:
                 "On the server detail page, direction keys should be able to focus the Test Connection button"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
         let alert = app.alerts["连接测试失败"]
         XCTAssertTrue(
             // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
-            alert.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.stateChangeDeadlineSeconds),
+            alert.waitForFailureEvidence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.stateChangeDeadlineSeconds),
             "Test Connection on server detail should show the error there at once, not after returning to settings root"
         )
         XCTAssertTrue(
@@ -152,7 +152,7 @@ extension FilterSummaryTVOSVisualUITests {
             downStepsFromPlayback: FilterSummaryTVOSVisualUITestsSettingsNavigation.cacheSteps,
             failureMessage: "Settings home should reliably reach the 'Cache Management' entry with direction keys"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         XCTAssertTrue(
             waitForSettingsControlExists(
@@ -200,7 +200,7 @@ extension FilterSummaryTVOSVisualUITests {
             downStepsFromPlayback: FilterSummaryTVOSVisualUITestsSettingsNavigation.cacheSteps,
             failureMessage: "Settings home should reliably reach the 'Cache Management' entry with direction keys"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let clearCacheButton = waitForSettingsControl(
             app: app,
@@ -213,7 +213,7 @@ extension FilterSummaryTVOSVisualUITests {
             if clearCacheButton.hasFocus || accessibilityValueString(for: clearCacheButton).contains("focused") {
                 break
             }
-            XCUIRemote.shared.press(.down)
+            FirstFailureRemote.press(.down)
             RunLoop.current.run(
                 until: Date().addingTimeInterval(FilterSummaryTVOSVisualUITestsWaitTiming.remotePressSettleSeconds))
         }
@@ -224,7 +224,7 @@ extension FilterSummaryTVOSVisualUITests {
             failureMessage: "On the cache page, direction keys should be able to focus the 'Clear Disk Cache' button"
         )
 
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         XCTAssertTrue(
             waitUntil(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.stateChangeDeadlineSeconds) {
@@ -264,7 +264,7 @@ extension FilterSummaryTVOSVisualUITests {
             downStepsFromPlayback: FilterSummaryTVOSVisualUITestsSettingsNavigation.aboutSteps,
             failureMessage: "Settings home should reliably reach the 'About' entry with direction keys"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         XCTAssertTrue(
             waitForSettingsControlExists(
@@ -311,19 +311,19 @@ extension FilterSummaryTVOSVisualUITests {
         )
         XCTAssertTrue(
             // ui-label-lookup: This lookup asserts the displayed feedback hint copy.
-            app.staticTexts["提交问题前，建议先确认版本号与运行平台。"].waitForExistence(
+            app.staticTexts["提交问题前，建议先确认版本号与运行平台。"].waitForFailureEvidence(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "About page should show the real feedback text, not placeholder text"
         )
         XCTAssertTrue(
             // ui-label-lookup: This lookup asserts the displayed privacy description copy.
-            app.staticTexts["查看完整隐私政策与数据处理说明。"].waitForExistence(
+            app.staticTexts["查看完整隐私政策与数据处理说明。"].waitForFailureEvidence(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "About page should show the privacy policy description"
         )
         XCTAssertFalse(
             // ui-label-lookup: This lookup rejects obsolete displayed placeholder copy.
-            app.staticTexts["后续会在这里补齐反馈入口和开源协议链接。"].waitForExistence(
+            app.staticTexts["后续会在这里补齐反馈入口和开源协议链接。"].waitForFailureEvidence(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.briefElementTimeoutSeconds),
             "About page should no longer show 'to be added later' placeholder text"
         )
@@ -344,7 +344,7 @@ extension FilterSummaryTVOSVisualUITests {
             downStepsFromPlayback: FilterSummaryTVOSVisualUITestsSettingsNavigation.aboutSteps,
             failureMessage: "Settings home should reliably reach the 'About' entry with direction keys"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let appInfoSection = waitForSettingsControl(
             app: app,
@@ -364,7 +364,7 @@ extension FilterSummaryTVOSVisualUITests {
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "About page should expose the 'Unofficial Notice' focus area"
         )
-        XCUIRemote.shared.press(.down)
+        FirstFailureRemote.press(.down)
         waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         waitForButtonToGainFocus(
             unofficialNoticeSection,
@@ -378,7 +378,7 @@ extension FilterSummaryTVOSVisualUITests {
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "About page should expose the 'Feedback & Support' focus area"
         )
-        XCUIRemote.shared.press(.down)
+        FirstFailureRemote.press(.down)
         waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         waitForButtonToGainFocus(
             feedbackSection,
@@ -392,7 +392,7 @@ extension FilterSummaryTVOSVisualUITests {
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "About page should show the 'Privacy Policy' entry"
         )
-        XCUIRemote.shared.press(.down)
+        FirstFailureRemote.press(.down)
         waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         waitForButtonToGainFocus(
             privacyPolicyLink,
@@ -406,7 +406,7 @@ extension FilterSummaryTVOSVisualUITests {
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
             failureMessage: "About page should show the 'Open Source Licenses' entry"
         )
-        XCUIRemote.shared.press(.down)
+        FirstFailureRemote.press(.down)
         waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         waitForButtonToGainFocus(
             openSourceLink,
@@ -416,7 +416,7 @@ extension FilterSummaryTVOSVisualUITests {
 
         attachScreenshot(app: app, name: "tvos-settings-about-page-bottom-focus-dark")
 
-        XCUIRemote.shared.press(.up)
+        FirstFailureRemote.press(.up)
         waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         waitForButtonToGainFocus(
             privacyPolicyLink,
@@ -441,7 +441,7 @@ extension FilterSummaryTVOSVisualUITests {
             downStepsFromPlayback: FilterSummaryTVOSVisualUITestsSettingsNavigation.aboutSteps,
             failureMessage: "Settings home should reliably reach the 'About' entry with direction keys"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let appInfoSection = waitForSettingsControl(
             app: app,
@@ -463,7 +463,7 @@ extension FilterSummaryTVOSVisualUITests {
         )
 
         for _ in 0..<3 {
-            XCUIRemote.shared.press(.down)
+            FirstFailureRemote.press(.down)
             waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         }
 
@@ -474,7 +474,7 @@ extension FilterSummaryTVOSVisualUITests {
                 "In the lower half of the About page, focus should land reliably on the 'Privacy Policy' entry"
         )
 
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let chineseLanguageButton = waitForSettingsControl(
             app: app,
@@ -506,7 +506,7 @@ extension FilterSummaryTVOSVisualUITests {
                 "On the privacy policy page, default focus should land directly on the 'Chinese' language button"
         )
 
-        XCUIRemote.shared.press(.down)
+        FirstFailureRemote.press(.down)
         waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         waitForButtonToGainFocus(
             firstPolicySection,
@@ -516,7 +516,7 @@ extension FilterSummaryTVOSVisualUITests {
 
         attachScreenshot(app: app, name: "tvos-settings-privacy-policy-page-dark")
 
-        XCUIRemote.shared.press(.up)
+        FirstFailureRemote.press(.up)
         waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         waitForButtonToGainFocus(
             chineseLanguageButton,
@@ -524,7 +524,7 @@ extension FilterSummaryTVOSVisualUITests {
             failureMessage: "Moving back up from the text, focus should return to the current language button"
         )
 
-        XCUIRemote.shared.press(.right)
+        FirstFailureRemote.press(.right)
         waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         waitForButtonToGainFocus(
             englishLanguageButton,
@@ -532,7 +532,7 @@ extension FilterSummaryTVOSVisualUITests {
             failureMessage: "Moving right from the Chinese button, focus should reach the English button"
         )
 
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
 
         let englishFirstPolicySection = waitForSettingsControl(
@@ -554,7 +554,7 @@ extension FilterSummaryTVOSVisualUITests {
         )
 
         for _ in 0..<3 {
-            XCUIRemote.shared.press(.down)
+            FirstFailureRemote.press(.down)
             waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         }
 
@@ -579,7 +579,7 @@ extension FilterSummaryTVOSVisualUITests {
             failureMessage: "Settings home should reliably reach the 'Access Protection' entry with direction keys"
         )
 
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         let enablePinInput = waitForSettingsControl(
             app: app,
             identifier: "settings.pin.input.enable",
@@ -609,7 +609,7 @@ extension FilterSummaryTVOSVisualUITests {
             failureMessage:
                 "In light mode, the settings home should reliably reach the 'Server' entry with direction keys"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         XCTAssertTrue(
             waitForSettingsControlExists(
@@ -662,7 +662,7 @@ extension FilterSummaryTVOSVisualUITests {
             downStepsFromPlayback: FilterSummaryTVOSVisualUITestsSettingsNavigation.serverSteps,
             failureMessage: "In English, the settings home should reliably reach the 'Server' entry with direction keys"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let serverURLField = waitForSettingsControl(
             app: app,
@@ -705,7 +705,7 @@ extension FilterSummaryTVOSVisualUITests {
             failureMessage:
                 "In light mode, settings home should reliably reach the 'Cache Management' entry with direction keys"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         XCTAssertTrue(
             waitForSettingsControlExists(
@@ -730,7 +730,7 @@ extension FilterSummaryTVOSVisualUITests {
             failureMessage:
                 "In light mode, the settings home should reliably reach the 'About' entry with direction keys"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         XCTAssertTrue(
             waitForSettingsControlExists(
@@ -761,7 +761,7 @@ extension FilterSummaryTVOSVisualUITests {
             downStepsFromPlayback: FilterSummaryTVOSVisualUITestsSettingsNavigation.aboutSteps,
             failureMessage: "Settings home should reliably reach the 'About' entry with direction keys"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let openSourceLink = waitForSettingsControl(
             app: app,
@@ -798,28 +798,28 @@ extension FilterSummaryTVOSVisualUITests {
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "On the About page, default focus should land on the 'App Info' section"
         )
-        XCUIRemote.shared.press(.down)
+        FirstFailureRemote.press(.down)
         waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         waitForButtonToGainFocus(
             unofficialNoticeSection,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "Moving down from 'App Info', focus should reach the 'Unofficial Notice' section"
         )
-        XCUIRemote.shared.press(.down)
+        FirstFailureRemote.press(.down)
         waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         waitForButtonToGainFocus(
             feedbackSection,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "Moving down again, focus should reach the 'Feedback & Support' section"
         )
-        XCUIRemote.shared.press(.down)
+        FirstFailureRemote.press(.down)
         waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         waitForButtonToGainFocus(
             privacyPolicyLink,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "Moving down again, focus should reach the 'Privacy Policy' entry"
         )
-        XCUIRemote.shared.press(.down)
+        FirstFailureRemote.press(.down)
         waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         waitForButtonToGainFocus(
             openSourceLink,
@@ -829,7 +829,7 @@ extension FilterSummaryTVOSVisualUITests {
 
         waitForFocusVisualSettle()
         attachScreenshot(app: app, name: "tvos-settings-about-open-source-entry-dark")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         XCTAssertTrue(
             waitForSettingsControlExists(

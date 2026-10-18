@@ -19,7 +19,7 @@ extension FilterSummaryTVOSVisualUITests {
         )
         waitForFocusVisualSettle()
         attachScreenshot(app: playbackApp, name: "english-tvos-settings-root")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
             waitForSettingsControlExists(
                 app: playbackApp, identifier: "settings.playback.autoPlay.link",
@@ -28,7 +28,7 @@ extension FilterSummaryTVOSVisualUITests {
         )
         waitForFocusVisualSettle()
         attachScreenshot(app: playbackApp, name: "english-tvos-settings-playback")
-        playbackApp.terminate()
+        playbackApp.terminateForFailureEvidence()
 
         let accessProtectionApp = try launchIntoSlideShow(
             colorScheme: "light",
@@ -42,7 +42,7 @@ extension FilterSummaryTVOSVisualUITests {
             downStepsFromPlayback: FilterSummaryTVOSVisualUITestsSettingsNavigation.accessProtectionSteps,
             failureMessage: "In English, the settings home should be able to open Access Protection"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
             waitForElementWithLabelExists(
                 app: accessProtectionApp, label: "Access protection is disabled",
@@ -51,7 +51,7 @@ extension FilterSummaryTVOSVisualUITests {
         )
         waitForFocusVisualSettle()
         attachScreenshot(app: accessProtectionApp, name: "english-tvos-settings-access-protection")
-        accessProtectionApp.terminate()
+        accessProtectionApp.terminateForFailureEvidence()
 
         let serverApp = try launchIntoSlideShow(
             colorScheme: "light",
@@ -65,7 +65,7 @@ extension FilterSummaryTVOSVisualUITests {
             downStepsFromPlayback: FilterSummaryTVOSVisualUITestsSettingsNavigation.serverSteps,
             failureMessage: "In English, the settings home should be able to open Server"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
             waitForSettingsControlExists(
                 app: serverApp, identifier: "server.apiKey.help.button",
@@ -74,7 +74,7 @@ extension FilterSummaryTVOSVisualUITests {
         )
         waitForFocusVisualSettle()
         attachScreenshot(app: serverApp, name: "english-tvos-settings-server")
-        serverApp.terminate()
+        serverApp.terminateForFailureEvidence()
 
         let cacheApp = try launchIntoSlideShow(
             colorScheme: "light",
@@ -88,7 +88,7 @@ extension FilterSummaryTVOSVisualUITests {
             downStepsFromPlayback: FilterSummaryTVOSVisualUITestsSettingsNavigation.cacheSteps,
             failureMessage: "In English, the settings home should be able to open Cache Management"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
             waitForSettingsControlExists(
                 app: cacheApp, identifier: "settings.cache.disk.row",
@@ -115,7 +115,7 @@ extension FilterSummaryTVOSVisualUITests {
             downStepsFromPlayback: FilterSummaryTVOSVisualUITestsSettingsNavigation.aboutSteps,
             failureMessage: "In English, the settings home should be able to open About"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let appInfoSection = waitForSettingsControl(
             app: app,
@@ -144,7 +144,7 @@ extension FilterSummaryTVOSVisualUITests {
             failureMessage: "English About page should show the Privacy Policy entry"
         )
         for _ in 0..<3 {
-            XCUIRemote.shared.press(.down)
+            FirstFailureRemote.press(.down)
             waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         }
         waitForButtonToGainFocus(
@@ -153,7 +153,7 @@ extension FilterSummaryTVOSVisualUITests {
             failureMessage: "English About page should let focus move to Privacy Policy"
         )
         attachScreenshot(app: app, name: "english-tvos-settings-about-bottom")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let chineseLanguageButton = waitForSettingsControl(
             app: app,
@@ -190,7 +190,7 @@ extension FilterSummaryTVOSVisualUITests {
         )
         waitForFocusVisualSettle()
         attachScreenshot(app: app, name: "english-tvos-settings-privacy-policy")
-        app.terminate()
+        app.terminateForFailureEvidence()
 
         let openSourceApp = try launchIntoSlideShow(
             colorScheme: "light",
@@ -204,7 +204,7 @@ extension FilterSummaryTVOSVisualUITests {
             downStepsFromPlayback: FilterSummaryTVOSVisualUITestsSettingsNavigation.aboutSteps,
             failureMessage: "In English, the settings home should be able to open About again"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let openSourceAppInfoSection = waitForSettingsControl(
             app: openSourceApp,
@@ -241,35 +241,35 @@ extension FilterSummaryTVOSVisualUITests {
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "English About page default focus should land on App Information"
         )
-        XCUIRemote.shared.press(.down)
+        FirstFailureRemote.press(.down)
         waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         waitForButtonToGainFocus(
             openSourceUnofficialSection,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "English About page should let focus go from App Information to Unofficial Notice"
         )
-        XCUIRemote.shared.press(.down)
+        FirstFailureRemote.press(.down)
         waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         waitForButtonToGainFocus(
             openSourceFeedbackSection,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "English About page should let focus go from Unofficial Notice to Feedback & Support"
         )
-        XCUIRemote.shared.press(.down)
+        FirstFailureRemote.press(.down)
         waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         waitForButtonToGainFocus(
             openSourcePrivacyLink,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "English About page should let focus go from Feedback & Support to Privacy Policy"
         )
-        XCUIRemote.shared.press(.down)
+        FirstFailureRemote.press(.down)
         waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         waitForButtonToGainFocus(
             openSourceLink,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "English About page should let focus move to Open Source Licenses"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
             waitForElementWithLabelExists(
                 app: openSourceApp, label: "Open Source Licenses",
@@ -287,13 +287,13 @@ extension FilterSummaryTVOSVisualUITests {
 
         let startPlaybackButton = app.buttons["filterSummary.startPlayback.button"]
         XCTAssertTrue(
-            startPlaybackButton.waitForExistence(
+            startPlaybackButton.waitForFailureEvidence(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Filter summary page should show the 'Start Playback' button")
 
         if startPlaybackButton.hasFocus == false {
             for _ in 0..<8 {
-                XCUIRemote.shared.press(.down)
+                FirstFailureRemote.press(.down)
                 RunLoop.current.run(
                     until: Date().addingTimeInterval(FilterSummaryTVOSVisualUITestsWaitTiming.remotePressSettleSeconds))
                 if startPlaybackButton.hasFocus {
@@ -303,9 +303,10 @@ extension FilterSummaryTVOSVisualUITests {
         }
 
         XCTAssertTrue(startPlaybackButton.hasFocus, "Focus should move reliably to the 'Start Playback' button")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
-            app.buttons["slideshow.control.settings.button"].waitForExistence(
+            app.buttons["slideshow.control.settings.button"].waitForPublicElement(
+                "slideshow.control.settings.button",
                 timeout: TestWait.seconds(.infrastructure(18))),
             "Starting playback from filter summary should open playback with the control bar settings button"
         )
@@ -317,7 +318,7 @@ extension FilterSummaryTVOSVisualUITests {
             downStepsFromPlayback: FilterSummaryTVOSVisualUITestsSettingsNavigation.accessProtectionSteps,
             failureMessage: "Settings home should reliably reach the 'Access Protection' entry with direction keys"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         XCTAssertTrue(
             waitForSettingsControlExists(
@@ -339,7 +340,7 @@ extension FilterSummaryTVOSVisualUITests {
             downStepsFromPlayback: FilterSummaryTVOSVisualUITestsSettingsNavigation.accessProtectionSteps,
             failureMessage: "Settings home should reliably reach the 'Access Protection' entry with direction keys"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let enablePinInput = waitForSettingsControl(
             app: app,
@@ -365,26 +366,26 @@ extension FilterSummaryTVOSVisualUITests {
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "On the access protection page, default focus should land on the 'Set PIN' input entry"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         enterSixDigitsInPinSheetUsingDigitOne(app: app, operationName: "Set PIN")
 
-        XCUIRemote.shared.press(.down)
+        FirstFailureRemote.press(.down)
         waitForButtonToGainFocus(
             enablePinConfirmInput,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "After filling 'Set PIN', moving down should focus the 'Confirm PIN' input entry"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         enterSixDigitsInPinSheetUsingDigitOne(app: app, operationName: "Confirm PIN")
 
-        XCUIRemote.shared.press(.down)
+        FirstFailureRemote.press(.down)
         waitForButtonToGainFocus(
             enableProtectionButton,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage:
                 "After entering and confirming the PIN, moving down should focus the 'Enable Access Protection' button"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
             waitForSettingsControlExists(
                 app: app, identifier: "settings.pin.disable.button",
@@ -398,7 +399,7 @@ extension FilterSummaryTVOSVisualUITests {
 
         let pinCloseButton = app.buttons["pinEntry.close.button"]
         XCTAssertTrue(
-            pinCloseButton.waitForExistence(
+            pinCloseButton.waitForFailureEvidence(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds),
             "With access protection enabled, opening settings again should first show the PIN check sheet"
         )

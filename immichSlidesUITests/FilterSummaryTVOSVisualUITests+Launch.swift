@@ -97,7 +97,7 @@ extension FilterSummaryTVOSVisualUITests {
         for (key, value) in extraLaunchEnvironment {
             app.launchEnvironment[key] = value
         }
-        app.launch()
+        app.launchForFailureEvidence()
 
         let expectedOnboardingTitles = expectedLocalizedTextCandidates(
             languageCode: languageCode,
@@ -123,7 +123,8 @@ extension FilterSummaryTVOSVisualUITests {
 
         let continueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            continueButton.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.connectionTimeoutSeconds),
+            continueButton.waitForPublicElement(
+                "mode.continue.button", timeout: FilterSummaryTVOSVisualUITestsWaitTiming.connectionTimeoutSeconds),
             "After injecting the test server config, the app should go straight to the mode selection page")
         startFilteredFlowFromModeSelection(app: app)
 
@@ -135,7 +136,7 @@ extension FilterSummaryTVOSVisualUITests {
             )
         } else {
             XCTAssertTrue(
-                app.buttons["filterSummary.startPlayback.button"].waitForExistence(
+                app.buttons["filterSummary.startPlayback.button"].waitForFailureEvidence(
                     timeout: FilterSummaryTVOSVisualUITestsWaitTiming.screenTransitionTimeoutSeconds),
                 "Without visual prep, the filter summary page should still open and show the Start Playback button"
             )
@@ -144,9 +145,11 @@ extension FilterSummaryTVOSVisualUITests {
         let albumButton = app.buttons["filterSummary.album.button"]
         let peopleButton = app.buttons["filterSummary.person.button"]
         XCTAssertTrue(
-            albumButton.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.navigationTimeoutSeconds))
+            albumButton.waitForFailureEvidence(
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.navigationTimeoutSeconds))
         XCTAssertTrue(
-            peopleButton.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.navigationTimeoutSeconds))
+            peopleButton.waitForFailureEvidence(
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.navigationTimeoutSeconds))
         return app
     }
 
@@ -168,7 +171,7 @@ extension FilterSummaryTVOSVisualUITests {
         app.launchEnvironment["UI_TEST_SERVER_URL"] = config.url
         app.launchEnvironment["UI_TEST_API_KEY"] = config.apiKey
         app.launchEnvironment["UI_TEST_FORCE_MODE_SELECTION"] = "1"
-        app.launch()
+        app.launchForFailureEvidence()
 
         let expectedOnboardingTitles = expectedLocalizedTextCandidates(
             languageCode: languageCode,
@@ -189,7 +192,8 @@ extension FilterSummaryTVOSVisualUITests {
 
         let continueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            continueButton.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.connectionTimeoutSeconds),
+            continueButton.waitForPublicElement(
+                "mode.continue.button", timeout: FilterSummaryTVOSVisualUITestsWaitTiming.connectionTimeoutSeconds),
             "After injecting the test server config, the app should go straight to the mode selection page")
         return app
     }
@@ -197,21 +201,23 @@ extension FilterSummaryTVOSVisualUITests {
     func startFilteredFlowFromModeSelection(app: XCUIApplication) {
         let modeFilteredButton = app.buttons["mode.filtered.button"]
         XCTAssertTrue(
-            modeFilteredButton.waitForExistence(
+            modeFilteredButton.waitForPublicElement(
+                "mode.filtered.button",
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds))
-        XCUIRemote.shared.press(.right)
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.right)
+        FirstFailureRemote.press(.select)
 
         let modeContinueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            modeContinueButton.waitForExistence(
+            modeContinueButton.waitForPublicElement(
+                "mode.continue.button",
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds))
         XCTAssertTrue(modeContinueButton.isEnabled)
-        XCUIRemote.shared.press(.down)
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.down)
+        FirstFailureRemote.press(.select)
 
         XCTAssertTrue(
-            app.buttons["filterSummary.startPlayback.button"].waitForExistence(
+            app.buttons["filterSummary.startPlayback.button"].waitForFailureEvidence(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.screenTransitionTimeoutSeconds))
     }
 
@@ -240,7 +246,7 @@ extension FilterSummaryTVOSVisualUITests {
         )
         let startPlaybackButton = app.buttons["filterSummary.startPlayback.button"]
         XCTAssertTrue(
-            startPlaybackButton.waitForExistence(
+            startPlaybackButton.waitForFailureEvidence(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Filter summary page should show the 'Start Playback' button")
 
@@ -248,7 +254,7 @@ extension FilterSummaryTVOSVisualUITests {
             // tvOS UI tests cannot tap directly; move focus first, then press Select.
 
             for _ in 0..<8 {
-                XCUIRemote.shared.press(.down)
+                FirstFailureRemote.press(.down)
                 RunLoop.current.run(
                     until: Date().addingTimeInterval(FilterSummaryTVOSVisualUITestsWaitTiming.remotePressSettleSeconds))
                 if startPlaybackButton.hasFocus {
@@ -260,9 +266,10 @@ extension FilterSummaryTVOSVisualUITests {
         XCTAssertTrue(
             startPlaybackButton.hasFocus,
             "On the filter summary page, focus should be able to move to the 'Start Playback' button")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
-            app.buttons["slideshow.control.settings.button"].waitForExistence(
+            app.buttons["slideshow.control.settings.button"].waitForPublicElement(
+                "slideshow.control.settings.button",
                 timeout: TestWait.seconds(.infrastructure(18))),
             "After starting playback, the playback page should open and show the control bar"
         )
@@ -278,7 +285,8 @@ extension FilterSummaryTVOSVisualUITests {
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
         ensureTVOSSlideshowControlBarVisible(app: app)
         XCTAssertTrue(
-            playPauseButton.waitForExistence(
+            playPauseButton.waitForPublicElement(
+                "slideshow.control.playPause.button",
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.screenTransitionTimeoutSeconds),
             "The tvOS playback page should show the Play/Pause button")
         XCTAssertTrue(
@@ -309,7 +317,7 @@ extension FilterSummaryTVOSVisualUITests {
             let currentIndexValue = indexSnapshot.map { String(describing: $0.value ?? "") } ?? ""
             let currentDateLabel = currentTVOSExifDateLabel(app: app)
             moveFocusToTVOSSlideshowNextButton(app: app)
-            XCUIRemote.shared.press(.select)
+            FirstFailureRemote.press(.select)
 
             if !currentIndexValue.isEmpty {
                 XCTAssertTrue(
@@ -334,13 +342,14 @@ extension FilterSummaryTVOSVisualUITests {
 
     func waitForTVOSExifToneReady(app: XCUIApplication, timeout: TimeInterval) -> Bool {
         let readyFlag = app.descendants(matching: .any)["slideshow.exifForegroundTone.ready"]
-        return readyFlag.waitForExistence(timeout: timeout)
+        return readyFlag.waitForFailureEvidence(timeout: timeout)
     }
 
     func currentTVOSExifToneDebugLabel(app: XCUIApplication) -> String {
         let toneFlag = app.descendants(matching: .any)["slideshow.exifForegroundTone.flag"]
         XCTAssertTrue(
-            toneFlag.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeTimeoutSeconds),
+            toneFlag.waitForFailureEvidence(
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeTimeoutSeconds),
             "tvOS playback page should expose the current EXIF text color diagnostic flag")
 
         let candidates = [
@@ -379,14 +388,16 @@ extension FilterSummaryTVOSVisualUITests {
         ensureTVOSSlideshowControlBarVisible(app: app)
         let nextButton = app.buttons["slideshow.control.next.button"]
         XCTAssertTrue(
-            nextButton.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeTimeoutSeconds),
+            nextButton.waitForPublicElement(
+                "slideshow.control.next.button",
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeTimeoutSeconds),
             "Playback page should show the next button")
 
         for _ in 0..<4 {
             if nextButton.hasFocus || accessibilityValueString(for: nextButton).contains("focused") {
                 return
             }
-            XCUIRemote.shared.press(.right)
+            FirstFailureRemote.press(.right)
             RunLoop.current.run(
                 until: Date().addingTimeInterval(FilterSummaryTVOSVisualUITestsWaitTiming.focusSettleSeconds))
         }
@@ -402,29 +413,32 @@ extension FilterSummaryTVOSVisualUITests {
     func enterRandomPlaybackFromModeSelection(app: XCUIApplication) throws {
         let randomButton = app.buttons["mode.random.button"]
         XCTAssertTrue(
-            randomButton.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.connectionTimeoutSeconds),
+            randomButton.waitForPublicElement(
+                "mode.random.button", timeout: FilterSummaryTVOSVisualUITestsWaitTiming.connectionTimeoutSeconds),
             "After injecting the public fixture, the app must reach the mode selection page")
         if randomButton.hasFocus == false {
-            XCUIRemote.shared.press(.left)
+            FirstFailureRemote.press(.left)
             RunLoop.current.run(
                 until: Date().addingTimeInterval(FilterSummaryTVOSVisualUITestsWaitTiming.focusSettleSeconds))
         }
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let continueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            continueButton.waitForExistence(
+            continueButton.waitForPublicElement(
+                "mode.continue.button",
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.elementAppearanceTimeoutSeconds),
             "After choosing random playback, the Continue button must be shown")
         XCTAssertTrue(continueButton.isEnabled, "After choosing random playback, the Continue button must be enabled")
         for _ in 0..<2 where continueButton.hasFocus == false {
-            XCUIRemote.shared.press(.down)
+            FirstFailureRemote.press(.down)
             RunLoop.current.run(
                 until: Date().addingTimeInterval(FilterSummaryTVOSVisualUITestsWaitTiming.focusSettleSeconds))
         }
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
-            app.buttons["slideshow.control.playPause.button"].waitForExistence(
+            app.buttons["slideshow.control.playPause.button"].waitForPublicElement(
+                "slideshow.control.playPause.button",
                 timeout: TestWait.seconds(.infrastructure(30))),
             "The control bar must appear after random playback starts"
         )
@@ -441,7 +455,9 @@ extension FilterSummaryTVOSVisualUITests {
     ) throws {
         let settingsButton = app.buttons["slideshow.control.settings.button"]
         XCTAssertTrue(
-            settingsButton.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
+            settingsButton.waitForPublicElement(
+                "slideshow.control.settings.button",
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
             "\(scenarioName): the control bar should be visible after entering the playback page",
             file: file,
             line: line
@@ -457,7 +473,8 @@ extension FilterSummaryTVOSVisualUITests {
         )
         let wakeReceiver = app.descendants(matching: .any)["slideshow.hiddenWakeReceiver"]
         XCTAssertTrue(
-            wakeReceiver.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.stateChangeDeadlineSeconds)
+            wakeReceiver.waitForFailureEvidence(
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.stateChangeDeadlineSeconds)
                 || settingsButton.exists == false,
             "\(scenarioName): the wake receiver should appear after hiding",
             file: file,
@@ -469,7 +486,7 @@ extension FilterSummaryTVOSVisualUITests {
                 until: Date().addingTimeInterval(FilterSummaryTVOSVisualUITestsWaitTiming.focusPollSeconds))
         }
 
-        let beforePNG = app.screenshot().pngRepresentation
+        let beforePNG = app.screenshotForFailureEvidence().pngRepresentation
         let beforeAttachment = XCTAttachment(data: beforePNG, uniformTypeIdentifier: "public.png")
         beforeAttachment.name = "\(screenshotName)-before"
         beforeAttachment.lifetime = .keepAlways
@@ -478,13 +495,14 @@ extension FilterSummaryTVOSVisualUITests {
         trigger(app)
 
         XCTAssertTrue(
-            settingsButton.waitForExistence(
+            settingsButton.waitForPublicElement(
+                "slideshow.control.settings.button",
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.elementAppearanceDeadlineSeconds),
             "\(scenarioName): the hidden control bar should wake successfully",
             file: file,
             line: line
         )
-        let afterPNG = app.screenshot().pngRepresentation
+        let afterPNG = app.screenshotForFailureEvidence().pngRepresentation
         let afterAttachment = XCTAttachment(data: afterPNG, uniformTypeIdentifier: "public.png")
         afterAttachment.name = "\(screenshotName)-after"
         afterAttachment.lifetime = .keepAlways
@@ -497,12 +515,14 @@ extension FilterSummaryTVOSVisualUITests {
         ensureTVOSSlideshowControlBarVisible(app: app)
         let settingsButton = app.buttons["slideshow.control.settings.button"]
         XCTAssertTrue(
-            settingsButton.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
+            settingsButton.waitForPublicElement(
+                "slideshow.control.settings.button",
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
             "Playback page should show the settings button")
 
         for _ in 0..<5 {
             if settingsButton.hasFocus { break }
-            XCUIRemote.shared.press(.left)
+            FirstFailureRemote.press(.left)
             RunLoop.current.run(
                 until: Date().addingTimeInterval(FilterSummaryTVOSVisualUITestsWaitTiming.remotePressSettleSeconds))
         }
@@ -512,7 +532,7 @@ extension FilterSummaryTVOSVisualUITests {
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeDeadlineSeconds,
             failureMessage: "Before opening settings, focus should return reliably to the leftmost settings button"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
             waitForAnySettingsSurface(
                 app: app, timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds),
@@ -525,7 +545,7 @@ extension FilterSummaryTVOSVisualUITests {
             if app.buttons["slideshow.control.settings.button"].exists {
                 return
             }
-            XCUIRemote.shared.press(.menu)
+            FirstFailureRemote.press(.menu)
             RunLoop.current.run(
                 until: Date().addingTimeInterval(FilterSummaryTVOSVisualUITestsWaitTiming.navigationFocusSettleSeconds))
         }
@@ -535,7 +555,7 @@ extension FilterSummaryTVOSVisualUITests {
                 if app.buttons["slideshow.control.settings.button"].exists {
                     return true
                 }
-                XCUIRemote.shared.press(.down)
+                FirstFailureRemote.press(.down)
                 RunLoop.current.run(
                     until: Date().addingTimeInterval(FilterSummaryTVOSVisualUITestsWaitTiming.focusSettleSeconds))
                 return app.buttons["slideshow.control.settings.button"].exists

@@ -7,6 +7,16 @@ private enum SwitchGeometry {
 // P2-03 Reduce Motion: toggle "Reduce Motion" through the real system settings and record both display modes in
 // separate video segments; only a person watching the recording decides whether there is motion.
 final class ReduceMotionUITests: XCTestCase {
+    override func invokeTest() {
+        FirstFailureContext.reset()
+        super.invokeTest()
+    }
+
+    override func record(_ issue: XCTIssue) {
+        FirstFailureEvidence.record(self, issue: issue)
+        super.record(issue)
+    }
+
     override func setUpWithError() throws {
         continueAfterFailure = false
     }
@@ -14,12 +24,12 @@ final class ReduceMotionUITests: XCTestCase {
     #if os(iOS)
     @MainActor
     func testSystemReduceMotionIOS() throws {
-        XCUIDevice.shared.orientation = .portrait
+        FirstFailureOrientation.set(.portrait)
         let input = try requireStrictE2EInput()
         let evidence = Evidence()
         let restore = try recordOriginalAndDisable(IOSReduceMotionSetting(), evidence: evidence)
         let app = try launchStrictE2EApp()
-        defer { app.terminate() }
+        defer { app.terminateForFailureEvidence() }
         let driver = IOSDriver(app: app)
         driver.launchToPlayback(input: input)
         try runMotionSegments(driver, system: IOSReduceMotionSetting(), evidence: evidence, restore: restore)
@@ -38,7 +48,7 @@ final class ReduceMotionUITests: XCTestCase {
         let evidence = Evidence()
         let restore = try recordOriginalAndDisable(TVReduceMotionSetting(), evidence: evidence)
         let app = try launchStrictE2EApp()
-        defer { app.terminate() }
+        defer { app.terminateForFailureEvidence() }
         let driver = TVDriver(app: app)
         driver.launchToPlayback(input: input)
         try runMotionSegments(driver, system: TVReduceMotionSetting(), evidence: evidence, restore: restore)
@@ -123,7 +133,7 @@ final class ReduceMotionUITests: XCTestCase {
 
     @MainActor
     private func bringToForeground(_ app: XCUIApplication) throws {
-        app.activate()
+        app.activateForFailureEvidence()
         guard app.wait(for: .runningForeground, timeout: MotionTiming.foregroundTimeout) else {
             throw Failure("The app did not return to the foreground after leaving system settings.")
         }
@@ -230,7 +240,7 @@ private enum ToggleValue {
     // error is thrown; use parse while polling.
     @MainActor
     static func failure(_ message: String, in settings: XCUIApplication) -> Failure {
-        let png = settings.screenshot().pngRepresentation
+        let png = settings.screenshotForFailureEvidence().pngRepresentation
         let tree = settings.debugDescription
         XCTContext.runActivity(named: "System settings failure evidence") { activity in
             let screen = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
@@ -274,9 +284,10 @@ private struct IOSReduceMotionSetting: ReduceMotionSystemSetting {
         // then fall back to the element center.
         let taps: [() -> Void] = [
             {
-                toggle.coordinate(withNormalizedOffset: CGVector(dx: SwitchGeometry.trailingTapFraction, dy: 0.5)).tap()
+                toggle.coordinate(withNormalizedOffset: CGVector(dx: SwitchGeometry.trailingTapFraction, dy: 0.5))
+                    .tapForFailureEvidence()
             },
-            { toggle.tap() }
+            { toggle.tapForFailureEvidence() }
         ]
         for tap in taps where ToggleValue.parse(toggle.value) != isOn {
             tap()
@@ -289,27 +300,27 @@ private struct IOSReduceMotionSetting: ReduceMotionSystemSetting {
     }
 
     func screenshot() -> Data {
-        settings.screenshot().pngRepresentation
+        settings.screenshotForFailureEvidence().pngRepresentation
     }
 
     // Settings may reopen on the last subpage, so step forward through whichever entry is visible. Wait for the
     // next level only after tapping an entry.
     private func openToggle() throws -> XCUIElement {
-        settings.terminate()
-        settings.launch()
+        settings.terminateForFailureEvidence()
+        settings.launchForFailureEvidence()
         let toggle = settings.switches.matching(Self.toggleMatch).firstMatch
         let motion = entry(Self.motionEntry)
         let accessibility = entry(Self.accessibilityEntry)
         for _ in 0..<MotionTiming.settingsNavigationSteps {
             if toggle.exists { return toggle }
             if motion.exists {
-                motion.tap()
-                _ = toggle.waitForExistence(timeout: MotionTiming.settingsPageTimeout)
+                motion.tapForFailureEvidence()
+                _ = toggle.waitForFailureEvidence(timeout: MotionTiming.settingsPageTimeout)
             } else if accessibility.exists {
-                accessibility.tap()
-                _ = motion.waitForExistence(timeout: MotionTiming.settingsPageTimeout)
+                accessibility.tapForFailureEvidence()
+                _ = motion.waitForFailureEvidence(timeout: MotionTiming.settingsPageTimeout)
             } else {
-                settings.swipeUp()
+                settings.swipeUpForFailureEvidence()
             }
         }
         guard toggle.exists else {
@@ -367,14 +378,14 @@ private struct TVReduceMotionSetting: ReduceMotionSystemSetting {
     }
 
     func screenshot() -> Data {
-        settings.screenshot().pngRepresentation
+        settings.screenshotForFailureEvidence().pngRepresentation
     }
 
     // Off-screen rows may not exist yet, so move down one row when no entry is found. Wait for the target only
     // after entering the next level.
     private func openToggle() throws -> XCUIElement {
-        settings.terminate()
-        settings.launch()
+        settings.terminateForFailureEvidence()
+        settings.launchForFailureEvidence()
         let toggle = row(Self.toggleLabels)
         let motion = row(Self.motionLabels)
         let accessibility = row(Self.accessibilityLabels)
@@ -383,11 +394,11 @@ private struct TVReduceMotionSetting: ReduceMotionSystemSetting {
             if motion.exists {
                 try focus(motion)
                 press(.select)
-                _ = toggle.waitForExistence(timeout: MotionTiming.settingsPageTimeout)
+                _ = toggle.waitForFailureEvidence(timeout: MotionTiming.settingsPageTimeout)
             } else if accessibility.exists {
                 try focus(accessibility)
                 press(.select)
-                _ = motion.waitForExistence(timeout: MotionTiming.settingsPageTimeout)
+                _ = motion.waitForFailureEvidence(timeout: MotionTiming.settingsPageTimeout)
             } else {
                 press(.down)
             }
@@ -434,7 +445,7 @@ private struct TVReduceMotionSetting: ReduceMotionSystemSetting {
     }
 
     private func press(_ button: XCUIRemote.Button) {
-        XCUIRemote.shared.press(button)
+        FirstFailureRemote.press(button)
         RunLoop.current.run(until: Date().addingTimeInterval(Timing.focusSettle))
     }
 }

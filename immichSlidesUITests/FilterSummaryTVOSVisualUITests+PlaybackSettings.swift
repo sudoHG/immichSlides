@@ -9,7 +9,8 @@ extension FilterSummaryTVOSVisualUITests {
 
         let playbackItem = app.buttons["settings.item.playback"]
         XCTAssertTrue(
-            playbackItem.waitForExistence(
+            playbackItem.waitForPublicElement(
+                "settings.item.playback",
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "After opening settings, the home page should show the 'Playback Settings' entry")
 
@@ -30,7 +31,8 @@ extension FilterSummaryTVOSVisualUITests {
 
         let playbackItem = app.buttons["settings.item.playback"]
         XCTAssertTrue(
-            playbackItem.waitForExistence(
+            playbackItem.waitForPublicElement(
+                "settings.item.playback",
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Settings home should show the 'Playback Settings' entry")
         waitForSettingsHomeItemFocus(
@@ -38,7 +40,7 @@ extension FilterSummaryTVOSVisualUITests {
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "Settings home default focus should land on 'Playback Settings'"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let autoPlayLink = waitForSettingsControl(
             app: app,
@@ -54,7 +56,7 @@ extension FilterSummaryTVOSVisualUITests {
                 "After opening 'Playback Settings', default focus should land on the first actionable item, 'Autoplay'"
         )
 
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let autoPlayOnButton = waitForSettingsControl(
             app: app,
@@ -78,10 +80,10 @@ extension FilterSummaryTVOSVisualUITests {
 
         let isOnOptionSelected = accessibilityValueString(for: autoPlayOnButton).contains("已选中")
         if isOnOptionSelected {
-            XCUIRemote.shared.press(.down)
+            FirstFailureRemote.press(.down)
             waitForFocusVisualSettle()
         }
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         XCTAssertTrue(
             waitUntil(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds) {
@@ -109,7 +111,8 @@ extension FilterSummaryTVOSVisualUITests {
 
         let playbackItem = app.buttons["settings.item.playback"]
         XCTAssertTrue(
-            playbackItem.waitForExistence(
+            playbackItem.waitForPublicElement(
+                "settings.item.playback",
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Settings home should show the 'Playback Settings' entry")
         waitForSettingsHomeItemFocus(
@@ -117,7 +120,7 @@ extension FilterSummaryTVOSVisualUITests {
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "Settings home default focus should land on 'Playback Settings'"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let autoPlayLink = waitForSettingsControl(
             app: app,
@@ -150,8 +153,8 @@ extension FilterSummaryTVOSVisualUITests {
             failureMessage: "After opening 'Playback Settings', default focus should land on the 'Autoplay' entry"
         )
 
-        XCUIRemote.shared.press(.down)
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.down)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
             waitUntil(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds) {
                 app.buttons["settings.playback.interval.5.button"].exists
@@ -179,7 +182,8 @@ extension FilterSummaryTVOSVisualUITests {
 
         let playbackItem = app.buttons["settings.item.playback"]
         XCTAssertTrue(
-            playbackItem.waitForExistence(
+            playbackItem.waitForPublicElement(
+                "settings.item.playback",
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Settings home should show the 'Playback Settings' entry")
         waitForSettingsHomeItemFocus(
@@ -187,7 +191,7 @@ extension FilterSummaryTVOSVisualUITests {
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "Settings home default focus should land on 'Playback Settings'"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let autoPlayLink = waitForSettingsControl(
             app: app,
@@ -210,11 +214,11 @@ extension FilterSummaryTVOSVisualUITests {
         )
 
         for _ in 0..<8 where !filterConfigButton.hasFocus {
-            XCUIRemote.shared.press(.down)
+            FirstFailureRemote.press(.down)
             waitForFocusVisualSettle()
         }
         XCTAssertTrue(filterConfigButton.hasFocus, "Edit Filters must get focus first")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         XCTAssertTrue(
             waitUntil(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.navigationDeadlineSeconds) {
@@ -245,11 +249,12 @@ extension FilterSummaryTVOSVisualUITests {
         let accessProtectionItem = app.buttons["settings.item.accessProtection"]
 
         XCTAssertTrue(
-            playbackItem.waitForExistence(
+            playbackItem.waitForPublicElement(
+                "settings.item.playback",
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "After opening settings, the home page should show the 'Playback Settings' entry")
         XCTAssertTrue(
-            accessProtectionItem.waitForExistence(
+            accessProtectionItem.waitForFailureEvidence(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "After opening settings, the home page should show the 'Access Protection' entry")
 
@@ -259,14 +264,14 @@ extension FilterSummaryTVOSVisualUITests {
             failureMessage: "After opening settings, default focus should land on 'Playback Settings'"
         )
 
-        XCUIRemote.shared.press(.down)
+        FirstFailureRemote.press(.down)
         waitForSettingsHomeItemFocus(
             button: accessProtectionItem,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "After moving down once on the home page, focus should reach 'Access Protection'"
         )
 
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
             waitForSettingsControlExists(
                 app: app,
@@ -289,11 +294,12 @@ extension FilterSummaryTVOSVisualUITests {
         let accessProtectionItem = app.buttons["settings.item.accessProtection"]
 
         XCTAssertTrue(
-            playbackItem.waitForExistence(
+            playbackItem.waitForPublicElement(
+                "settings.item.playback",
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Settings home page should show the 'Playback Settings' entry")
         XCTAssertTrue(
-            accessProtectionItem.waitForExistence(
+            accessProtectionItem.waitForFailureEvidence(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Settings home page should show the 'Access Protection' entry")
 
@@ -303,13 +309,13 @@ extension FilterSummaryTVOSVisualUITests {
             failureMessage: "After opening settings, default focus should land reliably on 'Playback Settings'"
         )
 
-        XCUIRemote.shared.press(.down)
+        FirstFailureRemote.press(.down)
         waitForSettingsHomeItemFocus(
             button: accessProtectionItem,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "Pressing Down on 'Playback Settings' should move focus to 'Access Protection'"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         let enablePinInput = waitForSettingsControl(
             app: app,
             identifier: "settings.pin.input.enable",

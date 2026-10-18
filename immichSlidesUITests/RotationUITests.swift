@@ -3,6 +3,16 @@ import XCTest
 // P2-04 iPad landscape / portrait multi-photo layout, P2-05 portrait -> landscape -> portrait during playback.
 // Evidence is captured only in stable states; a human judges layout, cropping and safe area from the PNGs / recording.
 final class RotationUITests: XCTestCase {
+    override func invokeTest() {
+        FirstFailureContext.reset()
+        super.invokeTest()
+    }
+
+    override func record(_ issue: XCTIssue) {
+        FirstFailureEvidence.record(self, issue: issue)
+        super.record(issue)
+    }
+
     override func setUpWithError() throws {
         continueAfterFailure = false
     }
@@ -12,10 +22,10 @@ final class RotationUITests: XCTestCase {
     // first capture; the contract requires landscape first and portrait second.
     @MainActor
     func testSmartFillLayoutBothOrientationsIPad() throws {
-        XCUIDevice.shared.orientation = .portrait
+        FirstFailureOrientation.set(.portrait)
         let input = try requireStrictE2EInput()
         let app = try launchStrictE2EApp()
-        defer { app.terminate() }
+        defer { app.terminateForFailureEvidence() }
         let driver = IOSDriver(app: app)
         let evidence = Evidence()
         driver.launchToPlayback(input: input)
@@ -37,10 +47,10 @@ final class RotationUITests: XCTestCase {
     // earliest natural switch, so any switch in the recording can be attributed to the rotation.
     @MainActor
     func testRotationDuringPlaybackIOS() throws {
-        XCUIDevice.shared.orientation = .portrait
+        FirstFailureOrientation.set(.portrait)
         let input = try requireStrictE2EInput()
         let app = try launchStrictE2EApp()
-        defer { app.terminate() }
+        defer { app.terminateForFailureEvidence() }
         let driver = IOSDriver(app: app)
         let evidence = Evidence()
         driver.launchToPlayback(input: input)
@@ -51,7 +61,7 @@ final class RotationUITests: XCTestCase {
             return observedMark?.isEmpty == false
         }
         guard let sceneBeforeNext = observedMark, !sceneBeforeNext.isEmpty else {
-            try evidence.reject("rotation-scene-before-next", png: app.screenshot().pngRepresentation)
+            try evidence.reject("rotation-scene-before-next", png: app.screenshotForFailureEvidence().pngRepresentation)
             throw Failure(
                 "Could not recognize a public photo on screen within \(Int(Timing.multiPhotoWait)) seconds before next, so the photo change cannot be confirmed."
             )
@@ -80,7 +90,7 @@ final class RotationUITests: XCTestCase {
             return playPauseValue == "pause"
         }
         guard isPlaying else {
-            try evidence.reject("rotation-play-state", png: app.screenshot().pngRepresentation)
+            try evidence.reject("rotation-play-state", png: app.screenshotForFailureEvidence().pngRepresentation)
             throw Failure(
                 "Before rotating, the play button value must be pause (playing), but it was '\(playPauseValue.isEmpty ? "empty" : playPauseValue)'."
             )
@@ -115,9 +125,9 @@ final class RotationUITests: XCTestCase {
                 "Self-check screenshots are written only to the StrictE2E evidence directory; runs only when the StrictE2E plan provides one."
             )
         }
-        XCUIDevice.shared.orientation = .portrait
+        FirstFailureOrientation.set(.portrait)
         let app = try launchStrictE2EApp()
-        defer { app.terminate() }
+        defer { app.terminateForFailureEvidence() }
         let targets: [(name: String, device: UIDeviceOrientation, orientation: StepOrientation)] = [
             ("selfcheck-orientation-portrait", .portrait, .portrait),
             ("selfcheck-orientation-landscape", .landscapeLeft, .landscape),
@@ -142,7 +152,8 @@ final class RotationUITests: XCTestCase {
                 "seconds_to_stable": frame.capturedAt.timeIntervalSince(startedAt),
                 "window": "\(Int(app.frame.width))x\(Int(app.frame.height))",
                 "pixels": "\(Int(pixels.width))x\(Int(pixels.height))",
-                "screen_image_orientation": XCUIScreen.main.screenshot().image.imageOrientation.rawValue,
+                "screen_image_orientation": XCUIScreen.main.screenshotForFailureEvidence().image.imageOrientation
+                    .rawValue,
                 "detail": frame.detail
             ]
         }
@@ -157,7 +168,7 @@ final class RotationUITests: XCTestCase {
         throws -> Date
     {
         let deadline = Date().addingTimeInterval(Timing.stableFrameTimeout)
-        XCUIDevice.shared.orientation = device
+        FirstFailureOrientation.set(device)
         guard Wait.until(timeout: Timing.stableFrameTimeout, { orientation.matches(app.frame.size) }) else {
             throw Failure(
                 "Orientation API: after setting \(orientation.rawValue), \(Int(Timing.stableFrameTimeout)) seconds later the window is still \(app.frame.size)."

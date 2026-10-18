@@ -34,19 +34,23 @@ extension FilterSummaryIOSVisualUITests {
         let saveButton = app.buttons["firstboot.saveConfig.button"]
 
         XCTAssertTrue(
-            serverURLField.waitForExistence(
+            serverURLField.waitForPublicElement(
+                "firstboot.serverURL.field",
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Server settings page should show the server URL field")
         XCTAssertTrue(
-            apiKeyField.waitForExistence(
+            apiKeyField.waitForPublicElement(
+                "firstboot.apiKey.field",
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Server settings page should show the API Key field")
         XCTAssertTrue(
-            testButton.waitForExistence(
+            testButton.waitForPublicElement(
+                "firstboot.testConnection.button",
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Server settings page should show the 'Test Connection' button")
         XCTAssertTrue(
-            saveButton.waitForExistence(
+            saveButton.waitForPublicElement(
+                "firstboot.saveConfig.button",
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Server settings page should show the 'Save Settings' button")
 
@@ -70,19 +74,23 @@ extension FilterSummaryIOSVisualUITests {
         let saveButton = app.buttons["firstboot.saveConfig.button"]
 
         XCTAssertTrue(
-            serverURLField.waitForExistence(
+            serverURLField.waitForPublicElement(
+                "firstboot.serverURL.field",
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Server settings page should show the server URL field")
         XCTAssertTrue(
-            apiKeyField.waitForExistence(
+            apiKeyField.waitForPublicElement(
+                "firstboot.apiKey.field",
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Server settings page should show the API Key field")
         XCTAssertTrue(
-            testButton.waitForExistence(
+            testButton.waitForPublicElement(
+                "firstboot.testConnection.button",
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Server settings page should show the 'Test Connection' button")
         XCTAssertTrue(
-            saveButton.waitForExistence(
+            saveButton.waitForPublicElement(
+                "firstboot.saveConfig.button",
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Server settings page should show the 'Save Settings' button")
 
@@ -105,13 +113,13 @@ extension FilterSummaryIOSVisualUITests {
 
         let playbackModePicker = app.segmentedControls["settings.playback.mode.picker"]
         XCTAssertTrue(
-            playbackModePicker.waitForExistence(
+            playbackModePicker.waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Playback settings page should show the default playback mode segmented picker")
 
         let filteredModeSegment = playbackModePicker.buttons.element(boundBy: 1)
         XCTAssertTrue(
-            filteredModeSegment.waitForExistence(
+            filteredModeSegment.waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.elementAppearanceTimeoutSeconds),
             "Playback settings page should show the 'Filtered Playback' option")
         tapElement(filteredModeSegment)
@@ -148,7 +156,8 @@ extension FilterSummaryIOSVisualUITests {
 
         let serverURLField = app.textFields["firstboot.serverURL.field"]
         XCTAssertTrue(
-            serverURLField.waitForExistence(
+            serverURLField.waitForPublicElement(
+                "firstboot.serverURL.field",
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Server settings page should show the server URL field")
         tapElement(serverURLField)
@@ -156,7 +165,8 @@ extension FilterSummaryIOSVisualUITests {
 
         let testConnectionButton = app.buttons["firstboot.testConnection.button"]
         XCTAssertTrue(
-            testConnectionButton.waitForExistence(
+            testConnectionButton.waitForPublicElement(
+                "firstboot.testConnection.button",
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Server settings page should show the test connection button")
         dismissKeyboardIfNeeded(app: app)
@@ -214,7 +224,8 @@ extension FilterSummaryIOSVisualUITests {
 
         let clearDiskButton = app.buttons["settings.cache.clearDisk.button"]
         XCTAssertTrue(
-            clearDiskButton.waitForExistence(
+            clearDiskButton.waitForPublicElement(
+                "settings.cache.clearDisk.button",
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Cache management page should show the clear disk cache button")
         tapElement(clearDiskButton)
@@ -246,12 +257,13 @@ extension FilterSummaryIOSVisualUITests {
 
         let clearDiskButton = app.buttons["settings.cache.clearDisk.button"]
         XCTAssertTrue(
-            clearDiskButton.waitForExistence(
+            clearDiskButton.waitForPublicElement(
+                "settings.cache.clearDisk.button",
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds))
         tapElement(clearDiskButton)
         // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
         XCTAssertTrue(
-            app.alerts.firstMatch.waitForExistence(
+            app.alerts.firstMatch.waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds))
 
         // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
@@ -319,7 +331,7 @@ extension FilterSummaryIOSVisualUITests {
     @MainActor
     func testIOSSettingsAboutPageScreenshotLandscape() throws {
         defer {
-            XCUIDevice.shared.orientation = .portrait
+            FirstFailureOrientation.set(.portrait)
         }
 
         let app = try launchIntoSlideShow(colorScheme: "light")
@@ -328,10 +340,10 @@ extension FilterSummaryIOSVisualUITests {
         openSettingsAboutPage(app: app)
         assertSettingsAboutPageLoaded(app: app)
 
-        XCUIDevice.shared.orientation = .landscapeLeft
+        FirstFailureOrientation.set(.landscapeLeft)
         XCTAssertTrue(
             // ui-label-lookup: This is a translated About copy assertion.
-            anyElement(app: app, withLabel: "应用名称").waitForExistence(
+            anyElement(app: app, withLabel: "应用名称").waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "In landscape, the About page should still show the app name"
         )
@@ -374,7 +386,7 @@ extension FilterSummaryIOSVisualUITests {
             .matching(identifier: "settings.about.opensource.link")
             .firstMatch
         XCTAssertTrue(
-            openSourceLink.waitForExistence(
+            openSourceLink.waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "About page should show the 'Open Source Licenses' entry")
 
@@ -382,22 +394,23 @@ extension FilterSummaryIOSVisualUITests {
             app: app,
             name: "ios-settings-about-open-source-entry-light-\(currentDeviceTag())"
         )
-        openSourceLink.tap()
+        openSourceLink.tapForFailureEvidence()
 
         XCTAssertTrue(
             app.descendants(matching: .any)
                 .matching(identifier: "settings.about.opensource.page")
                 .firstMatch
-                .waitForExistence(timeout: FilterSummaryIOSVisualUITestsWaitTiming.shortInteractionTimeoutSeconds),
+                .waitForFailureEvidence(
+                    timeout: FilterSummaryIOSVisualUITestsWaitTiming.shortInteractionTimeoutSeconds),
             "Tapping should open the open source licenses detail page"
         )
         XCTAssertTrue(
-            anyElement(app: app, withLabel: "SDWebImage").waitForExistence(
+            anyElement(app: app, withLabel: "SDWebImage").waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Open source licenses page should show the SDWebImage card"
         )
         XCTAssertTrue(
-            anyElement(app: app, withLabel: "SDWebImageSwiftUI").waitForExistence(
+            anyElement(app: app, withLabel: "SDWebImageSwiftUI").waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Open source licenses page should show the SDWebImageSwiftUI card"
         )
@@ -450,7 +463,7 @@ extension FilterSummaryIOSVisualUITests {
             .matching(identifier: "settings.about.opensource.link")
             .firstMatch
         XCTAssertTrue(
-            openSourceLink.waitForExistence(
+            openSourceLink.waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "About page should show the 'Open Source Licenses' entry")
         tapElement(openSourceLink)
@@ -459,14 +472,16 @@ extension FilterSummaryIOSVisualUITests {
             app.descendants(matching: .any)
                 .matching(identifier: "settings.about.opensource.page")
                 .firstMatch
-                .waitForExistence(timeout: FilterSummaryIOSVisualUITestsWaitTiming.shortInteractionTimeoutSeconds),
+                .waitForFailureEvidence(
+                    timeout: FilterSummaryIOSVisualUITestsWaitTiming.shortInteractionTimeoutSeconds),
             "Tapping should open the open source licenses detail page"
         )
 
         openSettingsSection(app: app, sectionID: "settings.item.server")
 
         XCTAssertTrue(
-            app.textFields["firstboot.serverURL.field"].waitForExistence(
+            app.textFields["firstboot.serverURL.field"].waitForPublicElement(
+                "firstboot.serverURL.field",
                 timeout: TestWait.seconds(.product(8))),
             "After tapping 'Server' in the left sidebar from the open source licenses page, the right detail pane should switch to server settings immediately"
         )

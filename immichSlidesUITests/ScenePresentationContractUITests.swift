@@ -21,6 +21,16 @@ private enum WaitTiming {
 
 #if os(iOS) || os(tvOS)
 final class ScenePresentationContractUITests: XCTestCase {
+    override func invokeTest() {
+        FirstFailureContext.reset()
+        super.invokeTest()
+    }
+
+    override func record(_ issue: XCTIssue) {
+        FirstFailureEvidence.record(self, issue: issue)
+        super.record(issue)
+    }
+
     private struct ContractOutcomes: Codable {
         let didRenderReadyScene: Bool
         let didPerformNext: Bool
@@ -188,8 +198,8 @@ final class ScenePresentationContractUITests: XCTestCase {
     private func runImageFailureRecovery() throws {
         let input = try requireStrictE2EInput()
         let app = try launchStrictE2EApp()
-        defer { app.terminate() }
-        XCUIDevice.shared.orientation = .portrait
+        defer { app.terminateForFailureEvidence() }
+        FirstFailureOrientation.set(.portrait)
         let driver = IOSDriver(app: app)
         driver.launchToPlayback(input: input)
         let evidence = Evidence()
@@ -203,7 +213,7 @@ final class ScenePresentationContractUITests: XCTestCase {
         _ = try imageResponse(input: input, mode: "http", assetID: failedAssetID)
         // A cold launch removes memory-cache hits while preserving the real saved playback settings.
         try driver.clearDiskCache(onCachePage: {})
-        app.terminate()
+        app.terminateForFailureEvidence()
         // Setting the mode again zeroes the counter, so it counts only the relaunched session.
         _ = try imageResponse(input: input, mode: "http", assetID: failedAssetID)
         try relaunchStrictE2EApp(app)
@@ -213,7 +223,7 @@ final class ScenePresentationContractUITests: XCTestCase {
         {
             guard Wait.until(timeout: captionTimeout, { driver.visibleOverlayText().contains(failedExifModel) })
             else { return }
-            try evidence.reject("singlePhoto-recovered", png: app.screenshot().pngRepresentation)
+            try evidence.reject("singlePhoto-recovered", png: app.screenshotForFailureEvidence().pngRepresentation)
             throw Failure("singlePhoto-recovered shows the failed target's EXIF caption \(failedExifModel)")
         }
         // The caption fails the wait for the first stable photo and the caption delay after it.
@@ -273,7 +283,7 @@ final class ScenePresentationContractUITests: XCTestCase {
         _ name: String, settledOn mark: String?, app: XCUIApplication, evidence: Evidence, accept: (String) -> Bool
     ) throws -> String {
         guard let mark, accept(mark) else {
-            try evidence.reject(name, png: app.screenshot().pngRepresentation)
+            try evidence.reject(name, png: app.screenshotForFailureEvidence().pngRepresentation)
             throw Failure("\(name) did not settle on the required public photo; stable photo: \(mark ?? "none")")
         }
         try evidence.capture(name, from: app) { $0.status == .match && $0.mark == mark }
@@ -283,7 +293,7 @@ final class ScenePresentationContractUITests: XCTestCase {
     @MainActor
     private func activatePlaybackControl(app: XCUIApplication, identifier: String) {
         let button = app.buttons[identifier]
-        XCTAssertTrue(button.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds))
+        XCTAssertTrue(button.waitForFailureEvidence(timeout: WaitTiming.controlAppearanceTimeoutSeconds))
         tap(button)
     }
 
@@ -353,13 +363,13 @@ final class ScenePresentationContractUITests: XCTestCase {
                 app.launchEnvironment[key] = value
             }
         }
-        app.launch()
+        app.launchForFailureEvidence()
 
         enterPlaybackFromFilteredMode(app: app)
 
         let probe = app.descendants(matching: .any)["slideshow.scenePresentation.contract.summary"]
         XCTAssertTrue(
-            probe.waitForExistence(timeout: TestWait.seconds(.infrastructure(45))),
+            probe.waitForFailureEvidence(timeout: TestWait.seconds(.infrastructure(45))),
             "The product host must expose the read-only contract probe")
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.infrastructure(45))) {
@@ -369,7 +379,7 @@ final class ScenePresentationContractUITests: XCTestCase {
             "The first full scene must reach Ready/stablePhoto"
         )
 
-        let initialScreenshot = XCTAttachment(screenshot: app.screenshot())
+        let initialScreenshot = XCTAttachment(screenshot: app.screenshotForFailureEvidence())
         initialScreenshot.name = "scene-presentation-\(displayMode)-ready"
         initialScreenshot.lifetime = .keepAlways
         add(initialScreenshot)
@@ -460,7 +470,7 @@ final class ScenePresentationContractUITests: XCTestCase {
             outcomes.loadingFlashCount, 0,
             "Diagnostic fields must not report Loading; a zero count does not mean a frame-by-frame visual pass")
 
-        let finalScreenshot = XCTAttachment(screenshot: app.screenshot())
+        let finalScreenshot = XCTAttachment(screenshot: app.screenshotForFailureEvidence())
         finalScreenshot.name = "scene-presentation-\(displayMode)-after-next"
         finalScreenshot.lifetime = .keepAlways
         add(finalScreenshot)
@@ -606,19 +616,22 @@ final class ScenePresentationContractUITests: XCTestCase {
     @MainActor
     private func enterPlaybackFromFilteredMode(app: XCUIApplication) {
         let filteredButton = app.buttons["mode.filtered.button"]
-        XCTAssertTrue(filteredButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(20))))
+        XCTAssertTrue(
+            filteredButton.waitForPublicElement("mode.filtered.button", timeout: TestWait.seconds(.infrastructure(20))))
         let continueButton = app.buttons["mode.continue.button"]
         let startButton = app.buttons["filterSummary.startPlayback.button"]
 
         #if os(tvOS)
         // tvOS must reach filtering through real remote focus, not a faked tap.
-        XCUIRemote.shared.press(.right)
-        XCUIRemote.shared.press(.select)
-        XCTAssertTrue(continueButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds))
+        FirstFailureRemote.press(.right)
+        FirstFailureRemote.press(.select)
+        XCTAssertTrue(
+            continueButton.waitForPublicElement(
+                "mode.continue.button", timeout: WaitTiming.controlAppearanceTimeoutSeconds))
         XCTAssertTrue(continueButton.isEnabled)
-        XCUIRemote.shared.press(.down)
-        XCUIRemote.shared.press(.select)
-        XCTAssertTrue(startButton.waitForExistence(timeout: WaitTiming.screenTransitionTimeoutSeconds))
+        FirstFailureRemote.press(.down)
+        FirstFailureRemote.press(.select)
+        XCTAssertTrue(startButton.waitForFailureEvidence(timeout: WaitTiming.screenTransitionTimeoutSeconds))
         // Starting before the page swaps in a real album and person would play the seeded placeholder album.
         for marker in ["filterSummary.album.ready", "filterSummary.people.ready"] {
             let readiness = app.staticTexts[marker]
@@ -631,17 +644,19 @@ final class ScenePresentationContractUITests: XCTestCase {
         }
         XCTAssertTrue(waitUntil(timeout: WaitTiming.screenTransitionTimeoutSeconds) { startButton.isEnabled })
         for _ in 0..<8 where !startButton.hasFocus {
-            XCUIRemote.shared.press(.down)
+            FirstFailureRemote.press(.down)
             RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.remotePressSettleSeconds))
         }
         XCTAssertTrue(startButton.hasFocus, "The tvOS Start Playback button must be able to take focus")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         #else
         tap(filteredButton)
-        XCTAssertTrue(continueButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds))
+        XCTAssertTrue(
+            continueButton.waitForPublicElement(
+                "mode.continue.button", timeout: WaitTiming.controlAppearanceTimeoutSeconds))
         XCTAssertTrue(continueButton.isEnabled)
         tap(continueButton)
-        XCTAssertTrue(startButton.waitForExistence(timeout: WaitTiming.screenTransitionTimeoutSeconds))
+        XCTAssertTrue(startButton.waitForFailureEvidence(timeout: WaitTiming.screenTransitionTimeoutSeconds))
         XCTAssertTrue(waitUntil(timeout: WaitTiming.screenTransitionTimeoutSeconds) { startButton.isEnabled })
         tap(startButton)
         #endif
@@ -651,9 +666,11 @@ final class ScenePresentationContractUITests: XCTestCase {
     private func prepareNextButton(app: XCUIApplication) -> XCUIElement {
         let nextButton = app.buttons["slideshow.control.next.button"]
         #if os(tvOS)
-        XCTAssertTrue(nextButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(6))))
+        XCTAssertTrue(
+            nextButton.waitForPublicElement(
+                "slideshow.control.next.button", timeout: TestWait.seconds(.infrastructure(6))))
         for _ in 0..<4 where !nextButton.hasFocus {
-            XCUIRemote.shared.press(.right)
+            FirstFailureRemote.press(.right)
             RunLoop.current.run(until: Date().addingTimeInterval(WaitTiming.focusSettleSeconds))
         }
         XCTAssertTrue(nextButton.hasFocus, "The tvOS Next button must be able to take focus")
@@ -668,7 +685,7 @@ final class ScenePresentationContractUITests: XCTestCase {
     @MainActor
     private func activateNext(_ nextButton: XCUIElement) {
         #if os(tvOS)
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         #else
         tap(nextButton)
         #endif
@@ -678,9 +695,9 @@ final class ScenePresentationContractUITests: XCTestCase {
     @MainActor
     private func tap(_ element: XCUIElement) {
         if element.isHittable {
-            element.tap()
+            element.tapForFailureEvidence()
         } else {
-            element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tapForFailureEvidence()
         }
     }
     #endif

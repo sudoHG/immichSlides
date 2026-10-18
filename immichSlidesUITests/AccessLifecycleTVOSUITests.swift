@@ -23,6 +23,16 @@ enum AccessLifecycleTVOSUITestsWaitTiming {
 
 #if os(tvOS)
 final class AccessLifecycleTVOSUITests: XCTestCase {
+    override func invokeTest() {
+        FirstFailureContext.reset()
+        super.invokeTest()
+    }
+
+    override func record(_ issue: XCTIssue) {
+        FirstFailureEvidence.record(self, issue: issue)
+        super.record(issue)
+    }
+
     enum Timing {
         static let focusSettle: TimeInterval = TestWait.seconds(.product(0.16))
         static let focusPoll: TimeInterval = TestWait.seconds(.product(0.08))
@@ -56,7 +66,7 @@ final class AccessLifecycleTVOSUITests: XCTestCase {
 
         let input = try requireStrictE2EInput()
         let app = try launchStrictE2EApp()
-        defer { app.terminate() }
+        defer { app.terminateForFailureEvidence() }
 
         try configureServerThroughFirstBoot(app: app, input: input)
         try enterRandomPlayback(app: app)
@@ -64,7 +74,8 @@ final class AccessLifecycleTVOSUITests: XCTestCase {
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
         let nextButton = app.buttons["slideshow.control.next.button"]
         XCTAssertTrue(
-            playPauseButton.waitForExistence(
+            playPauseButton.waitForPublicElement(
+                "slideshow.control.playPause.button",
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.playbackStartupTimeoutSeconds),
             "Control bar must show after random playback.")
         ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
@@ -107,13 +118,14 @@ final class AccessLifecycleTVOSUITests: XCTestCase {
         let input = try requireStrictE2EInput()
         let pins = try requirePrivatePINInput()
         let app = try launchStrictE2EApp()
-        defer { app.terminate() }
+        defer { app.terminateForFailureEvidence() }
 
         try configureServerThroughFirstBoot(app: app, input: input)
         try enterRandomPlayback(app: app)
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
         XCTAssertTrue(
-            playPauseButton.waitForExistence(
+            playPauseButton.waitForPublicElement(
+                "slideshow.control.playPause.button",
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.playbackStartupTimeoutSeconds),
             "Control bar must show after random playback.")
         ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
@@ -135,14 +147,15 @@ final class AccessLifecycleTVOSUITests: XCTestCase {
         screenshotOrder = []
         let input = try requireStrictE2EInput()
         let app = try launchStrictE2EApp()
-        defer { app.terminate() }
+        defer { app.terminateForFailureEvidence() }
         try AccessLifecycleContract.assertProgressProbeNotUsed(launchEnvironment: app.launchEnvironment)
 
         try configureServerThroughFirstBoot(app: app, input: input)
         try enterRandomPlayback(app: app)
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
         XCTAssertTrue(
-            playPauseButton.waitForExistence(
+            playPauseButton.waitForPublicElement(
+                "slideshow.control.playPause.button",
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.playbackStartupTimeoutSeconds),
             "Control bar must show after random playback.")
         ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
@@ -160,14 +173,17 @@ final class AccessLifecycleTVOSUITests: XCTestCase {
         try relaunchStrictE2EApp(app)
         try AccessLifecycleContract.assertProgressProbeNotUsed(launchEnvironment: app.launchEnvironment)
         XCTAssertTrue(
-            app.buttons["slideshow.control.settings.button"].waitForExistence(
+            app.buttons["slideshow.control.settings.button"].waitForPublicElement(
+                "slideshow.control.settings.button",
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.playbackStartupTimeoutSeconds)
                 || app.descendants(matching: .any)[AccessLifecycleContract.hiddenControlBarPlaybackIdentifier]
-                    .waitForExistence(timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+                    .waitForFailureEvidence(
+                        timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "After terminate and relaunch, must return to playback, not first boot."
         )
         XCTAssertFalse(
-            app.textFields["firstboot.serverURL.field"].waitForExistence(
+            app.textFields["firstboot.serverURL.field"].waitForPublicElement(
+                "firstboot.serverURL.field",
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.readbackTimeoutSeconds),
             "Must not return to first boot after relaunch."
         )
@@ -207,7 +223,7 @@ final class AccessLifecycleTVOSUITests: XCTestCase {
         screenshotOrder = []
         let input = try requireStrictE2EInput()
         let app = try launchStrictE2EApp()
-        defer { app.terminate() }
+        defer { app.terminateForFailureEvidence() }
         try AccessLifecycleContract.assertProgressProbeNotUsed(launchEnvironment: app.launchEnvironment)
 
         try configureServerThroughFirstBoot(app: app, input: input)
@@ -215,7 +231,8 @@ final class AccessLifecycleTVOSUITests: XCTestCase {
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
         let nextButton = app.buttons["slideshow.control.next.button"]
         XCTAssertTrue(
-            playPauseButton.waitForExistence(
+            playPauseButton.waitForPublicElement(
+                "slideshow.control.playPause.button",
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.playbackStartupTimeoutSeconds),
             "Control bar must show after random playback.")
         ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
@@ -253,14 +270,15 @@ final class AccessLifecycleTVOSUITests: XCTestCase {
         systemPauseActivation = ""
         let input = try requireStrictE2EInput()
         let app = try launchStrictE2EApp()
-        defer { app.terminate() }
+        defer { app.terminateForFailureEvidence() }
         try AccessLifecycleContract.assertProgressProbeNotUsed(launchEnvironment: app.launchEnvironment)
 
         try configureServerThroughFirstBoot(app: app, input: input)
         try enterRandomPlayback(app: app)
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
         XCTAssertTrue(
-            playPauseButton.waitForExistence(
+            playPauseButton.waitForPublicElement(
+                "slideshow.control.playPause.button",
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.playbackStartupTimeoutSeconds),
             "Control bar must show after random playback.")
         ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
@@ -287,7 +305,7 @@ final class AccessLifecycleTVOSUITests: XCTestCase {
         RunLoop.current.run(until: Date().addingTimeInterval(waitSeconds))
         didHomeLeaveAppRunning = app.state != .notRunning
         XCTAssertTrue(didHomeLeaveAppRunning, "Process gone after Home means activate opens/rebuilds; not a return.")
-        app.activate()
+        app.activateForFailureEvidence()
         systemPauseActivation = AccessLifecycleContract.allowedSystemPauseActivation
         record("playback.foreground")
         _ = app.wait(for: .runningForeground, timeout: TestWait.seconds(.infrastructure(10)))

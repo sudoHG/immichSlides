@@ -31,7 +31,7 @@ extension FilterSummaryIOSVisualUITests {
 
         let doneButton = app.buttons["filter.editor.done.button"]
         XCTAssertTrue(
-            doneButton.waitForExistence(
+            doneButton.waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Filter editor top bar should show the 'Done' button")
         tapElement(doneButton)
@@ -62,7 +62,7 @@ extension FilterSummaryIOSVisualUITests {
 
         let doneButton = app.buttons["filter.editor.done.button"]
         XCTAssertTrue(
-            doneButton.waitForExistence(
+            doneButton.waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Filter editor top bar should show the 'Done' button")
         tapElement(doneButton)
@@ -139,7 +139,7 @@ extension FilterSummaryIOSVisualUITests {
 
     @MainActor
     func testIOSSlideShowPlaybackEntryHintScreenshotLandscape() throws {
-        defer { XCUIDevice.shared.orientation = .portrait }
+        defer { FirstFailureOrientation.set(.portrait) }
 
         let app = try launchIntoSlideShow(
             colorScheme: "dark",
@@ -215,7 +215,7 @@ extension FilterSummaryIOSVisualUITests {
         let entryHintBanner = app.otherElements["slideshow.entryHint.banner"]
 
         XCTAssertTrue(
-            entryHintBanner.waitForExistence(
+            entryHintBanner.waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.settingsChangeTimeoutSeconds),
             "On first entering the playback page, the one-time tip should appear first"
         )
@@ -224,12 +224,13 @@ extension FilterSummaryIOSVisualUITests {
         returnToSlideShowFromSettings(app: app)
 
         XCTAssertTrue(
-            app.buttons["slideshow.control.settings.button"].waitForExistence(
+            app.buttons["slideshow.control.settings.button"].waitForPublicElement(
+                "slideshow.control.settings.button",
                 timeout: TestWait.seconds(.infrastructure(18))),
             "After returning from settings, the app should be back on the playback page"
         )
         XCTAssertFalse(
-            entryHintBanner.waitForExistence(timeout: TestWait.seconds(.product(2))),
+            entryHintBanner.waitForFailureEvidence(timeout: TestWait.seconds(.product(2))),
             "The one-time tip should not reappear when returning from settings to the playback page in the same first-launch flow"
         )
     }
@@ -244,24 +245,25 @@ extension FilterSummaryIOSVisualUITests {
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
 
         XCTAssertTrue(
-            entryHintBanner.waitForExistence(
+            entryHintBanner.waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.settingsChangeTimeoutSeconds),
             "On first entering the playback page, the one-time tip should appear first"
         )
         XCTAssertTrue(
-            playPauseButton.waitForExistence(
+            playPauseButton.waitForPublicElement(
+                "slideshow.control.playPause.button",
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.stateChangeTimeoutSeconds),
             "Playback page should show the play button in the control bar"
         )
 
-        playPauseButton.tap()
+        playPauseButton.tapForFailureEvidence()
         XCTAssertTrue(
-            entryHintBanner.waitForExistence(
+            entryHintBanner.waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.briefElementTimeoutSeconds),
             "Tapping a control bar button should not hide the bubble"
         )
 
-        entryHintBanner.tap()
+        entryHintBanner.tapForFailureEvidence()
         waitForPlaybackEntryHintToDisappear(entryHintBanner)
         XCTAssertFalse(entryHintBanner.exists, "Tapping the tip bubble itself should hide the bubble")
     }

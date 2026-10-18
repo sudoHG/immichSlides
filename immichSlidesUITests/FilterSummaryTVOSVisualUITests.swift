@@ -62,6 +62,15 @@ enum FilterSummaryTVOSVisualUITestsWaitTiming {
 
 #if os(tvOS)
 final class FilterSummaryTVOSVisualUITests: XCTestCase {
+    override func invokeTest() {
+        FirstFailureContext.reset()
+        super.invokeTest()
+    }
+
+    override func record(_ issue: XCTIssue) {
+        FirstFailureEvidence.record(self, issue: issue)
+        super.record(issue)
+    }
 
     struct LocalizedAcceptanceLocale {
         let screenshotPrefix: String
@@ -243,12 +252,12 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         ).firstMatch
 
         XCTAssertTrue(
-            singularAlbumSummary.waitForExistence(
+            singularAlbumSummary.waitForFailureEvidence(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Spanish summary for a single album should use the singular álbum"
         )
         XCTAssertTrue(
-            singularPeopleSummary.waitForExistence(
+            singularPeopleSummary.waitForFailureEvidence(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Spanish summary for a single person should use the singular persona"
         )
@@ -291,7 +300,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         )
         waitForFocusVisualSettle()
         attachScreenshot(app: modeApp, name: "\(locale.screenshotPrefix)-tvos-mode-selection")
-        modeApp.terminate()
+        modeApp.terminateForFailureEvidence()
 
         let filterSummaryApp = try launchIntoFilterSummary(
             colorScheme: "light",
@@ -307,7 +316,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         waitForReadinessMarker(app: filterSummaryApp, identifier: "filterSummary.album.ready")
         waitForFocusVisualSettle()
         attachScreenshot(app: filterSummaryApp, name: "\(locale.screenshotPrefix)-tvos-filter-summary")
-        filterSummaryApp.terminate()
+        filterSummaryApp.terminateForFailureEvidence()
 
         let albumApp = try launchIntoFilterSummary(
             colorScheme: "light",
@@ -324,7 +333,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         )
         waitForFocusVisualSettle()
         attachScreenshot(app: albumApp, name: "\(locale.screenshotPrefix)-tvos-album-filter")
-        albumApp.terminate()
+        albumApp.terminateForFailureEvidence()
 
         let personApp = try launchIntoFilterSummary(
             colorScheme: "light",
@@ -369,7 +378,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         waitForFocusVisualSettle()
         attachScreenshot(app: settingsApp, name: "\(locale.screenshotPrefix)-tvos-settings-root")
 
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
             waitForSettingsControlExists(
                 app: settingsApp, identifier: "settings.playback.autoPlay.link",
@@ -394,7 +403,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
             downStepsFromPlayback: FilterSummaryTVOSVisualUITestsSettingsNavigation.accessProtectionSteps,
             failureMessage: "Localized tvOS settings home should be able to open Access Protection"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
             waitForElementWithLabelExists(
                 app: accessProtectionApp, label: locale.accessProtectionDisabledTitle,
@@ -404,7 +413,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         // UI-test mode exposes row values verbatim; they must still be localized, not catalog keys.
         let enableButton = accessProtectionApp.buttons["settings.pin.enable.button"]
         XCTAssertTrue(
-            enableButton.waitForExistence(
+            enableButton.waitForFailureEvidence(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds))
         let enableValue = enableButton.value as? String ?? ""
         XCTAssertTrue(
@@ -429,7 +438,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
             downStepsFromPlayback: FilterSummaryTVOSVisualUITestsSettingsNavigation.serverSteps,
             failureMessage: "Localized tvOS settings home should be able to open Server"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
             waitForSettingsControlExists(
                 app: serverApp, identifier: "server.apiKey.help.button",
@@ -438,7 +447,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         )
         waitForFocusVisualSettle()
         attachScreenshot(app: serverApp, name: "\(locale.screenshotPrefix)-tvos-settings-server")
-        serverApp.terminate()
+        serverApp.terminateForFailureEvidence()
 
         let cacheApp = try launchIntoSlideShow(
             colorScheme: "light",
@@ -452,7 +461,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
             downStepsFromPlayback: FilterSummaryTVOSVisualUITestsSettingsNavigation.cacheSteps,
             failureMessage: "Localized tvOS settings home should be able to open Cache Management"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
             waitForSettingsControlExists(
                 app: cacheApp, identifier: "settings.cache.disk.row",
@@ -477,7 +486,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
             downStepsFromPlayback: FilterSummaryTVOSVisualUITestsSettingsNavigation.aboutSteps,
             failureMessage: "Localized tvOS settings home should be able to open About"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let appInfoSection = waitForSettingsControl(
             app: aboutApp,
@@ -506,7 +515,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
             failureMessage: "Localized tvOS About page should show the Privacy Policy entry"
         )
         for _ in 0..<3 {
-            XCUIRemote.shared.press(.down)
+            FirstFailureRemote.press(.down)
             waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         }
         waitForButtonToGainFocus(
@@ -515,7 +524,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
             failureMessage: "Localized tvOS About page should let focus move to Privacy Policy"
         )
         attachScreenshot(app: aboutApp, name: "\(locale.screenshotPrefix)-tvos-settings-about-bottom")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
             waitForSettingsControlExists(
                 app: aboutApp, identifier: "settings.about.privacyPolicy.section.0",
@@ -524,7 +533,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
         )
         waitForFocusVisualSettle()
         attachScreenshot(app: aboutApp, name: "\(locale.screenshotPrefix)-tvos-settings-privacy-policy")
-        aboutApp.terminate()
+        aboutApp.terminateForFailureEvidence()
 
         let openSourceApp = try launchIntoSlideShow(
             colorScheme: "light",
@@ -538,7 +547,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
             downStepsFromPlayback: FilterSummaryTVOSVisualUITestsSettingsNavigation.aboutSteps,
             failureMessage: "Localized tvOS settings home should be able to open About again"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let openSourceAppInfoSection = waitForSettingsControl(
             app: openSourceApp,
@@ -559,7 +568,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
             failureMessage: "Localized tvOS About page should show the Open Source Licenses entry"
         )
         for _ in 0..<4 {
-            XCUIRemote.shared.press(.down)
+            FirstFailureRemote.press(.down)
             waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.22)))
         }
         waitForButtonToGainFocus(
@@ -567,7 +576,7 @@ final class FilterSummaryTVOSVisualUITests: XCTestCase {
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
             failureMessage: "Localized tvOS About page should let focus move to Open Source Licenses"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
             waitForElementWithLabelExists(
                 app: openSourceApp, label: locale.openSourceTitle,

@@ -11,13 +11,13 @@ extension FilterSummaryIOSVisualUITests {
 
         let personEntry = app.buttons["filter.editor.person.entry"]
         XCTAssertTrue(
-            personEntry.waitForExistence(
+            personEntry.waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "After returning to the filter editor, the people entry should still be visible")
 
         let albumEntry = app.buttons["filter.editor.album.entry"]
         XCTAssertTrue(
-            albumEntry.waitForExistence(
+            albumEntry.waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "After returning to the filter editor, the album entry should still be visible")
         attachScreenshot(app: app, name: "ios-exif-diagnostic-filter-configured")
@@ -27,7 +27,7 @@ extension FilterSummaryIOSVisualUITests {
     func clearAllPeopleSelections(app: XCUIApplication) {
         let personEntry = app.buttons["filter.editor.person.entry"]
         XCTAssertTrue(
-            personEntry.waitForExistence(
+            personEntry.waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Filter editor should show the people entry")
         tapElement(personEntry)
@@ -36,14 +36,14 @@ extension FilterSummaryIOSVisualUITests {
 
         let clearButton = app.buttons["personFilter.clear.button"]
         XCTAssertTrue(
-            clearButton.waitForExistence(
+            clearButton.waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "People filter page should show the clear button")
         tapElement(clearButton)
 
         let backButton = app.buttons["personFilter.back.button"]
         XCTAssertTrue(
-            backButton.waitForExistence(
+            backButton.waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "People filter page should show the back button")
         tapElement(backButton)
@@ -53,7 +53,7 @@ extension FilterSummaryIOSVisualUITests {
     func selectOnlyExifDiagnosticAlbum(app: XCUIApplication) throws {
         let albumEntry = app.buttons["filter.editor.album.entry"]
         XCTAssertTrue(
-            albumEntry.waitForExistence(
+            albumEntry.waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Filter editor should show the album entry")
         tapElement(albumEntry)
@@ -62,7 +62,7 @@ extension FilterSummaryIOSVisualUITests {
 
         let clearButton = app.buttons["albumFilter.clear.button"]
         XCTAssertTrue(
-            clearButton.waitForExistence(
+            clearButton.waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Album filter page should show the clear button")
         tapElement(clearButton)
@@ -81,7 +81,7 @@ extension FilterSummaryIOSVisualUITests {
 
         let backButton = app.buttons["albumFilter.back.button"]
         XCTAssertTrue(
-            backButton.waitForExistence(
+            backButton.waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Album filter page should show the back button")
         tapElement(backButton)
@@ -103,9 +103,9 @@ extension FilterSummaryIOSVisualUITests {
             }
 
             if scrollView.exists {
-                scrollView.swipeUp()
+                scrollView.swipeUpForFailureEvidence()
             } else {
-                app.swipeUp()
+                app.swipeUpForFailureEvidence()
             }
             RunLoop.current.run(
                 until: Date().addingTimeInterval(FilterSummaryIOSVisualUITestsWaitTiming.controlSettleSeconds))
@@ -123,7 +123,8 @@ extension FilterSummaryIOSVisualUITests {
     ) {
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
         XCTAssertTrue(
-            playPauseButton.waitForExistence(
+            playPauseButton.waitForPublicElement(
+                "slideshow.control.playPause.button",
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "After returning to the playback page, the play/pause button should be visible")
         XCTAssertTrue(
@@ -223,7 +224,8 @@ extension FilterSummaryIOSVisualUITests {
     func currentExifToneDebugLabel(app: XCUIApplication) -> String {
         let toneFlag = app.descendants(matching: .any)["slideshow.exifForegroundTone.flag"]
         XCTAssertTrue(
-            toneFlag.waitForExistence(timeout: FilterSummaryIOSVisualUITestsWaitTiming.settingsChangeTimeoutSeconds),
+            toneFlag.waitForFailureEvidence(
+                timeout: FilterSummaryIOSVisualUITestsWaitTiming.settingsChangeTimeoutSeconds),
             "Playback page should expose the current EXIF text color diagnostic marker")
 
         let candidates = [
@@ -241,7 +243,8 @@ extension FilterSummaryIOSVisualUITests {
 
     func currentSlideshowAssetID(app: XCUIApplication) -> String? {
         let assetFlag = app.descendants(matching: .any)["slideshow.currentAssetId.flag"]
-        guard assetFlag.waitForExistence(timeout: FilterSummaryIOSVisualUITestsWaitTiming.stateChangeTimeoutSeconds)
+        guard
+            assetFlag.waitForFailureEvidence(timeout: FilterSummaryIOSVisualUITestsWaitTiming.stateChangeTimeoutSeconds)
         else { return nil }
 
         let candidates = [
@@ -260,7 +263,7 @@ extension FilterSummaryIOSVisualUITests {
     func waitForExifSamplingDebugOverlay(app: XCUIApplication, timeout: TimeInterval) -> Bool {
 
         let overlayReady = app.descendants(matching: .any)["slideshow.exifSamplingDebugOverlay.ready"]
-        return overlayReady.waitForExistence(timeout: timeout)
+        return overlayReady.waitForFailureEvidence(timeout: timeout)
     }
 
     func currentExifDateLabel(app: XCUIApplication) -> String? {

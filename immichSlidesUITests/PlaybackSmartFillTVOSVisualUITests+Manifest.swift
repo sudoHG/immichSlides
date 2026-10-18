@@ -7,24 +7,25 @@ extension PlaybackSmartFillTVOSVisualUITests {
         let nextButton = app.buttons["slideshow.control.next.button"]
         XCTAssertTrue(
             app.refreshTVOSSlideshowControlBar(timeout: TestWait.seconds(.product(6)))
-                && nextButton.waitForExistence(timeout: TestWait.seconds(.product(6))),
+                && nextButton.waitForPublicElement(
+                    "slideshow.control.next.button", timeout: TestWait.seconds(.product(6))),
             "Apple TV playback page should show the Next button")
 
         for _ in 0..<6 {
             if nextButton.hasFocus { break }
-            XCUIRemote.shared.press(.right)
+            FirstFailureRemote.press(.right)
             RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.16))))
         }
         if nextButton.hasFocus == false {
             for _ in 0..<6 {
                 if nextButton.hasFocus { break }
-                XCUIRemote.shared.press(.left)
+                FirstFailureRemote.press(.left)
                 RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.16))))
             }
         }
 
         XCTAssertTrue(nextButton.hasFocus, "Apple TV playback page focus should move to the Next button")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
     }
 
     func waitForCurrentManifest(app: XCUIApplication, timeout: TimeInterval) throws -> SmartFillManifest {
