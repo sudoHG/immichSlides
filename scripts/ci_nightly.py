@@ -157,6 +157,7 @@ def matrix_equality(scheduled, observed):
 
 def aggregate_nightly(scheduled, summaries, *, live_in_scope, informational=(), review_packages=()):
     from strict_e2e_p2_contract import P2_CASES
+    review_suites = P2_CASES.keys() | {"ios-lifecycle-pause"}
     result = {"schema_version": 1, "status": "failed", "release_eligible": False,
               "release_ineligible_reasons": ["skeleton nightly: mandatory tiers are not built"],
               "tiers": {"strict": "failed", **{tier: "not yet in scope" for tier in UNBUILT_TIERS}},
@@ -195,9 +196,9 @@ def aggregate_nightly(scheduled, summaries, *, live_in_scope, informational=(), 
             if summary["status"] == "failed":
                 result["errors"].append("producer failed: " + str(summary["run"]["shard"]))
             if summary["status"] == "unverified" and not any(
-                    entry["outcome"] == "needs-human-review" and entry["identity"]["dimensions"]["suite"] in P2_CASES
+                    entry["outcome"] == "needs-human-review" and entry["identity"]["dimensions"]["suite"] in review_suites
                     for entry in summary["population"]["observed"]):
-                result["errors"].append("unverified producer has no passing P2 contract")
+                result["errors"].append("unverified producer has no review-pending contract")
         result["matrix"] = matrix_equality(scheduled, result["observed"])
         if not result["matrix"]["equal"]:
             result["errors"].append("executed matrix differs from scheduled matrix")
@@ -205,7 +206,7 @@ def aggregate_nightly(scheduled, summaries, *, live_in_scope, informational=(), 
             suite = entry["identity"]["dimensions"]["suite"]
             if suite in informational:
                 result["informational"].append(entry)
-            elif entry["outcome"] == "needs-human-review" and suite in P2_CASES:
+            elif entry["outcome"] == "needs-human-review" and suite in review_suites:
                 result["needs_human_review"].append(entry["identity"])
             elif entry["outcome"] not in {"passed", "flaky-passed"}:
                 result["errors"].append(entry["outcome"] + ": " + identity_key(entry["identity"]))

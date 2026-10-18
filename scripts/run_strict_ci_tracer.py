@@ -25,7 +25,7 @@ from run_strict_e2e import (CommandError, FILTER_PERSON_SESSIONS, resolve_suite_
 from strict_e2e_build import build_settings, write_json
 from strict_e2e_p2_contract import P2_CASES, RAW_VERDICT, official_tests_facts
 from strict_e2e_server import PUBLIC_API_KEY
-from strict_e2e_runner_support import SIMULATOR_READINESS_TIMEOUT_SECONDS
+from strict_e2e_runner_support import SIMULATOR_READINESS_TIMEOUT_SECONDS, pause_timing_verdict
 
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = ROOT / "scripts/strict-tracer.json"
@@ -99,9 +99,12 @@ def evaluate_tracer(declared, results, *, interrupted=False, informational=()):
                   and official.get("skippedTests") == 0)
         p2 = result["identity"]["dimensions"]["suite"] in P2_CASES
         passed = passed and (not p2 or result.get("p2_verdict") == RAW_VERDICT)
-        outcome = ("needs-human-review" if p2 else "passed") if passed else "failed"
+        pending_timing = (result["identity"]["dimensions"]["suite"] == "ios-lifecycle-pause"
+                          and result.get("p2_verdict") != "PASS")
+        outcome = ("needs-human-review" if p2 or pending_timing else "passed") if passed else "failed"
         observed.append(observation(result["identity"], outcome, result["duration_seconds"],
-            reason="P2 contract requires signed human review" if outcome == "needs-human-review" else None,
+            reason=("Pause timing requires signed transition-start evidence" if pending_timing else
+                    "P2 contract requires signed human review") if outcome == "needs-human-review" else None,
             exit_code=result["exit_code"]))
         # The collector only adds receipts to failed phases; keep this check as defence in depth.
         if outcome == "failed" and VALIDATOR_FAILURE_FIELD in result:
@@ -332,6 +335,9 @@ def main(argv=None):
         phase.update(log_present=log_path.is_file(), build_operations=len(builds), products_unchanged=unchanged,
                      official_summary=official, p2_verdict=details.get("visual_identity", {}).get("verdict"),
                      automated_contract_failed=contract_failed)
+        if case["suite"] == "ios-lifecycle-pause":
+            # This existing field carries visual verdicts despite its legacy P2 name.
+            phase["p2_verdict"] = pause_timing_verdict(evidence)
         if contract_failed:
             observed, _ = evaluate_tracer([phase["identity"]], [phase])
             if observed[0]["outcome"] == "failed":
@@ -367,7 +373,7 @@ def main(argv=None):
             observed, _ = evaluate_tracer([case_identity], [phase])
             outcome = observed[0]["outcome"]
             checkpoint()
-            if outcome == "needs-human-review" and not nightly and P2_CASES[case["suite"]].video:
+            if outcome == "needs-human-review" and not nightly and case["suite"] in P2_CASES and P2_CASES[case["suite"]].video:
                 recording_evidence(evidence, output / "p2-trace" / case["suite"])
             print(f"{case['suite']}: {outcome}, {phase['duration_seconds']:.1f}s, build operations={phase['build_operations']}", flush=True)
             checkpoint()

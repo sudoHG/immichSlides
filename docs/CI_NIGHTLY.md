@@ -439,7 +439,12 @@ now run independently; mandatory scope/aggregate integration belongs to the sepa
 scope ticket. Setting live scope without live
 results fails; enabling it is a separate maintainer decision. Automated cases must pass
 or flaky-pass. P2 contract success is `needs-human-review`; contracts gate without visual
-PASS. Informational Vision outcomes are listed separately and excluded from health.
+PASS. Unsigned or pending iOS pause timing follows the same aggregate treatment:
+the case stays `needs-human-review` in `observed` and `needs_human_review`, while
+the producer stays `unverified`. Aggregate health can pass its automated checks
+without signing that case. The reporter preserves H for the official method as
+well as the case, so pending timing cannot count as an explicit pass night toward
+issue recovery. Informational Vision outcomes are listed separately and excluded from health.
 
 `nightly.json` records health/equality, every outcome, exclusions, source/run/attempt,
 hashes, shard intervals, start-order waves and wall time from planning through aggregate.

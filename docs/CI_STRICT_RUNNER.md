@@ -532,6 +532,15 @@ shorter spikes may be missed and unrelated runner activity is included.
 [summary contract](CI_SUMMARY.md). Missing results, builds in a warm log, changed
 Products and failed strict contracts fail the tracer. P2 contract success is
 `needs-human-review`, with overall producer status `unverified`, never visual PASS.
+The iOS pause/Next/Continue suite also reports `needs-human-review` unless its
+existing `pause-next-continue.json` contains exactly one `first_transition_start`
+with `status: detected` and boolean `official_signed: true`. Pending, unsigned,
+missing or unreadable timing evidence remains review-pending; it does not turn
+an official XCTest pass into a test failure. The runner's visual receipt records
+`UNVERIFIED`, and the tracer reads the timing receipt directly, including older
+cases whose visual receipt said `NOT_REQUIRED`. Official counts and runner exit
+codes stay unchanged, and a nonzero exit still fails. This does not reinterpret
+fade samples, sign pending evidence or provide missing video for human review.
 Only a complete observed set with every automated check passing permits a non-failed
 status. Cancellation and unexpected exceptions record failed status, an `interrupted`
 infrastructure entry and every unfinished case as `not-run`. Each runner starts in
