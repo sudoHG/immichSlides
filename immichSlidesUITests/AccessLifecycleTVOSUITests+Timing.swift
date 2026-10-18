@@ -323,6 +323,7 @@ extension AccessLifecycleTVOSUITests {
         XCUIRemote.shared.press(.select)
         record("playback.pause")
         let beforePause = try captureTVOSImmediateMark(app: app, name: "before-pause")
+        ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
         moveFocus(.right, to: nextButton, maximumPresses: 3, message: "After pause, focus must reach next.")
         XCUIRemote.shared.press(.select)
         record("playback.next")

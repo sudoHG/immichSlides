@@ -382,6 +382,10 @@ extension FilterSummaryTVOSVisualUITests {
             nextButton.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
             "Playback page should show the next button")
 
+        refreshTVOSSlideshowControlBarFocus(
+            app: app, on: settingsButton, direction: .left,
+            failureMessage: "The control bar should be able to bring focus to the settings button (far left)"
+        )
         for _ in 0..<5 {
             if settingsButton.hasFocus { break }
             XCUIRemote.shared.press(.left)
@@ -396,6 +400,10 @@ extension FilterSummaryTVOSVisualUITests {
         )
         attachScreenshot(app: app, name: "tvos-slideshow-controlbar-focus-settings")
 
+        refreshTVOSSlideshowControlBarFocus(
+            app: app, on: settingsButton, direction: .left,
+            failureMessage: "The control bar should be able to bring focus to the settings button (far left)"
+        )
         XCTAssertFalse(
             previousButton.isEnabled,
             "At the initial history boundary, previous should be disabled and skipped in the tvOS focus path")
@@ -409,6 +417,11 @@ extension FilterSummaryTVOSVisualUITests {
         )
         attachScreenshot(app: app, name: "tvos-slideshow-controlbar-focus-playpause")
 
+        refreshTVOSSlideshowControlBarFocus(
+            app: app, on: playPauseButton, direction: .left,
+            failureMessage:
+                "Previous is disabled at the initial history boundary, so moving right should jump focus to Play/Pause"
+        )
         XCUIRemote.shared.press(.right)
         waitForButtonToGainFocus(
             nextButton,
@@ -417,6 +430,10 @@ extension FilterSummaryTVOSVisualUITests {
         )
         attachScreenshot(app: app, name: "tvos-slideshow-controlbar-focus-next")
 
+        refreshTVOSSlideshowControlBarFocus(
+            app: app, on: nextButton, direction: .right,
+            failureMessage: "Moving right again, focus should reach the next button"
+        )
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
             waitUntil(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeDeadlineSeconds) {
@@ -425,6 +442,10 @@ extension FilterSummaryTVOSVisualUITests {
             "One next should create history to go back to and enable previous again"
         )
 
+        refreshTVOSSlideshowControlBarFocus(
+            app: app, on: nextButton, direction: .right,
+            failureMessage: "Moving right again, focus should reach the next button"
+        )
         XCUIRemote.shared.press(.left)
         waitForButtonToGainFocus(
             playPauseButton,
@@ -541,6 +562,11 @@ extension FilterSummaryTVOSVisualUITests {
         XCTAssertFalse(
             removedProgressLabel.exists, "The visible photo index above the control bar should have been removed")
 
+        refreshTVOSSlideshowControlBarFocus(
+            app: app, on: settingsButton, direction: .left,
+            failureMessage:
+                "Before the control bar activation test starts, focus should return to the settings button reliably"
+        )
         // Bring focus back to the far left first; the later path is only stable from there.
         for _ in 0..<5 {
             if settingsButton.hasFocus { break }
@@ -567,6 +593,11 @@ extension FilterSummaryTVOSVisualUITests {
         )
         let initialSignature = try currentTVOSSceneSignature(app: app)
 
+        refreshTVOSSlideshowControlBarFocus(
+            app: app, on: settingsButton, direction: .left,
+            failureMessage:
+                "Before the control bar activation test starts, focus should return to the settings button reliably"
+        )
         XCTAssertFalse(
             previousButton.isEnabled,
             "At the initial history boundary, previous should be disabled and out of the tvOS focus path")
@@ -590,6 +621,11 @@ extension FilterSummaryTVOSVisualUITests {
             "Pressing Select on the Play/Pause button should toggle the current playback state"
         )
         // Exercise both Select actions and restore pause before comparing retained scenes.
+        refreshTVOSSlideshowControlBarFocus(
+            app: app, on: playPauseButton, direction: .left,
+            failureMessage:
+                "Previous is disabled at the initial history boundary, so moving right should focus Play/Pause"
+        )
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
             waitUntil(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.stateChangeDeadlineSeconds) {
@@ -598,6 +634,11 @@ extension FilterSummaryTVOSVisualUITests {
             "Pressing Select again must restore the paused playback state before manual navigation"
         )
 
+        refreshTVOSSlideshowControlBarFocus(
+            app: app, on: playPauseButton, direction: .left,
+            failureMessage:
+                "Previous is disabled at the initial history boundary, so moving right should focus Play/Pause"
+        )
         XCUIRemote.shared.press(.right)
         waitForButtonToGainFocus(
             nextButton,
@@ -613,6 +654,10 @@ extension FilterSummaryTVOSVisualUITests {
         )
         XCTAssertNotEqual(signatureAfterNext, initialSignature, "The next button should move the visible scene forward")
 
+        refreshTVOSSlideshowControlBarFocus(
+            app: app, on: nextButton, direction: .right,
+            failureMessage: "After moving right again, focus should reach the next button"
+        )
         XCUIRemote.shared.press(.left)
         waitForButtonToGainFocus(
             playPauseButton,
@@ -635,6 +680,10 @@ extension FilterSummaryTVOSVisualUITests {
             "Pressing Select on the previous button should go back to the previous scene in playback history"
         )
 
+        refreshTVOSSlideshowControlBarFocus(
+            app: app, on: playPauseButton, direction: .right,
+            failureMessage: "Moving left from next, focus should return to the Play/Pause button"
+        )
         XCUIRemote.shared.press(.left)
         waitForButtonToGainFocus(
             settingsButton,
@@ -682,15 +731,28 @@ extension FilterSummaryTVOSVisualUITests {
 
         let initialSignature = try currentTVOSSceneSignature(app: app)
 
+        refreshTVOSSlideshowControlBarFocus(
+            app: app, on: playPauseButton, direction: .left,
+            failureMessage: "Once the control bar appears, default focus should be on the Play/Pause button"
+        )
         XCTAssertFalse(
             previousButton.isEnabled,
             "At the history boundary, previous should be disabled and out of the tvOS focus path")
 
         XCUIRemote.shared.press(.right)
+        waitForButtonToGainFocus(
+            nextButton,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeDeadlineSeconds,
+            failureMessage: "After moving right again, focus should reach the next button"
+        )
         XCUIRemote.shared.press(.select)
         let secondSignature = try waitForTVOSSceneSignatureChange(
             app: app, from: initialSignature,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds)
+        refreshTVOSSlideshowControlBarFocus(
+            app: app, on: nextButton, direction: .right,
+            failureMessage: "After moving right again, focus should reach the next button"
+        )
         XCTAssertTrue(
             waitUntil(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.stateChangeDeadlineSeconds) {
                 previousButton.isEnabled
@@ -699,7 +761,16 @@ extension FilterSummaryTVOSVisualUITests {
         )
         attachScreenshot(app: app, name: "tvos-retained-history-02-after-next")
 
+        refreshTVOSSlideshowControlBarFocus(
+            app: app, on: nextButton, direction: .right,
+            failureMessage: "After moving right again, focus should reach the next button"
+        )
         XCUIRemote.shared.press(.right)
+        waitForButtonToGainFocus(
+            nextButton,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeDeadlineSeconds,
+            failureMessage: "After moving right again, focus should reach the next button"
+        )
         XCUIRemote.shared.press(.select)
         let thirdSignature = try waitForTVOSSceneSignatureChange(
             app: app, from: secondSignature,
@@ -707,9 +778,17 @@ extension FilterSummaryTVOSVisualUITests {
         XCTAssertNotEqual(thirdSignature, initialSignature, "Two nexts in a row should reach a new playback scene")
         attachScreenshot(app: app, name: "tvos-retained-history-03-after-second-next")
 
-        ensureTVOSSlideshowControlBarVisible(app: app)
+        refreshTVOSSlideshowControlBarFocus(
+            app: app, on: nextButton, direction: .right,
+            failureMessage: "After moving right again, focus should reach the next button"
+        )
         XCUIRemote.shared.press(.left)
         XCUIRemote.shared.press(.left)
+        waitForButtonToGainFocus(
+            previousButton,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeDeadlineSeconds,
+            failureMessage: "Moving left again, focus should reach the previous button"
+        )
 
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
@@ -720,12 +799,20 @@ extension FilterSummaryTVOSVisualUITests {
         )
         attachScreenshot(app: app, name: "tvos-retained-history-04-previous-to-second")
 
+        refreshTVOSSlideshowControlBarFocus(
+            app: app, on: previousButton, direction: .left,
+            failureMessage: "Moving left again, focus should reach the previous button"
+        )
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
             waitUntil(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds) {
                 self.currentTVOSSceneSignatureValue(app: app) == initialSignature
             },
             "The second previous should continue along retained history back to the initial position"
+        )
+        refreshTVOSSlideshowControlBarFocus(
+            app: app, on: playPauseButton, direction: .right,
+            failureMessage: "Once the control bar appears, default focus should be on the Play/Pause button"
         )
         XCTAssertTrue(
             waitUntil(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.stateChangeDeadlineSeconds) {
@@ -734,6 +821,27 @@ extension FilterSummaryTVOSVisualUITests {
             "Back at the oldest history boundary, previous should be disabled again"
         )
         attachScreenshot(app: app, name: "tvos-retained-history-05-previous-to-initial")
+    }
+
+    @MainActor
+    private func refreshTVOSSlideshowControlBarFocus(
+        app: XCUIApplication,
+        on button: XCUIElement,
+        direction: XCUIRemote.Button,
+        failureMessage: String
+    ) {
+        ensureTVOSSlideshowControlBarVisible(app: app)
+        // A hidden-bar wake starts on Play/Pause; restore the step's target before continuing its route.
+        let maximumFocusPresses = 4
+        for _ in 0..<maximumFocusPresses {
+            if button.hasFocus { break }
+            XCUIRemote.shared.press(direction)
+        }
+        waitForButtonToGainFocus(
+            button,
+            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeDeadlineSeconds,
+            failureMessage: failureMessage
+        )
     }
 }
 extension FilterSummaryTVOSVisualUITests {
