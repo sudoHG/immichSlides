@@ -288,7 +288,7 @@ extension PlaybackSettingsTVOSUITests {
     func openSettingsFromSlideShow(app: XCUIApplication) {
         let settingsButton = app.buttons["slideshow.control.settings.button"]
         XCTAssertTrue(
-            settingsButton.waitForExistence(timeout: PlaybackSettingsTVOSUITestsWaitTiming.navigationTimeoutSeconds),
+            app.refreshTVOSSlideshowControlBar(timeout: PlaybackSettingsTVOSUITestsWaitTiming.navigationTimeoutSeconds),
             "The slideshow should show the settings button")
 
         // Bring focus back to the leftmost settings button before pressing Select.

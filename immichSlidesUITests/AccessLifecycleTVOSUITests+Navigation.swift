@@ -23,6 +23,7 @@ extension AccessLifecycleTVOSUITests {
         try writePNG(app: app, name: "pause")
         attachScreenshot(app: app, name: "tvos-access-lifecycle-pause")
 
+        ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
         moveFocus(.right, to: nextButton, maximumPresses: 3, message: "After pause, focus must reach next.")
         XCUIRemote.shared.press(.select)
         record("playback.next")
@@ -31,6 +32,7 @@ extension AccessLifecycleTVOSUITests {
         try writePNG(app: app, name: "after-next")
         attachScreenshot(app: app, name: "tvos-access-lifecycle-after-next")
 
+        ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
         moveFocus(.left, to: playPauseButton, maximumPresses: 3, message: "Focus must return to play/pause after next.")
         let pausedValue = String(describing: playPauseButton.value ?? "")
         XCUIRemote.shared.press(.select)
@@ -396,7 +398,8 @@ extension AccessLifecycleTVOSUITests {
             )
         }
         XCTAssertTrue(
-            settingsButton.waitForExistence(timeout: AccessLifecycleTVOSUITestsWaitTiming.navigationTimeoutSeconds),
+            app.refreshTVOSSlideshowControlBar(
+                timeout: AccessLifecycleTVOSUITestsWaitTiming.navigationTimeoutSeconds),
             "Playback page must show the settings button.")
         for _ in 0..<6 where settingsButton.hasFocus == false {
             XCUIRemote.shared.press(.left)
@@ -650,7 +653,7 @@ extension AccessLifecycleTVOSUITests {
             )
         }
         XCTAssertTrue(
-            playPauseButton.waitForExistence(
+            app.refreshTVOSSlideshowControlBar(
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.settingsChangeTimeoutSeconds),
             "Directional key must wake the playback controls.")
     }

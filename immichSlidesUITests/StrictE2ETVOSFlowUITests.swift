@@ -268,6 +268,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
         XCTAssertFalse(previousButton.isEnabled, "At the initial history boundary, previous must be disabled.")
         attachScreenshot(app: app, name: "tvos-playback-02-entry-hint-settings-focused")
 
+        ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
         moveFocus(
             .right,
             to: playPauseButton,
@@ -315,6 +316,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             "The playback page must expose the read-only index probe."
         )
         _ = try requireIndexValue(indexProbe)
+        ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
         XCTAssertTrue(
             previousButton.waitForExistence(timeout: TestWait.seconds(.product(5))),
             "The start of the history chain must show the previous button."
@@ -326,6 +328,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             attachmentName: "tvos-playback-05-history-a-paused"
         )
 
+        ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
         moveFocus(
             .right,
             to: nextButton,
@@ -347,6 +350,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             attachmentName: "tvos-playback-06-history-b-after-next"
         )
 
+        ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
         moveFocus(
             .right,
             to: nextButton,
@@ -368,6 +372,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             attachmentName: "tvos-playback-07-history-c-after-next"
         )
 
+        ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
         moveFocus(
             .left,
             to: playPauseButton,
@@ -394,6 +399,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             attachmentName: "tvos-playback-08-history-return-step-1"
         )
 
+        ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
         moveFocus(
             .left,
             to: previousButton,
@@ -418,6 +424,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             attachmentName: "tvos-playback-09-history-return-step-2"
         )
 
+        ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
         moveFocus(
             .right,
             to: nextButton,
@@ -469,6 +476,11 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
         XCTAssertNotNil(publicationAfterAutoPlay, "The index probe must change after a playback action.")
         attachScreenshot(app: app, name: "tvos-playback-10-auto-advanced-visible-frame")
 
+        ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
+        XCTAssertTrue(
+            waitForFocus(on: playPauseButton, timeout: TestWait.seconds(.product(6))),
+            "After auto-advance, focus on wake must return to Play/Pause."
+        )
         let resumedValue = String(describing: playPauseButton.value ?? "")
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
@@ -512,20 +524,25 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             evidenceName: "pause-after-10s",
             attachmentName: "tvos-playback-12-pause-after-10-seconds-visible-frame"
         )
+        ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
+        XCTAssertTrue(
+            waitForFocus(on: playPauseButton, timeout: TestWait.seconds(.product(6))),
+            "After the pause wait, focus on wake must return to Play/Pause."
+        )
+        let retainedPausedValue = String(describing: playPauseButton.value ?? "")
         let pauseEvidence = XCTAttachment(
             string: """
                 pauseStartedAtUnixSeconds=\(pauseStartedAt.timeIntervalSince1970)
                 pauseVerifiedAtUnixSeconds=\(pauseVerifiedAt.timeIntervalSince1970)
                 pauseElapsedSeconds=\(pauseElapsedSeconds)
                 pausedControlValue=\(pausedControlValue)
-                verifiedControlValue=\(String(describing: playPauseButton.value ?? ""))
+                verifiedControlValue=\(retainedPausedValue)
                 """
         )
         pauseEvidence.name = "tvos-playback-pause-state-and-timing"
         pauseEvidence.lifetime = .keepAlways
         add(pauseEvidence)
 
-        let retainedPausedValue = String(describing: playPauseButton.value ?? "")
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(4))) {
@@ -566,6 +583,11 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             name: "visual-identity.json"
         )
 
+        ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
+        XCTAssertTrue(
+            waitForFocus(on: playPauseButton, timeout: TestWait.seconds(.product(6))),
+            "After autoplay resumes, focus on wake must return to Play/Pause."
+        )
         let finalPlayingValue = String(describing: playPauseButton.value ?? "")
         XCUIRemote.shared.press(.select)
         XCTAssertTrue(
@@ -711,11 +733,8 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
 
     @MainActor
     private func ensureControlBarVisible(app: XCUIApplication, playPauseButton: XCUIElement) {
-        if !playPauseButton.exists {
-            XCUIRemote.shared.press(.up)
-        }
         XCTAssertTrue(
-            playPauseButton.waitForExistence(timeout: TestWait.seconds(.product(5))),
+            app.refreshTVOSSlideshowControlBar(timeout: TestWait.seconds(.product(5))),
             "An arrow key must wake the playback control bar.")
     }
 

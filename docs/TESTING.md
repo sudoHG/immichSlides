@@ -209,6 +209,15 @@ the generic waiter's final condition call. Playback History
 Play/Pause polls, including manual lifecycle pause/resume, read the value from one
 fallible application snapshot per poll and reveal an absent control within the original deadline.
 
+On tvOS, `refreshTVOSSlideshowControlBar` sends a real Up before control-dependent
+reads and Select actions, including when the bar is already visible. A visible
+snapshot alone does not refresh auto-hide. If hidden, the helper first waits for
+the wake receiver to have focus, within the caller's existing appearance deadline.
+Callers then confirm the intended control's focus before Select. Repeat this
+sequence after screenshots, scene sampling or other waits; do not reuse an earlier
+visibility or focus observation. Evidence text can reuse a value already captured
+in that refreshed window. Product auto-hide and one Select per action remain unchanged.
+
 1. **Every test has at least one assertion that can fail.** Screenshots may accompany assertions but never replace them.
 2. **Test rules, not design values.** "Input height is at least 44 pt" and "input text is larger than placeholder text" are good tests. "Height equals 46" is not: a design change should not turn tests red.
 3. **Do not assert on source text.** No reading `.swift` files and no `contains("some code")` checks. Enforce structure with the compiler, access control or a lint script.

@@ -113,6 +113,10 @@ extension StrictE2EFilterTVOSUITests {
             moveFocus(
                 .right, to: playPauseButton, maximumPresses: 3, message: "Focus must be able to move to Play/Pause.")
         }
+        ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
+        moveFocusTo(
+            playPauseButton, directions: [.left, .right],
+            message: "Focus must be able to move to Play/Pause.")
         let playingValue = String(describing: playPauseButton.value ?? "")
         if playingValue.contains("暂停") || playingValue.lowercased().contains("pause") {
             moveFocusTo(
@@ -350,35 +354,8 @@ extension StrictE2EFilterTVOSUITests {
     @MainActor
     func ensureControlBarVisible(app: XCUIApplication, playPauseButton: XCUIElement) {
         XCTAssertTrue(
-            revealControlBar(app: app, playPauseButton: playPauseButton, timeout: TestWait.seconds(.product(5))),
+            app.refreshTVOSSlideshowControlBar(timeout: TestWait.seconds(.product(5))),
             "A direction key must bring up the playback control bar.")
-    }
-
-    @MainActor
-    private func revealControlBar(app: XCUIApplication, playPauseButton: XCUIElement, timeout: TimeInterval) -> Bool {
-        let receiver = app.descendants(matching: .any).matching(identifier: "slideshow.hiddenWakeReceiver").firstMatch
-        let deadline = Date().addingTimeInterval(timeout)
-        let maximumWakePresses = 2
-        for _ in 0..<maximumWakePresses {
-            if playPauseButton.exists { return true }
-            let remainingWakeSeconds = max(TestWait.seconds(.product(0)), deadline.timeIntervalSinceNow)
-            guard
-                waitUntil(
-                    timeout: remainingWakeSeconds,
-                    condition: {
-                        playPauseButton.exists || (try? receiver.snapshot())?.hasFocus == true
-                    })
-            else { break }
-            if playPauseButton.exists { return true }
-            XCUIRemote.shared.press(.up)
-            let controlAppearanceSeconds = min(
-                timeout / Double(maximumWakePresses),
-                max(TestWait.seconds(.product(0)), deadline.timeIntervalSinceNow))
-            if playPauseButton.waitForExistence(timeout: controlAppearanceSeconds) {
-                return true
-            }
-        }
-        return playPauseButton.exists
     }
 
     @MainActor

@@ -24,6 +24,30 @@ extension XCUIApplication {
     }
 }
 
+#if os(tvOS)
+extension XCUIApplication {
+    @MainActor
+    func refreshTVOSSlideshowControlBar(timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            let snapshots = evidenceSnapshotsByIdentifier()
+            if snapshots["slideshow.control.playPause.button"] != nil
+                || snapshots["slideshow.hiddenWakeReceiver"]?.hasFocus == true
+            {
+                guard Date() < deadline else { return false }
+                // A visible bar may be about to expire; every interaction needs a fresh remote reveal.
+                XCUIRemote.shared.press(.up)
+                let remaining = max(0, deadline.timeIntervalSinceNow)
+                return buttons["slideshow.control.playPause.button"].waitForExistence(timeout: remaining)
+                    && Date() < deadline
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(Timing.focusSettle))
+        }
+        return false
+    }
+}
+#endif
+
 #if os(iOS)
 struct SlideshowControlBarButtonObservation {
     let identifier: String
