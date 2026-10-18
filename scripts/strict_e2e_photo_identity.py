@@ -110,6 +110,11 @@ def _pil_image():
 
 @functools.lru_cache(maxsize=4096)
 def classify_screenshot(image_bytes: bytes) -> PhotoIdentity:
+    return _classify_screenshot(image_bytes, qualify_single_photo=True)
+
+
+@functools.lru_cache(maxsize=4096)
+def _classify_screenshot(image_bytes: bytes, *, qualify_single_photo: bool) -> PhotoIdentity:
     if not image_bytes:
         return PhotoIdentity("UNRECOGNIZABLE", None, {}, 0.0, ("empty-bytes",))
     Image = _pil_image()
@@ -226,6 +231,13 @@ def classify_screenshot(image_bytes: bytes) -> PhotoIdentity:
     close = second_score > 0 and best_score < second_score * IDENTITY_AMBIGUOUS_SCORE_RATIO and (best_score - second_score) < IDENTITY_AMBIGUOUS_SCORE_MARGIN
     if mixed or close:
         return PhotoIdentity("TRANSITION", None, scores, mean_luma, notes)
+    if qualify_single_photo and best_mark in ("A1", "A2"):
+        candidates = _single_photo_candidates(rgb)
+        if len(candidates) > 1:
+            return PhotoIdentity("TRANSITION", None, scores, mean_luma, notes + ("multiple-public-candidates",))
+        if len(candidates) != 1 or scores[candidates[0]] < IDENTITY_MINIMUM_MATCH_SCORE:
+            return PhotoIdentity("UNRECOGNIZABLE", None, scores, mean_luma, notes + ("unsupported-public-candidate",))
+        best_mark = candidates[0]
     return PhotoIdentity("MATCH", best_mark, scores, mean_luma, notes)
 
 
@@ -238,6 +250,62 @@ FRAME_GLYPH_MAXIMUM_BLANK_ROWS = 4
 FRAME_GLYPH_MINIMUM_BAND_HEIGHT = 10
 FRAME_TEXTURE_MAXIMUM_CELL_DRIFT_PIXELS = 2
 FRAME_PALETTE_EDGE_BAND_RAW_PIXELS = 8
+
+
+def _single_photo_candidates(image: object) -> list[str]:
+    # Hue/gray mixtures cannot establish A1/A2. Require their real RGB pair and
+    # unobstructed public texture from the same full frame, including its surround.
+    rgb = sample_public_frame(image)
+    counts = {mark: [0, 0] for mark in ("A1", "A2")}
+    for color in rgb.getdata():
+        assignment = public_palette_assignment(color)
+        if assignment is not None and assignment[0] in counts:
+            counts[assignment[0]][assignment[1]] += 1
+    candidates = []
+    for mark, count in counts.items():
+        if min(count) < IDENTITY_MINIMUM_CHROMATIC_PIXEL_COUNT:
+            continue
+        try:
+            pattern = _public_slot_pattern(rgb, mark, None)
+        except IdentityAssertionError:
+            continue
+        if pattern is not None and (pattern != "B" or _has_sharp_public_stripe(rgb, mark)):
+            candidates.append(mark)
+    return candidates
+
+
+def _has_sharp_public_stripe(rgb: object, mark: str) -> bool:
+    # A monochrome row also occurs in a blurred striped background. Require
+    # a sharp palette edge at the existing identity scale, so display upscaling
+    # does not turn a source edge into an apparently blurred capture edge.
+    width = min(rgb.width, IDENTITY_SAMPLE_WIDTH_PIXELS)
+    height = max(IDENTITY_MINIMUM_IMAGE_PIXELS, round(rgb.height * width / rgb.width))
+    rgb = rgb.resize((width, height), _pil_image().Resampling.NEAREST)
+    pixels = rgb.load()
+    for x in range(rgb.width):
+        previous = None
+        unknown_run = 0
+        for y in range(rgb.height):
+            assignment = public_palette_assignment(pixels[x, y])
+            if assignment is not None and assignment[0] == mark:
+                if previous is not None and assignment[1] != previous and unknown_run <= FRAME_TEXTURE_MAXIMUM_CELL_DRIFT_PIXELS:
+                    return True
+                previous = assignment[1]
+                unknown_run = 0
+            else:
+                unknown_run += 1
+    return False
+
+
+def classify_screenshot_region(image_bytes: bytes, *, reference_matched_foreground: bytes | None = None) -> PhotoIdentity:
+    # Only the existing full-reference/surround pipeline may supply this same-PNG
+    # foreground. A generic whole-frame match cannot prove an arbitrary region.
+    if reference_matched_foreground is not None:
+        whole = classify_screenshot(reference_matched_foreground)
+        region = _classify_screenshot(image_bytes, qualify_single_photo=False)
+        if whole.mark in ("A1", "A2") and region.status == "MATCH" and region.mark == whole.mark:
+            return region
+    return classify_screenshot(image_bytes)
 
 # Scanner-approved captures; TV has no home indicator. Its entry hint and
 # control bar share this bounded rectangle, which cannot hide a full-span slot.

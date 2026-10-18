@@ -171,7 +171,7 @@ class DisplayStrategyContractTestsCases:
                 _compose_side_partner("A2", "A3"),
                 _compose_smart_fill("A2", "A4"),
             )
-        self.assertIn("second public fixture", str(raised.exception))
+        self.assertEqual(str(raised.exception), "Unrecognizable input must not count as a pass: display-before")
 
 
     def test_assert_display_before_letterbox_rejects_fullbleed_and_pool_end(self) -> None:

@@ -702,7 +702,7 @@ class DeviceEvidenceTests(unittest.TestCase):
             with self.assertRaises((CommandError, AccessLifecycleContractError)) as raised:
                 evaluate_device_evidence(root, fixture_set="a")
             self.assertIn(
-                "The side margins in before must not already show the second public fixture",
+                "Unrecognizable input must not count as a pass: display-before",
                 str(raised.exception),
             )
 

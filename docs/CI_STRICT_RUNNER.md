@@ -65,7 +65,7 @@ not fix it. The four-candidate denominator, deadlines and isolation checks remai
 A and C, and B1–B5's image bytes, remain unchanged.
 
 B6–B8 use two RGB endpoints per identity, matched as a pair within tolerance 12
-in both the Python and Swift readers, rather than A1–A5's hue scoring. This adds
+in both the Python and Swift readers, rather than the original A1–A5 hue scoring. This adds
 endpoint-pair scoring and the shared A6–A8 color labels without changing the
 existing tolerances or confidence thresholds. A B frame rejected as
 `unreadable public glyph slot` or `mixed public glyphs` can indicate a collision with system
@@ -73,6 +73,29 @@ chrome: first compare the failing slot's pixels and surrounding controls/EXIF
 against both identity endpoints. Preserve the original frame and its slot/axis
 exception; do not change tolerances or exclude the frame. The measured collision
 history and corpus are in [#486](https://github.com/sudoHG/immichSlides/pull/486).
+
+Whole-frame A1/A2 matches additionally require both real RGB palette endpoints
+and clear public row texture from the same PNG. The readers reuse tolerance 12,
+minimum support 18, observed row coverage 85% and texture cell drift 2 pixels.
+Only one qualified candidate above the existing score floor can confirm an
+identity; multiple candidates remain a transition, and missing evidence stays
+unrecognizable. Blurred background colors, generic green/gray and a faded frame
+without its true RGB pair cannot confirm a new photo. Original black, dark-wash,
+score and ambiguity gates still run first. Independently verified composite
+rectangles retain their existing interior hue check and complete canvas gates.
+Striped candidates additionally need a sharp edge between their actual RGB
+endpoints, with at most the existing two-pixel unknown band. A blurred stripe's
+monochrome rows alone do not establish clear foreground texture.
+The edge check reuses the identity reader's 96-pixel width, so normal display
+upscaling does not inflate a sharp source edge. Palette support, row texture and
+composite sampling retain their existing 480-pixel cap.
+Candidate palette proof reads the PNG's encoded RGB channels in both languages;
+display color conversion must not change those values for a tagged video frame.
+The existing composite reader keeps its original color conversion.
+Only a foreground returned by the existing full-reference matching pipeline can
+reuse its whole-photo qualification for a narrow region whose original hue
+verdict agrees. Generic whole-frame matches cannot supply this provenance;
+the filter's original surround checks still run before its region checks.
 
 The Swift `captureIdentity` and Python `capture_identity` readers locate each
 photo's palette rectangle, rather than assuming equal quadrants or full-span strips. They use

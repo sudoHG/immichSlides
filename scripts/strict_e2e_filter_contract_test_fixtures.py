@@ -64,6 +64,114 @@ from strict_e2e_server import PUBLIC_API_KEY, _fixture_data, fixture_manifest  #
 from test_strict_e2e_server import RunningServer  # noqa: E402
 
 
+def single_photo_candidate_cases():
+    """Frozen public photos in portrait fit scenes and isolated identity defects."""
+    import base64
+    # Public Display P3 metadata changes no encoded RGB samples in these inputs.
+    display_p3 = base64.b64decode(
+        "AAACGGFwcGwEAAAAbW50clJHQiBYWVogB+YAAQABAAAAAAAAYWNzcEFQUEwAAAAAQVBQTAAAAAAAAAAAAAAAAAAAAAAA"
+        "APbWAAEAAAAA0y1hcHBsAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKZGVzYwAA"
+        "APwAAAAwY3BydAAAASwAAABQd3RwdAAAAXwAAAAUclhZWgAAAZAAAAAUZ1hZWgAAAaQAAAAUYlhZWgAAAbgAAAAU"
+        "clRSQwAAAcwAAAAgY2hhZAAAAewAAAAsYlRSQwAAAcwAAAAgZ1RSQwAAAcwAAAAgbWx1YwAAAAAAAAABAAAADGVu"
+        "VVMAAAAUAAAAHABEAGkAcwBwAGwAYQB5ACAAUAAzbWx1YwAAAAAAAAABAAAADGVuVVMAAAA0AAAAHABDAG8AcAB5"
+        "AHIAaQBnAGgAdAAgAEEAcABwAGwAZQAgAEkAbgBjAC4ALAAgADIAMAAyADJYWVogAAAAAAAA9tUAAQAAAADTLFhZ"
+        "WiAAAAAAAACD3wAAPb////+7WFlaIAAAAAAAAEq/AACxNwAACrlYWVogAAAAAAAAKDgAABELAADIuXBhcmEAAAAAAAMA"
+        "AAACZmYAAPKnAAANWQAAE9AAAApbc2YzMgAAAAAAAQxCAAAF3v//8yYAAAeTAAD9kP//+6L///2jAAAD3AAAwG4=")
+    photos = [Image.open(io.BytesIO(_fixture_data("a")["images"][f"asset-a-{index}"])).convert("RGB")
+              for index in (1, 2)]
+    cases = []
+    for index, photo in enumerate(photos, start=1):
+        cases.append((f"raw-A{index}", photo, ("MATCH", f"A{index}"), ("MATCH", f"A{index}")))
+        background = ImageOps.fit(photo, (480, 1039)).filter(ImageFilter.GaussianBlur(60))
+        scene = background.copy()
+        fitted = ImageOps.contain(photo, scene.size)
+        scene.paste(fitted, (0, (scene.height - fitted.height) // 2))
+        scene.paste((180, 180, 180), (0, 955, 480, 1005))
+        cases.append((f"portrait-fit-A{index}", scene, ("MATCH", f"A{index}"), ("MATCH", f"A{index}")))
+        tagged = scene.copy()
+        tagged.info["icc_profile"] = display_p3
+        cases.append((f"profile-tagged-fit-A{index}", tagged, ("MATCH", f"A{index}"), ("MATCH", f"A{index}")))
+        cases.append((f"background-only-A{index}", background,
+                      ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
+        if index == 1:
+            tagged_background = background.copy()
+            tagged_background.info["icc_profile"] = display_p3
+            cases.append(("profile-tagged-background-A1", tagged_background,
+                          ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
+    for name, color in (("gray-only", (180, 180, 180)), ("missing-gray", (74, 170, 38))):
+        cases.append((name, Image.new("RGB", (480, 1039), color),
+                      ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
+    # Sharp horizontal stripes pass the existing public B texture semantics.
+    # Only the green differs from A2: hue and generic gray cannot prove its RGB pair.
+    wrong_green = Image.new("RGB", (480, 1039), (128, 122, 110))
+    for y in range(0, 1039, 80):
+        wrong_green.paste((37, 109, 19), (0, y, 480, min(1039, y + 40)))
+    cases.append(("non-A2-green", wrong_green, ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
+    # The stripe is sharp, but its second endpoint has only sixteen actual pixels.
+    unsupported = Image.new("RGB", (8, 8), (74, 170, 38))
+    for row in (3, 7):
+        unsupported.paste((128, 122, 110), (0, row, 8, row + 1))
+    cases.append(("insufficient-second-color", unsupported,
+                  ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
+    double = Image.new("RGB", (480, 1040))
+    for photo, box in zip(photos, ((0, 0, 480, 312), (0, 312, 480, 1040))):
+        double.paste(ImageOps.fit(photo, (box[2] - box[0], box[3] - box[1])), box)
+    cases.append(("two-qualified-photos", double, ("TRANSITION", None), ("MATCH", "A1+A2")))
+    transition = Image.blend(photos[0], photos[1].resize(photos[0].size), .6)
+    cases.append(("blended-photos", transition, ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
+    for name, widths in (("irregular-cells", (16, 48, 48, 48, 80, 32, 48, 48, 48, 48, 16)),
+                         ("oversized-edge-cell", (120, 40, 40, 40, 40, 40, 40, 40, 40, 40))):
+        scene = Image.new("RGB", (480, 270))
+        left = 0
+        for index, width in enumerate(widths):
+            scene.paste(((37, 109, 19), (91, 61, 91))[index % 2], (left, 0, left + width, 270))
+            left += width
+        cases.append((name, scene, ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
+    conflicting = photos[0].resize((480, 270), Image.Resampling.NEAREST)
+    conflicting.paste((37, 109, 19), (0, 135, 480, 270))
+    cases.append(("conflicting-row-patterns", conflicting,
+                  ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
+    for name, fraction in (("white-in-every-row", 1), ("insufficient-row-coverage", 96)):
+        scene = photos[0].resize((480, 270), Image.Resampling.NEAREST)
+        scene.paste((255, 255, 255) if fraction == 1 else (55, 135, 38), (0, 0, fraction, 270))
+        cases.append((name, scene, ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
+    low_score = Image.new("RGB", (480, 1039), (180, 180, 180))
+    low_score.paste((55, 135, 38), (0, 0, 240, 1039))
+    low_score.paste(photos[0].resize((480, 8), Image.Resampling.NEAREST), (0, 500))
+    cases.append(("qualified-below-score-floor", low_score,
+                  ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
+    unverified = photos[0].resize((480, 270), Image.Resampling.NEAREST)
+    # One ROI has the same hues but neither true palette endpoint. The whole
+    # scene's remaining A1 texture cannot prove that ROI without reference provenance.
+    for y in range(32, 224, 12):
+        unverified.paste((45, 132, 23) if (y - 32) // 12 % 2 else (120, 80, 120),
+                         (0, y, 88, min(224, y + 12)))
+    cases.append(("unverified-region-palette", unverified, ("MATCH", "A1"), ("MATCH", "A1")))
+    reference_fit = ImageOps.fit(photos[0], (320, 696)).filter(ImageFilter.GaussianBlur(40))
+    reference_fit.paste(photos[0], (0, 258))
+    cases.append(("reference-fit-A1", reference_fit, ("MATCH", "A1"), ("MATCH", "A1")))
+    for index in (1, 2):
+        photo = Image.open(io.BytesIO(_fixture_data("b")["images"][f"asset-b-{index}"])).convert("RGB")
+        cases.append((f"raw-B{index}", photo, ("MATCH", f"A{index}"), ("MATCH", f"A{index}")))
+        if index == 1:
+            from test_album_server_narrow_contract import IPAD_SCREEN, IPHONE_SCREEN, _full_screen
+            for screen in (IPHONE_SCREEN, IPAD_SCREEN):
+                clipped = Image.open(io.BytesIO(_full_screen("A1", screen, "b"))).convert("RGB")
+                cases.append((f"zoomed-B1-{screen[0]}", clipped, ("MATCH", "A1"), ("MATCH", "A1")))
+        background = ImageOps.fit(photo, (480, 1039)).filter(ImageFilter.GaussianBlur(60))
+        fitted = ImageOps.contain(photo, background.size)
+        scene = background.copy()
+        scene.paste(fitted, ((scene.width - fitted.width) // 2, (scene.height - fitted.height) // 2))
+        cases.append((f"portrait-fit-B{index}", scene, ("MATCH", f"A{index}"), ("MATCH", f"A{index}")))
+        cases.append((f"background-only-B{index}", background,
+                      ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
+        chrome = background.copy()
+        chrome.paste((180, 180, 180), (0, 955, 480, 1005))
+        cases.append((f"background-and-gray-UI-B{index}", chrome,
+                      ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
+    return cases
+
+
 # Real public-fixture chrome, sampled by dominant RGB bins without averaging.
 # The origin identifies the photo palette underneath each translucent overlay.
 PUBLIC_APP_CHROME_SAMPLES = {

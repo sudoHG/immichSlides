@@ -57,6 +57,7 @@ from strict_e2e_filter_contract_test_fixtures import (
     union_selection_labels,
     unittest,
     write_member_manifest,
+    single_photo_candidate_cases,
 )
 
 class DeviceFilterVisualIdentityTestsCases:
@@ -228,7 +229,7 @@ class DeviceFilterVisualIdentityTestsCases:
                 for case in ("foreign_bottom_half", "outside_gap"):
                     with self.subTest(case=case):
                         invalid = _iphone_control_split_frame(fixture_set, **{case: True})
-                        self.assertEqual(classify_screenshot(invalid).status, "MATCH")
+                        self.assertEqual(classify_screenshot(invalid).status, "TRANSITION")
                         (evidence / "album-play-1.png").write_bytes(invalid)
                         with self.assertRaises(FilterContractError):
                             evaluate_filter_visual_identity(evidence, "filter-album")
@@ -531,10 +532,18 @@ for offset in stride(from: 2, to: CommandLine.arguments.count, by: 2) {
 let path = CommandLine.arguments[offset]
 let mode = CommandLine.arguments[offset + 1]
 let original = try Data(contentsOf: URL(fileURLWithPath: path))
-if mode == "capture" {
-let result = StrictE2EPhotoIdentity.captureIdentity(png: original)
+if mode == "verified-region" || mode == "unverified-region" {
+let candidate = mode == "verified-region" ? try StrictE2EFilterContract.displayCandidatePNG(original, evidenceDirectory: root) : original
+let regions = StrictE2EPhotoIdentity.classifyRegions(png: candidate, hasReferenceMatchedForeground: candidate != original)
+let result = regions[mode == "verified-region" ? "center" : "left"]!
 print(String(data: try JSONSerialization.data(withJSONObject: ["status": result.status.rawValue,
-    "mark": result.mark ?? "nil"]), encoding: .utf8)!)
+    "mark": result.mark ?? "nil", "notes": result.notes]), encoding: .utf8)!)
+continue
+}
+if mode == "capture" || mode == "classify" {
+let result = mode == "capture" ? StrictE2EPhotoIdentity.captureIdentity(png: original) : StrictE2EPhotoIdentity.classify(png: original)
+print(String(data: try JSONSerialization.data(withJSONObject: ["status": result.status.rawValue,
+    "mark": result.mark ?? "nil", "notes": result.notes]), encoding: .utf8)!)
 continue
 }
 let candidate = mode == "slot" ? original : try StrictE2EFilterContract.displayCandidatePNG(original, evidenceDirectory: root)
@@ -555,6 +564,30 @@ print(String(data: try JSONSerialization.data(withJSONObject: report), encoding:
                 "swiftc", str(SCRIPT_DIR.parent / "TestSupport/StrictE2EFilterContract.swift"),
                 str(SCRIPT_DIR.parent / "TestSupport/StrictE2EPhotoIdentity.swift"), str(main), "-o", str(executable),
             ], check=True, capture_output=True, text=True)
+            candidate_arguments = []
+            candidate_expectations = []
+            for name, scene, full_expected, capture_expected in single_photo_candidate_cases():
+                path = directory / f"candidate-{name}.png"
+                scene.save(path)
+                for mode, expected in (("classify", full_expected), ("capture", capture_expected)):
+                    candidate_arguments.extend((str(path), mode))
+                    candidate_expectations.append((name, mode, expected))
+                if name in ("reference-fit-A1", "unverified-region-palette"):
+                    mode = "verified-region" if name == "reference-fit-A1" else "unverified-region"
+                    expected = ("MATCH", "A1") if mode == "verified-region" else ("UNRECOGNIZABLE", None)
+                    candidate_arguments.extend((str(path), mode))
+                    candidate_expectations.append((name, mode, expected))
+            candidates = subprocess.run([str(executable), str(directory), *candidate_arguments],
+                                        check=True, capture_output=True, text=True, timeout=300)
+            self.assertEqual(len(candidates.stdout.splitlines()), len(candidate_expectations))
+            for (name, mode, expected), line in zip(candidate_expectations, candidates.stdout.splitlines()):
+                with self.subTest(candidate=name, reader=mode):
+                    report = json.loads(line)
+                    self.assertEqual((report["status"], report["mark"]), (expected[0], expected[1] or "nil"))
+                    if expected[0] == "UNRECOGNIZABLE" and name != "gray-only":
+                        self.assertIn("unsupported-public-candidate", report["notes"])
+                    if expected[0] == "TRANSITION":
+                        self.assertIn("multiple-public-candidates", report["notes"])
             cases = []
             for fixture_set in ("a", "b"):
                 photo = Image.open(io.BytesIO(_fixture_png("A1", fixture_set))).convert("RGB")
@@ -793,7 +826,7 @@ print(String(data: try JSONSerialization.data(withJSONObject: report), encoding:
             (
                 "transition",
                 _full_frame_transition(_fixture_png("A1"), _fixture_png("A2")),
-                "Multiple before-change photos cannot be faked by a transition",
+                "The before-change frame must be recognizable as a public fixture photo",
             ),
             ("unknown", _solid_png((25, 25, 25)), "The before-change frame must be recognizable as a public fixture photo"),
         )
@@ -828,12 +861,12 @@ print(String(data: try JSONSerialization.data(withJSONObject: report), encoding:
             (
                 "multi",
                 _side_by_side(_fixture_png("A1"), _fixture_png("A2")),
-                "The after-change frame must be a recognizable, stable single-photo frame",
+                "after-change cannot use a transition or unknown frame as passing",
             ),
             (
                 "mixed_server",
                 _side_by_side(_fixture_png("A1", "a"), _fixture_png("A2", "b")),
-                "after-change frame must contain only target album photos from fixture A",
+                "after-change cannot use a transition or unknown frame as passing",
             ),
             (
                 "transition",

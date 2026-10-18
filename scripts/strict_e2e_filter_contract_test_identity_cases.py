@@ -475,7 +475,7 @@ class FilterVisualIdentityFromScreenshotsTestsCases:
                 "screenshot": _side_by_side(_fixture_png("A1", "a"), _fixture_png("A2", "b")),
                 "setting_source": "accessibility_ui",
                 "process_id_after": 44,
-                "error": "fixture B",
+                "error": "single photo after server switch cannot use a transition or unknown frame as passing",
             },
             {
                 "name": "probe",

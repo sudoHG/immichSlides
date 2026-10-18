@@ -36,7 +36,7 @@ from strict_e2e_photo_identity import (  # noqa: E402
 )
 from strict_e2e_server import GLYPHS, _fixture_data, _png as fixture_png  # noqa: E402
 from test_album_server_narrow_contract import IPHONE_SCREEN  # noqa: E402
-from strict_e2e_filter_contract_test_fixtures import PUBLIC_APP_CHROME_SAMPLES  # noqa: E402
+from strict_e2e_filter_contract_test_fixtures import PUBLIC_APP_CHROME_SAMPLES, single_photo_candidate_cases  # noqa: E402
 
 
 REVIEWED_SCREENSHOT_RELATIVE_PATHS = (
@@ -950,15 +950,34 @@ class PositiveIdentityTests(unittest.TestCase):
                 self.assertEqual(result.status, "MATCH", result.notes)
                 self.assertEqual(result.mark, label)
 
-    def test_cropped_and_dark_frames_keep_the_same_mark(self) -> None:
+    def test_single_photo_identity_requires_its_rgb_pair_and_clear_public_texture(self) -> None:
+        from access_lifecycle_contract import capture_identity, classify_display_regions
+        for name, scene, full_expected, capture_expected in single_photo_candidate_cases():
+            encoded = io.BytesIO()
+            scene.save(encoded, format="PNG")
+            for reader, expected in ((classify_screenshot, full_expected), (capture_identity, capture_expected)):
+                with self.subTest(frame=name, reader=reader.__name__):
+                    identity = reader(encoded.getvalue())
+                    self.assertEqual((identity.status, identity.mark), expected, identity.notes)
+                    if expected[0] == "UNRECOGNIZABLE" and name != "gray-only":
+                        self.assertIn("unsupported-public-candidate", identity.notes)
+                    if expected[0] == "TRANSITION":
+                        self.assertIn("multiple-public-candidates", identity.notes)
+            if name == "unverified-region-palette":
+                region = classify_display_regions(encoded.getvalue())["left"]
+                self.assertEqual((region.status, region.mark), ("UNRECOGNIZABLE", None))
+                self.assertIn("unsupported-public-candidate", region.notes)
+
+    def test_cropped_and_faded_frames_keep_only_supported_marks(self) -> None:
         for label in ("A2", "A3", "A4", "A5"):
             with self.subTest(label=label):
                 cropped = classify_screenshot(_crop_center(_fixture_png(label)))
                 dark = classify_screenshot(_darken(_fixture_png(label), 0.22))
                 self.assertEqual(cropped.status, "MATCH", cropped.notes)
                 self.assertEqual(cropped.mark, label)
-                self.assertEqual(dark.status, "MATCH", dark.notes)
-                self.assertEqual(dark.mark, label)
+                # A faded A2 no longer supplies its true RGB pair; hue/gray is insufficient.
+                self.assertEqual(dark.status, "UNRECOGNIZABLE" if label == "A2" else "MATCH", dark.notes)
+                self.assertEqual(dark.mark, None if label == "A2" else label)
 
 
     def test_matching_exif_is_accepted(self) -> None:

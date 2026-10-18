@@ -15,7 +15,7 @@ from typing import Any, Mapping, Sequence
 from strict_e2e_photo_identity import (
     MARKS, IdentityAssertionError, classify_public_pattern, classify_screenshot,
     public_frame_photos_from_bytes, public_frame_slot_count_from_bytes, public_letter_from_bytes,
-    public_scene_photos_from_bytes,
+    public_scene_photos_from_bytes, classify_screenshot_region,
 )
 from strict_e2e_server import PUBLIC_API_KEY, _fixture_data, fixture_manifest, public_visual_label
 
@@ -308,7 +308,8 @@ def _classify_display_regions(image_bytes: bytes) -> dict[str, Any]:
         from PIL import Image
         import io
 
-        with Image.open(io.BytesIO(_display_foreground_png(image_bytes))) as image:
+        foreground_png = _display_foreground_png(image_bytes)
+        with Image.open(io.BytesIO(foreground_png)) as image:
             rgb = image.convert("RGB")
             width, height = rgb.size
             if width < DISPLAY_MINIMUM_REGION_IMAGE_PIXELS or height < DISPLAY_MINIMUM_REGION_IMAGE_PIXELS:
@@ -325,7 +326,10 @@ def _classify_display_regions(image_bytes: bytes) -> dict[str, Any]:
                 )
                 buffer = io.BytesIO()
                 crop.save(buffer, format="PNG")
-                regions[name] = classify_screenshot(buffer.getvalue())
+                regions[name] = classify_screenshot_region(
+                    buffer.getvalue(),
+                    reference_matched_foreground=foreground_png if foreground_png != image_bytes else None,
+                )
     except FilterContractError:
         raise
     except Exception as error:

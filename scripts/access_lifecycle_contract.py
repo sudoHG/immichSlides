@@ -13,7 +13,7 @@ from typing import Any, Callable, Iterator, Mapping, Sequence, Optional, Tuple
 
 from strict_e2e_filter_contract import FROZEN_FIXTURE_SHA256
 from strict_e2e_photo_identity import (
-    MARKS, IdentityAssertionError, PhotoIdentity, classify_screenshot,
+    MARKS, IdentityAssertionError, PhotoIdentity, classify_screenshot, classify_screenshot_region,
     IDENTITY_MINIMUM_CHROMATIC_PIXEL_COUNT, FRAME_PALETTE_CHANNEL_TOLERANCE,
     sample_public_frame, public_palette_assignment, public_palette_edge_assignment, public_frame_edge_band,
 )
@@ -499,7 +499,7 @@ def classify_display_regions(image_bytes: bytes) -> dict[str, PhotoIdentity]:
                 (f"crop-failed:{type(error).__name__}",),
             )
             continue
-        regions[name] = classify_screenshot(cropped)
+        regions[name] = classify_screenshot_region(cropped)
     return regions
 
 
@@ -604,7 +604,10 @@ def capture_identity(image_bytes: bytes) -> PhotoIdentity:
                        math.ceil((top + (bottom - top) * CAPTURE_INNER_BOX[3]) * image.height / rgb.height))
                 output = io.BytesIO()
                 image.crop(box).save(output, format="PNG")
-                identity = classify_screenshot(output.getvalue())
+                # The complete rectangle already passed the existing RGB/coverage gates.
+                # Keep its hue check separate from whole-scene single-photo qualification.
+                from strict_e2e_photo_identity import _classify_screenshot
+                identity = _classify_screenshot(output.getvalue(), qualify_single_photo=False)
                 if identity.status != "MATCH" or identity.mark != mark:
                     return full
             ordered = [mark for mark, _ in sorted(slots, key=lambda item: (item[1][1], item[1][0]))]
