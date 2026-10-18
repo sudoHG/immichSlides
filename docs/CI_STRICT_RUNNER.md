@@ -732,9 +732,20 @@ failure (`XCTIssue.isFailure`, ignoring warnings) and persists its bounded safe 
 and capture. A background-thread issue retains unavailable App/image state.
 Foreground captures reject secure text fields, first-boot/server surfaces,
 the existing `pinEntry.`/`settings.pin.` namespaces and incomplete trees.
-One native App-window screenshot is resized from that same frame until it meets
-the limits; this adds no test retry. Private spools are projected only onto
+Capture uses one native screen screenshot, cropped to the already-snapshotted
+App-window frame without resolving an element again. Optional AX/capture issues
+are contained by a non-strict expected-failure scope, so they cannot precede or
+replace the original real failure. Diagnostics temporarily permit continuation
+inside that scope and restore the caller's setting before forwarding the original
+issue; an expected capture issue cannot unwind past the original record call.
+The same cropped frame is resized until it
+meets the limits; this adds no test retry. Private spools are projected only onto
 matching official failures and are removed before private-bundle finalization.
+Each existing attempt starts from a recorder-disabled command and receives its
+own spool only after configuration succeeds. A configuration failure leaves that
+attempt's recorder disabled; it never falls back to a previous attempt's spool.
+If the first failed attempt has no receipt, later receipts and their unbound UI
+diagnostic images are omitted to preserve the reader invariant.
 
 Action timestamps bracket the actual native call; completed waits stop timing
 when the existing waiter returns. `state_age_seconds` measures time since the
@@ -746,9 +757,10 @@ with unavailable App state/timing. Preparation receipts reuse retained #471
 timeout measurements; a deadline absent from that ledger stays null.
 
 Passing methods add no AX query, capture, spool or public receipt; only constant
-clock/context bookkeeping surrounds existing actions and waits. Native failure
-capture cost remains measured by the receipt offsets, under the existing
-runner/watchdog limits. The per-image target is at most 1 MiB image
+clock/context bookkeeping surrounds existing actions and waits. A snapshot that
+throws records its numeric query error but no timing cost; capture offsets remain
+null on that path. Successful capture cost is measured by the receipt offsets,
+under the existing runner/watchdog limits. The per-image target is at most 1 MiB image
 plus 8 KiB receipt for a failing method: 19 failures would add at most 19 MiB plus
 152 KiB per attempt (38 MiB plus 304 KiB if all 19 use both existing attempts),
 before existing artifact compression and receipt copies in
@@ -757,8 +769,11 @@ the current shard artifacts. Optional host image projection uses the existing
 seconds per job (43 jobs: at most 215 seconds/night). Earlier #471 collection
 consumes that same allowance. A spent allowance or invalid image leaves the core
 receipt intact with unavailable media. Image workers only return bytes; timed-out
-workers cannot publish late files. Mandatory bounded publication validation and
-bookkeeping remain separate, as do synchronous XCTest capture and export budgets.
+workers cannot publish late files. Existing UI failure attachments are normalized
+outside that optional budget, so they neither consume a later attempt's image
+allowance nor disappear when the first-failure budget is spent. Mandatory bounded
+publication validation and bookkeeping remain separate, as do synchronous XCTest
+capture and export budgets.
 The current matrix has 25 strict and 18 UI jobs. Its 132 strict cases include
 12 additional filter-person session methods; the UI plans have 318 methods.
 Thus at most 462 methods could fail once: 462 MiB of new PNGs plus 3.61 MiB of

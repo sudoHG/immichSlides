@@ -142,6 +142,95 @@ final class LocaleUITests: XCTestCase {
             with self.subTest(entry=entry), self.assertRaises(ValueError):
                 violations([entry])
 
+    def test_ui_flow_excludes_only_read_only_first_failure_capture(self):
+        import json
+        from ci_summary import test_identity
+        from ci_ui_flows import flow_violations
+
+        area_map = {"schema_version": 1, "revision": "areas-v1", "smoke": ["SmokeUITests/testLaunch"],
+                    "areas": {"core": {"sources": ["immichSlides/Core/**"], "tests": ["CoreUITests"]},
+                              "settings": {"sources": ["immichSlides/Settings.swift"],
+                                           "tests": ["SettingsUITests"]},
+                              "playback": {"sources": ["immichSlides/Playback.swift"],
+                                           "tests": ["PlaybackUITests"]}},
+                    "nightly_default": []}
+        app = {
+            "immichSlides/Settings.swift": 'let identifier = "settings.cache.clearDisk.button"',
+            "immichSlides/Playback.swift": 'let identifier = "settings.cache.clearDisk.button"',
+        }
+        recorder = (
+            'enum FirstFailureEvidence {\n'
+            '  static func record() { capture() }\n'
+            '  static func capture() { let identifier = "settings.cache.clearDisk.button" }\n'
+            '}\n'
+        )
+        tests = {
+            "immichSlidesUITests/UITestSupport.swift": recorder,
+            "immichSlidesUITests/Settings.swift":
+                'final class SettingsUITests: XCTestCase { func testOpen() { FirstFailureEvidence.record() } }',
+        }
+        keys = ["SettingsUITests/testOpen", "SmokeUITests/testLaunch"]
+        populations = {"ui-" + platform: [test_identity("ui", key, platform=platform) for key in keys]
+                       for platform in ("ios", "tvos")}
+        plans = {platform: json.dumps({"testTargets": [{"target": {"name": "immichSlidesUITests"}}]})
+                 for platform in ("ios", "tvos")}
+        exceptions = json.dumps({"schema_version": 1, "exceptions": []})
+
+        self.assertEqual([], flow_violations(json.dumps(area_map), exceptions, app, tests, populations, plans))
+
+        tests["immichSlidesUITests/UITestSupport.swift"] = "enum ExistingUITestSupport { static func helper() {} }"
+        self.assertEqual([], flow_violations(json.dumps(area_map), exceptions, app, tests, populations, plans))
+        tests["immichSlidesUITests/UITestSupport.swift"] = recorder
+
+        tests["immichSlidesUITests/UITestSupport.swift"] = recorder.replace(
+            'static func record() { capture() }',
+            'static func record() { let identifier = "settings.cache.clearDisk.button"; capture() }')
+        self.assertIn(
+            "SettingsUITests/testOpen reaches settings.cache.clearDisk.button defined in immichSlides/Playback.swift",
+            "\n".join(flow_violations(json.dumps(area_map), exceptions, app, tests, populations, plans)),
+        )
+
+        action_mutations = (
+            ("tap", "button.tap()"),
+            ("press", "button.press(forDuration: 1)"),
+            ("typeText", 'field.typeText("x")'),
+            ("swipeUp", "button.swipeUp()"),
+            ("adjust", "slider.adjust(toNormalizedSliderPosition: 0.5)"),
+            ("coordinate", "button.coordinate(withNormalizedOffset: .zero)"),
+            ("launch", "app.launch()"),
+            ("activate", "app.activate()"),
+            ("terminate", "app.terminate()"),
+        )
+        for action, expression in action_mutations:
+            with self.subTest(action=action):
+                tests["immichSlidesUITests/UITestSupport.swift"] = recorder
+                tests["immichSlidesUITests/UITestSupport.swift"] = recorder.replace(
+                    'let identifier = "settings.cache.clearDisk.button" }',
+                    f'let identifier = "settings.cache.clearDisk.button"; {expression} }}')
+                with self.assertRaisesRegex(
+                    ValueError,
+                    rf"UITestSupport\.swift: evidence-only FirstFailureEvidence\.capture reaches UI action {action}",
+                ):
+                    flow_violations(json.dumps(area_map), exceptions, app, tests, populations, plans)
+
+        tests["immichSlidesUITests/UITestSupport.swift"] = recorder.replace(
+            'static func capture() { let identifier = "settings.cache.clearDisk.button" }',
+            'static func capture() { let identifier = "settings.cache.clearDisk.button"; tapForFailureEvidence() }\n'
+            '  static func tapForFailureEvidence() { button.tap() }')
+        with self.assertRaisesRegex(
+            ValueError,
+            r"UITestSupport\.swift: evidence-only FirstFailureEvidence\.capture reaches UI action tap",
+        ):
+            flow_violations(json.dumps(area_map), exceptions, app, tests, populations, plans)
+
+        tests["immichSlidesUITests/UITestSupport.swift"] = recorder.replace(
+            '  static func capture() { let identifier = "settings.cache.clearDisk.button" }',
+            '  static func capture() { let identifier = "settings.cache.clearDisk.button" }\n'
+            '  static func capture() {}',
+        )
+        with self.assertRaisesRegex(ValueError, "duplicate FirstFailureEvidence.capture"):
+            flow_violations(json.dumps(area_map), exceptions, app, tests, populations, plans)
+
     def test_nightly_aggregates_cannot_wait_for_macos_or_require_xcode(self):
         path = policy.LIVE_WORKFLOW
         document = yaml.load((Path(__file__).resolve().parent.parent / path).read_text(), Loader=policy.WorkflowLoader)

@@ -942,16 +942,19 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             def configure_call(call, number):
                 bundle = Path(call[call.index("-resultBundlePath") + 1])
                 spool = bundle.parent / "first-failure-spool"
-                first_failure_spools[bundle] = (spool, selectors, number)
                 if "-xctestrun" in call:
                     try:
                         configured, prepared = configure_first_failure_attempt(call, spool, selectors)
                         private_test_runs.append(prepared)
-                        call[:] = configured
+                        first_failure_spools[bundle] = (spool, selectors, number)
+                        return configured
                     except (OSError, ValueError, TypeError, KeyError):
+                        # Calls retain the recorder-disabled baseline; configuration failure cannot reuse a spool.
                         pass
                 else:
                     environment.update(first_failure_environment(spool, selectors))
+                    first_failure_spools[bundle] = (spool, selectors, number)
+                return call
             from ci_flaky import check_retry_flags
             check_retry_flags(command)
             if arguments.listed_retry_device:
@@ -981,13 +984,13 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                             if path == original:
                                 private_bundles[index] = (path, suffix + "-attempt-1")
                         private_bundles.append((attempt_bundle, "-" + log_path.stem + "-attempt-2"))
-                    configure_call(call, 1 if call == command else 2)
+                    configured = configure_call(call, 1 if call == command else 2)
                     ensure_disk_for_xcodebuild(data_available_gib, arguments.min_free_gib)
                     started = time.monotonic()
                     code = None
                     products_unchanged = False
                     try:
-                        code = run_command(call, cwd=REPO_ROOT, environment=environment, log_path=log_path,
+                        code = run_command(configured, cwd=REPO_ROOT, environment=environment, log_path=log_path,
                                            timeout_seconds=arguments.warm_timeout_seconds)
                     except CommandError as error:
                         code = 124 if isinstance(error.__cause__, subprocess.TimeoutExpired) else error.code
@@ -1030,7 +1033,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                     if len(record["attempts"]) > 1:
                         print(f"{record['identity']['key']}: {record['outcome']}, attempts=2", file=stdout, flush=True)
                 return retry_result["exit_code"]
-            configure_call(command, 1)
+            command = configure_call(command, 1)
             started = time.monotonic()
             code = run_command(command, cwd=REPO_ROOT, environment=environment, log_path=log_path,
                                timeout_seconds=arguments.warm_timeout_seconds if warm_receipt is not None else XCODEBUILD_TIMEOUT_SECONDS)

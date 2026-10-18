@@ -123,7 +123,7 @@ def normalize_ui_failure_images(directory):
             if path.is_symlink() or not path.is_file() or path.stat().st_size > 32 * 1024 * 1024:
                 path.unlink(missing_ok=True)
                 continue
-            image = collect_first_failure_image(lambda path=path: canonical_first_failure_png(path.read_bytes()))
+            image = canonical_first_failure_png(path.read_bytes())
             if image is None:
                 path.unlink(missing_ok=True)
                 continue
@@ -195,7 +195,11 @@ def configure_first_failure_attempt(command, directory, selectors, *, screenshot
                 target.setdefault("EnvironmentVariables", {}).update(
                     first_failure_environment(directory, selectors, screenshots=screenshots))
     prepared = source.with_name(source.stem + "-first-failure-" + directory.name + source.suffix)
-    prepared.write_bytes(plistlib.dumps(payload))
+    try:
+        prepared.write_bytes(plistlib.dumps(payload))
+    except OSError:
+        prepared.unlink(missing_ok=True)
+        raise
     command = list(command)
     command[position] = str(prepared)
     return command, prepared
@@ -212,10 +216,11 @@ def attach_first_failures(observed, official, number):
             for entry in observed:
                 if entry["identity"]["key"].removeprefix("immichSlidesUITests/") != key:
                     continue
+                first = next((attempt for attempt in entry["attempts"] if attempt["outcome"] != "passed"), None)
                 for attempt in entry["attempts"]:
                     if attempt["number"] == number and attempt["outcome"] in {"failed", "crashed", "timed-out"}:
-                        attempt[FIRST_FAILURE_FIELD] = receipt
-                first = next((attempt for attempt in entry["attempts"] if attempt["outcome"] != "passed"), None)
+                        if attempt is first or first is not None and FIRST_FAILURE_FIELD in first:
+                            attempt[FIRST_FAILURE_FIELD] = receipt
                 if first is not None and FIRST_FAILURE_FIELD in first:
                     entry[FIRST_FAILURE_FIELD] = first[FIRST_FAILURE_FIELD]
         for child in node.get("children", []) if isinstance(node.get("children", []), list) else []:

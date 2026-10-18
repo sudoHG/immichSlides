@@ -207,8 +207,11 @@ class FixtureCoverageTests(unittest.TestCase):
         from ci_verdict import parse_policy
         from test_ci_flaky import registry
         from test_ci_summary import discovery_summary, first_failure_receipt
-        for retried, retry_read_failed, retry_two in ((False, False, False), (True, False, False),
-                                                     (True, True, False), (True, False, True)):
+        from ci_failure_diagnostics import configure_first_failure_attempt
+        for retried, retry_read_failed, retry_two, configure_failed, first_missing in (
+                (False, False, False, False, False), (True, False, False, False, False),
+                (True, True, False, False, False), (True, False, True, False, False),
+                (True, False, True, True, False), (True, False, True, False, True)):
             for diagnostics in ({"failure_phase": "interval_setup", "failure_class": "interval_readback"},
                                 {"failure_phase": "unknown", "failure_class": "unknown"}):
                 with self.subTest(retried=retried, retry_read_failed=retry_read_failed, diagnostics=diagnostics), tempfile.TemporaryDirectory() as directory:
@@ -217,7 +220,8 @@ class FixtureCoverageTests(unittest.TestCase):
                     output = Path(directory, "output")
                     source = root / "Products" / "app.xctestrun"
                     source.parent.mkdir()
-                    source.touch()
+                    source.write_bytes(plistlib.dumps({"TestConfigurations": [{"TestTargets": [
+                        {"BlueprintName": "immichSlidesUITests", "EnvironmentVariables": {}}]}]}))
                     (source.parent / "Debug-iphonesimulator" / "immichSlides.app").mkdir(parents=True)
                     seed = discovery_summary()
                     entry = seed["population"]["declared"][0]
@@ -256,6 +260,15 @@ class FixtureCoverageTests(unittest.TestCase):
                         first_receipt["screenshot"] = {"status": "captured", "width": 64, "height": 32,
                                                        "bytes": len(pixels.getvalue())}
                     bundles, invocations = [], []
+                    def configure(call, spool, selectors, **kwargs):
+                        if configure_failed and spool.name != "attempt-1":
+                            original_write = Path.write_bytes
+                            def fail_write(path, payload):
+                                original_write(path, payload[:8])
+                                raise OSError("Synthetic partial attempt configuration write")
+                            with patch.object(Path, "write_bytes", fail_write):
+                                return configure_first_failure_attempt(call, spool, selectors, **kwargs)
+                        return configure_first_failure_attempt(call, spool, selectors, **kwargs)
                     def allocate():
                         bundle = Path(directory, "private", str(len(bundles)), "fixture.xcresult")
                         bundle.mkdir(parents=True)
@@ -264,27 +277,44 @@ class FixtureCoverageTests(unittest.TestCase):
                     def process(command, **kwargs):
                         if command[0] == "xcodebuild":
                             invocations.append(command)
+                            target = plistlib.loads(Path(command[command.index("-xctestrun") + 1]).read_bytes())["TestConfigurations"][0]["TestTargets"][0]
+                            environment = target["EnvironmentVariables"]
+                            number = len(invocations)
+                            if configure_failed and number > 1:
+                                self.assertNotEqual("1", environment.get("STRICT_E2E_FIRST_FAILURE_ENABLED"))
+                                self.assertNotIn("STRICT_E2E_FIRST_FAILURE_DIR", environment)
+                            else:
+                                self.assertEqual("1", environment["STRICT_E2E_FIRST_FAILURE_ENABLED"])
+                                spool = Path(environment["STRICT_E2E_FIRST_FAILURE_DIR"])
+                                self.assertEqual(spool, Path(directory, "private/first-failure-spool", "attempt-" + str(number)))
                         code = 65 if len(invocations) == 1 or retry_two else 0
                         return SimpleNamespace(wait=lambda **kwargs: code, pid=42)
                     def export(bundle, *args, **kwargs):
                         self.assertIs(kwargs["enrich_failure_diagnostics"], True)
                         self.assertEqual(kwargs["export_timeout_seconds"], 60)
                         suffix = kwargs["suffix"]
+                        number = bundles.index(bundle) + 1
+                        self.assertEqual(kwargs["first_failure_spool"], None if configure_failed and number > 1 else
+                            (Path(directory, "private/first-failure-spool", "attempt-" + str(number)),
+                             [item["key"] for item in seed["population"]["declared"]]))
                         payload = copy.deepcopy(official)
                         for node in payload["testNodes"][0]["children"]:
-                            node["first_failure"] = copy.deepcopy(first_receipt)
+                            if not first_missing:
+                                node["first_failure"] = copy.deepcopy(first_receipt)
                         if bundle != bundles[0]:
                             retried_entry = second if retry_two and bundle == bundles[2] else entry
                             payload["testNodes"][0]["children"][0] = {
                                 "nodeType": "Test Case", "nodeIdentifier": retried_entry["key"] + "()",
                                 "result": "Failed" if retry_two else "Passed", "durationInSeconds": 1}
                             payload["testNodes"][0]["children"] = payload["testNodes"][0]["children"][:1]
-                            if retry_two:
+                            if retry_two and not configure_failed:
                                 payload["testNodes"][0]["children"][0]["first_failure"] = {
                                     **copy.deepcopy(first_receipt), "step": "capture-frame"}
                         (output / ("official-tests" + suffix + ".json")).write_text(json.dumps(payload))
                         if retry_two:
                             for node in payload["testNodes"][0]["children"]:
+                                if "first_failure" not in node:
+                                    continue
                                 index = 1 if node["nodeIdentifier"] == second["key"] + "()" else 0
                                 image = kwargs["first_failure_images"] / (str(index) + ".png")
                                 image.parent.mkdir(parents=True, exist_ok=True)
@@ -301,7 +331,7 @@ class FixtureCoverageTests(unittest.TestCase):
                                             ("prepare_simulator", None), ("verify_simulator_device", None),
                                             ("wait_for_service", ("127.0.0.1", 1234)), ("disk_check", None),
                                             ("check_products", None), ("measure_signing", "adhoc"),
-                                            ("prepare_test_run", source), ("reset_simulator_app", None),
+                                            ("reset_simulator_app", None),
                                             ("crash_report_directories", []), ("crash_report_snapshot", {}),
                                             ("read_problem_reason", detail), ("stop_exact_process", None)):
                             stack.enter_context(patch.object(runner, name, value if name == "ROOT"
@@ -317,6 +347,7 @@ class FixtureCoverageTests(unittest.TestCase):
                         stack.enter_context(patch.object(runner.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, b"{}")))
                         stack.enter_context(patch.object(runner, "simulator_inventory", return_value={}))
                         stack.enter_context(patch.object(runner, "export_private_result_bundle", side_effect=export))
+                        stack.enter_context(patch("ci_failure_diagnostics.configure_first_failure_attempt", side_effect=configure))
                         stack.enter_context(patch.object(runner, "finalize_fixture_run", return_value=[]))
                         stack.enter_context(patch.object(runner, "write_sensitive_scan"))
                         stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
@@ -330,12 +361,22 @@ class FixtureCoverageTests(unittest.TestCase):
                     result = parse_summary((output / "summary.json").read_text())
                     actual = result["population"]["observed"][0]
                     self.assertEqual(actual["outcome"], "flaky-passed" if retried and not retry_read_failed and not retry_two else "failed")
-                    self.assertEqual(first_receipt, actual["first_failure"])
+                    if first_missing:
+                        self.assertNotIn("first_failure", actual)
+                        self.assertTrue(all("first_failure" not in item for item in actual["attempts"]))
+                    else:
+                        self.assertEqual(first_receipt, actual["first_failure"])
                     if retry_two:
                         self.assertEqual(2, len(result["population"]["observed"]))
                         for record in result["population"]["observed"]:
-                            self.assertEqual(first_receipt, record["first_failure"])
-                            self.assertEqual("capture-frame", record["attempts"][1]["first_failure"]["step"])
+                            if first_missing:
+                                self.assertNotIn("first_failure", record)
+                            else:
+                                self.assertEqual(first_receipt, record["first_failure"])
+                                if configure_failed:
+                                    self.assertNotIn("first_failure", record["attempts"][1])
+                                else:
+                                    self.assertEqual("capture-frame", record["attempts"][1]["first_failure"]["step"])
                         import ci_ui_tests
                         with patch.object(ci_ui_tests, "output"), contextlib.redirect_stderr(io.StringIO()):
                             self.assertEqual(0, ci_ui_tests.main(["check-upload", "--output-dir", str(output)]))

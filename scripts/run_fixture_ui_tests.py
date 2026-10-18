@@ -590,7 +590,10 @@ def main(argv=None, *, simulator_prepared=False):
         first_failure_root = work / "first-failure-spool"
         first_failure_selectors = [entry["key"] for entry in declared]
         run = prepare_test_run(source_run, work, inputs, failure_screenshots=args.failure_screenshots,
-                               first_failure_spool=(first_failure_root / "attempt-1", first_failure_selectors))
+                               first_failure_spool=None if args.listed_only_retry else
+                               (first_failure_root / "attempt-1", first_failure_selectors))
+        first_failure_attempts = {} if args.listed_only_retry else {
+            bundle: (first_failure_root / "attempt-1", first_failure_selectors)}
         base = ["xcodebuild", "test-without-building", "-xctestrun", str(run), "-destination", args.destination,
                 "-derivedDataPath", str(work / "xcode-data"),
                 "-parallel-testing-enabled", "NO", "-collect-test-diagnostics", "never"]
@@ -650,15 +653,17 @@ def main(argv=None, *, simulator_prepared=False):
                 return path
             def attempt(call):
                 from ci_failure_diagnostics import configure_first_failure_attempt
+                configured = call
                 try:
+                    spool = first_failure_root / ("attempt-" + str(len(bundles)))
                     configured, _prepared = configure_first_failure_attempt(call,
-                        first_failure_root / ("attempt-" + str(len(bundles))), first_failure_selectors,
-                        screenshots=args.failure_screenshots)
-                    call[:] = configured
+                        spool, first_failure_selectors, screenshots=args.failure_screenshots)
+                    first_failure_attempts[bundles[-1]] = (spool, first_failure_selectors)
                 except (OSError, ValueError, TypeError, KeyError):
+                    # The unmodified command uses the recorder-disabled baseline, never a prior attempt's spool.
                     pass
                 started = time.monotonic()
-                raw_code = execute(call, "test-" + str(len(bundles)))
+                raw_code = execute(configured, "test-" + str(len(bundles)))
                 if official_mode and len(bundles) == 1:
                     summary["compiled_evidence"]["first_exit_code"] = raw_code
                 return raw_code, time.monotonic() - started
@@ -718,7 +723,7 @@ def main(argv=None, *, simulator_prepared=False):
                 digests[path] = export_private_result_bundle(path, output, [PUBLIC_API_KEY], suffix=suffix,
                     summary_timeout_seconds=args.result_export_timeout_seconds, export_timeout_seconds=args.result_export_timeout_seconds,
                     enrich_failure_diagnostics=True,
-                    first_failure_spool=(first_failure_root / ("attempt-" + str(number)), first_failure_selectors),
+                    first_failure_spool=first_failure_attempts.get(path),
                     first_failure_images=output / "failure-screenshots" / ("first-failure-attempt-" + str(1 if number == 1 else 2)))
             finally:
                 if args.failure_screenshots:
@@ -749,6 +754,17 @@ def main(argv=None, *, simulator_prepared=False):
             path = output / ("official-tests" + suffix + ".json")
             if path.is_file():
                 attach_first_failures(summary["population"]["observed"], json.loads(path.read_text()), 1 if number == 1 else 2)
+        retained_images = {(attempt["number"], first_failure_selectors.index(entry["identity"]["key"]))
+            for entry in summary["population"]["observed"] for attempt in entry["attempts"]
+            if attempt.get("first_failure", {}).get("screenshot", {}).get("status") == "captured"}
+        for number in (1, 2):
+            folder = output / "failure-screenshots" / ("first-failure-attempt-" + str(number))
+            if folder.is_dir():
+                for image in folder.glob("*.png"):
+                    if image.stem.isdigit() and (number, int(image.stem)) not in retained_images:
+                        image.unlink()
+                if not any(folder.iterdir()):
+                    folder.rmdir()
         if code == 0:
             summary["status"] = "unverified" if any(row["outcome"] == "skipped" for row in rows) else "passed"
         if official_mode:

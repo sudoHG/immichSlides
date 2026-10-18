@@ -60,7 +60,12 @@ enum FirstFailureEvidence {
         var png: Data?
         if Thread.isMainThread {
             MainActor.assumeIsolated {
-                png = capture(receipt: &receipt, failedAt: failedAt, vocabulary: vocabulary)
+                let shouldContinueAfterFailure = test.continueAfterFailure
+                test.continueAfterFailure = true
+                defer { test.continueAfterFailure = shouldContinueAfterFailure }
+                png = XCTExpectFailure("Optional first-failure evidence is unavailable.", options: .nonStrict()) {
+                    capture(receipt: &receipt, failedAt: failedAt, vocabulary: vocabulary)
+                }
             }
         }
         guard let data = try? JSONSerialization.data(withJSONObject: receipt, options: [.sortedKeys]),
@@ -163,8 +168,17 @@ enum FirstFailureEvidence {
         guard ProcessInfo.processInfo.environment["STRICT_E2E_FIRST_FAILURE_SCREENSHOT"] == "1" else { return nil }
         timing["state_age_seconds"] = ProcessInfo.processInfo.systemUptime - observedAt
         timing["capture_request_seconds"] = ProcessInfo.processInfo.systemUptime - failedAt
-        let screenshot = window.screenshot().pngRepresentation
+        let screen = XCUIScreen.main.screenshot().image
         timing["capture_return_seconds"] = ProcessInfo.processInfo.systemUptime - failedAt
+        let frame = snapshot.frame
+        guard !frame.isEmpty, !frame.isInfinite, !frame.isNull,
+            CGRect(origin: .zero, size: screen.size).contains(frame)
+        else { return nil }
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = screen.scale
+        let screenshot = UIGraphicsImageRenderer(size: frame.size, format: format).pngData { _ in
+            screen.draw(at: CGPoint(x: -frame.minX, y: -frame.minY))
+        }
         var didExceedSizeLimit = false
         if let source = CGImageSourceCreateWithData(screenshot as CFData, nil) {
             for side in thumbnailSides {

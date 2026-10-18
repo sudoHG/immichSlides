@@ -302,7 +302,7 @@ class SummaryContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ci_summary.ContractError, "^first failure: validator cannot claim a failure snapshot$"):
             ci_summary.parse_summary(scoped)
 
-    def test_first_failure_scanner_checks_nested_duplicate_escaped_and_broken_json(self):
+    def test_first_failure_scanner_and_ui_upload_reject_invalid_receipts_and_media(self):
         import io
         from PIL import Image
         from ci_ui_tests import main as ui_main

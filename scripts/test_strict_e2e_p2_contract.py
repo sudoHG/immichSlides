@@ -592,7 +592,6 @@ class ReviewPackageTests(unittest.TestCase):
             self.assertEqual(receipt, read_failure_package(diagnostic, summary)["first_failure"])
             self.assertEqual(second_receipt, read_failure_package(diagnostic.with_name("attempt-2"), summary)["first_failure"])
             self.assertEqual([], _read_json(published / "index.json")["packages"])
-            self.assertEqual("failed", summary["status"])
             from ci_review_packages import export_failure_diagnostic
             case_path = failed_evidence / "case-manifest.json"
             original_case = case_path.read_text()

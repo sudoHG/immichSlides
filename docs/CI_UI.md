@@ -344,7 +344,11 @@ through helpers, computed properties and stored constants in `immichSlidesUITest
 `TestSupport`. A bare or `self` call resolves to the caller's own type first, then to
 shared helpers outside other test classes; a call on another receiver may reach any
 definition with that name. `#if os(...)` branches follow the platform, and an
-interpolation matches any text. An app Swift file compiled on that platform defines an
+interpolation matches any text. Only `FirstFailureEvidence.capture` in
+`immichSlidesUITests/UITestSupport.swift` is excluded as evidence-only; the same
+check recursively rejects UI interactions in that body and any helper it reaches.
+Other recorder code and ordinary helpers retain the existing reachability rules.
+An app Swift file compiled on that platform defines an
 identifier when it contains a matching literal or calls a function whose name ends in
 `AccessibilityID`/`AccessibilityIdentifier` that returns one. The test must belong to
 one of each defining file's areas or to the smoke set; core files already select the
