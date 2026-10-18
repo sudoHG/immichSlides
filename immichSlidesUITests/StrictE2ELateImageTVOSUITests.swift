@@ -2,6 +2,16 @@ import XCTest
 
 #if os(tvOS)
 final class StrictE2ELateImageTVOSUITests: XCTestCase {
+    override func invokeTest() {
+        FirstFailureContext.reset()
+        super.invokeTest()
+    }
+
+    override func record(_ issue: XCTIssue) {
+        FirstFailureEvidence.record(self, issue: issue)
+        super.record(issue)
+    }
+
     private enum Timing {
         static let focusPollingSeconds: TimeInterval = TestWait.seconds(.product(0.05))
         // Preserve the post-delivery observation window; the fixture now confirms delivery first.
@@ -21,7 +31,7 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
 
         let input = try requireStrictE2EInput()
         let app = try launchStrictE2EApp(recordSceneSequence: true)
-        defer { app.terminate() }
+        defer { app.terminateForFailureEvidence() }
 
         try configureServerThroughFirstBoot(app: app, input: input)
         _ = try lateImageControl(input: input, action: "arm")
@@ -43,10 +53,12 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
 
         ensureControlBarVisible(app: app)
         XCTAssertTrue(
-            playPauseButton.waitForExistence(timeout: TestWait.seconds(.product(5))),
+            playPauseButton.waitForPublicElement(
+                "slideshow.control.playPause.button", timeout: TestWait.seconds(.product(5))),
             "After the late completion, Play/Pause must still be reachable.")
         XCTAssertTrue(
-            settingsButton.waitForExistence(timeout: TestWait.seconds(.product(5))),
+            settingsButton.waitForPublicElement(
+                "slideshow.control.settings.button", timeout: TestWait.seconds(.product(5))),
             "After the late completion, Settings must still be reachable.")
         if nextButton.hasFocus {
             attachScreenshot(app: app, name: "tvos-late-image-default-focus-next")
@@ -70,7 +82,7 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
         let pausedValue = try XCTUnwrap(
             (try? playPauseButton.snapshot()).map { String(describing: $0.value ?? "") },
             "Select baseline must be readable")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(4))) {
                 guard let snapshot = try? playPauseButton.snapshot() else { return false }
@@ -106,21 +118,21 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
     private func enterRandomPlayback(app: XCUIApplication) throws {
         let randomButton = app.buttons["mode.random.button"]
         XCTAssertTrue(
-            randomButton.waitForExistence(timeout: TestWait.seconds(.product(15))),
+            randomButton.waitForPublicElement("mode.random.button", timeout: TestWait.seconds(.product(15))),
             "After saving the settings, the mode selection page must open.")
         XCTAssertTrue(
             waitForFocus(on: randomButton, timeout: TestWait.seconds(.product(5))),
             "Default focus on the mode selection page must land on Random Playback.")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         let continueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            continueButton.waitForExistence(timeout: TestWait.seconds(.product(5))),
+            continueButton.waitForPublicElement("mode.continue.button", timeout: TestWait.seconds(.product(5))),
             "After choosing Random Playback, the Continue button must be shown.")
         XCTAssertTrue(continueButton.isEnabled, "After choosing Random Playback, the Continue button must be enabled.")
         moveFocus(
             .down, to: continueButton, maximumPresses: 2,
             message: "After choosing Random Playback, focus must be able to move down to the Continue button.")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
     }
 
     @MainActor
@@ -136,7 +148,7 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
             message: "Before advancing, Play/Pause must be focusable.")
         let render = SharedSceneEvidenceManifest.parseKeyValueFields(
             strictSceneFrameObservation(app: app)["render"] ?? "")
-        if render["playbackPaused"] != "true" { XCUIRemote.shared.press(.select) }
+        if render["playbackPaused"] != "true" { FirstFailureRemote.press(.select) }
         var pausedHistoryCount: Int?
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(4))) {
@@ -153,7 +165,7 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
             .right, to: nextButton, maximumPresses: 3,
             message: "Focus must land on Next before the old requests complete.")
         let deadline = ProcessInfo.processInfo.systemUptime + TestWait.seconds(.product(30))
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
             waitForLateImageScene(app: app, historyCount: initialHistory + 1, deadline: deadline),
             "Random mode must quickly reach a slideshow where Next works, without waiting for old image requests.")
@@ -161,7 +173,7 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
         moveFocus(
             .right, to: nextButton, maximumPresses: 3,
             message: "Focus must land on Next before the old requests complete.")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
             waitForLateImageScene(app: app, historyCount: initialHistory + 2, deadline: deadline),
             "Random mode must quickly reach a slideshow where Next works, without waiting for old image requests.")
@@ -171,13 +183,14 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
     private func configureServerThroughFirstBoot(app: XCUIApplication, input: StrictE2EInput) throws {
         let serverField = app.textFields["firstboot.serverURL.field"]
         XCTAssertTrue(
-            serverField.waitForExistence(timeout: TestWait.seconds(.infrastructure(12))),
+            serverField.waitForPublicElement(
+                "firstboot.serverURL.field", timeout: TestWait.seconds(.infrastructure(12))),
             "A clean install must open the first-launch form.")
         replaceFocusedText(in: serverField, app: app, with: input.serverURL)
 
         let apiKeyField = app.secureTextFields["firstboot.apiKey.field"]
         XCTAssertTrue(
-            apiKeyField.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            apiKeyField.waitForPublicElement("firstboot.apiKey.field", timeout: TestWait.seconds(.infrastructure(8))),
             "The first-launch form must show the API Key field.")
         moveFocus(
             .down, to: apiKeyField, maximumPresses: 2,
@@ -189,16 +202,16 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
             identifier: "firstboot.testConnection.button"
         )
         XCTAssertTrue(
-            testConnectionButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(5))),
+            testConnectionButton.waitForFailureEvidence(timeout: TestWait.seconds(.infrastructure(5))),
             "The first-launch form must show the Test Connection button.")
-        XCUIRemote.shared.press(.down)
-        XCUIRemote.shared.press(.right)
+        FirstFailureRemote.press(.down)
+        FirstFailureRemote.press(.right)
         attachFocusAudit(app: app, name: "tvos-late-image-firstboot-before-test-connection")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let success = app.staticTexts["firstboot.connection.success"]
         XCTAssertTrue(
-            success.waitForExistence(timeout: TestWait.seconds(.infrastructure(45))),
+            success.waitForFailureEvidence(timeout: TestWait.seconds(.infrastructure(45))),
             "Once the real controlled server is reachable, the connection test must show as passed.")
 
         let saveButton = firstBootControl(
@@ -206,32 +219,32 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
             identifier: "firstboot.saveConfig.button"
         )
         XCTAssertTrue(
-            saveButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(5))),
+            saveButton.waitForFailureEvidence(timeout: TestWait.seconds(.infrastructure(5))),
             "After a successful connection, the Save Settings button must be shown.")
         XCTAssertTrue(saveButton.isEnabled, "After a successful connection, Save Settings must be enabled.")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
     }
 
     @MainActor
     private func replaceFocusedText(in field: XCUIElement, app: XCUIApplication, with value: String) {
         XCTAssertTrue(
             waitForFocus(on: field, timeout: TestWait.seconds(.product(4))), "The field must be focused before typing.")
-        XCUIRemote.shared.press(.select)
-        app.typeText(value)
+        FirstFailureRemote.press(.select)
+        app.typeForFailureEvidence(value)
 
         let submit = app.buttons.matching(
             // ui-label-lookup: Match the simulator-localized system keyboard submit key.
             NSPredicate(format: "label IN %@", ["下一项", "Next", "完成", "Done"])
         ).firstMatch
         XCTAssertTrue(
-            submit.waitForExistence(timeout: TestWait.seconds(.product(4))),
+            submit.waitForFailureEvidence(timeout: TestWait.seconds(.product(4))),
             "The system keyboard must show Next or Done.")
         for _ in 0..<6 where !submit.hasFocus {
-            XCUIRemote.shared.press(.down)
+            FirstFailureRemote.press(.down)
         }
         XCTAssertTrue(submit.hasFocus, "The system keyboard submit button must be focused before submitting text.")
-        XCUIRemote.shared.press(.select)
-        XCUIRemote.shared.press(.menu)
+        FirstFailureRemote.press(.select)
+        FirstFailureRemote.press(.menu)
 
         if field.identifier == "firstboot.serverURL.field" {
             XCTAssertEqual(field.value as? String, value, "The server address must be submitted unchanged.")
@@ -255,7 +268,7 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
         for _ in 0..<maximumPresses where ProcessInfo.processInfo.systemUptime < deadline {
             if (try? element.snapshot())?.hasFocus == true { return }
             let previous = (try? focused.snapshot())?.identifier
-            XCUIRemote.shared.press(direction)
+            FirstFailureRemote.press(direction)
             while ProcessInfo.processInfo.systemUptime < deadline {
                 if (try? element.snapshot())?.hasFocus == true { return }
                 if let current = try? focused.snapshot(), current.hasFocus,
@@ -299,7 +312,7 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
     @MainActor
     private func captureLateImageTVOSFrame(app: XCUIApplication, name: String) throws {
         let before = strictSceneFrameObservation(app: app)
-        let png = app.screenshot().pngRepresentation
+        let png = app.screenshotForFailureEvidence().pngRepresentation
         let after = strictSceneFrameObservation(app: app)
         let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
         attachment.name = name
@@ -314,7 +327,7 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
     }
 
     private func attachScreenshot(app: XCUIApplication, name: String) {
-        let attachment = XCTAttachment(screenshot: app.screenshot())
+        let attachment = XCTAttachment(screenshot: app.screenshotForFailureEvidence())
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
@@ -326,12 +339,12 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
         let focused = app.descendants(matching: .any)
             .matching(NSPredicate(format: "hasFocus == %@", NSNumber(value: true)))
             .firstMatch
-        if focused.waitForExistence(timeout: TestWait.seconds(.product(0))) {
+        if focused.waitForFailureEvidence(timeout: TestWait.seconds(.product(0))) {
             focusedLines.append(StrictE2ELateImageFocusAudit.auditLine(for: focused))
         } else {
             for identifier in StrictE2ELateImageFocusAudit.knownIdentifiers {
                 let element = app.descendants(matching: .any)[identifier]
-                guard element.waitForExistence(timeout: TestWait.seconds(.product(0))), element.hasFocus else {
+                guard element.waitForFailureEvidence(timeout: TestWait.seconds(.product(0))), element.hasFocus else {
                     continue
                 }
                 focusedLines.append(StrictE2ELateImageFocusAudit.auditLine(for: element))

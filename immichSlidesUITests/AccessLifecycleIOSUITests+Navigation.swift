@@ -88,7 +88,7 @@ extension AccessLifecycleIOSUITests {
             }
             pending = nil
             if let references {
-                let png = app.screenshot().pngRepresentation
+                let png = app.screenshotForFailureEvidence().pngRepresentation
                 pending = (png, references, observation)
                 lastScreenshot = (png, observation)
             } else {
@@ -97,7 +97,7 @@ extension AccessLifecycleIOSUITests {
             }
         }
         // Failed windows retain diagnostics only; these files never provide verdict identity.
-        let diagnosticPNG = lastScreenshot?.png ?? app.screenshot().pngRepresentation
+        let diagnosticPNG = lastScreenshot?.png ?? app.screenshotForFailureEvidence().pngRepresentation
         try? persistRequiredPNG(diagnosticPNG, name: "\(name).diagnostic")
         try? StrictE2EVisualEvidence.writeRequiredJSON(
             [
@@ -116,15 +116,15 @@ extension AccessLifecycleIOSUITests {
     func launchApp() throws -> XCUIApplication {
         let app = XCUIApplication()
         try prepareLaunch(app)
-        app.launch()
+        app.launchForFailureEvidence()
         return app
     }
 
     @MainActor
     func relaunchApp(_ app: XCUIApplication) throws {
-        app.terminate()
+        app.terminateForFailureEvidence()
         try prepareLaunch(app)
-        app.launch()
+        app.launchForFailureEvidence()
     }
 
     @MainActor
@@ -139,13 +139,13 @@ extension AccessLifecycleIOSUITests {
     func readSceneProgress(app: XCUIApplication) throws -> (value: Double, raw: String, source: String) {
         revealPlaybackControls(app: app)
         let contractProbe = app.descendants(matching: .any)["slideshow.scenePresentation.contract.summary"]
-        if contractProbe.waitForExistence(timeout: TestWait.seconds(.product(4))),
+        if contractProbe.waitForFailureEvidence(timeout: TestWait.seconds(.product(4))),
             let parsed = progressValue(in: contractProbe.label)
         {
             return (parsed.value, parsed.raw, "slideshow.scenePresentation.contract.summary")
         }
         let motionSummary = app.descendants(matching: .any)["slideshow.smartfill.motionFrame.summary"]
-        if motionSummary.waitForExistence(timeout: TestWait.seconds(.product(2))),
+        if motionSummary.waitForFailureEvidence(timeout: TestWait.seconds(.product(2))),
             let parsed = progressValue(in: motionSummary.label)
         {
             return (parsed.value, parsed.raw, "slideshow.smartfill.motionFrame.summary")
@@ -216,7 +216,7 @@ extension AccessLifecycleIOSUITests {
             return try captureNewStableSceneMark(app: app, name: name, timeout: timeout)
         }
         try AccessLifecycleContract.assertIdentitySource("public_fixture_photo_mark")
-        let initialPNG = app.screenshot().pngRepresentation
+        let initialPNG = app.screenshotForFailureEvidence().pngRepresentation
         let initialMark = contractMark(StrictE2EPhotoIdentity.captureIdentity(png: initialPNG))
         let deadline = Date().addingTimeInterval(timeout)
         while true {
@@ -227,7 +227,7 @@ extension AccessLifecycleIOSUITests {
             RunLoop.current.run(
                 until: Date().addingTimeInterval(AccessLifecycleContract.pollWait(remaining: remaining))
             )
-            let png = app.screenshot().pngRepresentation
+            let png = app.screenshotForFailureEvidence().pngRepresentation
             let identity = StrictE2EPhotoIdentity.captureIdentity(png: png)
             let mark = contractMark(identity)
             if identity.status == .match, !mark.isEmpty, mark != initialMark {
@@ -240,7 +240,7 @@ extension AccessLifecycleIOSUITests {
                         AccessLifecycleContract.confirmWait(remaining: remainingForConfirm)
                     )
                 )
-                let stablePNG = app.screenshot().pngRepresentation
+                let stablePNG = app.screenshotForFailureEvidence().pngRepresentation
                 let stableIdentity = StrictE2EPhotoIdentity.captureIdentity(png: stablePNG)
                 let stableMark = contractMark(stableIdentity)
                 if AccessLifecycleContract.isConfirmedNewStableMark(
@@ -323,7 +323,7 @@ extension AccessLifecycleIOSUITests {
 
     @MainActor
     func captureRequiredPNG(app: XCUIApplication, name: String) throws -> Data {
-        let png = app.screenshot().pngRepresentation
+        let png = app.screenshotForFailureEvidence().pngRepresentation
         try persistRequiredPNG(png, name: name)
         return png
     }
@@ -367,7 +367,8 @@ extension AccessLifecycleIOSUITests {
     func enterPin(app: XCUIApplication, pin: String) {
         for digit in pin {
             let key = app.buttons["pinEntry.digit.\(digit).button"]
-            XCTAssertTrue(key.waitForExistence(timeout: TestWait.seconds(.product(3))), "PIN digit key does not exist.")
+            XCTAssertTrue(
+                key.waitForFailureEvidence(timeout: TestWait.seconds(.product(3))), "PIN digit key does not exist.")
             tapElement(key)
         }
     }
@@ -389,7 +390,8 @@ extension AccessLifecycleIOSUITests {
         revealPlaybackControls(app: app)
         let settingsButton = app.buttons["slideshow.control.settings.button"]
         XCTAssertTrue(
-            settingsButton.waitForExistence(timeout: TestWait.seconds(.product(15))),
+            settingsButton.waitForPublicElement(
+                "slideshow.control.settings.button", timeout: TestWait.seconds(.product(15))),
             "The playback page must provide a settings entry.")
         tapElement(settingsButton)
     }
@@ -404,7 +406,8 @@ extension AccessLifecycleIOSUITests {
             }
             if !isOnSettingsSurface(app: app) {
                 revealPlaybackControls(app: app)
-                if app.buttons["slideshow.control.settings.button"].waitForExistence(
+                if app.buttons["slideshow.control.settings.button"].waitForPublicElement(
+                    "slideshow.control.settings.button",
                     timeout: TestWait.seconds(.product(2)))
                 {
                     return
@@ -435,13 +438,14 @@ extension AccessLifecycleIOSUITests {
                 RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.3))))
                 continue
             }
-            app.swipeDown()
+            app.swipeDownForFailureEvidence()
         }
         if app.buttons["slideshow.control.next.button"].exists {
             revealPlaybackControls(app: app)
         }
         XCTAssertTrue(
-            app.buttons["slideshow.control.settings.button"].waitForExistence(
+            app.buttons["slideshow.control.settings.button"].waitForPublicElement(
+                "slideshow.control.settings.button",
                 timeout: TestWait.seconds(.product(8))),
             "Must be able to return from settings to the playback page."
         )
@@ -451,7 +455,7 @@ extension AccessLifecycleIOSUITests {
     func openPlaybackSettings(app: XCUIApplication) {
         let toggle = playbackSwitch(app: app, identifier: "settings.playback.autoPlay.toggle")
         // This probe decides whether to navigate again; keep its observation window fixed.
-        if toggle.waitForExistence(timeout: TestWait.seconds(.product(2))) {
+        if toggle.waitForFailureEvidence(timeout: TestWait.seconds(.product(2))) {
             return
         }
         let sidebar = app.buttons["ToggleSidebar"]
@@ -459,25 +463,25 @@ extension AccessLifecycleIOSUITests {
         if sidebar.exists && ["显示边栏", "Show Sidebar"].contains(sidebar.label) {
             tapElement(sidebar)
         }
-        _ = app.descendants(matching: .any)["settings.item.playback"].waitForExistence(
+        _ = app.descendants(matching: .any)["settings.item.playback"].waitForFailureEvidence(
             timeout: TestWait.seconds(.product(3)))
         let playbackButton = app.buttons["settings.item.playback"]
         XCTAssertTrue(
-            playbackButton.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            playbackButton.waitForPublicElement("settings.item.playback", timeout: TestWait.seconds(.product(8))),
             "The settings list must provide the playback settings entry")
         // A full-screen Toolbar swallows coordinate taps; use the element's tap() to activate via accessibility.
-        playbackButton.tap()
+        playbackButton.tapForFailureEvidence()
         if !waitUntil(
             timeout: TestWait.seconds(.product(2)),
             condition: { toggle.exists || app.staticTexts["settings.playback.title"].exists })
         {
-            app.cells.element(boundBy: 0).tap()
+            app.cells.element(boundBy: 0).tapForFailureEvidence()
         }
         let opened = waitUntil(timeout: TestWait.seconds(.product(10))) {
             toggle.exists || app.staticTexts["settings.playback.title"].exists
         }
         if !opened {
-            let png = app.screenshot().pngRepresentation
+            let png = app.screenshotForFailureEvidence().pngRepresentation
             try? StrictE2EVisualEvidence.writeRequiredPNG(png, name: "settings-open-debug")
             if let directory = StrictE2EVisualEvidence.directory() {
                 try? app.debugDescription.write(
@@ -541,7 +545,7 @@ extension AccessLifecycleIOSUITests {
         let sidebar = app.buttons["ToggleSidebar"]
         // ui-label-lookup: System navigation supplies the sidebar button label.
         if sidebar.exists && (sidebar.label == "显示边栏" || sidebar.label == "Show Sidebar") {
-            sidebar.tap()
+            sidebar.tapForFailureEvidence()
         }
         // While the Save Password prompt covers the screen the hit point is {-1,-1}; tap "Not Now" first,
         // then Access Protection.
@@ -561,9 +565,9 @@ extension AccessLifecycleIOSUITests {
                 continue
             }
             if attempt % 2 == 0 {
-                app.swipeUp()
+                app.swipeUpForFailureEvidence()
             } else {
-                app.swipeDown()
+                app.swipeDownForFailureEvidence()
             }
         }
         XCTFail("Settings item not found: \(sectionID)")
@@ -586,7 +590,7 @@ extension AccessLifecycleIOSUITests {
                 isTreatedAsRevealed: false
             )
         )
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tap()
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tapForFailureEvidence()
         _ = waitUntil(timeout: TestWait.seconds(.product(3))) {
             let button = self.playPauseButton(app)
             return button.exists && button.isHittable
@@ -612,12 +616,13 @@ extension AccessLifecycleIOSUITests {
     func fillFirstBootForm(app: XCUIApplication, input: StrictE2EInput) throws {
         let serverField = app.textFields["firstboot.serverURL.field"]
         XCTAssertTrue(
-            serverField.waitForExistence(timeout: TestWait.seconds(.infrastructure(20))),
+            serverField.waitForPublicElement(
+                "firstboot.serverURL.field", timeout: TestWait.seconds(.infrastructure(20))),
             "A fresh install must reach the normal first-boot page.")
         replaceText(in: serverField, with: input.serverURL)
         let apiKeyField = app.secureTextFields["firstboot.apiKey.field"]
         XCTAssertTrue(
-            apiKeyField.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            apiKeyField.waitForPublicElement("firstboot.apiKey.field", timeout: TestWait.seconds(.infrastructure(8))),
             "The first-boot page must show the API Key field.")
         replaceText(in: apiKeyField, with: input.publicKey)
         XCTAssertTrue(
@@ -633,7 +638,7 @@ extension AccessLifecycleIOSUITests {
             identifier: "firstboot.testConnection.button"
         )
         XCTAssertTrue(
-            testConnectionButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            testConnectionButton.waitForFailureEvidence(timeout: TestWait.seconds(.infrastructure(8))),
             "Test Connection must be shown")
         tapElement(testConnectionButton)
     }
@@ -664,7 +669,7 @@ extension AccessLifecycleIOSUITests {
             // ui-label-lookup: The permission action belongs to SpringBoard.
             let button = springboard.alerts.buttons[label]
             if button.exists {
-                button.tap()
+                button.tapForFailureEvidence()
                 return
             }
         }
@@ -680,15 +685,15 @@ extension AccessLifecycleIOSUITests {
     @MainActor
     func tapElement(_ element: XCUIElement) {
         if element.isHittable {
-            element.tap()
+            element.tapForFailureEvidence()
         } else {
-            element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tapForFailureEvidence()
         }
     }
 
     @MainActor
     func replaceText(in field: XCUIElement, with value: String) {
-        field.tap()
+        field.tapForFailureEvidence()
         let existingValue = field.value as? String ?? ""
         let looksLikePlaceholder =
             existingValue.contains("请输入") || existingValue.localizedCaseInsensitiveContains("enter")
@@ -696,7 +701,7 @@ extension AccessLifecycleIOSUITests {
             field.typeKey("a", modifierFlags: .command)
             field.typeKey(XCUIKeyboardKey.delete.rawValue, modifierFlags: [])
         }
-        field.typeText(value)
+        field.typeForFailureEvidence(value)
     }
 
     @MainActor
@@ -709,7 +714,7 @@ extension AccessLifecycleIOSUITests {
     func commitFocusedInputIfNeeded(app: XCUIApplication) {
         let done = app.buttons["server.keyboard.done.button"]
         if done.exists && done.isHittable {
-            done.tap()
+            done.tapForFailureEvidence()
             return
         }
         // ui-label-lookup: System keyboard submit keys follow the simulator language.
@@ -717,7 +722,7 @@ extension AccessLifecycleIOSUITests {
             // ui-label-lookup: System keyboard submit keys follow the simulator language.
             let button = app.keyboards.buttons[label]
             if button.exists && button.isHittable {
-                button.tap()
+                button.tapForFailureEvidence()
                 return
             }
         }

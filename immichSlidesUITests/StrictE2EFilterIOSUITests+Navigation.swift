@@ -41,7 +41,7 @@ extension StrictE2EFilterIOSUITests {
     func startFilteredPlayback(app: XCUIApplication) {
         let start = app.buttons["filterSummary.startPlayback.button"]
         XCTAssertTrue(
-            start.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            start.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
             "Filter summary must show Start Playback")
         XCTAssertTrue(start.isEnabled, "Start Playback must be enabled once something is selected")
         tapElement(start)
@@ -53,7 +53,7 @@ extension StrictE2EFilterIOSUITests {
 
     @MainActor
     func captureNamedPNG(app: XCUIApplication, name: String) -> Data {
-        let png = app.screenshot().pngRepresentation
+        let png = app.screenshotForFailureEvidence().pngRepresentation
         XCTAssertFalse(png.isEmpty, "Screenshot must not be empty: \(name)")
         let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
         attachment.name = name
@@ -67,7 +67,7 @@ extension StrictE2EFilterIOSUITests {
     func capturePlaybackPNG(app: XCUIApplication, name: String) -> Data {
         RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.8))))
         revealPlaybackControls(app: app)
-        let png = app.screenshot().pngRepresentation
+        let png = app.screenshotForFailureEvidence().pngRepresentation
         XCTAssertFalse(png.isEmpty, "Playback screenshot must not be empty: \(name)")
         let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
         attachment.name = name
@@ -82,7 +82,8 @@ extension StrictE2EFilterIOSUITests {
         revealPlaybackControls(app: app)
         let next = app.buttons["slideshow.control.next.button"]
         XCTAssertTrue(
-            next.waitForExistence(timeout: TestWait.seconds(.product(8))), "Playback page must have Next")
+            next.waitForPublicElement("slideshow.control.next.button", timeout: TestWait.seconds(.product(8))),
+            "Playback page must have Next")
         tapElement(next)
     }
 
@@ -90,14 +91,15 @@ extension StrictE2EFilterIOSUITests {
     @MainActor
     func assertSettingsFilterEditorAfterServerSwitchAlbumSelection(app: XCUIApplication, expectedPhotoCount: Int) {
         XCTAssertTrue(
-            app.staticTexts["filterEditor.page.title"].waitForExistence(timeout: TestWait.seconds(.product(8)))
-                || app.descendants(matching: .any)["filterEditor.page.title"].waitForExistence(
+            app.staticTexts["filterEditor.page.title"].waitForFailureEvidence(timeout: TestWait.seconds(.product(8)))
+                || app.descendants(matching: .any)["filterEditor.page.title"].waitForFailureEvidence(
                     timeout: TestWait.seconds(.product(2))),
             "After selecting the B album, the app must stay on the settings editor"
         )
         let albumEntry = app.buttons["filter.editor.album.entry"]
         XCTAssertTrue(
-            albumEntry.waitForExistence(timeout: TestWait.seconds(.product(8))), "Editor must offer the album entry")
+            albumEntry.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
+            "Editor must offer the album entry")
         XCTAssertTrue(app.staticTexts["filter.editor.summary.title"].exists, "Editor must show the filter summary")
         XCTAssertFalse(
             app.buttons["filterSummary.startPlayback.button"].exists,
@@ -163,7 +165,7 @@ extension StrictE2EFilterIOSUITests {
     @MainActor
     func finishFilterEditor(app: XCUIApplication) {
         let done = app.buttons["filter.editor.done.button"]
-        if done.waitForExistence(timeout: TestWait.seconds(.product(4))) {
+        if done.waitForFailureEvidence(timeout: TestWait.seconds(.product(4))) {
             tapElement(done)
             return
         }
@@ -187,7 +189,7 @@ extension StrictE2EFilterIOSUITests {
                 continue
             }
             if let backButton = settingsNavigationBackButton(app: app) {
-                backButton.tap()
+                backButton.tapForFailureEvidence()
                 continue
             }
             RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.3))))
@@ -231,18 +233,18 @@ extension StrictE2EFilterIOSUITests {
         }
         let serverEntry = app.descendants(matching: .any)["settings.item.server"].firstMatch
         XCTAssertTrue(
-            serverEntry.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            serverEntry.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
             "Settings must offer the server entry")
         tapElement(serverEntry)
         let serverField = app.textFields["firstboot.serverURL.field"]
         XCTAssertTrue(
-            serverField.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            serverField.waitForPublicElement("firstboot.serverURL.field", timeout: TestWait.seconds(.product(8))),
             "Server settings page should show the URL")
         replaceText(
             in: serverField, app: app, with: serverURL, evidenceName: "server-url-replace",
             shouldRequireExactValue: true)
         let apiKeyField = app.secureTextFields["firstboot.apiKey.field"]
-        if apiKeyField.waitForExistence(timeout: TestWait.seconds(.product(4))) {
+        if apiKeyField.waitForPublicElement("firstboot.apiKey.field", timeout: TestWait.seconds(.product(4))) {
             let current = apiKeyField.value as? String ?? ""
             if current.isEmpty || current.contains("请输入") {
                 replaceText(
@@ -283,7 +285,7 @@ extension StrictE2EFilterIOSUITests {
             }
         }
         let playbackEntry = app.descendants(matching: .any)["settings.item.playback"].firstMatch
-        if !playbackEntry.waitForExistence(timeout: TestWait.seconds(.product(2))) {
+        if !playbackEntry.waitForFailureEvidence(timeout: TestWait.seconds(.product(2))) {
             let back = app.buttons["global.back.button"]
             if back.exists && back.isHittable {
                 tapElement(back)
@@ -295,35 +297,36 @@ extension StrictE2EFilterIOSUITests {
             }
         }
         XCTAssertTrue(
-            playbackEntry.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            playbackEntry.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
             "After the server switch, settings must still offer the playback entry")
         tapElement(playbackEntry)
         let filterConfig = app.buttons["settings.playback.filterConfig.button"]
-        if !filterConfig.waitForExistence(timeout: TestWait.seconds(.product(2))) {
+        if !filterConfig.waitForFailureEvidence(timeout: TestWait.seconds(.product(2))) {
             let modePicker = app.segmentedControls["settings.playback.mode.picker"]
             XCTAssertTrue(
-                modePicker.waitForExistence(timeout: TestWait.seconds(.product(8))),
+                modePicker.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
                 "Playback settings must offer the default playback mode")
             let filteredMode = modePicker.buttons.element(boundBy: 1)
             XCTAssertTrue(
-                filteredMode.waitForExistence(timeout: TestWait.seconds(.product(4))),
+                filteredMode.waitForFailureEvidence(timeout: TestWait.seconds(.product(4))),
                 "Playback settings must offer the filtered playback option")
             tapElement(filteredMode)
             // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
             let configure = app.buttons["去配置"]
             XCTAssertTrue(
-                configure.waitForExistence(timeout: TestWait.seconds(.product(8))),
+                configure.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
                 "After the server switch clears filters, reconfiguring must be allowed")
             tapElement(configure)
         } else {
             if !filterConfig.isHittable {
-                app.swipeUp()
+                app.swipeUpForFailureEvidence()
             }
             tapElement(filterConfig)
         }
         XCTAssertTrue(
-            app.buttons["filter.editor.album.entry"].waitForExistence(timeout: TestWait.seconds(.product(12)))
-                || app.staticTexts["filterEditor.page.title"].waitForExistence(timeout: TestWait.seconds(.product(4))),
+            app.buttons["filter.editor.album.entry"].waitForFailureEvidence(timeout: TestWait.seconds(.product(12)))
+                || app.staticTexts["filterEditor.page.title"].waitForFailureEvidence(
+                    timeout: TestWait.seconds(.product(4))),
             "Filter editor must open after the server switch"
         )
     }
@@ -331,7 +334,7 @@ extension StrictE2EFilterIOSUITests {
     @MainActor
     func isolateAlbumSelection(app: XCUIApplication, keeping albumID: String) {
         let clear = app.buttons["albumFilter.clear.button"]
-        if clear.waitForExistence(timeout: TestWait.seconds(.product(4))) {
+        if clear.waitForFailureEvidence(timeout: TestWait.seconds(.product(4))) {
             tapElement(clear)
         }
         let known = [
@@ -360,9 +363,9 @@ extension StrictE2EFilterIOSUITests {
             }
         }
         XCTAssertTrue(
-            app.descendants(matching: .any)["settings.item.server"].firstMatch.waitForExistence(
+            app.descendants(matching: .any)["settings.item.server"].firstMatch.waitForFailureEvidence(
                 timeout: TestWait.seconds(.product(8)))
-                || app.descendants(matching: .any)["settings.item.playback"].firstMatch.waitForExistence(
+                || app.descendants(matching: .any)["settings.item.playback"].firstMatch.waitForFailureEvidence(
                     timeout: TestWait.seconds(.product(2))),
             "Playback page must open settings"
         )
@@ -373,11 +376,11 @@ extension StrictE2EFilterIOSUITests {
         openSettingsHomeFromPlayback(app: app)
         let playbackEntry = app.descendants(matching: .any)["settings.item.playback"].firstMatch
         XCTAssertTrue(
-            playbackEntry.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            playbackEntry.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
             "Settings must offer the playback entry")
         tapElement(playbackEntry)
         XCTAssertTrue(
-            app.segmentedControls["settings.playback.displayMode.picker"].waitForExistence(
+            app.segmentedControls["settings.playback.displayMode.picker"].waitForFailureEvidence(
                 timeout: TestWait.seconds(.product(8))),
             "Playback settings must offer the display policy"
         )
@@ -387,11 +390,11 @@ extension StrictE2EFilterIOSUITests {
     func selectSinglePhotoDisplayMode(app: XCUIApplication) {
         let picker = app.segmentedControls["settings.playback.displayMode.picker"]
         XCTAssertTrue(
-            picker.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            picker.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
             "Playback settings must offer the display policy segmented control")
         let singlePhoto = picker.buttons["settings.playback.displayMode.singlePhoto.option"]
         XCTAssertTrue(
-            singlePhoto.waitForExistence(timeout: TestWait.seconds(.product(3))),
+            singlePhoto.waitForFailureEvidence(timeout: TestWait.seconds(.product(3))),
             "Display policy must offer single-photo mode")
         tapElement(singlePhoto)
         XCTAssertTrue(
@@ -404,11 +407,11 @@ extension StrictE2EFilterIOSUITests {
     func selectSmartFillDisplayMode(app: XCUIApplication) {
         let picker = app.segmentedControls["settings.playback.displayMode.picker"]
         XCTAssertTrue(
-            picker.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            picker.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
             "Playback settings must offer the display policy segmented control")
         let smartFill = picker.buttons["settings.playback.displayMode.smartFill.option"]
         XCTAssertTrue(
-            smartFill.waitForExistence(timeout: TestWait.seconds(.product(3))),
+            smartFill.waitForFailureEvidence(timeout: TestWait.seconds(.product(3))),
             "Display policy must offer Smart Fill")
         tapElement(smartFill)
         XCTAssertTrue(

@@ -1,6 +1,16 @@
 import XCTest
 
 final class StrictE2ELateImageFocusAuditTests: XCTestCase {
+    override func invokeTest() {
+        FirstFailureContext.reset()
+        super.invokeTest()
+    }
+
+    override func record(_ issue: XCTIssue) {
+        FirstFailureEvidence.record(self, issue: issue)
+        super.record(issue)
+    }
+
     func testEmptyFocusLinesAreUnidentifiable() {
         XCTAssertNil(StrictE2ELateImageFocusAudit.attachmentBody(fromFocusedLines: []))
         XCTAssertNil(StrictE2ELateImageFocusAudit.attachmentBody(fromFocusedLines: ["", ""]))

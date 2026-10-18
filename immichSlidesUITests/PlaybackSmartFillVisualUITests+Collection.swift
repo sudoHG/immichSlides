@@ -156,14 +156,15 @@ extension PlaybackSmartFillVisualUITests {
             app.launchEnvironment["UI_TEST_FILTER_SELECTION_JSON"] = selectionJSON
         }
         let requestedOrientation = XCUIDevice.shared.orientation
-        app.launch()
+        app.launchForFailureEvidence()
         if requestedOrientation.isLandscape {
-            XCUIDevice.shared.orientation = requestedOrientation
+            FirstFailureOrientation.set(requestedOrientation)
             _ = waitUntil(timeout: TestWait.seconds(.infrastructure(8))) { app.frame.width > app.frame.height }
         }
 
         XCTAssertTrue(
-            app.buttons["mode.continue.button"].waitForExistence(timeout: TestWait.seconds(.infrastructure(12))),
+            app.buttons["mode.continue.button"].waitForPublicElement(
+                "mode.continue.button", timeout: TestWait.seconds(.infrastructure(12))),
             "After injecting the test server, the app should go straight to mode selection"
         )
         return app
@@ -197,7 +198,8 @@ extension PlaybackSmartFillVisualUITests {
         tapElement(app.buttons["mode.random.button"])
         tapElement(app.buttons["mode.continue.button"])
         XCTAssertTrue(
-            app.buttons["slideshow.control.settings.button"].waitForExistence(
+            app.buttons["slideshow.control.settings.button"].waitForPublicElement(
+                "slideshow.control.settings.button",
                 timeout: TestWait.seconds(.product(30))),
             "After starting random playback, the playback control bar should appear"
         )
@@ -217,7 +219,8 @@ extension PlaybackSmartFillVisualUITests {
         }
 
         XCTAssertTrue(
-            app.buttons["slideshow.control.next.button"].waitForExistence(
+            app.buttons["slideshow.control.next.button"].waitForPublicElement(
+                "slideshow.control.next.button",
                 timeout: TestWait.seconds(.product(4))),
             "\(scenario) control bar should still work after quick switching"
         )
@@ -233,7 +236,7 @@ extension PlaybackSmartFillVisualUITests {
 
         let startButton = app.buttons["filterSummary.startPlayback.button"]
         XCTAssertTrue(
-            startButton.waitForExistence(timeout: TestWait.seconds(.product(20))),
+            startButton.waitForFailureEvidence(timeout: TestWait.seconds(.product(20))),
             "Filter summary should show the Start playback button")
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(20))) { startButton.isEnabled },
@@ -241,7 +244,8 @@ extension PlaybackSmartFillVisualUITests {
         tapElement(startButton)
 
         XCTAssertTrue(
-            app.buttons["slideshow.control.settings.button"].waitForExistence(
+            app.buttons["slideshow.control.settings.button"].waitForPublicElement(
+                "slideshow.control.settings.button",
                 timeout: TestWait.seconds(.product(45))),
             "After starting people-filter playback, the playback control bar should appear"
         )
@@ -466,13 +470,13 @@ extension PlaybackSmartFillVisualUITests {
 
     func tapNext(app: XCUIApplication) {
         let nextButton = app.buttons["slideshow.control.next.button"]
-        if nextButton.waitForExistence(timeout: TestWait.seconds(.product(3))) {
+        if nextButton.waitForPublicElement("slideshow.control.next.button", timeout: TestWait.seconds(.product(3))) {
             tapElement(nextButton)
             return
         }
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tapForFailureEvidence()
         XCTAssertTrue(
-            nextButton.waitForExistence(timeout: TestWait.seconds(.product(5))),
+            nextButton.waitForPublicElement("slideshow.control.next.button", timeout: TestWait.seconds(.product(5))),
             "Next button should be found after waking the control bar")
         tapElement(nextButton)
     }

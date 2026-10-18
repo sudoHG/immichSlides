@@ -68,7 +68,7 @@ extension AppStoreScreenshotUITests {
         do {
             try capture()
         } catch {
-            XCUIApplication().terminate()
+            XCUIApplication().terminateForFailureEvidence()
             let message = "\(slot.rawValue): \(error.localizedDescription)"
             blockers.append(message)
             appendManifestRow(
@@ -122,7 +122,7 @@ extension AppStoreScreenshotUITests {
             slotDirectory: slotDirectory,
             notes: "selected album: \(playbackAlbumName)"
         )
-        app.terminate()
+        app.terminateForFailureEvidence()
     }
 
     @MainActor
@@ -139,7 +139,7 @@ extension AppStoreScreenshotUITests {
             "Mode selection should show the filtered playback option")
 
         capture(app: app, slot: .playbackMode, outputRoot: outputRoot, slotDirectory: slotDirectory)
-        app.terminate()
+        app.terminateForFailureEvidence()
     }
 
     @MainActor
@@ -164,7 +164,7 @@ extension AppStoreScreenshotUITests {
         }
 
         capture(app: app, slot: .filterEntry, outputRoot: outputRoot, slotDirectory: slotDirectory)
-        app.terminate()
+        app.terminateForFailureEvidence()
     }
 
     @MainActor
@@ -181,7 +181,7 @@ extension AppStoreScreenshotUITests {
             slotDirectory: slotDirectory,
             notes: "preseeded people: Augusto soloOnly; Mia, Wang, Ethan normal"
         )
-        app.terminate()
+        app.terminateForFailureEvidence()
     }
 
     @MainActor
@@ -192,7 +192,7 @@ extension AppStoreScreenshotUITests {
         try selectBriefAlbumsForScreenshot(app)
 
         capture(app: app, slot: .albumFilter, outputRoot: outputRoot, slotDirectory: slotDirectory)
-        app.terminate()
+        app.terminateForFailureEvidence()
     }
 
     @MainActor
@@ -218,7 +218,7 @@ extension AppStoreScreenshotUITests {
             "PIN overlay should show the number pad")
 
         capture(app: app, slot: .pinProtection, outputRoot: outputRoot, slotDirectory: slotDirectory)
-        app.terminate()
+        app.terminateForFailureEvidence()
     }
 
     @MainActor
@@ -227,7 +227,7 @@ extension AppStoreScreenshotUITests {
         app.launchEnvironment["UI_TEST_APP_STORE_SCREENSHOT_PREFILL_CONNECTION"] = "1"
         app.launchEnvironment["UI_TEST_APP_STORE_SCREENSHOT_SERVER_URL"] = appStoreDemoServerURL
         app.launchEnvironment["UI_TEST_APP_STORE_SCREENSHOT_API_KEY"] = appStoreDemoAPIKey
-        app.launch()
+        app.launchForFailureEvidence()
 
         let serverURLField = app.textFields["firstboot.serverURL.field"]
         try waitOrThrow(
@@ -267,7 +267,7 @@ extension AppStoreScreenshotUITests {
             slotDirectory: slotDirectory,
             notes: "prefilled demo URL and masked API key; keyboard not opened"
         )
-        app.terminate()
+        app.terminateForFailureEvidence()
     }
 }
 extension AppStoreScreenshotUITests {
@@ -385,7 +385,7 @@ extension AppStoreScreenshotUITests {
                 tapElement(card)
                 return
             }
-            app.swipeUp()
+            app.swipeUpForFailureEvidence()
             RunLoop.current.run(
                 until: Date().addingTimeInterval(AppStoreScreenshotUITestsWaitTiming.transitionPollSeconds))
         }
@@ -423,7 +423,7 @@ extension AppStoreScreenshotUITests {
         let app = makeBaseLaunchApp()
         try injectRealTestServer(into: app)
         app.launchEnvironment["UI_TEST_FORCE_MODE_SELECTION"] = "1"
-        app.launch()
+        app.launchForFailureEvidence()
 
         try waitOrThrow(
             app.buttons["mode.continue.button"], timeout: TestWait.seconds(.infrastructure(18)),
@@ -444,7 +444,7 @@ extension AppStoreScreenshotUITests {
         )
         try injectRealTestServer(into: app)
         app.launchEnvironment["UI_TEST_FORCE_MODE_SELECTION"] = "1"
-        app.launch()
+        app.launchForFailureEvidence()
 
         try startFilteredFlowFromModeSelection(app)
         return app
@@ -639,7 +639,7 @@ extension AppStoreScreenshotUITests {
     ) {
         RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.7))))
 
-        let screenshot = app.screenshot()
+        let screenshot = app.screenshotForFailureEvidence()
         let data = screenshot.pngRepresentation
         let fileURL = slotDirectory.appendingPathComponent(slot.fileName)
 
@@ -761,9 +761,9 @@ extension AppStoreScreenshotUITests {
             }
 
             if attempt % 2 == 0 {
-                app.swipeUp()
+                app.swipeUpForFailureEvidence()
             } else {
-                app.swipeDown()
+                app.swipeDownForFailureEvidence()
             }
             RunLoop.current.run(
                 until: Date().addingTimeInterval(AppStoreScreenshotUITestsWaitTiming.identityPollSeconds))
@@ -794,15 +794,15 @@ extension AppStoreScreenshotUITests {
 
     func tapElement(_ element: XCUIElement) {
         if element.isHittable {
-            element.tap()
+            element.tapForFailureEvidence()
         } else {
-            element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tapForFailureEvidence()
         }
         RunLoop.current.run(until: Date().addingTimeInterval(AppStoreScreenshotUITestsWaitTiming.identityPollSeconds))
     }
 
     func waitOrThrow(_ element: XCUIElement, timeout: TimeInterval, _ message: String) throws {
-        guard element.waitForExistence(timeout: timeout) else {
+        guard element.waitForFailureEvidence(timeout: timeout) else {
             throw ScreenshotError.message(message)
         }
     }

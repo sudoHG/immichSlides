@@ -43,6 +43,16 @@ enum FilterSummaryIOSVisualUITestsWaitTiming {
 
 #if os(iOS)
 final class FilterSummaryIOSVisualUITests: XCTestCase {
+    override func invokeTest() {
+        FirstFailureContext.reset()
+        super.invokeTest()
+    }
+
+    override func record(_ issue: XCTIssue) {
+        FirstFailureEvidence.record(self, issue: issue)
+        super.record(issue)
+    }
+
     let exifSamplingOverlayDiagnosticRunFlag = "IMMICHSLIDES_RUN_EXIF_SAMPLING_DIAGNOSTIC"
 
     struct LocalizedAcceptanceLocale {
@@ -139,7 +149,7 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
         continueAfterFailure = false
         try requireIOSDestination()
 
-        XCUIDevice.shared.orientation = .portrait
+        FirstFailureOrientation.set(.portrait)
     }
 
     func isEnvironmentFlagEnabled(_ name: String) -> Bool {
@@ -174,7 +184,8 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
         )
         let serverField = app.textFields["firstboot.serverURL.field"]
         XCTAssertTrue(
-            serverField.waitForExistence(
+            serverField.waitForPublicElement(
+                "firstboot.serverURL.field",
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "After resetting state, the app should return to the first-launch server setup page.")
 
@@ -191,7 +202,7 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
             ?? TestServerConfiguration.current?.serverURL
             ?? "https://debug.example.com/api"
 
-        fillButton.tap()
+        fillButton.tapForFailureEvidence()
 
         // Boolean compare: a failure must not print the expected URL, which can come from private configuration.
         XCTAssertTrue(
@@ -201,7 +212,8 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
 
         let apiField = app.secureTextFields["firstboot.apiKey.field"]
         XCTAssertTrue(
-            apiField.waitForExistence(timeout: FilterSummaryIOSVisualUITestsWaitTiming.stateChangeTimeoutSeconds))
+            apiField.waitForPublicElement(
+                "firstboot.apiKey.field", timeout: FilterSummaryIOSVisualUITestsWaitTiming.stateChangeTimeoutSeconds))
         let apiFieldValue = apiField.value as? String ?? ""
         XCTAssertFalse(
             apiFieldValue.isEmpty, "After tapping the debug button, the API Key field should no longer be empty.")
@@ -249,7 +261,7 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
     @MainActor
     func testIOSFirstBootOnboardingHeaderScreenshotLandscape() throws {
 
-        defer { XCUIDevice.shared.orientation = .portrait }
+        defer { FirstFailureOrientation.set(.portrait) }
 
         let app = launchIntoOnboardingFirstBoot(colorScheme: "dark")
         setOrientation(.landscapeLeft, app: app, waitForTitleIdentifier: "firstboot.page.title")
@@ -275,10 +287,12 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
         )
 
         XCTAssertTrue(
-            app.buttons["mode.random.button"].waitForExistence(
+            app.buttons["mode.random.button"].waitForPublicElement(
+                "mode.random.button",
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds))
         XCTAssertTrue(
-            app.buttons["mode.filtered.button"].waitForExistence(
+            app.buttons["mode.filtered.button"].waitForPublicElement(
+                "mode.filtered.button",
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds))
 
         attachScreenshot(app: app, name: "ios-mode-selection-onboarding-\(currentDeviceTag())")
@@ -296,10 +310,12 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
         )
 
         XCTAssertTrue(
-            app.buttons["mode.random.button"].waitForExistence(
+            app.buttons["mode.random.button"].waitForPublicElement(
+                "mode.random.button",
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds))
         XCTAssertTrue(
-            app.buttons["mode.filtered.button"].waitForExistence(
+            app.buttons["mode.filtered.button"].waitForPublicElement(
+                "mode.filtered.button",
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds))
 
         attachScreenshot(app: app, name: "ios-mode-selection-onboarding-light-\(currentDeviceTag())")
@@ -320,10 +336,12 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
         )
 
         XCTAssertTrue(
-            app.buttons["mode.random.button"].waitForExistence(
+            app.buttons["mode.random.button"].waitForPublicElement(
+                "mode.random.button",
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds))
         XCTAssertTrue(
-            app.buttons["mode.filtered.button"].waitForExistence(
+            app.buttons["mode.filtered.button"].waitForPublicElement(
+                "mode.filtered.button",
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds))
 
         attachScreenshot(
@@ -335,7 +353,7 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
     @MainActor
     func testIOSModeSelectionOnboardingHeaderScreenshotLandscape() throws {
 
-        defer { XCUIDevice.shared.orientation = .portrait }
+        defer { FirstFailureOrientation.set(.portrait) }
 
         let app = try launchIntoOnboardingModeSelection(colorScheme: "dark")
         setOrientation(.landscapeLeft, app: app, waitForTitleIdentifier: "mode.page.title")
@@ -347,10 +365,12 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
         )
 
         XCTAssertTrue(
-            app.buttons["mode.random.button"].waitForExistence(
+            app.buttons["mode.random.button"].waitForPublicElement(
+                "mode.random.button",
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds))
         XCTAssertTrue(
-            app.buttons["mode.filtered.button"].waitForExistence(
+            app.buttons["mode.filtered.button"].waitForPublicElement(
+                "mode.filtered.button",
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds))
 
         attachScreenshot(app: app, name: "ios-mode-selection-onboarding-landscape-\(currentDeviceTag())")
@@ -404,7 +424,7 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
     @MainActor
     func testIOSFilterSummaryOnboardingHeaderScreenshotLandscape() throws {
 
-        defer { XCUIDevice.shared.orientation = .portrait }
+        defer { FirstFailureOrientation.set(.portrait) }
 
         let app = try launchIntoOnboardingFilterSummary(colorScheme: "dark")
         setOrientation(.landscapeLeft, app: app, waitForTitleIdentifier: "filterSummary.page.title")
@@ -431,7 +451,7 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
             content: firstBootApp.buttons["firstboot.testConnection.button"],
             pageName: "First boot page"
         )
-        firstBootApp.terminate()
+        firstBootApp.terminateForFailureEvidence()
 
         let modeSelectionApp = try launchIntoOnboardingModeSelection(colorScheme: "dark")
         let modeTitleFrame = titleFrame(
@@ -443,7 +463,7 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
             content: modeSelectionApp.buttons["mode.random.button"],
             pageName: "Mode selection page"
         )
-        modeSelectionApp.terminate()
+        modeSelectionApp.terminateForFailureEvidence()
 
         let filterSummaryApp = try launchIntoOnboardingFilterSummary(colorScheme: "dark")
         let filterTitleFrame = titleFrame(
@@ -455,7 +475,7 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
             content: filterSummaryApp.buttons["filterSummary.album.button"],
             pageName: "Filter summary page"
         )
-        filterSummaryApp.terminate()
+        filterSummaryApp.terminateForFailureEvidence()
 
         assertTitleFrame(
             modeTitleFrame,
@@ -530,7 +550,7 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
 
     @MainActor
     func testIOSFilterEditorVisualScreenshotLandscape() throws {
-        defer { XCUIDevice.shared.orientation = .portrait }
+        defer { FirstFailureOrientation.set(.portrait) }
 
         let app = try launchIntoFilterEditor(colorScheme: "dark")
         setOrientation(.landscapeLeft, app: app, waitForTitleIdentifier: "filterEditor.page.title")
@@ -656,14 +676,14 @@ extension XCUIElement {
     func filterSummaryIOSVisualUITestsClearAndType(text: String) {
 
         guard let existing = self.value as? String else {
-            self.typeText(text)
+            self.typeForFailureEvidence(text)
             return
         }
 
-        self.tap()
+        self.tapForFailureEvidence()
         let deleteString = String(repeating: XCUIKeyboardKey.delete.rawValue, count: existing.count)
-        self.typeText(deleteString)
-        self.typeText(text)
+        self.typeForFailureEvidence(deleteString)
+        self.typeForFailureEvidence(text)
     }
 }
 #endif

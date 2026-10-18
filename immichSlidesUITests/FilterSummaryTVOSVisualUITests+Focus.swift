@@ -25,7 +25,7 @@ extension FilterSummaryTVOSVisualUITests {
             if isSettingsControlFocused(playbackItem) {
                 break
             }
-            XCUIRemote.shared.press(.up)
+            FirstFailureRemote.press(.up)
             RunLoop.current.run(
                 until: Date().addingTimeInterval(FilterSummaryTVOSVisualUITestsWaitTiming.remotePressSettleSeconds))
         }
@@ -41,7 +41,7 @@ extension FilterSummaryTVOSVisualUITests {
         // Normalize focus, then take a fixed number of steps, so we never start from a random spot.
 
         for _ in 0..<downStepsFromPlayback {
-            XCUIRemote.shared.press(.down)
+            FirstFailureRemote.press(.down)
             RunLoop.current.run(
                 until: Date().addingTimeInterval(FilterSummaryTVOSVisualUITestsWaitTiming.remotePressSettleSeconds))
         }
@@ -72,34 +72,34 @@ extension FilterSummaryTVOSVisualUITests {
 
     @MainActor
     func moveFocusToFilteredModeCard() {
-        XCUIRemote.shared.press(.right)
+        FirstFailureRemote.press(.right)
         RunLoop.current.run(
             until: Date().addingTimeInterval(FilterSummaryTVOSVisualUITestsWaitTiming.selectionPollSeconds))
     }
 
     @MainActor
     func moveFocusToModeContinueButton() {
-        XCUIRemote.shared.press(.down)
+        FirstFailureRemote.press(.down)
         RunLoop.current.run(
             until: Date().addingTimeInterval(FilterSummaryTVOSVisualUITestsWaitTiming.selectionPollSeconds))
     }
 
     @MainActor
     func moveFocusToPeopleCard() {
-        XCUIRemote.shared.press(.right)
+        FirstFailureRemote.press(.right)
         RunLoop.current.run(
             until: Date().addingTimeInterval(FilterSummaryTVOSVisualUITestsWaitTiming.snapshotPollSeconds))
     }
 
     @MainActor
     func moveFocusToBackButton() {
-        XCUIRemote.shared.press(.right)
+        FirstFailureRemote.press(.right)
         RunLoop.current.run(
             until: Date().addingTimeInterval(FilterSummaryTVOSVisualUITestsWaitTiming.selectionPollSeconds))
-        XCUIRemote.shared.press(.right)
+        FirstFailureRemote.press(.right)
         RunLoop.current.run(
             until: Date().addingTimeInterval(FilterSummaryTVOSVisualUITestsWaitTiming.selectionPollSeconds))
-        XCUIRemote.shared.press(.down)
+        FirstFailureRemote.press(.down)
         RunLoop.current.run(
             until: Date().addingTimeInterval(FilterSummaryTVOSVisualUITestsWaitTiming.selectionPollSeconds))
     }
@@ -108,7 +108,7 @@ extension FilterSummaryTVOSVisualUITests {
     func moveFocusToStartButton() {
 
         moveFocusToBackButton()
-        XCUIRemote.shared.press(.up)
+        FirstFailureRemote.press(.up)
         RunLoop.current.run(
             until: Date().addingTimeInterval(FilterSummaryTVOSVisualUITestsWaitTiming.selectionPollSeconds))
     }
@@ -117,28 +117,28 @@ extension FilterSummaryTVOSVisualUITests {
     func openAlbumFilter(from app: XCUIApplication) {
         let albumButton = app.buttons["filterSummary.album.button"]
         XCTAssertTrue(
-            albumButton.waitForExistence(
+            albumButton.waitForFailureEvidence(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds))
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
     }
 
     @MainActor
     func openPersonFilter(from app: XCUIApplication) {
         let peopleButton = app.buttons["filterSummary.person.button"]
         XCTAssertTrue(
-            peopleButton.waitForExistence(
+            peopleButton.waitForFailureEvidence(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds))
-        XCUIRemote.shared.press(.right)
+        FirstFailureRemote.press(.right)
         RunLoop.current.run(
             until: Date().addingTimeInterval(FilterSummaryTVOSVisualUITestsWaitTiming.transitionPollSeconds))
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
     }
 
     @MainActor
     func waitForAlbumFilterReady(app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
         let backButton = app.buttons["albumFilter.back.button"]
         XCTAssertTrue(
-            backButton.waitForExistence(
+            backButton.waitForFailureEvidence(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.screenTransitionTimeoutSeconds),
             "Album filter page should show the back button", file: file,
             line: line)
@@ -146,7 +146,7 @@ extension FilterSummaryTVOSVisualUITests {
             NSPredicate(format: "identifier BEGINSWITH %@", "albumFilter.album.")
         ).firstMatch
         XCTAssertTrue(
-            firstAlbumCard.waitForExistence(
+            firstAlbumCard.waitForFailureEvidence(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.screenTransitionTimeoutSeconds),
             "Album filter page should render at least one focusable card",
             file: file, line: line)
@@ -156,7 +156,7 @@ extension FilterSummaryTVOSVisualUITests {
     func waitForPersonFilterReady(app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
         let backButton = app.buttons["personFilter.back.button"]
         XCTAssertTrue(
-            backButton.waitForExistence(
+            backButton.waitForFailureEvidence(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.screenTransitionTimeoutSeconds),
             "Person filter page should show the back button", file: file,
             line: line)
@@ -164,7 +164,7 @@ extension FilterSummaryTVOSVisualUITests {
             NSPredicate(format: "identifier BEGINSWITH %@", "personFilter.person.")
         ).firstMatch
         XCTAssertTrue(
-            firstPersonCard.waitForExistence(
+            firstPersonCard.waitForFailureEvidence(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.screenTransitionTimeoutSeconds),
             "Person filter page should render at least one focusable card", file: file, line: line)
     }
@@ -213,7 +213,7 @@ extension FilterSummaryTVOSVisualUITests {
         var stableMoveCount = 0
 
         for _ in 0..<maxSteps {
-            XCUIRemote.shared.press(.down)
+            FirstFailureRemote.press(.down)
             RunLoop.current.run(
                 until: Date().addingTimeInterval(FilterSummaryTVOSVisualUITestsWaitTiming.albumFocusSettleSeconds))
 
@@ -281,7 +281,7 @@ extension FilterSummaryTVOSVisualUITests {
     ) {
         let readinessLabel = app.staticTexts[identifier]
         XCTAssertTrue(
-            readinessLabel.waitForExistence(
+            readinessLabel.waitForFailureEvidence(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.screenTransitionTimeoutSeconds),
             "A readable UI test readiness marker should be exposed: \(identifier)", file: file, line: line)
 
@@ -418,6 +418,8 @@ extension FilterSummaryTVOSVisualUITests {
     }
 
     func waitUntil(timeout: TimeInterval, condition: @escaping () -> Bool) -> Bool {
+        FirstFailureContext.beginWait(seconds: timeout)
+        defer { FirstFailureContext.endWait() }
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if condition() { return true }
@@ -454,7 +456,7 @@ extension FilterSummaryTVOSVisualUITests {
         let closeButton = app.buttons["pinEntry.close.button"]
 
         XCTAssertTrue(
-            digitOneButton.waitForExistence(
+            digitOneButton.waitForFailureEvidence(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds),
             "\(operationName): the opened PIN sheet should show the number pad",
             file: file,
@@ -470,7 +472,7 @@ extension FilterSummaryTVOSVisualUITests {
         )
 
         for _ in 0..<FilterSummaryTVOSVisualUITestsAccessProtection.pinDigitCount {
-            XCUIRemote.shared.press(.select)
+            FirstFailureRemote.press(.select)
             RunLoop.current.run(
                 until: Date().addingTimeInterval(FilterSummaryTVOSVisualUITestsWaitTiming.focusPollSeconds))
         }

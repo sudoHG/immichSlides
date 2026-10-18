@@ -31,8 +31,8 @@ extension FilterSummaryTVOSVisualUITests {
         app.launchEnvironment["UI_TEST_SERVER_URL"] = input.serverURL
         app.launchEnvironment["UI_TEST_API_KEY"] = input.publicKey
         app.launchEnvironment["UI_TEST_FORCE_MODE_SELECTION"] = "1"
-        app.launch()
-        defer { app.terminate() }
+        app.launchForFailureEvidence()
+        defer { app.terminateForFailureEvidence() }
 
         try enterRandomPlaybackFromModeSelection(app: app)
 
@@ -49,7 +49,7 @@ extension FilterSummaryTVOSVisualUITests {
                 scenarioName: "Arrow key \(scenario.name)",
                 screenshotName: "tvos-slideshow-controlbar-wakeup-by-direction-\(scenario.name)"
             ) { _ in
-                XCUIRemote.shared.press(scenario.button)
+                FirstFailureRemote.press(scenario.button)
             }
         }
     }
@@ -60,7 +60,8 @@ extension FilterSummaryTVOSVisualUITests {
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
 
         XCTAssertTrue(
-            playPauseButton.waitForExistence(
+            playPauseButton.waitForPublicElement(
+                "slideshow.control.playPause.button",
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
             "After entering the playback page, the Play/Pause button should be shown")
 
@@ -82,7 +83,7 @@ extension FilterSummaryTVOSVisualUITests {
         let settingsButton = app.buttons["slideshow.control.settings.button"]
 
         XCTAssertTrue(
-            entryHintTitle.waitForExistence(
+            entryHintTitle.waitForFailureEvidence(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeTimeoutSeconds),
             "On first reaching the playback page after the first-launch flow, the one-time tip should appear"
         )
@@ -91,7 +92,8 @@ extension FilterSummaryTVOSVisualUITests {
             "在这里调整照片播放范围和速度"
         )
         XCTAssertTrue(
-            entryHintAction.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.readbackTimeoutSeconds),
+            entryHintAction.waitForFailureEvidence(
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.readbackTimeoutSeconds),
             "The tip bubble should show a separate action sentence that helps the user understand the next step"
         )
         XCTAssertEqual(
@@ -99,7 +101,8 @@ extension FilterSummaryTVOSVisualUITests {
             "按 向下键 隐藏提示"
         )
         XCTAssertTrue(
-            entryHintKeycap.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.readbackTimeoutSeconds),
+            entryHintKeycap.waitForFailureEvidence(
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.readbackTimeoutSeconds),
             "The 'Down key' in the tip bubble should show as a separate keycap label"
         )
         XCTAssertEqual(entryHintKeycap.label, "向下键")
@@ -127,7 +130,7 @@ extension FilterSummaryTVOSVisualUITests {
         let settingsButton = app.buttons["slideshow.control.settings.button"]
 
         XCTAssertTrue(
-            entryHintTitle.waitForExistence(
+            entryHintTitle.waitForFailureEvidence(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeTimeoutSeconds),
             "In English, first entering the playback page should also show the one-time tip"
         )
@@ -136,7 +139,8 @@ extension FilterSummaryTVOSVisualUITests {
             "Adjust photo range and speed here"
         )
         XCTAssertTrue(
-            entryHintAction.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.readbackTimeoutSeconds),
+            entryHintAction.waitForFailureEvidence(
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.readbackTimeoutSeconds),
             "In English, the action sentence should also be shown in full"
         )
         XCTAssertEqual(
@@ -144,7 +148,8 @@ extension FilterSummaryTVOSVisualUITests {
             "Press Down to hide this tip"
         )
         XCTAssertTrue(
-            entryHintKeycap.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.readbackTimeoutSeconds),
+            entryHintKeycap.waitForFailureEvidence(
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.readbackTimeoutSeconds),
             "In English, the Down key should still show as a separate keycap label"
         )
         XCTAssertEqual(entryHintKeycap.label, "Down")
@@ -172,14 +177,16 @@ extension FilterSummaryTVOSVisualUITests {
         let settingsButton = app.buttons["slideshow.control.settings.button"]
 
         XCTAssertTrue(
-            entryHintTitle.waitForExistence(
+            entryHintTitle.waitForFailureEvidence(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeTimeoutSeconds))
         XCTAssertEqual(entryHintTitle.label, "ここで写真の範囲と速度を調整します")
         XCTAssertTrue(
-            entryHintAction.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.readbackTimeoutSeconds))
+            entryHintAction.waitForFailureEvidence(
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.readbackTimeoutSeconds))
         XCTAssertEqual(entryHintAction.label, "下キーを押すとヒントが閉じます")
         XCTAssertTrue(
-            entryHintKeycap.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.readbackTimeoutSeconds))
+            entryHintKeycap.waitForFailureEvidence(
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.readbackTimeoutSeconds))
         XCTAssertEqual(entryHintKeycap.label, "下キー")
         waitForButtonToGainFocus(
             settingsButton,
@@ -198,7 +205,7 @@ extension FilterSummaryTVOSVisualUITests {
         let settingsButton = app.buttons["slideshow.control.settings.button"]
 
         XCTAssertTrue(
-            entryHintBanner.waitForExistence(
+            entryHintBanner.waitForFailureEvidence(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeTimeoutSeconds),
             "The first-run tip state should show a bubble anchored to the settings button")
         waitForButtonToGainFocus(
@@ -207,7 +214,7 @@ extension FilterSummaryTVOSVisualUITests {
             failureMessage: "In the first-run tip state, default focus should land on the settings button"
         )
 
-        XCUIRemote.shared.press(.down)
+        FirstFailureRemote.press(.down)
 
         waitForElementToDisappear(
             entryHintBanner,
@@ -227,7 +234,8 @@ extension FilterSummaryTVOSVisualUITests {
         let entryHint = app.staticTexts["slideshow.entryHint.title"]
 
         XCTAssertTrue(
-            entryHint.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeTimeoutSeconds),
+            entryHint.waitForFailureEvidence(
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeTimeoutSeconds),
             "On first entering the playback page, the one-time tip should appear"
         )
 
@@ -235,7 +243,7 @@ extension FilterSummaryTVOSVisualUITests {
         exitSettingsToSlideShow(app: app)
 
         XCTAssertFalse(
-            entryHint.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.readbackDeadlineSeconds),
+            entryHint.waitForFailureEvidence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.readbackDeadlineSeconds),
             "The one-time tip should not reappear on return from settings to playback in the same first-launch flow"
         )
     }
@@ -246,7 +254,8 @@ extension FilterSummaryTVOSVisualUITests {
         let settingsButton = app.buttons["slideshow.control.settings.button"]
 
         XCTAssertTrue(
-            settingsButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(18))),
+            settingsButton.waitForPublicElement(
+                "slideshow.control.settings.button", timeout: TestWait.seconds(.infrastructure(18))),
             "After entering the playback page, the settings entry in the bottom control bar should be visible")
         XCTAssertFalse(
             app.buttons["global.back.button"].exists,
@@ -261,7 +270,8 @@ extension FilterSummaryTVOSVisualUITests {
         let app = try launchIntoSlideShow()
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
         XCTAssertTrue(
-            playPauseButton.waitForExistence(
+            playPauseButton.waitForPublicElement(
+                "slideshow.control.playPause.button",
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
             "After entering the playback page, the Play/Pause button should be visible")
 
@@ -276,10 +286,11 @@ extension FilterSummaryTVOSVisualUITests {
         )
 
         // Play/Pause while the bar is hidden should toggle autoplay and bring back the control bar.
-        XCUIRemote.shared.press(.playPause)
+        FirstFailureRemote.press(.playPause)
 
         XCTAssertTrue(
-            playPauseButton.waitForExistence(
+            playPauseButton.waitForPublicElement(
+                "slideshow.control.playPause.button",
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.elementAppearanceDeadlineSeconds),
             "Pressing Play/Pause while the control bar is hidden should wake the bar and show the playback state"
         )
@@ -299,7 +310,8 @@ extension FilterSummaryTVOSVisualUITests {
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
 
         XCTAssertTrue(
-            playPauseButton.waitForExistence(
+            playPauseButton.waitForPublicElement(
+                "slideshow.control.playPause.button",
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
             "After entering the playback page, the Play/Pause button should be visible")
         waitForButtonToGainFocus(
@@ -316,10 +328,11 @@ extension FilterSummaryTVOSVisualUITests {
             "The control bar must hide on its own before it can be woken"
         )
 
-        XCUIRemote.shared.press(.up)
+        FirstFailureRemote.press(.up)
 
         XCTAssertTrue(
-            playPauseButton.waitForExistence(
+            playPauseButton.waitForPublicElement(
+                "slideshow.control.playPause.button",
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.elementAppearanceDeadlineSeconds),
             "Pressing a direction key while the control bar is hidden should wake the bar first"
         )
@@ -347,9 +360,10 @@ extension FilterSummaryTVOSVisualUITests {
             },
             "The control bar must hide on its own again and leave focus on the wake receiver"
         )
-        XCUIRemote.shared.press(.up)
+        FirstFailureRemote.press(.up)
         XCTAssertTrue(
-            playPauseButton.waitForExistence(
+            playPauseButton.waitForPublicElement(
+                "slideshow.control.playPause.button",
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.elementAppearanceDeadlineSeconds),
             "A directional press must bring back a fully hidden control bar"
         )
@@ -370,17 +384,24 @@ extension FilterSummaryTVOSVisualUITests {
         let nextButton = app.buttons["slideshow.control.next.button"]
 
         XCTAssertTrue(
-            settingsButton.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
+            settingsButton.waitForPublicElement(
+                "slideshow.control.settings.button",
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
             "Playback page should show the settings button")
         XCTAssertTrue(
-            previousButton.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
+            previousButton.waitForPublicElement(
+                "slideshow.control.previous.button",
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
             "Playback page should show the previous button")
         XCTAssertTrue(
-            playPauseButton.waitForExistence(
+            playPauseButton.waitForPublicElement(
+                "slideshow.control.playPause.button",
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
             "Playback page should show the Play/Pause button")
         XCTAssertTrue(
-            nextButton.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
+            nextButton.waitForPublicElement(
+                "slideshow.control.next.button",
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
             "Playback page should show the next button")
 
         refreshTVOSSlideshowControlBarFocus(
@@ -389,7 +410,7 @@ extension FilterSummaryTVOSVisualUITests {
         )
         for _ in 0..<5 {
             if settingsButton.hasFocus { break }
-            XCUIRemote.shared.press(.left)
+            FirstFailureRemote.press(.left)
             RunLoop.current.run(
                 until: Date().addingTimeInterval(FilterSummaryTVOSVisualUITestsWaitTiming.remotePressSettleSeconds))
         }
@@ -409,7 +430,7 @@ extension FilterSummaryTVOSVisualUITests {
             previousButton.isEnabled,
             "At the initial history boundary, previous should be disabled and skipped in the tvOS focus path")
 
-        XCUIRemote.shared.press(.right)
+        FirstFailureRemote.press(.right)
         waitForButtonToGainFocus(
             playPauseButton,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeDeadlineSeconds,
@@ -423,7 +444,7 @@ extension FilterSummaryTVOSVisualUITests {
             failureMessage:
                 "Previous is disabled at the initial history boundary, so moving right should jump focus to Play/Pause"
         )
-        XCUIRemote.shared.press(.right)
+        FirstFailureRemote.press(.right)
         waitForButtonToGainFocus(
             nextButton,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeDeadlineSeconds,
@@ -435,7 +456,7 @@ extension FilterSummaryTVOSVisualUITests {
             app: app, on: nextButton, direction: .right,
             failureMessage: "Moving right again, focus should reach the next button"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
             waitUntil(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeDeadlineSeconds) {
                 previousButton.isEnabled
@@ -447,14 +468,14 @@ extension FilterSummaryTVOSVisualUITests {
             app: app, on: nextButton, direction: .right,
             failureMessage: "Moving right again, focus should reach the next button"
         )
-        XCUIRemote.shared.press(.left)
+        FirstFailureRemote.press(.left)
         waitForButtonToGainFocus(
             playPauseButton,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeDeadlineSeconds,
             failureMessage: "Moving left from next, focus should return to the Play/Pause button"
         )
 
-        XCUIRemote.shared.press(.left)
+        FirstFailureRemote.press(.left)
         waitForButtonToGainFocus(
             previousButton,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeDeadlineSeconds,
@@ -470,7 +491,8 @@ extension FilterSummaryTVOSVisualUITests {
         let nextButton = app.buttons["slideshow.control.next.button"]
 
         XCTAssertTrue(
-            playPauseButton.waitForExistence(
+            playPauseButton.waitForPublicElement(
+                "slideshow.control.playPause.button",
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
             "Playback page should show the Play/Pause button")
 
@@ -482,9 +504,10 @@ extension FilterSummaryTVOSVisualUITests {
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.screenTransitionDeadlineSeconds,
             failureMessage: "The control bar should hide on its own before focus movement is verified"
         )
-        XCUIRemote.shared.press(.right)
+        FirstFailureRemote.press(.right)
         XCTAssertTrue(
-            playPauseButton.waitForExistence(
+            playPauseButton.waitForPublicElement(
+                "slideshow.control.playPause.button",
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.elementAppearanceDeadlineSeconds),
             "A directional press should wake the hidden control bar")
         waitForButtonToGainFocus(
@@ -497,7 +520,7 @@ extension FilterSummaryTVOSVisualUITests {
         // than the delay.
         var isTargetingNext = true
         for _ in 0..<8 {
-            XCUIRemote.shared.press(isTargetingNext ? .right : .left)
+            FirstFailureRemote.press(isTargetingNext ? .right : .left)
             waitForButtonToGainFocus(
                 isTargetingNext ? nextButton : playPauseButton,
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeDeadlineSeconds,
@@ -515,12 +538,14 @@ extension FilterSummaryTVOSVisualUITests {
         let app = try launchIntoSlideShow(colorScheme: "light")
         let settingsButton = app.buttons["slideshow.control.settings.button"]
         XCTAssertTrue(
-            settingsButton.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
+            settingsButton.waitForPublicElement(
+                "slideshow.control.settings.button",
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
             "Light mode playback page should show the control bar")
 
         for _ in 0..<5 {
             if settingsButton.hasFocus { break }
-            XCUIRemote.shared.press(.left)
+            FirstFailureRemote.press(.left)
             RunLoop.current.run(
                 until: Date().addingTimeInterval(FilterSummaryTVOSVisualUITestsWaitTiming.remotePressSettleSeconds))
         }
@@ -548,17 +573,24 @@ extension FilterSummaryTVOSVisualUITests {
         let removedProgressLabel = app.staticTexts["slideshow.control.progress.label"]
 
         XCTAssertTrue(
-            settingsButton.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
+            settingsButton.waitForPublicElement(
+                "slideshow.control.settings.button",
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
             "Playback page should show the settings button")
         XCTAssertTrue(
-            previousButton.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
+            previousButton.waitForPublicElement(
+                "slideshow.control.previous.button",
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
             "Playback page should show the previous button")
         XCTAssertTrue(
-            playPauseButton.waitForExistence(
+            playPauseButton.waitForPublicElement(
+                "slideshow.control.playPause.button",
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
             "Playback page should show the Play/Pause button")
         XCTAssertTrue(
-            nextButton.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
+            nextButton.waitForPublicElement(
+                "slideshow.control.next.button",
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
             "Playback page should show the next button")
         XCTAssertFalse(
             removedProgressLabel.exists, "The visible photo index above the control bar should have been removed")
@@ -571,7 +603,7 @@ extension FilterSummaryTVOSVisualUITests {
         // Bring focus back to the far left first; the later path is only stable from there.
         for _ in 0..<5 {
             if settingsButton.hasFocus { break }
-            XCUIRemote.shared.press(.left)
+            FirstFailureRemote.press(.left)
             RunLoop.current.run(
                 until: Date().addingTimeInterval(FilterSummaryTVOSVisualUITestsWaitTiming.remotePressSettleSeconds))
         }
@@ -603,7 +635,7 @@ extension FilterSummaryTVOSVisualUITests {
             previousButton.isEnabled,
             "At the initial history boundary, previous should be disabled and out of the tvOS focus path")
 
-        XCUIRemote.shared.press(.right)
+        FirstFailureRemote.press(.right)
         waitForButtonToGainFocus(
             playPauseButton,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeDeadlineSeconds,
@@ -615,7 +647,7 @@ extension FilterSummaryTVOSVisualUITests {
         XCTAssertFalse(initialPlayPauseValue.isEmpty, "The Play/Pause button should expose its current state value")
         XCTAssertEqual(initialPlayPauseValue, "play", "The initial history boundary must stay paused during discovery")
         let firstPlayPauseSelectAt = Date()
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
             waitUntil(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.stateChangeDeadlineSeconds) {
                 ((playPauseButton.value as? String) ?? "") != initialPlayPauseValue
@@ -624,7 +656,7 @@ extension FilterSummaryTVOSVisualUITests {
         )
         // Exercise both Select actions and restore pause before comparing retained scenes.
         let secondPlayPauseSelectAt = Date()
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         print(
             "TVOS_PLAY_PAUSE_SELECT_INTERVAL_SECONDS=\(secondPlayPauseSelectAt.timeIntervalSince(firstPlayPauseSelectAt))"
         )
@@ -640,14 +672,14 @@ extension FilterSummaryTVOSVisualUITests {
             failureMessage:
                 "Previous is disabled at the initial history boundary, so moving right should focus Play/Pause"
         )
-        XCUIRemote.shared.press(.right)
+        FirstFailureRemote.press(.right)
         waitForButtonToGainFocus(
             nextButton,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeDeadlineSeconds,
             failureMessage: "After moving right again, focus should reach the next button"
         )
 
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         let signatureAfterNext = try waitForTVOSSceneSignatureChange(
             app: app,
             from: initialSignature,
@@ -659,21 +691,21 @@ extension FilterSummaryTVOSVisualUITests {
             app: app, on: nextButton, direction: .right,
             failureMessage: "After moving right again, focus should reach the next button"
         )
-        XCUIRemote.shared.press(.left)
+        FirstFailureRemote.press(.left)
         waitForButtonToGainFocus(
             playPauseButton,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeDeadlineSeconds,
             failureMessage: "Moving left from next, focus should return to the Play/Pause button"
         )
 
-        XCUIRemote.shared.press(.left)
+        FirstFailureRemote.press(.left)
         waitForButtonToGainFocus(
             previousButton,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeDeadlineSeconds,
             failureMessage: "Moving left again, focus should reach the previous button"
         )
 
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
             waitUntil(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds) {
                 self.currentTVOSSceneSignatureValue(app: app) == initialSignature
@@ -685,14 +717,14 @@ extension FilterSummaryTVOSVisualUITests {
             app: app, on: playPauseButton, direction: .right,
             failureMessage: "Moving left from next, focus should return to the Play/Pause button"
         )
-        XCUIRemote.shared.press(.left)
+        FirstFailureRemote.press(.left)
         waitForButtonToGainFocus(
             settingsButton,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeDeadlineSeconds,
             failureMessage: "Moving left again, focus should return to the settings button"
         )
 
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
             waitForAnySettingsSurface(
                 app: app, timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeDeadlineSeconds),
@@ -710,17 +742,24 @@ extension FilterSummaryTVOSVisualUITests {
 
         ensureTVOSSlideshowControlBarVisible(app: app)
         XCTAssertTrue(
-            settingsButton.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
+            settingsButton.waitForPublicElement(
+                "slideshow.control.settings.button",
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
             "Playback page should show the settings button")
         XCTAssertTrue(
-            previousButton.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
+            previousButton.waitForPublicElement(
+                "slideshow.control.previous.button",
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
             "Playback page should show the previous button")
         XCTAssertTrue(
-            playPauseButton.waitForExistence(
+            playPauseButton.waitForPublicElement(
+                "slideshow.control.playPause.button",
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
             "Playback page should show the Play/Pause button")
         XCTAssertTrue(
-            nextButton.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
+            nextButton.waitForPublicElement(
+                "slideshow.control.next.button",
+                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
             "Playback page should show the next button")
 
         waitForButtonToGainFocus(
@@ -740,13 +779,13 @@ extension FilterSummaryTVOSVisualUITests {
             previousButton.isEnabled,
             "At the history boundary, previous should be disabled and out of the tvOS focus path")
 
-        XCUIRemote.shared.press(.right)
+        FirstFailureRemote.press(.right)
         waitForButtonToGainFocus(
             nextButton,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeDeadlineSeconds,
             failureMessage: "After moving right again, focus should reach the next button"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         let secondSignature = try waitForTVOSSceneSignatureChange(
             app: app, from: initialSignature,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds)
@@ -766,13 +805,13 @@ extension FilterSummaryTVOSVisualUITests {
             app: app, on: nextButton, direction: .right,
             failureMessage: "After moving right again, focus should reach the next button"
         )
-        XCUIRemote.shared.press(.right)
+        FirstFailureRemote.press(.right)
         waitForButtonToGainFocus(
             nextButton,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeDeadlineSeconds,
             failureMessage: "After moving right again, focus should reach the next button"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         let thirdSignature = try waitForTVOSSceneSignatureChange(
             app: app, from: secondSignature,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds)
@@ -783,15 +822,15 @@ extension FilterSummaryTVOSVisualUITests {
             app: app, on: nextButton, direction: .right,
             failureMessage: "After moving right again, focus should reach the next button"
         )
-        XCUIRemote.shared.press(.left)
-        XCUIRemote.shared.press(.left)
+        FirstFailureRemote.press(.left)
+        FirstFailureRemote.press(.left)
         waitForButtonToGainFocus(
             previousButton,
             timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeDeadlineSeconds,
             failureMessage: "Moving left again, focus should reach the previous button"
         )
 
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
             waitUntil(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds) {
                 self.currentTVOSSceneSignatureValue(app: app) == secondSignature
@@ -804,7 +843,7 @@ extension FilterSummaryTVOSVisualUITests {
             app: app, on: previousButton, direction: .left,
             failureMessage: "Moving left again, focus should reach the previous button"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
             waitUntil(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds) {
                 self.currentTVOSSceneSignatureValue(app: app) == initialSignature
@@ -844,7 +883,7 @@ extension FilterSummaryTVOSVisualUITests {
             guard let focusedIdentifier = controlIdentifiers.first(where: { snapshots[$0]?.hasFocus == true }) else {
                 break
             }
-            XCUIRemote.shared.press(direction)
+            FirstFailureRemote.press(direction)
             let movementTimeout = FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeDeadlineSeconds
             let movementDeadline = Date().addingTimeInterval(movementTimeout)
             guard

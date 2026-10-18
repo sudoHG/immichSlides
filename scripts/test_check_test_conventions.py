@@ -906,6 +906,24 @@ class TimeoutLiteralTests(unittest.TestCase):
 
 
 class RepositoryTests(unittest.TestCase):
+    def test_every_direct_ui_case_forwards_the_first_failure_before_xctest(self):
+        import tempfile
+        hook = "override func record(_ issue: XCTIssue) { FirstFailureEvidence.record(self, issue: issue); super.record(issue) }"
+        reset = "override func invokeTest() { FirstFailureContext.reset(); super.invokeTest() }"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            folder = root / "immichSlidesUITests"
+            folder.mkdir()
+            source = folder / "FlowUITests.swift"
+            source.write_text("final class FlowUITests: XCTestCase { " + hook + reset + " }")
+            self.assertEqual([], conv.check_repository(root))
+            for missing, detail in ((hook, " must forward record(_:) to FirstFailureEvidence before super.record"),
+                    (reset, " must reset the first-failure timeline before super.invokeTest")):
+                source.write_text("final class FlowUITests: XCTestCase { " + (hook + reset).replace(missing, "") + " }")
+                violations = conv.check_repository(root)
+                self.assertEqual(["first-failure-hook"], rules(violations))
+                self.assertEqual("FlowUITests" + detail, violations[0].detail)
+
     def test_repository_passes_with_the_committed_allowlist(self):
         violations = conv.check_repository(REPO_ROOT)
         allowlist = conv.load_allowlist(REPO_ROOT / conv.ALLOWLIST_PATH)

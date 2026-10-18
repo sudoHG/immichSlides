@@ -68,21 +68,21 @@ extension PlaybackSettingsTVOSUITests {
         try requireServerAlbumAndPerson()
         app.launchEnvironment["UI_TEST_PREPARE_FILTER_SUMMARY_VISUAL_SELECTIONS"] = "1"
         app.launchEnvironment["UI_TEST_PREPARE_FILTER_EDITOR_VISUAL_SELECTIONS"] = "1"
-        app.launch()
+        app.launchForFailureEvidence()
 
         let continueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            continueButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(15))),
+            continueButton.waitForPublicElement("mode.continue.button", timeout: TestWait.seconds(.infrastructure(15))),
             "After injecting the test server config, the app should go straight to mode selection")
 
         startFilteredFlowFromModeSelection(app: app)
 
         XCTAssertTrue(
-            app.buttons["filterSummary.album.button"].waitForExistence(
+            app.buttons["filterSummary.album.button"].waitForFailureEvidence(
                 timeout: PlaybackSettingsTVOSUITestsWaitTiming.navigationTimeoutSeconds),
             "The filter summary page should show the album entry")
         XCTAssertTrue(
-            app.buttons["filterSummary.person.button"].waitForExistence(
+            app.buttons["filterSummary.person.button"].waitForFailureEvidence(
                 timeout: PlaybackSettingsTVOSUITestsWaitTiming.navigationTimeoutSeconds),
             "The filter summary page should show the people entry")
         return app
@@ -91,29 +91,31 @@ extension PlaybackSettingsTVOSUITests {
     func startFilteredFlowFromModeSelection(app: XCUIApplication) {
         let modeFilteredButton = app.buttons["mode.filtered.button"]
         XCTAssertTrue(
-            modeFilteredButton.waitForExistence(
+            modeFilteredButton.waitForPublicElement(
+                "mode.filtered.button",
                 timeout: PlaybackSettingsTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "The mode selection page should show the 'Filtered Playback' entry")
 
         // Filtered Playback is the second card: press Right, then Select.
 
-        XCUIRemote.shared.press(.right)
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.right)
+        FirstFailureRemote.press(.select)
 
         let continueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            continueButton.waitForExistence(
+            continueButton.waitForPublicElement(
+                "mode.continue.button",
                 timeout: PlaybackSettingsTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "After entering the filtered playback flow, the Continue button should be visible")
         XCTAssertTrue(
             continueButton.isEnabled,
             "The test seed already presets filter conditions, so the Continue button should be enabled")
 
-        XCUIRemote.shared.press(.down)
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.down)
+        FirstFailureRemote.press(.select)
 
         XCTAssertTrue(
-            app.buttons["filterSummary.startPlayback.button"].waitForExistence(
+            app.buttons["filterSummary.startPlayback.button"].waitForFailureEvidence(
                 timeout: PlaybackSettingsTVOSUITestsWaitTiming.screenTransitionTimeoutSeconds),
             "After entering the filter summary page, the 'Start Playback' button should be visible")
     }
@@ -129,13 +131,13 @@ extension PlaybackSettingsTVOSUITests {
         )
         let startPlaybackButton = app.buttons["filterSummary.startPlayback.button"]
         XCTAssertTrue(
-            startPlaybackButton.waitForExistence(
+            startPlaybackButton.waitForFailureEvidence(
                 timeout: PlaybackSettingsTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "The filter summary page should show the 'Start Playback' button")
 
         if startPlaybackButton.hasFocus == false {
             for _ in 0..<8 {
-                XCUIRemote.shared.press(.down)
+                FirstFailureRemote.press(.down)
                 RunLoop.current.run(
                     until: Date().addingTimeInterval(PlaybackSettingsTVOSUITestsWaitTiming.remotePressSettleSeconds))
                 if startPlaybackButton.hasFocus {
@@ -147,10 +149,11 @@ extension PlaybackSettingsTVOSUITests {
         XCTAssertTrue(
             startPlaybackButton.hasFocus,
             "After entering the filter summary page, focus should be able to move to 'Start Playback'")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         XCTAssertTrue(
-            app.buttons["slideshow.control.settings.button"].waitForExistence(
+            app.buttons["slideshow.control.settings.button"].waitForPublicElement(
+                "slideshow.control.settings.button",
                 timeout: TestWait.seconds(.infrastructure(18))),
             "After playback starts, the slideshow should open and show the control bar"
         )
@@ -171,7 +174,8 @@ extension PlaybackSettingsTVOSUITests {
 
         let playbackItem = app.buttons["settings.item.playback"]
         XCTAssertTrue(
-            playbackItem.waitForExistence(
+            playbackItem.waitForPublicElement(
+                "settings.item.playback",
                 timeout: PlaybackSettingsTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "The settings main page should show the 'Playback Settings' entry")
         waitForFocusableElementToGainFocus(
@@ -180,7 +184,7 @@ extension PlaybackSettingsTVOSUITests {
             failureMessage: "Entering the settings main page should put default focus on 'Playback Settings' first"
         )
 
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         XCTAssertTrue(
             waitForSettingsControlExists(
@@ -205,7 +209,7 @@ extension PlaybackSettingsTVOSUITests {
             failureMessage: "On the Playback Settings page, focus should be able to move to the 'Edit Filters' entry"
         )
 
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let didOpenEditor = waitUntil(timeout: PlaybackSettingsTVOSUITestsWaitTiming.navigationTimeoutSeconds) {
             app.buttons["filter.editor.album.entry"].exists && app.buttons["filter.editor.person.entry"].exists
@@ -245,7 +249,7 @@ extension PlaybackSettingsTVOSUITests {
             line: line
         )
 
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let didPresentEditor = waitUntil(timeout: PlaybackSettingsTVOSUITestsWaitTiming.navigationTimeoutSeconds) {
             app.buttons["filter.editor.album.entry"].exists && app.buttons["filter.editor.person.entry"].exists
@@ -289,7 +293,8 @@ extension PlaybackSettingsTVOSUITests {
         let settingsButton = app.buttons["slideshow.control.settings.button"]
         XCTAssertTrue(
             app.refreshTVOSSlideshowControlBar(timeout: PlaybackSettingsTVOSUITestsWaitTiming.navigationTimeoutSeconds)
-                && settingsButton.waitForExistence(
+                && settingsButton.waitForPublicElement(
+                    "slideshow.control.settings.button",
                     timeout: PlaybackSettingsTVOSUITestsWaitTiming.navigationTimeoutSeconds),
             "The slideshow should show the settings button")
 
@@ -297,7 +302,7 @@ extension PlaybackSettingsTVOSUITests {
 
         for _ in 0..<5 {
             if settingsButton.hasFocus { break }
-            XCUIRemote.shared.press(.left)
+            FirstFailureRemote.press(.left)
             RunLoop.current.run(
                 until: Date().addingTimeInterval(PlaybackSettingsTVOSUITestsWaitTiming.remotePressSettleSeconds))
         }
@@ -308,7 +313,7 @@ extension PlaybackSettingsTVOSUITests {
             failureMessage: "Before opening settings, focus should settle on the control bar's left settings button"
         )
 
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
             waitForAnySettingsSurface(
                 app: app, timeout: PlaybackSettingsTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
@@ -337,7 +342,7 @@ extension PlaybackSettingsTVOSUITests {
             if isAnySettingsControlFocused(app: app, identifier: identifier) {
                 return target
             }
-            XCUIRemote.shared.press(.down)
+            FirstFailureRemote.press(.down)
             waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.18)))
             if isAnySettingsControlFocused(app: app, identifier: identifier) {
                 return target
@@ -378,7 +383,7 @@ extension PlaybackSettingsTVOSUITests {
             // The Done button at the bottom may take focus first; press Up to return to the card area.
 
             if isAnySettingsControlFocused(app: app, identifier: doneIdentifier) {
-                XCUIRemote.shared.press(.up)
+                FirstFailureRemote.press(.up)
                 waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.18)))
                 if isAnySettingsControlFocused(app: app, identifier: identifier) {
                     return target
@@ -386,7 +391,7 @@ extension PlaybackSettingsTVOSUITests {
             }
 
             if identifier == personIdentifier && isAnySettingsControlFocused(app: app, identifier: albumIdentifier) {
-                XCUIRemote.shared.press(.right)
+                FirstFailureRemote.press(.right)
                 waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.18)))
                 if isAnySettingsControlFocused(app: app, identifier: identifier) {
                     return target
@@ -394,32 +399,32 @@ extension PlaybackSettingsTVOSUITests {
             } else if identifier == albumIdentifier
                 && isAnySettingsControlFocused(app: app, identifier: personIdentifier)
             {
-                XCUIRemote.shared.press(.left)
+                FirstFailureRemote.press(.left)
                 waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.18)))
                 if isAnySettingsControlFocused(app: app, identifier: identifier) {
                     return target
                 }
             }
 
-            XCUIRemote.shared.press(.up)
+            FirstFailureRemote.press(.up)
             waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.16)))
             if isAnySettingsControlFocused(app: app, identifier: identifier) {
                 return target
             }
 
-            XCUIRemote.shared.press(.right)
+            FirstFailureRemote.press(.right)
             waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.18)))
             if isAnySettingsControlFocused(app: app, identifier: identifier) {
                 return target
             }
 
-            XCUIRemote.shared.press(.down)
+            FirstFailureRemote.press(.down)
             waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.18)))
             if isAnySettingsControlFocused(app: app, identifier: identifier) {
                 return target
             }
 
-            XCUIRemote.shared.press(.left)
+            FirstFailureRemote.press(.left)
             waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.16)))
             if isAnySettingsControlFocused(app: app, identifier: identifier) {
                 return target
@@ -568,7 +573,7 @@ extension PlaybackSettingsTVOSUITests {
     ) {
         let readinessLabel = app.staticTexts[identifier]
         XCTAssertTrue(
-            readinessLabel.waitForExistence(
+            readinessLabel.waitForFailureEvidence(
                 timeout: PlaybackSettingsTVOSUITestsWaitTiming.screenTransitionTimeoutSeconds),
             "A readable UI test readiness marker should be exposed: \(identifier)",
             file: file,
@@ -593,7 +598,7 @@ extension PlaybackSettingsTVOSUITests {
     }
 
     func attachScreenshot(app: XCUIApplication, name: String) {
-        let attachment = XCTAttachment(screenshot: app.screenshot())
+        let attachment = XCTAttachment(screenshot: app.screenshotForFailureEvidence())
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)

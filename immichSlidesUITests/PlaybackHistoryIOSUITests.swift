@@ -9,18 +9,28 @@ enum PlaybackHistoryIOSUITestsCalibration {
 
 #if os(iOS)
 final class PlaybackHistoryIOSUITests: XCTestCase {
+    override func invokeTest() {
+        FirstFailureContext.reset()
+        super.invokeTest()
+    }
+
+    override func record(_ issue: XCTIssue) {
+        FirstFailureEvidence.record(self, issue: issue)
+        super.record(issue)
+    }
+
     var manualLifecycleRuntimeEvidenceRows: [[String: Any]] = []
 
     override func setUpWithError() throws {
         continueAfterFailure = false
-        XCUIDevice.shared.orientation = .portrait
+        FirstFailureOrientation.set(.portrait)
         manualLifecycleRuntimeEvidenceRows = []
     }
 
     @MainActor
     func testPreviousNextRetainedHistoryFromRandomPlayback() throws {
         let app = try launchConfiguredAppAtModeSelection()
-        defer { app.terminate() }
+        defer { app.terminateForFailureEvidence() }
         startRandomPlaybackFromModeSelection(app: app)
 
         let initialAssetID = try waitForCurrentAssetID(app: app, timeout: TestWait.seconds(.infrastructure(20)))
@@ -55,7 +65,7 @@ final class PlaybackHistoryIOSUITests: XCTestCase {
     @MainActor
     func testSmartFillPreviousNextRoundTripUsesCompleteVisibleSceneIdentity() throws {
         let app = try launchConfiguredSmartFillAppAtModeSelection()
-        defer { app.terminate() }
+        defer { app.terminateForFailureEvidence() }
         startFilteredPlaybackFromModeSelection(app: app)
 
         let initial = try waitForCompleteVisibleSmartFillScene(app: app, timeout: TestWait.seconds(.infrastructure(45)))
@@ -116,7 +126,7 @@ final class PlaybackHistoryIOSUITests: XCTestCase {
     @MainActor
     func testManualLifecycleSettingsAndControlsStayBidirectionallySynchronized() throws {
         let app = try launchConfiguredManualLifecycleAppAtModeSelection(mode: .singlePhoto)
-        defer { app.terminate() }
+        defer { app.terminateForFailureEvidence() }
         startFilteredPlaybackFromModeSelection(app: app)
         _ = try waitForStablePresentationProbe(app: app, timeout: TestWait.seconds(.infrastructure(45)))
 
@@ -164,7 +174,7 @@ final class PlaybackHistoryIOSUITests: XCTestCase {
         let app = try launchConfiguredManualLifecycleAppAtModeSelection(mode: .smartFill)
         defer {
             attachManualLifecycleRuntimeEvidence(mode: .smartFill)
-            app.terminate()
+            app.terminateForFailureEvidence()
         }
         startFilteredPlaybackFromModeSelection(app: app)
         _ = try waitForFrameSynchronizedPresentationProbe(app: app, timeout: TestWait.seconds(.infrastructure(45)))
@@ -182,7 +192,7 @@ final class PlaybackHistoryIOSUITests: XCTestCase {
         let app = try launchConfiguredManualLifecycleAppAtModeSelection(mode: .smartFill)
         defer {
             attachManualLifecycleRuntimeEvidence(mode: .smartFill)
-            app.terminate()
+            app.terminateForFailureEvidence()
         }
         startFilteredPlaybackFromModeSelection(app: app)
         _ = try waitForFrameSynchronizedPresentationProbe(app: app, timeout: TestWait.seconds(.infrastructure(45)))
@@ -210,7 +220,7 @@ final class PlaybackHistoryIOSUITests: XCTestCase {
         )
         defer {
             attachManualLifecycleRuntimeEvidence(mode: .smartFill)
-            app.terminate()
+            app.terminateForFailureEvidence()
         }
         startFilteredPlaybackFromModeSelection(app: app)
 
@@ -248,10 +258,11 @@ extension PlaybackHistoryIOSUITests {
         app.launchEnvironment["IMMICHSLIDES_DEBUG_PLAYBACK_SEQUENCE"] = "1"
         app.launchEnvironment["UI_TEST_SERVER_URL"] = config.url
         app.launchEnvironment["UI_TEST_API_KEY"] = config.apiKey
-        app.launch()
+        app.launchForFailureEvidence()
 
         XCTAssertTrue(
-            app.buttons["mode.continue.button"].waitForExistence(timeout: TestWait.seconds(.infrastructure(10))),
+            app.buttons["mode.continue.button"].waitForPublicElement(
+                "mode.continue.button", timeout: TestWait.seconds(.infrastructure(10))),
             "After the test server is injected, the app should go straight to mode selection"
         )
         return app
@@ -282,10 +293,11 @@ extension PlaybackHistoryIOSUITests {
                 app.launchEnvironment[key] = value
             }
         }
-        app.launch()
+        app.launchForFailureEvidence()
 
         XCTAssertTrue(
-            app.buttons["mode.continue.button"].waitForExistence(timeout: TestWait.seconds(.infrastructure(10))),
+            app.buttons["mode.continue.button"].waitForPublicElement(
+                "mode.continue.button", timeout: TestWait.seconds(.infrastructure(10))),
             "After the fixed SmartFill harness injects the test server, the app should go straight to mode selection"
         )
         return app
@@ -328,9 +340,10 @@ extension PlaybackHistoryIOSUITests {
         } else {
             app.launchEnvironment["UI_TEST_FORCE_PLAYBACK_DISPLAY_MODE"] = "singlePhoto"
         }
-        app.launch()
+        app.launchForFailureEvidence()
         XCTAssertTrue(
-            app.buttons["mode.continue.button"].waitForExistence(timeout: TestWait.seconds(.infrastructure(12))))
+            app.buttons["mode.continue.button"].waitForPublicElement(
+                "mode.continue.button", timeout: TestWait.seconds(.infrastructure(12))))
         return app
     }
 
@@ -338,7 +351,7 @@ extension PlaybackHistoryIOSUITests {
         let app = try launchConfiguredManualLifecycleAppAtModeSelection(mode: mode)
         defer {
             attachManualLifecycleRuntimeEvidence(mode: mode)
-            app.terminate()
+            app.terminateForFailureEvidence()
         }
         startFilteredPlaybackFromModeSelection(app: app)
 
@@ -416,7 +429,7 @@ extension PlaybackHistoryIOSUITests {
         let app = try launchConfiguredManualLifecycleAppAtModeSelection(mode: mode)
         defer {
             attachManualLifecycleRuntimeEvidence(mode: mode)
-            app.terminate()
+            app.terminateForFailureEvidence()
         }
         startFilteredPlaybackFromModeSelection(app: app)
 

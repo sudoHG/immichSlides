@@ -2,6 +2,16 @@ import XCTest
 
 #if os(tvOS)
 final class StrictE2ETVOSFlowUITests: XCTestCase {
+    override func invokeTest() {
+        FirstFailureContext.reset()
+        super.invokeTest()
+    }
+
+    override func record(_ issue: XCTIssue) {
+        FirstFailureEvidence.record(self, issue: issue)
+        super.record(issue)
+    }
+
     private enum Timing {
         static let focusMovementSettleSeconds: TimeInterval = TestWait.seconds(.product(0.15))
         static let focusPollingSeconds: TimeInterval = TestWait.seconds(.product(0.1))
@@ -24,13 +34,13 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
 
         let input = try requireStrictE2EInput()
         let app = try launchStrictE2EApp()
-        defer { app.terminate() }
+        defer { app.terminateForFailureEvidence() }
 
         try configureServerThroughFirstBoot(app: app, input: input)
 
         let randomButton = app.buttons["mode.random.button"]
         XCTAssertTrue(
-            randomButton.waitForExistence(timeout: TestWait.seconds(.product(15))),
+            randomButton.waitForPublicElement("mode.random.button", timeout: TestWait.seconds(.product(15))),
             "After saving settings, the app must reach the mode selection page."
         )
         XCTAssertTrue(
@@ -39,16 +49,18 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
         )
         attachScreenshot(app: app, name: "tvos-cold-launch-01-mode-selection-default-focus")
 
-        app.terminate()
-        app.launch()
+        app.terminateForFailureEvidence()
+        app.launchForFailureEvidence()
 
         XCTAssertFalse(
-            app.textFields["firstboot.serverURL.field"].waitForExistence(timeout: TestWait.seconds(.product(3))),
+            app.textFields["firstboot.serverURL.field"].waitForPublicElement(
+                "firstboot.serverURL.field", timeout: TestWait.seconds(.product(3))),
             "A cold launch with saved settings must not return to the first-boot form."
         )
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
         XCTAssertTrue(
-            playPauseButton.waitForExistence(timeout: TestWait.seconds(.product(30))),
+            playPauseButton.waitForPublicElement(
+                "slideshow.control.playPause.button", timeout: TestWait.seconds(.product(30))),
             "A configured cold launch must go straight to the playback page."
         )
         XCTAssertTrue(
@@ -70,16 +82,17 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
         XCTAssertEqual(scenario, "html-200", "The extra tvOS failure check runs only HTML 200.")
         let input = try requireStrictE2EInput()
         let app = try launchStrictE2EApp()
-        defer { app.terminate() }
+        defer { app.terminateForFailureEvidence() }
 
         let serverField = app.textFields["firstboot.serverURL.field"]
         XCTAssertTrue(
-            serverField.waitForExistence(timeout: TestWait.seconds(.infrastructure(12))),
+            serverField.waitForPublicElement(
+                "firstboot.serverURL.field", timeout: TestWait.seconds(.infrastructure(12))),
             "A clean install must reach the first-boot form.")
         replaceFocusedText(in: serverField, app: app, with: input.serverURL)
         let apiKeyField = app.secureTextFields["firstboot.apiKey.field"]
         XCTAssertTrue(
-            apiKeyField.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            apiKeyField.waitForPublicElement("firstboot.apiKey.field", timeout: TestWait.seconds(.infrastructure(8))),
             "The first-boot form must show the API Key field.")
         moveFocus(
             .down,
@@ -94,12 +107,12 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             identifier: "firstboot.testConnection.button"
         )
         XCTAssertTrue(
-            testConnectionButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(5))),
+            testConnectionButton.waitForFailureEvidence(timeout: TestWait.seconds(.infrastructure(5))),
             "The first-boot form must show the Test Connection button."
         )
-        XCUIRemote.shared.press(.down)
-        XCUIRemote.shared.press(.right)
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.down)
+        FirstFailureRemote.press(.right)
+        FirstFailureRemote.press(.select)
 
         // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
         let alert = app.alerts.firstMatch
@@ -128,14 +141,14 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
         )
         attachScreenshot(app: app, name: "tvos-firstboot-failure-html-200")
         if alert.exists {
-            XCUIRemote.shared.press(.select)
+            FirstFailureRemote.press(.select)
         }
         let saveButton = firstBootControl(
             in: app,
             identifier: "firstboot.saveConfig.button"
         )
         XCTAssertTrue(
-            saveButton.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            saveButton.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
             "After the failure, the app must still be on the connection page."
         )
         XCTAssertFalse(saveButton.isEnabled, "A failed connection test must not save by mistake.")
@@ -146,7 +159,8 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
 
         try relaunchStrictE2EApp(app)
         XCTAssertTrue(
-            app.textFields["firstboot.serverURL.field"].waitForExistence(
+            app.textFields["firstboot.serverURL.field"].waitForPublicElement(
+                "firstboot.serverURL.field",
                 timeout: TestWait.seconds(.product(12))),
             "After a relaunch on the failure path, the app must still be on the first-boot page."
         )
@@ -154,7 +168,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             in: app,
             identifier: "firstboot.saveConfig.button"
         )
-        XCTAssertTrue(saveAfterRelaunch.waitForExistence(timeout: TestWait.seconds(.product(8))))
+        XCTAssertTrue(saveAfterRelaunch.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))))
         XCTAssertFalse(
             saveAfterRelaunch.isEnabled,
             "After a relaunch on the failure path, no half-finished settings may be saveable."
@@ -171,14 +185,14 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
 
         let input = try requireStrictE2EInput()
         let app = try launchStrictE2EApp(recordSceneSequence: true)
-        defer { app.terminate() }
+        defer { app.terminateForFailureEvidence() }
 
         try configureServerThroughFirstBoot(app: app, input: input)
 
         let randomButton = app.buttons["mode.random.button"]
         let filteredButton = app.buttons["mode.filtered.button"]
         XCTAssertTrue(
-            randomButton.waitForExistence(timeout: TestWait.seconds(.product(15))),
+            randomButton.waitForPublicElement("mode.random.button", timeout: TestWait.seconds(.product(15))),
             "After saving settings, the app must reach the mode selection page."
         )
         XCTAssertTrue(
@@ -191,11 +205,11 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             maximumPresses: 2,
             message: "Focus on the mode page must be able to move to filtered playback."
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let continueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            continueButton.waitForExistence(timeout: TestWait.seconds(.product(5))),
+            continueButton.waitForPublicElement("mode.continue.button", timeout: TestWait.seconds(.product(5))),
             "After choosing filtered playback, the Continue button must appear."
         )
         XCTAssertTrue(
@@ -208,32 +222,32 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             maximumPresses: 2,
             message: "After choosing a mode, focus must be able to move down to the Continue button."
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let filterSummaryBackButton = app.buttons["filterSummary.backToMode.button"]
         XCTAssertTrue(
-            filterSummaryBackButton.waitForExistence(timeout: TestWait.seconds(.product(15))),
+            filterSummaryBackButton.waitForFailureEvidence(timeout: TestWait.seconds(.product(15))),
             "Filter mode must reach the filter summary page."
         )
-        XCUIRemote.shared.press(.right)
-        XCUIRemote.shared.press(.right)
-        XCUIRemote.shared.press(.down)
+        FirstFailureRemote.press(.right)
+        FirstFailureRemote.press(.right)
+        FirstFailureRemote.press(.down)
         XCTAssertTrue(
             waitForFocus(on: filterSummaryBackButton, timeout: TestWait.seconds(.product(5))),
             "Focus on the filter summary page must be able to move to Back to Mode Selection."
         )
         attachScreenshot(app: app, name: "tvos-playback-01-filter-summary-back-focused")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         XCTAssertTrue(
-            randomButton.waitForExistence(timeout: TestWait.seconds(.product(10))),
+            randomButton.waitForPublicElement("mode.random.button", timeout: TestWait.seconds(.product(10))),
             "Going back from the filter summary must return to the mode selection page."
         )
         XCTAssertTrue(
             waitForFocus(on: randomButton, timeout: TestWait.seconds(.product(5))),
             "After returning to mode selection, default focus must go back to random playback."
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(continueButton.isEnabled, "After choosing random playback, the Continue button must be enabled.")
         moveFocus(
             .down,
@@ -242,7 +256,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             message: "After choosing random playback, focus must be able to move down to the Continue button."
         )
         attachScreenshot(app: app, name: "tvos-playback-01-random-selected-continue-focused")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let settingsButton = app.buttons["slideshow.control.settings.button"]
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
@@ -250,11 +264,12 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
         let nextButton = app.buttons["slideshow.control.next.button"]
         let entryHint = app.otherElements["slideshow.entryHint.banner"]
         XCTAssertTrue(
-            settingsButton.waitForExistence(timeout: TestWait.seconds(.product(30))),
+            settingsButton.waitForPublicElement(
+                "slideshow.control.settings.button", timeout: TestWait.seconds(.product(30))),
             "After Continue, the app must reach the playback page and show the control bar."
         )
         XCTAssertTrue(
-            entryHint.waitForExistence(timeout: TestWait.seconds(.product(10))),
+            entryHint.waitForFailureEvidence(timeout: TestWait.seconds(.product(10))),
             "The first playback round must show the one-time remote hint."
         )
         XCTAssertTrue(
@@ -262,7 +277,8 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             "While the one-time hint is shown, default focus must land on the settings button."
         )
         XCTAssertTrue(
-            previousButton.waitForExistence(timeout: TestWait.seconds(.product(5))),
+            previousButton.waitForPublicElement(
+                "slideshow.control.previous.button", timeout: TestWait.seconds(.product(5))),
             "The playback control bar must show the previous button."
         )
         XCTAssertFalse(previousButton.isEnabled, "At the initial history boundary, previous must be disabled.")
@@ -276,7 +292,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             message: "Before the history chain starts, focus must be able to move to Play/Pause."
         )
         let playingValue = String(describing: playPauseButton.value ?? "")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(4))) {
                 String(describing: playPauseButton.value ?? "") != playingValue
@@ -284,23 +300,24 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             "Autoplay must be paused before the history chain starts."
         )
 
-        XCUIRemote.shared.press(.down)
+        FirstFailureRemote.press(.down)
         XCTAssertTrue(
             waitForDisappearance(of: playPauseButton, timeout: TestWait.seconds(.product(5))),
             "After pressing Down, the hint and the control bar must hide."
         )
         let wakeReceiver = app.descendants(matching: .any)["slideshow.hiddenWakeReceiver"]
         XCTAssertTrue(
-            wakeReceiver.waitForExistence(timeout: TestWait.seconds(.product(5))),
+            wakeReceiver.waitForFailureEvidence(timeout: TestWait.seconds(.product(5))),
             "After the control bar hides, the wake focus receiver layer must appear."
         )
         XCTAssertTrue(
             waitForFocus(on: wakeReceiver, timeout: TestWait.seconds(.product(5))),
             "Before sending the wake arrow key, the hidden receiver layer must have system focus."
         )
-        XCUIRemote.shared.press(.up)
+        FirstFailureRemote.press(.up)
         XCTAssertTrue(
-            playPauseButton.waitForExistence(timeout: TestWait.seconds(.product(5))),
+            playPauseButton.waitForPublicElement(
+                "slideshow.control.playPause.button", timeout: TestWait.seconds(.product(5))),
             "With the control bar hidden, an arrow key must wake it again."
         )
         attachFocusAudit(app: app, name: "tvos-playback-focus-after-control-bar-wake")
@@ -313,12 +330,13 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
         ensureControlBarVisible(app: app)
         let indexProbe = app.otherElements["slideshow.control.indexProbe"]
         XCTAssertTrue(
-            indexProbe.waitForExistence(timeout: TestWait.seconds(.product(5))),
+            indexProbe.waitForFailureEvidence(timeout: TestWait.seconds(.product(5))),
             "The playback page must expose the read-only index probe."
         )
         _ = try requireIndexValue(indexProbe)
         XCTAssertTrue(
-            previousButton.waitForExistence(timeout: TestWait.seconds(.product(5))),
+            previousButton.waitForPublicElement(
+                "slideshow.control.previous.button", timeout: TestWait.seconds(.product(5))),
             "The start of the history chain must show the previous button."
         )
         XCTAssertFalse(previousButton.isEnabled, "A must be at the history start of the current playback session.")
@@ -335,7 +353,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             maximumPresses: 2,
             message: "Focus must be able to move from Play/Pause to Next."
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
             waitForScenePublicationAdvance(
                 app: app, baseline: historyStart["after"] as? [String: String] ?? [:],
@@ -357,7 +375,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             maximumPresses: 2,
             message: "After the first next settles, focus must be able to move to Next again."
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
             waitForScenePublicationAdvance(
                 app: app, baseline: firstNext["after"] as? [String: String] ?? [:],
@@ -385,7 +403,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             maximumPresses: 2,
             message: "Once history exists, focus must be able to move to Previous."
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         RunLoop.current.run(until: Date().addingTimeInterval(Timing.playbackSceneSettleSeconds))
         ensureControlBarVisible(app: app)
         _ = try requireIndexValue(indexProbe)
@@ -406,12 +424,13 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             maximumPresses: 2,
             message: "After going back once, focus must be able to move to Previous again."
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         RunLoop.current.run(until: Date().addingTimeInterval(Timing.playbackSceneSettleSeconds))
         ensureControlBarVisible(app: app)
         _ = try requireIndexValue(indexProbe)
         XCTAssertTrue(
-            previousButton.waitForExistence(timeout: TestWait.seconds(.product(5))),
+            previousButton.waitForPublicElement(
+                "slideshow.control.previous.button", timeout: TestWait.seconds(.product(5))),
             "The end of the history chain must show the previous button."
         )
         XCTAssertFalse(
@@ -431,7 +450,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             maximumPresses: 3,
             message: "Before checking autoplay, focus must be able to move to Next."
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         RunLoop.current.run(until: Date().addingTimeInterval(Timing.playbackSceneSettleSeconds))
         ensureControlBarVisible(app: app)
         _ = try requireIndexValue(indexProbe)
@@ -441,7 +460,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             maximumPresses: 2,
             message: "After consuming one step of forward history, focus must be able to move to Next again."
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         RunLoop.current.run(until: Date().addingTimeInterval(Timing.playbackSceneSettleSeconds))
         ensureControlBarVisible(app: app)
         _ = try requireIndexValue(indexProbe)
@@ -453,7 +472,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             message: "At the history frontier, focus must be able to move to Play/Pause."
         )
         let pausedValue = String(describing: playPauseButton.value ?? "")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(4))) {
                 String(describing: playPauseButton.value ?? "") != pausedValue
@@ -482,7 +501,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             "After auto-advance, focus on wake must return to Play/Pause."
         )
         let resumedValue = String(describing: playPauseButton.value ?? "")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(4))) {
                 String(describing: playPauseButton.value ?? "") != resumedValue
@@ -543,7 +562,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
         pauseEvidence.lifetime = .keepAlways
         add(pauseEvidence)
 
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(4))) {
                 String(describing: playPauseButton.value ?? "") != retainedPausedValue
@@ -589,7 +608,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             "After autoplay resumes, focus on wake must return to Play/Pause."
         )
         let finalPlayingValue = String(describing: playPauseButton.value ?? "")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(4))) {
                 String(describing: playPauseButton.value ?? "") != finalPlayingValue
@@ -602,14 +621,16 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             maximumPresses: 4,
             message: "Focus in the playback control bar must be able to move to Settings."
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         XCTAssertTrue(
-            app.buttons["settings.item.playback"].waitForExistence(timeout: TestWait.seconds(.product(8))),
+            app.buttons["settings.item.playback"].waitForPublicElement(
+                "settings.item.playback", timeout: TestWait.seconds(.product(8))),
             "The settings button must open the settings page."
         )
-        XCUIRemote.shared.press(.menu)
+        FirstFailureRemote.press(.menu)
         XCTAssertTrue(
-            settingsButton.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            settingsButton.waitForPublicElement(
+                "slideshow.control.settings.button", timeout: TestWait.seconds(.product(8))),
             "Pressing Back/Menu on the settings page must return to the playback page."
         )
     }
@@ -618,13 +639,14 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
     private func configureServerThroughFirstBoot(app: XCUIApplication, input: StrictE2EInput) throws {
         let serverField = app.textFields["firstboot.serverURL.field"]
         XCTAssertTrue(
-            serverField.waitForExistence(timeout: TestWait.seconds(.infrastructure(12))),
+            serverField.waitForPublicElement(
+                "firstboot.serverURL.field", timeout: TestWait.seconds(.infrastructure(12))),
             "A clean install must reach the first-boot form.")
         replaceFocusedText(in: serverField, app: app, with: input.serverURL)
 
         let apiKeyField = app.secureTextFields["firstboot.apiKey.field"]
         XCTAssertTrue(
-            apiKeyField.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            apiKeyField.waitForPublicElement("firstboot.apiKey.field", timeout: TestWait.seconds(.infrastructure(8))),
             "The first-boot form must show the API Key field.")
         moveFocus(
             .down,
@@ -639,17 +661,17 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             identifier: "firstboot.testConnection.button"
         )
         XCTAssertTrue(
-            testConnectionButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(5))),
+            testConnectionButton.waitForFailureEvidence(timeout: TestWait.seconds(.infrastructure(5))),
             "The first-boot form must show the Test Connection button."
         )
-        XCUIRemote.shared.press(.down)
-        XCUIRemote.shared.press(.right)
+        FirstFailureRemote.press(.down)
+        FirstFailureRemote.press(.right)
         attachFocusAudit(app: app, name: "tvos-firstboot-focus-before-test-connection")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let success = app.staticTexts["firstboot.connection.success"]
         XCTAssertTrue(
-            success.waitForExistence(timeout: TestWait.seconds(.infrastructure(45))),
+            success.waitForFailureEvidence(timeout: TestWait.seconds(.infrastructure(45))),
             "Once the real controlled service is reachable, the connection-test-passed status must show."
         )
         XCTAssertFalse(
@@ -662,35 +684,35 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             identifier: "firstboot.saveConfig.button"
         )
         XCTAssertTrue(
-            saveButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(5))),
+            saveButton.waitForFailureEvidence(timeout: TestWait.seconds(.infrastructure(5))),
             "After a successful connection, the Save Settings button must appear."
         )
         XCTAssertTrue(saveButton.isEnabled, "After a successful connection, Save Settings must be enabled.")
         attachFocusAudit(app: app, name: "tvos-firstboot-focus-before-save")
         attachScreenshot(app: app, name: "tvos-firstboot-connection-success-save-focused")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
     }
 
     @MainActor
     private func replaceFocusedText(in field: XCUIElement, app: XCUIApplication, with value: String) {
         XCTAssertTrue(
             waitForFocus(on: field, timeout: TestWait.seconds(.product(4))), "The field must be focused before typing.")
-        XCUIRemote.shared.press(.select)
-        app.typeText(value)
+        FirstFailureRemote.press(.select)
+        app.typeForFailureEvidence(value)
 
         let submit = app.buttons.matching(
             // ui-label-lookup: Match the simulator-localized system keyboard submit key.
             NSPredicate(format: "label IN %@", ["下一项", "Next", "完成", "Done"])
         ).firstMatch
         XCTAssertTrue(
-            submit.waitForExistence(timeout: TestWait.seconds(.product(4))),
+            submit.waitForFailureEvidence(timeout: TestWait.seconds(.product(4))),
             "The system keyboard must show Next or Done.")
         for _ in 0..<6 where !submit.hasFocus {
-            XCUIRemote.shared.press(.down)
+            FirstFailureRemote.press(.down)
         }
         XCTAssertTrue(submit.hasFocus, "Focus the system keyboard submit button before submitting text.")
-        XCUIRemote.shared.press(.select)
-        XCUIRemote.shared.press(.menu)
+        FirstFailureRemote.press(.select)
+        FirstFailureRemote.press(.menu)
 
         if field.identifier == "firstboot.serverURL.field" {
             XCTAssertEqual(field.value as? String, value, "The server address must be submitted verbatim.")
@@ -710,7 +732,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
     ) {
         for _ in 0..<maximumPresses {
             if element.exists && element.hasFocus { return }
-            XCUIRemote.shared.press(direction)
+            FirstFailureRemote.press(direction)
             RunLoop.current.run(until: Date().addingTimeInterval(Timing.focusMovementSettleSeconds))
         }
         XCTAssertTrue(waitForFocus(on: element, timeout: TestWait.seconds(.product(4))), message)
@@ -817,6 +839,8 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
 
     @MainActor
     private func waitUntil(timeout: TimeInterval, condition: () -> Bool) -> Bool {
+        FirstFailureContext.beginWait(seconds: timeout)
+        defer { FirstFailureContext.endWait() }
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if condition() { return true }
@@ -826,7 +850,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
     }
 
     private func attachScreenshot(app: XCUIApplication, name: String) {
-        let attachment = XCTAttachment(screenshot: app.screenshot())
+        let attachment = XCTAttachment(screenshot: app.screenshotForFailureEvidence())
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)

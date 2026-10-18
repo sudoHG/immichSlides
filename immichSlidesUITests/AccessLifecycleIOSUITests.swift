@@ -15,6 +15,16 @@ enum AccessLifecycleIOSUITestsCalibration {
 
 #if os(iOS)
 final class AccessLifecycleIOSUITests: XCTestCase {
+    override func invokeTest() {
+        FirstFailureContext.reset()
+        super.invokeTest()
+    }
+
+    override func record(_ issue: XCTIssue) {
+        FirstFailureEvidence.record(self, issue: issue)
+        super.record(issue)
+    }
+
     let controlHideSeconds: TimeInterval = TestWait.seconds(.product(9))
     let intervalMinimumSeconds: Double = TestWait.seconds(.product(5))
     let intervalMaximumSeconds: Double = TestWait.seconds(.product(30))
@@ -29,7 +39,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
         shouldRequireStableSceneCaptures = false
-        XCUIDevice.shared.orientation = .portrait
+        FirstFailureOrientation.set(.portrait)
     }
 
     @MainActor
@@ -37,12 +47,14 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         targetIntervalSeconds = 30
         let input = try requireStrictE2EInput()
         let app = try launchApp()
-        defer { app.terminate() }
+        defer { app.terminateForFailureEvidence() }
         try completeFirstBootToPlayback(app: app, input: input)
         try changePlaybackSettingsFromUI(app: app)
         revealPlaybackControls(app: app)
         let playPause = app.buttons["slideshow.control.playPause.button"]
-        XCTAssertTrue(playPause.waitForExistence(timeout: TestWait.seconds(.product(8))))
+        XCTAssertTrue(
+            playPause.waitForPublicElement("slideshow.control.playPause.button", timeout: TestWait.seconds(.product(8)))
+        )
         if playPauseState(playPause) != "play" { tapElement(playPause) }
         XCTAssertTrue(waitUntil(timeout: TestWait.seconds(.product(4))) { self.playPauseState(playPause) == "play" })
         tapElement(playPause)
@@ -58,7 +70,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         shouldRequireStableSceneCaptures = true
         let input = try requireStrictE2EInput()
         let app = try launchApp()
-        defer { app.terminate() }
+        defer { app.terminateForFailureEvidence() }
 
         try completeFirstBootToPlayback(app: app, input: input)
         try changePlaybackSettingsFromUI(app: app, shouldUseTimingWindow: true)
@@ -84,10 +96,10 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         XCUIDevice.shared.press(.home)
         requests.append("playback.background")
         RunLoop.current.run(until: Date().addingTimeInterval(backgroundWaitSeconds))
-        app.activate()
+        app.activateForFailureEvidence()
         _ = app.wait(for: .runningForeground, timeout: TestWait.seconds(.infrastructure(10)))
         requests.append("playback.foreground")
-        if app.buttons["pinEntry.close.button"].waitForExistence(timeout: TestWait.seconds(.product(3))) {
+        if app.buttons["pinEntry.close.button"].waitForFailureEvidence(timeout: TestWait.seconds(.product(3))) {
             enterPin(app: app, pin: syntheticPIN())
             requests.append("settings.pin.unlock")
         }
@@ -142,15 +154,16 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         let ipadLicenseReturn = try proveIPadLicenseReturnIfNeeded(app: app)
 
         openSettingsFromSlideshow(app: app)
-        if app.buttons["pinEntry.close.button"].waitForExistence(timeout: TestWait.seconds(.product(3))) {
+        if app.buttons["pinEntry.close.button"].waitForFailureEvidence(timeout: TestWait.seconds(.product(3))) {
             enterPin(app: app, pin: syntheticPIN())
             requests.append("settings.pin.unlock")
         }
         let settingsBeforeRestart = try readPlaybackSettings(app: app)
-        app.terminate()
+        app.terminateForFailureEvidence()
         try relaunchApp(app)
         XCTAssertFalse(
-            app.textFields["firstboot.serverURL.field"].waitForExistence(timeout: TestWait.seconds(.product(3))),
+            app.textFields["firstboot.serverURL.field"].waitForPublicElement(
+                "firstboot.serverURL.field", timeout: TestWait.seconds(.product(3))),
             "A cold launch with saved settings must not return to the first-boot page."
         )
         XCTAssertTrue(
@@ -158,14 +171,14 @@ final class AccessLifecycleIOSUITests: XCTestCase {
             "Should return to the playback page after relaunch.")
         openSettingsFromSlideshow(app: app)
         XCTAssertTrue(
-            app.buttons["pinEntry.close.button"].waitForExistence(timeout: TestWait.seconds(.product(8))),
+            app.buttons["pinEntry.close.button"].waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
             "The access gate must still apply after relaunch"
         )
         _ = try captureRequiredPNG(app: app, name: "pin-restart-gate")
         enterPin(app: app, pin: syntheticPIN())
         requests.append("settings.pin.unlock")
         XCTAssertFalse(
-            app.buttons["pinEntry.close.button"].waitForExistence(timeout: TestWait.seconds(.product(3))),
+            app.buttons["pinEntry.close.button"].waitForFailureEvidence(timeout: TestWait.seconds(.product(3))),
             "The correct PIN must open settings")
         let settingsAfterRestart = try readPlaybackSettings(app: app)
         _ = try captureRequiredPNG(app: app, name: "settings-after-restart")
@@ -242,7 +255,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         let input = try requireStrictE2EInput()
         let pins = try requirePrivatePINInput()
         let app = try launchApp()
-        defer { app.terminate() }
+        defer { app.terminateForFailureEvidence() }
 
         try completeFirstBootToPlayback(app: app, input: input)
         try enablePasswordFromSettingsUI(app: app, pin: pins.correct)
@@ -256,7 +269,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         requests = []
         let input = try requireStrictE2EInput()
         let app = try launchStrictE2EApp()
-        defer { app.terminate() }
+        defer { app.terminateForFailureEvidence() }
         try AccessLifecycleContract.assertProgressProbeNotUsed(launchEnvironment: app.launchEnvironment)
 
         try completeFirstBootToPlayback(app: app, input: input)
@@ -274,11 +287,12 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         requests.append("settings.open")
         try assertNarrowEntryHasNoPin(app: app)
         let beforeRestart = try readPlaybackSettings(app: app, shouldAllowPinUnlock: false)
-        app.terminate()
+        app.terminateForFailureEvidence()
         try relaunchStrictE2EApp(app)
         try AccessLifecycleContract.assertProgressProbeNotUsed(launchEnvironment: app.launchEnvironment)
         XCTAssertFalse(
-            app.textFields["firstboot.serverURL.field"].waitForExistence(timeout: TestWait.seconds(.product(3))),
+            app.textFields["firstboot.serverURL.field"].waitForPublicElement(
+                "firstboot.serverURL.field", timeout: TestWait.seconds(.product(3))),
             "A cold launch with saved settings must not return to the first-boot page."
         )
         XCTAssertTrue(
@@ -323,7 +337,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         requests = []
         let input = try requireStrictE2EInput()
         let app = try launchStrictE2EApp()
-        defer { app.terminate() }
+        defer { app.terminateForFailureEvidence() }
         try AccessLifecycleContract.assertProgressProbeNotUsed(launchEnvironment: app.launchEnvironment)
 
         try completeFirstBootToPlayback(app: app, input: input)
@@ -354,7 +368,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         requests = []
         let input = try requireStrictE2EInput()
         let app = try launchStrictE2EApp()
-        defer { app.terminate() }
+        defer { app.terminateForFailureEvidence() }
         try AccessLifecycleContract.assertProgressProbeNotUsed(launchEnvironment: app.launchEnvironment)
 
         try completeFirstBootToPlayback(app: app, input: input)
@@ -379,7 +393,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         let didHomeLeaveAppRunning = app.state != .notRunning
         XCTAssertTrue(
             didHomeLeaveAppRunning, "The system terminated the process after Home; this does not count as a return.")
-        app.activate()
+        app.activateForFailureEvidence()
         requests.append("playback.foreground")
         _ = app.wait(for: .runningForeground, timeout: TestWait.seconds(.infrastructure(10)))
         XCTAssertNotEqual(

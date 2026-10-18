@@ -130,20 +130,23 @@ extension XCTestCase {
     func launchStrictE2EApp(recordSceneSequence: Bool = false) throws -> XCUIApplication {
         let app = XCUIApplication()
         try prepareStrictE2ELaunch(app, recordSceneSequence: recordSceneSequence)
-        app.launch()
+        FirstFailureContext.mark("launch-app", element: "app-window")
+        FirstFailureContext.action("launch") { app.launch() }
         return app
     }
 
     // Cold relaunch reuses the same container and clears launchEnvironment so no UI_TEST_* / IMMICH_TEST_* keys linger.
     @MainActor
     func relaunchStrictE2EApp(_ app: XCUIApplication) throws {
-        app.terminate()
+        FirstFailureContext.action("terminate") { app.terminate() }
         try prepareStrictE2ELaunch(app)
-        app.launch()
+        FirstFailureContext.mark("launch-app", element: "app-window")
+        FirstFailureContext.action("launch") { app.launch() }
     }
 
     @MainActor
     func attachStrictE2EScreenshot(app: XCUIApplication, name: String) {
+        FirstFailureContext.mark("capture-frame", element: "app-window")
         let screenshot = XCTAttachment(screenshot: app.screenshot())
         screenshot.name = name
         screenshot.lifetime = .keepAlways
@@ -170,6 +173,7 @@ extension XCTestCase {
 
     @MainActor
     func strictSceneFrameObservation(app: XCUIApplication) -> [String: String] {
+        FirstFailureContext.mark("query-element", element: "slideshow.scenePresentation.contract.summary")
         var values = ["manifest": "", "render": "", "index": ""]
         let identifiers = [
             "slideshow.smartfill.currentManifest.flag": "manifest",
@@ -205,7 +209,9 @@ extension XCTestCase {
 
     @MainActor
     func captureStrictSceneFrame(app: XCUIApplication, name: String, attachmentName: String) -> [String: Any] {
+        FirstFailureContext.mark("capture-frame", element: "app-window")
         let before = strictSceneFrameObservation(app: app)
+        FirstFailureContext.mark("capture-frame", element: "app-window")
         let png = app.screenshot().pngRepresentation
         let after = strictSceneFrameObservation(app: app)
         let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
@@ -225,6 +231,7 @@ extension XCTestCase {
         let refsAfter = SharedSceneEvidenceManifest.parseKeyValueFields(after["manifest"] ?? "")["ledgerSceneAssets"]
         let payload: [String: Any] = ["before": before, "after": after]
         StrictE2EVisualEvidence.writeJSON(payload, name: "\(name).scene.json")
+        FirstFailureContext.mark("capture-frame", element: "app-window")
         XCTAssertTrue(
             !png.isEmpty && identity.status != .black && identity.status != .blank
                 && stable && refsBefore != nil && refsBefore == refsAfter,

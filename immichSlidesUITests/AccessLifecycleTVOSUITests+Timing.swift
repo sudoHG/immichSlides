@@ -5,7 +5,7 @@ extension AccessLifecycleTVOSUITests {
     @MainActor
     func assertTVOSNarrowEntryHasNoPin(app: XCUIApplication) throws {
         XCTAssertFalse(
-            app.buttons["pinEntry.close.button"].waitForExistence(
+            app.buttons["pinEntry.close.button"].waitForFailureEvidence(
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.readbackTimeoutSeconds),
             "This narrow entry must not enable a password."
         )
@@ -18,13 +18,14 @@ extension AccessLifecycleTVOSUITests {
         try assertTVOSNarrowEntryHasNoPin(app: app)
         let playbackItem = app.buttons["settings.item.playback"]
         XCTAssertTrue(
-            playbackItem.waitForExistence(
+            playbackItem.waitForPublicElement(
+                "settings.item.playback",
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Settings home must show playback settings.")
         if playbackItem.hasFocus == false {
             moveFocus(.up, to: playbackItem, maximumPresses: 4, message: "Must return to playback settings.")
         }
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
     }
 
     // Page identity comes from playback settings content; a momentary lack of focus is not treated as home.
@@ -56,19 +57,20 @@ extension AccessLifecycleTVOSUITests {
         let homePlayback = app.buttons["settings.item.playback"]
         if identity == "home" {
             XCTAssertTrue(
-                homePlayback.waitForExistence(
+                homePlayback.waitForPublicElement(
+                    "settings.item.playback",
                     timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
                 "Settings home must show playback settings.")
             if homePlayback.hasFocus == false {
                 moveFocus(.up, to: homePlayback, maximumPresses: 6, message: "Must go back to playback settings entry.")
             }
             XCTAssertTrue(homePlayback.hasFocus, "Settings home must focus playback settings before entering.")
-            XCUIRemote.shared.press(.select)
+            FirstFailureRemote.press(.select)
             waitForFocusVisualSettle()
         }
         let autoPlayLink = app.buttons["settings.playback.autoPlay.link"]
         XCTAssertTrue(
-            autoPlayLink.waitForExistence(
+            autoPlayLink.waitForFailureEvidence(
                 timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Playback settings must show the autoplay row.")
         if autoPlayLink.hasFocus == false {
@@ -173,7 +175,7 @@ extension AccessLifecycleTVOSUITests {
         record("settings.save.autoplay")
 
         moveFocusToSettingsControl(app: app, identifier: "settings.playback.display.link", maxSteps: 7)
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         selectPlaybackToggle(
             app: app,
             link: "settings.playback.showExif.link",
@@ -183,7 +185,7 @@ extension AccessLifecycleTVOSUITests {
             stepsToLink: 0
         )
         record("settings.save.exif")
-        XCUIRemote.shared.press(.menu)
+        FirstFailureRemote.press(.menu)
         waitForFocusVisualSettle()
         returnToSlideShow(app: app)
         return try readTVOSFourSettings(app: app)
@@ -220,7 +222,7 @@ extension AccessLifecycleTVOSUITests {
             stepsToLink: 4
         )
         record("settings.save.display_mode")
-        XCUIRemote.shared.press(.menu)
+        FirstFailureRemote.press(.menu)
         waitForFocusVisualSettle()
         returnToSlideShow(app: app)
         return resolved
@@ -237,23 +239,25 @@ extension AccessLifecycleTVOSUITests {
     ) throws -> Bool {
         if let parent = openParentLink {
             moveFocusToSettingsControl(app: app, identifier: parent, maxSteps: 7)
-            XCUIRemote.shared.press(.select)
+            FirstFailureRemote.press(.select)
             waitForFocusVisualSettle()
         }
         moveFocusToSettingsControl(app: app, identifier: link, maxSteps: max(stepsToLink, 6))
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         let onButton = app.buttons[onOption]
         let offButton = app.buttons[offOption]
         XCTAssertTrue(
-            onButton.waitForExistence(timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds)
-                || offButton.waitForExistence(timeout: AccessLifecycleTVOSUITestsWaitTiming.readbackTimeoutSeconds),
+            onButton.waitForFailureEvidence(
+                timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds)
+                || offButton.waitForFailureEvidence(
+                    timeout: AccessLifecycleTVOSUITestsWaitTiming.readbackTimeoutSeconds),
             "Must read the toggle options."
         )
         let isOn = onButton.exists && valueContainsSelected(onButton)
-        XCUIRemote.shared.press(.menu)
+        FirstFailureRemote.press(.menu)
         waitForFocusVisualSettle()
         if openParentLink != nil {
-            XCUIRemote.shared.press(.menu)
+            FirstFailureRemote.press(.menu)
             waitForFocusVisualSettle()
         }
         return isOn
@@ -262,18 +266,18 @@ extension AccessLifecycleTVOSUITests {
     @MainActor
     func selectedIntervalSeconds(app: XCUIApplication) throws -> Int {
         moveFocusToSettingsControl(app: app, identifier: "settings.playback.interval.link", maxSteps: 6)
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         var selected = 0
         for seconds in AccessLifecycleContract.tvOSSelectableIntervals {
             let button = app.buttons["settings.playback.interval.\(seconds).button"]
-            if button.waitForExistence(timeout: AccessLifecycleTVOSUITestsWaitTiming.briefElementTimeoutSeconds)
+            if button.waitForFailureEvidence(timeout: AccessLifecycleTVOSUITestsWaitTiming.briefElementTimeoutSeconds)
                 && valueContainsSelected(button)
             {
                 selected = seconds
                 break
             }
         }
-        XCUIRemote.shared.press(.menu)
+        FirstFailureRemote.press(.menu)
         waitForFocusVisualSettle()
         if selected == 0 {
             throw AccessLifecycleContract.AssertionError.message("Missing settings evidence")
@@ -284,13 +288,14 @@ extension AccessLifecycleTVOSUITests {
     @MainActor
     func selectedDisplayMode(app: XCUIApplication) throws -> String {
         moveFocusToSettingsControl(app: app, identifier: "settings.playback.displayMode.link", maxSteps: 6)
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         let single = app.buttons["settings.playback.displayMode.singlePhoto.button"]
         XCTAssertTrue(
-            single.waitForExistence(timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+            single.waitForFailureEvidence(
+                timeout: AccessLifecycleTVOSUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Must be able to read the display mode.")
         let mode = valueContainsSelected(single) ? "singlePhoto" : "smartFill"
-        XCUIRemote.shared.press(.menu)
+        FirstFailureRemote.press(.menu)
         waitForFocusVisualSettle()
         return mode
     }
@@ -308,7 +313,7 @@ extension AccessLifecycleTVOSUITests {
         let value = String(describing: playPauseButton.value ?? "")
         let isPlaying = value.contains("暂停") || value.lowercased().contains("pause")
         if isPlaying == false {
-            XCUIRemote.shared.press(.select)
+            FirstFailureRemote.press(.select)
             XCTAssertTrue(
                 waitUntil(timeout: AccessLifecycleTVOSUITestsWaitTiming.stateChangeTimeoutSeconds) {
                     let current = String(describing: playPauseButton.value ?? "")
@@ -320,12 +325,12 @@ extension AccessLifecycleTVOSUITests {
         RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(interval / 2))))
         ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
         moveFocus(.right, to: playPauseButton, maximumPresses: 3, message: "At midpoint, focus must reach play/pause.")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         record("playback.pause")
         let beforePause = try captureTVOSImmediateMark(app: app, name: "before-pause")
         ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
         moveFocus(.right, to: nextButton, maximumPresses: 3, message: "After pause, focus must reach next.")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         record("playback.next")
         RunLoop.current.run(until: Date().addingTimeInterval(Timing.sceneSettle))
         let afterNext = try captureTVOSImmediateMark(app: app, name: "after-next")
@@ -360,7 +365,7 @@ extension AccessLifecycleTVOSUITests {
         ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
         moveFocus(.left, to: playPauseButton, maximumPresses: 3, message: "Focus must return to play/pause after next.")
         let continueAt = Date()
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         let pressReturnedElapsed = Date().timeIntervalSince(continueAt)
         record("playback.play")
         try AccessLifecycleContract.assertClickTimesRecordedSeparately(
@@ -431,7 +436,7 @@ extension AccessLifecycleTVOSUITests {
         var capturedFrames: [(request: TimeInterval, returned: TimeInterval, png: Data)] = []
         while Date().timeIntervalSince(continueAt) <= captureUntil {
             let request = Date().timeIntervalSince(continueAt)
-            let png = app.screenshot().pngRepresentation
+            let png = app.screenshotForFailureEvidence().pngRepresentation
             let returned = Date().timeIntervalSince(continueAt)
             capturedFrames.append((request, returned, png))
         }
@@ -508,7 +513,7 @@ extension AccessLifecycleTVOSUITests {
             x: (frame.minX - bounds.minX) / bounds.width, y: (frame.minY - bounds.minY) / bounds.height,
             width: frame.width / bounds.width, height: frame.height / bounds.height
         )
-        let png = app.screenshot().pngRepresentation
+        let png = app.screenshotForFailureEvidence().pngRepresentation
         guard settings.isHittable else {
             throw AccessLifecycleContract.AssertionError.message(
                 "Playback page should show the settings button: control-bar calibration requires Settings to remain hittable after the screenshot"
@@ -553,7 +558,7 @@ extension AccessLifecycleTVOSUITests {
         name: String
     ) throws -> (mark: String, png: Data) {
         try AccessLifecycleContract.assertIdentitySource("public_fixture_photo_mark")
-        let png = app.screenshot().pngRepresentation
+        let png = app.screenshotForFailureEvidence().pngRepresentation
         let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
         attachment.name = name
         attachment.lifetime = .keepAlways
@@ -570,7 +575,8 @@ extension AccessLifecycleTVOSUITests {
 
     @MainActor
     func classifyTVOSMark(app: XCUIApplication) -> String {
-        contractTVOSMark(StrictE2EPhotoIdentity.captureIdentity(png: app.screenshot().pngRepresentation))
+        contractTVOSMark(
+            StrictE2EPhotoIdentity.captureIdentity(png: app.screenshotForFailureEvidence().pngRepresentation))
     }
 
     func contractTVOSMark(_ identity: StrictE2EPhotoIdentity.Result) -> String {

@@ -120,6 +120,16 @@ func requireScreenshotBatchWithoutBlockers(_ blockers: [String]) throws {
 
 #if os(iOS)
 final class AppStoreScreenshotUITests: XCTestCase {
+    override func invokeTest() {
+        FirstFailureContext.reset()
+        super.invokeTest()
+    }
+
+    override func record(_ issue: XCTIssue) {
+        FirstFailureEvidence.record(self, issue: issue)
+        super.record(issue)
+    }
+
     // XCTest creates a new instance per test method; platform and locale are vars filled from env vars.
 
     var localeSpec = AppStoreScreenshotLocaleSpec.zhHans
@@ -267,7 +277,7 @@ final class AppStoreScreenshotUITests: XCTestCase {
         )
 
         // All screenshots are portrait; the current App Store brief only lists portrait sizes.
-        XCUIDevice.shared.orientation = .portrait
+        FirstFailureOrientation.set(.portrait)
     }
 
     @MainActor

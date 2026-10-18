@@ -634,9 +634,12 @@ Valid messages survive aggregation and compact history and appear in
 the [nightly failure table](CI_REPORT.md#method-identities-and-reruns).
 Historical traces and summaries without the field remain valid and gain no new claim.
 
-### Prepared first-failure evidence
+<a id="prepared-first-failure-evidence"></a>
 
-This reader contract precedes producer activation. Historical records without
+### First-failure evidence
+
+Public-fixture strict/UI failures can publish one first-failure receipt per
+method and existing attempt. Historical records without
 `first_failure` remain valid. No App code, workflow, assertion, deadline, retry,
 threshold, verdict or population changes. The accepting reader must be on main
 before a producer PR uses the field; see [reader-first evolution](CI_SUMMARY.md#reader-first-evolution).
@@ -645,7 +648,7 @@ The optional receipt has exactly `schema_version: 1`, `source` (`xctest`,
 `validator`, `preparation`), `step`, `element`, `action`, `timing`, `state`,
 `validator`, and `screenshot`. All strings are closed vocabularies in
 `ci_failure_diagnostics.py`; `FIRST_FAILURE_ELEMENTS` is the single reviewed
-element table, supplied by fixture runners to the future test-only recorder.
+element table, supplied by fixture runners to the test-only recorder.
 Unknown elements become `unknown`, never arbitrary identifiers. Unknown numbers
 remain null. No assertion text, paths, commands, URLs, asset identifiers, AX trees
 or raw probe labels are accepted. Exact fields, finite numbers and range checks
@@ -669,18 +672,18 @@ input image as `validated-input`; it cannot reconstruct failure-instant App
 state after the App exits and cannot claim `observation: failure-snapshot`.
 Neither evidence type changes its original result.
 
-Future XCTest capture is allowed only on the failure path of an explicitly
+XCTest capture is allowed only on the failure path of an explicitly
 configured public loopback fixture run, on an allowed foreground App surface.
 Live/private runs, first-boot credential/PIN pages, Settings.app and SpringBoard
 cannot produce public images. The scanner does not inspect pixel semantics;
 proven public fixture provenance and producer capture guards are required.
 The reader also refuses captured images when the waited element or focus target
-is a first-boot credential element, even if the reported surface is allowed.
+is any `firstboot.*` element, even if the reported surface is allowed.
 Successful tests must add no AX query, screenshot or public receipt. A synchronous
 XCTest screenshot has no independent hard five-second bound: its actual overhead
 must be measured, with existing runner/watchdog limits remaining authoritative.
 
-Strict diagnostic media will use a separate failure-only directory inside the
+Strict diagnostic media uses a separate failure-only directory inside the
 existing scanned `p2-review-*` artifact, never a completed P2 review package.
 The reader command is:
 
@@ -696,25 +699,96 @@ fixture hash must match the frozen public A/B fixture. The PNG is a single,
 metadata-free canonical PNG encoded with Pillow, with exact receipt dimensions,
 size and digest. Symlinks, extra files, trailing data and metadata are refused;
 the manifest is capped at 32 KiB. This reader grants no visual or human PASS.
-Ordinary UI media will reuse the existing scanned `ui-failures-*` artifact.
+Ordinary UI media reuses the existing scanned `ui-failures-*` artifact.
 `records/` remains unscanned, so validated projection must precede producer writes.
-PR 2 must call `read_failure_package` as a mandatory gate in `export-shard`
-before diagnostic media can reach the existing upload step. PR 2 must also
-apply the same dimensions, byte, metadata and canonical-image validation to
-UI failure screenshots before publication. These UI bounds currently depend
-on the future producer; this reader-only PR does not enforce them at UI upload.
+`export-shard` calls `read_failure_package` as a mandatory gate before diagnostic
+media can reach the existing upload step. Its staged package must bind the
+case source, fixture, exact official method, run and failed attempt; refusal
+leaves no uploaded candidate. Diagnostic paths are
+`first-failures/<sha>/<suite>/<device>/<configuration>/<scenario>/<fixture>/attempt-N/`;
+all public-fixture strict suites can use them, including non-P2 and Release cases.
+They do not enter
+the completed-P2 package index or change its review bindings.
 
-Producer budgets and measured costs will be documented when activated. The
-approved target is zero public bytes for a passing method and at most 1 MiB image
+UI exports normalize existing public-fixture failure screenshots to bounded,
+metadata-free canonical PNGs. `check-upload` validates every failure image with
+the same image validator, and binds new first-failure images to the corresponding
+summary attempt at `failure-screenshots/first-failure-attempt-N/<declared-index>.png`.
+Invocation numbers beyond two still belong to attempt two of their individual
+identities; the original listed-retry selection and verdicts are unchanged.
+
+The shared recorder lives in `immichSlidesUITests/UITestSupport.swift`; its
+Foundation-only timeline lives in `TestSupport/TestWait.swift` (existing UI and
+unit-test targets, never the App). Every direct UI `XCTestCase` resets the timeline
+before `super.invokeTest`, forwards the first issue to the recorder, then calls
+`super.record`; the conventions check rejects missing hooks. Existing native
+actions and waits forward once through the shared facades. Known reviewed
+identifiers are supplied without new AX reads; other targets remain `unknown`.
+
+Only public-fixture runners inject the opt-in, reviewed vocabulary and private
+spool into the UI test target, never the App or unit target. The recorder also
+requires a public synthetic key and a loopback `/api` URL. It latches the first
+failure (`XCTIssue.isFailure`, ignoring warnings) and persists its bounded safe core before optional failure-only AX reads
+and capture. A background-thread issue retains unavailable App/image state.
+Foreground captures reject secure text fields, first-boot/server surfaces,
+the existing `pinEntry.`/`settings.pin.` namespaces and incomplete trees.
+Capture uses one native screen screenshot, cropped to the already-snapshotted
+App-window frame without resolving an element again. Optional AX/capture issues
+are contained by a non-strict expected-failure scope, so they cannot precede or
+replace the original real failure. Diagnostics temporarily permit continuation
+inside that scope and restore the caller's setting before forwarding the original
+issue; an expected capture issue cannot unwind past the original record call.
+The same cropped frame is resized until it
+meets the limits; this adds no test retry. Private spools are projected only onto
+matching official failures and are removed before private-bundle finalization.
+Each existing attempt starts from a recorder-disabled command and receives its
+own spool only after configuration succeeds. A configuration failure leaves that
+attempt's recorder disabled; it never falls back to a previous attempt's spool.
+If the first failed attempt has no receipt, later receipts and their unbound UI
+diagnostic images are omitted to preserve the reader invariant.
+
+Action timestamps bracket the actual native call; completed waits stop timing
+when the existing waiter returns. `state_age_seconds` measures time since the
+failure snapshot query returned, at screenshot request. Existing probe fields
+are projected individually; absent fields stay unknown/null. `autoplay` reads
+the existing settings toggle value, without inferring a preference from pause.
+The post-test validator retains an actual input it evaluated as `validated-input`,
+with unavailable App state/timing. Preparation receipts reuse retained #471
+timeout measurements; a deadline absent from that ledger stays null.
+
+Passing methods add no AX query, capture, spool or public receipt; only constant
+clock/context bookkeeping surrounds existing actions and waits. A snapshot that
+throws records its numeric query error but no timing cost; capture offsets remain
+null on that path. Successful capture cost is measured by the receipt offsets,
+under the existing runner/watchdog limits. The per-image target is at most 1 MiB image
 plus 8 KiB receipt for a failing method: 19 failures would add at most 19 MiB plus
-152 KiB, before existing artifact compression. New host collection has a proposed
-five-second cumulative allowance per job (43 jobs: at most 215 seconds/night),
-separate from the synchronous XCTest limitation and existing export budgets.
+152 KiB per attempt (38 MiB plus 304 KiB if all 19 use both existing attempts),
+before existing artifact compression and receipt copies in
+the current shard artifacts. Optional host image projection uses the existing
+#471 shared accounting, stopping when its Xcode collection charge reaches five
+seconds per job (43 jobs: at most 215 seconds/night). Earlier #471 collection
+consumes that same allowance. A spent allowance or invalid image leaves the core
+receipt intact with unavailable media. Image workers only return bytes; timed-out
+workers cannot publish late files. Existing UI failure attachments are normalized
+outside that optional budget, so they neither consume a later attempt's image
+allowance nor disappear when the first-failure budget is spent. Mandatory bounded
+publication validation and bookkeeping remain separate, as do synchronous XCTest
+capture and export budgets.
+The current matrix has 25 strict and 18 UI jobs. Its 132 strict cases include
+12 additional filter-person session methods; the UI plans have 318 methods.
+Thus at most 462 methods could fail once: 462 MiB of new PNGs plus 3.61 MiB of
+logical receipts, or twice those amounts if every method used both allowed
+attempts (a conservative bound, since only listed methods may retry).
+Passing methods produce none of those bytes. A local optimized bookkeeping
+probe measured about 0.28 microseconds added per action/wait pair; this is a
+local helper cost, not a hosted wall-clock or full-nightly measurement.
 
-Full receipts remain in the per-night shard summaries and traces under the
-existing artifact retention. Compact reporter history keeps **zero** receipt
+Receipts are visible in producer summaries, the 7-day shard artifacts and
+`diagnose_nightly`. Reporter outputs (runs pages, step summary and post-merge
+notices) never carry receipts. Compact reporter history keeps **zero** receipt
 copies, including nested attempts, `diagnostics.failures` and `attempt_history`;
-merging also removes receipt objects from previously saved dates. The existing
+merging also strips any receipt objects from previously saved dates as a
+defensive compatibility measure; reader-first rollout emitted none. The existing
 issue-state `first_failure` date string is unchanged. Receipt growth in the
 16 MiB `history.json` budget is therefore zero bytes, including in the worst
 case; identity, verdict and timing history remain available without the receipt.

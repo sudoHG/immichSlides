@@ -36,22 +36,23 @@ extension FilterSummaryIOSVisualUITests {
         let summary = app.descendants(matching: .any)["filterTopBar.summary"]
 
         XCTAssertTrue(
-            backButton.waitForExistence(
+            backButton.waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Top bar should still show the back button", file: file, line: line
         )
         XCTAssertTrue(
-            selectAllButton.waitForExistence(
+            selectAllButton.waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Top bar should still show the select all button", file: file,
             line: line)
         XCTAssertTrue(
-            clearButton.waitForExistence(
+            clearButton.waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Top bar should still show the clear button", file: file,
             line: line)
         XCTAssertTrue(
-            title.waitForExistence(timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+            title.waitForFailureEvidence(
+                timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Top bar should still show the page title", file: file, line: line)
         // ui-label-lookup: The filter title is the localization assertion for this top bar.
         XCTAssertEqual(title.label, expectedTitle, file: file, line: line)
@@ -97,7 +98,8 @@ extension FilterSummaryIOSVisualUITests {
         let clearButton = app.buttons["albumFilter.clear.button"]
 
         XCTAssertTrue(
-            title.waitForExistence(timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+            title.waitForFailureEvidence(
+                timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "After entering the album filter page, the page title in the target language should be visible",
             file: file,
             line: line
@@ -126,7 +128,8 @@ extension FilterSummaryIOSVisualUITests {
         let clearButton = app.buttons["personFilter.clear.button"]
 
         XCTAssertTrue(
-            title.waitForExistence(timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+            title.waitForFailureEvidence(
+                timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "After entering the people filter page, the page title in the target language should be visible",
             file: file,
             line: line
@@ -151,7 +154,7 @@ extension FilterSummaryIOSVisualUITests {
             ]
 
             for candidate in typedCandidates {
-                if candidate.waitForExistence(
+                if candidate.waitForFailureEvidence(
                     timeout: FilterSummaryIOSVisualUITestsWaitTiming.briefElementTimeoutSeconds)
                 {
                     tapElement(candidate)
@@ -160,7 +163,9 @@ extension FilterSummaryIOSVisualUITests {
             }
 
             let fallback = app.descendants(matching: .any).matching(identifier: sectionID).firstMatch
-            if fallback.waitForExistence(timeout: FilterSummaryIOSVisualUITestsWaitTiming.briefElementTimeoutSeconds) {
+            if fallback.waitForFailureEvidence(
+                timeout: FilterSummaryIOSVisualUITestsWaitTiming.briefElementTimeoutSeconds)
+            {
                 tapElement(fallback)
                 return
             }
@@ -171,7 +176,7 @@ extension FilterSummaryIOSVisualUITests {
                 toggleSidebarButton.exists && toggleSidebarButton.isHittable
                 && isShowSidebarLabel(toggleSidebarButton.label)
             if sidebarIsCollapsed {
-                toggleSidebarButton.tap()
+                toggleSidebarButton.tapForFailureEvidence()
                 _ = waitForAnySettingsRootEntry(app: app, timeout: TestWait.seconds(.infrastructure(1.5)))
                 continue
             }
@@ -186,9 +191,9 @@ extension FilterSummaryIOSVisualUITests {
             }
 
             if attempt % 2 == 0 {
-                app.swipeUp()
+                app.swipeUpForFailureEvidence()
             } else {
-                app.swipeDown()
+                app.swipeDownForFailureEvidence()
             }
         }
     }
@@ -229,81 +234,82 @@ extension FilterSummaryIOSVisualUITests {
             : "在浏览器中查看完整政策文本。"
 
         XCTAssertTrue(
-            anyElement(app: app, withLabel: appInfoTitle).waitForExistence(
+            anyElement(app: app, withLabel: appInfoTitle).waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "About page should show the app information title")
         XCTAssertTrue(
-            anyElement(app: app, withLabel: appNameTitle).waitForExistence(
+            anyElement(app: app, withLabel: appNameTitle).waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "About page should show the app name title")
         XCTAssertTrue(
-            anyElement(app: app, withLabel: versionTitle).waitForExistence(
+            anyElement(app: app, withLabel: versionTitle).waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "About page should show the version title")
         XCTAssertTrue(
-            anyElement(app: app, withLabel: platformTitle).waitForExistence(
+            anyElement(app: app, withLabel: platformTitle).waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "About page should show the platform title")
         XCTAssertTrue(
-            anyElement(app: app, withLabel: unofficialNoticeTitle).waitForExistence(
+            anyElement(app: app, withLabel: unofficialNoticeTitle).waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "About page should show the unofficial notice title")
         XCTAssertTrue(
-            anyElement(app: app, withLabel: unofficialNoticeText).waitForExistence(
+            anyElement(app: app, withLabel: unofficialNoticeText).waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "About page should show the unofficial notice text")
         XCTAssertTrue(
-            anyElement(app: app, withLabel: feedbackTitle).waitForExistence(
+            anyElement(app: app, withLabel: feedbackTitle).waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "About page should show the feedback and support title")
         XCTAssertTrue(
             app.descendants(matching: .any)
                 .matching(identifier: "settings.about.feedback.email.link")
                 .firstMatch
-                .waitForExistence(timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+                .waitForFailureEvidence(
+                    timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "About page should show the real support email entry"
         )
         XCTAssertTrue(
-            anyElement(app: app, withLabel: feedbackHintText).waitForExistence(
+            anyElement(app: app, withLabel: feedbackHintText).waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "About page should show the feedback hint")
         XCTAssertTrue(
-            anyElement(app: app, withLabel: privacySectionTitle).waitForExistence(
+            anyElement(app: app, withLabel: privacySectionTitle).waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "About page should show the privacy and protection title")
         XCTAssertTrue(
-            anyElement(app: app, withLabel: privacyEntryTitle).waitForExistence(
+            anyElement(app: app, withLabel: privacyEntryTitle).waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "About page should show the privacy policy entry title")
         XCTAssertTrue(
-            anyElement(app: app, withLabel: privacyEntrySubtitle).waitForExistence(
+            anyElement(app: app, withLabel: privacyEntrySubtitle).waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "About page should show the privacy policy entry description")
 
         if shouldForceEnglishLocalization {
 
             XCTAssertTrue(
-                anyElement(app: app, withLabel: "App Information").waitForExistence(
+                anyElement(app: app, withLabel: "App Information").waitForFailureEvidence(
                     timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
                 "English About page should show 'App Information'"
             )
             XCTAssertTrue(
-                anyElement(app: app, withLabel: "Feedback & Support").waitForExistence(
+                anyElement(app: app, withLabel: "Feedback & Support").waitForFailureEvidence(
                     timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
                 "English About page should show 'Feedback & Support'"
             )
             XCTAssertTrue(
-                anyElement(app: app, withLabel: "Unofficial Notice").waitForExistence(
+                anyElement(app: app, withLabel: "Unofficial Notice").waitForFailureEvidence(
                     timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
                 "English About page should show 'Unofficial Notice'"
             )
             XCTAssertTrue(
-                anyElement(app: app, withLabel: "Privacy & Protection").waitForExistence(
+                anyElement(app: app, withLabel: "Privacy & Protection").waitForFailureEvidence(
                     timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
                 "English About page should show 'Privacy & Protection'"
             )
             XCTAssertTrue(
-                anyElement(app: app, withLabel: "Privacy Policy").waitForExistence(
+                anyElement(app: app, withLabel: "Privacy Policy").waitForFailureEvidence(
                     timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
                 "English About page should show 'Privacy Policy'"
             )
@@ -311,7 +317,8 @@ extension FilterSummaryIOSVisualUITests {
                 anyElement(
                     app: app,
                     withLabel: "View the current version, runtime environment, and feedback guidance."
-                ).waitForExistence(timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+                ).waitForFailureEvidence(
+                    timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
                 "English About page should show the new header description"
             )
         }
@@ -334,14 +341,15 @@ extension FilterSummaryIOSVisualUITests {
 
         if let openSourceLink {
 
-            openSourceLink.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            openSourceLink.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tapForFailureEvidence()
         }
 
         XCTAssertTrue(
             app.descendants(matching: .any)
                 .matching(identifier: "settings.about.opensource.page")
                 .firstMatch
-                .waitForExistence(timeout: FilterSummaryIOSVisualUITestsWaitTiming.shortInteractionTimeoutSeconds),
+                .waitForFailureEvidence(
+                    timeout: FilterSummaryIOSVisualUITestsWaitTiming.shortInteractionTimeoutSeconds),
             "Tapping 'Open Source Licenses' should quickly open the open source licenses detail page",
             file: file,
             line: line
@@ -356,7 +364,8 @@ extension FilterSummaryIOSVisualUITests {
     ) {
 
         let aboutBackButton = app.navigationBars.buttons["settings.about.opensource.back.button"].firstMatch
-        if aboutBackButton.waitForExistence(timeout: FilterSummaryIOSVisualUITestsWaitTiming.stateChangeTimeoutSeconds)
+        if aboutBackButton.waitForFailureEvidence(
+            timeout: FilterSummaryIOSVisualUITestsWaitTiming.stateChangeTimeoutSeconds)
         {
             tapElement(aboutBackButton)
         } else {
@@ -392,7 +401,7 @@ extension FilterSummaryIOSVisualUITests {
 
         for _ in 0..<5 {
             let openSourceButton = app.buttons["settings.about.opensource.link"]
-            if openSourceButton.waitForExistence(
+            if openSourceButton.waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.briefElementTimeoutSeconds),
                 openSourceButton.isHittable
             {
@@ -406,7 +415,7 @@ extension FilterSummaryIOSVisualUITests {
                 return openSourceLink
             }
 
-            app.swipeUp()
+            app.swipeUpForFailureEvidence()
             RunLoop.current.run(
                 until: Date().addingTimeInterval(FilterSummaryIOSVisualUITestsWaitTiming.snapshotPollSeconds))
         }
@@ -418,7 +427,8 @@ extension FilterSummaryIOSVisualUITests {
     func returnToSlideShowFromSettings(app: XCUIApplication) {
 
         for _ in 0..<3 {
-            if app.buttons["slideshow.control.settings.button"].waitForExistence(
+            if app.buttons["slideshow.control.settings.button"].waitForPublicElement(
+                "slideshow.control.settings.button",
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.readbackTimeoutSeconds)
             {
                 return
@@ -426,13 +436,14 @@ extension FilterSummaryIOSVisualUITests {
 
             let backButton = app.navigationBars.buttons.firstMatch
             if backButton.exists && backButton.isHittable {
-                backButton.tap()
+                backButton.tapForFailureEvidence()
                 continue
             }
         }
 
         XCTAssertTrue(
-            app.buttons["slideshow.control.settings.button"].waitForExistence(
+            app.buttons["slideshow.control.settings.button"].waitForPublicElement(
+                "slideshow.control.settings.button",
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.elementAppearanceTimeoutSeconds),
             "Could not return from settings to the playback page"
         )
@@ -460,9 +471,9 @@ extension FilterSummaryIOSVisualUITests {
 
             let scrollView = app.scrollViews.firstMatch
             if scrollView.exists {
-                scrollView.swipeUp()
+                scrollView.swipeUpForFailureEvidence()
             } else {
-                app.swipeUp()
+                app.swipeUpForFailureEvidence()
             }
             RunLoop.current.run(
                 until: Date().addingTimeInterval(FilterSummaryIOSVisualUITestsWaitTiming.selectionPollSeconds))
@@ -473,10 +484,10 @@ extension FilterSummaryIOSVisualUITests {
 
     func tapElement(_ element: XCUIElement) {
         if element.isHittable {
-            element.tap()
+            element.tapForFailureEvidence()
             return
         }
-        element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tapForFailureEvidence()
     }
 
     // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
@@ -538,7 +549,7 @@ extension FilterSummaryIOSVisualUITests {
             // ui-label-lookup: Keyboard action keys are system-provided controls.
             let button = app.keyboards.buttons[label]
             if button.exists && button.isHittable {
-                button.tap()
+                button.tapForFailureEvidence()
                 RunLoop.current.run(
                     until: Date().addingTimeInterval(FilterSummaryIOSVisualUITestsWaitTiming.readbackPollSeconds))
                 if app.keyboards.count == 0 {
@@ -551,7 +562,7 @@ extension FilterSummaryIOSVisualUITests {
 
         let toolbarDoneButton = app.buttons["server.keyboard.done.button"]
         if toolbarDoneButton.exists && toolbarDoneButton.isHittable {
-            toolbarDoneButton.tap()
+            toolbarDoneButton.tapForFailureEvidence()
             RunLoop.current.run(
                 until: Date().addingTimeInterval(FilterSummaryIOSVisualUITestsWaitTiming.readbackPollSeconds))
             if app.keyboards.count == 0 {
@@ -560,7 +571,7 @@ extension FilterSummaryIOSVisualUITests {
         }
 
         let safeTopTapArea = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.06))
-        safeTopTapArea.tap()
+        safeTopTapArea.tapForFailureEvidence()
         RunLoop.current.run(
             until: Date().addingTimeInterval(FilterSummaryIOSVisualUITestsWaitTiming.readbackPollSeconds))
 
@@ -570,7 +581,7 @@ extension FilterSummaryIOSVisualUITests {
 
         let navigationBar = app.navigationBars.firstMatch
         if navigationBar.exists {
-            navigationBar.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            navigationBar.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tapForFailureEvidence()
             RunLoop.current.run(
                 until: Date().addingTimeInterval(FilterSummaryIOSVisualUITestsWaitTiming.readbackPollSeconds))
         }
@@ -580,14 +591,16 @@ extension FilterSummaryIOSVisualUITests {
 
         let modeRandomButton = app.buttons["mode.random.button"]
         XCTAssertTrue(
-            modeRandomButton.waitForExistence(
+            modeRandomButton.waitForPublicElement(
+                "mode.random.button",
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Mode selection page should show the 'Shuffle All Photos' entry")
         tapElement(modeRandomButton)
 
         let modeContinueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            modeContinueButton.waitForExistence(
+            modeContinueButton.waitForPublicElement(
+                "mode.continue.button",
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Mode selection page should show the continue button")
         XCTAssertTrue(
@@ -606,19 +619,21 @@ extension FilterSummaryIOSVisualUITests {
     func startFilteredFlowFromModeSelection(app: XCUIApplication) {
         let modeFilteredButton = app.buttons["mode.filtered.button"]
         XCTAssertTrue(
-            modeFilteredButton.waitForExistence(
+            modeFilteredButton.waitForPublicElement(
+                "mode.filtered.button",
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds))
-        modeFilteredButton.tap()
+        modeFilteredButton.tapForFailureEvidence()
 
         let modeContinueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            modeContinueButton.waitForExistence(
+            modeContinueButton.waitForPublicElement(
+                "mode.continue.button",
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds))
         XCTAssertTrue(modeContinueButton.isEnabled)
-        modeContinueButton.tap()
+        modeContinueButton.tapForFailureEvidence()
 
         XCTAssertTrue(
-            app.buttons["filterSummary.startPlayback.button"].waitForExistence(
+            app.buttons["filterSummary.startPlayback.button"].waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.screenTransitionTimeoutSeconds))
     }
 
@@ -628,7 +643,7 @@ extension FilterSummaryIOSVisualUITests {
     ) {
         let readinessLabel = app.staticTexts[identifier]
         XCTAssertTrue(
-            readinessLabel.waitForExistence(
+            readinessLabel.waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.screenTransitionTimeoutSeconds),
             "Should expose a readable UI test readiness marker: \(identifier)", file: file, line: line)
 
@@ -654,7 +669,7 @@ extension FilterSummaryIOSVisualUITests {
     }
 
     func attachScreenshot(app: XCUIApplication, name: String) {
-        let screenshot = app.screenshot()
+        let screenshot = app.screenshotForFailureEvidence()
         let attachment = XCTAttachment(screenshot: screenshot)
         attachment.name = name
         attachment.lifetime = .keepAlways
@@ -806,7 +821,7 @@ extension FilterSummaryIOSVisualUITests {
             toggleSidebarButton.isHittable,
             isShowSidebarLabel(toggleSidebarButton.label)
         {
-            toggleSidebarButton.tap()
+            toggleSidebarButton.tapForFailureEvidence()
             _ = waitForAnySettingsRootEntry(
                 app: app, timeout: FilterSummaryIOSVisualUITestsWaitTiming.readbackTimeoutSeconds)
         }
@@ -855,17 +870,17 @@ extension FilterSummaryIOSVisualUITests {
 
     @MainActor
     func setOrientation(_ orientation: UIDeviceOrientation, app: XCUIApplication) {
-        XCUIDevice.shared.orientation = orientation
+        FirstFailureOrientation.set(orientation)
 
         // After rotating, wait until the main entry is visible again before taking a screenshot or tapping on.
 
         let albumButton = app.buttons["filterSummary.album.button"]
         XCTAssertTrue(
-            albumButton.waitForExistence(
+            albumButton.waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds))
         XCTAssertTrue(
             albumButton.isHittable
-                || app.buttons["filterSummary.person.button"].waitForExistence(
+                || app.buttons["filterSummary.person.button"].waitForFailureEvidence(
                     timeout: FilterSummaryIOSVisualUITestsWaitTiming.readbackTimeoutSeconds)
         )
     }
@@ -876,11 +891,12 @@ extension FilterSummaryIOSVisualUITests {
         app: XCUIApplication,
         waitForTitleIdentifier titleIdentifier: String
     ) {
-        XCUIDevice.shared.orientation = orientation
+        FirstFailureOrientation.set(orientation)
 
         let title = app.staticTexts[titleIdentifier]
         XCTAssertTrue(
-            title.waitForExistence(timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds))
+            title.waitForFailureEvidence(
+                timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds))
         RunLoop.current.run(
             until: Date().addingTimeInterval(FilterSummaryIOSVisualUITestsWaitTiming.snapshotPollSeconds))
     }
@@ -891,11 +907,12 @@ extension FilterSummaryIOSVisualUITests {
         app: XCUIApplication,
         waitForElementIdentifier identifier: String
     ) {
-        XCUIDevice.shared.orientation = orientation
+        FirstFailureOrientation.set(orientation)
 
         let element = app.descendants(matching: .any)[identifier]
         XCTAssertTrue(
-            element.waitForExistence(timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds))
+            element.waitForFailureEvidence(
+                timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds))
         RunLoop.current.run(
             until: Date().addingTimeInterval(FilterSummaryIOSVisualUITestsWaitTiming.snapshotPollSeconds))
     }

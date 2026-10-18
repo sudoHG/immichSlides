@@ -12,14 +12,15 @@ extension AccessLifecycleIOSUITests {
             identifier: "firstboot.saveConfig.button"
         )
         XCTAssertTrue(
-            saveButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            saveButton.waitForFailureEvidence(timeout: TestWait.seconds(.infrastructure(8))),
             "The first-boot page must show the Save Settings button.")
         XCTAssertTrue(
             waitForSaveEnabled(app: app, saveButton: saveButton, timeout: TestWait.seconds(.infrastructure(45))),
             "Save must become enabled after a real connection test succeeds.")
         tapElement(saveButton)
         XCTAssertTrue(
-            app.buttons["mode.random.button"].waitForExistence(timeout: TestWait.seconds(.product(15))),
+            app.buttons["mode.random.button"].waitForPublicElement(
+                "mode.random.button", timeout: TestWait.seconds(.product(15))),
             "Must reach mode selection after a successful save.")
         let modeButton = firstBootControl(in: app, identifier: "mode.random.button")
         let continueButton = firstBootControl(in: app, identifier: "mode.continue.button")
@@ -49,7 +50,7 @@ extension AccessLifecycleIOSUITests {
                 // ui-label-lookup: The Save Password action belongs to iOS.
                 let button = app.buttons[label]
                 if button.exists {
-                    button.tap()
+                    button.tapForFailureEvidence()
                     if waitUntil(
                         timeout: TestWait.seconds(.product(2)),
                         condition: { !self.isSystemSavePasswordPromptVisible(app: app) })
@@ -81,7 +82,7 @@ extension AccessLifecycleIOSUITests {
         openPlaybackSettings(app: app)
         let autoPlay = playbackSwitch(app: app, identifier: "settings.playback.autoPlay.toggle")
         XCTAssertTrue(
-            autoPlay.waitForExistence(timeout: TestWait.seconds(.product(12))),
+            autoPlay.waitForFailureEvidence(timeout: TestWait.seconds(.product(12))),
             "Playback settings must provide the autoplay toggle.")
         if !isToggleOn(autoPlay) {
             tapElement(autoPlay)
@@ -112,7 +113,7 @@ extension AccessLifecycleIOSUITests {
         requests.append("settings.save.interval")
         let exif = playbackSwitch(app: app, identifier: "settings.playback.showExif.toggle")
         XCTAssertTrue(
-            exif.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            exif.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
             "Playback settings must provide the EXIF toggle.")
         if isToggleOn(exif) {
             tapElement(exif)
@@ -138,17 +139,17 @@ extension AccessLifecycleIOSUITests {
         requests.append("settings.pin.confirm")
         let enable = app.buttons["settings.pin.enable.button"]
         XCTAssertTrue(
-            enable.waitForExistence(timeout: TestWait.seconds(.product(5))) && enable.isEnabled,
+            enable.waitForFailureEvidence(timeout: TestWait.seconds(.product(5))) && enable.isEnabled,
             "Enable must be available after confirming the PIN.")
         tapElement(enable)
         XCTAssertTrue(
-            app.buttons["settings.pin.disable.button"].waitForExistence(timeout: TestWait.seconds(.product(8))),
+            app.buttons["settings.pin.disable.button"].waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
             "The disable entry should appear after enabling.")
         returnToSlideshowFromSettings(app: app)
 
         openSettingsFromSlideshow(app: app)
         XCTAssertTrue(
-            app.buttons["pinEntry.close.button"].waitForExistence(timeout: TestWait.seconds(.product(8))),
+            app.buttons["pinEntry.close.button"].waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
             "After enabling, opening settings must require the PIN first.")
         enterPin(app: app, pin: wrongPIN())
         let retryHint = findFirstExistingIdentifiedText(
@@ -171,23 +172,26 @@ extension AccessLifecycleIOSUITests {
             revealPlaybackControls(app: app)
         }
         XCTAssertTrue(
-            app.buttons["slideshow.control.settings.button"].waitForExistence(timeout: TestWait.seconds(.product(8))),
+            app.buttons["slideshow.control.settings.button"].waitForPublicElement(
+                "slideshow.control.settings.button", timeout: TestWait.seconds(.product(8))),
             "After canceling the PIN, should return to the playback page with protection still on."
         )
         openSettingsFromSlideshow(app: app)
         XCTAssertTrue(
-            app.buttons["pinEntry.close.button"].waitForExistence(timeout: TestWait.seconds(.product(8))),
+            app.buttons["pinEntry.close.button"].waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
             "Protection must remain after canceling."
         )
         enterPin(app: app, pin: syntheticPIN())
         requests.append("settings.pin.unlock")
         XCTAssertFalse(
-            app.buttons["pinEntry.close.button"].waitForExistence(timeout: TestWait.seconds(.product(3))),
+            app.buttons["pinEntry.close.button"].waitForFailureEvidence(timeout: TestWait.seconds(.product(3))),
             "The correct PIN must open settings")
         XCTAssertTrue(
-            app.buttons["settings.item.playback"].waitForExistence(timeout: TestWait.seconds(.product(8)))
-                || app.buttons["settings.pin.disable.button"].waitForExistence(timeout: TestWait.seconds(.product(2)))
-                || settingsControl(app: app, identifier: "settings.playback.autoPlay.toggle").waitForExistence(
+            app.buttons["settings.item.playback"].waitForPublicElement(
+                "settings.item.playback", timeout: TestWait.seconds(.product(8)))
+                || app.buttons["settings.pin.disable.button"].waitForFailureEvidence(
+                    timeout: TestWait.seconds(.product(2)))
+                || settingsControl(app: app, identifier: "settings.playback.autoPlay.toggle").waitForFailureEvidence(
                     timeout: TestWait.seconds(.product(2))),
             "Must reach the settings page after the correct PIN."
         )
@@ -230,11 +234,11 @@ extension AccessLifecycleIOSUITests {
         requests.append("settings.pin.confirm")
         let enable = app.buttons["settings.pin.enable.button"]
         XCTAssertTrue(
-            enable.waitForExistence(timeout: TestWait.seconds(.product(5))) && enable.isEnabled,
+            enable.waitForFailureEvidence(timeout: TestWait.seconds(.product(5))) && enable.isEnabled,
             "Enable must be available after confirming the PIN.")
         tapElement(enable)
         XCTAssertTrue(
-            app.buttons["settings.pin.disable.button"].waitForExistence(timeout: TestWait.seconds(.product(8))),
+            app.buttons["settings.pin.disable.button"].waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
             "The disable entry should appear after enabling.")
         _ = try captureRequiredPNG(app: app, name: "pin-enabled")
         returnToSlideshowFromSettings(app: app)
@@ -245,10 +249,11 @@ extension AccessLifecycleIOSUITests {
         app: XCUIApplication,
         pins: StrictE2EPrivatePINInput
     ) throws {
-        app.terminate()
+        app.terminateForFailureEvidence()
         try relaunchApp(app)
         XCTAssertFalse(
-            app.textFields["firstboot.serverURL.field"].waitForExistence(timeout: TestWait.seconds(.product(3))),
+            app.textFields["firstboot.serverURL.field"].waitForPublicElement(
+                "firstboot.serverURL.field", timeout: TestWait.seconds(.product(3))),
             "A cold launch with saved settings must not return to the first-boot page."
         )
         XCTAssertTrue(
@@ -257,7 +262,7 @@ extension AccessLifecycleIOSUITests {
 
         openSettingsFromSlideshow(app: app)
         XCTAssertTrue(
-            app.buttons["pinEntry.close.button"].waitForExistence(timeout: TestWait.seconds(.product(8))),
+            app.buttons["pinEntry.close.button"].waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
             "After relaunch, opening a protected entry must show the access gate."
         )
         _ = try captureRequiredPNG(app: app, name: "pin-restart-gate")
@@ -275,11 +280,12 @@ extension AccessLifecycleIOSUITests {
         // ui-label-lookup: Verify the Simplified Chinese wrong-PIN retry hint after identifier lookup.
         XCTAssertEqual(retryHint?.label, "PIN 错误，请重试")
         XCTAssertTrue(
-            app.buttons["pinEntry.close.button"].waitForExistence(timeout: TestWait.seconds(.product(3))),
+            app.buttons["pinEntry.close.button"].waitForFailureEvidence(timeout: TestWait.seconds(.product(3))),
             "The PIN sheet must remain after a wrong PIN."
         )
         XCTAssertFalse(
-            app.buttons["settings.item.playback"].waitForExistence(timeout: TestWait.seconds(.product(1))),
+            app.buttons["settings.item.playback"].waitForPublicElement(
+                "settings.item.playback", timeout: TestWait.seconds(.product(1))),
             "A wrong PIN must not reveal the settings home page."
         )
         _ = try captureRequiredPNG(app: app, name: "pin-wrong")
@@ -287,12 +293,14 @@ extension AccessLifecycleIOSUITests {
         enterPin(app: app, pin: pins.correct)
         requests.append("settings.pin.unlock")
         XCTAssertFalse(
-            app.buttons["pinEntry.close.button"].waitForExistence(timeout: TestWait.seconds(.product(3))),
+            app.buttons["pinEntry.close.button"].waitForFailureEvidence(timeout: TestWait.seconds(.product(3))),
             "The correct PIN must open settings")
         XCTAssertTrue(
-            app.buttons["settings.item.playback"].waitForExistence(timeout: TestWait.seconds(.product(8)))
-                || app.buttons["settings.pin.disable.button"].waitForExistence(timeout: TestWait.seconds(.product(2)))
-                || settingsControl(app: app, identifier: "settings.playback.autoPlay.toggle").waitForExistence(
+            app.buttons["settings.item.playback"].waitForPublicElement(
+                "settings.item.playback", timeout: TestWait.seconds(.product(8)))
+                || app.buttons["settings.pin.disable.button"].waitForFailureEvidence(
+                    timeout: TestWait.seconds(.product(2)))
+                || settingsControl(app: app, identifier: "settings.playback.autoPlay.toggle").waitForFailureEvidence(
                     timeout: TestWait.seconds(.product(2))),
             "Must reach the settings page after the correct PIN."
         )
@@ -301,7 +309,7 @@ extension AccessLifecycleIOSUITests {
 
         openSettingsFromSlideshow(app: app)
         XCTAssertTrue(
-            app.buttons["pinEntry.close.button"].waitForExistence(timeout: TestWait.seconds(.product(8))),
+            app.buttons["pinEntry.close.button"].waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
             "Opening settings again must still require the PIN."
         )
         tapElement(app.buttons["pinEntry.close.button"])
@@ -318,14 +326,15 @@ extension AccessLifecycleIOSUITests {
         if pinStillShowing == false {
             revealPlaybackControls(app: app)
             XCTAssertTrue(
-                app.buttons["slideshow.control.settings.button"].waitForExistence(
+                app.buttons["slideshow.control.settings.button"].waitForPublicElement(
+                    "slideshow.control.settings.button",
                     timeout: TestWait.seconds(.product(8))),
                 "After canceling, should return to a safe page; the gate need not stay on screen."
             )
             openSettingsFromSlideshow(app: app)
         }
         XCTAssertTrue(
-            app.buttons["pinEntry.close.button"].waitForExistence(timeout: TestWait.seconds(.product(8))),
+            app.buttons["pinEntry.close.button"].waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
             "Protection must remain after canceling; opening settings again still requires the PIN."
         )
         _ = try captureRequiredPNG(app: app, name: "pin-cancel-still-gated")
@@ -391,7 +400,8 @@ extension AccessLifecycleIOSUITests {
         revealPlaybackControls(app: app)
         let playPause = app.buttons["slideshow.control.playPause.button"]
         XCTAssertTrue(
-            playPause.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            playPause.waitForPublicElement(
+                "slideshow.control.playPause.button", timeout: TestWait.seconds(.product(8))),
             "The playback page must have play/pause.")
         let pauseDeadline = Date().addingTimeInterval(TestWait.seconds(.product(4)))
         let isPlayingStableScene = waitUntil(
@@ -479,10 +489,11 @@ extension AccessLifecycleIOSUITests {
         let wakeEvidenceDeadline = Date().addingTimeInterval(AccessLifecycleContract.wakeEvidenceBudgetSeconds)
         let before = try captureWakeMark(app: app, name: "before-wake", deadline: wakeEvidenceDeadline)
         try requireHiddenPlaybackControls(app: app, timeout: TestWait.seconds(.product(0)))
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tap()
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tapForFailureEvidence()
         requests.append("playback.wake_controls")
         XCTAssertTrue(
-            app.buttons["slideshow.control.settings.button"].waitForExistence(
+            app.buttons["slideshow.control.settings.button"].waitForPublicElement(
+                "slideshow.control.settings.button",
                 timeout: TestWait.seconds(.product(4))),
             "The first wake should only bring up the control bar."
         )
@@ -551,23 +562,23 @@ extension AccessLifecycleIOSUITests {
         let beforeMark = before.mark
         openSettingsFromSlideshow(app: app)
         requests.append("settings.open")
-        if app.buttons["pinEntry.close.button"].waitForExistence(timeout: TestWait.seconds(.product(3))) {
+        if app.buttons["pinEntry.close.button"].waitForFailureEvidence(timeout: TestWait.seconds(.product(3))) {
             enterPin(app: app, pin: syntheticPIN())
             requests.append("settings.pin.unlock")
         }
         openPlaybackSettings(app: app)
         let picker = app.segmentedControls["settings.playback.displayMode.picker"]
         XCTAssertTrue(
-            picker.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            picker.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
             "Returning to settings must still allow changing the display policy.")
         let singlePhoto = picker.buttons["settings.playback.displayMode.singlePhoto.option"]
         XCTAssertTrue(
-            singlePhoto.waitForExistence(timeout: TestWait.seconds(.product(3))),
+            singlePhoto.waitForFailureEvidence(timeout: TestWait.seconds(.product(3))),
             "The display policy should offer single-photo mode.")
         tapElement(singlePhoto)
         requests.append("settings.save.display_mode")
         let autoPlay = playbackSwitch(app: app, identifier: "settings.playback.autoPlay.toggle")
-        if autoPlay.waitForExistence(timeout: TestWait.seconds(.product(3))), !isToggleOn(autoPlay) {
+        if autoPlay.waitForFailureEvidence(timeout: TestWait.seconds(.product(3))), !isToggleOn(autoPlay) {
             tapElement(autoPlay)
             XCTAssertTrue(
                 waitUntil(timeout: TestWait.seconds(.product(4))) { self.isToggleOn(autoPlay) },
@@ -608,24 +619,24 @@ extension AccessLifecycleIOSUITests {
             return ["applicable": false]
         }
         openSettingsFromSlideshow(app: app)
-        if app.buttons["pinEntry.close.button"].waitForExistence(timeout: TestWait.seconds(.product(5))) {
+        if app.buttons["pinEntry.close.button"].waitForFailureEvidence(timeout: TestWait.seconds(.product(5))) {
             enterPin(app: app, pin: syntheticPIN())
             requests.append("settings.pin.unlock")
         }
         openSettingsSection(app: app, sectionID: "settings.item.about")
         let openSourceLink = app.descendants(matching: .any)["settings.about.opensource.link"]
         XCTAssertTrue(
-            openSourceLink.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            openSourceLink.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
             "The About page should show the open-source licenses entry.")
         tapElement(openSourceLink)
         requests.append("settings.about.licenses")
         XCTAssertTrue(
-            app.descendants(matching: .any)["settings.about.opensource.page"].waitForExistence(
+            app.descendants(matching: .any)["settings.about.opensource.page"].waitForFailureEvidence(
                 timeout: TestWait.seconds(.product(5))),
             "Must reach the open-source licenses page."
         )
         let aboutBack = app.navigationBars.buttons["BackButton"].firstMatch
-        if aboutBack.waitForExistence(timeout: TestWait.seconds(.product(4))) {
+        if aboutBack.waitForFailureEvidence(timeout: TestWait.seconds(.product(4))) {
             tapElement(aboutBack)
         } else {
             let back = app.navigationBars.buttons.allElementsBoundByIndex.last { button in
@@ -636,7 +647,7 @@ extension AccessLifecycleIOSUITests {
                 tapElement(back)
             }
         }
-        let stackPreserved = openSourceLink.waitForExistence(timeout: TestWait.seconds(.product(8)))
+        let stackPreserved = openSourceLink.waitForFailureEvidence(timeout: TestWait.seconds(.product(8)))
         XCTAssertTrue(stackPreserved, "After going back, must still be on About; the back stack must not be lost.")
         try AccessLifecycleContract.assertIPadLicenseReturn(device: "ipad", isStackPreserved: stackPreserved)
         returnToSlideshowFromSettings(app: app)
@@ -664,7 +675,7 @@ extension AccessLifecycleIOSUITests {
     func captureSettingsAtBackground(app: XCUIApplication) throws -> ObservedPlaybackSettings {
         openSettingsFromSlideshow(app: app)
         requests.append("settings.open")
-        if app.buttons["pinEntry.close.button"].waitForExistence(timeout: TestWait.seconds(.product(3))) {
+        if app.buttons["pinEntry.close.button"].waitForFailureEvidence(timeout: TestWait.seconds(.product(3))) {
             enterPin(app: app, pin: syntheticPIN())
             requests.append("settings.pin.unlock")
         }
@@ -707,15 +718,15 @@ extension AccessLifecycleIOSUITests {
         openPlaybackSettings(app: app)
         let autoPlay = playbackSwitch(app: app, identifier: "settings.playback.autoPlay.toggle")
         XCTAssertTrue(
-            autoPlay.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            autoPlay.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
             "Playback settings must provide the autoplay toggle.")
         let exif = playbackSwitch(app: app, identifier: "settings.playback.showExif.toggle")
         XCTAssertTrue(
-            exif.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            exif.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
             "Playback settings must provide the EXIF toggle.")
         let display = app.segmentedControls["settings.playback.displayMode.picker"]
         XCTAssertTrue(
-            display.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            display.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
             "Playback settings must provide the display policy.")
         guard let interval = readIntervalSeconds(app: app) else {
             throw AccessLifecycleContract.AssertionError.message("Missing settings evidence")

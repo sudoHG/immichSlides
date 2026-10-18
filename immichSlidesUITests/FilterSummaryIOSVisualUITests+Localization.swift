@@ -119,7 +119,7 @@ extension FilterSummaryIOSVisualUITests {
             app: firstBootApp,
             name: "\(locale.screenshotPrefix)-ios-firstboot-\(currentDeviceTag())"
         )
-        firstBootApp.terminate()
+        firstBootApp.terminateForFailureEvidence()
 
         let modeApp = try launchIntoOnboardingModeSelection(
             colorScheme: "light",
@@ -135,7 +135,7 @@ extension FilterSummaryIOSVisualUITests {
             app: modeApp,
             name: "\(locale.screenshotPrefix)-ios-mode-selection-\(currentDeviceTag())"
         )
-        modeApp.terminate()
+        modeApp.terminateForFailureEvidence()
 
         let filterSummaryApp = try launchIntoOnboardingFilterSummary(
             colorScheme: "light",
@@ -186,7 +186,7 @@ extension FilterSummaryIOSVisualUITests {
             app: albumApp,
             name: "\(locale.screenshotPrefix)-ios-album-filter-\(currentDeviceTag())"
         )
-        albumApp.terminate()
+        albumApp.terminateForFailureEvidence()
 
         let personApp = try launchIntoPersonFilterPage(
             colorScheme: "light",
@@ -230,7 +230,7 @@ extension FilterSummaryIOSVisualUITests {
             sectionID: "settings.item.playback"
         )
         XCTAssertTrue(
-            settingsApp.buttons["settings.playback.filterConfig.button"].waitForExistence(
+            settingsApp.buttons["settings.playback.filterConfig.button"].waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Localized playback settings page should show the edit filters entry"
         )
@@ -245,7 +245,8 @@ extension FilterSummaryIOSVisualUITests {
         )
         XCTAssertTrue(
             anyElement(app: settingsApp, withLabel: locale.accessProtectionDisabledTitle)
-                .waitForExistence(timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+                .waitForFailureEvidence(
+                    timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Localized access protection page should show the disabled status"
         )
         attachScreenshot(
@@ -258,7 +259,8 @@ extension FilterSummaryIOSVisualUITests {
             sectionID: "settings.item.server"
         )
         XCTAssertTrue(
-            settingsApp.textFields["firstboot.serverURL.field"].waitForExistence(
+            settingsApp.textFields["firstboot.serverURL.field"].waitForPublicElement(
+                "firstboot.serverURL.field",
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Localized server settings page should show the server URL field"
         )
@@ -272,7 +274,8 @@ extension FilterSummaryIOSVisualUITests {
             sectionID: "settings.item.cache"
         )
         XCTAssertTrue(
-            settingsApp.buttons["settings.cache.clearDisk.button"].waitForExistence(
+            settingsApp.buttons["settings.cache.clearDisk.button"].waitForPublicElement(
+                "settings.cache.clearDisk.button",
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Localized cache management page should show the clear disk cache button"
         )
@@ -295,12 +298,12 @@ extension FilterSummaryIOSVisualUITests {
             sectionID: "settings.item.about"
         )
         XCTAssertTrue(
-            anyElement(app: aboutApp, withLabel: locale.appInfoTitle).waitForExistence(
+            anyElement(app: aboutApp, withLabel: locale.appInfoTitle).waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Localized About page should show the App info section"
         )
         XCTAssertTrue(
-            anyElement(app: aboutApp, withLabel: locale.privacyPolicyTitle).waitForExistence(
+            anyElement(app: aboutApp, withLabel: locale.privacyPolicyTitle).waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Localized About page should show the privacy policy entry text for the target locale"
         )
@@ -311,7 +314,7 @@ extension FilterSummaryIOSVisualUITests {
 
         openOpenSourceLicensesFromAbout(app: aboutApp)
         XCTAssertTrue(
-            anyElement(app: aboutApp, withLabel: locale.openSourceTitle).waitForExistence(
+            anyElement(app: aboutApp, withLabel: locale.openSourceTitle).waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Localized open source licenses page should show text for the target locale"
         )
@@ -385,7 +388,7 @@ extension FilterSummaryIOSVisualUITests {
             shouldForceEnglishLocalization: true
         )
         XCTAssertTrue(
-            anyElement(app: app, withLabel: "Edit Filters").waitForExistence(
+            anyElement(app: app, withLabel: "Edit Filters").waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "In English, the filter editor title should be Edit Filters"
         )
@@ -453,7 +456,7 @@ extension FilterSummaryIOSVisualUITests {
 
         openSettingsSection(app: app, sectionID: "settings.item.playback")
         XCTAssertTrue(
-            anyElement(app: app, withLabel: "Autoplay").waitForExistence(
+            anyElement(app: app, withLabel: "Autoplay").waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "English playback settings page should show Autoplay"
         )
@@ -474,7 +477,8 @@ extension FilterSummaryIOSVisualUITests {
 
         openSettingsSection(app: app, sectionID: "settings.item.server")
         XCTAssertTrue(
-            app.textFields["firstboot.serverURL.field"].waitForExistence(
+            app.textFields["firstboot.serverURL.field"].waitForPublicElement(
+                "firstboot.serverURL.field",
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "English server settings page should show the server URL field"
         )
@@ -495,7 +499,8 @@ extension FilterSummaryIOSVisualUITests {
 
         openSettingsSection(app: app, sectionID: "settings.item.cache")
         XCTAssertTrue(
-            app.buttons["settings.cache.clearDisk.button"].waitForExistence(
+            app.buttons["settings.cache.clearDisk.button"].waitForPublicElement(
+                "settings.cache.clearDisk.button",
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "English cache management page should show the clear disk cache button"
         )
@@ -523,7 +528,7 @@ extension FilterSummaryIOSVisualUITests {
 
         openOpenSourceLicensesFromAbout(app: app)
         XCTAssertTrue(
-            anyElement(app: app, withLabel: "Open Source Licenses").waitForExistence(
+            anyElement(app: app, withLabel: "Open Source Licenses").waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "English open source licenses page should show the Open Source Licenses title"
         )

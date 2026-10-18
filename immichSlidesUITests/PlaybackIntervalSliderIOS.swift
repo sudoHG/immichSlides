@@ -15,12 +15,12 @@ enum PlaybackIntervalSliderIOS {
     ) -> Int? {
         let slider = app.sliders["settings.playback.interval.slider"]
         XCTAssertTrue(
-            slider.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            slider.waitForPublicElement("settings.playback.interval.slider", timeout: TestWait.seconds(.product(8))),
             "Playback settings must provide the interval slider.")
         XCTAssertTrue(slider.isEnabled, "The interval cannot be changed while autoplay is off.")
         let range = Double(maximumSeconds - minimumSeconds)
         var position = Double(targetSeconds - minimumSeconds) / range
-        slider.adjust(toNormalizedSliderPosition: position)
+        slider.adjustForFailureEvidence(toNormalizedSliderPosition: position)
         for attempt in 0..<adjustmentAttemptLimit {
             var observed: Int?
             if Wait.until(
@@ -38,7 +38,7 @@ enum PlaybackIntervalSliderIOS {
             } else {
                 // Correct the last requested position using only the app's displayed seconds.
                 position = min(max(position + Double(targetSeconds - observed) / range, 0), 1)
-                slider.adjust(toNormalizedSliderPosition: position)
+                slider.adjustForFailureEvidence(toNormalizedSliderPosition: position)
             }
         }
         return nil

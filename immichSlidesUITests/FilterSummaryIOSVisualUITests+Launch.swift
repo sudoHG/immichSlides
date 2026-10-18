@@ -34,7 +34,7 @@ extension FilterSummaryIOSVisualUITests {
                 shouldDisableDebugFillConfigButton: shouldDisableDebugFillConfigButton
             )
         }
-        app.launch()
+        app.launchForFailureEvidence()
         return app
     }
 
@@ -69,11 +69,12 @@ extension FilterSummaryIOSVisualUITests {
         app.launchEnvironment["UI_TEST_SERVER_URL"] = config.url
         app.launchEnvironment["UI_TEST_API_KEY"] = config.apiKey
         app.launchEnvironment["UI_TEST_FORCE_MODE_SELECTION"] = "1"
-        app.launch()
+        app.launchForFailureEvidence()
 
         let continueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            continueButton.waitForExistence(timeout: FilterSummaryIOSVisualUITestsWaitTiming.connectionTimeoutSeconds),
+            continueButton.waitForPublicElement(
+                "mode.continue.button", timeout: FilterSummaryIOSVisualUITestsWaitTiming.connectionTimeoutSeconds),
             "After injecting the test server config, the app should go straight to the mode selection page")
         return app
     }
@@ -95,26 +96,28 @@ extension FilterSummaryIOSVisualUITests {
 
         let modeFilteredButton = app.buttons["mode.filtered.button"]
         XCTAssertTrue(
-            modeFilteredButton.waitForExistence(
+            modeFilteredButton.waitForPublicElement(
+                "mode.filtered.button",
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds))
-        modeFilteredButton.tap()
+        modeFilteredButton.tapForFailureEvidence()
 
         let modeContinueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            modeContinueButton.waitForExistence(
+            modeContinueButton.waitForPublicElement(
+                "mode.continue.button",
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds))
         XCTAssertTrue(modeContinueButton.isEnabled)
-        modeContinueButton.tap()
+        modeContinueButton.tapForFailureEvidence()
 
         let startPlaybackButton = app.buttons["filterSummary.startPlayback.button"]
         XCTAssertTrue(
-            startPlaybackButton.waitForExistence(
+            startPlaybackButton.waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.screenTransitionTimeoutSeconds))
         XCTAssertTrue(
-            app.buttons["filterSummary.album.button"].waitForExistence(
+            app.buttons["filterSummary.album.button"].waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.navigationTimeoutSeconds))
         XCTAssertTrue(
-            app.buttons["filterSummary.person.button"].waitForExistence(
+            app.buttons["filterSummary.person.button"].waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.navigationTimeoutSeconds))
         assertFilterSummaryUsesOnlyTopBackButton(app: app)
 
@@ -140,7 +143,7 @@ extension FilterSummaryIOSVisualUITests {
         let perCandidateTimeout = max(TestWait.seconds(.infrastructure(0.5)), timeout / Double(candidates.count))
 
         for candidate in candidates {
-            if candidate.waitForExistence(timeout: perCandidateTimeout) {
+            if candidate.waitForFailureEvidence(timeout: perCandidateTimeout) {
                 return candidate
             }
         }
@@ -290,20 +293,23 @@ extension FilterSummaryIOSVisualUITests {
         if shouldPrepareFilterEditorVisuals {
             app.launchEnvironment["UI_TEST_PREPARE_FILTER_EDITOR_VISUAL_SELECTIONS"] = "1"
         }
-        app.launch()
+        app.launchForFailureEvidence()
 
         let continueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            continueButton.waitForExistence(timeout: FilterSummaryIOSVisualUITestsWaitTiming.connectionTimeoutSeconds),
+            continueButton.waitForPublicElement(
+                "mode.continue.button", timeout: FilterSummaryIOSVisualUITestsWaitTiming.connectionTimeoutSeconds),
             "After injecting the test server config, the app should go straight to the mode selection page")
         startFilteredFlowFromModeSelection(app: app)
 
         let albumButton = app.buttons["filterSummary.album.button"]
         let peopleButton = app.buttons["filterSummary.person.button"]
         XCTAssertTrue(
-            albumButton.waitForExistence(timeout: FilterSummaryIOSVisualUITestsWaitTiming.navigationTimeoutSeconds))
+            albumButton.waitForFailureEvidence(
+                timeout: FilterSummaryIOSVisualUITestsWaitTiming.navigationTimeoutSeconds))
         XCTAssertTrue(
-            peopleButton.waitForExistence(timeout: FilterSummaryIOSVisualUITestsWaitTiming.navigationTimeoutSeconds))
+            peopleButton.waitForFailureEvidence(
+                timeout: FilterSummaryIOSVisualUITestsWaitTiming.navigationTimeoutSeconds))
         assertFilterSummaryUsesOnlyTopBackButton(app: app)
         return app
     }
@@ -330,11 +336,12 @@ extension FilterSummaryIOSVisualUITests {
         app.launchEnvironment["UI_TEST_API_KEY"] = config.apiKey
 
         app.launchEnvironment["UI_TEST_FORCE_MODE_SELECTION"] = "1"
-        app.launch()
+        app.launchForFailureEvidence()
 
         let continueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            continueButton.waitForExistence(timeout: FilterSummaryIOSVisualUITestsWaitTiming.connectionTimeoutSeconds),
+            continueButton.waitForPublicElement(
+                "mode.continue.button", timeout: FilterSummaryIOSVisualUITestsWaitTiming.connectionTimeoutSeconds),
             "After injecting the test server config, the app should go straight to the mode selection page"
         )
 
@@ -342,7 +349,9 @@ extension FilterSummaryIOSVisualUITests {
 
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
         XCTAssertTrue(
-            playPauseButton.waitForExistence(timeout: FilterSummaryIOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
+            playPauseButton.waitForPublicElement(
+                "slideshow.control.playPause.button",
+                timeout: FilterSummaryIOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
             "After random playback opens the playback page, the play/pause button should be visible"
         )
 
@@ -359,7 +368,7 @@ extension FilterSummaryIOSVisualUITests {
 
         let globalBackButton = app.buttons["global.back.button"]
         XCTAssertTrue(
-            globalBackButton.waitForExistence(
+            globalBackButton.waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.settingsChangeTimeoutSeconds),
             "Filter summary page should keep the top-left back button",
             file: file,
@@ -385,7 +394,7 @@ extension FilterSummaryIOSVisualUITests {
 
         let wizardTitle = app.staticTexts["onboardingWizard.title"]
         XCTAssertTrue(
-            wizardTitle.waitForExistence(
+            wizardTitle.waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "The top of the page should show the shared setup wizard header",
             file: file,
@@ -395,7 +404,7 @@ extension FilterSummaryIOSVisualUITests {
 
         let pageTitle = app.staticTexts[pageTitleIdentifier]
         XCTAssertTrue(
-            pageTitle.waitForExistence(
+            pageTitle.waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "The page main title should clearly state the task of the current step",
             file: file,
@@ -434,34 +443,37 @@ extension FilterSummaryIOSVisualUITests {
         let settingsButton = app.buttons["slideshow.control.settings.button"]
 
         XCTAssertTrue(
-            banner.waitForExistence(timeout: FilterSummaryIOSVisualUITestsWaitTiming.settingsChangeTimeoutSeconds),
+            banner.waitForFailureEvidence(
+                timeout: FilterSummaryIOSVisualUITestsWaitTiming.settingsChangeTimeoutSeconds),
             "On first entering the playback page, the one-time tip bubble should appear",
             file: file,
             line: line
         )
         XCTAssertTrue(
-            title.waitForExistence(timeout: FilterSummaryIOSVisualUITestsWaitTiming.readbackTimeoutSeconds),
+            title.waitForFailureEvidence(timeout: FilterSummaryIOSVisualUITestsWaitTiming.readbackTimeoutSeconds),
             "The tip should show its main text",
             file: file,
             line: line
         )
         XCTAssertEqual(title.label, expectedTitle, file: file, line: line)
         XCTAssertTrue(
-            action.waitForExistence(timeout: FilterSummaryIOSVisualUITestsWaitTiming.readbackTimeoutSeconds),
+            action.waitForFailureEvidence(timeout: FilterSummaryIOSVisualUITestsWaitTiming.readbackTimeoutSeconds),
             "The tip should show the action hint",
             file: file,
             line: line
         )
         XCTAssertEqual(action.label, expectedAction, file: file, line: line)
         XCTAssertTrue(
-            keycap.waitForExistence(timeout: FilterSummaryIOSVisualUITestsWaitTiming.readbackTimeoutSeconds),
+            keycap.waitForFailureEvidence(timeout: FilterSummaryIOSVisualUITestsWaitTiming.readbackTimeoutSeconds),
             "The tip should show the dismiss target as a separate keycap",
             file: file,
             line: line
         )
         XCTAssertEqual(keycap.label, expectedKeycap, file: file, line: line)
         XCTAssertTrue(
-            settingsButton.waitForExistence(timeout: FilterSummaryIOSVisualUITestsWaitTiming.stateChangeTimeoutSeconds),
+            settingsButton.waitForPublicElement(
+                "slideshow.control.settings.button",
+                timeout: FilterSummaryIOSVisualUITestsWaitTiming.stateChangeTimeoutSeconds),
             "The playback page should keep the settings button; the tip must not break the entry itself",
             file: file,
             line: line
@@ -547,7 +559,8 @@ extension FilterSummaryIOSVisualUITests {
     ) -> CGRect {
         let title = app.staticTexts[identifier]
         XCTAssertTrue(
-            title.waitForExistence(timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+            title.waitForFailureEvidence(
+                timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Should be able to read the page main title position: \(identifier)",
             file: file,
             line: line
@@ -563,7 +576,8 @@ extension FilterSummaryIOSVisualUITests {
         line: UInt = #line
     ) {
         XCTAssertTrue(
-            content.waitForExistence(timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+            content.waitForFailureEvidence(
+                timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Should be able to read the page content column position: \(content.identifier)",
             file: file,
             line: line
@@ -622,14 +636,14 @@ extension FilterSummaryIOSVisualUITests {
         )
         let startPlaybackButton = app.buttons["filterSummary.startPlayback.button"]
         XCTAssertTrue(
-            startPlaybackButton.waitForExistence(
+            startPlaybackButton.waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Filter summary page should show the 'Start Playback' button")
         // Start stays disabled until the page has loaded and selected the first album from the server.
         waitForReadinessMarker(app: app, identifier: "filterSummary.visual.ready")
         XCTAssertTrue(
             startPlaybackButton.isEnabled, "The 'Start Playback' button on the filter summary page should be enabled")
-        startPlaybackButton.tap()
+        startPlaybackButton.tapForFailureEvidence()
 
         var playbackEntryDiagnostic = ""
         XCTAssertTrue(
@@ -641,7 +655,9 @@ extension FilterSummaryIOSVisualUITests {
 
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
         XCTAssertTrue(
-            playPauseButton.waitForExistence(timeout: FilterSummaryIOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
+            playPauseButton.waitForPublicElement(
+                "slideshow.control.playPause.button",
+                timeout: FilterSummaryIOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
             "Playback page should show the play/pause button")
 
         RunLoop.current.run(
@@ -680,7 +696,7 @@ extension FilterSummaryIOSVisualUITests {
 
         let filterConfigButton = app.buttons["settings.playback.filterConfig.button"]
         XCTAssertTrue(
-            filterConfigButton.waitForExistence(
+            filterConfigButton.waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Playback settings page should show the 'Edit Filters' entry"
         )
@@ -695,10 +711,12 @@ extension FilterSummaryIOSVisualUITests {
         let albumEntry = app.buttons["filter.editor.album.entry"]
         let personEntry = app.buttons["filter.editor.person.entry"]
         XCTAssertTrue(
-            albumEntry.waitForExistence(timeout: FilterSummaryIOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
+            albumEntry.waitForFailureEvidence(
+                timeout: FilterSummaryIOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
             "Filter editor should show the album entry")
         XCTAssertTrue(
-            personEntry.waitForExistence(timeout: FilterSummaryIOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
+            personEntry.waitForFailureEvidence(
+                timeout: FilterSummaryIOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
             "Filter editor should show the people entry")
 
         if shouldPrepareFilterEditorVisuals {
@@ -714,10 +732,11 @@ extension FilterSummaryIOSVisualUITests {
         let app = try launchIntoFilterSummary(colorScheme: "dark")
         let albumButton = app.buttons["filterSummary.album.button"]
         XCTAssertTrue(
-            albumButton.waitForExistence(timeout: FilterSummaryIOSVisualUITestsWaitTiming.navigationTimeoutSeconds))
+            albumButton.waitForFailureEvidence(
+                timeout: FilterSummaryIOSVisualUITestsWaitTiming.navigationTimeoutSeconds))
         tapElement(albumButton)
         XCTAssertTrue(
-            app.buttons["albumFilter.back.button"].waitForExistence(
+            app.buttons["albumFilter.back.button"].waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.connectionTimeoutSeconds))
         return app
     }
@@ -741,7 +760,8 @@ extension FilterSummaryIOSVisualUITests {
 
         let albumEntry = app.buttons["filter.editor.album.entry"]
         XCTAssertTrue(
-            albumEntry.waitForExistence(timeout: FilterSummaryIOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
+            albumEntry.waitForFailureEvidence(
+                timeout: FilterSummaryIOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
             "Filter editor should show the album entry")
         tapElement(albumEntry)
 
@@ -774,7 +794,8 @@ extension FilterSummaryIOSVisualUITests {
 
         let personEntry = app.buttons["filter.editor.person.entry"]
         XCTAssertTrue(
-            personEntry.waitForExistence(timeout: FilterSummaryIOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
+            personEntry.waitForFailureEvidence(
+                timeout: FilterSummaryIOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
             "Filter editor should show the people entry")
         tapElement(personEntry)
 

@@ -17,6 +17,16 @@ private enum Calibration {
 // E2E-P2-01: EXIF must follow the current photo's metadata (full vs empty) and remain available on a SmartFill
 // multi-photo frame.
 final class ExifToggleUITests: XCTestCase {
+    override func invokeTest() {
+        FirstFailureContext.reset()
+        super.invokeTest()
+    }
+
+    override func record(_ issue: XCTIssue) {
+        FirstFailureEvidence.record(self, issue: issue)
+        super.record(issue)
+    }
+
     // Public fixture convention: odd photos carry full EXIF (camera model Fixture N), even photos have empty metadata.
     private static let fullMetadataMarks: Set<String> = ["A1", "A3", "A5"]
     private static let emptyMetadataMarks: Set<String> = ["A2", "A4"]
@@ -28,10 +38,10 @@ final class ExifToggleUITests: XCTestCase {
     #if os(iOS)
     @MainActor
     func testExifToggleOwnershipIOS() throws {
-        XCUIDevice.shared.orientation = .portrait
+        FirstFailureOrientation.set(.portrait)
         let input = try requireStrictE2EInput()
         let app = try launchStrictE2EApp()
-        defer { app.terminate() }
+        defer { app.terminateForFailureEvidence() }
         try runExifFlow(IOSDriver(app: app), input: input)
     }
     #endif
@@ -45,7 +55,7 @@ final class ExifToggleUITests: XCTestCase {
         }
         let input = try requireStrictE2EInput()
         let app = try launchStrictE2EApp()
-        defer { app.terminate() }
+        defer { app.terminateForFailureEvidence() }
         try runExifFlow(TVDriver(app: app), input: input)
     }
     #endif
@@ -66,7 +76,8 @@ final class ExifToggleUITests: XCTestCase {
         driver.applyPlaybackSettings([.showExif(false)])
         XCTAssertTrue(
             Wait.until(timeout: Timing.exifSettleTimeout) {
-                ExifOverlayImage.isHidden(comparedWith: enabledPNG, in: driver.app.screenshot().pngRepresentation)
+                ExifOverlayImage.isHidden(
+                    comparedWith: enabledPNG, in: driver.app.screenshotForFailureEvidence().pngRepresentation)
             },
             "After turning EXIF off, the info card in the upper-right area of the public photo must disappear from the screen."
         )

@@ -85,7 +85,7 @@ extension PlaybackHistoryIOSUITests {
     static func capturePausedWindowSample(app: XCUIApplication) -> PausedWindowSample {
         let window = app.windows.firstMatch
         let before = pausedChromeFrames(app: app)
-        let png = window.screenshot().pngRepresentation
+        let png = window.screenshotForFailureEvidence().pngRepresentation
         let after = pausedChromeFrames(app: app)
         return PausedWindowSample(
             png: png, windowFrame: window.frame, chromeFrames: before.frames + after.frames,

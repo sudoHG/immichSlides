@@ -557,6 +557,101 @@ class ReviewPackageTests(unittest.TestCase):
                 changed = copy.deepcopy(bindings); changed[0][key] = value
                 with self.subTest(key=key), self.assertRaises(ValueError):
                     validate_bindings(changed, summary)
+            from ci_failure_diagnostics import canonical_first_failure_png
+            from ci_review_packages import read_failure_package
+            from test_ci_summary import first_failure_receipt
+            failed_evidence = source / "cases/000-p2-cache"
+            png, width, height = canonical_first_failure_png((failed_evidence / "cache-returned.png").read_bytes())
+            receipt = first_failure_receipt()
+            receipt["screenshot"].update(width=width, height=height, bytes=len(png))
+            failed = observation(item, "failed", 1, exit_code=65)
+            failed["first_failure"] = failed["attempts"][0]["first_failure"] = receipt
+            summary["population"]["observed"] = [failed]
+            summary["status"] = "failed"
+            _write_json(source / "records/summary.json", summary)
+            (failed_evidence / "first-failure").mkdir()
+            (failed_evidence / "first-failure/0.png").write_bytes(png)
+            from ci_flaky import merge_retry
+            second_receipt = {**copy.deepcopy(receipt), "step": "capture-frame"}
+            second_failure = observation(item, "failed", 1, exit_code=65)
+            second_failure["first_failure"] = second_failure["attempts"][0]["first_failure"] = second_receipt
+            failed = merge_retry(failed, second_failure)
+            summary["population"]["observed"] = [failed]
+            _write_json(source / "records/summary.json", summary)
+            (failed_evidence / "first-failure-attempt-2").mkdir()
+            (failed_evidence / "first-failure-attempt-2/0.png").write_bytes(png)
+            _write_json(failed_evidence / "official-tests-attempt-2.json", {"testNodes": [{"nodeType": "Test Case",
+                "nodeIdentifier": "CacheSettingsUITests/testClearDiskCacheFromSettingsIOS()", "result": "Failed",
+                "first_failure": second_receipt}]})
+            _write_json(failed_evidence / "official-tests.json", {"testNodes": [{"nodeType": "Test Case",
+                "nodeIdentifier": "CacheSettingsUITests/testClearDiskCacheFromSettingsIOS()", "result": "Failed",
+                "first_failure": receipt}]})
+            published = root / "published-failure"
+            self.assertEqual(0, export_shard(source, published))
+            diagnostic = published / "first-failures" / SOURCE_SHA / "p2-cache/iphone/Debug/normal/a/attempt-1"
+            self.assertEqual(receipt, read_failure_package(diagnostic, summary)["first_failure"])
+            self.assertEqual(second_receipt, read_failure_package(diagnostic.with_name("attempt-2"), summary)["first_failure"])
+            self.assertEqual([], _read_json(published / "index.json")["packages"])
+            from ci_review_packages import export_failure_diagnostic
+            case_path = failed_evidence / "case-manifest.json"
+            original_case = case_path.read_text()
+            for defect, message in (("source", "first failure case provenance differs"),
+                                    ("scenario", "first failure case provenance differs"),
+                                    ("symlink", "invalid first failure case evidence")):
+                held = root / "held-manifest.json"
+                if defect in {"source", "scenario"}:
+                    changed_case = json.loads(original_case)
+                    changed_case["source_sha" if defect == "source" else "scenario"] = (
+                        "0" * 40 if defect == "source" else "out-of-order")
+                    _write_json(case_path, changed_case)
+                else:
+                    case_path.rename(held)
+                    case_path.symlink_to(held)
+                def reject(*args):
+                    with self.assertRaisesRegex(ValueError, "^" + message + "$") as raised:
+                        export_failure_diagnostic(*args)
+                    raise raised.exception
+                try:
+                    refused = root / ("denied-case-" + defect)
+                    with self.subTest(defect=defect), mock.patch("ci_review_packages.export_failure_diagnostic", side_effect=reject):
+                        self.assertEqual(0, export_shard(source, refused))
+                    self.assertFalse(list(refused.rglob("*.png")))
+                finally:
+                    if defect == "symlink":
+                        case_path.unlink()
+                        held.rename(case_path)
+                    case_path.write_text(original_case)
+            denied = root / "denied-failure"
+            with mock.patch("ci_review_packages.file_digest", return_value="0" * 64):
+                self.assertEqual(0, export_shard(source, denied))
+            self.assertFalse(list(denied.rglob("*.png")), "A rejected package must never reach the upload directory")
+            _write_json(failed_evidence / "official-tests.json", {"testNodes": [{"nodeType": "Test Case",
+                "nodeIdentifier": "ForeignUITests/testOther()", "result": "Failed", "first_failure": receipt}]})
+            denied_method = root / "denied-method"
+            self.assertEqual(0, export_shard(source, denied_method))
+            self.assertFalse(list(denied_method.rglob("attempt-1/*.png")))
+            legacy_case = dict(manifest["case"], suite="late-image", scenario="out-of-order")
+            legacy_item = case_identity(legacy_case)
+            failed["identity"] = legacy_item
+            summary["population"].update(declared=[legacy_item], compiled=[legacy_item], observed=[failed])
+            _write_json(source / "records/summary.json", summary)
+            legacy_evidence = source / "cases/000-late-image"
+            failed_evidence.rename(legacy_evidence)
+            provenance = _read_json(legacy_evidence / "case-manifest.json")
+            provenance.update(suite="late-image", scenario="out-of-order")
+            _write_json(legacy_evidence / "case-manifest.json", provenance)
+            _write_json(legacy_evidence / "official-tests.json", {"testNodes": [{"nodeType": "Test Case",
+                "nodeIdentifier": "StrictE2ELateImageIOSUITests/testLateImageKeepsCurrentSceneAfterLateRequest()",
+                "result": "Failed", "first_failure": receipt}]})
+            _write_json(legacy_evidence / "official-tests-attempt-2.json", {"testNodes": [{"nodeType": "Test Case",
+                "nodeIdentifier": "StrictE2ELateImageIOSUITests/testLateImageKeepsCurrentSceneAfterLateRequest()",
+                "result": "Failed", "first_failure": second_receipt}]})
+            legacy_output = root / "published-legacy-failure"
+            self.assertEqual(0, export_shard(source, legacy_output))
+            legacy_package = legacy_output / "first-failures" / SOURCE_SHA / "late-image/iphone/Debug/out-of-order/a/attempt-1"
+            self.assertEqual(receipt, read_failure_package(legacy_package, summary)["first_failure"])
+            self.assertEqual(second_receipt, read_failure_package(legacy_package.with_name("attempt-2"), summary)["first_failure"])
+            self.assertEqual([], _read_json(legacy_output / "index.json")["packages"])
 
 
 if __name__ == "__main__":

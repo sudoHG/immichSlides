@@ -24,14 +24,16 @@ extension StrictE2EFirstBatchIOSUITests {
         attachment.name = "pause-window-launch-environment-keys"
         attachment.lifetime = .keepAlways
         add(attachment)
-        app.launch()
+        app.launchForFailureEvidence()
         return app
     }
 
     @MainActor
     func pausePlaybackIfNeeded(app: XCUIApplication) {
         let playPause = app.buttons["slideshow.control.playPause.button"]
-        guard playPause.waitForExistence(timeout: TestWait.seconds(.product(4))) else { return }
+        guard
+            playPause.waitForPublicElement("slideshow.control.playPause.button", timeout: TestWait.seconds(.product(4)))
+        else { return }
         if playPauseState(playPause) != "play" {
             tapElement(playPause)
         }
@@ -51,7 +53,8 @@ extension StrictE2EFirstBatchIOSUITests {
 
         let playbackEntry: XCUIElement
         if UIDevice.current.userInterfaceIdiom == .pad {
-            if app.switches["settings.playback.autoPlay.toggle"].waitForExistence(
+            if app.switches["settings.playback.autoPlay.toggle"].waitForPublicElement(
+                "settings.playback.autoPlay.toggle",
                 timeout: TestWait.seconds(.product(2)))
             {
                 return
@@ -66,7 +69,7 @@ extension StrictE2EFirstBatchIOSUITests {
             playbackEntry = app.buttons["settings.item.playback"]
         }
         XCTAssertTrue(
-            playbackEntry.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            playbackEntry.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
             "The settings list must offer the playback settings entry"
         )
         tapElement(playbackEntry)
@@ -91,9 +94,9 @@ extension StrictE2EFirstBatchIOSUITests {
                 .filter { $0.exists && $0.isHittable && $0.identifier != "ToggleSidebar" }
                 .first
             if let backButton {
-                backButton.tap()
+                backButton.tapForFailureEvidence()
             } else {
-                app.tap()
+                app.tapForFailureEvidence()
             }
             RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.3))))
         }
@@ -110,12 +113,12 @@ extension StrictE2EFirstBatchIOSUITests {
     func selectSinglePhotoDisplayMode(app: XCUIApplication) {
         let picker = app.segmentedControls["settings.playback.displayMode.picker"]
         XCTAssertTrue(
-            picker.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            picker.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
             "Playback settings must offer the display mode segmented control."
         )
         let singlePhoto = picker.buttons["settings.playback.displayMode.singlePhoto.option"]
         XCTAssertTrue(
-            singlePhoto.waitForExistence(timeout: TestWait.seconds(.product(3))),
+            singlePhoto.waitForFailureEvidence(timeout: TestWait.seconds(.product(3))),
             "Display mode must offer single photo mode.")
         tapElement(singlePhoto)
         XCTAssertTrue(singlePhoto.exists, "The segmented control must remain after selecting single photo mode.")
@@ -127,7 +130,8 @@ extension StrictE2EFirstBatchIOSUITests {
     func confirmExifOnAndFiveSecondInterval(app: XCUIApplication) {
         let exifToggle = app.switches["settings.playback.showExif.toggle"]
         XCTAssertTrue(
-            exifToggle.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            exifToggle.waitForPublicElement(
+                "settings.playback.showExif.toggle", timeout: TestWait.seconds(.product(8))),
             "Playback settings must offer the EXIF toggle.")
         let toggleValue = ((exifToggle.value as? String) ?? "").lowercased()
         XCTAssertTrue(toggleValue == "1" || toggleValue == "true", "Show EXIF info must be on.")
@@ -220,10 +224,11 @@ extension StrictE2EFirstBatchIOSUITests {
 
     @MainActor
     func revealPlaybackControlsWithoutWaitHelper(app: XCUIApplication, shouldRefreshAutoHideTimer: Bool = false) {
+        FirstFailureContext.mark("reveal-controls", element: "slideshow.control.playPause.button")
         let playPause = app.buttons["slideshow.control.playPause.button"]
         // A visible bar can be near expiry after an observation hold; refresh it before evidence reads.
         if !shouldRefreshAutoHideTimer && playPause.exists && playPause.isHittable { return }
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tap()
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tapForFailureEvidence()
         _ = waitUntil(timeout: TestWait.seconds(.product(4))) { playPause.exists }
     }
 
@@ -355,12 +360,12 @@ extension StrictE2EFirstBatchIOSUITests {
 
     @MainActor
     func classifyVisibleFixture(app: XCUIApplication) -> String {
-        StrictE2EPhotoIdentity.classify(png: app.screenshot().pngRepresentation).mark ?? "unknown"
+        StrictE2EPhotoIdentity.classify(png: app.screenshotForFailureEvidence().pngRepresentation).mark ?? "unknown"
     }
 
     @MainActor
     func attachPauseWindowPNG(app: XCUIApplication, name: String) -> Bool {
-        let png = app.screenshot().pngRepresentation
+        let png = app.screenshotForFailureEvidence().pngRepresentation
         guard !png.isEmpty else { return false }
         let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
         attachment.name = name

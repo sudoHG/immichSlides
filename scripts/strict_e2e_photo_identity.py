@@ -255,6 +255,8 @@ class PublicFramePhoto:
 
 
 def public_scene_photos_from_bytes(image_bytes: bytes, *, screenshot_name: str | None = None) -> tuple[PublicFramePhoto, ...]:
+    from ci_failure_diagnostics import remember_validator_input
+    remember_validator_input(image_bytes)
     from strict_e2e_filter_manifest import FilterContractError
 
     try:
@@ -1032,6 +1034,8 @@ def _classify_named(evidence_dir: Path, name: str) -> PhotoIdentity:
         payload = path.read_bytes()
     except OSError as error:
         raise IdentityAssertionError(f"Cannot read identification input {name}.png: {error}") from error
+    from ci_failure_diagnostics import remember_validator_input
+    remember_validator_input(payload)
     return classify_screenshot(payload)
 
 

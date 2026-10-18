@@ -61,7 +61,7 @@ extension StrictE2EFilterIOSUITests {
     ) throws {
         let input = try requireStrictE2EInput()
         let app = try launchStrictE2EApp()
-        defer { app.terminate() }
+        defer { app.terminateForFailureEvidence() }
         try completeFirstBootToModeSelection(app: app, input: input, evidencePrefix: evidencePrefix)
         enterFilterSummary(app: app)
         openPersonFilter(app: app)
@@ -101,7 +101,7 @@ extension StrictE2EFilterIOSUITests {
             identifier: "firstboot.saveConfig.button"
         )
         XCTAssertTrue(
-            saveButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            saveButton.waitForFailureEvidence(timeout: TestWait.seconds(.infrastructure(8))),
             "First-boot page must show the Save Settings button.")
         XCTAssertTrue(
             waitForSaveEnabled(app: app, saveButton: saveButton, timeout: TestWait.seconds(.infrastructure(45))),
@@ -109,7 +109,8 @@ extension StrictE2EFilterIOSUITests {
         attachStrictE2EScreenshot(app: app, name: "\(evidencePrefix)-connection-passed-\(currentDeviceTag())")
         tapElement(saveButton)
         XCTAssertTrue(
-            app.buttons["mode.random.button"].waitForExistence(timeout: TestWait.seconds(.product(15))),
+            app.buttons["mode.random.button"].waitForPublicElement(
+                "mode.random.button", timeout: TestWait.seconds(.product(15))),
             "A successful save must lead to mode selection.")
         XCTAssertTrue(app.buttons["mode.filtered.button"].exists, "Mode page must also offer the filter option.")
         attachStrictE2EScreenshot(app: app, name: "\(evidencePrefix)-mode-selection-\(currentDeviceTag())")
@@ -122,13 +123,13 @@ extension StrictE2EFilterIOSUITests {
             app.switches[identifier].exists
             ? app.switches[identifier]
             : app.descendants(matching: .any)[identifier].firstMatch
-        guard exif.waitForExistence(timeout: TestWait.seconds(.product(6))),
+        guard exif.waitForFailureEvidence(timeout: TestWait.seconds(.product(6))),
             let value = exif.value as? String, ["0", "1"].contains(value)
         else {
             throw StrictE2EPhotoIdentity.AssertionError.message(
                 "The real EXIF switch must be read before capturing display policy evidence")
         }
-        if value == "1" { exif.tap() }
+        if value == "1" { exif.tapForFailureEvidence() }
         guard waitUntil(timeout: TestWait.seconds(.product(4)), condition: { (exif.value as? String) == "0" }) else {
             throw StrictE2EPhotoIdentity.AssertionError.message(
                 "EXIF must be turned off through real settings before display policy screenshots")
@@ -139,14 +140,15 @@ extension StrictE2EFilterIOSUITests {
     func fillFirstBootForm(app: XCUIApplication, input: StrictE2EInput) throws {
         let serverField = app.textFields["firstboot.serverURL.field"]
         XCTAssertTrue(
-            serverField.waitForExistence(timeout: TestWait.seconds(.infrastructure(20))),
+            serverField.waitForPublicElement(
+                "firstboot.serverURL.field", timeout: TestWait.seconds(.infrastructure(20))),
             "A fresh install must open the normal first-boot page.")
         replaceText(
             in: serverField, app: app, with: input.serverURL, evidenceName: "firstboot-url-replace",
             shouldRequireExactValue: true)
         let apiKeyField = app.secureTextFields["firstboot.apiKey.field"]
         XCTAssertTrue(
-            apiKeyField.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            apiKeyField.waitForPublicElement("firstboot.apiKey.field", timeout: TestWait.seconds(.infrastructure(8))),
             "First-boot page must show the API Key field.")
         replaceText(
             in: apiKeyField, app: app, with: input.publicKey, evidenceName: "firstboot-apikey-replace",
@@ -193,7 +195,7 @@ extension StrictE2EFilterIOSUITests {
             if back.exists && back.isHittable { return }
             let entry = app.buttons["filterSummary.album.button"]
             if !didTap && entry.exists && entry.isHittable {
-                entry.tap()
+                entry.tapForFailureEvidence()
                 didTap = true
             }
             RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.2))))
@@ -206,8 +208,8 @@ extension StrictE2EFilterIOSUITests {
     func openAlbumFilter(app: XCUIApplication) {
         tapElement(app.buttons["filterSummary.album.button"])
         XCTAssertTrue(
-            app.buttons["albumFilter.back.button"].waitForExistence(timeout: TestWait.seconds(.product(12)))
-                || app.buttons["albumFilter.selectAll.button"].waitForExistence(
+            app.buttons["albumFilter.back.button"].waitForFailureEvidence(timeout: TestWait.seconds(.product(12)))
+                || app.buttons["albumFilter.selectAll.button"].waitForFailureEvidence(
                     timeout: TestWait.seconds(.product(2))),
             "Album filter page must open"
         )
@@ -217,8 +219,8 @@ extension StrictE2EFilterIOSUITests {
     func openPersonFilter(app: XCUIApplication) {
         tapElement(app.buttons["filterSummary.person.button"])
         XCTAssertTrue(
-            app.buttons["personFilter.back.button"].waitForExistence(timeout: TestWait.seconds(.product(12)))
-                || app.buttons["personFilter.selectAll.button"].waitForExistence(
+            app.buttons["personFilter.back.button"].waitForFailureEvidence(timeout: TestWait.seconds(.product(12)))
+                || app.buttons["personFilter.selectAll.button"].waitForFailureEvidence(
                     timeout: TestWait.seconds(.product(2))),
             "Person filter page must open"
         )
@@ -228,27 +230,28 @@ extension StrictE2EFilterIOSUITests {
     func openAlbumFilterFromEditor(app: XCUIApplication) {
         let entry = app.buttons["filter.editor.album.entry"]
         XCTAssertTrue(
-            entry.waitForExistence(timeout: TestWait.seconds(.product(10))),
+            entry.waitForFailureEvidence(timeout: TestWait.seconds(.product(10))),
             "Filter editor must offer the album entry")
         tapElement(entry)
-        _ = app.buttons["albumFilter.back.button"].waitForExistence(timeout: TestWait.seconds(.product(12)))
+        _ = app.buttons["albumFilter.back.button"].waitForFailureEvidence(timeout: TestWait.seconds(.product(12)))
     }
 
     @MainActor
     func openPersonFilterFromEditor(app: XCUIApplication) {
         let entry = app.buttons["filter.editor.person.entry"]
         XCTAssertTrue(
-            entry.waitForExistence(timeout: TestWait.seconds(.product(10))),
+            entry.waitForFailureEvidence(timeout: TestWait.seconds(.product(10))),
             "Filter editor must offer the person entry")
         tapElement(entry)
-        _ = app.buttons["personFilter.back.button"].waitForExistence(timeout: TestWait.seconds(.product(12)))
+        _ = app.buttons["personFilter.back.button"].waitForFailureEvidence(timeout: TestWait.seconds(.product(12)))
     }
 
     @MainActor
     func selectAlbum(app: XCUIApplication, albumID: String) {
         let button = app.buttons["albumFilter.album.\(albumID).button"]
         XCTAssertTrue(
-            button.waitForExistence(timeout: TestWait.seconds(.infrastructure(20))), "Album \(albumID) must appear")
+            button.waitForFailureEvidence(timeout: TestWait.seconds(.infrastructure(20))),
+            "Album \(albumID) must appear")
         tapElement(button)
     }
 
@@ -256,7 +259,7 @@ extension StrictE2EFilterIOSUITests {
     func setAlbumSelection(app: XCUIApplication, albumID: String, isSelectionRequested: Bool) {
         let card = albumCard(app: app, albumID: albumID)
         XCTAssertTrue(
-            card.waitForExistence(timeout: TestWait.seconds(.infrastructure(20))), "Album \(albumID) must appear")
+            card.waitForFailureEvidence(timeout: TestWait.seconds(.infrastructure(20))), "Album \(albumID) must appear")
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(12))) {
                 if self.isSystemSavePasswordPromptVisible(app: app) {
@@ -273,7 +276,7 @@ extension StrictE2EFilterIOSUITests {
                 XCTFail("Before the tap, the album must still be visible and not covered by a system prompt")
                 return
             }
-            card.tap()
+            card.tapForFailureEvidence()
         }
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(6))) {
@@ -337,7 +340,7 @@ extension StrictE2EFilterIOSUITests {
                 // ui-label-lookup: Dismiss the iOS Save Password sheet without saving credentials.
                 let later = prompt.buttons["以后"].exists ? prompt.buttons["以后"] : prompt.buttons["Not Now"]
                 guard later.exists else { continue }
-                later.tap()
+                later.tapForFailureEvidence()
                 _ = waitUntil(timeout: TestWait.seconds(.product(2))) {
                     !self.isSystemSavePasswordPromptVisible(app: app)
                 }
@@ -357,7 +360,7 @@ extension StrictE2EFilterIOSUITests {
             // ui-label-lookup: Verify the public fixture person name after locating its card by identifier.
             .matching(NSPredicate(format: "label ENDSWITH %@", " Synthetic"))
         XCTAssertTrue(
-            names.firstMatch.waitForExistence(timeout: TestWait.seconds(.infrastructure(20))),
+            names.firstMatch.waitForFailureEvidence(timeout: TestWait.seconds(.infrastructure(20))),
             "The target public fixture person name must appear")
         XCTAssertEqual(
             names.count, 1, "Target person name must be unique; do not pick an arbitrary node with the same identifier")
@@ -377,13 +380,13 @@ extension StrictE2EFilterIOSUITests {
             tapElement(card)
         }
         XCTAssertTrue(
-            toggle.waitForExistence(timeout: TestWait.seconds(.product(6))),
+            toggle.waitForFailureEvidence(timeout: TestWait.seconds(.product(6))),
             "Solo-only switch must appear after selecting the person")
         let isOn = (toggle.value as? String) == "1"
         if isSoloOnly != isOn {
             // Tap the actual knob on the right of the switch; tapping the middle of the combined SwiftUI label
             // may not toggle the value.
-            toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+            toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tapForFailureEvidence()
         }
         assertPersonNavigation(
             waitUntil(timeout: TestWait.seconds(.product(6))) { (toggle.value as? String) == (isSoloOnly ? "1" : "0") },
@@ -394,7 +397,7 @@ extension StrictE2EFilterIOSUITests {
     func returnFromAlbumFilter(app: XCUIApplication) {
         let back = app.buttons["albumFilter.back.button"]
         XCTAssertTrue(
-            back.waitForExistence(timeout: TestWait.seconds(.product(8))), "Album filter must be able to go back"
+            back.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))), "Album filter must be able to go back"
         )
         tapElement(back)
     }
@@ -403,9 +406,9 @@ extension StrictE2EFilterIOSUITests {
     func returnFromPersonFilter(app: XCUIApplication) {
         let back = app.buttons["personFilter.back.button"]
         XCTAssertTrue(
-            back.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            back.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
             "Person filter must be able to go back")
-        back.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        back.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tapForFailureEvidence()
     }
 
     @MainActor

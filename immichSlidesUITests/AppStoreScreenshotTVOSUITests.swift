@@ -3,6 +3,16 @@ import XCTest
 
 #if os(tvOS)
 final class AppStoreScreenshotTVOSUITests: XCTestCase {
+    override func invokeTest() {
+        FirstFailureContext.reset()
+        super.invokeTest()
+    }
+
+    override func record(_ issue: XCTIssue) {
+        FirstFailureEvidence.record(self, issue: issue)
+        super.record(issue)
+    }
+
     // Current export locale; the older zh-Hans-only tests keep the default.
     var localeSpec = AppStoreScreenshotLocaleSpec.zhHans
     let platformGroup = "tvOS_4K"

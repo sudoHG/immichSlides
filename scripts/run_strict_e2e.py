@@ -213,6 +213,8 @@ def export_private_result_bundle(
     summary_timeout_seconds: float | None = None,
     export_timeout_seconds: float = OFFICIAL_EXPORT_TIMEOUT_SECONDS,
     enrich_failure_diagnostics: bool = False,
+    first_failure_spool=None,
+    first_failure_images=None,
 ) -> str:
     from ci_flaky import official_result_step
     try:
@@ -258,6 +260,11 @@ def export_private_result_bundle(
             for node in failed:
                 key = str(node.get("nodeIdentifier", "")).removesuffix("()")
                 node.update(diagnostics.get(key, unknown_diagnostics()))
+            if first_failure_spool is not None:
+                from ci_failure_diagnostics import collect_first_failure_spool
+                directory, selectors = first_failure_spool
+                collect_first_failure_spool(directory, selectors, failed,
+                    first_failure_images or evidence_dir / ("first-failure" + suffix))
             exported = (json.dumps(payload, sort_keys=True) + "\n").encode()
     (evidence_dir / f"official-tests{suffix}.json").write_bytes(exported)
     summary_path = evidence_dir / f"official-summary{suffix}.json"
@@ -753,6 +760,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
     result_bundle_path: Path | None = None
     private_bundles: list[tuple[Path, str]] = []
     private_test_runs: list[Path] = []
+    first_failure_spools = {}
     official_tests_digests: dict[str, str] = {}
 
     def record_timeout(error: InfrastructureTimeout) -> None:
@@ -928,6 +936,25 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         retry_sessions = {}
         def execute_case(command, log_path):
             nonlocal effective_result_bundle
+            from ci_failure_diagnostics import configure_first_failure_attempt, first_failure_environment
+            selectors = ([session["selector"] for session in FILTER_PERSON_SESSIONS] if arguments.suite == "filter-person"
+                         else [resolve_suite_selector(arguments.platform, arguments.suite)])
+            def configure_call(call, number):
+                bundle = Path(call[call.index("-resultBundlePath") + 1])
+                spool = bundle.parent / "first-failure-spool"
+                if "-xctestrun" in call:
+                    try:
+                        configured, prepared = configure_first_failure_attempt(call, spool, selectors)
+                        private_test_runs.append(prepared)
+                        first_failure_spools[bundle] = (spool, selectors, number)
+                        return configured
+                    except (OSError, ValueError, TypeError, KeyError):
+                        # Calls retain the recorder-disabled baseline; configuration failure cannot reuse a spool.
+                        pass
+                else:
+                    environment.update(first_failure_environment(spool, selectors))
+                    first_failure_spools[bundle] = (spool, selectors, number)
+                return call
             from ci_flaky import check_retry_flags
             check_retry_flags(command)
             if arguments.listed_retry_device:
@@ -957,12 +984,13 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                             if path == original:
                                 private_bundles[index] = (path, suffix + "-attempt-1")
                         private_bundles.append((attempt_bundle, "-" + log_path.stem + "-attempt-2"))
+                    configured = configure_call(call, 1 if call == command else 2)
                     ensure_disk_for_xcodebuild(data_available_gib, arguments.min_free_gib)
                     started = time.monotonic()
                     code = None
                     products_unchanged = False
                     try:
-                        code = run_command(call, cwd=REPO_ROOT, environment=environment, log_path=log_path,
+                        code = run_command(configured, cwd=REPO_ROOT, environment=environment, log_path=log_path,
                                            timeout_seconds=arguments.warm_timeout_seconds)
                     except CommandError as error:
                         code = 124 if isinstance(error.__cause__, subprocess.TimeoutExpired) else error.code
@@ -1005,6 +1033,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                     if len(record["attempts"]) > 1:
                         print(f"{record['identity']['key']}: {record['outcome']}, attempts=2", file=stdout, flush=True)
                 return retry_result["exit_code"]
+            command = configure_call(command, 1)
             started = time.monotonic()
             code = run_command(command, cwd=REPO_ROOT, environment=environment, log_path=log_path,
                                timeout_seconds=arguments.warm_timeout_seconds if warm_receipt is not None else XCODEBUILD_TIMEOUT_SECONDS)
@@ -1184,19 +1213,21 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         (arguments.evidence_dir / "official-summary.json").write_text(
             json.dumps(summary_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
-        if arguments.suite in P2_CASES:
-            visual_payload = require_p2_evidence(
-                arguments.evidence_dir,
-                suite=arguments.suite,
-                platform=arguments.platform,
-                simulator_udid=simulator_udid,
-                fixture_set=arguments.fixture_set,
-                result_bundle_path=result_bundle_path,
-            )
-            if case_manifest is not None:
-                case_manifest.update(visual_payload["execution"])
-        else:
-            visual_payload = require_visual_identity(arguments.evidence_dir, arguments.suite, fixture_set=arguments.fixture_set)
+        from ci_failure_diagnostics import public_fixture_validator_scope
+        with public_fixture_validator_scope(arguments.evidence_dir, screenshots=True):
+            if arguments.suite in P2_CASES:
+                visual_payload = require_p2_evidence(
+                    arguments.evidence_dir,
+                    suite=arguments.suite,
+                    platform=arguments.platform,
+                    simulator_udid=simulator_udid,
+                    fixture_set=arguments.fixture_set,
+                    result_bundle_path=result_bundle_path,
+                )
+                if case_manifest is not None:
+                    case_manifest.update(visual_payload["execution"])
+            else:
+                visual_payload = require_visual_identity(arguments.evidence_dir, arguments.suite, fixture_set=arguments.fixture_set)
         if case_manifest is not None:
             case_manifest["result"] = ("flaky-passed" if any(record["outcome"] == "flaky-passed"
                                                           for record in case_manifest.get("retry_observations", [])) else summary.result)
@@ -1233,11 +1264,17 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                 digest = export_private_result_bundle(
                     bundle, arguments.evidence_dir, [PUBLIC_API_KEY, WRONG_PUBLIC_API_KEY], suffix=suffix,
                     enrich_failure_diagnostics=True,
+                    first_failure_spool=first_failure_spools[bundle][:2] if bundle in first_failure_spools else None,
                 )
             except InfrastructureTimeout as error:
                 record_timeout(error)
                 raise
             official_tests_digests[suffix] = digest
+            if case_manifest is not None and bundle in first_failure_spools:
+                from ci_failure_diagnostics import attach_first_failures
+                attach_first_failures(case_manifest.get("retry_observations", []),
+                    json.loads((arguments.evidence_dir / ("official-tests" + suffix + ".json")).read_text()),
+                    first_failure_spools[bundle][2])
             if case_manifest is not None:
                 if bundle == result_bundle_path:
                     case_manifest["official_tests_sha256"] = digest
@@ -1320,6 +1357,8 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                 cleanup_failures.append(f"sensitive_scan: {error}")
 
         successful = did_complete_checks and primary_exit_code == 0 and not cleanup_failures
+        for spool, _selectors, _number in first_failure_spools.values():
+            shutil.rmtree(spool, ignore_errors=True)
         for bundle, suffix in private_bundles:
             cleanup_failures.extend(finalize_private_result_bundle(
                 bundle, arguments.evidence_dir, official_tests_digests.get(suffix),

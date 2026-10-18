@@ -56,7 +56,7 @@ extension StrictE2EFilterIOSUITests {
     ) {
         let modeButton = firstBootControl(in: app, identifier: identifier)
         XCTAssertTrue(
-            modeButton.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            modeButton.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
             "Mode page must offer \(identifier).")
         let continueButton = firstBootControl(in: app, identifier: "mode.continue.button")
         // The system Save Password prompt may cover the card late; after handling the named prompt,
@@ -75,7 +75,7 @@ extension StrictE2EFilterIOSUITests {
             if waitUntil(
                 timeout: TestWait.seconds(.product(4)), condition: { modeButton.exists && modeButton.isHittable }
             ) {
-                modeButton.tap()
+                modeButton.tapForFailureEvidence()
             } else {
                 let matches = app.buttons.matching(identifier: identifier)
                 let frame = modeButton.frame
@@ -102,7 +102,7 @@ extension StrictE2EFilterIOSUITests {
                 }
                 // When XCTest's hittable flag is wrong, tap only the center of the single visible button;
                 // the selection and page checks below still decide the result.
-                modeButton.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+                modeButton.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tapForFailureEvidence()
             }
             _ = waitUntil(timeout: TestWait.seconds(.product(4))) {
                 self.isSystemSavePasswordPromptVisible(app: app) || self.isOnboardingModeSelected(modeButton)
@@ -120,7 +120,7 @@ extension StrictE2EFilterIOSUITests {
             isOnboardingModeSelected(modeButton),
             "Target mode card must be selected before Continue; do not rely on Continue with the default random mode"
         )
-        continueButton.tap()
+        continueButton.tapForFailureEvidence()
         // The password prompt may appear only after tapping Continue; resend the blocked Continue once,
         // and only if the prompt was actually dismissed.
         let departureDeadline = Date().addingTimeInterval(TestWait.seconds(.product(8)))
@@ -140,7 +140,7 @@ extension StrictE2EFilterIOSUITests {
                         XCTFail("Target mode must stay selected after the prompt goes away")
                         return
                     }
-                    continueButton.tap()
+                    continueButton.tapForFailureEvidence()
                 }
             }
             // A cold-start password sheet can arrive after the mode page disappears. Keep observing
@@ -159,7 +159,9 @@ extension StrictE2EFilterIOSUITests {
     func pausePlaybackIfNeeded(app: XCUIApplication) {
         revealPlaybackControls(app: app)
         let playPause = app.buttons["slideshow.control.playPause.button"]
-        guard playPause.waitForExistence(timeout: TestWait.seconds(.product(4))) else { return }
+        guard
+            playPause.waitForPublicElement("slideshow.control.playPause.button", timeout: TestWait.seconds(.product(4)))
+        else { return }
         if playPauseState(playPause) != "play" {
             tapElement(playPause)
         }
@@ -171,7 +173,7 @@ extension StrictE2EFilterIOSUITests {
         _ = waitUntil(timeout: TestWait.seconds(.product(4))) {
             let settings = app.buttons["slideshow.control.settings.button"]
             if settings.exists && settings.isHittable { return true }
-            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tap()
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tapForFailureEvidence()
             return false
         }
     }
@@ -181,7 +183,7 @@ extension StrictE2EFilterIOSUITests {
         waitUntil(timeout: timeout) {
             let settings = app.buttons["slideshow.control.settings.button"]
             if settings.exists && settings.isHittable { return true }
-            app.tap()
+            app.tapForFailureEvidence()
             return false
         }
     }
@@ -189,7 +191,7 @@ extension StrictE2EFilterIOSUITests {
     @MainActor
     func dismissPlaybackEntryHintIfNeeded(app: XCUIApplication) {
         let banner = app.descendants(matching: .any)["slideshow.entryHint.banner"]
-        if banner.waitForExistence(timeout: TestWait.seconds(.product(2))) {
+        if banner.waitForFailureEvidence(timeout: TestWait.seconds(.product(2))) {
             tapElement(banner)
             _ = waitUntil(timeout: TestWait.seconds(.product(2))) { !banner.exists }
         }
@@ -202,7 +204,7 @@ extension StrictE2EFilterIOSUITests {
             identifier: "firstboot.testConnection.button"
         )
         XCTAssertTrue(
-            testConnectionButton.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            testConnectionButton.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
             "Test Connection must be shown")
         tapElement(testConnectionButton)
     }
@@ -225,9 +227,9 @@ extension StrictE2EFilterIOSUITests {
         evidenceName: String,
         shouldRequireExactValue: Bool
     ) {
-        field.tap()
+        field.tapForFailureEvidence()
         clearTextFieldOrFail(field, app: app, evidenceName: evidenceName)
-        field.typeText(value)
+        field.typeForFailureEvidence(value)
         guard shouldRequireExactValue else { return }
         let actual = field.value as? String ?? ""
         if actual != value {
@@ -246,11 +248,11 @@ extension StrictE2EFilterIOSUITests {
         let menuItem = app.menuItems.matching(NSPredicate(format: "label IN %@", selectAllLabels)).firstMatch
         let button = app.buttons.matching(NSPredicate(format: "label IN %@", selectAllLabels)).firstMatch
         if menuItem.exists {
-            menuItem.tap()
+            menuItem.tapForFailureEvidence()
         } else if button.exists {
-            button.tap()
+            button.tapForFailureEvidence()
         }
-        field.typeText(XCUIKeyboardKey.delete.rawValue)
+        field.typeForFailureEvidence(XCUIKeyboardKey.delete.rawValue)
         if !isTextFieldEmpty(field) {
             _ = captureNamedPNG(app: app, name: "\(evidenceName)-clear-failed")
             XCTFail("Failed to clear the URL field; read back \(field.value as? String ?? "")")
@@ -272,7 +274,7 @@ extension StrictE2EFilterIOSUITests {
     func commitFocusedInputIfNeeded(app: XCUIApplication) {
         let done = app.buttons["server.keyboard.done.button"]
         if done.exists && done.isHittable {
-            done.tap()
+            done.tapForFailureEvidence()
             return
         }
         // ui-label-lookup: System keyboard submit keys follow the simulator language.
@@ -280,7 +282,7 @@ extension StrictE2EFilterIOSUITests {
             // ui-label-lookup: System keyboard submit keys follow the simulator language.
             let button = app.keyboards.buttons[label]
             if button.exists && button.isHittable {
-                button.tap()
+                button.tapForFailureEvidence()
                 return
             }
         }
@@ -312,7 +314,7 @@ extension StrictE2EFilterIOSUITests {
             // ui-label-lookup: The permission action belongs to SpringBoard.
             let button = springboard.alerts.buttons[label]
             if button.exists {
-                button.tap()
+                button.tapForFailureEvidence()
                 return
             }
         }
@@ -326,9 +328,9 @@ extension StrictE2EFilterIOSUITests {
 
     func tapElement(_ element: XCUIElement) {
         if element.isHittable {
-            element.tap()
+            element.tapForFailureEvidence()
         } else {
-            element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tapForFailureEvidence()
         }
     }
 

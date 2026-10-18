@@ -31,6 +31,9 @@ DECLARED_NAME_RE = re.compile(r"\b(?:let|var|func|case|class|struct|enum|extensi
 TOKEN_RE = re.compile(r"\b[A-Za-z_]\w*\b")
 DELEGATE_RE = re.compile(r"AccessibilityI(?:D|dentifier)$")
 LEXEME_START = re.compile(r"[`\"'/#]")
+EVIDENCE_CAPTURE = ("immichSlidesUITests/UITestSupport.swift", "FirstFailureEvidence", "capture")
+UI_ACTION = re.compile(r"^(?:tap|doubleTap|twoFingerTap|press|typeText|adjust|coordinate|launch|activate|terminate|open|swipe\w*|pinch\w*|rotate\w*|drag\w*)$")
+UI_ORIENTATION_ASSIGNMENT = re.compile(r"\bXCUIDevice\s*\.\s*shared\s*\.\s*orientation\s*=(?!=)")
 
 
 def identifier_literals(text):
@@ -144,6 +147,7 @@ class FlowGraph:
         self.symbols = {}  # name -> [(called, owner, file, start, end)]
         self.methods = {}  # (type, name) -> [(file, start, end)]
         self.cache = {}
+        self.evidence_capture = None
         for source in self.files:
             code, bodies = source.code, []
             for match in FUNC_RE.finditer(code):
@@ -154,6 +158,9 @@ class FlowGraph:
                 span = (brace, matching_brace(code, brace))
                 bodies.append(span)
                 owner = source.owner(match.start())
+                if (source.name, owner, match[2]) == EVIDENCE_CAPTURE:
+                    require(self.evidence_capture is None, "duplicate FirstFailureEvidence.capture")
+                    self.evidence_capture = (source, *span)
                 self.symbols.setdefault(match[2], []).append((True, owner, source, *span))
                 self.methods.setdefault((owner, match[2]), []).append((source, *span))
             for match in COMPUTED_RE.finditer(code):
@@ -177,6 +184,11 @@ class FlowGraph:
         return own or [symbol for symbol in candidates if symbol[1] not in self.test_classes]
 
     def edges(self, source, start, end, platform):
+        if self.evidence_capture == (source, start, end):
+            return set(), []
+        return self._edges(source, start, end, platform)
+
+    def _edges(self, source, start, end, platform):
         key = (source.name, start, platform)
         if key not in self.cache:
             caller = source.owner(start)
@@ -185,6 +197,29 @@ class FlowGraph:
                 for name, called, receiver in source.references(start, end, platform)
                 for _called, _owner, target, target_start, target_end in self.resolve(name, called, receiver, caller)])
         return self.cache[key]
+
+    def validate_evidence_capture(self):
+        """Reject listed UI actions and orientation writes in the excluded helper graph."""
+        if self.evidence_capture is None:
+            return
+        source, start, end = self.evidence_capture
+        for platform in ("ios", "tvos"):
+            pending, seen = [(source, start, end)], set()
+            while pending:
+                current, body_start, body_end = pending.pop()
+                key = (current.name, body_start)
+                if key in seen:
+                    continue
+                seen.add(key)
+                for match in UI_ORIENTATION_ASSIGNMENT.finditer(current.code, body_start, body_end):
+                    if platform in current.platforms_at(match.start()):
+                        raise ValueError(f"{current.name}: evidence-only FirstFailureEvidence.capture reaches UI action orientation assignment")
+                references = sorted(current.references(body_start, body_end, platform), key=lambda item: item[0])
+                for name, called, _receiver in references:
+                    if called and UI_ACTION.fullmatch(name):
+                        raise ValueError(f"{current.name}: evidence-only FirstFailureEvidence.capture reaches UI action {name}")
+                _patterns, targets = self._edges(current, body_start, body_end, platform)
+                pending.extend(targets)
 
     def test_patterns(self, key, platform):
         owner, _, method = key.partition("/")
@@ -269,6 +304,7 @@ def flow_violations(raw_map, raw_exceptions, app_files, test_files, populations,
     require(all(set(item.get("areas", [])) <= set(area_map["nightly_default"]) for item in exceptions),
             "UI flow navigation sources apply only to nightly-default areas")
     graph = FlowGraph(test_files)
+    graph.validate_evidence_capture()
     definitions = app_patterns(app_files)
     defining = {}  # (platform, used pattern) -> app paths with an overlapping literal
     used, violations, path_areas = set(), set(), {}

@@ -31,7 +31,7 @@ extension immichSlidesUITests {
             app.launchEnvironment["UI_TEST_EXPECTED_CONNECTION_SERVER_URL"] = config.serverURL
             app.launchEnvironment["UI_TEST_EXPECTED_CONNECTION_API_KEY"] = config.apiKey
         }
-        app.launch()
+        app.launchForFailureEvidence()
         return app
     }
 
@@ -59,10 +59,11 @@ extension immichSlidesUITests {
         app.launchEnvironment["UI_TEST_FORCE_MODE_SELECTION"] = "1"
         app.launchEnvironment["UI_TEST_SERVER_URL"] = config.url
         app.launchEnvironment["UI_TEST_API_KEY"] = config.apiKey
-        app.launch()
+        app.launchForFailureEvidence()
 
         XCTAssertTrue(
-            app.buttons["mode.continue.button"].waitForExistence(
+            app.buttons["mode.continue.button"].waitForPublicElement(
+                "mode.continue.button",
                 timeout: immichSlidesUITestsWaitTiming.navigationTimeoutSeconds),
             "After injecting the test server at launch, the app should go straight to mode selection"
         )
@@ -71,7 +72,8 @@ extension immichSlidesUITests {
 
     func assertModeSelectionCoreElements(app: XCUIApplication) {
         XCTAssertTrue(
-            app.buttons["mode.random.button"].waitForExistence(
+            app.buttons["mode.random.button"].waitForPublicElement(
+                "mode.random.button",
                 timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
         XCTAssertTrue(app.buttons["mode.filtered.button"].exists)
         XCTAssertTrue(app.buttons["mode.continue.button"].exists)
@@ -79,49 +81,58 @@ extension immichSlidesUITests {
 
     func completeFirstBootToModeSelection(app: XCUIApplication, serverURL: String, apiKey: String) throws {
         let serverField = app.textFields["firstboot.serverURL.field"]
-        guard serverField.waitForExistence(timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds)
+        guard
+            serverField.waitForPublicElement(
+                "firstboot.serverURL.field", timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds)
         else {
             throw XCTSkip("Not in first-boot state; skipping first-boot flow assertions.")
         }
-        serverField.tap()
+        serverField.tapForFailureEvidence()
         serverField.immichSlidesUITestsClearAndType(text: serverURL)
 
         let apiField = app.secureTextFields["firstboot.apiKey.field"]
-        XCTAssertTrue(apiField.waitForExistence(timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
-        apiField.tap()
+        XCTAssertTrue(
+            apiField.waitForPublicElement(
+                "firstboot.apiKey.field", timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
+        apiField.tapForFailureEvidence()
         apiField.immichSlidesUITestsClearAndType(text: apiKey)
 
         let testConnectionButton = app.buttons["firstboot.testConnection.button"]
         XCTAssertTrue(
-            testConnectionButton.waitForExistence(
+            testConnectionButton.waitForPublicElement(
+                "firstboot.testConnection.button",
                 timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
         // Do not tap empty space to dismiss the keyboard first; on small screens that may hit the keyboard. Use
         // XCUIElement.tap instead, which scrolls the element into view.
 
-        testConnectionButton.tap()
+        testConnectionButton.tapForFailureEvidence()
 
         let saveButton = app.buttons["firstboot.saveConfig.button"]
         XCTAssertTrue(
-            saveButton.waitForExistence(timeout: immichSlidesUITestsWaitTiming.controlAppearanceTimeoutSeconds))
+            saveButton.waitForPublicElement(
+                "firstboot.saveConfig.button", timeout: immichSlidesUITestsWaitTiming.controlAppearanceTimeoutSeconds))
         let saveEnabledExpectation = NSPredicate(format: "isEnabled == true")
         let saveEnabledWait = expectation(for: saveEnabledExpectation, evaluatedWith: saveButton)
         wait(for: [saveEnabledWait], timeout: TestWait.seconds(.infrastructure(45)))
         tapElement(saveButton)
 
         XCTAssertTrue(
-            app.buttons["mode.continue.button"].waitForExistence(
+            app.buttons["mode.continue.button"].waitForPublicElement(
+                "mode.continue.button",
                 timeout: immichSlidesUITestsWaitTiming.navigationTimeoutSeconds))
     }
 
     func startRandomPlaybackFromModeSelection(app: XCUIApplication) {
         let modeRandomButton = app.buttons["mode.random.button"]
         XCTAssertTrue(
-            modeRandomButton.waitForExistence(timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
+            modeRandomButton.waitForPublicElement(
+                "mode.random.button", timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
         tapElement(modeRandomButton)
 
         let modeContinueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            modeContinueButton.waitForExistence(timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
+            modeContinueButton.waitForPublicElement(
+                "mode.continue.button", timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
         XCTAssertTrue(modeContinueButton.isEnabled)
         tapElement(modeContinueButton)
 
@@ -131,17 +142,19 @@ extension immichSlidesUITests {
     func startFilteredFlowFromModeSelection(app: XCUIApplication) {
         let modeFilteredButton = app.buttons["mode.filtered.button"]
         XCTAssertTrue(
-            modeFilteredButton.waitForExistence(timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
+            modeFilteredButton.waitForPublicElement(
+                "mode.filtered.button", timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
         tapElement(modeFilteredButton)
 
         let modeContinueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            modeContinueButton.waitForExistence(timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
+            modeContinueButton.waitForPublicElement(
+                "mode.continue.button", timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
         XCTAssertTrue(modeContinueButton.isEnabled)
         tapElement(modeContinueButton)
 
         XCTAssertTrue(
-            app.buttons["filterSummary.startPlayback.button"].waitForExistence(
+            app.buttons["filterSummary.startPlayback.button"].waitForFailureEvidence(
                 timeout: immichSlidesUITestsWaitTiming.navigationTimeoutSeconds))
     }
 
@@ -155,9 +168,9 @@ extension immichSlidesUITests {
     func openAccessProtectionSectionIfNeeded(app: XCUIApplication) {
         openSettingsSection(app: app, sectionID: "settings.item.accessProtection")
         XCTAssertTrue(
-            app.buttons["settings.pin.enable.button"].waitForExistence(
+            app.buttons["settings.pin.enable.button"].waitForFailureEvidence(
                 timeout: immichSlidesUITestsWaitTiming.controlAppearanceTimeoutSeconds)
-                || app.buttons["settings.pin.disable.button"].waitForExistence(
+                || app.buttons["settings.pin.disable.button"].waitForFailureEvidence(
                     timeout: immichSlidesUITestsWaitTiming.controlAppearanceTimeoutSeconds)
         )
     }
@@ -166,7 +179,7 @@ extension immichSlidesUITests {
         let sidebar = app.buttons["ToggleSidebar"]
         // ui-label-lookup: System navigation supplies the sidebar button label.
         if sidebar.exists && (sidebar.label == "显示边栏" || sidebar.label == "Show Sidebar") {
-            sidebar.tap()
+            sidebar.tapForFailureEvidence()
         }
         // A detail page hides the list, so pop back before retrying the section identifier.
         for attempt in 0..<6 {
@@ -176,9 +189,9 @@ extension immichSlidesUITests {
                 app.otherElements[sectionID]
             ]
             for candidate in typedCandidates {
-                if candidate.waitForExistence(timeout: immichSlidesUITestsWaitTiming.briefElementTimeoutSeconds) {
+                if candidate.waitForFailureEvidence(timeout: immichSlidesUITestsWaitTiming.briefElementTimeoutSeconds) {
                     if candidate.isHittable {
-                        candidate.tap()
+                        candidate.tapForFailureEvidence()
                         return
                     }
                     tapElement(candidate)
@@ -187,21 +200,22 @@ extension immichSlidesUITests {
             }
 
             let identifiedEntry = app.descendants(matching: .any)[sectionID].firstMatch
-            if identifiedEntry.waitForExistence(timeout: immichSlidesUITestsWaitTiming.briefElementTimeoutSeconds) {
+            if identifiedEntry.waitForFailureEvidence(timeout: immichSlidesUITestsWaitTiming.briefElementTimeoutSeconds)
+            {
                 tapElement(identifiedEntry)
                 return
             }
 
             let navBack = app.navigationBars.buttons.firstMatch
             if navBack.exists && navBack.isHittable {
-                navBack.tap()
+                navBack.tapForFailureEvidence()
                 RunLoop.current.run(until: Date().addingTimeInterval(immichSlidesUITestsWaitTiming.readbackPollSeconds))
             }
 
             if attempt % 2 == 0 {
-                app.swipeUp()
+                app.swipeUpForFailureEvidence()
             } else {
-                app.swipeDown()
+                app.swipeDownForFailureEvidence()
             }
         }
     }
@@ -209,32 +223,34 @@ extension immichSlidesUITests {
     func tapSettingsPinInput(app: XCUIApplication, id: String) {
         let pinInputButton = app.buttons[id]
         XCTAssertTrue(
-            pinInputButton.waitForExistence(timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds),
+            pinInputButton.waitForFailureEvidence(
+                timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds),
             "PIN input entry not found: \(id)")
-        pinInputButton.tap()
+        pinInputButton.tapForFailureEvidence()
     }
 
     func inputPinOnSheet(app: XCUIApplication, pin: String) {
         for digit in pin {
             let key = app.buttons["pinEntry.digit.\(digit).button"]
             XCTAssertTrue(
-                key.waitForExistence(timeout: immichSlidesUITestsWaitTiming.shortInteractionTimeoutSeconds),
+                key.waitForFailureEvidence(timeout: immichSlidesUITestsWaitTiming.shortInteractionTimeoutSeconds),
                 "PIN digit key does not exist: \(digit)")
-            key.tap()
+            key.tapForFailureEvidence()
         }
     }
 
     func returnToSlideshowFromSettings(app: XCUIApplication) {
         // Playback hides the control bar after settings dismiss; close any PIN sheet first, then pop back and wake it.
         for _ in 0..<8 {
-            if app.buttons["slideshow.control.settings.button"].waitForExistence(
+            if app.buttons["slideshow.control.settings.button"].waitForPublicElement(
+                "slideshow.control.settings.button",
                 timeout: immichSlidesUITestsWaitTiming.readbackTimeoutSeconds)
             {
                 return
             }
             let closePinEntry = app.buttons["pinEntry.close.button"]
             if closePinEntry.exists {
-                closePinEntry.tap()
+                closePinEntry.tapForFailureEvidence()
                 continue
             }
 
@@ -251,7 +267,7 @@ extension immichSlidesUITests {
                 .last
 
             if let backButton {
-                backButton.tap()
+                backButton.tapForFailureEvidence()
                 RunLoop.current.run(
                     until: Date().addingTimeInterval(immichSlidesUITestsWaitTiming.selectionPollSeconds))
                 continue
@@ -293,7 +309,7 @@ extension immichSlidesUITests {
             if button.exists && button.isHittable {
                 return true
             }
-            app.tap()
+            app.tapForFailureEvidence()
             RunLoop.current.run(until: Date().addingTimeInterval(immichSlidesUITestsWaitTiming.readbackPollSeconds))
         }
         return button.exists
@@ -303,33 +319,34 @@ extension immichSlidesUITests {
         // Prefer the pages' stable back identifiers; the system nav-bar label changes with language.
         for identifier in ["albumFilter.back.button", "personFilter.back.button"] {
             let stableBackButton = app.buttons[identifier]
-            if stableBackButton.waitForExistence(timeout: immichSlidesUITestsWaitTiming.briefElementTimeoutSeconds),
+            if stableBackButton.waitForFailureEvidence(
+                timeout: immichSlidesUITestsWaitTiming.briefElementTimeoutSeconds),
                 stableBackButton.isHittable
             {
-                stableBackButton.tap()
+                stableBackButton.tapForFailureEvidence()
                 return
             }
         }
 
         let explicitBack = app.buttons["global.back.button"]
-        if explicitBack.waitForExistence(timeout: immichSlidesUITestsWaitTiming.shortInteractionTimeoutSeconds),
+        if explicitBack.waitForFailureEvidence(timeout: immichSlidesUITestsWaitTiming.shortInteractionTimeoutSeconds),
             explicitBack.isHittable
         {
-            explicitBack.tap()
+            explicitBack.tapForFailureEvidence()
             return
         }
         let navBack = app.navigationBars.buttons.firstMatch
         if navBack.exists && navBack.isHittable {
-            navBack.tap()
+            navBack.tapForFailureEvidence()
         }
     }
 
     func tapElement(_ element: XCUIElement) {
         if element.isHittable {
-            element.tap()
+            element.tapForFailureEvidence()
             return
         }
-        element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tapForFailureEvidence()
     }
 
     // Non-alert text such as the PIN retry hint retains its stable identifier.
@@ -399,7 +416,7 @@ extension immichSlidesUITests {
             // ui-label-lookup: System keyboard submit keys follow the simulator language.
             let keyboardButton = app.keyboards.buttons[label]
             if keyboardButton.exists && keyboardButton.isHittable {
-                keyboardButton.tap()
+                keyboardButton.tapForFailureEvidence()
                 return
             }
 
@@ -407,12 +424,12 @@ extension immichSlidesUITests {
 
             let appButton = app.buttons["server.keyboard.done.button"].firstMatch
             if appButton.exists && appButton.isHittable {
-                appButton.tap()
+                appButton.tapForFailureEvidence()
                 return
             }
         }
 
-        app.tap()
+        app.tapForFailureEvidence()
     }
 
     func assertInAlbumFilterPage(app: XCUIApplication) {
@@ -479,7 +496,7 @@ extension immichSlidesUITests {
     }
 
     func attachScreenshot(app: XCUIApplication, name: String) {
-        let attachment = XCTAttachment(screenshot: app.screenshot())
+        let attachment = XCTAttachment(screenshot: app.screenshotForFailureEvidence())
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)

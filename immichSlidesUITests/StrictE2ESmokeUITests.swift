@@ -1,6 +1,16 @@
 import XCTest
 
 final class StrictE2ESmokeUITests: XCTestCase {
+    override func invokeTest() {
+        FirstFailureContext.reset()
+        super.invokeTest()
+    }
+
+    override func record(_ issue: XCTIssue) {
+        FirstFailureEvidence.record(self, issue: issue)
+        super.record(issue)
+    }
+
     override func setUpWithError() throws {
         continueAfterFailure = false
     }
@@ -31,16 +41,17 @@ final class StrictE2ESmokeUITests: XCTestCase {
         let input = try requireStrictE2EInput()
         let app = try launchStrictE2EApp()
         defer {
-            let scene = XCTAttachment(screenshot: app.screenshot())
+            let scene = XCTAttachment(screenshot: app.screenshotForFailureEvidence())
             scene.name = "strict-e2e-before-termination"
             scene.lifetime = .keepAlways
             add(scene)
-            app.terminate()
+            app.terminateForFailureEvidence()
         }
 
         let serverField = app.textFields["firstboot.serverURL.field"]
         XCTAssertTrue(
-            serverField.waitForExistence(timeout: TestWait.seconds(.infrastructure(12))),
+            serverField.waitForPublicElement(
+                "firstboot.serverURL.field", timeout: TestWait.seconds(.infrastructure(12))),
             "Fresh install must open the normal first-launch page")
         #if os(iOS)
         replaceText(in: serverField, with: input.serverURL)
@@ -50,7 +61,7 @@ final class StrictE2ESmokeUITests: XCTestCase {
 
         let apiKeyField = app.secureTextFields["firstboot.apiKey.field"]
         XCTAssertTrue(
-            apiKeyField.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            apiKeyField.waitForPublicElement("firstboot.apiKey.field", timeout: TestWait.seconds(.infrastructure(8))),
             "First-launch page must show the API Key field.")
         #if os(iOS)
         replaceText(in: apiKeyField, with: input.publicKey)
@@ -64,15 +75,15 @@ final class StrictE2ESmokeUITests: XCTestCase {
             identifier: "firstboot.testConnection.button"
         )
         XCTAssertTrue(
-            testConnectionButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            testConnectionButton.waitForFailureEvidence(timeout: TestWait.seconds(.infrastructure(8))),
             "First-launch page must show Test Connection.")
         #if os(iOS)
-        testConnectionButton.tap()
+        testConnectionButton.tapForFailureEvidence()
         #else
-        XCUIRemote.shared.press(.down)
-        XCUIRemote.shared.press(.right)
+        FirstFailureRemote.press(.down)
+        FirstFailureRemote.press(.right)
         attachTVOSFocusAudit(app: app)
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         #endif
 
         #if os(iOS)
@@ -81,7 +92,7 @@ final class StrictE2ESmokeUITests: XCTestCase {
             identifier: "firstboot.saveConfig.button"
         )
         XCTAssertTrue(
-            saveButton.waitForExistence(timeout: TestWait.seconds(.infrastructure(8))),
+            saveButton.waitForFailureEvidence(timeout: TestWait.seconds(.infrastructure(8))),
             "First-launch page must show the Save Settings button.")
         let enabled = expectation(
             for: NSPredicate(format: "isEnabled == true"),
@@ -92,7 +103,7 @@ final class StrictE2ESmokeUITests: XCTestCase {
         waitForTVOSConnectionSuccess(in: app, timeout: TestWait.seconds(.infrastructure(45)))
         #endif
 
-        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        let screenshot = XCTAttachment(screenshot: app.screenshotForFailureEvidence())
         screenshot.name = "strict-e2e-connection-reachable"
         screenshot.lifetime = XCTAttachment.Lifetime.keepAlways
         add(screenshot)
@@ -100,21 +111,21 @@ final class StrictE2ESmokeUITests: XCTestCase {
 
     #if os(iOS)
     private func replaceText(in field: XCUIElement, with value: String) {
-        field.tap()
+        field.tapForFailureEvidence()
         if let existingValue = field.value as? String, !existingValue.isEmpty {
-            field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: existingValue.count))
+            field.typeForFailureEvidence(String(repeating: XCUIKeyboardKey.delete.rawValue, count: existingValue.count))
         }
-        field.typeText(value)
+        field.typeForFailureEvidence(value)
     }
     #else
     private func replaceFocusedTVOSText(in field: XCUIElement, app: XCUIApplication, with value: String) {
         XCTAssertTrue(
             waitForTVOSFocus(on: field, timeout: TestWait.seconds(.product(3))),
             "The field must be focused before typing.")
-        XCUIRemote.shared.press(.select)
-        app.typeText(value)
+        FirstFailureRemote.press(.select)
+        app.typeForFailureEvidence(value)
         if field.identifier == "firstboot.serverURL.field" {
-            let typed = XCTAttachment(screenshot: app.screenshot())
+            let typed = XCTAttachment(screenshot: app.screenshotForFailureEvidence())
             typed.name = "strict-e2e-url-before-submit"
             typed.lifetime = .keepAlways
             add(typed)
@@ -124,15 +135,15 @@ final class StrictE2ESmokeUITests: XCTestCase {
             NSPredicate(format: "label IN %@", ["下一项", "Next", "完成", "Done"])
         ).firstMatch
         XCTAssertTrue(
-            submit.waitForExistence(timeout: TestWait.seconds(.product(3))),
+            submit.waitForFailureEvidence(timeout: TestWait.seconds(.product(3))),
             "The system keyboard must have a visible submit button.")
         for _ in 0..<6 {
             if submit.hasFocus { break }
-            XCUIRemote.shared.press(.down)
+            FirstFailureRemote.press(.down)
         }
         XCTAssertTrue(submit.hasFocus, "The system keyboard submit button must be focused before submitting.")
-        XCUIRemote.shared.press(.select)
-        XCUIRemote.shared.press(.menu)
+        FirstFailureRemote.press(.select)
+        FirstFailureRemote.press(.menu)
         if field.identifier == "firstboot.serverURL.field" {
             XCTAssertEqual(
                 field.value as? String, value,
@@ -144,7 +155,7 @@ final class StrictE2ESmokeUITests: XCTestCase {
     }
 
     private func moveTVOSFocusDown(to element: XCUIElement, message: String) {
-        XCUIRemote.shared.press(.down)
+        FirstFailureRemote.press(.down)
         XCTAssertTrue(waitForTVOSFocus(on: element, timeout: TestWait.seconds(.product(3))), message)
     }
 

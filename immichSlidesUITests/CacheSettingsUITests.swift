@@ -2,6 +2,16 @@ import XCTest
 
 // E2E-P2-02. iPad runs a smoke test of cache completion and the returned frame, without the disk-usage review.
 final class CacheSettingsUITests: XCTestCase {
+    override func invokeTest() {
+        FirstFailureContext.reset()
+        super.invokeTest()
+    }
+
+    override func record(_ issue: XCTIssue) {
+        FirstFailureEvidence.record(self, issue: issue)
+        super.record(issue)
+    }
+
     override func setUpWithError() throws {
         continueAfterFailure = false
     }
@@ -12,10 +22,10 @@ final class CacheSettingsUITests: XCTestCase {
         guard UIDevice.current.userInterfaceIdiom == .phone else {
             throw XCTSkip("Runs on iPhone only; iPad is covered by testCacheSettingsPageSmokeIPad.")
         }
-        XCUIDevice.shared.orientation = .portrait
+        FirstFailureOrientation.set(.portrait)
         let input = try requireStrictE2EInput()
         let app = try launchStrictE2EApp()
-        defer { app.terminate() }
+        defer { app.terminateForFailureEvidence() }
         try runCacheClearFlow(IOSDriver(app: app), input: input)
     }
 
@@ -27,7 +37,7 @@ final class CacheSettingsUITests: XCTestCase {
         }
         let input = try requireStrictE2EInput()
         let app = try launchStrictE2EApp()
-        defer { app.terminate() }
+        defer { app.terminateForFailureEvidence() }
         let driver = IOSDriver(app: app)
         driver.launchToPlayback(input: input)
         // Like the iPhone flow: a paused single photo keeps the returned frame classifiable.
@@ -53,7 +63,7 @@ final class CacheSettingsUITests: XCTestCase {
         }
         let input = try requireStrictE2EInput()
         let app = try launchStrictE2EApp()
-        defer { app.terminate() }
+        defer { app.terminateForFailureEvidence() }
         try runCacheClearFlow(TVDriver(app: app), input: input)
     }
     #endif

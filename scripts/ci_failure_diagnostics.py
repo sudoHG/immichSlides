@@ -3,6 +3,8 @@
 import json
 import math
 import re
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 from ci_summary import BOUNDED_DIAGNOSTICS_FIELD
 
@@ -46,6 +48,298 @@ FIRST_FAILURE_ACTIONS = ("unknown", "none", "tap", "select", "up", "down", "left
     "play-pause", "rotate", "launch", "activate", "terminate", "type", "adjust")
 FIRST_FAILURE_TIMING_FIELDS = ("since_action_issued_seconds", "since_action_returned_seconds", "action_duration_seconds",
     "wait_elapsed_seconds", "deadline_seconds", "capture_request_seconds", "capture_return_seconds", "state_age_seconds")
+_validator_input = ContextVar("first_failure_validator_input", default=None)
+_validator_enabled = ContextVar("first_failure_validator_enabled", default=False)
+
+
+def unavailable_first_failure(source, step="unknown", element="unknown"):
+    return {"schema_version": 1, "source": source, "step": step, "element": element, "action": "unknown",
+        "timing": dict.fromkeys(FIRST_FAILURE_TIMING_FIELDS), "state": {
+            "app": "unknown", "surface": "unknown", "observation": "unavailable", "control_bar": "unknown",
+            "focus": "unknown", "history_count": None, "autoplay": "unknown", "orientation": "unknown",
+            "scene_status": "unknown", "query_error_code": None}, "validator": None,
+        "screenshot": {"status": "not-applicable" if source == "preparation" else "unavailable",
+                       "width": None, "height": None, "bytes": None}}
+
+
+def preparation_first_failure(ledger):
+    from ci_bounded_diagnostics import validate_receipt
+    receipt = unavailable_first_failure("preparation", element="simulator")
+    if ledger is not None:
+        validate_receipt(ledger)
+        event = next((event for event in ledger["events"] if event["scope"] == "preparation"
+                      and event["state"] == "timeout" and event["phase"] in FIRST_FAILURE_STEPS), None)
+        if event is not None:
+            receipt["step"] = event["phase"] if event["phase"] in FIRST_FAILURE_STEPS else "unknown"
+            receipt["timing"]["wait_elapsed_seconds"] = event["elapsed_seconds"]
+    validate_first_failure(receipt)
+    return receipt
+
+
+def remember_validator_input(image_bytes):
+    if _validator_enabled.get():
+        _validator_input.set(image_bytes if len(image_bytes) <= 32 * 1024 * 1024 else None)
+
+
+def canonical_first_failure_png(data):
+    import io
+    from PIL import Image
+    if len(data) > 32 * 1024 * 1024:
+        return None
+    try:
+        with Image.open(io.BytesIO(data)) as original:
+            if original.format not in {"PNG", "JPEG"} or original.n_frames != 1 or original.width * original.height > 16_777_216:
+                return None
+            original.load()
+            for side in (1536, 1024, 768, 512):
+                picture = original.convert("RGB")
+                picture.thumbnail((side, side))
+                clean = Image.frombytes(picture.mode, picture.size, picture.tobytes())
+                output = io.BytesIO()
+                clean.save(output, format="PNG")
+                png = output.getvalue()
+                if len(png) <= FIRST_FAILURE_MAX_IMAGE_BYTES:
+                    return png, picture.width, picture.height
+    except (OSError, ValueError, Image.DecompressionBombError):
+        return None
+    return None
+
+
+def collect_first_failure_image(operation):
+    from ci_execution_diagnostics import active
+    recorder = active()
+    if recorder is None:
+        return operation()
+    # Existing shared #471 accounting makes this cumulative across a job's child runners.
+    return recorder.collect("xcode", operation, cap=max(0, 5 - recorder.charged["xcode"]))
+
+
+def normalize_ui_failure_images(directory):
+    """Only exported public-fixture failure attachments are normalized, after XCTest has finished."""
+    for path in directory.rglob("*"):
+        if path.suffix.lower() not in {".png", ".jpg", ".jpeg"}:
+            continue
+        try:
+            if path.is_symlink() or not path.is_file() or path.stat().st_size > 32 * 1024 * 1024:
+                path.unlink(missing_ok=True)
+                continue
+            image = canonical_first_failure_png(path.read_bytes())
+            if image is None:
+                path.unlink(missing_ok=True)
+                continue
+            destination = path if path.suffix.lower() == ".png" else path.with_name(path.name + ".png")
+            destination.write_bytes(image[0])
+            if destination != path:
+                path.unlink()
+        except Exception:
+            # Unreadable optional media must not reach the existing upload boundary.
+            path.unlink(missing_ok=True)
+
+
+@contextmanager
+def public_fixture_validator_scope(directory, *, screenshots=False):
+    """Only the controlled fixture runner enters this scope; keep an actual validator input on failure."""
+    enabled, image_token = _validator_enabled.set(True), _validator_input.set(None)
+    try:
+        yield
+    except Exception as error:
+        receipt = unavailable_first_failure("validator", "capture-frame", "app-window")
+        receipt["validator"] = {"kind": "unknown", "slot": None, "axis": "unknown"}
+        message = public_validator_failure_message(str(error.__cause__ or error))
+        match = re.search(r"\bslot ([1-9][0-9]?) \((horizontal|vertical|both)(?: axes)?\)", message)
+        if match is not None and int(match[1]) <= 64:
+            receipt["validator"] = {"kind": "glyph", "slot": int(match[1]), "axis": match[2]}
+        data = _validator_input.get()
+        try:
+            if screenshots and data:
+                image = collect_first_failure_image(lambda: canonical_first_failure_png(data))
+                if image is not None:
+                    png, width, height = image
+                    receipt["screenshot"] = {"status": "validated-input", "width": width, "height": height, "bytes": len(png)}
+                    path = directory / "first-failure-validator.png"
+                    path.write_bytes(png)
+                    validate_first_failure_image(path, receipt)
+        except Exception:
+            # An optional diagnostic must preserve the exception already raised by the validator.
+            receipt["screenshot"] = {"status": "unavailable", "width": None, "height": None, "bytes": None}
+        try:
+            validate_first_failure(receipt)
+            (directory / "first-failure-validator.json").write_text(json.dumps(receipt, sort_keys=True) + "\n")
+        except (OSError, ValueError, TypeError):
+            pass
+        raise
+    finally:
+        _validator_enabled.reset(enabled)
+        _validator_input.reset(image_token)
+
+
+def first_failure_environment(directory, selectors, *, screenshots=True):
+    """Called only by public-fixture runners; never forward these keys to the App."""
+    selectors = [key.removeprefix("immichSlidesUITests/").removesuffix("()") for key in selectors]
+    return {"STRICT_E2E_FIRST_FAILURE_ENABLED": "1", "STRICT_E2E_FIRST_FAILURE_DIR": str(directory),
+            "STRICT_E2E_FIRST_FAILURE_SCREENSHOT": "1" if screenshots else "0",
+            "STRICT_E2E_FIRST_FAILURE_TESTS": json.dumps({key: index for index, key in enumerate(selectors)}),
+            "STRICT_E2E_FIRST_FAILURE_ELEMENTS": json.dumps(FIRST_FAILURE_ELEMENTS)}
+
+
+def configure_first_failure_attempt(command, directory, selectors, *, screenshots=True):
+    """Give each existing listed attempt a private spool, without changing retry selection or flags."""
+    import plistlib
+    from pathlib import Path
+    position = command.index("-xctestrun") + 1
+    source = Path(command[position])
+    payload = plistlib.loads(source.read_bytes())
+    for configuration in payload.get("TestConfigurations", []):
+        for target in configuration.get("TestTargets", []):
+            if target.get("BlueprintName") == "immichSlidesUITests":
+                target.setdefault("EnvironmentVariables", {}).update(
+                    first_failure_environment(directory, selectors, screenshots=screenshots))
+    prepared = source.with_name(source.stem + "-first-failure-" + directory.name + source.suffix)
+    try:
+        prepared.write_bytes(plistlib.dumps(payload))
+    except OSError:
+        prepared.unlink(missing_ok=True)
+        raise
+    command = list(command)
+    command[position] = str(prepared)
+    return command, prepared
+
+
+def attach_first_failures(observed, official, number):
+    """Keep the first failing attempt's receipt across the runner's existing listed retry."""
+    def visit(node):
+        if not isinstance(node, dict):
+            return
+        receipt = public_first_failure(node.get(FIRST_FAILURE_FIELD))
+        if node.get("nodeType") == "Test Case" and node.get("result") == "Failed" and receipt is not None:
+            key = str(node.get("nodeIdentifier", "")).removeprefix("immichSlidesUITests/").removesuffix("()")
+            for entry in observed:
+                if entry["identity"]["key"].removeprefix("immichSlidesUITests/") != key:
+                    continue
+                first = next((attempt for attempt in entry["attempts"] if attempt["outcome"] != "passed"), None)
+                for attempt in entry["attempts"]:
+                    if attempt["number"] == number and attempt["outcome"] in {"failed", "crashed", "timed-out"}:
+                        if attempt is first or first is not None and FIRST_FAILURE_FIELD in first:
+                            attempt[FIRST_FAILURE_FIELD] = receipt
+                if first is not None and FIRST_FAILURE_FIELD in first:
+                    entry[FIRST_FAILURE_FIELD] = first[FIRST_FAILURE_FIELD]
+        for child in node.get("children", []) if isinstance(node.get("children", []), list) else []:
+            visit(child)
+    for node in official.get("testNodes", []):
+        visit(node)
+
+
+def collect_first_failure_spool(directory, selectors, failed_nodes, output):
+    """Project bounded fixture evidence onto official failures; raw spool data is never published."""
+    import io
+    try:
+        from PIL import Image
+    except ImportError:
+        return
+    from ci_summary import decode
+    if not directory.is_dir() or directory.is_symlink():
+        return
+    nodes = {str(node.get("nodeIdentifier", "")).removeprefix("immichSlidesUITests/").removesuffix("()"): node
+             for node in failed_nodes}
+    for index, selector in enumerate(selectors):
+        key = selector.removeprefix("immichSlidesUITests/").removesuffix("()")
+        node = nodes.get(key)
+        if node is None:
+            continue
+        path = directory / f"{index}.json"
+        try:
+            if not path.is_file() or path.is_symlink() or path.stat().st_size > FIRST_FAILURE_MAX_BYTES:
+                continue
+            receipt = decode(path.read_text())
+            validate_first_failure(receipt)
+            if receipt["source"] != "xctest":
+                continue
+            image_data = None
+            if receipt["screenshot"]["status"] == "captured":
+                image_path = directory / f"{index}.png"
+                def project():
+                    try:
+                        if (not image_path.is_file() or image_path.is_symlink()
+                                or not 0 < image_path.stat().st_size <= FIRST_FAILURE_MAX_IMAGE_BYTES):
+                            return None
+                        data = image_path.read_bytes()
+                        with Image.open(io.BytesIO(data)) as picture:
+                            if (picture.format != "PNG" or picture.n_frames != 1
+                                    or picture.size != (receipt["screenshot"]["width"], receipt["screenshot"]["height"])):
+                                return None
+                        return canonical_first_failure_png(data)
+                    except (OSError, ValueError, Image.DecompressionBombError):
+                        return None
+                image = collect_first_failure_image(project)
+                if image is None:
+                    receipt["screenshot"] = {"status": "unavailable", "width": None, "height": None, "bytes": None}
+                else:
+                    image_data, width, height = image
+                    receipt["screenshot"].update(width=width, height=height, bytes=len(image_data))
+                validate_first_failure(receipt)
+            if image_data is not None:
+                output.mkdir(parents=True, exist_ok=True)
+                (output / f"{index}.png").write_bytes(image_data)
+                validate_first_failure_image(output / f"{index}.png", receipt)
+            node[FIRST_FAILURE_FIELD] = receipt
+        except (OSError, ValueError, TypeError, KeyError, Image.DecompressionBombError):
+            # A missing or unsafe diagnostic never changes the official failure or its exit code.
+            continue
+
+
+def validate_first_failure_image(path, receipt):
+    import io
+    from PIL import Image
+    from ci_summary import require
+    require(path.is_file() and not path.is_symlink(), "nonregular first failure package input")
+    require(0 < path.stat().st_size <= FIRST_FAILURE_MAX_IMAGE_BYTES, "first failure package image exceeds bound")
+    data = path.read_bytes()
+    require(len(data) == receipt["screenshot"]["bytes"], "first failure package image differs")
+    try:
+        with Image.open(path) as picture:
+            require(picture.format == "PNG" and not picture.info and picture.n_frames == 1,
+                    "first failure package image contains unsupported data")
+            require(picture.size == (receipt["screenshot"]["width"], receipt["screenshot"]["height"])
+                    and max(picture.size) <= FIRST_FAILURE_MAX_IMAGE_SIDE, "first failure package image dimensions differ")
+            picture.load()
+            canonical = io.BytesIO()
+            picture.save(canonical, format="PNG")
+            require(canonical.getvalue() == data, "first failure package image contains unsupported data")
+    except (OSError, Image.DecompressionBombError):
+        raise ValueError("first failure package image cannot be decoded") from None
+
+
+def validate_ui_first_failure_images(directory, summary):
+    from ci_summary import require
+    declared = summary["population"]["declared"]
+    observed = {entry["identity"]["key"]: entry for entry in summary["population"]["observed"]}
+    expected = set()
+    for index, identity in enumerate(declared):
+        for attempt in observed.get(identity["key"], {}).get("attempts", []):
+            receipt = attempt.get(FIRST_FAILURE_FIELD)
+            if receipt is None or receipt["screenshot"]["status"] != "captured":
+                continue
+            folder = directory / ("first-failure-attempt-" + str(attempt["number"]))
+            require(folder.is_dir() and not folder.is_symlink(), "invalid first failure package directory")
+            path = folder / f"{index}.png"
+            validate_first_failure_image(path, receipt)
+            expected.add(path)
+    folders = list(directory.glob("first-failure-attempt-*"))
+    require(all(folder.is_dir() and not folder.is_symlink() and folder in {path.parent for path in expected}
+                for folder in folders), "invalid first failure package directory")
+    actual = {path for folder in folders for path in folder.iterdir()}
+    require(actual == expected, "unexpected first failure package content")
+    for path in directory.rglob("*"):
+        if path.suffix.lower() in {".png", ".jpg", ".jpeg"}:
+            require(path.is_file() and not path.is_symlink(), "nonregular first failure package input")
+            require(0 < path.stat().st_size <= FIRST_FAILURE_MAX_IMAGE_BYTES, "first failure package image exceeds bound")
+            from PIL import Image
+            try:
+                with Image.open(path) as image:
+                    receipt = {"screenshot": {"width": image.width, "height": image.height, "bytes": path.stat().st_size}}
+            except (OSError, Image.DecompressionBombError):
+                raise ValueError("first failure package image cannot be decoded") from None
+            validate_first_failure_image(path, receipt)
 
 
 def validate_first_failure(receipt):
@@ -539,10 +833,13 @@ def test_node_diagnostics(payload):
         if not isinstance(node, dict):
             return
         if node.get("nodeType") == "Test Case" and node.get("result") == "Failed":
-            validate_diagnostic_fields(node)
+            validate_diagnostic_fields({key: value for key, value in node.items() if key != FIRST_FAILURE_FIELD})
             key = str(node.get("nodeIdentifier", "")).removesuffix("()")
             diagnostics[key] = ({field: node[field] for field in DIAGNOSTIC_FIELDS}
                                 if DIAGNOSTIC_FIELDS <= node.keys() else unknown_diagnostics())
+            receipt = public_first_failure(node.get(FIRST_FAILURE_FIELD))
+            if receipt is not None and receipt["source"] == "xctest":
+                diagnostics[key][FIRST_FAILURE_FIELD] = receipt
         children = node.get("children", [])
         for child in children if isinstance(children, list) else []:
             visit(child)

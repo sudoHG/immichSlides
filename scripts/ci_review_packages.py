@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import io
 import json
 import os
 import shutil
@@ -256,8 +255,8 @@ def read_package(directory):
 
 def read_failure_package(directory, summary):
     """Read diagnostic media separately from a completed P2 review; it grants no verdict."""
-    from ci_failure_diagnostics import FIRST_FAILURE_MAX_IMAGE_BYTES, FIRST_FAILURE_MAX_IMAGE_SIDE
-    from PIL import Image
+    from ci_failure_diagnostics import FIRST_FAILURE_MAX_IMAGE_BYTES
+    from ci_failure_diagnostics import validate_first_failure_image
     summary = parse_summary(summary)
     require(directory.is_dir() and not directory.is_symlink(), "invalid first failure package directory")
     require({path.name for path in directory.iterdir()} == {"first-failure.json", "first-failure.png"},
@@ -289,18 +288,7 @@ def read_failure_package(directory, summary):
     data = image_path.read_bytes()
     require(hashlib.sha256(data).hexdigest() == manifest["image_sha256"]
             and len(data) == receipt["screenshot"]["bytes"], "first failure package image differs")
-    try:
-        with Image.open(image_path) as image:
-            require(image.format == "PNG" and not image.info and image.n_frames == 1,
-                    "first failure package image contains unsupported data")
-            require(image.size == (receipt["screenshot"]["width"], receipt["screenshot"]["height"])
-                    and max(image.size) <= FIRST_FAILURE_MAX_IMAGE_SIDE, "first failure package image dimensions differ")
-            image.load()
-            canonical = io.BytesIO()
-            image.save(canonical, format="PNG")
-            require(canonical.getvalue() == data, "first failure package image contains unsupported data")
-    except (OSError, Image.DecompressionBombError):
-        raise ValueError("first failure package image cannot be decoded") from None
+    validate_first_failure_image(image_path, receipt)
     scan(directory)
     return manifest
 
@@ -408,6 +396,65 @@ def validate_bindings(entries, summary=None):
     return entries
 
 
+def export_failure_diagnostic(evidence, output_dir, summary, entry):
+    from ci_failure_diagnostics import public_first_failure, test_node_diagnostics
+    from run_strict_e2e import FILTER_PERSON_SESSIONS, resolve_suite_selector
+    dimensions = entry["identity"]["dimensions"]
+    manifest_path = evidence / "case-manifest.json"
+    require(evidence.is_dir() and not evidence.is_symlink() and manifest_path.is_file()
+            and not manifest_path.is_symlink() and manifest_path.stat().st_size <= 65536,
+            "invalid first failure case evidence")
+    case = decode(manifest_path.read_text())
+    require(case.get("source_sha") == shard_context(summary)["source_sha"]
+            and case.get("suite") == dimensions["suite"] and case.get("platform") == DEVICE_PLATFORM[dimensions["device"]]
+            and case.get("scenario") == dimensions["scenario"]
+            and case.get("fixture_set") == dimensions["fixture"]
+            and case.get("fixture_sha256") == FROZEN_FIXTURE_SHA256[dimensions["fixture"]],
+            "first failure case provenance differs")
+    selectors = ([session["selector"] for session in FILTER_PERSON_SESSIONS] if dimensions["suite"] == "filter-person"
+                 else [resolve_suite_selector(DEVICE_PLATFORM[dimensions["device"]], dimensions["suite"])])
+    expected_methods = {selector.removeprefix("immichSlidesUITests/"): index for index, selector in enumerate(selectors)}
+    for attempt in entry["attempts"]:
+        receipt = public_first_failure(attempt.get("first_failure"))
+        if receipt is None or receipt["screenshot"]["status"] not in {"captured", "validated-input"}:
+            continue
+        image = None
+        if receipt["source"] == "validator":
+            candidate = evidence / "first-failure-validator.json"
+            if candidate.is_file() and not candidate.is_symlink() and candidate.stat().st_size <= 8192:
+                if decode(candidate.read_text()) == receipt:
+                    image = evidence / "first-failure-validator.png"
+        else:
+            for candidate in sorted(evidence.glob("official-tests*.json")):
+                if candidate.is_symlink() or not candidate.is_file():
+                    continue
+                methods = test_node_diagnostics(decode(candidate.read_text()))
+                for method, index in expected_methods.items():
+                    if methods.get(method, {}).get("first_failure") == receipt:
+                        suffix = candidate.stem.removeprefix("official-tests")
+                        image = evidence / ("first-failure" + suffix) / (str(index) + ".png")
+                        break
+                if image is not None:
+                    break
+        if image is None or not image.is_file() or image.is_symlink():
+            continue
+        from ci_failure_diagnostics import validate_first_failure_image
+        validate_first_failure_image(image, receipt)
+        with tempfile.TemporaryDirectory(prefix="first-failure-export-") as temporary:
+            package = Path(temporary)
+            shutil.copyfile(image, package / "first-failure.png")
+            manifest = {"schema_version": 1, "source_identity": summary["identity"], "run": summary["run"],
+                "identity": entry["identity"], "attempt": attempt["number"],
+                "fixture_sha256": FROZEN_FIXTURE_SHA256[dimensions["fixture"]], "first_failure": receipt,
+                "image_sha256": file_digest(package / "first-failure.png")}
+            write_json(package / "first-failure.json", manifest)
+            read_failure_package(package, summary)
+            relative = (Path("first-failures") / shard_context(summary)["source_sha"] / dimensions["suite"]
+                        / dimensions["device"] / dimensions["configuration"] / dimensions["scenario"]
+                        / dimensions["fixture"] / ("attempt-" + str(attempt["number"])))
+            shutil.copytree(package, output_dir / relative)
+
+
 def export_shard(input_dir, output_dir):
     summary = parse_summary((input_dir / "records/summary.json").read_text())
     context = shard_context(summary)
@@ -418,10 +465,16 @@ def export_shard(input_dir, output_dir):
     for index, item in enumerate(summary["population"]["declared"]):
         dimensions = item["dimensions"]
         suite = dimensions["suite"]
-        if suite not in P2_CASES:
-            continue
         case = {**dimensions, "platform": DEVICE_PLATFORM[dimensions["device"]]}
         entry = observed.get(json.dumps(item, sort_keys=True))
+        if entry is not None and entry["outcome"] in {"failed", "crashed", "timed-out", "flaky-passed"}:
+            try:
+                export_failure_diagnostic(input_dir / "cases" / f"{index:03d}-{suite}", output_dir, summary, entry)
+            except (ValueError, OSError, TypeError, KeyError):
+                # Refuse optional media without changing automated/P2 review verdicts.
+                pass
+        if suite not in P2_CASES:
+            continue
         if entry is None or entry["outcome"] != "needs-human-review":
             missing.append({"case": case, "reason": "automated contract did not pass"})
             continue

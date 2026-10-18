@@ -26,6 +26,15 @@ enum immichSlidesUITestsWaitTiming {
 
 #if os(iOS)
 final class immichSlidesUITests: XCTestCase {
+    override func invokeTest() {
+        FirstFailureContext.reset()
+        super.invokeTest()
+    }
+
+    override func record(_ issue: XCTIssue) {
+        FirstFailureEvidence.record(self, issue: issue)
+        super.record(issue)
+    }
 
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -34,7 +43,7 @@ final class immichSlidesUITests: XCTestCase {
         }
         // Reset to portrait at the start of each test so a previous landscape test does not carry over.
 
-        XCUIDevice.shared.orientation = .portrait
+        FirstFailureOrientation.set(.portrait)
     }
 
     @MainActor
@@ -43,27 +52,33 @@ final class immichSlidesUITests: XCTestCase {
 
         let serverField = app.textFields["firstboot.serverURL.field"]
         XCTAssertTrue(
-            serverField.waitForExistence(
+            serverField.waitForPublicElement(
+                "firstboot.serverURL.field",
                 timeout: TestWait.seconds(
                     .infrastructure(immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))))
 
         let apiField = app.secureTextFields["firstboot.apiKey.field"]
-        XCTAssertTrue(apiField.waitForExistence(timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
+        XCTAssertTrue(
+            apiField.waitForPublicElement(
+                "firstboot.apiKey.field", timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
 
         let saveButton = app.buttons["firstboot.saveConfig.button"]
         XCTAssertTrue(
-            saveButton.waitForExistence(timeout: immichSlidesUITestsWaitTiming.shortInteractionTimeoutSeconds))
+            saveButton.waitForPublicElement(
+                "firstboot.saveConfig.button", timeout: immichSlidesUITestsWaitTiming.shortInteractionTimeoutSeconds))
         XCTAssertFalse(saveButton.isEnabled, "Save button should stay disabled before the connection is verified")
 
-        serverField.tap()
+        serverField.tapForFailureEvidence()
         serverField.immichSlidesUITestsClearAndType(text: "foo://invalid-host")
-        apiField.tap()
+        apiField.tapForFailureEvidence()
         apiField.immichSlidesUITestsClearAndType(text: "dummy-key")
-        app.typeText("\n")
+        app.typeForFailureEvidence("\n")
 
         let testConnectionButton = app.buttons["firstboot.testConnection.button"]
         XCTAssertTrue(
-            testConnectionButton.waitForExistence(timeout: immichSlidesUITestsWaitTiming.shortInteractionTimeoutSeconds)
+            testConnectionButton.waitForPublicElement(
+                "firstboot.testConnection.button", timeout: immichSlidesUITestsWaitTiming.shortInteractionTimeoutSeconds
+            )
         )
         dismissKeyboardIfNeeded(app: app)
         tapElement(testConnectionButton)
@@ -91,38 +106,39 @@ final class immichSlidesUITests: XCTestCase {
 
         let helpButton = app.buttons["server.apiKey.help.button"]
         XCTAssertTrue(
-            helpButton.waitForExistence(timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds),
+            helpButton.waitForFailureEvidence(timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds),
             "First-boot page should show the help entry next to the API Key title")
         tapElement(helpButton)
 
         let sheet = app.descendants(matching: .any)["server.apiKey.help.sheet"]
         XCTAssertTrue(
-            sheet.waitForExistence(timeout: immichSlidesUITestsWaitTiming.shortInteractionTimeoutSeconds),
+            sheet.waitForFailureEvidence(timeout: immichSlidesUITestsWaitTiming.shortInteractionTimeoutSeconds),
             "Tapping the help entry should show the API Key help sheet")
         XCTAssertTrue(
-            app.staticTexts["server.apiKey.help.sheet"].waitForExistence(
+            app.staticTexts["server.apiKey.help.sheet"].waitForFailureEvidence(
                 timeout: immichSlidesUITestsWaitTiming.shortInteractionTimeoutSeconds))
         XCTAssertTrue(app.staticTexts["server.apiKey.help.section.list.number.title"].exists)
         XCTAssertTrue(app.staticTexts["server.apiKey.help.section.checklist.title"].exists)
 
         if !app.staticTexts["server.apiKey.help.section.key.fill.title"].exists {
-            sheet.swipeUp()
+            sheet.swipeUpForFailureEvidence()
         }
         XCTAssertTrue(
-            app.staticTexts["server.apiKey.help.section.key.fill.title"].waitForExistence(
+            app.staticTexts["server.apiKey.help.section.key.fill.title"].waitForFailureEvidence(
                 timeout: immichSlidesUITestsWaitTiming.readbackTimeoutSeconds))
         attachScreenshot(app: app, name: "firstboot-api-key-help-sheet")
 
         let closeButton = app.buttons["server.apiKey.help.close.button"]
         XCTAssertTrue(
-            closeButton.waitForExistence(timeout: immichSlidesUITestsWaitTiming.shortInteractionTimeoutSeconds),
+            closeButton.waitForFailureEvidence(timeout: immichSlidesUITestsWaitTiming.shortInteractionTimeoutSeconds),
             "Help sheet should provide a tappable close button")
         tapElement(closeButton)
         XCTAssertFalse(
-            sheet.waitForExistence(timeout: immichSlidesUITestsWaitTiming.briefElementTimeoutSeconds),
+            sheet.waitForFailureEvidence(timeout: immichSlidesUITestsWaitTiming.briefElementTimeoutSeconds),
             "The help sheet should be gone after closing it")
         XCTAssertTrue(
-            app.secureTextFields["firstboot.apiKey.field"].waitForExistence(
+            app.secureTextFields["firstboot.apiKey.field"].waitForPublicElement(
+                "firstboot.apiKey.field",
                 timeout: immichSlidesUITestsWaitTiming.shortInteractionTimeoutSeconds))
     }
 
@@ -131,7 +147,8 @@ final class immichSlidesUITests: XCTestCase {
         // Inject the server directly and stop on the mode page, so first boot interferes less with the screenshot.
         let app = try launchConfiguredAppAtModeSelection(shouldResetState: true, colorScheme: "dark")
         XCTAssertTrue(
-            app.buttons["mode.random.button"].waitForExistence(
+            app.buttons["mode.random.button"].waitForPublicElement(
+                "mode.random.button",
                 timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
         XCTAssertTrue(app.buttons["mode.filtered.button"].exists)
 
@@ -147,7 +164,7 @@ final class immichSlidesUITests: XCTestCase {
         startFilteredFlowFromModeSelection(app: app)
 
         XCTAssertTrue(
-            app.buttons["filterSummary.album.button"].waitForExistence(
+            app.buttons["filterSummary.album.button"].waitForFailureEvidence(
                 timeout: immichSlidesUITestsWaitTiming.controlAppearanceTimeoutSeconds))
         XCTAssertTrue(app.buttons["filterSummary.person.button"].exists)
 
@@ -159,7 +176,7 @@ final class immichSlidesUITests: XCTestCase {
         let app = try launchConfiguredAppAtModeSelection(shouldResetState: true)
         assertModeSelectionCoreElements(app: app)
 
-        XCUIDevice.shared.orientation = .landscapeLeft
+        FirstFailureOrientation.set(.landscapeLeft)
         XCTAssertTrue(
             waitUntil(timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds) {
                 app.buttons["mode.random.button"].exists
@@ -172,10 +189,11 @@ final class immichSlidesUITests: XCTestCase {
         tapElement(continueButton)
 
         XCTAssertTrue(
-            app.buttons["slideshow.control.settings.button"].waitForExistence(
+            app.buttons["slideshow.control.settings.button"].waitForPublicElement(
+                "slideshow.control.settings.button",
                 timeout: immichSlidesUITestsWaitTiming.playbackControlTimeoutSeconds))
 
-        XCUIDevice.shared.orientation = .portrait
+        FirstFailureOrientation.set(.portrait)
     }
 
     @MainActor
@@ -185,34 +203,46 @@ final class immichSlidesUITests: XCTestCase {
 
         let settingsButton = app.buttons["slideshow.control.settings.button"]
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
-        XCTAssertTrue(settingsButton.waitForExistence(timeout: immichSlidesUITestsWaitTiming.navigationTimeoutSeconds))
-        XCTAssertTrue(playPauseButton.waitForExistence(timeout: immichSlidesUITestsWaitTiming.navigationTimeoutSeconds))
+        XCTAssertTrue(
+            settingsButton.waitForPublicElement(
+                "slideshow.control.settings.button", timeout: immichSlidesUITestsWaitTiming.navigationTimeoutSeconds))
+        XCTAssertTrue(
+            playPauseButton.waitForPublicElement(
+                "slideshow.control.playPause.button", timeout: immichSlidesUITestsWaitTiming.navigationTimeoutSeconds))
 
         // The control bar auto-hides 8 seconds after the last interaction; a slow runner can cross that between
         // the lookup above and this tap, so wake it right before tapping.
-        app.tap()
+        app.tapForFailureEvidence()
         XCTAssertTrue(
-            playPauseButton.waitForExistence(timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds),
+            playPauseButton.waitForPublicElement(
+                "slideshow.control.playPause.button",
+                timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds),
             "A tap on the slideshow should bring the control bar back")
-        playPauseButton.tap()
-        playPauseButton.tap()
+        playPauseButton.tapForFailureEvidence()
+        playPauseButton.tapForFailureEvidence()
 
-        XCUIDevice.shared.orientation = .landscapeRight
+        FirstFailureOrientation.set(.landscapeRight)
         XCTAssertTrue(
-            settingsButton.waitForExistence(timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
+            settingsButton.waitForPublicElement(
+                "slideshow.control.settings.button",
+                timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
         XCTAssertTrue(
-            playPauseButton.waitForExistence(timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
-        app.tap()
-        settingsButton.tap()
+            playPauseButton.waitForPublicElement(
+                "slideshow.control.playPause.button",
+                timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
+        app.tapForFailureEvidence()
+        settingsButton.tapForFailureEvidence()
 
         XCTAssertTrue(
             waitForAnySettingsSurface(app: app, timeout: immichSlidesUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Should be able to open settings in landscape")
         returnToSlideshowFromSettings(app: app)
 
-        XCUIDevice.shared.orientation = .portrait
+        FirstFailureOrientation.set(.portrait)
         XCTAssertTrue(
-            settingsButton.waitForExistence(timeout: immichSlidesUITestsWaitTiming.controlAppearanceTimeoutSeconds))
+            settingsButton.waitForPublicElement(
+                "slideshow.control.settings.button",
+                timeout: immichSlidesUITestsWaitTiming.controlAppearanceTimeoutSeconds))
     }
 
     @MainActor
@@ -220,19 +250,21 @@ final class immichSlidesUITests: XCTestCase {
         let app = launchApp(shouldResetState: true)
 
         XCTAssertTrue(
-            app.textFields["firstboot.serverURL.field"].waitForExistence(
+            app.textFields["firstboot.serverURL.field"].waitForPublicElement(
+                "firstboot.serverURL.field",
                 timeout: immichSlidesUITestsWaitTiming.settingsChangeTimeoutSeconds))
         XCTAssertTrue(app.secureTextFields["firstboot.apiKey.field"].exists)
         XCTAssertTrue(app.buttons["firstboot.testConnection.button"].exists)
 
-        XCUIDevice.shared.orientation = .landscapeLeft
+        FirstFailureOrientation.set(.landscapeLeft)
         XCTAssertTrue(
-            app.textFields["firstboot.serverURL.field"].waitForExistence(
+            app.textFields["firstboot.serverURL.field"].waitForPublicElement(
+                "firstboot.serverURL.field",
                 timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
         XCTAssertTrue(app.secureTextFields["firstboot.apiKey.field"].exists)
         XCTAssertTrue(app.buttons["firstboot.saveConfig.button"].exists)
 
-        XCUIDevice.shared.orientation = .portrait
+        FirstFailureOrientation.set(.portrait)
     }
 
     @MainActor
@@ -241,17 +273,17 @@ final class immichSlidesUITests: XCTestCase {
         startFilteredFlowFromModeSelection(app: app)
 
         let albumButton = app.buttons["filterSummary.album.button"]
-        XCUIDevice.shared.orientation = .landscapeRight
+        FirstFailureOrientation.set(.landscapeRight)
         XCTAssertTrue(
-            albumButton.waitForExistence(timeout: immichSlidesUITestsWaitTiming.controlAppearanceTimeoutSeconds))
+            albumButton.waitForFailureEvidence(timeout: immichSlidesUITestsWaitTiming.controlAppearanceTimeoutSeconds))
 
         tapElement(albumButton)
         assertInAlbumFilterPage(app: app)
         tapChevronBackIfNeeded(app: app)
         XCTAssertTrue(
-            app.buttons["filterSummary.startPlayback.button"].waitForExistence(
+            app.buttons["filterSummary.startPlayback.button"].waitForFailureEvidence(
                 timeout: immichSlidesUITestsWaitTiming.controlAppearanceTimeoutSeconds))
-        XCUIDevice.shared.orientation = .portrait
+        FirstFailureOrientation.set(.portrait)
     }
 
     @MainActor
@@ -260,16 +292,16 @@ final class immichSlidesUITests: XCTestCase {
         startFilteredFlowFromModeSelection(app: app)
 
         let personButton = app.buttons["filterSummary.person.button"]
-        XCUIDevice.shared.orientation = .landscapeRight
+        FirstFailureOrientation.set(.landscapeRight)
         XCTAssertTrue(
-            personButton.waitForExistence(timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
+            personButton.waitForFailureEvidence(timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
         tapElement(personButton)
         assertInPersonFilterPage(app: app)
         tapChevronBackIfNeeded(app: app)
         XCTAssertTrue(
-            app.buttons["filterSummary.startPlayback.button"].waitForExistence(
+            app.buttons["filterSummary.startPlayback.button"].waitForFailureEvidence(
                 timeout: immichSlidesUITestsWaitTiming.controlAppearanceTimeoutSeconds))
-        XCUIDevice.shared.orientation = .portrait
+        FirstFailureOrientation.set(.portrait)
     }
 
     @MainActor
@@ -281,10 +313,11 @@ final class immichSlidesUITests: XCTestCase {
         app.launchEnvironment["UI_TEST_SERVER_URL"] = "https://ui-test-empty-filter.invalid"
         app.launchEnvironment["UI_TEST_API_KEY"] = "ui-test-empty-filter-key"
         app.launchEnvironment["UI_TEST_FORCE_EMPTY_FILTER_DATA"] = "all"
-        app.launch()
+        app.launchForFailureEvidence()
 
         XCTAssertTrue(
-            app.buttons["mode.continue.button"].waitForExistence(
+            app.buttons["mode.continue.button"].waitForPublicElement(
+                "mode.continue.button",
                 timeout: immichSlidesUITestsWaitTiming.navigationTimeoutSeconds),
             "After injecting the test server config, the app should go straight to mode selection"
         )
@@ -292,13 +325,14 @@ final class immichSlidesUITests: XCTestCase {
 
         let albumButton = app.buttons["filterSummary.album.button"]
         XCTAssertTrue(
-            albumButton.waitForExistence(timeout: immichSlidesUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+            albumButton.waitForFailureEvidence(timeout: immichSlidesUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Filter summary should show the album entry")
         tapElement(albumButton)
 
         let albumBackButton = app.buttons["albumFilter.back.button"]
         XCTAssertTrue(
-            albumBackButton.waitForExistence(timeout: immichSlidesUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+            albumBackButton.waitForFailureEvidence(
+                timeout: immichSlidesUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Empty album page should show a back button")
         // ui-label-lookup: Verify the displayed empty-album message itself.
         XCTAssertTrue(app.staticTexts["Immich 中还没有相册"].exists, "Empty album page should show the empty-state message")
@@ -307,13 +341,14 @@ final class immichSlidesUITests: XCTestCase {
 
         let personButton = app.buttons["filterSummary.person.button"]
         XCTAssertTrue(
-            personButton.waitForExistence(timeout: immichSlidesUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+            personButton.waitForFailureEvidence(timeout: immichSlidesUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Going back from the empty album page should return to the filter summary")
         tapElement(personButton)
 
         let personBackButton = app.buttons["personFilter.back.button"]
         XCTAssertTrue(
-            personBackButton.waitForExistence(timeout: immichSlidesUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+            personBackButton.waitForFailureEvidence(
+                timeout: immichSlidesUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Empty people page should show a back button")
         // ui-label-lookup: Verify the displayed empty-people message itself.
         XCTAssertTrue(app.staticTexts["Immich 中还没有人物"].exists, "Empty people page should show the empty-state message")
@@ -321,7 +356,7 @@ final class immichSlidesUITests: XCTestCase {
         tapElement(personBackButton)
 
         XCTAssertTrue(
-            app.buttons["filterSummary.album.button"].waitForExistence(
+            app.buttons["filterSummary.album.button"].waitForFailureEvidence(
                 timeout: immichSlidesUITestsWaitTiming.controlAppearanceTimeoutSeconds),
             "Going back from the empty people page should return to the filter summary"
         )
@@ -338,16 +373,18 @@ final class immichSlidesUITests: XCTestCase {
 
         openSettingsSection(app: app, sectionID: "settings.item.playback")
         XCTAssertTrue(
-            app.switches["settings.playback.autoPlay.toggle"].waitForExistence(
+            app.switches["settings.playback.autoPlay.toggle"].waitForPublicElement(
+                "settings.playback.autoPlay.toggle",
                 timeout: immichSlidesUITestsWaitTiming.settingsChangeTimeoutSeconds))
 
-        XCUIDevice.shared.orientation = .landscapeLeft
+        FirstFailureOrientation.set(.landscapeLeft)
         openSettingsSection(app: app, sectionID: "settings.item.cache")
         XCTAssertTrue(
-            app.buttons["settings.cache.clearDisk.button"].waitForExistence(
+            app.buttons["settings.cache.clearDisk.button"].waitForPublicElement(
+                "settings.cache.clearDisk.button",
                 timeout: immichSlidesUITestsWaitTiming.settingsChangeTimeoutSeconds))
 
-        XCUIDevice.shared.orientation = .portrait
+        FirstFailureOrientation.set(.portrait)
         returnToSlideshowFromSettings(app: app)
         XCTAssertTrue(
             app.waitForSlideshowControlBarButton(
@@ -368,10 +405,11 @@ final class immichSlidesUITests: XCTestCase {
         for scheme in schemes {
             for orientation in orientations {
                 let app = launchApp(shouldResetState: true, colorScheme: scheme)
-                XCUIDevice.shared.orientation = orientation.value
+                FirstFailureOrientation.set(orientation.value)
 
                 XCTAssertTrue(
-                    app.textFields["firstboot.serverURL.field"].waitForExistence(
+                    app.textFields["firstboot.serverURL.field"].waitForPublicElement(
+                        "firstboot.serverURL.field",
                         timeout: immichSlidesUITestsWaitTiming.settingsChangeTimeoutSeconds))
                 XCTAssertTrue(app.secureTextFields["firstboot.apiKey.field"].exists)
                 XCTAssertTrue(app.buttons["firstboot.testConnection.button"].exists)
@@ -380,11 +418,11 @@ final class immichSlidesUITests: XCTestCase {
                     app: app,
                     name: "audit-firstboot-\(scheme)-\(orientation.name)-\(currentDeviceTag())"
                 )
-                app.terminate()
+                app.terminateForFailureEvidence()
             }
         }
 
-        XCUIDevice.shared.orientation = .portrait
+        FirstFailureOrientation.set(.portrait)
     }
 
     @MainActor
@@ -400,14 +438,15 @@ final class immichSlidesUITests: XCTestCase {
             // Return to portrait before relaunching with another color scheme, otherwise the first-boot fields may
             // not get keyboard focus.
 
-            XCUIDevice.shared.orientation = .portrait
+            FirstFailureOrientation.set(.portrait)
             let app = launchApp(shouldResetState: true, shouldSeedFilterSelection: true, colorScheme: scheme)
             try completeFirstBootToModeSelection(app: app, serverURL: config.url, apiKey: config.apiKey)
 
             for orientation in orientations {
-                XCUIDevice.shared.orientation = orientation.value
+                FirstFailureOrientation.set(orientation.value)
                 XCTAssertTrue(
-                    app.buttons["mode.random.button"].waitForExistence(
+                    app.buttons["mode.random.button"].waitForPublicElement(
+                        "mode.random.button",
                         timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
 
                 tapElement(app.buttons["mode.random.button"])
@@ -425,11 +464,12 @@ final class immichSlidesUITests: XCTestCase {
 
             let continueButton = app.buttons["mode.continue.button"]
             XCTAssertTrue(
-                continueButton.waitForExistence(timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
+                continueButton.waitForPublicElement(
+                    "mode.continue.button", timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
             XCTAssertTrue(continueButton.isEnabled)
             tapElement(continueButton)
             XCTAssertTrue(
-                app.buttons["filterSummary.album.button"].waitForExistence(
+                app.buttons["filterSummary.album.button"].waitForFailureEvidence(
                     timeout: immichSlidesUITestsWaitTiming.controlAppearanceTimeoutSeconds))
 
             attachScreenshot(
@@ -447,11 +487,13 @@ final class immichSlidesUITests: XCTestCase {
 
             let startButton = app.buttons["filterSummary.startPlayback.button"]
             XCTAssertTrue(
-                startButton.waitForExistence(timeout: immichSlidesUITestsWaitTiming.controlAppearanceTimeoutSeconds))
+                startButton.waitForFailureEvidence(
+                    timeout: immichSlidesUITestsWaitTiming.controlAppearanceTimeoutSeconds))
             if startButton.isEnabled {
                 tapElement(startButton)
                 XCTAssertTrue(
-                    app.buttons["slideshow.control.settings.button"].waitForExistence(
+                    app.buttons["slideshow.control.settings.button"].waitForPublicElement(
+                        "slideshow.control.settings.button",
                         timeout: immichSlidesUITestsWaitTiming.playbackControlTimeoutSeconds))
                 attachScreenshot(
                     app: app,
@@ -459,10 +501,10 @@ final class immichSlidesUITests: XCTestCase {
                 )
             }
 
-            app.terminate()
+            app.terminateForFailureEvidence()
         }
 
-        XCUIDevice.shared.orientation = .portrait
+        FirstFailureOrientation.set(.portrait)
     }
 
     @MainActor
@@ -471,7 +513,8 @@ final class immichSlidesUITests: XCTestCase {
         startRandomPlaybackFromModeSelection(app: app)
 
         XCTAssertTrue(
-            app.buttons["slideshow.control.settings.button"].waitForExistence(
+            app.buttons["slideshow.control.settings.button"].waitForPublicElement(
+                "slideshow.control.settings.button",
                 timeout: immichSlidesUITestsWaitTiming.playbackControlTimeoutSeconds),
             "After entering playback in random mode, the settings entry should remain")
         XCTAssertFalse(
@@ -486,28 +529,32 @@ final class immichSlidesUITests: XCTestCase {
 
         let globalBackButton = app.buttons["global.back.button"]
         XCTAssertTrue(
-            globalBackButton.waitForExistence(timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds),
+            globalBackButton.waitForFailureEvidence(
+                timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds),
             "Filter summary should be able to go back to mode selection")
         XCTAssertFalse(
             app.buttons["filterSummary.backToMode.button"].exists,
             "Filter summary should no longer show an extra bottom Back to Mode Selection button"
         )
-        globalBackButton.tap()
+        globalBackButton.tapForFailureEvidence()
         XCTAssertTrue(
-            app.buttons["mode.continue.button"].waitForExistence(
+            app.buttons["mode.continue.button"].waitForPublicElement(
+                "mode.continue.button",
                 timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
 
         startFilteredFlowFromModeSelection(app: app)
 
         let startPlaybackButton = app.buttons["filterSummary.startPlayback.button"]
         XCTAssertTrue(
-            startPlaybackButton.waitForExistence(timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds)
+            startPlaybackButton.waitForFailureEvidence(
+                timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds)
         )
         XCTAssertTrue(startPlaybackButton.isEnabled, "With a non-empty filter, Start Playback should be tappable")
-        startPlaybackButton.tap()
+        startPlaybackButton.tapForFailureEvidence()
 
         XCTAssertTrue(
-            app.buttons["slideshow.control.settings.button"].waitForExistence(
+            app.buttons["slideshow.control.settings.button"].waitForPublicElement(
+                "slideshow.control.settings.button",
                 timeout: immichSlidesUITestsWaitTiming.playbackControlTimeoutSeconds))
         XCTAssertFalse(
             app.buttons["global.back.button"].exists,
@@ -529,9 +576,9 @@ final class immichSlidesUITests: XCTestCase {
 
         let enableButton = app.buttons["settings.pin.enable.button"]
         XCTAssertTrue(
-            enableButton.waitForExistence(timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
+            enableButton.waitForFailureEvidence(timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
         XCTAssertTrue(enableButton.isEnabled)
-        enableButton.tap()
+        enableButton.tapForFailureEvidence()
 
         returnToSlideshowFromSettings(app: app)
 
@@ -543,11 +590,12 @@ final class immichSlidesUITests: XCTestCase {
             app.waitForSlideshowControlBarButton(
                 identifier: "slideshow.control.settings.button",
                 timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
-        settingsButton.tap()
+        settingsButton.tapForFailureEvidence()
 
         let closePinEntry = app.buttons["pinEntry.close.button"]
         XCTAssertTrue(
-            closePinEntry.waitForExistence(timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds),
+            closePinEntry.waitForFailureEvidence(
+                timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds),
             "With PIN on, opening settings should first show PIN verification")
 
         inputPinOnSheet(app: app, pin: "000000")
@@ -563,7 +611,8 @@ final class immichSlidesUITests: XCTestCase {
         inputPinOnSheet(app: app, pin: "123456")
         let pinSheetCloseButton = app.buttons["pinEntry.close.button"]
         XCTAssertFalse(
-            pinSheetCloseButton.waitForExistence(timeout: immichSlidesUITestsWaitTiming.shortInteractionTimeoutSeconds),
+            pinSheetCloseButton.waitForFailureEvidence(
+                timeout: immichSlidesUITestsWaitTiming.shortInteractionTimeoutSeconds),
             "After entering the correct PIN, the PIN sheet should close")
     }
 
@@ -580,33 +629,35 @@ final class immichSlidesUITests: XCTestCase {
         inputPinOnSheet(app: app, pin: "123456")
         tapSettingsPinInput(app: app, id: "settings.pin.input.enableConfirm")
         inputPinOnSheet(app: app, pin: "123456")
-        app.buttons["settings.pin.enable.button"].tap()
+        app.buttons["settings.pin.enable.button"].tapForFailureEvidence()
 
         XCTAssertTrue(
-            app.buttons["settings.pin.disable.button"].waitForExistence(
+            app.buttons["settings.pin.disable.button"].waitForFailureEvidence(
                 timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds),
             "After enabling PIN, settings should switch to the enabled state"
         )
 
-        app.terminate()
+        app.terminateForFailureEvidence()
         app.launchEnvironment.removeAll()
-        app.launch()
+        app.launchForFailureEvidence()
 
         XCTAssertFalse(
-            app.textFields["firstboot.serverURL.field"].waitForExistence(
+            app.textFields["firstboot.serverURL.field"].waitForPublicElement(
+                "firstboot.serverURL.field",
                 timeout: immichSlidesUITestsWaitTiming.readbackTimeoutSeconds),
             "After relaunch, the app should not return to first-boot setup")
         XCTAssertTrue(
-            app.buttons["slideshow.control.settings.button"].waitForExistence(
+            app.buttons["slideshow.control.settings.button"].waitForPublicElement(
+                "slideshow.control.settings.button",
                 timeout: immichSlidesUITestsWaitTiming.connectionTimeoutSeconds),
             "After relaunch, the app should go straight back to playback")
         XCTAssertFalse(
             app.buttons["global.back.button"].exists,
             "After relaunch with a persisted PIN, the playback page should still show no back button")
 
-        app.buttons["slideshow.control.settings.button"].tap()
+        app.buttons["slideshow.control.settings.button"].tapForFailureEvidence()
         XCTAssertTrue(
-            app.buttons["pinEntry.close.button"].waitForExistence(
+            app.buttons["pinEntry.close.button"].waitForFailureEvidence(
                 timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds),
             "After relaunch with a persisted PIN, opening settings should still require verification")
         attachScreenshot(app: app, name: "Desktop-relaunch-pin-gate")
@@ -616,14 +667,14 @@ final class immichSlidesUITests: XCTestCase {
 extension XCUIElement {
     func immichSlidesUITestsClearAndType(text: String) {
         guard let existing = self.value as? String else {
-            self.typeText(text)
+            self.typeForFailureEvidence(text)
             return
         }
 
-        self.tap()
+        self.tapForFailureEvidence()
         let deleteString = String(repeating: XCUIKeyboardKey.delete.rawValue, count: existing.count)
-        self.typeText(deleteString)
-        self.typeText(text)
+        self.typeForFailureEvidence(deleteString)
+        self.typeForFailureEvidence(text)
     }
 }
 #endif

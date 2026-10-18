@@ -2,9 +2,19 @@ import XCTest
 
 #if os(iOS)
 final class StrictE2EFilterIOSUITests: XCTestCase {
+    override func invokeTest() {
+        FirstFailureContext.reset()
+        super.invokeTest()
+    }
+
+    override func record(_ issue: XCTIssue) {
+        FirstFailureEvidence.record(self, issue: issue)
+        super.record(issue)
+    }
+
     override func setUpWithError() throws {
         continueAfterFailure = false
-        XCUIDevice.shared.orientation = .portrait
+        FirstFailureOrientation.set(.portrait)
     }
 
     // Seam: continuous playback after selecting the target album in the filter summary.
@@ -15,7 +25,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         let manifest = try loadEvidenceManifest()
         let albumID = try stringValue(manifest, keyPath: ["target_album", "id"])
         let app = try launchStrictE2EApp()
-        defer { app.terminate() }
+        defer { app.terminateForFailureEvidence() }
 
         try completeFirstBootToModeSelection(app: app, input: input, evidencePrefix: "filter-album")
         enterFilterSummary(app: app)
@@ -41,7 +51,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         let targetAlbumID = try stringValue(manifest, keyPath: ["target_album", "id"])
         let nonTargetAlbumID = try stringValue(manifest, keyPath: ["non_target_album", "id"])
         let app = try launchStrictE2EApp()
-        defer { app.terminate() }
+        defer { app.terminateForFailureEvidence() }
 
         try completeFirstBootToModeSelection(app: app, input: input, evidencePrefix: "filter-edit-switch")
         enterFilterSummary(app: app)
@@ -70,7 +80,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
 
         let modePicker = app.segmentedControls["settings.playback.mode.picker"]
         XCTAssertTrue(
-            modePicker.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            modePicker.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
             "Leaving the editor must return to the real playback settings page"
         )
         let filteredMode = modePicker.buttons.element(boundBy: 1)
@@ -88,7 +98,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         openAlbumFilterFromEditor(app: app)
         let clear = app.buttons["albumFilter.clear.button"]
         XCTAssertTrue(
-            clear.waitForExistence(timeout: TestWait.seconds(.product(8))) && clear.isHittable,
+            clear.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))) && clear.isHittable,
             "The real album editor must offer Clear Selection")
         tapElement(clear)
         let clearedTarget = albumCard(app: app, albumID: targetAlbumID)
@@ -103,7 +113,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         finishFilterEditor(app: app)
 
         XCTAssertTrue(
-            modePicker.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            modePicker.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
             "Clearing and leaving the editor must return to the real playback settings page")
         let randomMode = modePicker.buttons.element(boundBy: 0)
         XCTAssertTrue(
@@ -126,13 +136,13 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
     func testFilterEmptySelectionCannotStart() throws {
         let input = try requireStrictE2EInput()
         let app = try launchStrictE2EApp()
-        defer { app.terminate() }
+        defer { app.terminateForFailureEvidence() }
 
         try completeFirstBootToModeSelection(app: app, input: input, evidencePrefix: "filter-empty")
         enterFilterSummary(app: app)
         let start = app.buttons["filterSummary.startPlayback.button"]
         XCTAssertTrue(
-            start.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            start.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
             "Filter summary must show Start Playback")
         XCTAssertFalse(start.isEnabled, "An empty selection must not start")
         attachStrictE2EScreenshot(app: app, name: "filter-empty-\(currentDeviceTag())")
@@ -157,13 +167,13 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         let emptyAlbumID = try stringValue(manifest, keyPath: ["empty_album", "id"])
         let emptyCopy = "当前筛选条件没有找到可播放照片，请换一组相册或人物再试。"
         let app = try launchStrictE2EApp()
-        defer { app.terminate() }
+        defer { app.terminateForFailureEvidence() }
 
         try completeFirstBootToModeSelection(app: app, input: input, evidencePrefix: "album-empty")
         enterFilterSummary(app: app)
         let start = app.buttons["filterSummary.startPlayback.button"]
         XCTAssertTrue(
-            start.waitForExistence(timeout: TestWait.seconds(.product(8))),
+            start.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
             "Filter summary must show Start Playback")
         XCTAssertFalse(start.isEnabled, "Start must be disabled with 0 albums / 0 people")
         attachStrictE2EScreenshot(app: app, name: "album-empty-selection-\(currentDeviceTag())")
@@ -243,7 +253,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         let manifest = try loadEvidenceManifest()
         let personID = try stringValue(manifest, keyPath: ["person_cases", "solo_only_qualified", "person_id"])
         let app = try launchStrictE2EApp()
-        defer { app.terminate() }
+        defer { app.terminateForFailureEvidence() }
 
         try completeFirstBootToModeSelection(app: app, input: input, evidencePrefix: "filter-person-navigation")
         enterFilterSummary(app: app)
@@ -253,10 +263,10 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         let card = personNameElement(app: app, personID: personID)
         attachStrictE2EScreenshot(app: app, name: "person-navigation-before-selection-\(currentDeviceTag())")
         assertPersonNavigation(
-            back.waitForExistence(timeout: TestWait.seconds(.product(8))) && back.isHittable,
+            back.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))) && back.isHittable,
             "Before selection, the person page Back button must be visible and hittable", app: app, personID: personID)
         assertPersonNavigation(
-            card.waitForExistence(timeout: TestWait.seconds(.infrastructure(20))) && card.isHittable,
+            card.waitForFailureEvidence(timeout: TestWait.seconds(.infrastructure(20))) && card.isHittable,
             "Before selection, the target person card must be visible and hittable", app: app, personID: personID)
 
         selectPerson(app: app, personID: personID, isSoloOnly: false)
@@ -297,7 +307,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         let personID = try stringValue(
             try loadEvidenceManifest(), keyPath: ["person_cases", "solo_only_qualified", "person_id"])
         let app = try launchStrictE2EApp()
-        defer { app.terminate() }
+        defer { app.terminateForFailureEvidence() }
 
         try completeFirstBootToModeSelection(app: app, input: input, evidencePrefix: "filter-person-solo-toggle")
         enterFilterSummary(app: app)
@@ -308,7 +318,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         openPersonFilter(app: app)
         let toggle = personSoloOnlySwitch(app: app, personID: personID)
         assertPersonNavigation(
-            toggle.waitForExistence(timeout: TestWait.seconds(.product(6))) && (toggle.value as? String) == "1",
+            toggle.waitForFailureEvidence(timeout: TestWait.seconds(.product(6))) && (toggle.value as? String) == "1",
             "After going back and reopening, the target person's solo-only mode must still be on", app: app,
             personID: personID)
         selectPerson(app: app, personID: personID, isSoloOnly: false)
@@ -317,7 +327,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         openPersonFilter(app: app)
         let reopenedToggle = personSoloOnlySwitch(app: app, personID: personID)
         assertPersonNavigation(
-            reopenedToggle.waitForExistence(timeout: TestWait.seconds(.product(6)))
+            reopenedToggle.waitForFailureEvidence(timeout: TestWait.seconds(.product(6)))
                 && (reopenedToggle.value as? String) == "0",
             "After going back and reopening, the target person's solo-only mode must still be off", app: app,
             personID: personID)
@@ -383,7 +393,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         let albumID = try stringValue(manifest, keyPath: ["target_album", "id"])
         let targetMarks = try stringArrayValue(manifest, keyPath: ["target_album", "labels"])
         let app = try launchStrictE2EApp()
-        defer { app.terminate() }
+        defer { app.terminateForFailureEvidence() }
 
         try completeFirstBootToModeSelection(app: app, input: input, evidencePrefix: "display-policy")
         enterFilterSummary(app: app)
@@ -413,7 +423,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         try waitForDisplayControlsToHide(app: app)
         var afterPNG: Data?
         let afterIsStableSingle = waitUntil(timeout: TestWait.seconds(.product(20))) {
-            let png = app.screenshot().pngRepresentation
+            let png = app.screenshotForFailureEvidence().pngRepresentation
             guard let candidate = try? self.displayCandidatePNG(png) else { return false }
             let identity = StrictE2EPhotoIdentity.classify(png: candidate)
             guard identity.status == .match,
@@ -465,7 +475,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         for index in 1...4 {
             try waitForDisplayControlsToHide(app: app)
             RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(1.0))))
-            let png = app.screenshot().pngRepresentation
+            let png = app.screenshotForFailureEvidence().pngRepresentation
             let step = String(format: "display-before-candidate-%02d", index)
             XCTAssertFalse(png.isEmpty, "Before-change candidate screenshot must not be empty: \(step)")
             candidateSteps.append(step)
@@ -529,7 +539,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         let albumB = try stringValue(manifestB, keyPath: ["target_album", "id"])
         let targetMarksB = try stringArrayValue(manifestB, keyPath: ["target_album", "labels"])
         let app = try launchStrictE2EApp()
-        defer { app.terminate() }
+        defer { app.terminateForFailureEvidence() }
 
         try completeFirstBootToModeSelection(app: app, input: input, evidencePrefix: "filter-switch-a")
         enterFilterSummary(app: app)
@@ -539,7 +549,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         _ = captureNamedPNG(app: app, name: "server-switch-album-summary-\(albumA)")
         let startA = app.buttons["filterSummary.startPlayback.button"]
         XCTAssertTrue(
-            startA.waitForExistence(timeout: TestWait.seconds(.product(8))) && startA.isEnabled,
+            startA.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))) && startA.isEnabled,
             "Start Playback must be enabled after selecting the target album")
         startFilteredPlayback(app: app)
         pausePlaybackIfNeeded(app: app)
@@ -602,7 +612,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
 
         var singleAfterSwitchPNG: Data?
         let isStableBSingle = waitUntil(timeout: TestWait.seconds(.product(20))) {
-            let png = app.screenshot().pngRepresentation
+            let png = app.screenshotForFailureEvidence().pngRepresentation
             guard let candidate = try? self.displayCandidatePNG(png) else { return false }
             let identity = StrictE2EPhotoIdentity.classify(png: candidate)
             guard identity.status == .match,
@@ -677,7 +687,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         let manifest = try loadEvidenceManifest()
         let soloID = try stringValue(manifest, keyPath: ["person_cases", "solo_only_qualified", "person_id"])
         let app = try launchStrictE2EApp()
-        defer { app.terminate() }
+        defer { app.terminateForFailureEvidence() }
         try completeFirstBootToModeSelection(app: app, input: input, evidencePrefix: "filter-vision")
         enterFilterSummary(app: app)
         openPersonFilter(app: app)

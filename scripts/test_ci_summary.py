@@ -302,12 +302,20 @@ class SummaryContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ci_summary.ContractError, "^first failure: validator cannot claim a failure snapshot$"):
             ci_summary.parse_summary(scoped)
 
-    def test_first_failure_scanner_checks_nested_duplicate_escaped_and_broken_json(self):
+    def test_first_failure_scanner_and_ui_upload_reject_invalid_receipts_and_media(self):
+        import io
+        from PIL import Image
         from ci_ui_tests import main as ui_main
         from run_strict_e2e import CommandError, write_sensitive_scan
         receipt = first_failure_receipt()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
+            picture = io.BytesIO()
+            Image.new("RGB", (320, 180), "blue").save(picture, format="PNG")
+            receipt["screenshot"].update(width=320, height=180, bytes=len(picture.getvalue()))
+            image_path = root / "failure-screenshots/first-failure-attempt-1/0.png"
+            image_path.parent.mkdir(parents=True)
+            image_path.write_bytes(picture.getvalue())
             path = root / "diagnostic.json"
             path.write_text(json.dumps({"nested": [{"first_failure": receipt}]}))
             summary = archive_download_summary()
@@ -321,6 +329,56 @@ class SummaryContractTests(unittest.TestCase):
             with patch("ci_ui_tests.output"):
                 self.assertEqual(0, ui_main(["check-upload", "--output-dir", str(root)]))
             self.assertEqual("PASS", json.loads((root / "sensitive-scan.json").read_text())["result"])
+            from contextlib import redirect_stderr
+            extra = root / "failure-screenshots/legacy.png"
+            for defect in ("dimensions", "metadata", "size"):
+                supplied = io.BytesIO()
+                if defect == "size":
+                    import random
+                    image = Image.frombytes("RGB", (1536, 1024), random.Random(0).randbytes(1536 * 1024 * 3))
+                else:
+                    image = Image.new("RGB", (2000, 100) if defect == "dimensions" else (320, 180), "blue")
+                image.save(supplied, format="PNG", **({"icc_profile": b"PRIVATE_PROFILE"} if defect == "metadata" else {}))
+                extra.write_bytes(supplied.getvalue())
+                with self.subTest(defect=defect), patch("ci_ui_tests.output"), redirect_stderr(io.StringIO()) as errors:
+                    self.assertEqual(1, ui_main(["check-upload", "--output-dir", str(root)]))
+                self.assertIn("first failure package image " + {"dimensions": "dimensions differ",
+                    "metadata": "contains unsupported data", "size": "exceeds bound"}[defect], errors.getvalue())
+                self.assertNotIn("PRIVATE_PROFILE", errors.getvalue())
+            extra.unlink()
+            for defect, message in (("missing-image", "nonregular first failure package input"),
+                    ("symlink-image", "nonregular first failure package input"),
+                    ("symlink-directory", "invalid first failure package directory"),
+                    ("foreign-directory", "invalid first failure package directory"),
+                    ("extra-file", "unexpected first failure package content")):
+                held = root / "held"
+                foreign = root / "failure-screenshots/first-failure-attempt-2"
+                if defect in {"missing-image", "symlink-image"}:
+                    image_path.rename(held)
+                    if defect == "symlink-image":
+                        image_path.symlink_to(held)
+                elif defect == "symlink-directory":
+                    image_path.parent.rename(held)
+                    image_path.parent.symlink_to(held, target_is_directory=True)
+                elif defect == "foreign-directory":
+                    foreign.mkdir()
+                else:
+                    (image_path.parent / "unexpected.txt").write_text("public")
+                try:
+                    with self.subTest(defect=defect), patch("ci_ui_tests.output"), redirect_stderr(io.StringIO()) as errors:
+                        self.assertEqual(1, ui_main(["check-upload", "--output-dir", str(root)]))
+                    self.assertIn(message, errors.getvalue())
+                finally:
+                    if defect in {"missing-image", "symlink-image"}:
+                        image_path.unlink(missing_ok=True)
+                        held.rename(image_path)
+                    elif defect == "symlink-directory":
+                        image_path.parent.unlink()
+                        held.rename(image_path.parent)
+                    elif defect == "foreign-directory":
+                        foreign.rmdir()
+                    else:
+                        (image_path.parent / "unexpected.txt").unlink()
             for raw in ('{"first_failure":' + json.dumps(receipt).replace('"source": "xctest"',
                         '"source": "private", "source": "xctest"') + '}',
                         '{"first_failure":', '{"first_\\u0066ailure":',

@@ -18,10 +18,19 @@ private enum WaitTiming {
 
 #if os(iOS)
 final class ServerConfigFormIOSUITests: XCTestCase {
+    override func invokeTest() {
+        FirstFailureContext.reset()
+        super.invokeTest()
+    }
+
+    override func record(_ issue: XCTIssue) {
+        FirstFailureEvidence.record(self, issue: issue)
+        super.record(issue)
+    }
 
     override func setUpWithError() throws {
         continueAfterFailure = false
-        XCUIDevice.shared.orientation = .portrait
+        FirstFailureOrientation.set(.portrait)
     }
 
     @MainActor
@@ -31,7 +40,8 @@ final class ServerConfigFormIOSUITests: XCTestCase {
 
         let serverField = app.textFields["firstboot.serverURL.field"]
         XCTAssertTrue(
-            serverField.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            serverField.waitForPublicElement(
+                "firstboot.serverURL.field", timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Server settings page should show the URL field")
         tapFieldAndAssertKeyboardAppears(
             serverField,
@@ -48,7 +58,8 @@ final class ServerConfigFormIOSUITests: XCTestCase {
 
         let apiKeyField = app.secureTextFields["firstboot.apiKey.field"]
         XCTAssertTrue(
-            apiKeyField.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            apiKeyField.waitForPublicElement(
+                "firstboot.apiKey.field", timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Server settings page should show the API Key field")
         tapFieldAndAssertKeyboardAppears(
             apiKeyField,
@@ -65,7 +76,8 @@ final class ServerConfigFormIOSUITests: XCTestCase {
 
         let serverField = app.textFields["firstboot.serverURL.field"]
         XCTAssertTrue(
-            serverField.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            serverField.waitForPublicElement(
+                "firstboot.serverURL.field", timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Server settings page should show the URL field")
         tapFieldAndAssertKeyboardAppears(
             serverField,
@@ -78,7 +90,8 @@ final class ServerConfigFormIOSUITests: XCTestCase {
 
         let apiKeyField = app.secureTextFields["firstboot.apiKey.field"]
         XCTAssertTrue(
-            apiKeyField.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            apiKeyField.waitForPublicElement(
+                "firstboot.apiKey.field", timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Server settings page should show the API Key field")
         tapFieldAndAssertKeyboardAppears(
             apiKeyField,
@@ -94,7 +107,8 @@ final class ServerConfigFormIOSUITests: XCTestCase {
 
         let serverField = app.textFields["firstboot.serverURL.field"]
         XCTAssertTrue(
-            serverField.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            serverField.waitForPublicElement(
+                "firstboot.serverURL.field", timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "First-launch page should show the URL field")
         tapFieldAndAssertKeyboardAppears(
             serverField,
@@ -106,7 +120,8 @@ final class ServerConfigFormIOSUITests: XCTestCase {
 
         let apiKeyField = app.secureTextFields["firstboot.apiKey.field"]
         XCTAssertTrue(
-            apiKeyField.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            apiKeyField.waitForPublicElement(
+                "firstboot.apiKey.field", timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "First-launch page should show the API Key field")
         tapFieldAndAssertKeyboardAppears(
             apiKeyField,
@@ -124,10 +139,11 @@ final class ServerConfigFormIOSUITests: XCTestCase {
         app.launchEnvironment["UI_TEST_FORCE_MODE_SELECTION"] = "1"
         app.launchEnvironment["UI_TEST_SERVER_URL"] = config.url
         app.launchEnvironment["UI_TEST_API_KEY"] = config.apiKey
-        app.launch()
+        app.launchForFailureEvidence()
 
         XCTAssertTrue(
-            app.buttons["mode.continue.button"].waitForExistence(timeout: WaitTiming.screenTransitionTimeoutSeconds),
+            app.buttons["mode.continue.button"].waitForPublicElement(
+                "mode.continue.button", timeout: WaitTiming.screenTransitionTimeoutSeconds),
             "After injecting the test server config, the app should open the mode selection page"
         )
         return app
@@ -137,7 +153,7 @@ final class ServerConfigFormIOSUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchEnvironment["UI_TEST_RESET_STATE"] = "1"
         app.launchEnvironment["UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT"] = "1"
-        app.launch()
+        app.launchForFailureEvidence()
         return app
     }
 
@@ -150,13 +166,15 @@ final class ServerConfigFormIOSUITests: XCTestCase {
     private func startRandomPlaybackFromModeSelection(app: XCUIApplication) {
         let randomButton = app.buttons["mode.random.button"]
         XCTAssertTrue(
-            randomButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            randomButton.waitForPublicElement(
+                "mode.random.button", timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Mode selection page should show random playback")
         tapElement(randomButton)
 
         let continueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            continueButton.waitForExistence(timeout: WaitTiming.controlAppearanceTimeoutSeconds),
+            continueButton.waitForPublicElement(
+                "mode.continue.button", timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Mode selection page should show Continue")
         XCTAssertTrue(continueButton.isEnabled, "After selecting random playback, Continue should be tappable")
         tapElement(continueButton)
@@ -186,14 +204,14 @@ final class ServerConfigFormIOSUITests: XCTestCase {
                 app.otherElements[sectionID]
             ]
 
-            for candidate in candidates where candidate.waitForExistence(timeout: WaitTiming.briefElementTimeoutSeconds)
-            {
+            for candidate in candidates
+            where candidate.waitForFailureEvidence(timeout: WaitTiming.briefElementTimeoutSeconds) {
                 tapElement(candidate)
                 return
             }
 
             let fallback = app.descendants(matching: .any).matching(identifier: sectionID).firstMatch
-            if fallback.waitForExistence(timeout: WaitTiming.briefElementTimeoutSeconds) {
+            if fallback.waitForFailureEvidence(timeout: WaitTiming.briefElementTimeoutSeconds) {
                 tapElement(fallback)
                 return
             }
@@ -204,15 +222,15 @@ final class ServerConfigFormIOSUITests: XCTestCase {
                 toggleSidebarButton.isHittable,
                 isShowSidebarLabel(toggleSidebarButton.label)
             {
-                toggleSidebarButton.tap()
+                toggleSidebarButton.tapForFailureEvidence()
                 _ = waitForAnySettingsRootEntry(app: app, timeout: WaitTiming.keyboardTransitionTimeoutSeconds)
                 continue
             }
 
             if attempt % 2 == 0 {
-                app.swipeUp()
+                app.swipeUpForFailureEvidence()
             } else {
-                app.swipeDown()
+                app.swipeDownForFailureEvidence()
             }
         }
 
@@ -230,7 +248,7 @@ final class ServerConfigFormIOSUITests: XCTestCase {
         let start = Date()
         tapElement(field)
         let keyboard = app.keyboards.firstMatch
-        let didAppear = keyboard.waitForExistence(timeout: timeout)
+        let didAppear = keyboard.waitForFailureEvidence(timeout: timeout)
         if !didAppear {
             attachScreenshot(app: app, name: "ios-server-keyboard-missing-\(currentDeviceTag())")
         }
@@ -251,7 +269,7 @@ final class ServerConfigFormIOSUITests: XCTestCase {
             // ui-label-lookup: Keyboard action keys are system-provided controls.
             let keyboardButton = app.keyboards.buttons[label]
             if keyboardButton.exists && keyboardButton.isHittable {
-                keyboardButton.tap()
+                keyboardButton.tapForFailureEvidence()
                 if waitUntil(
                     timeout: WaitTiming.keyboardTransitionTimeoutSeconds, condition: { app.keyboards.count == 0 })
                 {
@@ -263,7 +281,7 @@ final class ServerConfigFormIOSUITests: XCTestCase {
 
         let appButton = app.buttons["server.keyboard.done.button"]
         if appButton.exists && appButton.isHittable {
-            appButton.tap()
+            appButton.tapForFailureEvidence()
             if waitUntil(timeout: WaitTiming.keyboardTransitionTimeoutSeconds, condition: { app.keyboards.count == 0 })
             {
                 return
@@ -273,7 +291,7 @@ final class ServerConfigFormIOSUITests: XCTestCase {
         app.coordinate(
             withNormalizedOffset: CGVector(
                 dx: KeyboardGeometry.dismissalHorizontalFraction, dy: KeyboardGeometry.dismissalTopFraction)
-        ).tap()
+        ).tapForFailureEvidence()
         _ = waitUntil(timeout: WaitTiming.keyboardTransitionTimeoutSeconds, condition: { app.keyboards.count == 0 })
     }
 
@@ -283,7 +301,7 @@ final class ServerConfigFormIOSUITests: XCTestCase {
             if button.exists && button.isHittable {
                 return true
             }
-            app.tap()
+            app.tapForFailureEvidence()
             return false
         }
     }
@@ -305,9 +323,9 @@ final class ServerConfigFormIOSUITests: XCTestCase {
 
     private func tapElement(_ element: XCUIElement) {
         if element.isHittable {
-            element.tap()
+            element.tapForFailureEvidence()
         } else {
-            element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tapForFailureEvidence()
         }
     }
 
@@ -332,7 +350,7 @@ final class ServerConfigFormIOSUITests: XCTestCase {
     }
 
     private func attachScreenshot(app: XCUIApplication, name: String) {
-        let attachment = XCTAttachment(screenshot: app.screenshot())
+        let attachment = XCTAttachment(screenshot: app.screenshotForFailureEvidence())
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
@@ -353,14 +371,14 @@ final class ServerConfigFormIOSUITests: XCTestCase {
 private extension XCUIElement {
     func clearAndType(text: String) {
         guard let existing = self.value as? String else {
-            self.typeText(text)
+            self.typeForFailureEvidence(text)
             return
         }
 
-        self.tap()
+        self.tapForFailureEvidence()
         let deleteString = String(repeating: XCUIKeyboardKey.delete.rawValue, count: existing.count)
-        self.typeText(deleteString)
-        self.typeText(text)
+        self.typeForFailureEvidence(deleteString)
+        self.typeForFailureEvidence(text)
     }
 }
 #endif

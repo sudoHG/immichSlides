@@ -10,12 +10,14 @@ struct TVDriver: PlaybackDriver {
     func launchToPlayback(input: StrictE2EInput) {
         let serverField = app.textFields["firstboot.serverURL.field"]
         XCTAssertTrue(
-            serverField.waitForExistence(timeout: UITestSupportWaitTiming.screenTransitionTimeoutSeconds),
+            serverField.waitForPublicElement(
+                "firstboot.serverURL.field", timeout: UITestSupportWaitTiming.screenTransitionTimeoutSeconds),
             "A clean install must open the first-boot form.")
         replaceFocusedText(in: serverField, with: input.serverURL)
         let apiKeyField = app.secureTextFields["firstboot.apiKey.field"]
         XCTAssertTrue(
-            apiKeyField.waitForExistence(timeout: UITestSupportWaitTiming.controlAppearanceTimeoutSeconds),
+            apiKeyField.waitForPublicElement(
+                "firstboot.apiKey.field", timeout: UITestSupportWaitTiming.controlAppearanceTimeoutSeconds),
             "First-boot form must show the API Key field.")
         focus(
             apiKeyField, trying: [.down], maxPresses: 2,
@@ -24,25 +26,28 @@ struct TVDriver: PlaybackDriver {
 
         let testConnection = firstBootControl("firstboot.testConnection.button")
         XCTAssertTrue(
-            testConnection.waitForExistence(timeout: UITestSupportWaitTiming.elementAppearanceTimeoutSeconds),
+            testConnection.waitForPublicElement(
+                "firstboot.testConnection.button", timeout: UITestSupportWaitTiming.elementAppearanceTimeoutSeconds),
             "First-boot form must show the Test Connection button.")
         press(.down)
         press(.right)
         press(.select)
         XCTAssertTrue(
-            app.staticTexts["firstboot.connection.success"].waitForExistence(
+            app.staticTexts["firstboot.connection.success"].waitForFailureEvidence(
                 timeout: UITestSupportWaitTiming.sceneReadyTimeoutSeconds),
             "Once the real controlled server is reachable, it must show that the connection test passed.")
         let save = firstBootControl("firstboot.saveConfig.button")
         XCTAssertTrue(
-            save.waitForExistence(timeout: UITestSupportWaitTiming.elementAppearanceTimeoutSeconds),
+            save.waitForPublicElement(
+                "firstboot.saveConfig.button", timeout: UITestSupportWaitTiming.elementAppearanceTimeoutSeconds),
             "Once connected, the Save Settings button must show.")
         XCTAssertTrue(save.isEnabled, "After a successful connection, Save Settings must be enabled.")
         press(.select)
 
         let random = app.buttons["mode.random.button"]
         XCTAssertTrue(
-            random.waitForExistence(timeout: UITestSupportWaitTiming.connectionTimeoutSeconds),
+            random.waitForPublicElement(
+                "mode.random.button", timeout: UITestSupportWaitTiming.connectionTimeoutSeconds),
             "Saving the settings must open the mode selection page.")
         XCTAssertTrue(
             waitForFocus(random, timeout: UITestSupportWaitTiming.elementAppearanceTimeoutSeconds),
@@ -50,14 +55,16 @@ struct TVDriver: PlaybackDriver {
         press(.select)
         let continueButton = app.buttons["mode.continue.button"]
         XCTAssertTrue(
-            continueButton.waitForExistence(timeout: UITestSupportWaitTiming.elementAppearanceTimeoutSeconds),
+            continueButton.waitForPublicElement(
+                "mode.continue.button", timeout: UITestSupportWaitTiming.elementAppearanceTimeoutSeconds),
             "After choosing Random playback, the Continue button must show.")
         focus(
             continueButton, trying: [.down], maxPresses: 2,
             "After choosing Random playback, focus must be able to move down to Continue.")
         press(.select)
         XCTAssertTrue(
-            app.buttons["slideshow.control.settings.button"].waitForExistence(
+            app.buttons["slideshow.control.settings.button"].waitForPublicElement(
+                "slideshow.control.settings.button",
                 timeout: UITestSupportWaitTiming.playbackStartupTimeoutSeconds),
             "The control bar must appear after starting random playback.")
     }
@@ -69,7 +76,7 @@ struct TVDriver: PlaybackDriver {
             "Settings home must be able to focus playback settings.")
         press(.select)
         XCTAssertTrue(
-            app.buttons["settings.playback.autoPlay.link"].waitForExistence(
+            app.buttons["settings.playback.autoPlay.link"].waitForFailureEvidence(
                 timeout: UITestSupportWaitTiming.controlAppearanceTimeoutSeconds),
             "Must open the playback settings subpage.")
         for setting in settings {
@@ -94,7 +101,7 @@ struct TVDriver: PlaybackDriver {
                 )
                 press(.menu)
                 XCTAssertTrue(
-                    app.buttons["settings.playback.display.link"].waitForExistence(
+                    app.buttons["settings.playback.display.link"].waitForFailureEvidence(
                         timeout: UITestSupportWaitTiming.settingsChangeTimeoutSeconds),
                     "After Menu, must return to playback settings.")
             }
@@ -127,7 +134,8 @@ struct TVDriver: PlaybackDriver {
         press(.up)
         let nextButton = app.buttons["slideshow.control.next.button"]
         XCTAssertTrue(
-            nextButton.waitForExistence(timeout: UITestSupportWaitTiming.stateChangeTimeoutSeconds),
+            nextButton.waitForPublicElement(
+                "slideshow.control.next.button", timeout: UITestSupportWaitTiming.stateChangeTimeoutSeconds),
             "After a direction key wakes the controls, Next must show.")
         focus(nextButton, trying: [.right, .left], maxPresses: 3, "Focus must be able to reach Next.")
         press(.select)
@@ -155,7 +163,8 @@ struct TVDriver: PlaybackDriver {
         focusSettingsControl("settings.item.cache")
         press(.select)
         XCTAssertTrue(
-            app.buttons["settings.cache.clearDisk.button"].waitForExistence(
+            app.buttons["settings.cache.clearDisk.button"].waitForPublicElement(
+                "settings.cache.clearDisk.button",
                 timeout: UITestSupportWaitTiming.controlAppearanceTimeoutSeconds),
             "Cache page must provide the Clear Disk Cache button.")
         focusSettingsControl("settings.cache.clearDisk.button")
@@ -164,12 +173,13 @@ struct TVDriver: PlaybackDriver {
         // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
         let alert = app.alerts.firstMatch
         XCTAssertTrue(
-            alert.waitForExistence(timeout: UITestSupportWaitTiming.elementAppearanceTimeoutSeconds),
+            alert.waitForFailureEvidence(timeout: UITestSupportWaitTiming.elementAppearanceTimeoutSeconds),
             "Selecting Clear must show the confirmation alert.")
         // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
         let confirmButtons = alert.buttons.matching(NSPredicate(format: "label == %@", "清理"))
         XCTAssertTrue(
-            confirmButtons.firstMatch.waitForExistence(timeout: UITestSupportWaitTiming.shortInteractionTimeoutSeconds),
+            confirmButtons.firstMatch.waitForFailureEvidence(
+                timeout: UITestSupportWaitTiming.shortInteractionTimeoutSeconds),
             "Confirmation alert must offer Clear.")
         let hasFocusedConfirm = {
             confirmButtons.allElementsBoundByIndex.contains { $0.exists && $0.hasFocus }
@@ -186,7 +196,7 @@ struct TVDriver: PlaybackDriver {
         XCTAssertTrue(
             Wait.until(timeout: UITestSupportWaitTiming.shortInteractionTimeoutSeconds) { hasFocusedConfirm() },
             "Alert focus must be able to reach Clear.")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         waitForClearCompletion()
     }
 
@@ -198,7 +208,8 @@ struct TVDriver: PlaybackDriver {
             "Before opening settings, focus must be on the settings button.")
         press(.select)
         XCTAssertTrue(
-            app.buttons["settings.item.playback"].waitForExistence(
+            app.buttons["settings.item.playback"].waitForPublicElement(
+                "settings.item.playback",
                 timeout: UITestSupportWaitTiming.controlAppearanceTimeoutSeconds),
             "Selecting settings must open the settings home.")
     }
@@ -215,17 +226,20 @@ struct TVDriver: PlaybackDriver {
             "After choosing \(option), it must be selected.")
         press(.menu)
         XCTAssertTrue(
-            app.buttons[link].waitForExistence(timeout: UITestSupportWaitTiming.settingsChangeTimeoutSeconds),
+            app.buttons[link].waitForFailureEvidence(timeout: UITestSupportWaitTiming.settingsChangeTimeoutSeconds),
             "Menu must return to the page with \(link).")
     }
 
     // The settings page is a single column: search down first, then up if nothing is found at the bottom.
     private func focusSettingsControl(_ identifier: String) {
-        focus(app.buttons[identifier], trying: [.down, .up], maxPresses: 7, "Must be able to focus \(identifier).")
+        focus(
+            app.buttons[identifier], trying: [.down, .up], maxPresses: 7, publicElement: identifier,
+            "Must be able to focus \(identifier).")
     }
 
     // Refresh even visible controls; hidden controls first need the wake receiver to have focus.
     private func revealControls() {
+        FirstFailureContext.mark("reveal-controls", element: "slideshow.control.playPause.button")
         XCTAssertTrue(
             app.refreshTVOSSlideshowControlBar(timeout: UITestSupportWaitTiming.controlAppearanceTimeoutSeconds),
             "A direction key must wake the playback control bar.")
@@ -244,11 +258,11 @@ struct TVDriver: PlaybackDriver {
             waitForFocus(field, timeout: UITestSupportWaitTiming.stateChangeTimeoutSeconds),
             "The field must be focused before input.")
         press(.select)
-        app.typeText(value)
+        app.typeForFailureEvidence(value)
         // ui-label-lookup: tvOS owns the on-screen keyboard submit buttons.
         let submit = app.buttons.matching(NSPredicate(format: "label IN %@", ["下一项", "Next", "完成", "Done"])).firstMatch
         XCTAssertTrue(
-            submit.waitForExistence(timeout: UITestSupportWaitTiming.stateChangeTimeoutSeconds),
+            submit.waitForFailureEvidence(timeout: UITestSupportWaitTiming.stateChangeTimeoutSeconds),
             "The system keyboard must show Next or Done.")
         for _ in 0..<6 where !submit.hasFocus {
             press(.down)
@@ -262,10 +276,14 @@ struct TVDriver: PlaybackDriver {
     }
 
     private func focus(
-        _ element: XCUIElement, trying directions: [XCUIRemote.Button], maxPresses: Int, _ message: String
+        _ element: XCUIElement, trying directions: [XCUIRemote.Button], maxPresses: Int,
+        publicElement: String = "unknown", _ message: String
     ) {
+        FirstFailureContext.mark("focus", element: publicElement)
         XCTAssertTrue(
-            element.waitForExistence(timeout: UITestSupportWaitTiming.controlAppearanceTimeoutSeconds), message)
+            element.waitForPublicElement(
+                publicElement, timeout: UITestSupportWaitTiming.controlAppearanceTimeoutSeconds), message)
+        FirstFailureContext.mark("focus", element: publicElement)
         for direction in directions {
             for _ in 0..<maxPresses {
                 if element.exists && element.hasFocus { return }
@@ -276,11 +294,12 @@ struct TVDriver: PlaybackDriver {
     }
 
     private func waitForFocus(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
-        Wait.until(timeout: timeout) { element.exists && element.hasFocus }
+        FirstFailureContext.mark("focus", element: FirstFailureContext.snapshot().element)
+        return Wait.until(timeout: timeout) { element.exists && element.hasFocus }
     }
 
     private func press(_ button: XCUIRemote.Button) {
-        XCUIRemote.shared.press(button)
+        FirstFailureRemote.press(button)
         RunLoop.current.run(until: Date().addingTimeInterval(Timing.focusSettle))
     }
 

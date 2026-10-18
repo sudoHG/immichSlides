@@ -262,14 +262,14 @@ extension AlbumCardSnapshot {
         for overlap in overlaps.prefix(maximumTaps) {
             let tap = origin.withOffset(CGVector(dx: overlap.point.x, dy: overlap.point.y))
             let before = try selection(in: app)
-            tap.tap()
+            tap.tapForFailureEvidence()
             let changed = try waitForSelectionChange(in: app, from: before)
             XCTAssertEqual(
                 changed, [overlap.card.identifier],
                 "Tap at \(overlap.point) inside \(overlap.card.identifier), under \(overlap.coverOwner.identifier)'s cover",
                 file: file, line: line)
             guard !changed.isEmpty else { continue }
-            tap.tap()
+            tap.tapForFailureEvidence()
             XCTAssertTrue(
                 try waitForSelection(in: app, toEqual: before),
                 "The second tap at \(overlap.point) should undo the first",

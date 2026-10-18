@@ -10,12 +10,14 @@ struct IOSDriver: PlaybackDriver {
     func launchToPlayback(input: StrictE2EInput) {
         let serverField = app.textFields["firstboot.serverURL.field"]
         XCTAssertTrue(
-            serverField.waitForExistence(timeout: TestWait.seconds(.infrastructure(20))),
+            serverField.waitForPublicElement(
+                "firstboot.serverURL.field", timeout: TestWait.seconds(.infrastructure(20))),
             "Fresh install must open the normal first-boot page.")
         replaceText(in: serverField, with: input.serverURL)
         let apiKeyField = app.secureTextFields["firstboot.apiKey.field"]
         XCTAssertTrue(
-            apiKeyField.waitForExistence(timeout: UITestSupportWaitTiming.controlAppearanceTimeoutSeconds),
+            apiKeyField.waitForPublicElement(
+                "firstboot.apiKey.field", timeout: UITestSupportWaitTiming.controlAppearanceTimeoutSeconds),
             "First-boot page must show the API Key field.")
         replaceText(in: apiKeyField, with: input.publicKey)
         XCTAssertTrue(
@@ -27,18 +29,21 @@ struct IOSDriver: PlaybackDriver {
 
         let testConnection = control("firstboot.testConnection.button")
         XCTAssertTrue(
-            testConnection.waitForExistence(timeout: UITestSupportWaitTiming.controlAppearanceTimeoutSeconds),
+            testConnection.waitForPublicElement(
+                "firstboot.testConnection.button", timeout: UITestSupportWaitTiming.controlAppearanceTimeoutSeconds),
             "First-boot page must show Test Connection.")
         tap(testConnection)
         let save = control("firstboot.saveConfig.button")
         XCTAssertTrue(
-            save.waitForExistence(timeout: UITestSupportWaitTiming.controlAppearanceTimeoutSeconds),
+            save.waitForPublicElement(
+                "firstboot.saveConfig.button", timeout: UITestSupportWaitTiming.controlAppearanceTimeoutSeconds),
             "First-boot page must show the Save Settings button.")
         XCTAssertTrue(waitForSaveEnabled(save), "Save must become enabled after a real connection test succeeds.")
         tap(save)
 
         XCTAssertTrue(
-            app.buttons["mode.random.button"].waitForExistence(
+            app.buttons["mode.random.button"].waitForPublicElement(
+                "mode.random.button",
                 timeout: UITestSupportWaitTiming.connectionTimeoutSeconds),
             "A successful save must lead to mode selection.")
         let random = control("mode.random.button")
@@ -70,7 +75,8 @@ struct IOSDriver: PlaybackDriver {
                 let observed = PlaybackIntervalSliderIOS.adjust(in: app, targetSeconds: 30, accepting: { $0 == 30 })
                 let reached30 = observed == 30
                 if !reached30 {
-                    try? Evidence().reject("interval30-setting", png: app.screenshot().pngRepresentation)
+                    try? Evidence().reject(
+                        "interval30-setting", png: app.screenshotForFailureEvidence().pngRepresentation)
                 }
                 XCTAssertTrue(reached30, "The interval must be set to 30 seconds with the real slider.")
             case .interval15Seconds:
@@ -82,14 +88,16 @@ struct IOSDriver: PlaybackDriver {
             case .displayMode(let isSinglePhoto):
                 let picker = app.segmentedControls["settings.playback.displayMode.picker"]
                 XCTAssertTrue(
-                    picker.waitForExistence(timeout: UITestSupportWaitTiming.controlAppearanceTimeoutSeconds),
+                    picker.waitForPublicElement(
+                        "settings.playback.displayMode.picker",
+                        timeout: UITestSupportWaitTiming.controlAppearanceTimeoutSeconds),
                     "Playback settings must have display mode segments.")
                 let option = picker.buttons[
                     isSinglePhoto
                         ? "settings.playback.displayMode.singlePhoto.option"
                         : "settings.playback.displayMode.smartFill.option"]
                 XCTAssertTrue(
-                    option.waitForExistence(timeout: UITestSupportWaitTiming.shortInteractionTimeoutSeconds),
+                    option.waitForFailureEvidence(timeout: UITestSupportWaitTiming.shortInteractionTimeoutSeconds),
                     "Display mode must offer the target option.")
                 tap(option)
                 XCTAssertTrue(
@@ -98,7 +106,9 @@ struct IOSDriver: PlaybackDriver {
             case .showExif(let isOn):
                 let toggle = app.switches["settings.playback.showExif.toggle"]
                 XCTAssertTrue(
-                    toggle.waitForExistence(timeout: UITestSupportWaitTiming.controlAppearanceTimeoutSeconds),
+                    toggle.waitForPublicElement(
+                        "settings.playback.showExif.toggle",
+                        timeout: UITestSupportWaitTiming.controlAppearanceTimeoutSeconds),
                     "Playback settings must provide the EXIF toggle.")
                 if isToggleOn(toggle) != isOn { tap(toggle) }
                 XCTAssertTrue(
@@ -115,7 +125,8 @@ struct IOSDriver: PlaybackDriver {
         revealControls()
         let playPause = app.buttons["slideshow.control.playPause.button"]
         XCTAssertTrue(
-            playPause.waitForExistence(timeout: UITestSupportWaitTiming.controlAppearanceTimeoutSeconds),
+            playPause.waitForPublicElement(
+                "slideshow.control.playPause.button", timeout: UITestSupportWaitTiming.controlAppearanceTimeoutSeconds),
             "Playback page must provide play/pause.")
         if playPauseValue(playPause) != "play" { tap(playPause) }
         XCTAssertTrue(
@@ -129,7 +140,8 @@ struct IOSDriver: PlaybackDriver {
         revealControls()
         let nextButton = app.buttons["slideshow.control.next.button"]
         XCTAssertTrue(
-            nextButton.waitForExistence(timeout: UITestSupportWaitTiming.stateChangeTimeoutSeconds),
+            nextButton.waitForPublicElement(
+                "slideshow.control.next.button", timeout: UITestSupportWaitTiming.stateChangeTimeoutSeconds),
             "Playback page must provide Next.")
         tap(nextButton)
     }
@@ -140,7 +152,11 @@ struct IOSDriver: PlaybackDriver {
             if settingsButton.exists && settingsButton.isHittable { return }
             if !isOnSettingsSurface() {
                 revealControls()
-                if settingsButton.waitForExistence(timeout: UITestSupportWaitTiming.readbackTimeoutSeconds) { return }
+                if settingsButton.waitForPublicElement(
+                    "slideshow.control.settings.button", timeout: UITestSupportWaitTiming.readbackTimeoutSeconds)
+                {
+                    return
+                }
             }
             let globalBack = app.buttons["global.back.button"]
             if globalBack.exists && globalBack.isHittable {
@@ -161,10 +177,11 @@ struct IOSDriver: PlaybackDriver {
                 RunLoop.current.run(until: Date().addingTimeInterval(UITestSupportWaitTiming.identityPollSeconds))
                 continue
             }
-            app.swipeDown()
+            app.swipeDownForFailureEvidence()
         }
         XCTAssertTrue(
-            settingsButton.waitForExistence(timeout: UITestSupportWaitTiming.controlAppearanceTimeoutSeconds),
+            settingsButton.waitForPublicElement(
+                "slideshow.control.settings.button", timeout: UITestSupportWaitTiming.controlAppearanceTimeoutSeconds),
             "Must be able to return from settings to playback.")
     }
 
@@ -173,22 +190,23 @@ struct IOSDriver: PlaybackDriver {
         openCacheSection()
         let clearButton = app.buttons["settings.cache.clearDisk.button"]
         XCTAssertTrue(
-            clearButton.waitForExistence(timeout: UITestSupportWaitTiming.controlAppearanceTimeoutSeconds),
+            clearButton.waitForPublicElement(
+                "settings.cache.clearDisk.button", timeout: UITestSupportWaitTiming.controlAppearanceTimeoutSeconds),
             "Cache page must provide the Clear Disk Cache button.")
-        if !clearButton.isHittable { app.swipeUp() }
+        if !clearButton.isHittable { app.swipeUpForFailureEvidence() }
         try onCachePage()
         tap(clearButton)
         // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
         let alert = app.alerts["确认清理磁盘缓存"]
         XCTAssertTrue(
-            alert.waitForExistence(timeout: UITestSupportWaitTiming.elementAppearanceTimeoutSeconds),
+            alert.waitForFailureEvidence(timeout: UITestSupportWaitTiming.elementAppearanceTimeoutSeconds),
             "Tapping Clear must show the confirmation alert.")
         // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
         let confirm = alert.buttons.matching(NSPredicate(format: "label == %@", "清理")).firstMatch
         XCTAssertTrue(
-            confirm.waitForExistence(timeout: UITestSupportWaitTiming.shortInteractionTimeoutSeconds),
+            confirm.waitForFailureEvidence(timeout: UITestSupportWaitTiming.shortInteractionTimeoutSeconds),
             "Confirmation alert must offer Clear.")
-        confirm.tap()
+        confirm.tapForFailureEvidence()
         waitForClearCompletion()
     }
 
@@ -196,7 +214,8 @@ struct IOSDriver: PlaybackDriver {
         revealControls()
         let settingsButton = app.buttons["slideshow.control.settings.button"]
         XCTAssertTrue(
-            settingsButton.waitForExistence(timeout: UITestSupportWaitTiming.connectionTimeoutSeconds),
+            settingsButton.waitForPublicElement(
+                "slideshow.control.settings.button", timeout: UITestSupportWaitTiming.connectionTimeoutSeconds),
             "Playback page must provide the settings entry.")
         tap(settingsButton)
         XCTAssertTrue(
@@ -207,18 +226,23 @@ struct IOSDriver: PlaybackDriver {
     // On iPad the split view shows playback settings on the right by default; iPhone goes through the list.
     private func openPlaybackSection() {
         let autoPlay = app.switches["settings.playback.autoPlay.toggle"]
-        if autoPlay.waitForExistence(timeout: UITestSupportWaitTiming.readbackTimeoutSeconds) { return }
+        if autoPlay.waitForPublicElement(
+            "settings.playback.autoPlay.toggle", timeout: UITestSupportWaitTiming.readbackTimeoutSeconds)
+        {
+            return
+        }
         showSidebarIfCollapsed()
         let playbackItem = app.buttons["settings.item.playback"]
         XCTAssertTrue(
-            playbackItem.waitForExistence(timeout: UITestSupportWaitTiming.controlAppearanceTimeoutSeconds),
+            playbackItem.waitForPublicElement(
+                "settings.item.playback", timeout: UITestSupportWaitTiming.controlAppearanceTimeoutSeconds),
             "Settings list must have the playback settings entry.")
-        playbackItem.tap()
+        playbackItem.tapForFailureEvidence()
         if !Wait.until(
             timeout: UITestSupportWaitTiming.readbackTimeoutSeconds,
             { autoPlay.exists || app.staticTexts["settings.playback.title"].exists })
         {
-            app.cells.element(boundBy: 0).tap()
+            app.cells.element(boundBy: 0).tapForFailureEvidence()
         }
         XCTAssertTrue(
             Wait.until(timeout: TestWait.seconds(.product(10))) {
@@ -238,12 +262,16 @@ struct IOSDriver: PlaybackDriver {
                 app.staticTexts["settings.item.cache"]
             ]
             if let entry = candidates.first(where: {
-                $0.waitForExistence(timeout: UITestSupportWaitTiming.briefElementTimeoutSeconds)
+                $0.waitForFailureEvidence(timeout: UITestSupportWaitTiming.briefElementTimeoutSeconds)
             }) {
                 tap(entry)
-                if clearButton.waitForExistence(timeout: UITestSupportWaitTiming.stateChangeTimeoutSeconds) { return }
+                if clearButton.waitForPublicElement(
+                    "settings.cache.clearDisk.button", timeout: UITestSupportWaitTiming.stateChangeTimeoutSeconds)
+                {
+                    return
+                }
             }
-            if attempt % 2 == 0 { app.swipeUp() } else { app.swipeDown() }
+            if attempt % 2 == 0 { app.swipeUpForFailureEvidence() } else { app.swipeDownForFailureEvidence() }
         }
         XCTFail("Settings list must be able to open cache management.")
     }
@@ -279,14 +307,17 @@ struct IOSDriver: PlaybackDriver {
     }
 
     private func revealControls() {
+        FirstFailureContext.mark("reveal-controls", element: "slideshow.control.playPause.button")
         if app.buttons["slideshow.control.settings.button"].exists { return }
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tap()
-        _ = app.buttons["slideshow.control.settings.button"].waitForExistence(
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tapForFailureEvidence()
+        _ = app.buttons["slideshow.control.settings.button"].waitForPublicElement(
+            "slideshow.control.settings.button",
             timeout: UITestSupportWaitTiming.shortInteractionTimeoutSeconds)
     }
 
     private func waitForPlaybackControls(timeout: TimeInterval) -> Bool {
-        Wait.until(timeout: timeout) {
+        FirstFailureContext.mark("query-element", element: "slideshow.control.settings.button")
+        return Wait.until(timeout: timeout) {
             dismissSavePasswordPrompt(timeout: TestWait.seconds(.product(0)))
             let banner = app.descendants(matching: .any).matching(identifier: "slideshow.entryHint.banner").firstMatch
             if banner.exists { tap(banner) }
@@ -297,12 +328,13 @@ struct IOSDriver: PlaybackDriver {
     }
 
     private func waitForSaveEnabled(_ save: XCUIElement) -> Bool {
-        Wait.until(timeout: UITestSupportWaitTiming.sceneReadyTimeoutSeconds) {
+        FirstFailureContext.mark("query-element", element: "firstboot.saveConfig.button")
+        return Wait.until(timeout: UITestSupportWaitTiming.sceneReadyTimeoutSeconds) {
             let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
             // ui-label-lookup: The local-network permission alert belongs to iOS.
             for label in ["允许", "Allow"] where springboard.alerts.buttons[label].exists {
                 // ui-label-lookup: The permission action belongs to SpringBoard.
-                springboard.alerts.buttons[label].tap()
+                springboard.alerts.buttons[label].tapForFailureEvidence()
             }
             // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
             let alert = app.alerts.firstMatch
@@ -319,7 +351,7 @@ struct IOSDriver: PlaybackDriver {
             // ui-label-lookup: Dismiss the iOS Save Password sheet without saving credentials.
             for label in ["以后", "Not Now"] where app.buttons[label].exists {
                 // ui-label-lookup: The Save Password action belongs to iOS.
-                app.buttons[label].tap()
+                app.buttons[label].tapForFailureEvidence()
                 return true
             }
             return false
@@ -327,14 +359,14 @@ struct IOSDriver: PlaybackDriver {
     }
 
     private func replaceText(in field: XCUIElement, with value: String) {
-        field.tap()
+        field.tapForFailureEvidence()
         let existing = field.value as? String ?? ""
         let isPlaceholder = existing.contains("请输入") || existing.localizedCaseInsensitiveContains("enter")
         if !existing.isEmpty && !isPlaceholder {
             field.typeKey("a", modifierFlags: .command)
             field.typeKey(XCUIKeyboardKey.delete.rawValue, modifierFlags: [])
         }
-        field.typeText(value)
+        field.typeForFailureEvidence(value)
     }
 
     private func secureFieldHasValue(_ field: XCUIElement) -> Bool {
@@ -345,7 +377,7 @@ struct IOSDriver: PlaybackDriver {
     private func commitFocusedInput() {
         let done = app.buttons["server.keyboard.done.button"]
         if done.exists && done.isHittable {
-            done.tap()
+            done.tapForFailureEvidence()
             return
         }
         // ui-label-lookup: System keyboard submit keys follow the simulator language.
@@ -353,7 +385,7 @@ struct IOSDriver: PlaybackDriver {
             // ui-label-lookup: System keyboard submit keys follow the simulator language.
             let button = app.keyboards.buttons[label]
             if button.exists && button.isHittable {
-                button.tap()
+                button.tapForFailureEvidence()
                 return
             }
         }
@@ -369,9 +401,9 @@ struct IOSDriver: PlaybackDriver {
 
     private func tap(_ element: XCUIElement) {
         if element.isHittable {
-            element.tap()
+            element.tapForFailureEvidence()
         } else {
-            element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tapForFailureEvidence()
         }
     }
 

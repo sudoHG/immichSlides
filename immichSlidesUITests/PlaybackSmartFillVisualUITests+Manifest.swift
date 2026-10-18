@@ -334,7 +334,7 @@ extension PlaybackSmartFillVisualUITests {
     ) -> (path: String, captureTimestamp: String)? {
         // In a landscape Simulator an app-element screenshot can keep the old window bounds,
         // so runtime evidence takes a full-screen screenshot.
-        let screenshot = XCUIScreen.main.screenshot()
+        let screenshot = XCUIScreen.main.screenshotForFailureEvidence()
         if shouldAttachToXCTest {
             let attachment = XCTAttachment(screenshot: screenshot)
             attachment.name = name
@@ -359,14 +359,14 @@ extension PlaybackSmartFillVisualUITests {
 
     func tapElement(_ element: XCUIElement) {
         if element.isHittable {
-            element.tap()
+            element.tapForFailureEvidence()
             return
         }
-        element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tapForFailureEvidence()
     }
 
     func saveEvidenceScreenshot(app: XCUIApplication, scenario: String, step: String) {
-        let screenshot = app.screenshot()
+        let screenshot = app.screenshotForFailureEvidence()
         let attachment = XCTAttachment(screenshot: screenshot)
         attachment.name = "\(scenario)-\(step)"
         attachment.lifetime = .keepAlways

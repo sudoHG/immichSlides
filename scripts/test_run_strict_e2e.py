@@ -317,6 +317,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
         )
         recording_process = mock.Mock(pid=9876)
         invocations = []
+        attempt_environments = []
         from test_ci_flaky import registry
         from ci_summary import test_identity
         retry_registry = registry()
@@ -329,6 +330,10 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
         def fake_run_command(command: list[str], **kwargs: object) -> int:
             kwargs["log_path"].write_text("test run\n", encoding="utf-8")
             invocations.append(command)
+            if "-xctestrun" in command:
+                import plistlib
+                payload = plistlib.loads(Path(command[command.index("-xctestrun") + 1]).read_bytes())
+                attempt_environments.append(payload["TestConfigurations"][0]["TestTargets"][0]["EnvironmentVariables"])
             if late_image_attempt is not None:
                 late_image_attempt(kwargs["environment"], len(invocations))
             if suite != "filter-person":
@@ -358,8 +363,10 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
             return subprocess.CompletedProcess(command, 0, "", "")
 
         def fake_test_run(source, directory, environment):
+            import plistlib
             run = directory / "case.xctestrun"
-            run.write_bytes(b"private test inputs")
+            run.write_bytes(plistlib.dumps({"TestConfigurations": [{"TestTargets": [
+                {"BlueprintName": "immichSlidesUITests", "EnvironmentVariables": {}}]}]}))
             return run
 
         def fake_preparation(udid, *, report):
@@ -434,7 +441,46 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
             "start": start,
             "stop": stop,
             "recording_process": recording_process,
+            "invocations": invocations,
+            "attempt_environments": attempt_environments,
         }
+
+    def test_strict_retry_configures_independent_spools_and_disables_a_failed_reconfiguration(self):
+        from ci_failure_diagnostics import configure_first_failure_attempt
+        for failed in (None, 2, 4):
+            with self.subTest(reconfiguration_failed=failed), tempfile.TemporaryDirectory() as raw:
+                configured = []
+                def configure(call, spool, selectors, **kwargs):
+                    configured.append(spool)
+                    if len(configured) == failed:
+                        original_write = Path.write_bytes
+                        def fail_write(path, payload):
+                            original_write(path, payload[:8])
+                            raise OSError("Synthetic partial attempt configuration write")
+                        with mock.patch.object(Path, "write_bytes", fail_write):
+                            return configure_first_failure_attempt(call, spool, selectors, **kwargs)
+                    return configure_first_failure_attempt(call, spool, selectors, **kwargs)
+                with mock.patch("ci_failure_diagnostics.configure_first_failure_attempt", side_effect=configure), \
+                        mock.patch.object(strict_runner, "export_private_result_bundle",
+                                          wraps=strict_runner.export_private_result_bundle) as export:
+                    code, _, stderr, calls = self._run_p2_main(Path(raw) / "evidence", suite="filter-person",
+                        platform="ios", model="iPhone", warm=True, retry=True)
+                self.assertEqual(0, code, stderr)
+                self.assertEqual(4, len(configured))
+                self.assertNotEqual(configured[0], configured[1])
+                for index, (command, environment) in enumerate(zip(calls["invocations"], calls["attempt_environments"])):
+                    bundle = Path(command[command.index("-resultBundlePath") + 1])
+                    self.assertEqual(configured[index], bundle.parent / "first-failure-spool")
+                    if index + 1 == failed:
+                        self.assertNotIn("STRICT_E2E_FIRST_FAILURE_ENABLED", environment)
+                        self.assertNotIn("STRICT_E2E_FIRST_FAILURE_DIR", environment)
+                    else:
+                        self.assertEqual(environment["STRICT_E2E_FIRST_FAILURE_ENABLED"], "1")
+                        self.assertEqual(environment["STRICT_E2E_FIRST_FAILURE_DIR"], str(configured[index]))
+                    exported = next(call for call in export.call_args_list if call.args[0] == bundle)
+                    self.assertEqual(None if index + 1 == failed else
+                        (configured[index], [session["selector"] for session in FILTER_PERSON_SESSIONS]),
+                        exported.kwargs["first_failure_spool"])
 
     def test_listed_late_image_retry_resets_and_isolates_hold_generations(self):
         import time
@@ -692,6 +738,102 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
 
 
 class FailureDiagnosticsTests(unittest.TestCase):
+    def test_validator_failure_retains_its_actual_input_without_claiming_an_app_snapshot(self):
+        from unittest.mock import patch
+        from PIL import Image
+        import run_strict_e2e as runner
+        from ci_failure_diagnostics import public_fixture_validator_scope, validate_first_failure, validate_first_failure_image
+        from strict_e2e_p2_contract_test_fixtures import build_evidence, _facts, UDID
+        with tempfile.TemporaryDirectory() as directory:
+            evidence = build_evidence(Path(directory), "p2-cache", "iphone", review=False)
+            Image.new("RGB", (320, 180), "black").save(evidence / "cache-returned.png", format="PNG")
+            with patch.object(runner, "read_xcresult_facts", return_value=_facts("p2-cache", "iphone")):
+                with self.assertRaises(runner.CommandError) as raised:
+                    with public_fixture_validator_scope(evidence, screenshots=True):
+                        runner.require_p2_evidence(evidence, suite="p2-cache", platform="ios", simulator_udid=UDID,
+                            fixture_set="a", result_bundle_path=evidence / "strict-p2-cache.xcresult")
+            self.assertEqual(2, raised.exception.code)
+            receipt = json.loads((evidence / "first-failure-validator.json").read_text())
+            validate_first_failure(receipt)
+            self.assertEqual(("validator", "unavailable", "unknown", "validated-input"),
+                (receipt["source"], receipt["state"]["observation"], receipt["state"]["app"], receipt["screenshot"]["status"]))
+            self.assertTrue(all(value is None for value in receipt["timing"].values()))
+            path = evidence / "first-failure-validator.png"
+            validate_first_failure_image(path, receipt)
+            with Image.open(path) as image:
+                self.assertEqual(((0, 0), (0, 0), (0, 0)), image.getextrema())
+            runner.write_sensitive_scan(evidence, ["PRIVATE_SENTINEL"])
+
+    def test_export_retains_only_a_valid_official_fixture_failure_and_canonical_image(self):
+        import io
+        import ci_execution_diagnostics as diagnostics
+        from unittest.mock import patch
+        import run_strict_e2e as runner
+        from PIL import Image
+        from test_ci_summary import first_failure_receipt
+        selector = "immichSlidesUITests/FlowUITests/testPlayback"
+        for defect in (None, "private-element", "passed", "oversized-receipt", "symlink", "image-budget", "invalid-image", "wrong-source"):
+            with self.subTest(defect=defect), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                spool, output = root / "private-spool", root / "public"
+                spool.mkdir()
+                output.mkdir()
+                image = io.BytesIO()
+                Image.new("RGB", (64, 32), "blue").save(image, format="PNG", icc_profile=b"PRIVATE_PROFILE")
+                raw = image.getvalue()
+                receipt = first_failure_receipt()
+                receipt["screenshot"].update(width=64, height=32, bytes=len(raw))
+                if defect == "private-element":
+                    receipt["element"] = "PRIVATE_SENTINEL"
+                if defect == "wrong-source":
+                    from ci_failure_diagnostics import unavailable_first_failure
+                    receipt = unavailable_first_failure("validator")
+                receipt_path = spool / "0.json"
+                receipt_path.write_text(json.dumps(receipt).ljust(8193) if defect == "oversized-receipt" else json.dumps(receipt))
+                if defect == "symlink":
+                    receipt_path.rename(spool / "other.json")
+                    receipt_path.symlink_to(spool / "other.json")
+                (spool / "0.png").write_bytes(b"not an image" if defect == "invalid-image" else raw)
+                official = {"testNodes": [{"nodeType": "Test Case", "nodeIdentifier": "FlowUITests/testPlayback()",
+                    "result": "Passed" if defect == "passed" else "Failed"}]}
+                (output / "official-summary.json").write_text("{}")
+                def export(command, **kwargs):
+                    payload = official if "tests" in command else {}
+                    return subprocess.CompletedProcess(command, 0, json.dumps(payload).encode())
+                with diagnostics.session() as recorder, patch.object(runner.subprocess, "run", side_effect=export):
+                    from ci_failure_diagnostics import normalize_ui_failure_images
+                    legacy = output / "legacy/earlier-attempt.png"
+                    legacy.parent.mkdir()
+                    legacy.write_bytes(raw)
+                    charged = recorder.charged["xcode"]
+                    normalize_ui_failure_images(legacy.parent)
+                    self.assertEqual(charged, recorder.charged["xcode"], "legacy images cannot crowd out a later first-failure image")
+                    self.assertTrue(legacy.is_file())
+                    if defect == "image-budget":
+                        recorder.charged["xcode"] = 5
+                        legacy.write_bytes(raw)
+                        normalize_ui_failure_images(legacy.parent)
+                        self.assertTrue(legacy.is_file(), "spent first-failure budget cannot remove a legacy image")
+                    runner.export_private_result_bundle(root / "test.xcresult", output, [], enrich_failure_diagnostics=True,
+                        first_failure_spool=(spool, [selector]))
+                node = json.loads((output / "official-tests.json").read_text())["testNodes"][0]
+                if defect in {"image-budget", "invalid-image"}:
+                    self.assertEqual(receipt["timing"], node["first_failure"]["timing"])
+                    self.assertEqual({"status": "unavailable", "width": None, "height": None, "bytes": None},
+                                     node["first_failure"]["screenshot"])
+                    self.assertFalse((output / "first-failure/0.png").exists())
+                elif defect is not None:
+                    self.assertNotIn("first_failure", node)
+                    self.assertFalse((output / "first-failure/0.png").exists())
+                else:
+                    kept = node["first_failure"]
+                    public_image = output / "first-failure/0.png"
+                    self.assertEqual(kept["screenshot"]["bytes"], public_image.stat().st_size)
+                    self.assertEqual(kept["timing"], receipt["timing"])
+                    with Image.open(public_image) as picture:
+                        self.assertEqual(picture.info, {})
+                    runner.write_sensitive_scan(output, ["PRIVATE_SENTINEL", "PRIVATE_PROFILE"])
+
     def test_hosted_flow_prefixes_publish_only_the_reviewed_phase_and_class(self):
         from ci_failure_diagnostics import (
             FAILURE_CLASSES, FAILURE_PHASES, PREFIX_RULES, classify_messages, unknown_diagnostics,
@@ -1607,6 +1749,14 @@ raise SystemExit(65)
             self.assertEqual(expected, [entry["identity"] for entry in summary["population"]["observed"]])
             self.assertEqual("failed", summary["status"])
             self.assertEqual("simulator-preparation-failed", summary["infrastructure"][0]["code"])
+            for item in summary["population"]["observed"]:
+                receipt = item["first_failure"]
+                self.assertEqual(receipt, item["attempts"][0]["first_failure"])
+                self.assertEqual(("preparation", "simulator-readiness", 301.5, None),
+                    (receipt["source"], receipt["step"], receipt["timing"]["wait_elapsed_seconds"],
+                     receipt["timing"]["deadline_seconds"]))
+                self.assertEqual("not-applicable", receipt["screenshot"]["status"])
+                self.assertEqual("unknown", receipt["state"]["app"])
             events = summary["bounded_diagnostics"]["events"]
             self.assertIsNone(summary["bounded_diagnostics"]["collection_seconds"]["fixture"])
             self.assertTrue(any(event["phase"] == "simulator-readiness" and event["state"] == "timeout"

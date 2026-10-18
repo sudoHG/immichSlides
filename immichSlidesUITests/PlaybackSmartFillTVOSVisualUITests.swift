@@ -3,6 +3,16 @@ import XCTest
 
 #if os(tvOS)
 final class PlaybackSmartFillTVOSVisualUITests: XCTestCase {
+    override func invokeTest() {
+        FirstFailureContext.reset()
+        super.invokeTest()
+    }
+
+    override func record(_ issue: XCTIssue) {
+        FirstFailureEvidence.record(self, issue: issue)
+        super.record(issue)
+    }
+
     override func setUpWithError() throws {
         continueAfterFailure = false
     }
@@ -34,7 +44,8 @@ final class PlaybackSmartFillTVOSVisualUITests: XCTestCase {
 
         let settingsButton = app.buttons["slideshow.control.settings.button"]
         XCTAssertTrue(
-            settingsButton.waitForExistence(timeout: TestWait.seconds(.product(6))),
+            settingsButton.waitForPublicElement(
+                "slideshow.control.settings.button", timeout: TestWait.seconds(.product(6))),
             "Apple TV control bar settings button should still exist after quick switching"
         )
     }
@@ -151,7 +162,7 @@ final class PlaybackSmartFillTVOSVisualUITests: XCTestCase {
             interval: smartFillMotionSampleIntervalSeconds()
         ) { elapsed in
             if actions.isEmpty, elapsed >= 1.0 {
-                XCUIRemote.shared.press(.up)
+                FirstFailureRemote.press(.up)
                 self.recordInteractionAction(
                     "tap-image-show-control-bar",
                     elapsed: ProcessInfo.processInfo.systemUptime - traceStartedAt,
@@ -173,7 +184,7 @@ final class PlaybackSmartFillTVOSVisualUITests: XCTestCase {
                 !actions.containsAction("pause"),
                 elapsed >= 8.0
             {
-                XCUIRemote.shared.press(.playPause)
+                FirstFailureRemote.press(.playPause)
                 self.recordInteractionAction(
                     "pause",
                     elapsed: ProcessInfo.processInfo.systemUptime - traceStartedAt,
@@ -184,7 +195,7 @@ final class PlaybackSmartFillTVOSVisualUITests: XCTestCase {
                 !actions.containsAction("resume"),
                 elapsed >= 10.0
             {
-                XCUIRemote.shared.press(.playPause)
+                FirstFailureRemote.press(.playPause)
                 self.recordInteractionAction(
                     "resume",
                     elapsed: ProcessInfo.processInfo.systemUptime - traceStartedAt,
@@ -202,7 +213,7 @@ final class PlaybackSmartFillTVOSVisualUITests: XCTestCase {
                 )
             }
         }
-        XCUIRemote.shared.press(.menu)
+        FirstFailureRemote.press(.menu)
         recordInteractionAction(
             "menu-return",
             elapsed: ProcessInfo.processInfo.systemUptime - traceStartedAt,

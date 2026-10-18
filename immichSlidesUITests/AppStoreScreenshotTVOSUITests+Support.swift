@@ -60,7 +60,7 @@ extension AppStoreScreenshotTVOSUITests {
         do {
             try capture()
         } catch {
-            XCUIApplication().terminate()
+            XCUIApplication().terminateForFailureEvidence()
             let message = "\(slot.rawValue): \(error.localizedDescription)"
             blockers.append(message)
             appendManifestRow(
@@ -82,7 +82,7 @@ extension AppStoreScreenshotTVOSUITests {
             shouldDisablePlaybackEntryHint: false
         )
         try focusStartPlaybackButton(in: app)
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         try waitOrThrow(
             app.buttons["slideshow.control.settings.button"],
@@ -113,7 +113,7 @@ extension AppStoreScreenshotTVOSUITests {
             slotDirectory: slotDirectory,
             notes: "selected album: \(playbackAlbumName)"
         )
-        app.terminate()
+        app.terminateForFailureEvidence()
     }
 
     @MainActor
@@ -131,7 +131,7 @@ extension AppStoreScreenshotTVOSUITests {
         waitForFocusVisualSettle()
 
         capture(app: app, slot: .playbackMode, outputRoot: outputRoot, slotDirectory: slotDirectory)
-        app.terminate()
+        app.terminateForFailureEvidence()
     }
 
     @MainActor
@@ -163,7 +163,7 @@ extension AppStoreScreenshotTVOSUITests {
         waitForFocusVisualSettle(seconds: TestWait.seconds(.product(1.2)))
 
         capture(app: app, slot: .filterEntry, outputRoot: outputRoot, slotDirectory: slotDirectory)
-        app.terminate()
+        app.terminateForFailureEvidence()
     }
 
     @MainActor
@@ -188,7 +188,7 @@ extension AppStoreScreenshotTVOSUITests {
             slotDirectory: slotDirectory,
             notes: "preseeded people: Augusto soloOnly; Mia, Wang, Ethan normal"
         )
-        app.terminate()
+        app.terminateForFailureEvidence()
     }
 
     @MainActor
@@ -213,7 +213,7 @@ extension AppStoreScreenshotTVOSUITests {
             slotDirectory: slotDirectory,
             notes: "preseeded albums: Augusto Family; Augusto & Mia; Beijing Cycling"
         )
-        app.terminate()
+        app.terminateForFailureEvidence()
     }
 
     @MainActor
@@ -227,7 +227,7 @@ extension AppStoreScreenshotTVOSUITests {
             downStepsFromPlayback: 1,
             failureMessage: "Settings home should be able to focus the access protection entry"
         )
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let pinInputButton = app.buttons["settings.pin.input.enable"]
         try waitOrThrow(
@@ -236,7 +236,7 @@ extension AppStoreScreenshotTVOSUITests {
         try waitForFocus(
             pinInputButton, timeout: AppStoreScreenshotUITestsWaitTiming.controlAppearanceTimeoutSeconds,
             "Access protection page should default focus to the set-PIN entry")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         try waitOrThrow(
             app.buttons["pinEntry.close.button"],
@@ -249,7 +249,7 @@ extension AppStoreScreenshotTVOSUITests {
         waitForFocusVisualSettle()
 
         capture(app: app, slot: .pinProtection, outputRoot: outputRoot, slotDirectory: slotDirectory)
-        app.terminate()
+        app.terminateForFailureEvidence()
     }
 
     @MainActor
@@ -258,7 +258,7 @@ extension AppStoreScreenshotTVOSUITests {
         app.launchEnvironment["UI_TEST_APP_STORE_SCREENSHOT_PREFILL_CONNECTION"] = "1"
         app.launchEnvironment["UI_TEST_APP_STORE_SCREENSHOT_SERVER_URL"] = appStoreDemoServerURL
         app.launchEnvironment["UI_TEST_APP_STORE_SCREENSHOT_API_KEY"] = appStoreDemoAPIKey
-        app.launch()
+        app.launchForFailureEvidence()
 
         let serverURLField = app.textFields["firstboot.serverURL.field"]
         try waitOrThrow(
@@ -293,7 +293,7 @@ extension AppStoreScreenshotTVOSUITests {
             slotDirectory: slotDirectory,
             notes: "prefilled demo URL and masked API key"
         )
-        app.terminate()
+        app.terminateForFailureEvidence()
     }
 }
 extension AppStoreScreenshotTVOSUITests {
@@ -302,7 +302,7 @@ extension AppStoreScreenshotTVOSUITests {
         let app = makeBaseLaunchApp()
         try injectRealTestServer(into: app)
         app.launchEnvironment["UI_TEST_FORCE_MODE_SELECTION"] = "1"
-        app.launch()
+        app.launchForFailureEvidence()
 
         try waitOrThrow(
             app.buttons["mode.continue.button"], timeout: TestWait.seconds(.infrastructure(18)),
@@ -325,7 +325,7 @@ extension AppStoreScreenshotTVOSUITests {
         if shouldPrepareFilterSummaryVisuals {
             app.launchEnvironment["UI_TEST_PREPARE_FILTER_SUMMARY_VISUAL_SELECTIONS"] = "1"
         }
-        app.launch()
+        app.launchForFailureEvidence()
 
         try startFilteredFlowFromModeSelection(app)
         return app
@@ -338,7 +338,7 @@ extension AppStoreScreenshotTVOSUITests {
             shouldPrepareFilterSummaryVisuals: false
         )
         try focusStartPlaybackButton(in: app)
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         try waitOrThrow(
             app.buttons["slideshow.control.settings.button"],
             timeout: AppStoreScreenshotUITestsWaitTiming.playbackEntryTimeoutSeconds,
@@ -386,9 +386,9 @@ extension AppStoreScreenshotTVOSUITests {
         try waitOrThrow(
             filteredButton, timeout: AppStoreScreenshotUITestsWaitTiming.screenTransitionTimeoutSeconds,
             "Mode selection should show the filtered playback option")
-        XCUIRemote.shared.press(.right)
+        FirstFailureRemote.press(.right)
         waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.25)))
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         let continueButton = app.buttons["mode.continue.button"]
         try waitOrThrow(
@@ -397,9 +397,9 @@ extension AppStoreScreenshotTVOSUITests {
         guard continueButton.isEnabled else {
             throw TVOSScreenshotError.message("Continue button is disabled after choosing filtered playback.")
         }
-        XCUIRemote.shared.press(.down)
+        FirstFailureRemote.press(.down)
         waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.25)))
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
 
         try waitOrThrow(
             app.buttons["filterSummary.startPlayback.button"],
@@ -415,7 +415,7 @@ extension AppStoreScreenshotTVOSUITests {
             albumButton, timeout: AppStoreScreenshotUITestsWaitTiming.screenTransitionTimeoutSeconds,
             "Filter summary should show the album entry")
         try focusFilterSummaryAlbumButton(in: app)
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         try waitOrThrow(
             app.buttons["albumFilter.back.button"],
             timeout: AppStoreScreenshotUITestsWaitTiming.screenTransitionTimeoutSeconds,
@@ -429,7 +429,7 @@ extension AppStoreScreenshotTVOSUITests {
             peopleButton, timeout: AppStoreScreenshotUITestsWaitTiming.screenTransitionTimeoutSeconds,
             "Filter summary should show the people entry")
         try focusFilterSummaryPeopleButton(in: app)
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         try waitOrThrow(
             app.buttons["personFilter.back.button"],
             timeout: AppStoreScreenshotUITestsWaitTiming.screenTransitionTimeoutSeconds,
@@ -443,10 +443,10 @@ extension AppStoreScreenshotTVOSUITests {
 
         for _ in 0..<6 {
             if isFocused(albumButton) { return }
-            XCUIRemote.shared.press(.left)
+            FirstFailureRemote.press(.left)
             waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.15)))
             if isFocused(albumButton) { return }
-            XCUIRemote.shared.press(.up)
+            FirstFailureRemote.press(.up)
             waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.15)))
         }
 
@@ -461,7 +461,7 @@ extension AppStoreScreenshotTVOSUITests {
         if isFocused(peopleButton) { return }
 
         try focusFilterSummaryAlbumButton(in: app)
-        XCUIRemote.shared.press(.right)
+        FirstFailureRemote.press(.right)
         waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.25)))
         try waitForFocus(
             peopleButton, timeout: AppStoreScreenshotUITestsWaitTiming.shortInteractionTimeoutSeconds,
@@ -477,7 +477,7 @@ extension AppStoreScreenshotTVOSUITests {
 
         for _ in 0..<10 {
             if isFocused(startButton) { return }
-            XCUIRemote.shared.press(.down)
+            FirstFailureRemote.press(.down)
             waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.15)))
         }
 
@@ -535,14 +535,14 @@ extension AppStoreScreenshotTVOSUITests {
 
         for _ in 0..<6 {
             if isFocused(settingsButton) { break }
-            XCUIRemote.shared.press(.left)
+            FirstFailureRemote.press(.left)
             waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.12)))
         }
 
         try waitForFocus(
             settingsButton, timeout: AppStoreScreenshotUITestsWaitTiming.elementAppearanceTimeoutSeconds,
             "Focus should return to the settings button before opening settings")
-        XCUIRemote.shared.press(.select)
+        FirstFailureRemote.press(.select)
         try waitUntilOrThrow(
             timeout: AppStoreScreenshotUITestsWaitTiming.navigationTimeoutSeconds,
             "Pressing the settings button should open settings home"
@@ -568,7 +568,7 @@ extension AppStoreScreenshotTVOSUITests {
 
         for _ in 0..<8 {
             if isFocused(playbackItem) { break }
-            XCUIRemote.shared.press(.up)
+            FirstFailureRemote.press(.up)
             waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.12)))
         }
         try waitForFocus(
@@ -576,7 +576,7 @@ extension AppStoreScreenshotTVOSUITests {
             "Settings home should be able to settle focus on the playback settings entry")
 
         for _ in 0..<downStepsFromPlayback {
-            XCUIRemote.shared.press(.down)
+            FirstFailureRemote.press(.down)
             waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.15)))
         }
 
@@ -696,7 +696,7 @@ extension AppStoreScreenshotTVOSUITests {
     ) {
         waitForFocusVisualSettle(seconds: TestWait.seconds(.product(0.7)))
 
-        let screenshot = app.screenshot()
+        let screenshot = app.screenshotForFailureEvidence()
         let data = screenshot.pngRepresentation
         let fileURL = slotDirectory.appendingPathComponent(slot.fileName)
 
@@ -770,7 +770,7 @@ extension AppStoreScreenshotTVOSUITests {
 }
 extension AppStoreScreenshotTVOSUITests {
     func waitOrThrow(_ element: XCUIElement, timeout: TimeInterval, _ message: String) throws {
-        guard element.waitForExistence(timeout: timeout) else {
+        guard element.waitForFailureEvidence(timeout: timeout) else {
             throw TVOSScreenshotError.message(message)
         }
     }

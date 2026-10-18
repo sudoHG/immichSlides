@@ -1004,6 +1004,22 @@ def check_repository(root: Path) -> list[Violation]:
         source = file.read_text(encoding="utf-8")
         for check in CHECKS:
             violations.extend(check(path, source))
+        if path.startswith("immichSlidesUITests/"):
+            code = mask_comments(source, mask_strings=True)
+            for match in re.finditer(r"\bclass\s+(\w+)\s*:\s*XCTestCase\b[^\{]*\{", code):
+                end = find_matching(code, match.end() - 1, "{", "}")
+                body = re.sub(r"[\s;]+", "", code[match.end():end])
+                hook = "overridefuncrecord(_issue:XCTIssue){FirstFailureEvidence.record(self,issue:issue)super.record(issue)}"
+                reset = "overridefuncinvokeTest(){FirstFailureContext.reset()super.invokeTest()}"
+                detail = None
+                if hook not in body:
+                    detail = " must forward record(_:) to FirstFailureEvidence before super.record"
+                elif reset not in body:
+                    detail = " must reset the first-failure timeline before super.invokeTest"
+                if detail is not None:
+                    name = match.group(1)
+                    violations.append(Violation(path, line_of(source, match.start()), "first-failure-hook", name,
+                        name + detail))
     for file in sorted((root / "immichSlides").rglob("*.swift")):
         violations.extend(check_product_wait_factor(file.relative_to(root).as_posix(), file.read_text(encoding="utf-8")))
     return violations
