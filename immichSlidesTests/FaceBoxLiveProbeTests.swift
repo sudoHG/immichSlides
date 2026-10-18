@@ -12,7 +12,7 @@ import Testing
 @testable import immichSlides
 
 @MainActor
-@Suite(.sharedRuntimeIsolation, .enabled(if: isEvidenceRun))
+@Suite(.serialized, .sharedRuntimeIsolation, .enabled(if: isEvidenceRun))
 struct FaceBoxLiveProbeTests {
     private nonisolated static let liveConfiguration = TestServerConfiguration.current
     private nonisolated static let isLiveEnabled = liveConfiguration != nil
@@ -20,34 +20,36 @@ struct FaceBoxLiveProbeTests {
     @Test(.enabled(if: isLiveEnabled))
     func `random live sample produces a redacted face box geometry report`() async throws {
         try await ServerConfigurationTestIsolation.run {
-            configureLiveServer()
+            try await LiveTestTraffic.observe {
+                configureLiveServer()
 
-            let sampleSize = 25
-            let assets = try await ImmichAPIService.shared.getRandomAsset(size: sampleSize)
-            let rows = makeReportRows(from: assets)
-            let faceRows = rows.filter(\.hasFaces)
-            let hasRotated90Or270 = rows.contains { $0.orientationCategory == .rotated90Or270 }
+                let sampleSize = 25
+                let assets = try await ImmichAPIService.shared.getRandomAsset(size: sampleSize)
+                let rows = makeReportRows(from: assets)
+                let faceRows = rows.filter(\.hasFaces)
+                let hasRotated90Or270 = rows.contains { $0.orientationCategory == .rotated90Or270 }
 
-            var lines: [String] = [
-                "FACE_BOX_LIVE_PROBE_REDACTED",
-                "sampleCount=\(assets.count)",
-                "assetsWithFaces=\(faceRows.count)"
-            ]
+                var lines: [String] = [
+                    "FACE_BOX_LIVE_PROBE_REDACTED",
+                    "sampleCount=\(assets.count)",
+                    "assetsWithFaces=\(faceRows.count)"
+                ]
 
-            if !hasRotated90Or270 {
-                lines.append("ROTATED_LIVE_SAMPLE_NOT_AVAILABLE")
+                if !hasRotated90Or270 {
+                    lines.append("ROTATED_LIVE_SAMPLE_NOT_AVAILABLE")
+                }
+                if faceRows.isEmpty {
+                    lines.append("LIVE_FACE_SAMPLE_NOT_AVAILABLE")
+                }
+
+                lines += rows.map(\.redactedLine)
+
+                let report = lines.joined(separator: "\n")
+                try writeReport(report)
+                print(report)
+
+                #expect(assets.count <= sampleSize)
             }
-            if faceRows.isEmpty {
-                lines.append("LIVE_FACE_SAMPLE_NOT_AVAILABLE")
-            }
-
-            lines += rows.map(\.redactedLine)
-
-            let report = lines.joined(separator: "\n")
-            try writeReport(report)
-            print(report)
-
-            #expect(assets.count <= sampleSize)
         }
     }
 

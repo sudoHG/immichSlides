@@ -1806,6 +1806,41 @@ class ArchiveUnitResultTests(unittest.TestCase):
 
 
 class LiveBoundaryTests(unittest.TestCase):
+    def test_live_rate_limit_category_is_public_but_never_changes_a_failed_verdict(self):
+        import ci_live_tests as live
+        from ci_summary import observation, test_identity
+        from run_offline_unit_tests import TestResultsSummary
+        identity = test_identity('swift', 'ExampleLiveTests/works', platform='tvos')
+        for diagnostic, expected in (
+                ('Issue recorded: TEST_SERVER_RATE_LIMITED: test server rate limited private-host private-key',
+                 'test server rate limited'),
+                ('HTTP 429 private-host private-key', 'Live test failed; private diagnostic withheld.'),
+                ('Issue recorded: TEST_SERVER_CONCURRENCY_LIMITED: gateway concurrency limit private-host private-key',
+                 'gateway concurrency limit'),
+                ('HTTP 503 private-host private-key', 'Live test failed; private diagnostic withheld.'),
+                ('TEST_SERVER_RATE_LIMITED_OTHER: private-host', 'Live test failed; private diagnostic withheld.')):
+            with self.subTest(diagnostic=diagnostic):
+                row = observation(identity, 'failed', 1, message=diagnostic, exit_code=65)
+                # The environment issue may follow an earlier assertion and a long private message.
+                payload = {'testNodes': [{'nodeType': 'Unit test bundle', 'name': 'immichSlidesTests', 'children': [
+                    {'nodeType': 'Test Case', 'nodeIdentifier': 'ExampleLiveTests/works()', 'result': 'Failed',
+                     'children': [{'nodeType': 'Failure Message', 'name': 'private-' + 'x' * 250},
+                                  {'nodeType': 'Failure Message', 'name': diagnostic}]}]}]}
+                with tempfile.TemporaryDirectory() as directory:
+                    records = Path(directory)
+                    (records / 'official-tests.json').write_text(json.dumps(payload))
+                    row['attempts'][0]['message'] = 'first private failure'
+                    with patch.object(live.units, 'read_results', return_value=([row], None)):
+                        rows, _ = live.read_live_results(records, 'tvos')
+                public = live.sanitized_outcomes([identity], rows)
+                self.assertEqual(public[0]['attempts'][0]['message'], expected)
+                self.assertEqual(public[0]['outcome'], 'failed')
+                self.assertEqual(public[0]['attempts'][0]['exit_code'], 1)
+                self.assertNotIn('private-', json.dumps(public))
+                with self.assertRaisesRegex(ContractError, 'live process or official counts failed'):
+                    live.public_outcomes([identity], {'ExampleLiveTests/works()'}, [row],
+                                         TestResultsSummary(1, 0, 1, 0, 'Failed'), 65)
+
     def test_live_scope_selects_from_the_full_catalog_but_refuses_unowned_or_missing_live_tests(self):
         import ci_live_tests as live
         from ci_summary import test_identity
