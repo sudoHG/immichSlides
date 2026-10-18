@@ -422,8 +422,10 @@ The iPhone/iPad pause timing flow calibrates the visible Settings glyph and its 
 button rectangle before Next and Continue timing. Dense Next/Continue capture loops record
 only screenshot bytes and request/return times; they perform no accessibility queries or
 image classification between captures. Deferred classification derives control-bar visibility
-from each original frame by matching the calibrated glyph, so disappearance cannot masquerade
-as photo dimming. This pixel reader is limited to the controlled fixture flow and stable screen
+from each original frame by matching the calibrated glyph. The existing 5% sustained-dimming
+threshold prevents control-bar disappearance from being mistaken for photo dimming. Calibration
+also requires Settings to remain hittable after its screenshot, before timing starts.
+This pixel reader is limited to the controlled fixture flow and stable screen
 geometry. The screenshot gap, ordering, Continue origin and transition/stability contracts
 remain unchanged. The tvOS pause flow does not use this dense capture path.
 

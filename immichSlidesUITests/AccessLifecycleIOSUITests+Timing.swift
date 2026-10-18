@@ -731,7 +731,8 @@ extension AccessLifecycleIOSUITests {
 
     @MainActor
     func captureControlBarReference(app: XCUIApplication) throws -> StrictE2EPhotoIdentity.ControlBarReference {
-        let frame = try app.buttons["slideshow.control.settings.button"].snapshot().frame
+        let settings = app.buttons["slideshow.control.settings.button"]
+        let frame = try settings.snapshot().frame
         let bounds = app.frame
         let normalizedRect = CGRect(
             x: (frame.minX - bounds.minX) / bounds.width,
@@ -739,9 +740,15 @@ extension AccessLifecycleIOSUITests {
             width: frame.width / bounds.width,
             height: frame.height / bounds.height
         )
+        let png = app.screenshot().pngRepresentation
+        guard settings.isHittable else {
+            throw AccessLifecycleContract.AssertionError.message(
+                "Playback page should show the settings button: control-bar calibration requires Settings to remain hittable after the screenshot"
+            )
+        }
         return try XCTUnwrap(
             StrictE2EPhotoIdentity.ControlBarReference(
-                png: app.screenshot().pngRepresentation, normalizedRect: normalizedRect)
+                png: png, normalizedRect: normalizedRect)
         )
     }
 

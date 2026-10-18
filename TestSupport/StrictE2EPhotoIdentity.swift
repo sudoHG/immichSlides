@@ -27,7 +27,7 @@ enum StrictE2EPhotoIdentity {
         private let centeredPixels: [Double]
         private let magnitude: Double
         private static let edgePixels = 32
-        private static let minimumContrast = 8.0
+        private static let minimumContrast = 8.0  // RMS deviation in 8-bit grey levels over the centered 32x32 sample.
         private static let minimumCorrelation = 0.8
 
         init?(png: Data, normalizedRect: CGRect) {

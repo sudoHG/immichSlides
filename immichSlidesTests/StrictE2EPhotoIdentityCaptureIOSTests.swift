@@ -7,10 +7,15 @@ import UIKit
 
 @Suite
 struct StrictE2EPhotoIdentityCaptureIOSTests {
-    @Test(arguments: [false, true], [false, true])
-    func `control visibility follows the captured gear across photo backgrounds`(
-        isDark: Bool, isVisible: Bool
-    ) throws {
+    enum ControlBarCaptureCase: CaseIterable, Sendable {
+        case lightVisible, darkVisible, lightHidden, darkHidden, blackHidden, flatCalibration
+    }
+
+    @Test(arguments: ControlBarCaptureCase.allCases)
+    func `control bar capture rejects hidden and flat pixels`(captureCase: ControlBarCaptureCase) throws {
+        let isDark = captureCase == .darkVisible || captureCase == .darkHidden
+        let isVisible = captureCase == .lightVisible || captureCase == .darkVisible
+        let gear = try #require(UIImage(systemName: "gearshape.fill"))
         let button = CGRect(x: 35, y: 610, width: 60, height: 60)
         let normalized = CGRect(
             x: button.minX / 480, y: button.minY / 720, width: button.width / 480, height: button.height / 720)
@@ -21,20 +26,29 @@ struct StrictE2EPhotoIdentityCaptureIOSTests {
                     context.setFillColor(isDark ? UIColor.black.cgColor : UIColor.white.cgColor)
                     context.fill(button)
                     UIGraphicsPushContext(context)
-                    UIImage(systemName: "gearshape.fill")!
+                    gear
                         .withTintColor(isDark ? .white : .black, renderingMode: .alwaysOriginal)
                         .draw(in: button.insetBy(dx: 12, dy: 12))
                     UIGraphicsPopContext()
                 }
             }
         }
-        let reference = try #require(
-            StrictE2EPhotoIdentity.ControlBarReference(
-                png: frame(mark: "A1", hasControl: true), normalizedRect: normalized)
+        let black = try renderPNG(width: 480, height: 720) { context in
+            context.setFillColor(CGColor(gray: 0, alpha: 1))
+            context.fill(CGRect(x: 0, y: 0, width: 480, height: 720))
+        }
+        let calibrationPNG = try (captureCase == .flatCalibration ? black : frame(mark: "A1", hasControl: true))
+        let reference = StrictE2EPhotoIdentity.ControlBarReference(
+            png: calibrationPNG, normalizedRect: normalized
         )
-        let observed = try frame(mark: "A3", hasControl: isVisible)
+        if captureCase == .flatCalibration {
+            #expect(reference == nil)
+            return
+        }
+        let calibrated = try #require(reference)
+        let observed = try (captureCase == .blackHidden ? black : frame(mark: "A3", hasControl: isVisible))
 
-        #expect(reference.isVisible(png: observed) == isVisible)
+        #expect(calibrated.isVisible(png: observed) == isVisible)
     }
 
     @Test
