@@ -323,6 +323,7 @@ extension AccessLifecycleTVOSUITests {
         XCUIRemote.shared.press(.select)
         record("playback.pause")
         let beforePause = try captureTVOSImmediateMark(app: app, name: "before-pause")
+        ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
         moveFocus(.right, to: nextButton, maximumPresses: 3, message: "After pause, focus must reach next.")
         XCUIRemote.shared.press(.select)
         record("playback.next")
@@ -374,8 +375,8 @@ extension AccessLifecycleTVOSUITests {
         ]
     }
 
-    // Early-half-window evidence uses the classification moment instead of waiting until T/2 to capture;
-    // the criteria are still ≤T/2 and a first transition at T±2.
+    // Capture on the original clock; defer pixel classification so it cannot consume the sampling window.
+    // The criteria remain ≤T/2 and a first transition at T±2.
     @MainActor
     func watchTVOSContinueToFirstAdvance(
         app: XCUIApplication,
@@ -385,12 +386,18 @@ extension AccessLifecycleTVOSUITests {
     ) throws -> (earlyMark: String, earlyElapsed: TimeInterval, advancedMark: String, advancedElapsed: TimeInterval) {
         let earliestAdvance = interval - AccessLifecycleContract.continueCaptureSlackSeconds
         let latest = interval + AccessLifecycleContract.continueCaptureSlackSeconds
-        var samples: [(elapsed: TimeInterval, mark: String)] = []
-        var earlyMark = ""
-        var earlyElapsed: TimeInterval = TestWait.seconds(.product(0))
+        var capturedFrames: [(elapsed: TimeInterval, png: Data)] = []
         while Date().timeIntervalSince(continueAt) <= latest {
             let elapsed = Date().timeIntervalSince(continueAt)
             let png = app.screenshot().pngRepresentation
+            capturedFrames.append((elapsed, png))
+            RunLoop.current.run(
+                until: Date().addingTimeInterval(AccessLifecycleTVOSUITestsWaitTiming.readbackPollSeconds))
+        }
+        var samples: [(elapsed: TimeInterval, mark: String)] = []
+        var earlyMark = ""
+        var earlyElapsed: TimeInterval = TestWait.seconds(.product(0))
+        for (elapsed, png) in capturedFrames {
             let mark = contractTVOSMark(StrictE2EPhotoIdentity.captureIdentity(png: png))
             samples.append((elapsed, mark))
             if earlyMark.isEmpty {
@@ -418,7 +425,7 @@ extension AccessLifecycleTVOSUITests {
                     intervalSeconds: interval
                 )
             } else if AccessLifecycleContract.isUsableSceneMark(mark) && mark != continueMark {
-                try writePNG(app: app, name: "after-auto-advance")
+                try persistTVOSCapturedPNG(png, name: "after-auto-advance")
                 try AccessLifecycleContract.assertSamplesStayOnSceneBeforeAdvanceWindow(
                     continueMark: continueMark,
                     samples: samples,
@@ -452,10 +459,10 @@ extension AccessLifecycleTVOSUITests {
                     advancedElapsed: first.elapsed
                 )
             }
-            RunLoop.current.run(
-                until: Date().addingTimeInterval(AccessLifecycleTVOSUITestsWaitTiming.readbackPollSeconds))
         }
-        try writePNG(app: app, name: "after-auto-advance")
+        if let lastFrame = capturedFrames.last {
+            try persistTVOSCapturedPNG(lastFrame.png, name: "after-auto-advance")
+        }
         try AccessLifecycleContract.assertSamplesStayOnSceneBeforeAdvanceWindow(
             continueMark: continueMark,
             samples: samples,
