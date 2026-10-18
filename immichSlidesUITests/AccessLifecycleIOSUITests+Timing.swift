@@ -260,10 +260,12 @@ extension AccessLifecycleIOSUITests {
         )
         requests.append("playback.pause")
         let beforePause = try captureImmediateRequiredMark(app: app, name: "before-pause")
+        let controlBarReference = try captureControlBarReference(app: app)
         revealPlaybackControls(app: app)
         tapElement(app.buttons["slideshow.control.next.button"])
         requests.append("playback.next")
-        let afterNext = try captureStableNextMark(app: app, continueMark: beforePause.mark)
+        let afterNext = try captureStableNextMark(
+            app: app, continueMark: beforePause.mark, controlBarReference: controlBarReference)
         try AccessLifecycleContract.assertPauseUsesVisibleIdentity(
             pauseMark: beforePause.mark,
             afterNextMark: afterNext.mark,
@@ -313,7 +315,8 @@ extension AccessLifecycleIOSUITests {
             continueAt: continueAt,
             pressReturnedElapsed: press.returned.timeIntervalSince(press.issued),
             continueMark: afterNext.mark,
-            interval: interval
+            interval: interval,
+            controlBarReference: controlBarReference
         )
         return continueWatch.timeline(
             beforePauseMark: beforePause.mark,
@@ -327,7 +330,6 @@ extension AccessLifecycleIOSUITests {
         let requestElapsed: TimeInterval
         let returnElapsed: TimeInterval
         let png: Data
-        let isControlBarVisible: Bool
     }
 
     struct ContinueWatchFrame {
@@ -442,7 +444,8 @@ extension AccessLifecycleIOSUITests {
         continueAt: Date,
         pressReturnedElapsed: TimeInterval,
         continueMark: String,
-        interval: TimeInterval
+        interval: TimeInterval,
+        controlBarReference: StrictE2EPhotoIdentity.ControlBarReference
     ) throws -> ContinueWatchResult {
         let earliestAdvance = interval - AccessLifecycleContract.continueCaptureSlackSeconds
         let denseUntil = AccessLifecycleContract.continueWatchDenseCaptureDeadline(intervalSeconds: interval)
@@ -558,8 +561,7 @@ extension AccessLifecycleIOSUITests {
             return ContinueWatchRawFrame(
                 requestElapsed: requestElapsed,
                 returnElapsed: returnElapsed,
-                png: png,
-                isControlBarVisible: playPauseButton(app).exists
+                png: png
             )
         }
 
@@ -572,7 +574,7 @@ extension AccessLifecycleIOSUITests {
                 status: identity.status.rawValue,
                 mark: continueWatchMark(identity),
                 meanLuma: identity.meanLuma,
-                isControlBarVisible: raw.isControlBarVisible
+                isControlBarVisible: try XCTUnwrap(controlBarReference.isVisible(png: raw.png))
             )
             let frame = ContinueWatchFrame(sample: sample, png: raw.png)
             frames.append(frame)
@@ -728,9 +730,26 @@ extension AccessLifecycleIOSUITests {
     }
 
     @MainActor
+    func captureControlBarReference(app: XCUIApplication) throws -> StrictE2EPhotoIdentity.ControlBarReference {
+        let frame = try app.buttons["slideshow.control.settings.button"].snapshot().frame
+        let bounds = app.frame
+        let normalizedRect = CGRect(
+            x: (frame.minX - bounds.minX) / bounds.width,
+            y: (frame.minY - bounds.minY) / bounds.height,
+            width: frame.width / bounds.width,
+            height: frame.height / bounds.height
+        )
+        return try XCTUnwrap(
+            StrictE2EPhotoIdentity.ControlBarReference(
+                png: app.screenshot().pngRepresentation, normalizedRect: normalizedRect)
+        )
+    }
+
+    @MainActor
     func captureStableNextMark(
         app: XCUIApplication,
-        continueMark: String
+        continueMark: String,
+        controlBarReference: StrictE2EPhotoIdentity.ControlBarReference
     ) throws -> (mark: String, png: Data) {
         try AccessLifecycleContract.assertIdentitySource("public_fixture_photo_mark")
         let nextAt = Date()
@@ -754,8 +773,7 @@ extension AccessLifecycleIOSUITests {
                     ContinueWatchRawFrame(
                         requestElapsed: requestElapsed,
                         returnElapsed: returnElapsed,
-                        png: png,
-                        isControlBarVisible: playPauseButton(app).exists
+                        png: png
                     )
                 )
             }
@@ -768,7 +786,7 @@ extension AccessLifecycleIOSUITests {
                     status: identity.status.rawValue,
                     mark: continueWatchMark(identity),
                     meanLuma: identity.meanLuma,
-                    isControlBarVisible: raw.isControlBarVisible
+                    isControlBarVisible: try XCTUnwrap(controlBarReference.isVisible(png: raw.png))
                 )
                 samples.append(sample)
                 guard

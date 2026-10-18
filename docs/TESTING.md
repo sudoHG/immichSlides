@@ -418,6 +418,15 @@ python3 scripts/run_strict_e2e.py --platform tvos --destination 'platform=tvOS S
 
 Use `python3 scripts/run_strict_e2e.py --help` for the current suite list. Settings, pause/resume and background-return flows use `ios-lifecycle-settings`, `ios-lifecycle-pause` and `ios-lifecycle-background`, or the same names with a `tvos` prefix. The iOS first-wake flow uses `ios-lifecycle-first-wake`; an iPad pause run uses `ios-lifecycle-pause` with an iPad UDID.
 
+The iPhone/iPad pause timing flow calibrates the visible Settings glyph and its normalized
+button rectangle before Next and Continue timing. Dense Next/Continue capture loops record
+only screenshot bytes and request/return times; they perform no accessibility queries or
+image classification between captures. Deferred classification derives control-bar visibility
+from each original frame by matching the calibrated glyph, so disappearance cannot masquerade
+as photo dimming. This pixel reader is limited to the controlled fixture flow and stable screen
+geometry. The screenshot gap, ordering, Continue origin and transition/stability contracts
+remain unchanged. The tvOS pause flow does not use this dense capture path.
+
 On iOS, `PlaybackIntervalSliderIOS` drives the real interval slider for both
 `IOSDriver` and the lifecycle flows. It reads only `settings.playback.interval.value`.
 Interior adjustments correct the last requested normalized position by

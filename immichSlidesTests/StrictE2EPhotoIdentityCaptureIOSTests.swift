@@ -3,9 +3,40 @@ import CoreGraphics
 import Foundation
 import ImageIO
 import Testing
+import UIKit
 
 @Suite
 struct StrictE2EPhotoIdentityCaptureIOSTests {
+    @Test(arguments: [false, true], [false, true])
+    func `control visibility follows the captured gear across photo backgrounds`(
+        isDark: Bool, isVisible: Bool
+    ) throws {
+        let button = CGRect(x: 35, y: 610, width: 60, height: 60)
+        let normalized = CGRect(
+            x: button.minX / 480, y: button.minY / 720, width: button.width / 480, height: button.height / 720)
+        func frame(mark: String, hasControl: Bool) throws -> Data {
+            try renderPNG(width: 480, height: 720) { context in
+                fillSyntheticMark(mark, in: CGRect(x: 0, y: 0, width: 480, height: 720), context: context)
+                if hasControl {
+                    context.setFillColor(isDark ? UIColor.black.cgColor : UIColor.white.cgColor)
+                    context.fill(button)
+                    UIGraphicsPushContext(context)
+                    UIImage(systemName: "gearshape.fill")!
+                        .withTintColor(isDark ? .white : .black, renderingMode: .alwaysOriginal)
+                        .draw(in: button.insetBy(dx: 12, dy: 12))
+                    UIGraphicsPopContext()
+                }
+            }
+        }
+        let reference = try #require(
+            StrictE2EPhotoIdentity.ControlBarReference(
+                png: frame(mark: "A1", hasControl: true), normalizedRect: normalized)
+        )
+        let observed = try frame(mark: "A3", hasControl: isVisible)
+
+        #expect(reference.isVisible(png: observed) == isVisible)
+    }
+
     @Test
     func `a differently colored top overlay on a single photo does not count as a second photo`() throws {
         let png = try renderPNG(width: 480, height: 720) { context in

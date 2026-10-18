@@ -21,6 +21,69 @@ enum StrictE2EPhotoIdentity {
         let notes: [String]
     }
 
+    // Calibrate the unchanged Settings glyph before timing starts, then read only captured pixels.
+    struct ControlBarReference {
+        let normalizedRect: CGRect
+        private let centeredPixels: [Double]
+        private let magnitude: Double
+        private static let edgePixels = 32
+        private static let minimumContrast = 8.0
+        private static let minimumCorrelation = 0.8
+
+        init?(png: Data, normalizedRect: CGRect) {
+            guard let pixels = Self.pixels(png: png, normalizedRect: normalizedRect) else { return nil }
+            let centered = Self.center(pixels)
+            let magnitude = sqrt(centered.reduce(0) { $0 + $1 * $1 })
+            guard magnitude / sqrt(Double(centered.count)) >= Self.minimumContrast else { return nil }
+            self.normalizedRect = normalizedRect
+            self.centeredPixels = centered
+            self.magnitude = magnitude
+        }
+
+        func isVisible(png: Data) -> Bool? {
+            guard let pixels = Self.pixels(png: png, normalizedRect: normalizedRect) else { return nil }
+            let centered = Self.center(pixels)
+            let magnitude = sqrt(centered.reduce(0) { $0 + $1 * $1 })
+            guard magnitude / sqrt(Double(centered.count)) >= Self.minimumContrast else { return false }
+            let dot = zip(centeredPixels, centered).reduce(0) { $0 + $1.0 * $1.1 }
+            return dot / (self.magnitude * magnitude) >= Self.minimumCorrelation
+        }
+
+        private static func center(_ pixels: [Double]) -> [Double] {
+            let mean = pixels.reduce(0, +) / Double(pixels.count)
+            return pixels.map { $0 - mean }
+        }
+
+        private static func pixels(png: Data, normalizedRect: CGRect) -> [Double]? {
+            guard normalizedRect.width > 0, normalizedRect.height > 0,
+                CGRect(x: 0, y: 0, width: 1, height: 1).contains(normalizedRect),
+                let source = CGImageSourceCreateWithData(png as CFData, nil),
+                let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
+                let crop = image.cropping(
+                    to: CGRect(
+                        x: normalizedRect.minX * CGFloat(image.width),
+                        y: normalizedRect.minY * CGFloat(image.height),
+                        width: normalizedRect.width * CGFloat(image.width),
+                        height: normalizedRect.height * CGFloat(image.height)
+                    ).integral)
+            else { return nil }
+            var bytes = [UInt8](repeating: 0, count: edgePixels * edgePixels)
+            let didDraw = bytes.withUnsafeMutableBytes { buffer -> Bool in
+                guard
+                    let context = CGContext(
+                        data: buffer.baseAddress, width: edgePixels, height: edgePixels,
+                        bitsPerComponent: 8, bytesPerRow: edgePixels,
+                        space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue
+                    )
+                else { return false }
+                context.interpolationQuality = .high
+                context.draw(crop, in: CGRect(x: 0, y: 0, width: edgePixels, height: edgePixels))
+                return true
+            }
+            return didDraw ? bytes.map(Double.init) : nil
+        }
+    }
+
     enum AssertionError: LocalizedError {
         case message(String)
         var errorDescription: String? {
