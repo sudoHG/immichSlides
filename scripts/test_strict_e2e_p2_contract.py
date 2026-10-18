@@ -161,6 +161,18 @@ class ReviewPackageTests(unittest.TestCase):
             with mock.patch("sys.stdout", new=io.StringIO()):
                 self.assertEqual(0, main(["read-failure", "--package", str(package), "--summary", str(root / "summary.json")]))
             self.assertEqual(manifest, read_failure_package(package, summary))
+            _write_json(package / "first-failure.json", {**manifest, "extra": "unexpected"})
+            with self.assertRaisesRegex(ContractError, "^first failure package: expected fields "):
+                read_failure_package(package, summary)
+            unavailable = copy.deepcopy(manifest)
+            unavailable["first_failure"]["screenshot"] = {
+                "status": "unavailable", "width": None, "height": None, "bytes": None}
+            unavailable_summary = copy.deepcopy(summary)
+            row = unavailable_summary["population"]["observed"][0]
+            row["first_failure"] = row["attempts"][0]["first_failure"] = unavailable["first_failure"]
+            _write_json(package / "first-failure.json", unavailable)
+            with self.assertRaisesRegex(ContractError, "^first failure package has no retained image$"):
+                read_failure_package(package, unavailable_summary)
             cases = [
                 (("schema_version",), True, "unsupported first failure package"),
                 (("source_identity", "tree_sha"), "e" * 40, "first failure package provenance differs"),
@@ -203,7 +215,12 @@ class ReviewPackageTests(unittest.TestCase):
             (package / "first-failure.png").write_bytes(png + b"extra")
             with self.assertRaisesRegex(ContractError, "^first failure package image differs$"):
                 read_failure_package(package, summary)
-            for payload in (b"not-an-image", png + b"trailing-data"):
+            metadata_image = io.BytesIO()
+            with Image.open(io.BytesIO(png)) as original:
+                exif = Image.Exif()
+                exif[0x010E] = "private-metadata"
+                original.save(metadata_image, format="PNG", exif=exif)
+            for payload in (b"not-an-image", png + b"trailing-data", metadata_image.getvalue()):
                 changed = copy.deepcopy(manifest)
                 changed["first_failure"]["screenshot"]["bytes"] = len(payload)
                 changed["image_sha256"] = hashlib.sha256(payload).hexdigest()

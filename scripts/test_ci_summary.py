@@ -209,6 +209,12 @@ class SummaryContractTests(unittest.TestCase):
             with self.subTest(level=level), self.assertRaisesRegex(ci_summary.ContractError,
                     "^first failure requires a failing strict or UI " + level + "$"):
                 ci_summary.parse_summary(changed)
+        for kind in ("host", "swift"):
+            changed = copy.deepcopy(summary)
+            changed["population"]["observed"][0]["identity"]["kind"] = kind
+            with self.subTest(kind=kind), self.assertRaisesRegex(ci_summary.ContractError,
+                    "^first failure requires a failing strict or UI observation$"):
+                ci_summary.parse_summary(changed)
 
     def test_first_failure_supports_unavailable_preparation_validator_and_scoped_ui_records(self):
         receipt = first_failure_receipt()
