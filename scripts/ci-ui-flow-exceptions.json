@@ -89,6 +89,14 @@
       "reason": "Settings is opened from the slideshow control bar; settings and playback tests cover it."
     },
     {
+      "navigation": "immichSlides/tvOS/Core/SlideShowViewTV.swift",
+      "areas": [
+        "localization-about",
+        "localization-settings"
+      ],
+      "reason": "Settings is opened after waking the slideshow controls; settings and playback tests cover this navigation route."
+    },
+    {
       "navigation": "immichSlides/iOS/Core/SettingsViewIOS.swift",
       "areas": [
         "localization-filter"

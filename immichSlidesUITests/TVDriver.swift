@@ -224,20 +224,11 @@ struct TVDriver: PlaybackDriver {
         focus(app.buttons[identifier], trying: [.down, .up], maxPresses: 7, "Must be able to focus \(identifier).")
     }
 
-    // While the control bar is hidden, the first direction key only wakes it. Wait for the hidden receiver layer
-    // to get focus before pressing, and press again at most once.
+    // Refresh even visible controls; hidden controls first need the wake receiver to have focus.
     private func revealControls() {
-        let playPause = app.buttons["slideshow.control.playPause.button"]
-        let receiver = app.descendants(matching: .any).matching(identifier: "slideshow.hiddenWakeReceiver").firstMatch
-        for _ in 0..<2 where !playPause.exists {
-            _ = Wait.until(timeout: UITestSupportWaitTiming.controlAppearanceTimeoutSeconds) {
-                playPause.exists || (receiver.exists && receiver.hasFocus)
-            }
-            if playPause.exists { break }
-            press(.up)
-            _ = playPause.waitForExistence(timeout: UITestSupportWaitTiming.stateChangeTimeoutSeconds)
-        }
-        XCTAssertTrue(playPause.exists, "A direction key must wake the playback control bar.")
+        XCTAssertTrue(
+            app.refreshTVOSSlideshowControlBar(timeout: UITestSupportWaitTiming.controlAppearanceTimeoutSeconds),
+            "A direction key must wake the playback control bar.")
     }
 
     private func isOnPlaybackLayer() -> Bool {

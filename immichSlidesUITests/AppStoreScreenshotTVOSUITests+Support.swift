@@ -524,6 +524,9 @@ extension AppStoreScreenshotTVOSUITests {
     @MainActor
     func openSettingsFromSlideShow(_ app: XCUIApplication) throws {
         let settingsButton = app.buttons["slideshow.control.settings.button"]
+        XCTAssertTrue(
+            app.refreshTVOSSlideshowControlBar(timeout: AppStoreScreenshotUITestsWaitTiming.connectionTimeoutSeconds),
+            "Playback page should show the settings button")
         try waitOrThrow(
             settingsButton, timeout: AppStoreScreenshotUITestsWaitTiming.connectionTimeoutSeconds,
             "Playback page should show the settings button")

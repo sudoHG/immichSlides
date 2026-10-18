@@ -276,6 +276,7 @@ extension FilterSummaryTVOSVisualUITests {
         screenshotNamePrefix: String = "tvos-exif-diagnostic"
     ) {
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
+        ensureTVOSSlideshowControlBarVisible(app: app)
         XCTAssertTrue(
             playPauseButton.waitForExistence(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.screenTransitionTimeoutSeconds),
@@ -302,11 +303,11 @@ extension FilterSummaryTVOSVisualUITests {
 
             guard index < expectedCount - 1 else { continue }
 
+            ensureTVOSSlideshowControlBarVisible(app: app)
             let indexProbe = app.otherElements["slideshow.control.indexProbe"]
             let indexSnapshot = app.evidenceSnapshotsByIdentifier()["slideshow.control.indexProbe"]
             let currentIndexValue = indexSnapshot.map { String(describing: $0.value ?? "") } ?? ""
             let currentDateLabel = currentTVOSExifDateLabel(app: app)
-            ensureTVOSSlideshowControlBarVisible(app: app)
             moveFocusToTVOSSlideshowNextButton(app: app)
             XCUIRemote.shared.press(.select)
 
@@ -366,12 +367,8 @@ extension FilterSummaryTVOSVisualUITests {
 
     @MainActor
     func ensureTVOSSlideshowControlBarVisible(app: XCUIApplication) {
-        let playPauseButton = app.buttons["slideshow.control.playPause.button"]
-        if playPauseButton.exists { return }
-
-        XCUIRemote.shared.press(.up)
         XCTAssertTrue(
-            playPauseButton.waitForExistence(
+            app.refreshTVOSSlideshowControlBar(
                 timeout: FilterSummaryTVOSVisualUITestsWaitTiming.elementAppearanceDeadlineSeconds),
             "Once hidden, the control bar should wake again with a direction key"
         )
@@ -379,6 +376,7 @@ extension FilterSummaryTVOSVisualUITests {
 
     @MainActor
     func moveFocusToTVOSSlideshowNextButton(app: XCUIApplication) {
+        ensureTVOSSlideshowControlBarVisible(app: app)
         let nextButton = app.buttons["slideshow.control.next.button"]
         XCTAssertTrue(
             nextButton.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.settingsChangeTimeoutSeconds),
@@ -496,6 +494,7 @@ extension FilterSummaryTVOSVisualUITests {
 
     @MainActor
     func openSettingsFromSlideShow(app: XCUIApplication) {
+        ensureTVOSSlideshowControlBarVisible(app: app)
         let settingsButton = app.buttons["slideshow.control.settings.button"]
         XCTAssertTrue(
             settingsButton.waitForExistence(timeout: FilterSummaryTVOSVisualUITestsWaitTiming.navigationTimeoutSeconds),

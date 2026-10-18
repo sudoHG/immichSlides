@@ -41,7 +41,7 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
         try captureLateImageTVOSFrame(app: app, name: "ooo-after-late")
         attachScreenshot(app: app, name: "tvos-late-image-ooo-after-late")
 
-        ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
+        ensureControlBarVisible(app: app)
         XCTAssertTrue(
             playPauseButton.waitForExistence(timeout: TestWait.seconds(.product(5))),
             "After the late completion, Play/Pause must still be reachable.")
@@ -60,6 +60,7 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
         }
         attachFocusAudit(app: app, name: "tvos-late-image-default-focus")
 
+        ensureControlBarVisible(app: app)
         moveFocus(
             .left, to: playPauseButton, maximumPresses: 2,
             message: "After the late completion, focus must be able to return to Play/Pause.")
@@ -129,7 +130,7 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
             "Random mode must quickly reach a slideshow where Next works, without waiting for old image requests."
         )
         let playPause = app.buttons["slideshow.control.playPause.button"]
-        ensureControlBarVisible(app: app, playPauseButton: playPause)
+        ensureControlBarVisible(app: app)
         moveFocus(
             .right, to: playPause, maximumPresses: 3,
             message: "Before advancing, Play/Pause must be focusable.")
@@ -156,7 +157,7 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
         XCTAssertTrue(
             waitForLateImageScene(app: app, historyCount: initialHistory + 1, deadline: deadline),
             "Random mode must quickly reach a slideshow where Next works, without waiting for old image requests.")
-        ensureControlBarVisible(app: app, playPauseButton: playPause)
+        ensureControlBarVisible(app: app)
         moveFocus(
             .right, to: nextButton, maximumPresses: 3,
             message: "Focus must land on Next before the old requests complete.")
@@ -279,20 +280,9 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
     }
 
     @MainActor
-    private func ensureControlBarVisible(app: XCUIApplication, playPauseButton: XCUIElement) {
-        let deadline = ProcessInfo.processInfo.systemUptime + TestWait.seconds(.product(5))
-        let receiver = app.descendants(matching: .any)["slideshow.hiddenWakeReceiver"]
-        for _ in 0..<2 {
-            while ProcessInfo.processInfo.systemUptime < deadline {
-                if (try? playPauseButton.snapshot()) != nil { return }
-                if (try? receiver.snapshot())?.hasFocus == true { break }
-                RunLoop.current.run(until: Date().addingTimeInterval(Timing.focusPollingSeconds))
-            }
-            if ProcessInfo.processInfo.systemUptime >= deadline { break }
-            XCUIRemote.shared.press(.up)
-        }
+    private func ensureControlBarVisible(app: XCUIApplication) {
         XCTAssertTrue(
-            (try? playPauseButton.snapshot()) != nil,
+            app.refreshTVOSSlideshowControlBar(timeout: TestWait.seconds(.product(5))),
             "An arrow key must be able to wake the playback control bar.")
     }
 

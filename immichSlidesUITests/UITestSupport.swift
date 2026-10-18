@@ -24,6 +24,61 @@ extension XCUIApplication {
     }
 }
 
+#if os(tvOS)
+extension XCUIApplication {
+    func refreshTVOSSlideshowControlBar(timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        let controlIdentifiers = ["settings", "previous", "playPause", "next"].map {
+            "slideshow.control.\($0).button"
+        }
+        func waitForFocus(_ condition: ([String: XCUIElementSnapshot]) -> Bool) -> Bool {
+            let movementDeadline = min(
+                deadline, Date().addingTimeInterval(UITestSupportWaitTiming.readbackTimeoutSeconds))
+            while Date() < movementDeadline {
+                let snapshots = evidenceSnapshotsByIdentifier()
+                if condition(snapshots) { return Date() < movementDeadline }
+                RunLoop.current.run(until: Date().addingTimeInterval(Timing.focusSettle))
+            }
+            return false
+        }
+        while Date() < deadline {
+            let snapshots = evidenceSnapshotsByIdentifier()
+            if let focusedIdentifier = controlIdentifiers.first(where: { snapshots[$0]?.hasFocus == true }) {
+                guard Date() < deadline else { return false }
+                // Moving focus refreshes auto-hide; round trips restore the last attempt's enabled control. Callers verify focus.
+                let direction: XCUIRemote.Button =
+                    focusedIdentifier == "slideshow.control.next.button" ? .left : .right
+                XCUIRemote.shared.press(direction)
+                // Auto-hide can consume a focus move as a wake; retry from a fresh snapshot in the same budget.
+                guard
+                    waitForFocus({ observation in
+                        controlIdentifiers.contains {
+                            $0 != focusedIdentifier && observation[$0]?.hasFocus == true
+                        }
+                    })
+                else { continue }
+                // Previous can retain focus just after Select disables it at the history boundary.
+                if snapshots[focusedIdentifier]?.isEnabled == false {
+                    if waitForFocus({ $0["slideshow.control.playPause.button"]?.hasFocus == true }) { return true }
+                    continue
+                }
+                XCUIRemote.shared.press(direction == .left ? .right : .left)
+                if waitForFocus({ $0[focusedIdentifier]?.hasFocus == true }) { return true }
+                continue
+            }
+            if snapshots["slideshow.hiddenWakeReceiver"]?.hasFocus == true {
+                guard Date() < deadline else { return false }
+                XCUIRemote.shared.press(.up)
+                if waitForFocus({ $0["slideshow.control.playPause.button"] != nil }) { return true }
+                continue
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(Timing.focusSettle))
+        }
+        return false
+    }
+}
+#endif
+
 #if os(iOS)
 struct SlideshowControlBarButtonObservation {
     let identifier: String
