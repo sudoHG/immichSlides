@@ -1215,6 +1215,8 @@ class StrictCITracerTests(unittest.TestCase):
         pending = {"name": "first_transition_start", "status": "pending_video_review", "official_signed": False,
                    "reason": "No usable start in window; post-window new photo does not count"}
         variants = [("signed", signed, 0, "passed"), ("pending", pending, 0, "needs-human-review"),
+                    ("legacy visual receipt", pending, 0, "needs-human-review"),
+                    ("legacy signed visual receipt", signed, 0, "passed"),
                     ("unsigned detected", dict(signed, official_signed=False), 0, "needs-human-review"),
                     ("pending signed", dict(pending, official_signed=True), 0, "needs-human-review"),
                     ("nonboolean signature", dict(signed, official_signed=1), 0, "needs-human-review"),
@@ -1262,7 +1264,8 @@ class StrictCITracerTests(unittest.TestCase):
                             (evidence / "pause-next-continue.json").write_text("{" if label == "unreadable receipt" else json.dumps(receipt))
                         visual = require_visual_identity(evidence, case["suite"])
                         self.assertEqual("PASS" if outcome == "passed" else "UNVERIFIED", visual["verdict"])
-                        (evidence / "case-manifest.json").write_text(json.dumps({"visual_identity": visual}))
+                        (evidence / "case-manifest.json").write_text(json.dumps({"visual_identity":
+                            {**visual, "verdict": "NOT_REQUIRED"} if label.startswith("legacy ") else visual}))
                         (evidence / "xcodebuild.log").write_text("test-without-building\n")
                         (evidence / "xcodebuild-reuse.json").write_text(json.dumps({"products_unchanged": True}))
                         (evidence / "official-summary.json").write_text(json.dumps(counts))
