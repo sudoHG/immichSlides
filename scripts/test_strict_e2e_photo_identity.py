@@ -284,16 +284,16 @@ class FrameGlyphBoundaryTests(unittest.TestCase):
                     evaluate_visual_identity(evidence, suite)
 
     def test_palette_interpolation_is_unique_and_confined_to_eight_raw_edge_pixels(self) -> None:
-        from strict_e2e_photo_identity import _public_palette_edge_assignment, public_scene_photos_from_bytes
+        from strict_e2e_photo_identity import public_palette_edge_assignment, public_scene_photos_from_bytes
         from test_album_server_narrow_contract import _full_screen
-        self.assertEqual(_public_palette_edge_assignment((77, 74, 72)), "A1")
+        self.assertEqual(public_palette_edge_assignment((77, 74, 72)), "A1")
         for color in ((0, 0, 0), (255, 255, 255), (56, 140, 28)):
             with self.subTest(color=color):
-                self.assertIsNone(_public_palette_edge_assignment(color))
+                self.assertIsNone(public_palette_edge_assignment(color))
         with patch("strict_e2e_photo_identity._public_photo_palettes", return_value={
             "A1": ((0, 50, 100), (100, 50, 0)), "A2": ((0, 50, 0), (100, 50, 100)),
         }):
-            self.assertIsNone(_public_palette_edge_assignment((50, 50, 50)))
+            self.assertIsNone(public_palette_edge_assignment((50, 50, 50)))
         for horizontal in (False, True):
             with self.subTest(horizontal=horizontal):
                 frame = Image.open(io.BytesIO(_full_screen("A1", (1640, 2360)))).convert("RGB")

@@ -71,6 +71,27 @@ against both identity endpoints. Preserve the original frame and its slot/axis
 exception; do not change tolerances or exclude the frame. The measured collision
 history and corpus are in [#486](https://github.com/sudoHG/immichSlides/pull/486).
 
+The Swift `captureIdentity` and Python `capture_identity` readers locate each
+photo's palette rectangle, rather than assuming equal quadrants or full-span strips. They use
+the public fixture RGB pairs, the same tolerance 12 and minimum 18 matching pixels
+per line, and a nearest-neighbour sample capped at 480 pixels wide. A composite
+requires two or three distinct, non-overlapping rectangles that tile their canvas.
+That canvas must cover the image center and fill at least one image axis; each
+slot needs clean rows and columns and an independent interior color match.
+This covers unequal doubles, balanced triples and the four primary-plus-pair
+triple orientations. Missing interior lines can join only matching neighbours;
+an entirely black outer edge contributes no identity. Mixed slot lines, overlaps
+and gaps reject the composite. A fractional slot boundary may leave one sampled
+row or column between rectangles: every pixel must be an interpolation of its
+immediate neighbours in two distinct slots, within the existing RGB tolerance.
+Black seams and wider gaps remain rejected. Identities use top-to-bottom, then
+left-to-right rectangle order. Otherwise the original whole-frame verdict is preserved,
+so single-photo, black and transition frames gain no composite identity. These
+helpers ship only in test targets; the glyph/texture validators and their
+acceptance requirements are unchanged.
+The scanner's existing unique same-photo interpolation is used only within its
+existing eight-raw-pixel outer edge band, preserving clipped texture edges.
+
 Fixture-A suites also accept A6–A8 through the shared reader vocabulary even
 though fixture A contains only A1–A5. This is intentional for this change: the
 RGB-pair collision risk is low, and every A frame retained its original

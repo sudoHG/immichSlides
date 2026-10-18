@@ -22,11 +22,12 @@ struct StrictE2EPhotoIdentityCaptureIOSTests {
         #expect(identity.mark == "A5")
     }
 
-    @Test
-    func `two photos placed side by side keep a composite identity`() throws {
+    @Test(arguments: [0.4, 0.5, 0.6])
+    func `two photos placed side by side keep a composite identity`(share: Double) throws {
+        let boundary = 480 * share
         let png = try renderPNG(width: 480, height: 720) { context in
-            fillSyntheticMark("A1", in: CGRect(x: 0, y: 0, width: 240, height: 720), context: context)
-            fillSyntheticMark("A3", in: CGRect(x: 240, y: 0, width: 240, height: 720), context: context)
+            fillSyntheticMark("A1", in: CGRect(x: 0, y: 0, width: boundary, height: 720), context: context)
+            fillSyntheticMark("A3", in: CGRect(x: boundary, y: 0, width: 480 - boundary, height: 720), context: context)
         }
 
         let identity = StrictE2EPhotoIdentity.captureIdentity(png: png)
@@ -35,11 +36,12 @@ struct StrictE2EPhotoIdentityCaptureIOSTests {
         #expect(identity.mark == "A1+A3")
     }
 
-    @Test
-    func `two photos stacked vertically keep a composite identity`() throws {
+    @Test(arguments: [0.4, 0.5, 0.6])
+    func `two photos stacked vertically keep a composite identity`(share: Double) throws {
+        let boundary = 720 * share
         let png = try renderPNG(width: 480, height: 720) { context in
-            fillSyntheticMark("A1", in: CGRect(x: 0, y: 0, width: 480, height: 360), context: context)
-            fillSyntheticMark("A5", in: CGRect(x: 0, y: 360, width: 480, height: 360), context: context)
+            fillSyntheticMark("A1", in: CGRect(x: 0, y: 0, width: 480, height: boundary), context: context)
+            fillSyntheticMark("A5", in: CGRect(x: 0, y: boundary, width: 480, height: 720 - boundary), context: context)
         }
 
         let identity = StrictE2EPhotoIdentity.captureIdentity(png: png)
@@ -52,13 +54,13 @@ struct StrictE2EPhotoIdentityCaptureIOSTests {
         let colors: (CGColor, CGColor)
         switch mark {
         case "A1":
-            colors = (color(0.05, 0.80, 0.15), color(0.78, 0.60, 0.78))
+            colors = (color(37, 109, 19), color(91, 61, 91))
         case "A2":
-            colors = (color(0.05, 0.80, 0.15), color(0.65, 0.65, 0.65))
+            colors = (color(74, 170, 38), color(128, 122, 110))
         case "A3":
-            colors = (color(0.85, 0.08, 0.85), color(0.45, 0.24, 0.12))
+            colors = (color(111, 51, 57), color(165, 3, 129))
         case "A5":
-            colors = (color(0.05, 0.80, 0.15), color(0.05, 0.45, 0.95))
+            colors = (color(5, 173, 95), color(59, 125, 167))
         default:
             preconditionFailure("Unknown synthetic mark: \(mark)")
         }
@@ -88,7 +90,7 @@ struct StrictE2EPhotoIdentityCaptureIOSTests {
     private func color(_ red: CGFloat, _ green: CGFloat, _ blue: CGFloat) -> CGColor {
         CGColor(
             colorSpace: CGColorSpaceCreateDeviceRGB(),
-            components: [red, green, blue, 1]
+            components: [red / 255, green / 255, blue / 255, 1]
         )!
     }
 

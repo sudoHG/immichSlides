@@ -141,7 +141,7 @@ def classify_screenshot(image_bytes: bytes) -> PhotoIdentity:
         if luma < IDENTITY_MINIMUM_LUMA or luma > IDENTITY_MAXIMUM_LUMA:
             continue
         # New marks require their own RGB pair; old-photo hue mixtures must not invent a new identity.
-        assignment = _public_palette_assignment((red, green, blue))
+        assignment = public_palette_assignment((red, green, blue))
         if assignment is not None and assignment[0] in extended_counts:
             extended_counts[assignment[0]][assignment[1]] += 1
         if saturation < IDENTITY_GRAY_SATURATION_THRESHOLD:
@@ -276,9 +276,9 @@ def _public_scene_photos_from_bytes(image_bytes: bytes) -> tuple[PublicFramePhot
         raise IdentityAssertionError("Unrecognizable input: unreadable public glyph slot: screenshot cannot be decoded") from error
     with _pil_image().open(io.BytesIO(foreground)) as image:
         color_box, glyph_box = PUBLIC_SCENE_GEOMETRIES.get(image.size, (None, None))
-        rgb = _public_frame_sample(image)
+        rgb = sample_public_frame(image)
         slots, patterns = _public_frame_slots(rgb, _public_frame_sample_box(color_box, image.size, rgb.size),
-                                              edge_band_pixels=_public_frame_edge_band(image.size, rgb.size))
+                                              edge_band_pixels=public_frame_edge_band(image.size, rgb.size))
     # Preserve #381's one-photo boundary uniformly across capture geometries.
     # Segmentation still precedes this path, so mixed/unreadable layouts cannot fall back.
     if len(slots) == 1:
@@ -379,14 +379,14 @@ def _public_photo_palettes() -> dict[str, tuple[tuple[int, int, int], ...]]:
 
 
 @functools.lru_cache(maxsize=4096)
-def _public_palette_assignment(color: tuple[int, int, int]) -> tuple[str, int] | None:
+def public_palette_assignment(color: tuple[int, int, int]) -> tuple[str, int] | None:
     matches = [(mark, index) for mark, palette in _public_photo_palettes().items()
                for index, reference in enumerate(palette)
                if max(abs(a - b) for a, b in zip(color, reference)) <= FRAME_PALETTE_CHANNEL_TOLERANCE]
     return matches[0] if len(matches) == 1 else None
 
 
-def _public_palette_edge_assignment(color: tuple[int, int, int]) -> str | None:
+def public_palette_edge_assignment(color: tuple[int, int, int]) -> str | None:
     """Only segmentation may use a unique same-photo interpolation at an edge."""
     matches = []
     for mark, (first, second) in _public_photo_palettes().items():
@@ -398,7 +398,7 @@ def _public_palette_edge_assignment(color: tuple[int, int, int]) -> str | None:
     return matches[0] if len(matches) == 1 else None
 
 
-def _public_frame_edge_band(original_size: tuple[int, int], sample_size: tuple[int, int]) -> tuple[int, int]:
+def public_frame_edge_band(original_size: tuple[int, int], sample_size: tuple[int, int]) -> tuple[int, int]:
     return tuple(FRAME_PALETTE_EDGE_BAND_RAW_PIXELS * sample // original
                  for original, sample in zip(original_size, sample_size))
 
@@ -423,13 +423,13 @@ def _public_axis_slots(rgb: object, color_exclusion_box: tuple[int, int, int, in
                 if left <= x < right and top <= y < bottom:
                     continue
             color = pixels[x, y]
-            assignment = _public_palette_assignment(color)
+            assignment = public_palette_assignment(color)
             if assignment is not None:
                 mark, index = assignment
                 counts[mark][index] += 1
                 exact_counts[mark] += 1
             elif line < edge_band_pixels or line >= extent - edge_band_pixels:
-                mark = _public_palette_edge_assignment(color)
+                mark = public_palette_edge_assignment(color)
                 if mark is not None:
                     counts[mark][0] += 1
         marks = [mark for mark, count in counts.items() if sum(count) >= IDENTITY_MINIMUM_CHROMATIC_PIXEL_COUNT]
@@ -480,7 +480,7 @@ def _public_slot_pattern(rgb: object, mark: str, exclusion: tuple[int, int, int,
                 continue
             color = pixels[x, y]
             has_white |= min(color) >= 240
-            assignment = _public_palette_assignment(color)
+            assignment = public_palette_assignment(color)
             if assignment is not None and assignment[0] == mark:
                 count[assignment[1]] += 1
                 if previous is not None and assignment[1] != previous:
@@ -639,7 +639,7 @@ def public_frame_letter_from_bytes(image_bytes: bytes) -> str | None:
         return None
 
 
-def _public_frame_sample(image: object) -> object:
+def sample_public_frame(image: object) -> object:
     rgb = image.convert("RGB")
     width, height = rgb.size
     if width < IDENTITY_MINIMUM_IMAGE_PIXELS or height < IDENTITY_MINIMUM_IMAGE_PIXELS:
@@ -671,9 +671,9 @@ def public_frame_slot_count_from_bytes(image_bytes: bytes, *,
     Image = _pil_image()
     try:
         with Image.open(io.BytesIO(image_bytes)) as image:
-            rgb = _public_frame_sample(image)
+            rgb = sample_public_frame(image)
             slots, _ = _public_frame_slots(rgb, _public_frame_sample_box(color_exclusion_box, image.size, rgb.size),
-                                           edge_band_pixels=_public_frame_edge_band(image.size, rgb.size))
+                                           edge_band_pixels=public_frame_edge_band(image.size, rgb.size))
             return len(slots)
     except IdentityAssertionError:
         raise
@@ -691,9 +691,9 @@ def public_frame_photos_from_bytes(image_bytes: bytes, *,
     Image = _pil_image()
     try:
         with Image.open(io.BytesIO(image_bytes)) as image:
-            rgb = _public_frame_sample(image)
+            rgb = sample_public_frame(image)
             slots, patterns = _public_frame_slots(rgb, _public_frame_sample_box(color_exclusion_box, image.size, rgb.size),
-                                                  edge_band_pixels=_public_frame_edge_band(image.size, rgb.size))
+                                                  edge_band_pixels=public_frame_edge_band(image.size, rgb.size))
             overlay = _public_frame_sample_box(glyph_overlay_box, image.size, rgb.size)
             photos = []
             for index, (mark, box) in enumerate(slots, start=1):

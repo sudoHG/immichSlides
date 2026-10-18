@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import lzma
+import math
 import os
 import zlib
 from pathlib import Path
@@ -11,7 +12,11 @@ from typing import Any, Callable, Iterator, Mapping, Sequence, Optional, Tuple
 
 
 from strict_e2e_filter_contract import FROZEN_FIXTURE_SHA256
-from strict_e2e_photo_identity import MARKS, PhotoIdentity, classify_screenshot
+from strict_e2e_photo_identity import (
+    MARKS, IdentityAssertionError, PhotoIdentity, classify_screenshot,
+    IDENTITY_MINIMUM_CHROMATIC_PIXEL_COUNT, FRAME_PALETTE_CHANNEL_TOLERANCE,
+    sample_public_frame, public_palette_assignment, public_palette_edge_assignment, public_frame_edge_band,
+)
 from strict_e2e_server import fixture_manifest
 
 
@@ -64,8 +69,6 @@ DISPLAY_REGION_BOXES = {
     "top_half": (0.0, 0.0, 1.0, 0.50),
     "bottom_half": (0.0, 0.50, 1.0, 1.0),
 }
-CAPTURE_STACK_REGIONS = ("top", "upper", "top_half", "bottom_half")
-CAPTURE_SIDE_REGIONS = ("left", "right")
 # Crops that are too small cannot be identified; 8px matches classify_screenshot's minimum edge length.
 MIN_DISPLAY_CROP_EDGE_PIXELS = 8
 # A 16:9 A1 fills the screen, so no second public fixture shows; A5 at the pool end is alone.
@@ -500,46 +503,115 @@ def classify_display_regions(image_bytes: bytes) -> dict[str, PhotoIdentity]:
     return regions
 
 
-def _ordered_match_marks(
-    regions: Mapping[str, PhotoIdentity],
-    names: Sequence[str],
-) -> list[str]:
-    marks: list[str] = []
-    for name in names:
-        identity = regions.get(name)
-        if (
-            identity is not None
-            and identity.status == "MATCH"
-            and identity.mark in MARKS
-            and identity.mark not in marks
-        ):
-            marks.append(identity.mark)
-    return marks
+CAPTURE_INNER_BOX = (0.28, 0.18, 0.72, 0.82)
+
+
+def _capture_canvas_tiled(boxes: list[tuple[int, int, int, int]], canvas: tuple[int, int, int, int], rgb: Any) -> bool:
+    if sum((right - left) * (bottom - top) for left, top, right, bottom in boxes) == (
+            canvas[2] - canvas[0]) * (canvas[3] - canvas[1]):
+        return True
+
+    def containing(x: int, y: int) -> int | None:
+        return next((index for index, (left, top, right, bottom) in enumerate(boxes)
+                     if left <= x < right and top <= y < bottom), None)
+
+    for y in range(canvas[1], canvas[3]):
+        for x in range(canvas[0], canvas[2]):
+            if containing(x, y) is not None:
+                continue
+            # Match Swift: only one sampled boundary line with independently located slots on both sides.
+            for dx, dy in ((1, 0), (0, 1)):
+                before, after = containing(x - dx, y - dy), containing(x + dx, y + dy)
+                if before is None or after is None or before == after:
+                    continue
+                first, second, color = rgb.getpixel((x - dx, y - dy)), rgb.getpixel((x + dx, y + dy)), rgb.getpixel((x, y))
+                delta = tuple(b - a for a, b in zip(first, second))
+                squared_length = sum(d * d for d in delta)
+                fraction = sum((c - a) * d for c, a, d in zip(color, first, delta)) / squared_length if squared_length else 0.5
+                if (0 < fraction < 1 and max(abs(c - (a + fraction * d)) for c, a, d in zip(color, first, delta))
+                        <= FRAME_PALETTE_CHANNEL_TOLERANCE):
+                    break
+            else:
+                return False
+    return True
 
 
 def capture_identity(image_bytes: bytes) -> PhotoIdentity:
-    # A combined identity needs at least two region MATCHes; a full-screen TRANSITION/BLACK/BLANK or no region MATCH
-    # must not be promoted.
-    regions = classify_display_regions(image_bytes)
-    full = regions["full"]
-    stack_marks = _ordered_match_marks(regions, CAPTURE_STACK_REGIONS)
-    if len(stack_marks) >= 2:
-        return PhotoIdentity(
-            "MATCH",
-            "+".join(stack_marks),
-            dict(full.scores),
-            full.mean_luma,
-            ("stack-region-match",) + tuple(full.notes),
-        )
-    side_marks = _ordered_match_marks(regions, CAPTURE_SIDE_REGIONS)
-    if len(side_marks) >= 2:
-        return PhotoIdentity(
-            "MATCH",
-            "+".join(side_marks),
-            dict(full.scores),
-            full.mean_luma,
-            ("side-region-match",) + tuple(full.notes),
-        )
+    # Mirror Swift: discover palette rectangles first, including SmartFill's T-shaped triples.
+    import io
+    from PIL import Image
+
+    full = classify_screenshot(image_bytes)
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            rgb = sample_public_frame(image)
+            row_counts = {mark: [0] * rgb.height for mark in MARKS}
+            column_counts = {mark: [0] * rgb.width for mark in MARKS}
+            edge_width, edge_height = public_frame_edge_band(image.size, rgb.size)
+            assignments = []
+            for index, color in enumerate(rgb.getdata()):
+                assignment = public_palette_assignment(color)
+                row, column = divmod(index, rgb.width)
+                mark = assignment[0] if assignment is not None else None
+                if mark is None and (column < edge_width or column >= rgb.width - edge_width
+                                     or row < edge_height or row >= rgb.height - edge_height):
+                    mark = public_palette_edge_assignment(color)
+                assignments.append(mark)
+                if mark is not None:
+                    row_counts[mark][row] += 1
+                    column_counts[mark][column] += 1
+            slots = []
+            for mark in MARKS:
+                rows = [index for index, count in enumerate(row_counts[mark]) if count >= IDENTITY_MINIMUM_CHROMATIC_PIXEL_COUNT]
+                columns = [index for index, count in enumerate(column_counts[mark]) if count >= IDENTITY_MINIMUM_CHROMATIC_PIXEL_COUNT]
+                if rows and columns:
+                    slots.append((mark, (columns[0], rows[0], columns[-1] + 1, rows[-1] + 1)))
+            if not 2 <= len(slots) <= 3:
+                return full
+            canvas = (min(box[0] for _, box in slots), min(box[1] for _, box in slots),
+                      max(box[2] for _, box in slots), max(box[3] for _, box in slots))
+            if not ((canvas[2] - canvas[0] == rgb.width or canvas[3] - canvas[1] == rgb.height)
+                    and canvas[0] <= rgb.width / 2 < canvas[2] and canvas[1] <= rgb.height / 2 < canvas[3]):
+                return full
+            if not _capture_canvas_tiled([box for _, box in slots], canvas, rgb) or any(
+                    max(a[0], b[0]) < min(a[2], b[2]) and max(a[1], b[1]) < min(a[3], b[3])
+                    for index, (_, a) in enumerate(slots) for _, b in slots[index + 1:]):
+                return full
+            if any(color != (0, 0, 0) and not (canvas[0] <= index % rgb.width < canvas[2]
+                                             and canvas[1] <= index // rgb.width < canvas[3])
+                   for index, color in enumerate(rgb.getdata())):
+                return full
+            for mark, (left, top, right, bottom) in slots:
+                for horizontal in (False, True):
+                    lines = range(left, right) if horizontal else range(top, bottom)
+                    offsets = range(top, bottom) if horizontal else range(left, right)
+                    matches = []
+                    for line in lines:
+                        counts = dict.fromkeys(MARKS, 0)
+                        for offset in offsets:
+                            observed = assignments[offset * rgb.width + line if horizontal else line * rgb.width + offset]
+                            if observed is not None:
+                                counts[observed] += 1
+                        if any(count >= IDENTITY_MINIMUM_CHROMATIC_PIXEL_COUNT and observed != mark
+                               for observed, count in counts.items()):
+                            return full
+                        matches.append(counts[mark] >= IDENTITY_MINIMUM_CHROMATIC_PIXEL_COUNT)
+                    if not matches[0] or not matches[-1]:
+                        return full
+                box = (int((left + (right - left) * CAPTURE_INNER_BOX[0]) * image.width / rgb.width),
+                       int((top + (bottom - top) * CAPTURE_INNER_BOX[1]) * image.height / rgb.height),
+                       math.ceil((left + (right - left) * CAPTURE_INNER_BOX[2]) * image.width / rgb.width),
+                       math.ceil((top + (bottom - top) * CAPTURE_INNER_BOX[3]) * image.height / rgb.height))
+                output = io.BytesIO()
+                image.crop(box).save(output, format="PNG")
+                identity = classify_screenshot(output.getvalue())
+                if identity.status != "MATCH" or identity.mark != mark:
+                    return full
+            ordered = [mark for mark, _ in sorted(slots, key=lambda item: (item[1][1], item[1][0]))]
+            return PhotoIdentity("MATCH", "+".join(ordered), dict(full.scores), full.mean_luma,
+                                 ("photo-slot-axis-match",) + tuple(full.notes))
+    except (OSError, ValueError, IdentityAssertionError):
+        pass
     return full
 
 
