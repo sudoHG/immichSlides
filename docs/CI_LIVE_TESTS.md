@@ -112,15 +112,22 @@ test work. The existing 900-second execution bound and 40-minute job cap remain.
 Request count and payload volume are unchanged; pacing reduces bursts, not the
 server's paid traffic volume. A depleted traffic quota can still slow responses.
 
-A test-only observer counts requests to the configured live host and detects HTTP
-429 and 503 even when the App consumes that response. Its private output contains only
-request counts per elapsed minute, peak rolling-second/minute counts and peak
-concurrency. A 429 records
+A test-only observer counts `URLSession.shared` requests to the configured live host
+and detects HTTP 429 and 503 on that traffic, including responses consumed by the App.
+SDWebImage uses independent sessions: image downloads and their 429/503 responses
+are not observed. Measured peaks are therefore lower bounds on server traffic.
+Counters accumulate across all observed tests in one process run; each printed line
+contains the cumulative elapsed-minute buckets, rolling-second/minute peaks and peak
+concurrency since the first request, not a per-test reset. A 429 records
 `TEST_SERVER_RATE_LIMITED: test server rate limited` as a failing test issue;
 publication maps only that exact marker to the fixed public message
 `test server rate limited`; a 503 records `TEST_SERVER_CONCURRENCY_LIMITED: gateway concurrency limit`
-and publishes `gateway concurrency limit`. Other details remain withheld. The test and nightly
-stay failed; the observer neither retries nor throttles App requests.
+and publishes `gateway concurrency limit`. If another failure issue coexists, the fixed
+public category appends `; another test failure was recorded`; private details remain
+withheld. A skipped result carrying an environment marker is normalized to failed
+while preserving the exported official counts. Each observer instance captures its
+test token, so late responses from a finished test cannot mark a subsequent test.
+The test and nightly stay failed; the observer neither retries nor throttles App requests.
 It reuses one forwarding session with the shared session's configuration, rather
 than creating a transport session and fresh connections for every request.
 

@@ -11,35 +11,65 @@ import SDWebImage
 import Testing
 @testable import immichSlides
 
-// Observes only the configured live host; forwarding leaves App request scheduling unchanged.
+// Observes URLSession.shared traffic only; SDWebImage's independent sessions are outside this scope.
 private final class LiveRequestObserver: URLProtocol, @unchecked Sendable {
+    private struct Scope {
+        let token: UUID
+        var isRateLimited = false
+        var isConcurrencyLimited = false
+    }
     private static let lock = NSLock()
     nonisolated(unsafe) private static var host: String?
+    nonisolated(unsafe) private static var scope: Scope?
+    nonisolated(unsafe) private static var observers: [Int: LiveRequestObserver] = [:]
     nonisolated(unsafe) private static var starts: [TimeInterval] = []
-    nonisolated(unsafe) private static var isRateLimited = false
-    nonisolated(unsafe) private static var isConcurrencyLimited = false
     nonisolated(unsafe) private static var inFlight = 0
     nonisolated(unsafe) private static var peakInFlight = 0
     private static let forwardingSession: URLSession = {
         let configuration = URLSession.shared.configuration
         // Reuse connections and the original cache policy without recursively intercepting the forwarding session.
         configuration.protocolClasses = []
-        return URLSession(configuration: configuration)
+        return URLSession(configuration: configuration, delegate: ForwardingDelegate(), delegateQueue: nil)
     }()
+    // Client callbacks can synchronously stop loading; serialize them with cancellation without deadlocking.
+    private let callbackLock = NSRecursiveLock()
+    private static let testTokenKey = "LiveRequestObserver.testToken"
+    private let initialTestToken = LiveRequestObserver.lock.withLock { LiveRequestObserver.scope?.token }
+    private var testToken: UUID? {
+        if let value = URLProtocol.property(forKey: Self.testTokenKey, in: request) as? String {
+            return UUID(uuidString: value)
+        }
+        return initialTestToken
+    }
+    private var isStopped = false
     private var forwardingTask: URLSessionDataTask?
 
-    static func begin() {
-        lock.withLock {
-            host = TestServerConfiguration.current.flatMap { URL(string: $0.serverURL)?.host }
-            isRateLimited = false
-            isConcurrencyLimited = false
+    private final class ForwardingDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+        func urlSession(
+            _ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+            newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void
+        ) {
+            let observer = LiveRequestObserver.lock.withLock { LiveRequestObserver.observers[task.taskIdentifier] }
+            observer?.redirect(to: request, response: response)
+            completionHandler(nil)
         }
-        URLProtocol.registerClass(Self.self)
     }
 
-    static func finish() -> (isRateLimited: Bool, isConcurrencyLimited: Bool) {
+    static func begin() -> UUID {
+        let token = UUID()
         lock.withLock {
+            host = TestServerConfiguration.current.flatMap { URL(string: $0.serverURL)?.host }
+            scope = Scope(token: token)
+        }
+        URLProtocol.registerClass(Self.self)
+        return token
+    }
+
+    static func finish(token: UUID) -> (isRateLimited: Bool, isConcurrencyLimited: Bool) {
+        lock.withLock {
+            guard let finished = scope, finished.token == token else { return (false, false) }
             host = nil
+            scope = nil
             if let first = starts.first {
                 var minutes: [Int: Int] = [:]
                 var windowStart = 0
@@ -58,7 +88,7 @@ private final class LiveRequestObserver: URLProtocol, @unchecked Sendable {
                     "LIVE_REQUEST_COUNTS total=\(starts.count) peakRollingMinute=\(peak) peakRollingSecond=\(peakSecond) peakInFlight=\(peakInFlight) minutes=\(buckets)"
                 )
             }
-            return (isRateLimited, isConcurrencyLimited)
+            return (finished.isRateLimited, finished.isConcurrencyLimited)
         }
     }
 
@@ -69,33 +99,85 @@ private final class LiveRequestObserver: URLProtocol, @unchecked Sendable {
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
-        Self.lock.withLock {
-            Self.starts.append(ProcessInfo.processInfo.systemUptime)
-            Self.inFlight += 1
-            Self.peakInFlight = max(Self.peakInFlight, Self.inFlight)
-        }
-        forwardingTask = Self.forwardingSession.dataTask(with: request) { [self] data, response, error in
-            Self.lock.withLock {
-                Self.inFlight -= 1
-                switch (response as? HTTPURLResponse)?.statusCode {
-                case 429: Self.isRateLimited = true
-                case 503: Self.isConcurrencyLimited = true
-                default: break
+        callbackLock.withLock {
+            guard !isStopped else { return }
+            var forwarded = request
+            if let stream = forwarded.httpBodyStream {
+                stream.open()
+                defer { stream.close() }
+                var body = Data()
+                var buffer = [UInt8](repeating: 0, count: 16_384)
+                while true {
+                    let count = stream.read(&buffer, maxLength: buffer.count)
+                    if count < 0 {
+                        client?.urlProtocol(
+                            self, didFailWithError: stream.streamError ?? URLError(.cannotDecodeContentData))
+                        return
+                    }
+                    if count == 0 { break }
+                    body.append(contentsOf: buffer.prefix(count))
+                }
+                forwarded.httpBodyStream = nil
+                forwarded.httpBody = body
+                forwarded.setValue(String(body.count), forHTTPHeaderField: "Content-Length")
+                forwarded.setValue(nil, forHTTPHeaderField: "Transfer-Encoding")
+            }
+            let token = Self.lock.withLock {
+                Self.starts.append(ProcessInfo.processInfo.systemUptime)
+                Self.inFlight += 1
+                Self.peakInFlight = max(Self.peakInFlight, Self.inFlight)
+                return testToken
+            }
+            forwardingTask = Self.forwardingSession.dataTask(with: forwarded) { [self] data, response, error in
+                Self.lock.withLock {
+                    Self.inFlight -= 1
+                    if let task = forwardingTask { Self.observers.removeValue(forKey: task.taskIdentifier) }
+                    // A response from a finished test must never be attributed to the next test.
+                    if let token, Self.scope?.token == token {
+                        switch (response as? HTTPURLResponse)?.statusCode {
+                        case 429: Self.scope?.isRateLimited = true
+                        case 503: Self.scope?.isConcurrencyLimited = true
+                        default: break
+                        }
+                    }
+                }
+                callbackLock.withLock {
+                    guard !isStopped else { return }
+                    if let error {
+                        client?.urlProtocol(self, didFailWithError: error)
+                    } else if let response {
+                        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+                        guard !isStopped else { return }
+                        if let data { client?.urlProtocol(self, didLoad: data) }
+                        guard !isStopped else { return }
+                        client?.urlProtocolDidFinishLoading(self)
+                    }
                 }
             }
-            if let error {
-                client?.urlProtocol(self, didFailWithError: error)
-            } else if let response {
-                client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .allowed)
-                if let data { client?.urlProtocol(self, didLoad: data) }
-                client?.urlProtocolDidFinishLoading(self)
+            if let task = forwardingTask {
+                Self.lock.withLock { Self.observers[task.taskIdentifier] = self }
+                task.resume()
             }
         }
-        forwardingTask?.resume()
+    }
+
+    private func redirect(to request: URLRequest, response: HTTPURLResponse) {
+        callbackLock.withLock {
+            guard !isStopped else { return }
+            isStopped = true
+            let redirected = (request as NSURLRequest).mutableCopy() as! NSMutableURLRequest
+            if let token = testToken {
+                URLProtocol.setProperty(token.uuidString, forKey: Self.testTokenKey, in: redirected)
+            }
+            client?.urlProtocol(self, wasRedirectedTo: redirected as URLRequest, redirectResponse: response)
+        }
     }
 
     override func stopLoading() {
-        forwardingTask?.cancel()
+        callbackLock.withLock {
+            isStopped = true
+            forwardingTask?.cancel()
+        }
     }
 }
 
@@ -103,9 +185,9 @@ enum LiveTestTraffic {
     private static let verificationLimiter = LiveVerificationLimiter()
 
     static func observe<T>(_ body: () async throws -> T) async rethrows -> T {
-        LiveRequestObserver.begin()
+        let token = LiveRequestObserver.begin()
         defer {
-            let limits = LiveRequestObserver.finish()
+            let limits = LiveRequestObserver.finish(token: token)
             if limits.isRateLimited {
                 Issue.record("TEST_SERVER_RATE_LIMITED: test server rate limited")
             }
