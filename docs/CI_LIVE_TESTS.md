@@ -101,7 +101,8 @@ Test-owned asset-detail, album-membership and person-statistics probes share one
 request gate: at most four requests in flight and at least 70 ms between starts
 (at most 15 starts per rolling second, approximately 14.3 requests/s). Every existing
 asset is still independently fetched and checked; results reach the assertions in
-their original order, without sampling, caching or retries.
+their original order, without sampling, reusing the resolver's assets as the oracle,
+or retrying requests.
 App requests and rendering are unchanged. There is no whole-job request cap:
 App traffic is additional, so the total peak must be measured separately.
 For the current maximum of 1,000 person-statistics probes, 700 resolver asset
@@ -120,6 +121,8 @@ publication maps only that exact marker to the fixed public message
 `test server rate limited`; a 503 records `TEST_SERVER_CONCURRENCY_LIMITED: gateway concurrency limit`
 and publishes `gateway concurrency limit`. Other details remain withheld. The test and nightly
 stay failed; the observer neither retries nor throttles App requests.
+It reuses one forwarding session with the shared session's configuration, rather
+than creating a transport session and fresh connections for every request.
 
 All live subprocess output is captured privately. Raw bundles and exports stay
 private until parsing. The runner deletes its captures, bundle, DerivedData and
