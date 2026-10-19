@@ -130,8 +130,8 @@ extension StrictE2EFilterTVOSUITests {
                 playPauseButton, directions: [.left, .right],
                 message: "Focus must be able to move to Play/Pause.")
         }
-        if let stableFrameDeadline {
-            // Later person selections can retain Pause; prove those frames without another Select.
+        if let stableFrameDeadline, shouldSendPause || names[0] == "person-no-faces" {
+            // No-faces proves a readable retained Pause with auto-hide live; Simulator soloOnly stays unverified.
             readyFrame = try requireFocusedStablePersonFrame(
                 app: app, deadline: stableFrameDeadline, name: names[0])
         }
