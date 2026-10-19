@@ -173,6 +173,13 @@ Inspect every captured window: a late credential sheet can be in a
 later SpringBoard window and absent from the app's accessibility tree. Mode selection
 and Continue attributes share one app window subtree; taps use the captured window
 index. Multiple matching prompt windows are ambiguous and never authorize a tap.
+Only when both hosts' window snapshots lack the prompt, inspect one fallible
+`app.alerts` snapshot: iPad can expose the remote credential modal only there.
+Require exactly one alert, the exact password title and one decline button in
+that same snapshot. Multiple alerts or a failed snapshot are unknown and cannot
+authorize a tap or prove disappearance. Receipts distinguish `window-index-N`
+from `alert-snapshot`. A still-present prompt needs a fresh exact snapshot and
+live-hittable decline action before another decline within the same deadline.
 Record a returned decline separately from a later snapshot confirming disappearance.
 Public snapshots do not expose hittability: immediately before a real tap, check
 only the target's live `isHittable`, then check the same absolute deadline again.

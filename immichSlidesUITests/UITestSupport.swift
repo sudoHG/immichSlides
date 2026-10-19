@@ -408,6 +408,8 @@ struct IOSFirstBootNavigation {
         let promptHost: XCUIApplication
         let promptFrame: CGRect
         let promptWindowIndex: Int
+        let isPromptAlert: Bool
+        let promptSource: String
 
         func button(_ identifier: String) -> XCUIElementSnapshot? {
             let matches = nodes.filter { $0.identifier == identifier && $0.elementType == .button }
@@ -444,8 +446,15 @@ struct IOSFirstBootNavigation {
         if !ownPrompts.isEmpty { return combine(own, prompts: ownPrompts, windows: ownWindows) }
         let system = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         let systemWindows = try windowObservations(host: system)
-        return combine(
-            own, prompts: systemWindows.filter(\.hasPasswordPrompt), windows: ownWindows + systemWindows)
+        let systemPrompts = systemWindows.filter(\.hasPasswordPrompt)
+        let windows = ownWindows + systemWindows
+        if !systemPrompts.isEmpty { return combine(own, prompts: systemPrompts, windows: windows) }
+        // A remote credential alert can be absent from every window snapshot on iPad.
+        let alerts = app.alerts.allElementsBoundByIndex
+        guard alerts.count <= 1 else { throw NSError(domain: "IOSFirstBootNavigation", code: 2) }
+        guard let alert = alerts.first else { return combine(own, prompts: [], windows: windows) }
+        let modal = observation(window: try alert.snapshot(), host: app, windowIndex: .zero, isPromptAlert: true)
+        return combine(own, prompts: modal.hasPasswordPrompt ? [modal] : [], windows: windows + [modal])
     }
 
     private func combine(_ own: Observation, prompts: [Observation], windows: [Observation]) -> Observation {
@@ -454,7 +463,8 @@ struct IOSFirstBootNavigation {
             window: own.window, windowIndex: own.windowIndex, nodes: own.nodes, decline: prompt?.decline,
             hasPasswordPrompt: !prompts.isEmpty, hasModalObstacle: windows.contains(where: \.hasModalObstacle),
             promptHost: prompt?.promptHost ?? app, promptFrame: prompt?.window.frame ?? .zero,
-            promptWindowIndex: prompt?.windowIndex ?? .zero)
+            promptWindowIndex: prompt?.windowIndex ?? .zero, isPromptAlert: prompt?.isPromptAlert ?? false,
+            promptSource: prompt?.promptSource ?? (prompts.isEmpty ? "not-observed" : "ambiguous"))
     }
 
     private func windowObservations(host: XCUIApplication) throws -> [Observation] {
@@ -466,7 +476,9 @@ struct IOSFirstBootNavigation {
         }
     }
 
-    private func observation(window: XCUIElementSnapshot, host: XCUIApplication, windowIndex: Int) -> Observation {
+    private func observation(
+        window: XCUIElementSnapshot, host: XCUIApplication, windowIndex: Int, isPromptAlert: Bool = false
+    ) -> Observation {
         var pending = [window]
         var nodes: [XCUIElementSnapshot] = []
         while let node = pending.popLast() {
@@ -495,7 +507,9 @@ struct IOSFirstBootNavigation {
             decline: hasTitle && !hasOtherModal && declines.count == 1 ? declines[0] : nil,
             hasPasswordPrompt: hasTitle,
             hasModalObstacle: hasTitle || nodes.contains { $0.elementType == .alert || $0.elementType == .sheet },
-            promptHost: host, promptFrame: window.frame, promptWindowIndex: windowIndex)
+            promptHost: host, promptFrame: window.frame, promptWindowIndex: windowIndex,
+            isPromptAlert: isPromptAlert,
+            promptSource: isPromptAlert ? "alert-snapshot" : "window-index-\(windowIndex)")
     }
 
     // Snapshot attributes are fallible; XCTest exposes hittability only on the live element.
@@ -510,26 +524,31 @@ struct IOSFirstBootNavigation {
         guard node.isEnabled, !node.frame.isEmpty, frame.contains(node.frame), Date() < deadline
         else { return false }
         let target: XCUIElement
-        let window = host.windows.element(boundBy: isDecline ? observation.promptWindowIndex : observation.windowIndex)
+        let container =
+            isDecline && observation.isPromptAlert
+            ? host.alerts.element(boundBy: .zero)
+            : host.windows.element(boundBy: isDecline ? observation.promptWindowIndex : observation.windowIndex)
         if node.identifier.isEmpty {
             // ui-label-lookup: Only the exact password prompt's unique decline action reaches this branch.
-            target = window.buttons.matching(NSPredicate(format: "label == %@", node.label)).firstMatch
+            target = container.buttons.matching(NSPredicate(format: "label == %@", node.label)).firstMatch
         } else {
-            target = window.buttons.matching(identifier: node.identifier).firstMatch
+            target = container.buttons.matching(identifier: node.identifier).firstMatch
         }
         let isHittable = target.isHittable
         guard isHittable, Date() < deadline else { return false }
         FirstFailureContext.mark(step, element: node.identifier.isEmpty ? "unknown" : node.identifier)
         willTap()
         if step == "save-password-prompt" {
-            print("Exact Save Password prompt observed; Not Now issued; windowIndex=\(observation.promptWindowIndex)")
+            print("Exact Save Password prompt observed; Not Now issued; source=\(observation.promptSource)")
         }
         FirstFailureContext.action("tap") { target.tap() }
-        if step == "save-password-prompt" { print("Exact Save Password prompt: Not Now returned") }
+        if step == "save-password-prompt" {
+            print("First-boot prompt receipt: source=\(observation.promptSource); Not Now returned=true")
+        }
         return true
     }
 
-    /// One decline per observed prompt; no screenshot or unrelated alert query precedes the tap.
+    /// Every decline needs a fresh exact prompt observation within the same absolute deadline.
     @discardableResult
     func dismissPasswordPrompt(until deadline: Date) -> Bool {
         var didDecline = false
@@ -539,9 +558,10 @@ struct IOSFirstBootNavigation {
                     if didDecline { print("Exact Save Password prompt disappearance confirmed") }
                     return Date() <= deadline
                 }
-                if !didDecline, let decline = observation.decline {
-                    didDecline = tap(
+                if let decline = observation.decline {
+                    let returned = tap(
                         decline, observation: observation, deadline: deadline, step: "save-password-prompt")
+                    didDecline = didDecline || returned
                 }
             }
             poll(until: deadline)
@@ -559,6 +579,7 @@ struct IOSFirstBootNavigation {
         var didDecline = false
         var didSeePrompt = false
         var didConfirmPromptGone = false
+        var promptSource = "not-observed"
         var didIssueContinue = false
         var didReturnContinue = false
         var lastSnapshotError: Int?
@@ -586,11 +607,13 @@ struct IOSFirstBootNavigation {
             if observation.hasPasswordPrompt {
                 didSeePrompt = true
                 didConfirmPromptGone = false
+                promptSource = observation.promptSource
                 step = "save-password-prompt"
-                if !didDecline, let decline = observation.decline {
-                    didDecline = tap(
+                if let decline = observation.decline {
+                    let returned = tap(
                         decline, observation: observation, deadline: deadline, step: "save-password-prompt")
-                    if didDecline && !didIssueContinue { didSelect = false }
+                    didDecline = didDecline || returned
+                    if returned && !didIssueContinue { didSelect = false }
                 }
                 poll(until: deadline)
                 continue
@@ -603,7 +626,7 @@ struct IOSFirstBootNavigation {
             if didIssueContinue {
                 if !observation.isModePage && observation.hasDestination {
                     print(
-                        "First-boot mode departure confirmed; Continue issued=true returned=\(didReturnContinue); passwordPromptDismissed=\(didConfirmPromptGone)"
+                        "First-boot mode departure confirmed; Continue issued=true returned=\(didReturnContinue); passwordPromptDismissed=\(didConfirmPromptGone); promptSource=\(promptSource)"
                     )
                     return departureDeadline
                 }
@@ -634,7 +657,7 @@ struct IOSFirstBootNavigation {
         }
         FirstFailureContext.mark(step, element: didIssueContinue ? "mode.continue.button" : identifier)
         let detail =
-            "step=\(step), Continue issued=\(didIssueContinue) returned=\(didReturnContinue), passwordPromptObserved=\(didSeePrompt), passwordDeclineReturned=\(didDecline), passwordPromptDismissed=\(didConfirmPromptGone), modePage=\(lastModePage.map(String.init) ?? "unknown"), postContinueSnapshotObserved=\(didObserveAfterContinue), lastSnapshotSucceeded=\(didReadLastSnapshot), lastSnapshotError=\(lastSnapshotError.map(String.init) ?? "none")"
+            "step=\(step), Continue issued=\(didIssueContinue) returned=\(didReturnContinue), passwordPromptObserved=\(didSeePrompt), passwordDeclineReturned=\(didDecline), passwordPromptDismissed=\(didConfirmPromptGone), promptSource=\(promptSource), modePage=\(lastModePage.map(String.init) ?? "unknown"), postContinueSnapshotObserved=\(didObserveAfterContinue), lastSnapshotSucceeded=\(didReadLastSnapshot), lastSnapshotError=\(lastSnapshotError.map(String.init) ?? "none")"
         if didIssueContinue && !didSeePrompt && didReadLastSnapshot && didObserveAfterContinue && lastModePage == true {
             XCTFail(
                 "Mode departure failed after one hittable Continue without a password prompt; possible App navigation defect (\(detail))",
