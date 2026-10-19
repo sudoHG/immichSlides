@@ -403,6 +403,7 @@ struct IOSFirstBootNavigation {
         let nodes: [XCUIElementSnapshot]
         let decline: XCUIElementSnapshot?
         let hasPasswordPrompt: Bool
+        let hasModalObstacle: Bool
         let promptHost: XCUIApplication
         let promptFrame: CGRect
 
@@ -444,7 +445,9 @@ struct IOSFirstBootNavigation {
         let prompt = observation(window: systemWindow, host: system)
         return Observation(
             window: own.window, nodes: own.nodes, decline: prompt.decline,
-            hasPasswordPrompt: prompt.hasPasswordPrompt, promptHost: system, promptFrame: systemWindow.frame)
+            hasPasswordPrompt: prompt.hasPasswordPrompt,
+            hasModalObstacle: own.hasModalObstacle || prompt.hasModalObstacle,
+            promptHost: system, promptFrame: systemWindow.frame)
     }
 
     private func observation(window: XCUIElementSnapshot, host: XCUIApplication) -> Observation {
@@ -474,7 +477,9 @@ struct IOSFirstBootNavigation {
         return Observation(
             window: window, nodes: nodes,
             decline: hasTitle && !hasOtherModal && declines.count == 1 ? declines[0] : nil,
-            hasPasswordPrompt: hasTitle, promptHost: host, promptFrame: window.frame)
+            hasPasswordPrompt: hasTitle,
+            hasModalObstacle: hasTitle || nodes.contains { $0.elementType == .alert || $0.elementType == .sheet },
+            promptHost: host, promptFrame: window.frame)
     }
 
     // Snapshot attributes are fallible; XCTest exposes hittability only on the live element.
@@ -494,11 +499,23 @@ struct IOSFirstBootNavigation {
         } else {
             target = host.windows.firstMatch.buttons.matching(identifier: node.identifier).firstMatch
         }
-        guard target.isHittable, Date() < deadline else { return false }
+        let isHittable = target.isHittable
+        guard Date() < deadline else { return false }
+        // SwiftUI mode cards can report non-hittable despite an unobstructed, fully visible frame.
+        guard isHittable || (step == "mode-card" && !observation.hasModalObstacle) else { return false }
         FirstFailureContext.mark(step, element: node.identifier.isEmpty ? "unknown" : node.identifier)
         willTap()
         if step == "save-password-prompt" { print("Exact Save Password prompt observed; Not Now issued") }
-        FirstFailureContext.action("tap") { target.tap() }
+        FirstFailureContext.action("tap") {
+            if isHittable {
+                target.tap()
+            } else {
+                let origin = observation.window.frame.origin
+                print("First-boot mode-card issued using its unique unobstructed snapshot frame")
+                app.windows.firstMatch.coordinate(withNormalizedOffset: .zero)
+                    .withOffset(CGVector(dx: node.frame.midX - origin.x, dy: node.frame.midY - origin.y)).tap()
+            }
+        }
         if step == "save-password-prompt" { print("Exact Save Password prompt: Not Now returned") }
         return true
     }
