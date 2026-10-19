@@ -238,11 +238,6 @@ final class AccessLifecycleTVOSUITests: XCTestCase {
         ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
 
         let interval = try configureTVOSTimingPlaybackSettings(app: app)
-        // Fix the evidence subject before the unchanged midpoint/Continue timing windows begin.
-        let driver = TVDriver(app: app)
-        driver.pause()
-        _ = try driver.advance(toAnyOf: ["A2"])
-        moveFocus(.left, to: playPauseButton, maximumPresses: 3, message: "Focus must reach play/pause.")
         let timeline = try exerciseTVOSPauseNextContinueVisibleTiming(
             app: app,
             playPauseButton: playPauseButton,

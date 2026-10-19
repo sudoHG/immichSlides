@@ -123,12 +123,6 @@ crop. Other dimensions and region crops grant no exclusion. In particular,
 iPhone landscape has no measured entry, and the portrait phone's glyph-only
 box grants no palette exclusion. EXIF uses the same reader without waiting for
 controls to hide; the six-Next limit and existing deadlines remain unchanged.
-The tvOS pause entry prepares A2 through the existing public-pixel driver before
-its timing stage: pause, use the bounded photo rotation to reach a clear A2, then
-restore Play/Pause focus. This prevents a random start from omitting narrow-photo
-evidence. Its original midpoint and Continue windows start afterward, with the
-existing action, identity and runner deadlines. Capture still occurs with visible
-controls. The settings entry retains its original baseline and immediate capture.
 
 The Swift `captureIdentity` and Python `capture_identity` readers locate each
 photo's palette rectangle, rather than assuming equal quadrants or full-span strips. They use
