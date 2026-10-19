@@ -330,8 +330,7 @@ def evaluate_album_empty_evidence(evidence_dir: Path, fixture_set: str = "a", *,
     frame_geometry = {}
     for name in playback_names:
         if use_ios_album_geometry:
-            marks, geometry = target_album_frame_identity((evidence_dir / f"{name}.png").read_bytes(), fixture_set,
-                                                         screenshot_name=f"{name}.png")
+            marks, geometry = target_album_frame_identity((evidence_dir / f"{name}.png").read_bytes(), fixture_set)
             frame_geometry[name] = geometry
         else:
             # tvOS uses the scene reader; iOS retains its measured/unmeasured boundary above.
