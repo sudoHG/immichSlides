@@ -18,61 +18,25 @@ extension AccessLifecycleIOSUITests {
             waitForSaveEnabled(app: app, saveButton: saveButton, timeout: TestWait.seconds(.infrastructure(45))),
             "Save must become enabled after a real connection test succeeds.")
         tapElement(saveButton)
+        guard
+            let playbackDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
+                "mode.random.button", selectionTimeout: TestWait.seconds(.product(15)),
+                departureTimeout: TestWait.seconds(.product(30)))
+        else { return }
         XCTAssertTrue(
-            app.buttons["mode.random.button"].waitForPublicElement(
-                "mode.random.button", timeout: TestWait.seconds(.product(15))),
-            "Must reach mode selection after a successful save.")
-        let modeButton = firstBootControl(in: app, identifier: "mode.random.button")
-        let continueButton = firstBootControl(in: app, identifier: "mode.continue.button")
-        if !(continueButton.exists && continueButton.isEnabled && modeButton.isSelected) {
-            tapElement(modeButton)
-            XCTAssertTrue(
-                waitUntil(timeout: TestWait.seconds(.product(2))) { continueButton.exists && continueButton.isEnabled },
-                "Continue must be enabled after selecting random.")
-        }
-        tapElement(continueButton)
-        dismissSystemSavePromptIfPresent(app: app, timeout: TestWait.seconds(.product(5)))
-        if continueButton.exists && continueButton.isHittable && continueButton.isEnabled {
-            tapElement(continueButton)
-        }
-        XCTAssertTrue(
-            waitForPlaybackControls(app: app, timeout: TestWait.seconds(.product(30))),
+            waitForPlaybackControls(app: app, timeout: max(0, playbackDeadline.timeIntervalSinceNow)),
             "Random mode must reach the playback page.")
     }
 
     @MainActor
-    func dismissSystemSavePromptIfPresent(app: XCUIApplication, timeout: TimeInterval) {
-        // Tap only "Not Now"; the prompt often appears only after entering settings, so wait for it to go away.
-        let deadline = Date().addingTimeInterval(timeout)
-        repeat {
-            // ui-label-lookup: Dismiss the iOS Save Password sheet without saving credentials.
-            for label in ["以后", "Not Now"] {
-                // ui-label-lookup: The Save Password action belongs to iOS.
-                let button = app.buttons[label]
-                if button.exists {
-                    button.tapForFailureEvidence()
-                    if waitUntil(
-                        timeout: TestWait.seconds(.product(2)),
-                        condition: { !self.isSystemSavePasswordPromptVisible(app: app) })
-                    {
-                        return
-                    }
-                }
-            }
-            RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.1))))
-        } while Date() < deadline
+    func dismissSystemSavePromptIfPresent(app: XCUIApplication, deadline: Date) {
+        _ = IOSFirstBootNavigation(app: app).dismissPasswordPrompt(until: deadline)
     }
 
     @MainActor
     func isSystemSavePasswordPromptVisible(app: XCUIApplication) -> Bool {
-        // ui-label-lookup: The Save Password sheet is owned by iOS.
-        app.sheets["保存密码？"].exists
-            // ui-label-lookup: The Save Password prompt belongs to iOS.
-            || app.sheets["Save Password?"].exists
-            // ui-label-lookup: The Save Password action is owned by iOS.
-            || app.buttons["以后"].exists
-            // ui-label-lookup: The Save Password prompt belongs to iOS.
-            || app.buttons["Not Now"].exists
+        // A failed snapshot is unknown, never evidence that the prompt is absent.
+        (try? IOSFirstBootNavigation(app: app).observe().hasPasswordPrompt) ?? true
     }
 
     @MainActor
@@ -202,8 +166,9 @@ extension AccessLifecycleIOSUITests {
     func enablePasswordFromSettingsUI(app: XCUIApplication, pin: String) throws {
         openSettingsFromSlideshow(app: app)
         requests.append("settings.open")
+        let accessDeadline = Date().addingTimeInterval(TestWait.seconds(.product(12)))
         let isAccessReady = waitUntil(timeout: TestWait.seconds(.product(12))) {
-            self.dismissSystemSavePromptIfPresent(app: app, timeout: TestWait.seconds(.product(0)))
+            self.dismissSystemSavePromptIfPresent(app: app, deadline: accessDeadline)
             return self.firstExistingSettingsItem(
                 app: app,
                 identifier: "settings.item.accessProtection"
@@ -215,7 +180,7 @@ extension AccessLifecycleIOSUITests {
         )
         let holdUntil = Date().addingTimeInterval(TestWait.seconds(.product(2)))
         while Date() < holdUntil {
-            dismissSystemSavePromptIfPresent(app: app, timeout: TestWait.seconds(.product(0)))
+            dismissSystemSavePromptIfPresent(app: app, deadline: holdUntil)
             RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.1))))
         }
         XCTAssertTrue(

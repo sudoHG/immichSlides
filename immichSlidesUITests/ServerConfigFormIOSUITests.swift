@@ -164,20 +164,9 @@ final class ServerConfigFormIOSUITests: XCTestCase {
     }
 
     private func startRandomPlaybackFromModeSelection(app: XCUIApplication) {
-        let randomButton = app.buttons["mode.random.button"]
-        XCTAssertTrue(
-            randomButton.waitForPublicElement(
-                "mode.random.button", timeout: WaitTiming.controlAppearanceTimeoutSeconds),
-            "Mode selection page should show random playback")
-        tapElement(randomButton)
-
-        let continueButton = app.buttons["mode.continue.button"]
-        XCTAssertTrue(
-            continueButton.waitForPublicElement(
-                "mode.continue.button", timeout: WaitTiming.controlAppearanceTimeoutSeconds),
-            "Mode selection page should show Continue")
-        XCTAssertTrue(continueButton.isEnabled, "After selecting random playback, Continue should be tappable")
-        tapElement(continueButton)
+        IOSFirstBootNavigation(app: app).selectModeAndContinue(
+            "mode.random.button", selectionTimeout: WaitTiming.controlAppearanceTimeoutSeconds,
+            departureTimeout: TestWait.seconds(.product(25)))
 
         XCTAssertTrue(
             waitForSlideshowSettingsButton(app: app, timeout: TestWait.seconds(.product(25))),

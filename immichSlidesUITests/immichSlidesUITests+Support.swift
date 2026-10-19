@@ -123,35 +123,17 @@ extension immichSlidesUITests {
     }
 
     func startRandomPlaybackFromModeSelection(app: XCUIApplication) {
-        let modeRandomButton = app.buttons["mode.random.button"]
-        XCTAssertTrue(
-            modeRandomButton.waitForPublicElement(
-                "mode.random.button", timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
-        tapElement(modeRandomButton)
-
-        let modeContinueButton = app.buttons["mode.continue.button"]
-        XCTAssertTrue(
-            modeContinueButton.waitForPublicElement(
-                "mode.continue.button", timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
-        XCTAssertTrue(modeContinueButton.isEnabled)
-        tapElement(modeContinueButton)
+        IOSFirstBootNavigation(app: app).selectModeAndContinue(
+            "mode.random.button", selectionTimeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds,
+            departureTimeout: immichSlidesUITestsWaitTiming.navigationTimeoutSeconds)
 
         XCTAssertTrue(waitForSlideshowSettingsButton(app: app, timeout: TestWait.seconds(.product(25))))
     }
 
     func startFilteredFlowFromModeSelection(app: XCUIApplication) {
-        let modeFilteredButton = app.buttons["mode.filtered.button"]
-        XCTAssertTrue(
-            modeFilteredButton.waitForPublicElement(
-                "mode.filtered.button", timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
-        tapElement(modeFilteredButton)
-
-        let modeContinueButton = app.buttons["mode.continue.button"]
-        XCTAssertTrue(
-            modeContinueButton.waitForPublicElement(
-                "mode.continue.button", timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
-        XCTAssertTrue(modeContinueButton.isEnabled)
-        tapElement(modeContinueButton)
+        IOSFirstBootNavigation(app: app).selectModeAndContinue(
+            "mode.filtered.button", selectionTimeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds,
+            departureTimeout: immichSlidesUITestsWaitTiming.navigationTimeoutSeconds)
 
         XCTAssertTrue(
             app.buttons["filterSummary.startPlayback.button"].waitForFailureEvidence(

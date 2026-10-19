@@ -46,23 +46,13 @@ struct IOSDriver: PlaybackDriver {
                 "mode.random.button",
                 timeout: UITestSupportWaitTiming.connectionTimeoutSeconds),
             "A successful save must lead to mode selection.")
-        let random = control("mode.random.button")
-        let continueButton = control("mode.continue.button")
-        if !(continueButton.exists && continueButton.isEnabled && random.isSelected) {
-            tap(random)
-            XCTAssertTrue(
-                Wait.until(timeout: UITestSupportWaitTiming.readbackTimeoutSeconds) {
-                    continueButton.exists && continueButton.isEnabled
-                },
-                "Continue must be enabled after selecting Random.")
-        }
-        tap(continueButton)
-        dismissSavePasswordPrompt(timeout: UITestSupportWaitTiming.elementAppearanceTimeoutSeconds)
-        if continueButton.exists && continueButton.isHittable && continueButton.isEnabled {
-            tap(continueButton)
-        }
+        guard
+            let playbackDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
+                "mode.random.button", selectionTimeout: UITestSupportWaitTiming.readbackTimeoutSeconds,
+                departureTimeout: UITestSupportWaitTiming.playbackStartupTimeoutSeconds)
+        else { return }
         XCTAssertTrue(
-            waitForPlaybackControls(timeout: UITestSupportWaitTiming.playbackStartupTimeoutSeconds),
+            waitForPlaybackControls(timeout: max(0, playbackDeadline.timeIntervalSinceNow)),
             "Random mode must reach the playback page.")
     }
 
@@ -317,8 +307,9 @@ struct IOSDriver: PlaybackDriver {
 
     private func waitForPlaybackControls(timeout: TimeInterval) -> Bool {
         FirstFailureContext.mark("query-element", element: "slideshow.control.settings.button")
+        let deadline = Date().addingTimeInterval(timeout)
         return Wait.until(timeout: timeout) {
-            dismissSavePasswordPrompt(timeout: TestWait.seconds(.product(0)))
+            dismissSavePasswordPrompt(deadline: deadline)
             let banner = app.descendants(matching: .any).matching(identifier: "slideshow.entryHint.banner").firstMatch
             if banner.exists { tap(banner) }
             if app.buttons["slideshow.control.settings.button"].isHittable { return true }
@@ -346,16 +337,8 @@ struct IOSDriver: PlaybackDriver {
         }
     }
 
-    private func dismissSavePasswordPrompt(timeout: TimeInterval) {
-        _ = Wait.until(timeout: timeout) {
-            // ui-label-lookup: Dismiss the iOS Save Password sheet without saving credentials.
-            for label in ["以后", "Not Now"] where app.buttons[label].exists {
-                // ui-label-lookup: The Save Password action belongs to iOS.
-                app.buttons[label].tapForFailureEvidence()
-                return true
-            }
-            return false
-        }
+    private func dismissSavePasswordPrompt(deadline: Date) {
+        _ = IOSFirstBootNavigation(app: app).dismissPasswordPrompt(until: deadline)
     }
 
     private func replaceText(in field: XCUIElement, with value: String) {

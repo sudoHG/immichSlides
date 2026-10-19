@@ -27,7 +27,7 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
         defer { app.terminateForFailureEvidence() }
 
         try completeFirstBootToModeSelection(app: app, input: input, evidencePrefix: "late-image")
-        dismissSavePasswordPromptIfShown(app: app)
+        dismissSavePasswordPromptIfShown(app: app, deadline: Date().addingTimeInterval(TestWait.seconds(.product(2))))
         _ = try lateImageControl(input: input, action: "arm")
         try enterPlaybackThenAdvanceTwice(app: app)
 
@@ -64,21 +64,9 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
 
     @MainActor
     private func enterPlaybackThenAdvanceTwice(app: XCUIApplication) throws {
-        let modeButton = firstBootControl(in: app, identifier: "mode.random.button")
-        let continueButton = firstBootControl(in: app, identifier: "mode.continue.button")
-        if (try? continueButton.snapshot())?.isEnabled != true {
-            XCTAssertTrue(
-                modeButton.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
-                "The mode page must provide mode.random.button.")
-            tapElement(modeButton)
-            XCTAssertTrue(
-                waitUntil(timeout: TestWait.seconds(.product(2))) {
-                    (try? continueButton.snapshot())?.isEnabled == true
-                },
-                "After selecting random, Continue must be enabled."
-            )
-        }
-        continueButton.tapForFailureEvidence()
+        IOSFirstBootNavigation(app: app).selectModeAndContinue(
+            "mode.random.button", selectionTimeout: TestWait.seconds(.product(8)),
+            departureTimeout: TestWait.seconds(.product(8)))
         let next = app.buttons["slideshow.control.next.button"]
         XCTAssertTrue(
             next.waitForPublicElement("slideshow.control.next.button", timeout: TestWait.seconds(.product(8))),
@@ -120,9 +108,10 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
     @MainActor
     private func revealLateImageControls(app: XCUIApplication) -> Bool {
         let deadline = ProcessInfo.processInfo.systemUptime + TestWait.seconds(.product(8))
+        let promptDeadline = Date().addingTimeInterval(TestWait.seconds(.product(8)))
         return waitUntil(timeout: TestWait.seconds(.product(8))) {
             guard ProcessInfo.processInfo.systemUptime < deadline else { return false }
-            self.dismissSavePasswordPromptIfShown(app: app)
+            self.dismissSavePasswordPromptIfShown(app: app, deadline: promptDeadline)
             if let next = app.evidenceSnapshotsByIdentifier()["slideshow.control.next.button"], next.isEnabled {
                 return ProcessInfo.processInfo.systemUptime < deadline
             }
@@ -133,7 +122,7 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
 
     @MainActor
     private func captureRequiredIdentity(app: XCUIApplication, name: String) throws -> StrictE2EPhotoIdentity.Result {
-        dismissSavePasswordPromptIfShown(app: app)
+        dismissSavePasswordPromptIfShown(app: app, deadline: Date().addingTimeInterval(TestWait.seconds(.product(2))))
         let before = strictSceneFrameObservation(app: app)
         let png = app.screenshotForFailureEvidence().pngRepresentation
         let after = strictSceneFrameObservation(app: app)

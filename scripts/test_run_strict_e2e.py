@@ -857,7 +857,8 @@ class FailureDiagnosticsTests(unittest.TestCase):
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift", "Save must become enabled after a real connection test succeeds.", "firstboot_setup", "control_state"),
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift", "A cold launch with saved settings must not return to the first-boot page.", "cold_relaunch", "navigation"),
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift", "A configured cold launch must go straight to the playback page.", "cold_relaunch", "navigation"),
-            ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift", "The mode page must offer ", "mode_selection", "navigation"),
+            ("immichSlidesUITests/UITestSupport.swift", "First-boot mode navigation must dismiss the exact password prompt,", "mode_selection", "navigation"),
+            ("immichSlidesUITests/UITestSupport.swift", "Mode departure failed after one hittable Continue without a password prompt;", "playback_entry", "navigation"),
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift", "Chose filter but reached the playback page, so the mode card tap did not register.", "mode_selection", "navigation"),
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift", "Still on the mode page after Continue; filter mode did not start.", "mode_selection", "navigation"),
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift", "Filter mode must reach the filter summary page.", "mode_selection", "navigation"),
@@ -948,6 +949,8 @@ class FailureDiagnosticsTests(unittest.TestCase):
             ("immichSlidesUITests/PlaybackHistoryIOSUITests+Support.swift", "Could not return from the playback settings page to the slideshow", "settings_navigation", "navigation"),
         )
         failure_prefixes = {
+            "First-boot mode navigation must dismiss the exact password prompt,",
+            "Mode departure failed after one hittable Continue without a password prompt;",
             "The slideshow control never became tappable before the deadline.",
             "The slideshow Settings tap had no observed outcome before the deadline.",
             "A fresh install must reach the normal first-boot page.",

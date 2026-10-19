@@ -395,6 +395,211 @@ extension XCUIApplication {
 #endif
 
 #if os(iOS)
+struct IOSFirstBootNavigation {
+    let app: XCUIApplication
+
+    struct Observation {
+        let window: XCUIElementSnapshot
+        let nodes: [XCUIElementSnapshot]
+        let decline: XCUIElementSnapshot?
+        let hasPasswordPrompt: Bool
+
+        func button(_ identifier: String) -> XCUIElementSnapshot? {
+            let matches = nodes.filter { $0.identifier == identifier && $0.elementType == .button }
+            return matches.count == 1 ? matches[0] : nil
+        }
+
+        func isSelected(_ identifier: String) -> Bool {
+            guard let button = button(identifier) else { return false }
+            var pending = [button]
+            while let node = pending.popLast() {
+                if node.isSelected || (node.elementType == .image && node.identifier == "checkmark.circle.fill") {
+                    return true
+                }
+                pending.append(contentsOf: node.children)
+            }
+            return false
+        }
+
+        var isModePage: Bool { nodes.contains { $0.identifier.hasPrefix("mode.") } }
+        var hasDestination: Bool {
+            nodes.contains {
+                $0.identifier == "filterSummary.startPlayback.button"
+                    || $0.identifier == "slideshow.currentAssetId.flag"
+                    || $0.identifier == "slideshow.control.next.button"
+                    || $0.identifier == "slideshow.entryHint.banner"
+            }
+        }
+    }
+
+    func observe() throws -> Observation {
+        let window = try app.windows.firstMatch.snapshot()
+        var pending = [window]
+        var nodes: [XCUIElementSnapshot] = []
+        while let node = pending.popLast() {
+            nodes.append(node)
+            pending.append(contentsOf: node.children)
+        }
+        // ui-label-lookup: The simulator-owned password prompt follows the system language.
+        let titles = ["保存密码？", "保存密码?", "Save Password?"]
+        let hasTitle = nodes.contains {
+            ($0.elementType == .staticText || $0.elementType == .sheet || $0.elementType == .alert)
+                && (titles.contains($0.label) || titles.contains($0.identifier))
+        }
+        let hasOtherModal = nodes.contains { node in
+            guard node.elementType == .alert || node.elementType == .sheet else { return false }
+            var pending = [node]
+            while let child = pending.popLast() {
+                if titles.contains(child.label) || titles.contains(child.identifier) { return false }
+                pending.append(contentsOf: child.children)
+            }
+            return true
+        }
+        // ui-label-lookup: Never act on a generic Not Now button without the exact password title.
+        let declines = nodes.filter { $0.elementType == .button && ["以后", "Not Now"].contains($0.label) }
+        return Observation(
+            window: window, nodes: nodes,
+            decline: hasTitle && !hasOtherModal && declines.count == 1 ? declines[0] : nil,
+            hasPasswordPrompt: hasTitle)
+    }
+
+    // Snapshot attributes are fallible; XCTest exposes hittability only on the live element.
+    private func tap(
+        _ node: XCUIElementSnapshot, observation: Observation, deadline: Date, step: String,
+        willTap: () -> Void = {}
+    ) -> Bool {
+        guard node.isEnabled, !node.frame.isEmpty, observation.window.frame.contains(node.frame), Date() < deadline
+        else { return false }
+        let target: XCUIElement
+        if node.identifier.isEmpty {
+            // ui-label-lookup: Only the exact password prompt's unique decline action reaches this branch.
+            target = app.buttons.matching(NSPredicate(format: "label == %@", node.label)).firstMatch
+        } else {
+            target = app.buttons.matching(identifier: node.identifier).firstMatch
+        }
+        guard target.isHittable, Date() < deadline else { return false }
+        FirstFailureContext.mark(step, element: node.identifier.isEmpty ? "unknown" : node.identifier)
+        willTap()
+        if step == "save-password-prompt" { print("Exact Save Password prompt observed; Not Now issued") }
+        FirstFailureContext.action("tap") { target.tap() }
+        if step == "save-password-prompt" { print("Exact Save Password prompt: Not Now returned") }
+        return true
+    }
+
+    /// One decline per observed prompt; no screenshot or unrelated alert query precedes the tap.
+    @discardableResult
+    func dismissPasswordPrompt(until deadline: Date) -> Bool {
+        var didDecline = false
+        repeat {
+            if let observation = try? observe() {
+                if !observation.hasPasswordPrompt {
+                    if didDecline { print("Exact Save Password prompt disappearance confirmed") }
+                    return Date() <= deadline
+                }
+                if !didDecline, let decline = observation.decline {
+                    didDecline = tap(
+                        decline, observation: observation, deadline: deadline, step: "save-password-prompt")
+                }
+            }
+            poll(until: deadline)
+        } while Date() < deadline
+        return false
+    }
+
+    @discardableResult
+    func selectModeAndContinue(
+        _ identifier: String, selectionTimeout: TimeInterval, departureTimeout: TimeInterval,
+        file: StaticString = #filePath, line: UInt = #line
+    ) -> Date? {
+        let selectionDeadline = Date().addingTimeInterval(selectionTimeout)
+        var didSelect = false
+        var didDecline = false
+        var didSeePrompt = false
+        var didIssueContinue = false
+        var didReturnContinue = false
+        var lastSnapshotError: Int?
+        var lastModePage: Bool?
+        var didReadLastSnapshot = false
+        var departureDeadline: Date?
+        var step = "mode-card"
+        FirstFailureContext.beginWait(seconds: selectionTimeout)
+        defer { FirstFailureContext.endWait() }
+        while Date() < (departureDeadline ?? selectionDeadline) {
+            let deadline = departureDeadline ?? selectionDeadline
+            FirstFailureContext.mark(step, element: didIssueContinue ? "mode.continue.button" : identifier)
+            let observation: Observation
+            do { observation = try observe() } catch {
+                lastSnapshotError = (error as NSError).code
+                didReadLastSnapshot = false
+                poll(until: deadline)
+                continue
+            }
+            guard Date() < deadline else { break }
+            didReadLastSnapshot = true
+            lastModePage = observation.isModePage
+            if observation.hasPasswordPrompt {
+                didSeePrompt = true
+                if !didDecline, let decline = observation.decline {
+                    didDecline = tap(
+                        decline, observation: observation, deadline: deadline, step: "save-password-prompt")
+                    if didDecline && !didIssueContinue { didSelect = false }
+                }
+                poll(until: deadline)
+                continue
+            }
+            if didIssueContinue {
+                if !observation.isModePage && observation.hasDestination {
+                    print(
+                        "First-boot mode departure confirmed; Continue issued=true returned=\(didReturnContinue); passwordPromptDismissed=\(didDecline)"
+                    )
+                    return departureDeadline
+                }
+            } else if observation.isSelected(identifier) {
+                step = "mode-continue"
+                if let button = observation.button("mode.continue.button") {
+                    // The departure budget is absolute, including the real tap and any late prompt.
+                    let end = Date().addingTimeInterval(departureTimeout)
+                    if tap(
+                        button, observation: observation, deadline: deadline, step: step,
+                        willTap: {
+                            didIssueContinue = true
+                            print("First-boot Continue issued=true; targetModeSelected=true")
+                        })
+                    {
+                        didReturnContinue = true
+                        departureDeadline = end
+                        step = "mode-departure"
+                        FirstFailureContext.endWait()
+                        FirstFailureContext.beginWait(seconds: max(0, end.timeIntervalSinceNow))
+                        print("First-boot Continue issued=true returned=true; targetModeSelected=true")
+                    }
+                }
+            } else if !didIssueContinue && !didSelect, let button = observation.button(identifier) {
+                didSelect = tap(button, observation: observation, deadline: deadline, step: step)
+            }
+            poll(until: departureDeadline ?? selectionDeadline)
+        }
+        FirstFailureContext.mark(step, element: didIssueContinue ? "mode.continue.button" : identifier)
+        let detail =
+            "step=\(step), Continue issued=\(didIssueContinue) returned=\(didReturnContinue), passwordPromptObserved=\(didSeePrompt), passwordPromptDismissed=\(didDecline), modePage=\(lastModePage.map(String.init) ?? "unknown"), lastSnapshotSucceeded=\(didReadLastSnapshot), lastSnapshotError=\(lastSnapshotError.map(String.init) ?? "none")"
+        if didIssueContinue && !didSeePrompt && didReadLastSnapshot && lastModePage == true {
+            XCTFail(
+                "Mode departure failed after one hittable Continue without a password prompt; possible App navigation defect (\(detail))",
+                file: file, line: line)
+        } else {
+            XCTFail(
+                "First-boot mode navigation must dismiss the exact password prompt, select the target and leave mode within its deadline (\(detail))",
+                file: file, line: line)
+        }
+        return nil
+    }
+
+    private func poll(until deadline: Date) {
+        guard Date() < deadline else { return }
+        RunLoop.current.run(until: min(deadline, Date().addingTimeInterval(TestWait.seconds(.product(0.1)))))
+    }
+}
+
 struct SlideshowControlBarButtonObservation {
     let identifier: String
     let snapshots: [String: XCUIElementSnapshot]

@@ -458,19 +458,9 @@ extension PlaybackHistoryIOSUITests {
     }
 
     func startRandomPlaybackFromModeSelection(app: XCUIApplication) {
-        let randomButton = app.buttons["mode.random.button"]
-        XCTAssertTrue(
-            randomButton.waitForPublicElement("mode.random.button", timeout: TestWait.seconds(.infrastructure(5))),
-            "The mode selection page should show the Random Playback entry")
-        tapElement(randomButton)
-
-        let continueButton = app.buttons["mode.continue.button"]
-        XCTAssertTrue(
-            continueButton.waitForPublicElement("mode.continue.button", timeout: TestWait.seconds(.infrastructure(5))),
-            "The mode selection page should show the Continue button")
-        XCTAssertTrue(
-            continueButton.isEnabled, "After choosing Random Playback, the Continue button should be tappable")
-        tapElement(continueButton)
+        IOSFirstBootNavigation(app: app).selectModeAndContinue(
+            "mode.random.button", selectionTimeout: TestWait.seconds(.infrastructure(5)),
+            departureTimeout: TestWait.seconds(.infrastructure(12)))
 
         XCTAssertTrue(
             app.buttons["slideshow.control.settings.button"].waitForPublicElement(
@@ -481,19 +471,9 @@ extension PlaybackHistoryIOSUITests {
     }
 
     func startFilteredPlaybackFromModeSelection(app: XCUIApplication) {
-        let filteredButton = app.buttons["mode.filtered.button"]
-        XCTAssertTrue(
-            filteredButton.waitForPublicElement("mode.filtered.button", timeout: TestWait.seconds(.infrastructure(5))),
-            "The filtered-playback harness should show the Filtered Playback entry")
-        tapElement(filteredButton)
-
-        let continueButton = app.buttons["mode.continue.button"]
-        XCTAssertTrue(
-            continueButton.waitForPublicElement("mode.continue.button", timeout: TestWait.seconds(.infrastructure(5))),
-            "Filtered playback should show the Continue button")
-        XCTAssertTrue(
-            continueButton.isEnabled, "The Continue button in the filtered-playback harness should be tappable")
-        tapElement(continueButton)
+        IOSFirstBootNavigation(app: app).selectModeAndContinue(
+            "mode.filtered.button", selectionTimeout: TestWait.seconds(.infrastructure(5)),
+            departureTimeout: TestWait.seconds(.infrastructure(12)))
 
         let startButton = app.buttons["filterSummary.startPlayback.button"]
         XCTAssertTrue(

@@ -94,20 +94,10 @@ extension FilterSummaryIOSVisualUITests {
             acceptanceLocale: acceptanceLocale
         )
 
-        let modeFilteredButton = app.buttons["mode.filtered.button"]
-        XCTAssertTrue(
-            modeFilteredButton.waitForPublicElement(
-                "mode.filtered.button",
-                timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds))
-        modeFilteredButton.tapForFailureEvidence()
-
-        let modeContinueButton = app.buttons["mode.continue.button"]
-        XCTAssertTrue(
-            modeContinueButton.waitForPublicElement(
-                "mode.continue.button",
-                timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds))
-        XCTAssertTrue(modeContinueButton.isEnabled)
-        modeContinueButton.tapForFailureEvidence()
+        IOSFirstBootNavigation(app: app).selectModeAndContinue(
+            "mode.filtered.button",
+            selectionTimeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            departureTimeout: FilterSummaryIOSVisualUITestsWaitTiming.screenTransitionTimeoutSeconds)
 
         let startPlaybackButton = app.buttons["filterSummary.startPlayback.button"]
         XCTAssertTrue(

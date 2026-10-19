@@ -195,8 +195,9 @@ extension PlaybackSmartFillVisualUITests {
     }
 
     func startRandomPlaybackFromModeSelection(app: XCUIApplication) {
-        tapElement(app.buttons["mode.random.button"])
-        tapElement(app.buttons["mode.continue.button"])
+        IOSFirstBootNavigation(app: app).selectModeAndContinue(
+            "mode.random.button", selectionTimeout: TestWait.seconds(.product(8)),
+            departureTimeout: TestWait.seconds(.product(30)))
         XCTAssertTrue(
             app.buttons["slideshow.control.settings.button"].waitForPublicElement(
                 "slideshow.control.settings.button",
@@ -231,8 +232,9 @@ extension PlaybackSmartFillVisualUITests {
     }
 
     func startFilteredPlaybackFromModeSelection(app: XCUIApplication) {
-        tapElement(app.buttons["mode.filtered.button"])
-        tapElement(app.buttons["mode.continue.button"])
+        IOSFirstBootNavigation(app: app).selectModeAndContinue(
+            "mode.filtered.button", selectionTimeout: TestWait.seconds(.product(8)),
+            departureTimeout: TestWait.seconds(.product(20)))
 
         let startButton = app.buttons["filterSummary.startPlayback.button"]
         XCTAssertTrue(

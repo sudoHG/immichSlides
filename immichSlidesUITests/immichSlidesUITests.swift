@@ -183,10 +183,9 @@ final class immichSlidesUITests: XCTestCase {
             })
         assertModeSelectionCoreElements(app: app)
 
-        tapElement(app.buttons["mode.random.button"])
-        let continueButton = app.buttons["mode.continue.button"]
-        XCTAssertTrue(continueButton.isEnabled)
-        tapElement(continueButton)
+        IOSFirstBootNavigation(app: app).selectModeAndContinue(
+            "mode.random.button", selectionTimeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds,
+            departureTimeout: immichSlidesUITestsWaitTiming.playbackControlTimeoutSeconds)
 
         XCTAssertTrue(
             app.buttons["slideshow.control.settings.button"].waitForPublicElement(
@@ -462,12 +461,9 @@ final class immichSlidesUITests: XCTestCase {
                 )
             }
 
-            let continueButton = app.buttons["mode.continue.button"]
-            XCTAssertTrue(
-                continueButton.waitForPublicElement(
-                    "mode.continue.button", timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
-            XCTAssertTrue(continueButton.isEnabled)
-            tapElement(continueButton)
+            IOSFirstBootNavigation(app: app).selectModeAndContinue(
+                "mode.filtered.button", selectionTimeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds,
+                departureTimeout: immichSlidesUITestsWaitTiming.controlAppearanceTimeoutSeconds)
             XCTAssertTrue(
                 app.buttons["filterSummary.album.button"].waitForFailureEvidence(
                     timeout: immichSlidesUITestsWaitTiming.controlAppearanceTimeoutSeconds))

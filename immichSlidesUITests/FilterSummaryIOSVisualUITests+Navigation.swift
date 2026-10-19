@@ -588,24 +588,10 @@ extension FilterSummaryIOSVisualUITests {
     }
 
     func startRandomPlaybackFromModeSelection(app: XCUIApplication) {
-
-        let modeRandomButton = app.buttons["mode.random.button"]
-        XCTAssertTrue(
-            modeRandomButton.waitForPublicElement(
-                "mode.random.button",
-                timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
-            "Mode selection page should show the 'Shuffle All Photos' entry")
-        tapElement(modeRandomButton)
-
-        let modeContinueButton = app.buttons["mode.continue.button"]
-        XCTAssertTrue(
-            modeContinueButton.waitForPublicElement(
-                "mode.continue.button",
-                timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
-            "Mode selection page should show the continue button")
-        XCTAssertTrue(
-            modeContinueButton.isEnabled, "After choosing random playback, the continue button should be enabled")
-        tapElement(modeContinueButton)
+        IOSFirstBootNavigation(app: app).selectModeAndContinue(
+            "mode.random.button",
+            selectionTimeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            departureTimeout: FilterSummaryIOSVisualUITestsWaitTiming.screenTransitionTimeoutSeconds)
 
         var diagnostic = ""
         XCTAssertTrue(
@@ -617,20 +603,10 @@ extension FilterSummaryIOSVisualUITests {
     }
 
     func startFilteredFlowFromModeSelection(app: XCUIApplication) {
-        let modeFilteredButton = app.buttons["mode.filtered.button"]
-        XCTAssertTrue(
-            modeFilteredButton.waitForPublicElement(
-                "mode.filtered.button",
-                timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds))
-        modeFilteredButton.tapForFailureEvidence()
-
-        let modeContinueButton = app.buttons["mode.continue.button"]
-        XCTAssertTrue(
-            modeContinueButton.waitForPublicElement(
-                "mode.continue.button",
-                timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds))
-        XCTAssertTrue(modeContinueButton.isEnabled)
-        modeContinueButton.tapForFailureEvidence()
+        IOSFirstBootNavigation(app: app).selectModeAndContinue(
+            "mode.filtered.button",
+            selectionTimeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+            departureTimeout: FilterSummaryIOSVisualUITestsWaitTiming.screenTransitionTimeoutSeconds)
 
         XCTAssertTrue(
             app.buttons["filterSummary.startPlayback.button"].waitForFailureEvidence(

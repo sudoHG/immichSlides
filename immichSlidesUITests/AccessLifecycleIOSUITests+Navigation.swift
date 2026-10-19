@@ -376,8 +376,9 @@ extension AccessLifecycleIOSUITests {
     @MainActor
     func tapSettingsPinInput(app: XCUIApplication, id: String) {
         let pinInputButton = app.buttons[id]
+        let deadline = Date().addingTimeInterval(TestWait.seconds(.product(8)))
         let ready = waitUntil(timeout: TestWait.seconds(.product(8))) {
-            self.dismissSystemSavePromptIfPresent(app: app, timeout: TestWait.seconds(.product(0)))
+            self.dismissSystemSavePromptIfPresent(app: app, deadline: deadline)
             return pinInputButton.exists && pinInputButton.isHittable
                 && !self.isSystemSavePasswordPromptVisible(app: app)
         }
@@ -549,8 +550,9 @@ extension AccessLifecycleIOSUITests {
         }
         // While the Save Password prompt covers the screen the hit point is {-1,-1}; tap "Not Now" first,
         // then Access Protection.
-        for attempt in 0..<20 {
-            dismissSystemSavePromptIfPresent(app: app, timeout: TestWait.seconds(.product(0)))
+        let deadline = Date().addingTimeInterval(TestWait.seconds(.product(6)))
+        for attempt in 0..<20 where Date() < deadline {
+            dismissSystemSavePromptIfPresent(app: app, deadline: deadline)
             if let candidate = firstExistingSettingsItem(
                 app: app,
                 identifier: sectionID
@@ -601,8 +603,9 @@ extension AccessLifecycleIOSUITests {
     // about 60 s for Ken Burns to go idle.
     @MainActor
     func waitForPlaybackControls(app: XCUIApplication, timeout: TimeInterval) -> Bool {
-        waitUntil(timeout: timeout) {
-            self.dismissSystemSavePromptIfPresent(app: app, timeout: TestWait.seconds(.product(0)))
+        let deadline = Date().addingTimeInterval(timeout)
+        return waitUntil(timeout: timeout) {
+            self.dismissSystemSavePromptIfPresent(app: app, deadline: deadline)
             return AccessLifecycleContract.hasPlaybackPageArrived(
                 isSettingsPresent: app.buttons["slideshow.control.settings.button"].exists,
                 isNextPresent: app.buttons["slideshow.control.next.button"].exists,

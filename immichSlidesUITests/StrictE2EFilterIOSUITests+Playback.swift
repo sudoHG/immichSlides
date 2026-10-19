@@ -186,9 +186,9 @@ extension StrictE2EFilterIOSUITests {
         var didTap = false
         while Date() < deadline {
             if isSystemSavePasswordPromptVisible(app: app) {
-                _ = captureNamedPNG(app: app, name: "server-switch-entry-password-prompt")
-                guard dismissSystemSavePasswordPromptIfPresent(app: app, timeout: TestWait.seconds(.product(4)))
+                guard dismissSystemSavePasswordPromptIfPresent(app: app, deadline: deadline)
                 else { break }
+                _ = captureNamedPNG(app: app, name: "server-switch-entry-password-prompt-dismissed")
                 didTap = false
             }
             let back = app.buttons["albumFilter.back.button"]
@@ -260,11 +260,12 @@ extension StrictE2EFilterIOSUITests {
         let card = albumCard(app: app, albumID: albumID)
         XCTAssertTrue(
             card.waitForFailureEvidence(timeout: TestWait.seconds(.infrastructure(20))), "Album \(albumID) must appear")
+        let deadline = Date().addingTimeInterval(TestWait.seconds(.product(12)))
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(12))) {
                 if self.isSystemSavePasswordPromptVisible(app: app) {
                     _ = self.dismissSystemSavePasswordPromptIfPresent(
-                        app: app, timeout: TestWait.seconds(.product(2)))
+                        app: app, deadline: deadline)
                     return false
                 }
                 return card.exists && card.isHittable
@@ -300,56 +301,14 @@ extension StrictE2EFilterIOSUITests {
     }
 
     @MainActor
-    func namedSavePasswordPrompt(in app: XCUIApplication) -> XCUIElement? {
-        // ui-label-lookup: The Save Password sheet belongs to iOS.
-        let titles = ["保存密码？", "保存密码?", "Save Password?"]
-        for title in titles {
-            // ui-label-lookup: The Save Password prompt belongs to iOS.
-            let sheet = app.sheets[title]
-            if sheet.exists { return sheet }
-            // ui-label-lookup: The Save Password prompt belongs to iOS.
-            let alert = app.alerts[title]
-            if alert.exists { return alert }
-        }
-        // The system prompt container may have no title identifier, so match the title together with
-        // the single decline and save buttons.
-        // ui-label-lookup: The Save Password sheet belongs to iOS.
-        let title = app.staticTexts.matching(NSPredicate(format: "label IN %@", titles)).firstMatch
-        // ui-label-lookup: The Save Password action is owned by iOS.
-        let later = app.buttons.matching(NSPredicate(format: "label IN %@", ["以后", "Not Now"]))
-        // ui-label-lookup: The Save Password action is owned by iOS.
-        let save = app.buttons.matching(NSPredicate(format: "label IN %@", ["保存", "Save Password", "Save"]))
-        if title.exists && later.count == 1 && save.count == 1 { return app }
-        return nil
-    }
-
-    @MainActor
     func isSystemSavePasswordPromptVisible(app: XCUIApplication) -> Bool {
-        namedSavePasswordPrompt(in: app) != nil
-            || namedSavePasswordPrompt(in: XCUIApplication(bundleIdentifier: "com.apple.springboard")) != nil
+        (try? IOSFirstBootNavigation(app: app).observe().hasPasswordPrompt) ?? true
     }
 
     @discardableResult
     @MainActor
-    func dismissSystemSavePasswordPromptIfPresent(app: XCUIApplication, timeout: TimeInterval) -> Bool {
-        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        let deadline = Date().addingTimeInterval(timeout)
-        repeat {
-            for host in [app, springboard] {
-                guard let prompt = namedSavePasswordPrompt(in: host) else { continue }
-                // ui-label-lookup: Dismiss the iOS Save Password sheet without saving credentials.
-                let later = prompt.buttons["以后"].exists ? prompt.buttons["以后"] : prompt.buttons["Not Now"]
-                guard later.exists else { continue }
-                later.tapForFailureEvidence()
-                _ = waitUntil(timeout: TestWait.seconds(.product(2))) {
-                    !self.isSystemSavePasswordPromptVisible(app: app)
-                }
-                return !isSystemSavePasswordPromptVisible(app: app)
-            }
-            if !isSystemSavePasswordPromptVisible(app: app) { return true }
-            RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.1))))
-        } while Date() < deadline
-        return !isSystemSavePasswordPromptVisible(app: app)
+    func dismissSystemSavePasswordPromptIfPresent(app: XCUIApplication, deadline: Date) -> Bool {
+        IOSFirstBootNavigation(app: app).dismissPasswordPrompt(until: deadline)
     }
 
     @MainActor

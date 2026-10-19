@@ -164,6 +164,19 @@ It matches the same receiver passed as a complete argument (optionally labeled o
 when the true branch starts with a call, including calls nested inside it; passing another element,
 a derived property or a snapshot is outside this rule.
 Snapshots expose enabled state, not hittability, so pause-stage evidence uses `*_enabled` keys.
+For iOS first-boot mode navigation, use `IOSFirstBootNavigation` in `UITestSupport`.
+Each poll reads the exact English/Chinese Save Password title and unique Not Now
+action, mode selection and Continue attributes from one fallible window snapshot.
+Public snapshots do not expose hittability: immediately before a real tap, check
+only the target's live `isHittable`, then check the same absolute deadline again.
+Never equate a visible frame with hittability, decline an unrelated alert, or save
+credentials. Do not capture screenshots between detecting the prompt and declining
+it. Confirm the prompt is absent and the intended mode is selected before issuing
+one Continue; record its issue and return separately, then prove mode disappeared
+and the destination appeared within the existing departure deadline. A returned,
+hittable Continue without a prompt that leaves mode visible is a navigation failure,
+including a possible App defect; do not resend Continue or retry the flow.
+
 For iOS slideshow Settings readiness, use one fallible window snapshot for enabled
 state and a non-empty button frame fully contained in that window. This is a snapshot
 readiness gate, not a claim of live hittability: the shared tap verifies the resulting
