@@ -165,12 +165,15 @@ def single_photo_region_frame(kind: str, defect: str | None = None) -> Image.Ima
             draw.rectangle((0, 0, 1169, 7), fill=(40, 40, 40))
         elif defect == "bottom-edge":
             draw.rectangle((0, 2524, 1169, 2531), fill=(40, 40, 40))
+        elif defect == "blurred-left-boundary":
+            # Preserve the supported viewport rows while removing left-edge sharp runs.
+            blurred = frame.filter(ImageFilter.GaussianBlur(80))
+            frame.paste(blurred.crop((0, 8, 40, 2524)), (0, 8))
         return frame
     photo = Image.open(io.BytesIO(_fixture_data("b")["images"]["asset-b-2"])).convert("RGB")
     frame = ImageOps.fit(photo, (3840, 2160)).filter(ImageFilter.GaussianBlur(384))
     fitted = ImageOps.contain(photo, frame.size)
-    if defect != "missing-sharp":
-        frame.paste(fitted, ((frame.width - fitted.width) // 2, 0))
+    frame.paste(fitted, ((frame.width - fitted.width) // 2, 0))
     # Native c02bdae1...: visible bar lies inside the existing 4K rectangle.
     ImageDraw.Draw(frame).rounded_rectangle((1264, 1715, 2573, 1920), radius=100, fill=(55, 55, 55))
     if defect == "foreign-side":
@@ -180,6 +183,13 @@ def single_photo_region_frame(kind: str, defect: str | None = None) -> Image.Ima
         frame.paste((0, 0, 0), (0, 600, 691, 800))
     elif defect == "vertical-gap":
         frame.paste((0, 0, 0), (240, 0, 280, 2160))
+    elif defect in ("two-line-gap", "three-line-gap"):
+        # At 240 samples across this 691-pixel strip, native x=240,243,246 are sampled.
+        right = 246 if defect == "two-line-gap" else 249
+        frame.paste((0, 0, 0), (240, 0, right, 2160))
+    elif defect == "blurred-mid-left":
+        blurred = ImageOps.fit(photo, frame.size).filter(ImageFilter.GaussianBlur(384))
+        frame.paste(blurred.crop((692, 432, 1612, 1714)), (692, 432))
     return frame
 
 
@@ -465,14 +475,10 @@ def single_photo_candidate_cases():
         expected = ("UNRECOGNIZABLE", None) if damaged else ("MATCH", "A2")
         cases.append(("touching-approved-TV-bar-damaged" if damaged else "touching-approved-TV-bar-clear",
                       touching.resize(tv_size, Image.Resampling.NEAREST), expected, expected))
-    for defect in (None, "gap", "top-edge", "bottom-edge"):
+    for defect in (None, "gap", "top-edge", "bottom-edge", "blurred-left-boundary"):
         expected = ("UNRECOGNIZABLE", None) if defect else ("MATCH", "A1")
         cases.append((f"viewport-clipped-B1-{defect}" if defect else "viewport-clipped-B1-with-EXIF",
                       single_photo_region_frame("iphone-zoom", defect), expected, expected))
-    cases.append(("pinned-TV-B2-fit", single_photo_region_frame("tv-fit"),
-                  ("MATCH", "A2"), ("MATCH", "A2")))
-    cases.append(("pinned-TV-B2-without-sharp-photo", single_photo_region_frame("tv-fit", "missing-sharp"),
-                  ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
     return cases
 
 

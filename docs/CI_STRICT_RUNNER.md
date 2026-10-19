@@ -99,10 +99,14 @@ support rectangle continuity but cannot qualify a texture row. A bitmap whose
 entire canvas supplies public palette colors or white ink keeps its original
 bounds; fitted captures derive their bounds from independently supported lines.
 A zoomed photo interrupted by overlays can retry the complete viewport only
-when independent sharp seeds reach both side edges and every pixel in its top
-and bottom rows supplies the same palette or white ink. This candidate still
-passes the unchanged line continuity, RGB pair, row texture and stripe-edge
+when independently supported sharp runs reach both side edges and every pixel
+in its top and bottom 480-wide sample rows supplies the same palette or white ink.
+This candidate still passes the unchanged line continuity, RGB pair, row texture and stripe-edge
 checks; the retry grants no overlay mask or weaker threshold.
+The same viewport retry can mask a partial-height vertical seam inside a zoomed
+photo: supported rows above and below the seam can restore its column support,
+just as they restore antialiased glyph-edge columns. No additional seam criterion
+is applied.
 Candidate palette proof reads the PNG's encoded RGB channels in both languages;
 display color conversion must not change those values for a tagged video frame.
 The existing composite reader keeps its original color conversion.
@@ -118,9 +122,12 @@ mid-left and mid-right regions must qualify positively. The left/right margins
 may contain the same photo's glyph-free blur: their ungated hue verdict must
 agree with the qualified photo, so foreign colors, black and unknown strips
 still reject. These margins never acquire a positive single-photo identity.
-Their existing 240-pixel surround probe also rejects full dark rows or columns
-longer than the two-pixel continuity allowance, using the unchanged black-luma
-threshold; matching hue cannot conceal a partial matte strip.
+A new side-band probe uses the existing 240-pixel sample width, minimum sample
+height, black-luma threshold and two-line continuity allowance. It rejects only
+dark bands spanning the full strip width or height for more than two consecutive
+sample lines. A local black block inside a strip can still pass, as can a
+same-palette A2 blurred background beside B2; both also passed before single-photo
+qualification was introduced.
 Evidence used to reject a side partner, an out-of-album photo or an old nonempty
 pool uses the ungated hue reader, so qualification cannot hide visible defects.
 Synthetic coverage includes A1/A2 and B1/B2 at iPhone, iPad and tvOS dimensions,

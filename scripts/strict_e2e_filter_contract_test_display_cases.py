@@ -63,7 +63,8 @@ from strict_e2e_filter_contract_test_fixtures import (
 
 class DeviceFilterVisualIdentityTestsCases:
     def test_single_photo_switch_keeps_blurred_sides_consistent_with_the_sharp_photo(self) -> None:
-        for defect in (None, "foreign-side", "black-side", "vertical-gap"):
+        for defect in (None, "foreign-side", "black-side", "vertical-gap", "blurred-mid-left",
+                       "two-line-gap", "three-line-gap"):
             with self.subTest(defect=defect), tempfile.TemporaryDirectory() as raw:
                 evidence = Path(raw)
                 _write_server_switch_pass(evidence)
@@ -78,8 +79,9 @@ class DeviceFilterVisualIdentityTestsCases:
                 buffer = io.BytesIO()
                 single_photo_region_frame("tv-fit", defect).save(buffer, format="PNG")
                 (evidence / "display-after.png").write_bytes(buffer.getvalue())
-                if defect:
-                    with self.assertRaisesRegex(FilterContractError, "The after-change frame must be a recognizable, stable single-photo frame"):
+                if defect not in (None, "two-line-gap"):
+                    suffix = "side black band" if defect in ("black-side", "vertical-gap", "three-line-gap") else "photo region identity"
+                    with self.assertRaisesRegex(FilterContractError, "^The after-change frame must be a recognizable, stable single-photo frame: " + suffix + "$"):
                         evaluate_filter_visual_identity(evidence, "tvos-switch")
                 else:
                     report = evaluate_filter_visual_identity(evidence, "tvos-switch")

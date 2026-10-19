@@ -313,7 +313,7 @@ def _has_black_side_gap(rgb: object) -> bool:
     dark = [(0.299 * r + 0.587 * g + 0.114 * b) / 255 < IDENTITY_BLACK_LUMA_THRESHOLD
             for r, g, b in sample.getdata()]
     # Hue agreement cannot reveal a matte strip through otherwise matching blur.
-    # Reuse the surround probe and existing two-pixel continuity allowance.
+    # This side-band probe reuses the sample width and continuity allowance.
     for vertical in (False, True):
         missing = 0
         for line in range(width if vertical else height):
@@ -348,7 +348,7 @@ def _classify_display_regions(image_bytes: bytes, *, for_rejection: bool = False
                     )
                 )
                 if reject_side_gaps and name in ("left", "right") and _has_black_side_gap(crop):
-                    raise FilterContractError("The after-change frame must be a recognizable, stable single-photo frame")
+                    raise FilterContractError("The after-change frame must be a recognizable, stable single-photo frame: side black band")
                 buffer = io.BytesIO()
                 crop.save(buffer, format="PNG")
                 if for_rejection:
@@ -565,7 +565,7 @@ def _evaluate_display_policy(evidence_dir: Path, suite: str, *, manifest: Mappin
     for name in stable_region_names:
         identity = rejection_regions[name] if name in ("left", "right") else after_regions[name]
         if identity.status != "MATCH" or identity.mark != after_mark:
-            raise FilterContractError("The after-change frame must be a recognizable, stable single-photo frame")
+            raise FilterContractError("The after-change frame must be a recognizable, stable single-photo frame: photo region identity")
     after_marks = _display_region_marks(after_regions)
     if len(after_marks) >= 2:
         raise FilterContractError("after-change frame must be a recognizable single-photo frame")
