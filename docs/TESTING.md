@@ -165,6 +165,8 @@ when the true branch starts with a call, including calls nested inside it; passi
 a derived property or a snapshot is outside this rule.
 Snapshots expose enabled state, not hittability, so pause-stage evidence uses `*_enabled` keys.
 For iOS first-boot mode navigation, use `IOSFirstBootNavigation` in `UITestSupport`.
+Use `selectMode` for selection-only screenshots and `selectModeAndContinue` to leave
+the mode page; both use the same observation, prompt handling and selection checks.
 Each poll reads the exact English/Chinese Save Password title and unique Not Now
 action from one fallible snapshot of each actual window (the app or SpringBoard).
 Enumerate real window elements rather than an application snapshot's children:

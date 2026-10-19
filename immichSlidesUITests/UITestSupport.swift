@@ -570,9 +570,24 @@ struct IOSFirstBootNavigation {
     }
 
     @discardableResult
+    func selectMode(
+        _ identifier: String, timeout: TimeInterval, file: StaticString = #filePath, line: UInt = #line
+    ) -> Bool {
+        navigateMode(identifier, selectionTimeout: timeout, departureTimeout: nil, file: file, line: line) != nil
+    }
+
+    @discardableResult
     func selectModeAndContinue(
         _ identifier: String, selectionTimeout: TimeInterval, departureTimeout: TimeInterval,
         file: StaticString = #filePath, line: UInt = #line
+    ) -> Date? {
+        navigateMode(
+            identifier, selectionTimeout: selectionTimeout, departureTimeout: departureTimeout, file: file, line: line)
+    }
+
+    private func navigateMode(
+        _ identifier: String, selectionTimeout: TimeInterval, departureTimeout: TimeInterval?,
+        file: StaticString, line: UInt
     ) -> Date? {
         let selectionDeadline = Date().addingTimeInterval(selectionTimeout)
         var didSelect = false
@@ -630,7 +645,11 @@ struct IOSFirstBootNavigation {
                     )
                     return departureDeadline
                 }
-            } else if observation.isSelected(identifier) {
+            } else if observation.isSelected(identifier) && !observation.hasModalObstacle {
+                guard let departureTimeout else {
+                    print("First-boot target mode selection confirmed; Continue issued=false")
+                    return selectionDeadline
+                }
                 step = "mode-continue"
                 if let button = observation.button("mode.continue.button") {
                     // The departure budget is absolute, including the real tap and any late prompt.
@@ -664,7 +683,7 @@ struct IOSFirstBootNavigation {
                 file: file, line: line)
         } else {
             XCTFail(
-                "First-boot mode navigation must dismiss the exact password prompt, select the target and leave mode within its deadline (\(detail))",
+                "First-boot mode navigation must dismiss the exact password prompt, select the target and finish within its deadline (\(detail))",
                 file: file, line: line)
         }
         return nil

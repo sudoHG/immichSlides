@@ -448,13 +448,15 @@ final class immichSlidesUITests: XCTestCase {
                         "mode.random.button",
                         timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
 
-                tapElement(app.buttons["mode.random.button"])
+                IOSFirstBootNavigation(app: app).selectMode(
+                    "mode.random.button", timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds)
                 attachScreenshot(
                     app: app,
                     name: "audit-mode-random-selected-\(scheme)-\(orientation.name)-\(currentDeviceTag())"
                 )
 
-                tapElement(app.buttons["mode.filtered.button"])
+                IOSFirstBootNavigation(app: app).selectMode(
+                    "mode.filtered.button", timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds)
                 attachScreenshot(
                     app: app,
                     name: "audit-mode-filtered-selected-\(scheme)-\(orientation.name)-\(currentDeviceTag())"

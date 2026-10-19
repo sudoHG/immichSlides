@@ -1073,7 +1073,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
     def test_reviewed_prefixes_map_private_values_and_unmatched_messages_stay_unknown(self):
         from ci_failure_diagnostics import classify_messages, PREFIX_RULES, unknown_diagnostics
         for message, phase in (
-            ("failed - First-boot mode navigation must dismiss the exact password prompt, select the target and leave mode within its deadline (step=mode-card, Continue issued=false returned=false, passwordPromptObserved=true)", "mode_selection"),
+            ("failed - First-boot mode navigation must dismiss the exact password prompt, select the target and finish within its deadline (step=mode-card, Continue issued=false returned=false, passwordPromptObserved=true)", "mode_selection"),
             ("failed - Mode departure failed after one hittable Continue without a password prompt; possible App navigation defect (step=mode-departure, Continue issued=true returned=true, modePage=true)", "playback_entry"),
         ):
             with self.subTest(message=message):
