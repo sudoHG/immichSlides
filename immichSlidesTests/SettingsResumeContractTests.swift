@@ -738,12 +738,12 @@ final class SettingsResumeContractTests: XCTestCase {
         )
     }
 
-    func testTVOSTwelveSecondsIsNotSilentlySubstituted() throws {
+    func testTVOSOfferedIntervalAvoidsReviewButMissingIntervalRequiresIt() throws {
         let exact = try AccessLifecycleContract.resolveTimingInterval(
-            requested: 12,
-            available: [5, 8, 10, 12, 15, 30]
+            requested: AccessLifecycleContract.tvOSRequestedIntervalSeconds,
+            available: AccessLifecycleContract.tvOSSelectableIntervals
         )
-        XCTAssertEqual(exact.actual, 12)
+        XCTAssertEqual(exact.actual, AccessLifecycleContract.tvOSRequestedIntervalSeconds)
         XCTAssertFalse(exact.shouldRequireIntervalReview)
         let tv = try AccessLifecycleContract.resolveTimingInterval(
             requested: 12,

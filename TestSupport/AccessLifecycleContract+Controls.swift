@@ -4,6 +4,8 @@ extension AccessLifecycleContract {
     // Narrow entry for settings save / pause-continue / background return: time and the public frame are the final
     // criteria, not the progress probe or control value changes.
     static let requestedIntervalSeconds = Int(TestWait.seconds(.product(12)))
+    // SettingsViewTV.intervalOptions offers 10 s, distinct from the initial 5 s setting.
+    static let tvOSRequestedIntervalSeconds = Int(TestWait.seconds(.product(10)))
     // T/2 stays at least 5 s and T-2 at least 8 s; bound run time without changing any timing tolerance.
     static let iosTimingIntervalSeconds = Int(TestWait.seconds(.product(10)))...Int(TestWait.seconds(.product(15)))
     static let pauseHoldBeyondIntervalSeconds: TimeInterval = TestWait.seconds(.product(2))

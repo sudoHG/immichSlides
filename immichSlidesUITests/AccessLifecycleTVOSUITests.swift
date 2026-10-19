@@ -248,7 +248,7 @@ final class AccessLifecycleTVOSUITests: XCTestCase {
             name: "pause-next-continue.json",
             extra: [
                 "suite": "pause-next-continue",
-                "interval_requested": AccessLifecycleContract.requestedIntervalSeconds,
+                "interval_requested": AccessLifecycleContract.tvOSRequestedIntervalSeconds,
                 "interval_actual": interval.actual,
                 "desktop_closeout_required": interval.shouldRequireIntervalReview,
                 "interval_options": AccessLifecycleContract.tvOSSelectableIntervals,
@@ -343,7 +343,7 @@ final class AccessLifecycleTVOSUITests: XCTestCase {
             name: "background-return.json",
             extra: [
                 "suite": "background-return",
-                "interval_requested": AccessLifecycleContract.requestedIntervalSeconds,
+                "interval_requested": AccessLifecycleContract.tvOSRequestedIntervalSeconds,
                 "interval_actual": interval.actual,
                 "desktop_closeout_required": interval.shouldRequireIntervalReview,
                 "wait_seconds": waitSeconds,
