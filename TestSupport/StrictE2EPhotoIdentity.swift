@@ -392,7 +392,8 @@ enum StrictE2EPhotoIdentity {
         // Mirror PUBLIC_SCENE_GEOMETRIES' shared color/glyph box, never a glyph-only
         // phone box or an inferred landscape geometry. Cropped inputs grant no mask.
         let exclusion: CGRect? =
-            image.width == approvedTVFrameWidthPixels && image.height == approvedTVFrameHeightPixels
+            ((image.width == approvedTVFrameWidthPixels && image.height == approvedTVFrameHeightPixels)
+                || (image.width == approvedTVFrameWidthPixels / 2 && image.height == approvedTVFrameHeightPixels / 2))
             ? CGRect(
                 x: floor(approvedTVControlBarMinXPixels * Double(frame.width) / Double(approvedTVFrameWidthPixels)),
                 y: floor(approvedTVControlBarMinYPixels * Double(frame.height) / Double(approvedTVFrameHeightPixels)),

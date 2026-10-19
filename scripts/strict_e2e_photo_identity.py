@@ -494,6 +494,10 @@ def classify_screenshot_region(image_bytes: bytes, *, reference_matched_foregrou
 PUBLIC_SCENE_GEOMETRIES = {
     (1170, 2532): ((373, 2489, 798, 2512), (68, 2126, 1102, 2314)),
     (1640, 2360): ((543, 2330, 1097, 2349), None),
+    # Native iPad B3: only the measured EXIF glass; no glyph exclusion.
+    (2064, 2752): ((1308, 60, 2004, 442), None),
+    # The HD TV uses the same point-space hint/bar as the 4K TV, rounded outward.
+    (1920, 1080): ((628, 718, 1290, 963), (628, 718, 1290, 963)),
     (3840, 2160): ((1256, 1436, 2580, 1925), (1256, 1436, 2580, 1925)),
 }
 
