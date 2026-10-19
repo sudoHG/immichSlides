@@ -535,8 +535,8 @@ struct IOSFirstBootNavigation {
         let target = matches.element(boundBy: .zero)
         let liveLabel = target.label
         guard liveLabel == node.label, target.frame == node.frame else { return false }
-        if isDecline && observation.isPromptAlert && host.alerts.count != 1 { return false }
         let isHittable = target.isHittable
+        if isDecline && observation.isPromptAlert && host.alerts.count != 1 { return false }
         guard isHittable, Date() < deadline else { return false }
         FirstFailureContext.mark(step, element: node.identifier.isEmpty ? "unknown" : node.identifier)
         willTap()
@@ -577,7 +577,7 @@ struct IOSFirstBootNavigation {
 
     func isPasswordPromptVisible(until deadline: Date) -> Bool {
         repeat {
-            if let observation = try? observe() { return observation.hasPasswordPrompt }
+            if let observation = try? observe() { return observation.hasPasswordPrompt || Date() > deadline }
             poll(until: deadline)
         } while Date() < deadline
         // Unknown at the caller's deadline cannot authorize an unobstructed action.

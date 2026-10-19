@@ -204,14 +204,24 @@ struct IOSDriver: PlaybackDriver {
 
     private func openSettings() {
         revealControls()
+        // A first-boot credential sheet can arrive after mode departure; share the old 15 + 5 s budget.
+        let deadline = Date().addingTimeInterval(
+            UITestSupportWaitTiming.connectionTimeoutSeconds + UITestSupportWaitTiming.controlAppearanceTimeoutSeconds)
         let settingsButton = app.buttons["slideshow.control.settings.button"]
-        XCTAssertTrue(
-            settingsButton.waitForPublicElement(
-                "slideshow.control.settings.button", timeout: UITestSupportWaitTiming.connectionTimeoutSeconds),
-            "Playback page must provide the settings entry.")
+        guard
+            Wait.until(
+                timeout: max(.zero, deadline.timeIntervalSinceNow),
+                {
+                    guard IOSFirstBootNavigation(app: app).dismissPasswordPrompt(until: deadline) else { return false }
+                    return settingsButton.exists && settingsButton.isHittable && Date() < deadline
+                })
+        else {
+            XCTFail("Playback page must provide the settings entry.")
+            return
+        }
         tap(settingsButton)
         XCTAssertTrue(
-            Wait.until(timeout: UITestSupportWaitTiming.controlAppearanceTimeoutSeconds) { isOnSettingsSurface() },
+            Wait.until(timeout: max(.zero, deadline.timeIntervalSinceNow)) { isOnSettingsSurface() },
             "Tapping settings must open the settings page.")
     }
 
