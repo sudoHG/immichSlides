@@ -318,6 +318,20 @@ def single_photo_candidate_cases():
             outside_texture.putpixel((x, y), ((74, 170, 38), (128, 122, 110))[cell])
     cases.append(("outside-approved-TV-bar-horizontal-texture", outside_texture.resize(tv_size, Image.Resampling.NEAREST),
                   ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
+    # The detected foreground begins exactly at the sampled control box's right
+    # edge. Touching supplies no overlap and cannot exempt damaged texture rows.
+    for damaged in (False, True):
+        touching = Image.new("RGB", (480, 270), (180, 180, 180))
+        for y in range(270):
+            for x in range(323, 480):
+                column = x - 323
+                cell = ((column // 20) + (y // 20)) % 2
+                if damaged and 200 <= y < 220:
+                    cell = int(10 <= column < 50 or 60 <= column)
+                touching.putpixel((x, y), ((74, 170, 38), (128, 122, 110))[cell])
+        expected = ("UNRECOGNIZABLE", None) if damaged else ("MATCH", "A2")
+        cases.append(("touching-approved-TV-bar-damaged" if damaged else "touching-approved-TV-bar-clear",
+                      touching.resize(tv_size, Image.Resampling.NEAREST), expected, expected))
     return cases
 
 

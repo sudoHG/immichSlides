@@ -122,6 +122,12 @@ enum StrictE2EPhotoIdentity {
         "A8": [[255, 75, 255], [255, 75, 220]]
     ]
     private static let extendedPaletteChannelTolerance = 12
+    private static let approvedTVFrameWidthPixels = 3840
+    private static let approvedTVFrameHeightPixels = 2160
+    private static let approvedTVControlBarMinXPixels = 1256.0
+    private static let approvedTVControlBarMinYPixels = 1436.0
+    private static let approvedTVControlBarMaxXPixels = 2580.0
+    private static let approvedTVControlBarMaxYPixels = 1925.0
     // Kept in sync with Python DISPLAY_REGION_BOXES. top/upper cover the case where motion cropping of the upper half
     // makes top_half scan as TRANSITION.
     static let displayRegionBoxes: [(name: String, box: (CGFloat, CGFloat, CGFloat, CGFloat))] = [
@@ -386,11 +392,16 @@ enum StrictE2EPhotoIdentity {
         // Mirror PUBLIC_SCENE_GEOMETRIES' shared color/glyph box, never a glyph-only
         // phone box or an inferred landscape geometry. Cropped inputs grant no mask.
         let exclusion: CGRect? =
-            image.width == 3840 && image.height == 2160
+            image.width == approvedTVFrameWidthPixels && image.height == approvedTVFrameHeightPixels
             ? CGRect(
-                x: floor(1256 * Double(frame.width) / 3840), y: floor(1436 * Double(frame.height) / 2160),
-                width: ceil(2580 * Double(frame.width) / 3840) - floor(1256 * Double(frame.width) / 3840),
-                height: ceil(1925 * Double(frame.height) / 2160) - floor(1436 * Double(frame.height) / 2160)) : nil
+                x: floor(approvedTVControlBarMinXPixels * Double(frame.width) / Double(approvedTVFrameWidthPixels)),
+                y: floor(approvedTVControlBarMinYPixels * Double(frame.height) / Double(approvedTVFrameHeightPixels)),
+                width: ceil(approvedTVControlBarMaxXPixels * Double(frame.width) / Double(approvedTVFrameWidthPixels))
+                    - floor(approvedTVControlBarMinXPixels * Double(frame.width) / Double(approvedTVFrameWidthPixels)),
+                height: ceil(
+                    approvedTVControlBarMaxYPixels * Double(frame.height) / Double(approvedTVFrameHeightPixels))
+                    - floor(approvedTVControlBarMinYPixels * Double(frame.height) / Double(approvedTVFrameHeightPixels))
+            ) : nil
         return ["A1", "A2"].filter { mark in
             guard let foreground = sharpPublicForeground(frame: frame, colors: colors, mark: mark, exclusion: exclusion)
             else { return false }
@@ -626,8 +637,10 @@ enum StrictE2EPhotoIdentity {
             }
         }
         // A matching y range alone cannot exempt texture wholly beside the overlay.
-        let textureExclusion = foregroundExclusion?.intersection(
-            CGRect(x: 0, y: 0, width: croppedWidth, height: croppedHeight))
+        let textureExclusion = foregroundExclusion.flatMap { exclusion -> CGRect? in
+            let intersection = exclusion.intersection(CGRect(x: 0, y: 0, width: croppedWidth, height: croppedHeight))
+            return intersection.isEmpty ? nil : intersection
+        }
         return ((croppedWidth, croppedHeight, pixels), croppedColors, textureExclusion)
     }
 

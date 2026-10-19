@@ -532,8 +532,9 @@ for offset in stride(from: 2, to: CommandLine.arguments.count, by: 2) {
 let path = CommandLine.arguments[offset]
 let mode = CommandLine.arguments[offset + 1]
 let original = try Data(contentsOf: URL(fileURLWithPath: path))
-if mode == "rejection" {
-let result = StrictE2EPhotoIdentity.rejectionRegions(png: original)["full"]!
+if mode == "rejection" || mode == "rejection-center" {
+let regionName = mode == "rejection-center" ? "center" : "full"
+let result = StrictE2EPhotoIdentity.rejectionRegions(png: original)[regionName]!
 print(String(data: try JSONSerialization.data(withJSONObject: ["status": result.status.rawValue,
     "mark": result.mark ?? "nil", "notes": result.notes]), encoding: .utf8)!)
 continue
@@ -584,7 +585,10 @@ print(String(data: try JSONSerialization.data(withJSONObject: report), encoding:
             blurred = blurred.filter(ImageFilter.GaussianBlur(60))
             blurred_path = directory / "blurred-rejection-A2.png"
             blurred.save(blurred_path)
-            for mode, expected in (("classify", ("UNRECOGNIZABLE", None)), ("rejection", ("MATCH", "A2"))):
+            for mode, expected in (
+                ("classify", ("UNRECOGNIZABLE", None)), ("region-center", ("UNRECOGNIZABLE", None)),
+                ("rejection", ("MATCH", "A2")), ("rejection-center", ("MATCH", "A2")),
+            ):
                 candidate_arguments.extend((str(blurred_path), mode))
                 candidate_expectations.append(("blurred-rejection-A2", mode, expected))
             for name, scene, full_expected, capture_expected in single_photo_candidate_cases():
