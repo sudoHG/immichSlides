@@ -1526,9 +1526,9 @@ class StrictCITracerTests(unittest.TestCase):
             self.assertEqual([], list(output.iterdir()))
 
     def _produce_validator_records(self, directory, error, *, verdict="FAIL", runner_exit=2,
-                                   receipt_suite="tvos-switch", nightly=False, child_load_timeout=False):
+                                   receipt_suite="tvos-switch", nightly=False, child_load_timeout=False, case=None):
         import run_strict_ci_tracer as tracer
-        case = {"platform": "tvos", "device": "tv", "configuration": "Release",
+        case = case or {"platform": "tvos", "device": "tv", "configuration": "Release",
                 "suite": "tvos-switch", "scenario": "normal", "fixture": "a"}
         identity = {"schema_version": 1, "event": "local", "repository": "sudoHG/immichSlides",
                     "commit_sha": "0" * 40, "tree_sha": "0" * 40, "dirty": False}
@@ -1575,7 +1575,10 @@ raise SystemExit(65)
                 self.assertEqual(65, real_runner([sys.executable, "-B", "-c", child, receipt],
                     SCRIPT_DIR, directory / "child.log", **_kwargs))
             evidence.mkdir(parents=True)
-            (evidence / "case-manifest.json").write_text(json.dumps({"infrastructure": []}))
+            (evidence / "case-manifest.json").write_text(json.dumps({"infrastructure": [],
+                "source_sha": identity["commit_sha"], "platform": case["platform"], "suite": case["suite"],
+                "scenario": case["scenario"], "fixture_set": case["fixture"],
+                "fixture_sha256": FROZEN_FIXTURE_SHA256[case["fixture"]]}))
             if receipt_suite is not None:
                 message = error(evidence) if callable(error) else error
                 (evidence / "visual-identity-runner.json").write_text(json.dumps({
@@ -1597,10 +1600,120 @@ raise SystemExit(65)
                 mock.patch.object(tracer.shutil, "disk_usage", return_value=mock.Mock(total=200 * 1024**3, free=100 * 1024**3)), \
                 mock.patch.object(tracer, "toolchain", return_value={"versions": {"python": "test"}, "signing_mode": "not-applicable"}), \
                 mock.patch.dict(os.environ, {"GITHUB_RUN_ID": "10", "GITHUB_RUN_ATTEMPT": "1"}):
-            exit_code = tracer.main(["--platform", "tvos", "--destination", "unused", "--manifest", str(manifest),
+            exit_code = tracer.main(["--platform", case["platform"], "--destination", "unused", "--manifest", str(manifest),
                                      "--output-dir", str(output)] + options)
         return exit_code, output / "records", json.loads((output / "records/trace.json").read_text()), \
             json.loads((output / "records/summary.json").read_text())
+
+    def test_target_album_rejection_exports_its_actual_input_bound_to_the_failed_attempt(self):
+        import copy
+        from PIL import Image
+        from ci_failure_diagnostics import public_fixture_validator_scope
+        from ci_review_packages import export_shard, main as package_main, read_failure_package
+        from strict_e2e_filter_manifest import FILTER_ALBUM_STEPS
+        from strict_e2e_filter_contract_test_fixtures import _fixture_png
+        case = {"platform": "ios", "device": "ipad", "configuration": "Debug",
+                "suite": "filter-album", "scenario": "normal", "fixture": "a"}
+        for failed_step in FILTER_ALBUM_STEPS:
+            with self.subTest(step=failed_step), tempfile.TemporaryDirectory() as raw:
+                root = Path(raw)
+                def reject(evidence):
+                    write_member_manifest(evidence / "member-manifest.json", "a")
+                    for name in FILTER_ALBUM_STEPS:
+                        (evidence / f"{name}.png").write_bytes(_fixture_png("A3"))
+                    Image.new("RGB", (1640, 2360), "black").save(evidence / f"{failed_step}.png")
+                    with self.assertRaisesRegex(CommandError,
+                            rf"0 completed slots.*screenshot {failed_step}\.png") as raised:
+                        with public_fixture_validator_scope(evidence, screenshots=True):
+                            require_visual_identity(evidence, "filter-album")
+                    return str(raised.exception.__cause__)
+                code, records, _trace, summary = self._produce_validator_records(
+                    root, reject, case=case, receipt_suite="filter-album", nightly=True)
+                self.assertEqual(1, code)
+                failed = summary["population"]["observed"][0]
+                self.assertEqual("validated-input", failed["first_failure"]["screenshot"]["status"])
+                self.assertIn(f"screenshot {failed_step}.png", failed["validator_failure_message"])
+                published = root / "published"
+                self.assertEqual(0, export_shard(records.parent, published))
+                package = next(published.rglob("attempt-1"))
+                self.assertEqual(0, package_main(["read-failure", "--package", str(package),
+                                                  "--summary", str(records / "summary.json")]))
+                with Image.open(package / "first-failure.png") as image:
+                    self.assertEqual(((0, 0), (0, 0), (0, 0)), image.getextrema())
+                manifest_path = package / "first-failure.json"
+                manifest = json.loads(manifest_path.read_text())
+                for field, value, message in (("run", {**manifest["run"], "id": "11"}, "provenance differs"),
+                        ("attempt", 2, "attempt differs"),
+                        ("first_failure", {**manifest["first_failure"], "step": "wait-scene"}, "receipt differs"),
+                        ("image_sha256", "0" * 64, "image differs")):
+                    changed = copy.deepcopy(manifest)
+                    changed[field] = value
+                    manifest_path.write_text(json.dumps(changed))
+                    with self.subTest(field=field), self.assertRaisesRegex(ValueError,
+                            "^first failure package " + message + "$"):
+                        read_failure_package(package, summary)
+                manifest_path.write_text(json.dumps(manifest))
+
+    def test_warm_child_boot_timeout_keeps_a_preparation_receipt_and_an_unexecuted_attempt(self):
+        import ci_execution_diagnostics as diagnostics
+        import run_strict_ci_tracer as tracer
+        import run_strict_e2e as runner
+        import strict_e2e_runner_support as support
+        from ci_summary import parse_summary
+        case = {"platform": "ios", "device": "iphone", "configuration": "Debug",
+                "suite": "filter-person", "scenario": "normal", "fixture": "a"}
+        identity = {"schema_version": 1, "event": "local", "repository": "sudoHG/immichSlides",
+                    "commit_sha": "0" * 40, "tree_sha": "0" * 40, "dirty": False}
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps({"cases": [case], "exclusions": []}))
+            output = root / "trace"
+            def invoke(command, *_args, **_kwargs):
+                derived = Path(command[command.index("--derived-data-path") + 1])
+                if "--warm-up-only" in command:
+                    derived.mkdir(parents=True)
+                    (derived / "strict-warm-build.json").write_text(json.dumps({"signing_mode": "adhoc"}))
+                    # A reused job ledger must not attribute an earlier case's timeout to this child.
+                    ledger = Path(command[command.index("--diagnostics-receipt") + 1])
+                    with diagnostics.session(ledger, reuse=True) as recorder:
+                        recorder.event("preparation", "simulator-readiness", "timeout", recorder.next_sequence(), elapsed=299)
+                    return 0
+                clock = [0.0]
+                def boot_timeout(call, **kwargs):
+                    self.assertEqual(["xcrun", "simctl", "boot"], call[:3])
+                    clock[0] += kwargs["timeout"]
+                    raise subprocess.TimeoutExpired(call, kwargs["timeout"])
+                with mock.patch("strict_e2e_build.validate_paths"), \
+                        mock.patch("strict_e2e_build.load_warm_build", return_value=({}, root / "unused.xctestrun")), \
+                        mock.patch.object(runner, "ensure_disk_for_xcodebuild"), \
+                        mock.patch.object(runner, "read_source_sha", return_value=identity["commit_sha"]), \
+                        mock.patch.object(runner, "read_source_dirty_paths", return_value=[]), \
+                        mock.patch.object(support.time, "monotonic", side_effect=lambda: clock[0]), \
+                        mock.patch("ci_execution_diagnostics.Recorder.sample", return_value=None), \
+                        mock.patch.object(support.subprocess, "run", side_effect=boot_timeout):
+                    code = runner.main(command[3:], stdout=io.StringIO(), stderr=io.StringIO())
+                self.assertEqual(124, code)
+                return code
+            with mock.patch.object(tracer, "run_runner", side_effect=invoke), \
+                    mock.patch.object(tracer, "workspace_preflight"), mock.patch.object(tracer, "run_identity", return_value=identity), \
+                    mock.patch.object(tracer, "source_metadata", return_value=(None, False)), \
+                    mock.patch.object(tracer.shutil, "disk_usage", return_value=mock.Mock(total=200 * 1024**3, free=100 * 1024**3)), \
+                    mock.patch.object(tracer, "toolchain", return_value={"versions": {"python": "test"}, "signing_mode": "not-applicable"}):
+                self.assertEqual(1, tracer.main(["--platform", "ios", "--destination", "platform=iOS Simulator,id=TEST",
+                    "--manifest", str(manifest), "--output-dir", str(output)]))
+            summary = parse_summary((output / "records/summary.json").read_text())
+            self.assertEqual([], summary["population"]["compiled"])
+            failed = summary["population"]["observed"][0]
+            self.assertEqual(("failed", "not-run", 124),
+                (failed["outcome"], failed["attempts"][0]["outcome"], failed["attempts"][0]["exit_code"]))
+            receipt = failed["first_failure"]
+            self.assertEqual(receipt, failed["attempts"][0]["first_failure"])
+            self.assertEqual(("preparation", "simulator-boot", 60),
+                (receipt["source"], receipt["step"], receipt["timing"]["wait_elapsed_seconds"]))
+            self.assertEqual("not-applicable", receipt["screenshot"]["status"])
+            trace = json.loads((output / "records/trace.json").read_text())
+            self.assertEqual((124, []), (trace["warm"][0]["exit_code"], trace["warm"][0]["official_methods"]))
 
     def test_tracer_redacts_private_validator_errors_before_writing_public_records(self):
         from ci_nightly import aggregate_nightly
@@ -2200,6 +2313,7 @@ raise SystemExit(65)
 
     def test_failed_runner_keeps_official_counts_and_compilation_without_becoming_passed(self):
         import run_strict_ci_tracer as tracer
+        from ci_failure_diagnostics import unavailable_first_failure
         case = {"platform": "ios", "device": "iphone", "configuration": "Debug", "suite": "smoke", "scenario": "normal", "fixture": "a"}
         identity = {"schema_version": 1, "event": "local", "repository": "sudoHG/immichSlides",
                     "commit_sha": "0" * 40, "tree_sha": "0" * 40, "dirty": False}
@@ -2223,7 +2337,8 @@ raise SystemExit(65)
                     self.assertGreaterEqual(_kwargs["timeout_seconds"], execution_budget + SIMULATOR_READINESS_TIMEOUT_SECONDS
                                             + SIMULATOR_RESET_TIMEOUT_SECONDS)
                     evidence.mkdir(parents=True)
-                    (evidence / "case-manifest.json").write_text(json.dumps({"infrastructure": infrastructure}))
+                    (evidence / "case-manifest.json").write_text(json.dumps({"infrastructure": infrastructure,
+                        "first_failure": unavailable_first_failure("preparation", element="simulator")}))
                     if contract:
                         (evidence / "visual-identity-runner.json").write_text(json.dumps({
                             "suite": "smoke", "verdict": contract, "error": "private runner details"}))
@@ -2235,7 +2350,7 @@ raise SystemExit(65)
                     (evidence / "official-tests.json").write_text(json.dumps({"testNodes": [{
                         "nodeType": "Unit test bundle", "name": "immichSlidesUITests", "children": [{
                             "nodeType": "Test Case", "nodeIdentifier": "StrictE2ESmokeUITests/testIOSStrictE2EConnectionSmoke()",
-                            "result": official_result}]}]}))
+                            "result": official_result, "failure_phase": "playback_entry", "failure_class": "navigation"}]}]}))
                     return 124 if infrastructure else 65
 
                 with mock.patch.object(tracer, "run_runner", side_effect=runner), mock.patch.object(tracer, "workspace_preflight"), \
@@ -2252,7 +2367,16 @@ raise SystemExit(65)
                 self.assertEqual(trace["warm"][0]["official_summary"]["totalTestCount"], 1)
                 method = {"identifier": "StrictE2ESmokeUITests/testIOSStrictE2EConnectionSmoke", "result": official_result}
                 if official_result == "Failed":
-                    method.update(failure_phase="unknown", failure_class="unknown")
+                    method.update(failure_phase="playback_entry", failure_class="navigation")
+                failed = summary["population"]["observed"][0]
+                self.assertNotIn("first_failure", failed, "Preparation evidence cannot replace an executed method")
+                for entry in (failed, failed["attempts"][0]):
+                    if official_result == "Failed":
+                        self.assertEqual(("playback_entry", "navigation"),
+                            (entry.get("failure_phase"), entry.get("failure_class")))
+                    else:
+                        self.assertNotIn("failure_phase", entry)
+                        self.assertNotIn("failure_class", entry)
                 self.assertEqual([method],
                                  trace["warm"][0]["official_methods"])
                 self.assertEqual(trace["warm"][0]["exit_code"], 124 if infrastructure else 65)

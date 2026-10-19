@@ -822,8 +822,17 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         def report_preparation(line):
             preparation_lines.append(line)
             print(line, flush=True)
+        recorder = active()
+        preparation_sequence = recorder.sequence if recorder else 0
         try:
             _, preparation_log = prepare_simulator(simulator_udid, report=report_preparation)
+        except (CommandError, OSError, subprocess.SubprocessError):
+            from ci_failure_diagnostics import preparation_first_failure
+            ledger = recorder.receipt() if recorder else None
+            if ledger is not None:
+                ledger["events"] = [event for event in ledger["events"] if event["sequence"] > preparation_sequence]
+            case_manifest["first_failure"] = preparation_first_failure(ledger)
+            raise
         finally:
             (arguments.evidence_dir / "simulator-preparation.log").write_text(
                 preparation_log or ("\n".join(preparation_lines) + "\n"), encoding="utf-8")

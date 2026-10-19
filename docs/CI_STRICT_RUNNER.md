@@ -722,6 +722,16 @@ input image as `validated-input`; it cannot reconstruct failure-instant App
 state after the App exits and cannot claim `observation: failure-snapshot`.
 Neither evidence type changes its original result.
 
+The target-album validator registers its raw input before slot counting and includes
+the fixed `album-play-N.png` context in identity rejections. Its retained PNG uses
+the existing diagnostic budget, canonicalization and `read-failure` hash/attempt gate.
+Warm child-runner preparation failures project the current bounded ledger into the
+case manifest. The tracer accepts that preparation receipt only without official
+method execution: the case stays failed, its attempt is `not-run`, and the raw runner
+exit (including 124) is retained. Failed official methods also supply their existing
+phase/class pair to the failed summary observation and attempt; validator or
+preparation failures do not acquire XCTest labels.
+
 XCTest capture is allowed only on the failure path of an explicitly
 configured public loopback fixture run, on an allowed foreground App surface.
 Live/private runs, first-boot credential/PIN pages, Settings.app and SpringBoard

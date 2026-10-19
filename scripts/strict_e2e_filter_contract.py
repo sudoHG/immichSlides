@@ -721,7 +721,9 @@ TARGET_ALBUM_HOME_INDICATOR_BOXES = {
 TARGET_ALBUM_GLYPH_OVERLAY_BOXES = {(1170, 2532): (68, 2126, 1102, 2314)}
 
 
-def target_album_frame_identity(image_bytes: bytes, fixture_set: str) -> tuple[tuple[str, ...], str]:
+def target_album_frame_identity(image_bytes: bytes, fixture_set: str, *, screenshot_name: str | None = None) -> tuple[tuple[str, ...], str]:
+    from ci_failure_diagnostics import remember_validator_input
+    remember_validator_input(image_bytes)
     # Unmeasured captures keep the original contract. Measured captures must pass
     # the foreground and slot gates; unreadable collages never fall back to whole-frame color.
     try:
@@ -748,8 +750,9 @@ def target_album_frame_identity(image_bytes: bytes, fixture_set: str) -> tuple[t
             marks = tuple(photo.mark for photo in photos)
             if any(photo.letter != fixture_set.upper() for photo in photos):
                 raise FilterContractError(f"target album frame must show the public glyph of fixture {fixture_set.upper()}")
-    except IdentityAssertionError as error:
-        raise FilterContractError(str(error)) from error
+    except (IdentityAssertionError, FilterContractError) as error:
+        context = f"; screenshot {Path(screenshot_name).name}" if screenshot_name else ""
+        raise FilterContractError(f"{error}{context}") from error
     except (OSError, ValueError) as error:
         raise FilterContractError("Unrecognizable input: target album screenshot cannot be decoded") from error
     assert_playback_marks_in_target(marks, fixture_set)
@@ -772,7 +775,7 @@ def _evaluate_filter_album(evidence_dir: Path) -> dict[str, Any]:
         path = evidence_dir / f"{name}.png"
         if not path.is_file():
             raise FilterContractError(f"Missing visual input {name}.png")
-        frame_marks, geometry = target_album_frame_identity(path.read_bytes(), fixture_set)
+        frame_marks, geometry = target_album_frame_identity(path.read_bytes(), fixture_set, screenshot_name=f"{name}.png")
         marks.extend(frame_marks)
         frame_geometry[name] = geometry
     return {

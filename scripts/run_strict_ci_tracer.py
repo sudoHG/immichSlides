@@ -102,16 +102,24 @@ def evaluate_tracer(declared, results, *, interrupted=False, informational=()):
         pending_timing = (result["identity"]["dimensions"]["suite"] == IOS_LIFECYCLE_PAUSE_SUITE
                           and result.get("p2_verdict") != "PASS")
         outcome = ("needs-human-review" if p2 or pending_timing else "passed") if passed else "failed"
+        from ci_failure_diagnostics import DIAGNOSTIC_FIELDS, FIRST_FAILURE_FIELD, public_first_failure
+        receipt = public_first_failure(result.get(FIRST_FAILURE_FIELD))
+        preparation_failed = (outcome == "failed" and receipt is not None and receipt["source"] == "preparation"
+                              and not official and not result.get("official_methods"))
+        failed_method = next((method for method in result.get("official_methods", []) if method["result"] == "Failed"), None)
+        failure_diagnostics = ({field: failed_method[field] for field in DIAGNOSTIC_FIELDS}
+                               if outcome == "failed" and failed_method is not None else None)
         observed.append(observation(result["identity"], outcome, result["duration_seconds"],
             reason=("Pause timing requires signed transition-start evidence" if pending_timing else
                     "P2 contract requires signed human review") if outcome == "needs-human-review" else None,
-            exit_code=result["exit_code"]))
+            exit_code=result["exit_code"], failure_diagnostics=failure_diagnostics))
+        if preparation_failed:
+            observed[-1]["attempts"][0]["outcome"] = "not-run"
+            observed[-1]["attempts"][0]["reason"] = "simulator preparation infrastructure failure before test execution"
         # The collector only adds receipts to failed phases; keep this check as defence in depth.
         if outcome == "failed" and VALIDATOR_FAILURE_FIELD in result:
             observed[-1][VALIDATOR_FAILURE_FIELD] = observed[-1]["attempts"][0][VALIDATOR_FAILURE_FIELD] = result[VALIDATOR_FAILURE_FIELD]
-        from ci_failure_diagnostics import FIRST_FAILURE_FIELD, public_first_failure
-        receipt = public_first_failure(result.get(FIRST_FAILURE_FIELD))
-        if outcome == "failed" and receipt is not None and receipt["source"] in {"xctest", "validator"}:
+        if outcome == "failed" and receipt is not None and (preparation_failed or receipt["source"] in {"xctest", "validator"}):
             observed[-1][FIRST_FAILURE_FIELD] = observed[-1]["attempts"][0][FIRST_FAILURE_FIELD] = receipt
     declared_keys = {identity_key(item) for item in declared}
     observed_keys = {identity_key(item["identity"]) for item in observed}
@@ -353,6 +361,10 @@ def main(argv=None):
                 # The existing CommandError relay can still expose raw errors in public job logs.
                 phase[VALIDATOR_FAILURE_FIELD] = public_validator_failure_message(contract.get("error"))
         from ci_failure_diagnostics import FIRST_FAILURE_FIELD, public_first_failure
+        if phase["exit_code"] and official is None and not phase["official_methods"]:
+            receipt = public_first_failure(details.get(FIRST_FAILURE_FIELD))
+            if receipt is not None and receipt["source"] == "preparation":
+                phase[FIRST_FAILURE_FIELD] = receipt
         for method in phase["official_methods"]:
             receipt = public_first_failure(method.get(FIRST_FAILURE_FIELD))
             if method["result"] == "Failed" and receipt is not None and receipt["source"] == "xctest":
