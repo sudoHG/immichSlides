@@ -882,7 +882,6 @@ class FailureDiagnosticsTests(unittest.TestCase):
             ("immichSlidesUITests/ScenePresentationContractUITests.swift", "Fixture control must acknowledge its response mode", "image_recovery", "fixture_response"),
             ("immichSlidesUITests/ExifToggleUITests.swift", "After turning EXIF off, the info card in the upper-right area of the public photo must disappear from the screen.", "exif_ownership", "exif_visibility"),
             ("immichSlidesUITests/ExifToggleUITests.swift", "The required PNG with EXIF off still shows the info card.", "exif_ownership", "exif_visibility"),
-            ("immichSlidesUITests/ExifToggleUITests.swift", "A2 identity evidence requires the hidden control receiver to have focus.", "hidden_controls", "focus"),
             ("TestSupport/StrictE2EPhotoIdentity.swift", "Can't check EXIF: photo status ", "unknown", "scene_identity"),
             ("TestSupport/StrictE2EPhotoIdentity.swift", "EXIF does not match the photo: mark=", "unknown", "exif_correspondence"),
             ("immichSlidesUITests/IOSDriver.swift", "The EXIF toggle must reach the target state through the real settings.", "unknown", "control_state"),

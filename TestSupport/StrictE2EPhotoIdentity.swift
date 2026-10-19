@@ -383,14 +383,29 @@ enum StrictE2EPhotoIdentity {
         let colorSpace = image.colorSpace.flatMap { $0.model == .rgb ? $0 : nil }
         guard let frame = capturePixels(image: image, colorSpace: colorSpace) else { return [] }
         let colors = paletteColors(frame: frame)
+        // Mirror PUBLIC_SCENE_GEOMETRIES' shared color/glyph box, never a glyph-only
+        // phone box or an inferred landscape geometry. Cropped inputs grant no mask.
+        let exclusion: CGRect? =
+            image.width == 3840 && image.height == 2160
+            ? CGRect(
+                x: floor(1256 * Double(frame.width) / 3840), y: floor(1436 * Double(frame.height) / 2160),
+                width: ceil(2580 * Double(frame.width) / 3840) - floor(1256 * Double(frame.width) / 3840),
+                height: ceil(1925 * Double(frame.height) / 2160) - floor(1436 * Double(frame.height) / 2160)) : nil
         return ["A1", "A2"].filter { mark in
-            guard let foreground = sharpPublicForeground(frame: frame, colors: colors, mark: mark) else { return false }
+            guard let foreground = sharpPublicForeground(frame: frame, colors: colors, mark: mark, exclusion: exclusion)
+            else { return false }
             var counts = [0, 0]
-            for color in foreground.colors {
+            for (index, color) in foreground.colors.enumerated() {
+                if foreground.exclusion?.contains(
+                    CGPoint(x: index % foreground.frame.width, y: index / foreground.frame.width)) == true
+                {
+                    continue
+                }
                 if let (observed, index) = color, observed == mark { counts[index] += 1 }
             }
             return counts.min()! >= minimumChromaticPixelCount
-                && hasPublicTexture(frame: foreground.frame, colors: foreground.colors, mark: mark)
+                && hasPublicTexture(
+                    frame: foreground.frame, colors: foreground.colors, mark: mark, exclusion: foreground.exclusion)
         }
     }
 
@@ -419,13 +434,22 @@ enum StrictE2EPhotoIdentity {
     }
 
     private static func sharpPublicForeground(
-        frame: (width: Int, height: Int, pixels: [UInt8]), colors: [(String, Int)?], mark: String
-    ) -> (frame: (width: Int, height: Int, pixels: [UInt8]), colors: [(String, Int)?])? {
+        frame: (width: Int, height: Int, pixels: [UInt8]), colors: [(String, Int)?], mark: String, exclusion: CGRect?
+    ) -> (frame: (width: Int, height: Int, pixels: [UInt8]), colors: [(String, Int)?], exclusion: CGRect?)? {
         // Half-resolution capture separates a bilinear footprint from blur. The 96-pixel proof remains below.
         let width = min(frame.width, max(minimumSampleHeightPixels, frame.width / 2))
         let height = max(
             minimumSampleHeightPixels,
             Int((Double(frame.height) * Double(width) / Double(frame.width)).rounded(.toNearestOrEven)))
+        let probeExclusion = exclusion.map {
+            CGRect(
+                x: floor($0.minX * Double(width) / Double(frame.width)),
+                y: floor($0.minY * Double(height) / Double(frame.height)),
+                width: ceil($0.maxX * Double(width) / Double(frame.width))
+                    - floor($0.minX * Double(width) / Double(frame.width)),
+                height: ceil($0.maxY * Double(height) / Double(frame.height))
+                    - floor($0.minY * Double(height) / Double(frame.height)))
+        }
         var probe = [Int?]()
         for row in 0..<height {
             let sourceRow = min(frame.height - 1, Int((Double(row) + 0.5) * Double(frame.height) / Double(height)))
@@ -449,6 +473,19 @@ enum StrictE2EPhotoIdentity {
                 var isSharp = false
                 var unknownRun = 0
                 for position in 0...length {
+                    let point = CGPoint(x: vertical ? line : position, y: vertical ? position : line)
+                    if probeExclusion?.contains(point) == true {
+                        // Neither the overlay nor its opposite edge may provide a sharp seed.
+                        if isSharp, let start, let previousPosition {
+                            runs[axis].append((line, start, previousPosition + 1))
+                        }
+                        start = nil
+                        previous = nil
+                        previousPosition = nil
+                        isSharp = false
+                        unknownRun = 0
+                        continue
+                    }
                     let value =
                         position < length ? probe[vertical ? position * width + line : line * width + position] : nil
                     guard let value else {
@@ -524,8 +561,11 @@ enum StrictE2EPhotoIdentity {
         }
         var croppedWidth = cropRight - cropLeft
         var croppedHeight = cropBottom - cropTop
+        var foregroundExclusion = exclusion?.offsetBy(dx: -CGFloat(cropLeft), dy: -CGFloat(cropTop))
         var supported = croppedColors.indices.map { index in
-            croppedColors[index]?.0 == mark || (0..<3).allSatisfy { pixels[index * pixelChannelCount + $0] >= 240 }
+            foregroundExclusion?.contains(CGPoint(x: index % croppedWidth, y: index / croppedWidth)) != true
+                && (croppedColors[index]?.0 == mark
+                    || (0..<3).allSatisfy { pixels[index * pixelChannelCount + $0] >= 240 })
         }
         let rows = (0..<croppedHeight).filter { row in
             supported[(row * croppedWidth)..<((row + 1) * croppedWidth)].filter { $0 }.count
@@ -548,6 +588,7 @@ enum StrictE2EPhotoIdentity {
                 trimmedColors.append(croppedColors[index])
             }
         }
+        foregroundExclusion = foregroundExclusion?.offsetBy(dx: -CGFloat(firstColumn), dy: -CGFloat(firstRow))
         croppedWidth = lastColumn - firstColumn + 1
         croppedHeight = lastRow - firstRow + 1
         guard
@@ -556,12 +597,20 @@ enum StrictE2EPhotoIdentity {
         pixels = trimmedPixels
         croppedColors = trimmedColors
         supported = croppedColors.indices.map { index in
-            croppedColors[index]?.0 == mark || (0..<3).allSatisfy { pixels[index * pixelChannelCount + $0] >= 240 }
+            foregroundExclusion?.contains(CGPoint(x: index % croppedWidth, y: index / croppedWidth)) != true
+                && (croppedColors[index]?.0 == mark
+                    || (0..<3).allSatisfy { pixels[index * pixelChannelCount + $0] >= 240 })
         }
         // Complete-slot line support excludes detached patches and thin edges; public white ink is an occlusion.
         for vertical in [false, true] {
             var matches = [Bool]()
             for line in 0..<(vertical ? croppedWidth : croppedHeight) {
+                let isOccluded = (0..<(vertical ? croppedHeight : croppedWidth)).allSatisfy { position in
+                    foregroundExclusion?.contains(CGPoint(x: vertical ? line : position, y: vertical ? position : line))
+                        == true
+                }
+                // A wholly occluded line is neither evidence nor a missing-photo gap.
+                if isOccluded { continue }
                 let count = (0..<(vertical ? croppedHeight : croppedWidth)).reduce(0) { count, position in
                     count
                         + (supported[vertical ? position * croppedWidth + line : line * croppedWidth + position]
@@ -576,11 +625,11 @@ enum StrictE2EPhotoIdentity {
                 if Double(missing * width) / Double(frame.width) > Double(textureMaximumCellDriftPixels) { return nil }
             }
         }
-        return ((croppedWidth, croppedHeight, pixels), croppedColors)
+        return ((croppedWidth, croppedHeight, pixels), croppedColors, foregroundExclusion)
     }
 
     private static func hasPublicTexture(
-        frame: (width: Int, height: Int, pixels: [UInt8]), colors: [(String, Int)?], mark: String
+        frame: (width: Int, height: Int, pixels: [UInt8]), colors: [(String, Int)?], mark: String, exclusion: CGRect?
     ) -> Bool {
         // Mirror Python's existing row texture gates inside the independently detected foreground.
         var pattern: String?
@@ -593,6 +642,7 @@ enum StrictE2EPhotoIdentity {
             var unknownRun = 0
             var maximumUnknownRun = 0
             for column in 0..<frame.width {
+                if exclusion?.contains(CGPoint(x: column, y: row)) == true { continue }
                 let index = row * frame.width + column
                 hasWhite = hasWhite || (0..<3).allSatisfy { frame.pixels[index * pixelChannelCount + $0] >= 240 }
                 if let (observedMark, color) = colors[index], observedMark == mark {
@@ -610,7 +660,9 @@ enum StrictE2EPhotoIdentity {
                 continue
             }
             let observed = count.min()! >= minimumChromaticPixelCount ? "A" : "B"
-            if observed == "A", transitions.count >= 2, maximumUnknownRun <= textureMaximumCellDriftPixels {
+            if observed == "A", transitions.count >= 2, maximumUnknownRun <= textureMaximumCellDriftPixels,
+                !(exclusion.map { $0.minY <= CGFloat(row) && CGFloat(row) < $0.maxY } ?? false)
+            {
                 let widths = zip(transitions, transitions.dropFirst()).map { $1 - $0 }
                 let period = widths.min()!
                 if widths.max()! - period > Double(textureMaximumCellDriftPixels)
@@ -624,11 +676,11 @@ enum StrictE2EPhotoIdentity {
             pattern = observed
         }
         guard let pattern else { return false }
-        return pattern != "B" || hasSharpPublicStripe(frame: frame, colors: colors, mark: mark)
+        return pattern != "B" || hasSharpPublicStripe(frame: frame, colors: colors, mark: mark, exclusion: exclusion)
     }
 
     private static func hasSharpPublicStripe(
-        frame: (width: Int, height: Int, pixels: [UInt8]), colors: [(String, Int)?], mark: String
+        frame: (width: Int, height: Int, pixels: [UInt8]), colors: [(String, Int)?], mark: String, exclusion: CGRect?
     ) -> Bool {
         // Use the existing identity scale: display upscaling spreads a sharp source edge over capture pixels.
         let width = min(frame.width, sampleWidthPixels)
@@ -641,6 +693,11 @@ enum StrictE2EPhotoIdentity {
             var unknownRun = 0
             for row in 0..<height {
                 let sourceRow = min(frame.height - 1, Int((Double(row) + 0.5) * Double(frame.height) / Double(height)))
+                if exclusion?.contains(CGPoint(x: sourceColumn, y: sourceRow)) == true {
+                    previous = nil
+                    unknownRun = 0
+                    continue
+                }
                 if let (observedMark, color) = colors[sourceRow * frame.width + sourceColumn], observedMark == mark {
                     if let previous, previous != color, unknownRun <= textureMaximumCellDriftPixels {
                         return true

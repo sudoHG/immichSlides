@@ -276,6 +276,37 @@ def single_photo_candidate_cases():
                     f"geometry-background-only-{label}-{geometry}-duplicate", background_only,
                     (background_status, None), (background_status, None),
                 ))
+    # Keep native dimensions: an approved overlay must never be inferred from
+    # aspect ratio or carried into an arbitrary cropped/resized input.
+    from strict_e2e_photo_identity import PUBLIC_SCENE_GEOMETRIES
+    tv_size = (3840, 2160)
+    bar = PUBLIC_SCENE_GEOMETRIES[tv_size][0]
+    for fixture_set in ("a", "b"):
+        photo = Image.open(io.BytesIO(_fixture_data(fixture_set)["images"][f"asset-{fixture_set}-2"])).convert("RGB")
+        background = ImageOps.fit(photo, tv_size).filter(ImageFilter.GaussianBlur(48))
+        fitted = ImageOps.contain(photo, tv_size)
+        scene = background.copy()
+        scene.paste(fitted, ((scene.width - fitted.width) // 2, 0))
+        scene.paste((55, 55, 55), bar)
+        label = "A2" if fixture_set == "a" else "B2"
+        cases.append((f"approved-TV-bar-{label}", scene, ("MATCH", "A2"), ("MATCH", "A2")))
+        if fixture_set == "a":
+            # A gray palette endpoint in chrome must not turn checker rows into
+            # fixture B stripes. This isolates texture exclusion from continuity.
+            palette_bar = scene.copy()
+            palette_bar.paste((128, 122, 110), bar)
+            cases.append(("approved-TV-palette-bar-A2", palette_bar,
+                          ("MATCH", "A2"), ("MATCH", "A2")))
+            background.paste((55, 55, 55), bar)
+            cases.append(("approved-TV-bar-background-only", background,
+                          ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
+            wrong_size = scene.resize((3840, 2161), Image.Resampling.NEAREST)
+            cases.append(("unapproved-TV-bar-geometry", wrong_size,
+                          ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
+            outside = scene.copy()
+            outside.paste((55, 55, 55), (bar[0], 1100, bar[2], 1160))
+            cases.append(("outside-approved-TV-bar-gap", outside,
+                          ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
     return cases
 
 

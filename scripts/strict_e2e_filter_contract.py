@@ -489,7 +489,8 @@ def _evaluate_display_policy(evidence_dir: Path, suite: str, *, manifest: Mappin
             region_marks = list(dict.fromkeys(_scene_slot_marks(foreground, fixture_set)))
         else:
             region_marks = _display_region_marks(regions)
-        rejection_marks = _display_region_marks(_classify_display_regions(image_bytes, for_rejection=True))
+        rejection_marks = (region_marks if switched_server else
+                           _display_region_marks(_classify_display_regions(image_bytes, for_rejection=True)))
         if rejection_marks:
             for mark in rejection_marks:
                 if mark not in allowed:

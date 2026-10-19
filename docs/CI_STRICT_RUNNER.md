@@ -95,8 +95,9 @@ half-resolution probe, capped at 240 pixels wide, locates contiguous sharp
 palette runs before the original texture checks. Its rectangle needs the existing
 minimum image extent and at least 18 supported pixels per boundary/interior line;
 missing interior lines may span at most two probe pixels. White glyph ink can
-support rectangle continuity but cannot qualify a texture row. A complete public
-bitmap keeps its original bounds, so damaged rows cannot disappear by cropping.
+support rectangle continuity but cannot qualify a texture row. A bitmap whose
+entire canvas supplies public palette colors or white ink keeps its original
+bounds; fitted captures derive their bounds from independently supported lines.
 Candidate palette proof reads the PNG's encoded RGB channels in both languages;
 display color conversion must not change those values for a tagged video frame.
 The existing composite reader keeps its original color conversion.
@@ -113,12 +114,15 @@ Synthetic coverage includes A1/A2 and B1/B2 at iPhone, iPad and tvOS dimensions,
 both orientations, and motion scales 1.00/1.10. Background-only geometry controls
 must remain nonmatches; duplicate controls retain their original hue status and
 do not count as independent rejection coverage.
-The EXIF A2 flow on tvOS waits for the existing hidden control receiver to regain
-focus before starting its unchanged identity wait. The visible bar can span the
-entire narrow photo and break rectangle continuity; those occluded frames stay
-unrecognizable. This preparation uses the existing screen-transition deadline,
-keeps the six-Next limit and does not interpolate across an occlusion or relax a
-reader gate.
+For original 3840x2160 tvOS captures, sharp-foreground continuity and texture
+checks ignore only the scanner-approved shared color/glyph rectangle
+(1256,1436)-(2580,1925). Its pixels supply no palette counts or sharp edges;
+fully occluded lines supply neither support nor a missing-photo gap. The same
+rectangle is mapped into the sampled frame and translated with each foreground
+crop. Other dimensions and region crops grant no exclusion. In particular,
+iPhone landscape has no measured entry, and the portrait phone's glyph-only
+box grants no palette exclusion. EXIF uses the same reader without waiting for
+controls to hide; the six-Next limit and existing deadlines remain unchanged.
 
 The Swift `captureIdentity` and Python `capture_identity` readers locate each
 photo's palette rectangle, rather than assuming equal quadrants or full-span strips. They use
@@ -987,7 +991,6 @@ New enum meanings and why the previous vocabulary cannot express them:
 | `After returning to mode selection, default focus must go back to random playback.` | `mode_selection` | `focus` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift) |
 | `After Continue, the app must reach the playback page and show the control bar.` | `playback_entry` | `navigation` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift) |
 | `Before sending the wake arrow key, the hidden receiver layer must have system focus.` | `hidden_controls` | `focus` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift) |
-| `A2 identity evidence requires the hidden control receiver to have focus.` | `hidden_controls` | `focus` | [ExifToggleUITests.swift](../immichSlidesUITests/ExifToggleUITests.swift) |
 | `After the control bar wakes again, focus must land on Play/Pause.` | `hidden_controls` | `focus` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift) |
 | `After pressing Down, the hint and the control bar must hide.` | `hidden_controls` | `hidden_controls` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift) |
 | `With the control bar hidden, an arrow key must wake it again.` | `hidden_controls` | `hidden_controls` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift) |
