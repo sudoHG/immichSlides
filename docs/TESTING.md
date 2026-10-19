@@ -219,6 +219,19 @@ Callers then confirm the intended control's focus before Select. Repeat this
 sequence after screenshots, scene sampling or other waits; do not reuse an earlier
 visibility or focus observation. Evidence text can reuse a value already captured
 in that refreshed window. Product auto-hide and one Select per action remain unchanged.
+Read an initial history boundary from one fallible snapshot before slow evidence captures.
+Keep cold-launch existence and focus waits fallible and bounded; either wait may wake a
+focused hidden receiver, at most once across both waits. Record whether a wake was sent,
+and require actual Play/Pause focus afterward. Direction drivers must still issue their
+bounded press when a target cannot yet be read, and choose observed focus deterministically.
+Read Previous's current enabled state before deciding whether a move is possible.
+Before pausing person evidence, prove a readable frame within the original loading deadline;
+Debug must bracket the same PNG with fully opaque stable scene probes. Then take one fresh
+snapshot confirming Play/Pause exists and has focus, and immediately send the one Select.
+If focus was lost, refresh controls, restore focus and re-prove within that same deadline.
+Write evidence after Select. Classify and save the paused PNG from the same bytes, and keep
+membership validation for every original capture. Consecutive Release pixel identities alone
+do not prove full opacity.
 
 1. **Every test has at least one assertion that can fail.** Screenshots may accompany assertions but never replace them.
 2. **Test rules, not design values.** "Input height is at least 44 pt" and "input text is larger than placeholder text" are good tests. "Height equals 46" is not: a design change should not turn tests red.

@@ -70,15 +70,39 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
         XCTAssertTrue(
             waitForPlaybackControls(app: app, timeout: TestWait.seconds(.product(30))),
             "Random mode must reach the playback page.")
+        let previous = app.buttons["slideshow.control.previous.button"]
+        var initialSnapshots: [String: XCUIElementSnapshot] = [:]
+        let initialBoundaryTimeout = TestWait.seconds(.product(8))
+        let initialBoundaryDeadline = Date().addingTimeInterval(initialBoundaryTimeout)
+        FirstFailureContext.beginWait(seconds: initialBoundaryTimeout)
+        var didReadInitialBoundary = false
+        while Date() < initialBoundaryDeadline {
+            initialSnapshots = app.evidenceSnapshotsByIdentifier()
+            let render = SharedSceneEvidenceManifest.parseKeyValueFields(
+                initialSnapshots["slideshow.scenePresentation.contract.summary"]?.label ?? "")
+            if initialSnapshots["slideshow.control.previous.button"] != nil,
+                let historyCount = Int(render["historyCount"] ?? ""), historyCount > 0
+            {
+                didReadInitialBoundary = Date() < initialBoundaryDeadline
+                break
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.1))))
+        }
+        FirstFailureContext.endWait()
+        XCTAssertTrue(
+            didReadInitialBoundary,
+            "The playback page must show the Previous button.")
+        let initialPrevious = try XCTUnwrap(initialSnapshots["slideshow.control.previous.button"])
+        let initialRender = SharedSceneEvidenceManifest.parseKeyValueFields(
+            initialSnapshots["slideshow.scenePresentation.contract.summary"]?.label ?? "")
+        XCTAssertFalse(
+            initialPrevious.isEnabled, "Previous must be disabled at the history boundary when playback starts.")
+        XCTAssertEqual(
+            initialRender["historyCount"], "1",
+            "Playback must start with exactly one retained history entry.")
+        recordControlTimeline(app: app, event: "journey-b-initial-boundary")
         dismissPlaybackEntryHintIfNeeded(app: app)
         attachOrientationEvidence(app: app, name: "journey-b-random-playback-start")
-
-        let previous = app.buttons["slideshow.control.previous.button"]
-        XCTAssertTrue(
-            previous.waitForPublicElement("slideshow.control.previous.button", timeout: TestWait.seconds(.product(8))),
-            "The playback page must show the Previous button.")
-        XCTAssertFalse(previous.isEnabled, "Previous must be disabled at the history boundary when playback starts.")
-        recordControlTimeline(app: app, event: "journey-b-initial-boundary")
 
         RunLoop.current.run(until: Date().addingTimeInterval(autoplayObservationSeconds))
         XCTAssertTrue(

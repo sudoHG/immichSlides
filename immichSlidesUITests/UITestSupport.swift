@@ -335,6 +335,32 @@ extension XCUIApplication {
 
 #if os(tvOS)
 extension XCUIApplication {
+    // Return a confirmed move, a confirmed edge, or an unknown observation without failing the poll.
+    func pressAndWaitForTVOSFocusMovement(
+        _ direction: XCUIRemote.Button, to identifier: String?, timeout: TimeInterval
+    ) -> Bool? {
+        let previous = evidenceSnapshotsByIdentifier().sorted { $0.key < $1.key }.first { $0.value.hasFocus }?.value
+        FirstFailureRemote.press(direction)
+        let deadline = Date().addingTimeInterval(timeout)
+        var hasConfirmedUnchangedFocus = false
+        while Date() < deadline {
+            let snapshots = evidenceSnapshotsByIdentifier()
+            guard Date() < deadline else { return nil }
+            if let identifier, snapshots[identifier]?.hasFocus == true { return true }
+            hasConfirmedUnchangedFocus = false
+            if let previous,
+                let current = snapshots.sorted(by: { $0.key < $1.key }).first(where: { $0.value.hasFocus })?.value
+            {
+                if current.identifier != previous.identifier || current.elementType != previous.elementType {
+                    return true
+                }
+                hasConfirmedUnchangedFocus = true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(Timing.focusSettle))
+        }
+        return hasConfirmedUnchangedFocus ? false : nil
+    }
+
     func refreshTVOSSlideshowControlBar(timeout: TimeInterval) -> Bool {
         FirstFailureContext.mark("reveal-controls", element: "slideshow.control.playPause.button")
         FirstFailureContext.beginWait(seconds: timeout)
@@ -373,12 +399,22 @@ extension XCUIApplication {
                     })
                 else { continue }
                 // Previous can retain focus just after Select disables it at the history boundary.
-                if snapshots[focusedIdentifier]?.isEnabled == false {
+                let current = evidenceSnapshotsByIdentifier()
+                if current[focusedIdentifier]?.isEnabled == false {
                     if waitForFocus({ $0["slideshow.control.playPause.button"]?.hasFocus == true }) { return true }
                     continue
                 }
                 FirstFailureRemote.press(direction == .left ? .right : .left)
-                if waitForFocus({ $0[focusedIdentifier]?.hasFocus == true }) { return true }
+                if waitForFocus({ observation in
+                    if focusedIdentifier == "slideshow.control.previous.button",
+                        observation[focusedIdentifier]?.isEnabled == false
+                    {
+                        return observation["slideshow.control.playPause.button"]?.hasFocus == true
+                    }
+                    return observation[focusedIdentifier]?.hasFocus == true
+                }) {
+                    return true
+                }
                 continue
             }
             if snapshots["slideshow.hiddenWakeReceiver"]?.hasFocus == true {

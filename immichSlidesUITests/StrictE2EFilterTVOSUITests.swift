@@ -297,7 +297,7 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
         }
 
         let input = try requireStrictE2EInput()
-        let app = try launchStrictE2EApp()
+        let app = try launchStrictE2EApp(recordSceneSequence: true)
         defer { app.terminateForFailureEvidence() }
 
         try StrictE2EVisualEvidence.writeRequiredJSON(
@@ -637,6 +637,7 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
             try writeScreenshotPNG(app: app, name: evidenceName, attachmentName: evidenceName)
             return
         }
+        let captureDeadline = Date().addingTimeInterval(TestWait.seconds(.product(30)))
         let loading = app.descendants(matching: .any)["playback.loading.indicator"]
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(30))) { !loading.exists },
@@ -648,7 +649,7 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
             if evidenceName == "person-conflict-normal" {
                 names.append(contentsOf: ["person-conflict-normal-2", "person-conflict-normal-3"])
             }
-            try capturePausedPlaybackPNGs(app: app, names: names)
+            try capturePausedPlaybackPNGs(app: app, names: names, stableFrameDeadline: captureDeadline)
         }
         if evidenceName == "person-conflict-solo" {
             try writeScreenshotPNG(app: app, name: "person-solo", attachmentName: "person-solo")

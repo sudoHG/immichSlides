@@ -205,9 +205,15 @@ Probes cannot supply a
 missing pixel identity. A5 and A1+A5 have different signatures.
 
 `UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE=1` enables the Debug manifest probes.
-Probe-only launches are `journey-b`, `tvos-flow`, `late-image`, `ios-lifecycle-first-wake`,
+Probe-only launches are `journey-b`, `tvos-flow`, `tvos-person`, `late-image`, `ios-lifecycle-first-wake`,
 and `AccessLifecycleIOSUITests.prepareLaunch`, including its cold relaunches and
 `run_access_lifecycle_ios.py`'s `testAccessProtectionSettingsAndLifecycle`.
+For `tvos-person`, the scene key also exposes the existing read-only SmartFill
+manifest, motion-frame summary and EXIF tone accessibility anchors. These clear
+anchors read existing state; they do not change photo rendering, transition clocks,
+auto-hide deadlines or playback commands. Motion trace collection requires its
+separate key and is not enabled. Their extra accessibility/label computation is
+diagnostic overhead, not a product timing override.
 The `ios-lifecycle-settings`, `ios-lifecycle-pause` and `ios-lifecycle-background`
 selectors use an empty launch environment and forbid the scene probe.
 `pause-window` sets the probe plus `UI_TEST_SERVER_URL`, `UI_TEST_API_KEY`,
