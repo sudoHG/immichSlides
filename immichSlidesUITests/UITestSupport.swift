@@ -400,15 +400,18 @@ struct IOSFirstBootNavigation {
 
     struct Observation {
         let window: XCUIElementSnapshot
+        let windowElement: XCUIElement
         let windowIndex: Int
         let nodes: [XCUIElementSnapshot]
         let decline: XCUIElementSnapshot?
         let hasPasswordPrompt: Bool
+        let hasPromptClue: Bool
         let hasModalObstacle: Bool
         let promptHost: XCUIApplication
         let promptFrame: CGRect
         let promptWindowIndex: Int
         let isPromptAlert: Bool
+        let promptContainer: XCUIElement
         let promptSource: String
 
         func button(_ identifier: String) -> XCUIElementSnapshot? {
@@ -427,7 +430,7 @@ struct IOSFirstBootNavigation {
         }
     }
 
-    func observe(destinationIdentifier: String? = nil) throws -> Observation {
+    func observe(modeIdentifier: String? = nil, destinationIdentifier: String? = nil) throws -> Observation {
         let ownWindows = try windowObservations(host: app)
         let own =
             ownWindows.first(where: { window in
@@ -435,6 +438,12 @@ struct IOSFirstBootNavigation {
             }) ?? ownWindows[0]
         let ownPrompts = ownWindows.filter(\.hasPasswordPrompt)
         if !ownPrompts.isEmpty { return combine(own, prompts: ownPrompts, windows: ownWindows) }
+        if let modeIdentifier, own.isModePage,
+            !ownWindows.contains(where: { $0.hasPromptClue || $0.hasModalObstacle }),
+            modeControlsAreHittable(own, modeIdentifier: modeIdentifier)
+        {
+            return combine(own, prompts: [], windows: ownWindows)
+        }
         let system = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         let systemWindows = try windowObservations(host: system)
         let systemPrompts = systemWindows.filter(\.hasPasswordPrompt)
@@ -444,18 +453,37 @@ struct IOSFirstBootNavigation {
         let alerts = app.alerts.allElementsBoundByIndex
         guard alerts.count <= 1 else { throw NSError(domain: "IOSFirstBootNavigation", code: 2) }
         guard let alert = alerts.first else { return combine(own, prompts: [], windows: windows) }
-        let modal = observation(window: try alert.snapshot(), host: app, windowIndex: .zero, isPromptAlert: true)
+        let modal = observation(
+            window: try alert.snapshot(), element: alert, host: app, windowIndex: .zero, isPromptAlert: true)
         return combine(own, prompts: modal.hasPasswordPrompt ? [modal] : [], windows: windows + [modal])
     }
 
     private func combine(_ own: Observation, prompts: [Observation], windows: [Observation]) -> Observation {
         let prompt = prompts.count == 1 ? prompts[0] : nil
         return Observation(
-            window: own.window, windowIndex: own.windowIndex, nodes: own.nodes, decline: prompt?.decline,
-            hasPasswordPrompt: !prompts.isEmpty, hasModalObstacle: windows.contains(where: \.hasModalObstacle),
+            window: own.window, windowElement: own.windowElement, windowIndex: own.windowIndex, nodes: own.nodes,
+            decline: prompt?.decline, hasPasswordPrompt: !prompts.isEmpty,
+            hasPromptClue: windows.contains(where: \.hasPromptClue),
+            hasModalObstacle: windows.contains(where: \.hasModalObstacle),
             promptHost: prompt?.promptHost ?? app, promptFrame: prompt?.window.frame ?? .zero,
             promptWindowIndex: prompt?.windowIndex ?? .zero, isPromptAlert: prompt?.isPromptAlert ?? false,
+            promptContainer: prompt?.promptContainer ?? own.windowElement,
             promptSource: prompt?.promptSource ?? (prompts.isEmpty ? "not-observed" : "ambiguous"))
+    }
+
+    private func modeControlsAreHittable(_ observation: Observation, modeIdentifier: String) -> Bool {
+        // A blocked mode surface still needs the complete remote credential-prompt search.
+        for identifier in [modeIdentifier, "mode.continue.button"] {
+            guard let button = observation.button(identifier), button.isEnabled, !button.frame.isEmpty,
+                observation.window.frame.contains(button.frame)
+            else { return false }
+            // ui-label-lookup: Bind the live mode control to the same button in the captured window.
+            let target = observation.windowElement.buttons.matching(
+                NSPredicate(format: "identifier == %@ AND label == %@", button.identifier, button.label)
+            ).firstMatch
+            guard target.isHittable else { return false }
+        }
+        return true
     }
 
     private func windowObservations(host: XCUIApplication) throws -> [Observation] {
@@ -463,12 +491,13 @@ struct IOSFirstBootNavigation {
         let windows = host.windows.allElementsBoundByIndex
         guard !windows.isEmpty else { throw NSError(domain: "IOSFirstBootNavigation", code: 1) }
         return try windows.enumerated().map { index, window in
-            observation(window: try window.snapshot(), host: host, windowIndex: index)
+            observation(window: try window.snapshot(), element: window, host: host, windowIndex: index)
         }
     }
 
     private func observation(
-        window: XCUIElementSnapshot, host: XCUIApplication, windowIndex: Int, isPromptAlert: Bool = false
+        window: XCUIElementSnapshot, element: XCUIElement, host: XCUIApplication,
+        windowIndex: Int, isPromptAlert: Bool = false
     ) -> Observation {
         var pending = [window]
         var nodes: [XCUIElementSnapshot] = []
@@ -494,12 +523,12 @@ struct IOSFirstBootNavigation {
         // ui-label-lookup: Never act on a generic Not Now button without the exact password title.
         let declines = nodes.filter { $0.elementType == .button && ["以后", "Not Now"].contains($0.label) }
         return Observation(
-            window: window, windowIndex: windowIndex, nodes: nodes,
+            window: window, windowElement: element, windowIndex: windowIndex, nodes: nodes,
             decline: hasTitle && !hasOtherModal && declines.count == 1 ? declines[0] : nil,
-            hasPasswordPrompt: hasTitle,
+            hasPasswordPrompt: hasTitle, hasPromptClue: hasTitle || !declines.isEmpty,
             hasModalObstacle: hasTitle || nodes.contains { $0.elementType == .alert || $0.elementType == .sheet },
             promptHost: host, promptFrame: window.frame, promptWindowIndex: windowIndex,
-            isPromptAlert: isPromptAlert,
+            isPromptAlert: isPromptAlert, promptContainer: element,
             promptSource: isPromptAlert ? "alert-snapshot" : "window-index-\(windowIndex)")
     }
 
@@ -515,10 +544,7 @@ struct IOSFirstBootNavigation {
         guard node.isEnabled, !node.frame.isEmpty, frame.contains(node.frame), Date() < deadline
         else { return false }
         if isDecline && observation.isPromptAlert && host.alerts.count != 1 { return false }
-        let container =
-            isDecline && observation.isPromptAlert
-            ? host.alerts.element(boundBy: .zero)
-            : host.windows.element(boundBy: isDecline ? observation.promptWindowIndex : observation.windowIndex)
+        let container = isDecline ? observation.promptContainer : observation.windowElement
         // ui-label-lookup: Bind the live action to both attributes of the observed button, including an empty ID.
         let matches = container.buttons.matching(
             NSPredicate(format: "identifier == %@ AND label == %@", node.identifier, node.label))
@@ -621,7 +647,9 @@ struct IOSFirstBootNavigation {
             let deadline = departureDeadline ?? selectionDeadline
             FirstFailureContext.mark(step, element: didIssueContinue ? "mode.continue.button" : identifier)
             let observation: Observation
-            do { observation = try observe(destinationIdentifier: destinationIdentifier) } catch {
+            do {
+                observation = try observe(modeIdentifier: identifier, destinationIdentifier: destinationIdentifier)
+            } catch {
                 lastSnapshotError = (error as NSError).code
                 didReadLastSnapshot = false
                 poll(until: deadline)

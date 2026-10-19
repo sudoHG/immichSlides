@@ -167,14 +167,18 @@ Snapshots expose enabled state, not hittability, so pause-stage evidence uses `*
 For iOS first-boot mode navigation, use `IOSFirstBootNavigation` in `UITestSupport`.
 Use `selectMode` for selection-only screenshots and `selectModeAndContinue` to leave
 the mode page; both use the same observation, prompt handling and selection checks.
-Each poll reads the exact English/Chinese Save Password title and unique Not Now
-action from one fallible snapshot of each actual window (the app or SpringBoard).
+Each poll first reads actual App windows. Only an unobstructed mode page with no
+password-title/decline clues and both the target card and Continue live-hittable
+can omit the SpringBoard and alert search. Other surfaces, modal clues or either
+blocked control still use the complete search. Each prompt's exact English/Chinese
+Save Password title and unique Not Now action come from the same fallible window snapshot.
 Enumerate real window elements rather than an application snapshot's children:
 an application snapshot can omit the main window and change the apparent indices.
 Inspect every captured window: a late credential sheet can be in a
 later SpringBoard window and absent from the app's accessibility tree. Mode selection
-and Continue attributes share one app window subtree; taps use the captured window
-index. Multiple matching prompt windows are ambiguous and never authorize a tap.
+and Continue attributes share one app window subtree. Retain the actual window
+elements from that enumeration for live checks and taps within the observation;
+do not enumerate them again. Multiple matching prompt windows are ambiguous and never authorize a tap.
 Only when both hosts' window snapshots lack the prompt, inspect one fallible
 `app.alerts` snapshot: iPad can expose the remote credential modal only there.
 Require exactly one alert, the exact password title and one decline button in
