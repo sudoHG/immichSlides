@@ -722,6 +722,7 @@ PREFIX_RULES = (
     ("After returning to mode selection, default focus must go back to random playback.", "mode_selection", "focus"),
     ("After Continue, the app must reach the playback page and show the control bar.", "playback_entry", "navigation"),
     ("Before sending the wake arrow key, the hidden receiver layer must have system focus.", "hidden_controls", "focus"),
+    ("A2 identity evidence requires the hidden control receiver to have focus.", "hidden_controls", "focus"),
     ("After the control bar wakes again, focus must land on Play/Pause.", "hidden_controls", "focus"),
     ("After pressing Down, the hint and the control bar must hide.", "hidden_controls", "hidden_controls"),
     ("With the control bar hidden, an arrow key must wake it again.", "hidden_controls", "hidden_controls"),
