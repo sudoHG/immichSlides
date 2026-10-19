@@ -510,16 +510,24 @@ extension AppStoreScreenshotUITests {
 
     @MainActor
     func startFilteredFlowFromModeSelection(_ app: XCUIApplication) throws {
-        guard
-            let summaryDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
-                "mode.filtered.button", destinationIdentifier: "filterSummary.startPlayback.button",
-                selectionTimeout: AppStoreScreenshotUITestsWaitTiming.screenTransitionTimeoutSeconds,
-                departureTimeout: AppStoreScreenshotUITestsWaitTiming.connectionTimeoutSeconds)
-        else { return }
+        try waitOrThrow(
+            app.buttons["mode.filtered.button"],
+            timeout: AppStoreScreenshotUITestsWaitTiming.screenTransitionTimeoutSeconds,
+            "Mode selection should show the filtered playback option")
+        tapElement(app.buttons["mode.filtered.button"])
+
+        let continueButton = app.buttons["mode.continue.button"]
+        try waitOrThrow(
+            continueButton, timeout: AppStoreScreenshotUITestsWaitTiming.screenTransitionTimeoutSeconds,
+            "Mode selection should show the Continue button")
+        guard continueButton.isEnabled else {
+            throw ScreenshotError.message("Continue button is disabled after choosing filtered playback.")
+        }
+        tapElement(continueButton)
 
         try waitOrThrow(
             app.buttons["filterSummary.startPlayback.button"],
-            timeout: max(.zero, summaryDeadline.timeIntervalSinceNow),
+            timeout: AppStoreScreenshotUITestsWaitTiming.connectionTimeoutSeconds,
             "Should reach the filter summary")
     }
 

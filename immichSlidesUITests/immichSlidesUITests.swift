@@ -183,17 +183,15 @@ final class immichSlidesUITests: XCTestCase {
             })
         assertModeSelectionCoreElements(app: app)
 
-        guard
-            let playbackDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
-                "mode.random.button", destinationIdentifier: "slideshow.control.settings.button",
-                selectionTimeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds,
-                departureTimeout: immichSlidesUITestsWaitTiming.playbackControlTimeoutSeconds)
-        else { return }
+        tapElement(app.buttons["mode.random.button"])
+        let continueButton = app.buttons["mode.continue.button"]
+        XCTAssertTrue(continueButton.isEnabled)
+        tapElement(continueButton)
 
         XCTAssertTrue(
             app.buttons["slideshow.control.settings.button"].waitForPublicElement(
                 "slideshow.control.settings.button",
-                timeout: max(.zero, playbackDeadline.timeIntervalSinceNow)))
+                timeout: immichSlidesUITestsWaitTiming.playbackControlTimeoutSeconds))
 
         FirstFailureOrientation.set(.portrait)
     }

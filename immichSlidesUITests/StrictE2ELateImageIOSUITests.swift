@@ -67,7 +67,7 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
         guard
             let playbackDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
                 "mode.random.button", destinationIdentifier: "slideshow.control.next.button",
-                selectionTimeout: TestWait.seconds(.product(8)),
+                selectionTimeout: TestWait.seconds(.product(8)) + TestWait.seconds(.product(2)),
                 departureTimeout: TestWait.seconds(.product(8)))
         else { return }
         let next = app.buttons["slideshow.control.next.button"]

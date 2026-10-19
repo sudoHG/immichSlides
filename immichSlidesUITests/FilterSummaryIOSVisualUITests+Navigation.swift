@@ -588,33 +588,53 @@ extension FilterSummaryIOSVisualUITests {
     }
 
     func startRandomPlaybackFromModeSelection(app: XCUIApplication) {
-        guard
-            let playbackDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
-                "mode.random.button", destinationIdentifier: "slideshow.control.settings.button",
-                selectionTimeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
-                departureTimeout: TestWait.seconds(.infrastructure(25)))
-        else { return }
+
+        let modeRandomButton = app.buttons["mode.random.button"]
+        XCTAssertTrue(
+            modeRandomButton.waitForPublicElement(
+                "mode.random.button",
+                timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+            "Mode selection page should show the 'Shuffle All Photos' entry")
+        tapElement(modeRandomButton)
+
+        let modeContinueButton = app.buttons["mode.continue.button"]
+        XCTAssertTrue(
+            modeContinueButton.waitForPublicElement(
+                "mode.continue.button",
+                timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
+            "Mode selection page should show the continue button")
+        XCTAssertTrue(
+            modeContinueButton.isEnabled, "After choosing random playback, the continue button should be enabled")
+        tapElement(modeContinueButton)
 
         var diagnostic = ""
         XCTAssertTrue(
             waitForSlideshowSettingsButton(
-                app: app, timeout: max(.zero, playbackDeadline.timeIntervalSinceNow),
+                app: app, timeout: TestWait.seconds(.infrastructure(25)),
                 onTimeout: { diagnostic = " (\($0))" }),
             "After entering the playback page, the settings button should be visible\(diagnostic)"
         )
     }
 
     func startFilteredFlowFromModeSelection(app: XCUIApplication) {
-        guard
-            let summaryDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
-                "mode.filtered.button", destinationIdentifier: "filterSummary.startPlayback.button",
-                selectionTimeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
-                departureTimeout: FilterSummaryIOSVisualUITestsWaitTiming.screenTransitionTimeoutSeconds)
-        else { return }
+        let modeFilteredButton = app.buttons["mode.filtered.button"]
+        XCTAssertTrue(
+            modeFilteredButton.waitForPublicElement(
+                "mode.filtered.button",
+                timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds))
+        modeFilteredButton.tapForFailureEvidence()
+
+        let modeContinueButton = app.buttons["mode.continue.button"]
+        XCTAssertTrue(
+            modeContinueButton.waitForPublicElement(
+                "mode.continue.button",
+                timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds))
+        XCTAssertTrue(modeContinueButton.isEnabled)
+        modeContinueButton.tapForFailureEvidence()
 
         XCTAssertTrue(
             app.buttons["filterSummary.startPlayback.button"].waitForFailureEvidence(
-                timeout: max(.zero, summaryDeadline.timeIntervalSinceNow)))
+                timeout: FilterSummaryIOSVisualUITestsWaitTiming.screenTransitionTimeoutSeconds))
     }
 
     @MainActor

@@ -164,9 +164,13 @@ It matches the same receiver passed as a complete argument (optionally labeled o
 when the true branch starts with a call, including calls nested inside it; passing another element,
 a derived property or a snapshot is outside this rule.
 Snapshots expose enabled state, not hittability, so pause-stage evidence uses `*_enabled` keys.
-For iOS first-boot mode navigation, use `IOSFirstBootNavigation` in `UITestSupport`.
-Use `selectMode` for selection-only screenshots and `selectModeAndContinue` to leave
-the mode page; both use the same observation, prompt handling and selection checks.
+For iOS first-boot paths that type and save server credentials, use
+`IOSFirstBootNavigation` in `UITestSupport`, including the interactive visual-audit
+pack. Use `selectMode` for selection-only screenshots and `selectModeAndContinue`
+to leave the mode page; both use the same observation, prompt handling and selection
+checks. Fixture paths that inject configuration retain their original card tap,
+Continue readiness check, single Continue tap and destination assertions, with the
+original independent waits. They do not use this credential-prompt observer.
 Each poll first reads actual App windows. Only an unobstructed mode page with no
 password-title/decline clues and both the target card and Continue live-hittable
 can omit the SpringBoard and alert search. Other surfaces, modal clues or either
@@ -206,6 +210,10 @@ hittable Continue without a post-Continue prompt that leaves mode visible is a n
 including a possible App defect; do not resend Continue or retry the flow.
 Callers use the returned absolute deadline for the remaining destination wait;
 snapshot errors re-observe within that same budget and never authorize a tap.
+When replacing independent credential-entry card and Continue waits with one
+selection cap, preserve their sum, the first-attempt hittability/selected-state
+readbacks and any existing prompt allowance. Do not
+borrow repeated-tap or whole-flow retry budgets, or extend the departure deadline.
 A successful prompt-visibility observation remains evidence even after the retry
 deadline; callers that act must independently check their action deadline.
 Mode-navigation failures append bounded observation counts/durations, snapshot match

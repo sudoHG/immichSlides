@@ -62,8 +62,7 @@ final class VisualAuditMatrixUITests: XCTestCase {
                 XCTAssertTrue(
                     randomButton.waitForPublicElement(
                         "mode.random.button", timeout: TestWait.seconds(.infrastructure(8))))
-                IOSFirstBootNavigation(app: app).selectMode(
-                    "mode.random.button", timeout: TestWait.seconds(.infrastructure(8)))
+                tapElement(randomButton)
                 attachScreenshot(
                     app: app, name: "audit-matrix-mode-random-selected-\(scheme)-\(orientation.name)-\(deviceTag())")
             }

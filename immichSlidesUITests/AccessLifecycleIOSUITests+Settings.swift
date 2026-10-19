@@ -21,7 +21,8 @@ extension AccessLifecycleIOSUITests {
         guard
             let playbackDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
                 "mode.random.button", destinationIdentifier: "slideshow.control.settings.button",
-                selectionTimeout: TestWait.seconds(.product(15)),
+                selectionTimeout: TestWait.seconds(.product(15)) + TestWait.seconds(.product(2))
+                    + TestWait.seconds(.product(5)),
                 departureTimeout: TestWait.seconds(.product(30)))
         else { return }
         XCTAssertTrue(

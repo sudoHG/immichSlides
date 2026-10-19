@@ -195,16 +195,12 @@ extension PlaybackSmartFillVisualUITests {
     }
 
     func startRandomPlaybackFromModeSelection(app: XCUIApplication) {
-        guard
-            let playbackDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
-                "mode.random.button", destinationIdentifier: "slideshow.control.settings.button",
-                selectionTimeout: TestWait.seconds(.product(8)),
-                departureTimeout: TestWait.seconds(.product(30)))
-        else { return }
+        tapElement(app.buttons["mode.random.button"])
+        tapElement(app.buttons["mode.continue.button"])
         XCTAssertTrue(
             app.buttons["slideshow.control.settings.button"].waitForPublicElement(
                 "slideshow.control.settings.button",
-                timeout: max(.zero, playbackDeadline.timeIntervalSinceNow)),
+                timeout: TestWait.seconds(.product(30))),
             "After starting random playback, the playback control bar should appear"
         )
     }
@@ -235,16 +231,12 @@ extension PlaybackSmartFillVisualUITests {
     }
 
     func startFilteredPlaybackFromModeSelection(app: XCUIApplication) {
-        guard
-            let summaryDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
-                "mode.filtered.button", destinationIdentifier: "filterSummary.startPlayback.button",
-                selectionTimeout: TestWait.seconds(.product(8)),
-                departureTimeout: TestWait.seconds(.product(20)))
-        else { return }
+        tapElement(app.buttons["mode.filtered.button"])
+        tapElement(app.buttons["mode.continue.button"])
 
         let startButton = app.buttons["filterSummary.startPlayback.button"]
         XCTAssertTrue(
-            startButton.waitForFailureEvidence(timeout: max(.zero, summaryDeadline.timeIntervalSinceNow)),
+            startButton.waitForFailureEvidence(timeout: TestWait.seconds(.product(20))),
             "Filter summary should show the Start playback button")
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(20))) { startButton.isEnabled },

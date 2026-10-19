@@ -269,17 +269,23 @@ private extension PlaybackRequestLifecycleDiagnosticsUITests {
     }
 
     func startRandomPlaybackFromModeSelection(app: XCUIApplication) {
-        guard
-            let playbackDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
-                "mode.random.button", destinationIdentifier: "slideshow.control.settings.button",
-                selectionTimeout: TestWait.seconds(.infrastructure(10)),
-                departureTimeout: TestWait.seconds(.product(30)))
-        else { return }
+        let randomButton = app.buttons["mode.random.button"]
+        XCTAssertTrue(
+            randomButton.waitForPublicElement("mode.random.button", timeout: TestWait.seconds(.infrastructure(10))),
+            "Mode selection page should show random playback")
+        tapElement(randomButton)
+
+        let continueButton = app.buttons["mode.continue.button"]
+        XCTAssertTrue(
+            continueButton.waitForPublicElement("mode.continue.button", timeout: TestWait.seconds(.product(10))),
+            "Mode selection page should show Continue")
+        XCTAssertTrue(continueButton.isEnabled, "After selecting random playback, Continue should be tappable")
+        tapElement(continueButton)
 
         XCTAssertTrue(
             app.buttons["slideshow.control.settings.button"].waitForPublicElement(
                 "slideshow.control.settings.button",
-                timeout: max(.zero, playbackDeadline.timeIntervalSinceNow)),
+                timeout: TestWait.seconds(.product(30))),
             "After entering playback, the control bar should be shown"
         )
     }

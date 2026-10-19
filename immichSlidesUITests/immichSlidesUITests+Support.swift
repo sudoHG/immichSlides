@@ -123,28 +123,39 @@ extension immichSlidesUITests {
     }
 
     func startRandomPlaybackFromModeSelection(app: XCUIApplication) {
-        guard
-            let playbackDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
-                "mode.random.button", destinationIdentifier: "slideshow.control.settings.button",
-                selectionTimeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds,
-                departureTimeout: TestWait.seconds(.product(25)))
-        else { return }
-
+        let modeRandomButton = app.buttons["mode.random.button"]
         XCTAssertTrue(
-            waitForSlideshowSettingsButton(app: app, timeout: max(.zero, playbackDeadline.timeIntervalSinceNow)))
+            modeRandomButton.waitForPublicElement(
+                "mode.random.button", timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
+        tapElement(modeRandomButton)
+
+        let modeContinueButton = app.buttons["mode.continue.button"]
+        XCTAssertTrue(
+            modeContinueButton.waitForPublicElement(
+                "mode.continue.button", timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
+        XCTAssertTrue(modeContinueButton.isEnabled)
+        tapElement(modeContinueButton)
+
+        XCTAssertTrue(waitForSlideshowSettingsButton(app: app, timeout: TestWait.seconds(.product(25))))
     }
 
     func startFilteredFlowFromModeSelection(app: XCUIApplication) {
-        guard
-            let summaryDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
-                "mode.filtered.button", destinationIdentifier: "filterSummary.startPlayback.button",
-                selectionTimeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds,
-                departureTimeout: immichSlidesUITestsWaitTiming.navigationTimeoutSeconds)
-        else { return }
+        let modeFilteredButton = app.buttons["mode.filtered.button"]
+        XCTAssertTrue(
+            modeFilteredButton.waitForPublicElement(
+                "mode.filtered.button", timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
+        tapElement(modeFilteredButton)
+
+        let modeContinueButton = app.buttons["mode.continue.button"]
+        XCTAssertTrue(
+            modeContinueButton.waitForPublicElement(
+                "mode.continue.button", timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
+        XCTAssertTrue(modeContinueButton.isEnabled)
+        tapElement(modeContinueButton)
 
         XCTAssertTrue(
             app.buttons["filterSummary.startPlayback.button"].waitForFailureEvidence(
-                timeout: max(.zero, summaryDeadline.timeIntervalSinceNow)))
+                timeout: immichSlidesUITestsWaitTiming.navigationTimeoutSeconds))
     }
 
     func openSettingsFromSlideshow(app: XCUIApplication) {

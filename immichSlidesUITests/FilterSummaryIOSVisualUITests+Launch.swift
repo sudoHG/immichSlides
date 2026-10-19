@@ -94,17 +94,25 @@ extension FilterSummaryIOSVisualUITests {
             acceptanceLocale: acceptanceLocale
         )
 
-        guard
-            let summaryDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
-                "mode.filtered.button", destinationIdentifier: "filterSummary.startPlayback.button",
-                selectionTimeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
-                departureTimeout: FilterSummaryIOSVisualUITestsWaitTiming.screenTransitionTimeoutSeconds)
-        else { return app }
+        let modeFilteredButton = app.buttons["mode.filtered.button"]
+        XCTAssertTrue(
+            modeFilteredButton.waitForPublicElement(
+                "mode.filtered.button",
+                timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds))
+        modeFilteredButton.tapForFailureEvidence()
+
+        let modeContinueButton = app.buttons["mode.continue.button"]
+        XCTAssertTrue(
+            modeContinueButton.waitForPublicElement(
+                "mode.continue.button",
+                timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds))
+        XCTAssertTrue(modeContinueButton.isEnabled)
+        modeContinueButton.tapForFailureEvidence()
 
         let startPlaybackButton = app.buttons["filterSummary.startPlayback.button"]
         XCTAssertTrue(
             startPlaybackButton.waitForFailureEvidence(
-                timeout: max(.zero, summaryDeadline.timeIntervalSinceNow)))
+                timeout: FilterSummaryIOSVisualUITestsWaitTiming.screenTransitionTimeoutSeconds))
         XCTAssertTrue(
             app.buttons["filterSummary.album.button"].waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.navigationTimeoutSeconds))

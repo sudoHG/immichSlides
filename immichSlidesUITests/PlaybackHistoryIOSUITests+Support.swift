@@ -458,32 +458,46 @@ extension PlaybackHistoryIOSUITests {
     }
 
     func startRandomPlaybackFromModeSelection(app: XCUIApplication) {
-        guard
-            let playbackDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
-                "mode.random.button", destinationIdentifier: "slideshow.control.settings.button",
-                selectionTimeout: TestWait.seconds(.infrastructure(5)),
-                departureTimeout: TestWait.seconds(.infrastructure(25)))
-        else { return }
+        let randomButton = app.buttons["mode.random.button"]
+        XCTAssertTrue(
+            randomButton.waitForPublicElement("mode.random.button", timeout: TestWait.seconds(.infrastructure(5))),
+            "The mode selection page should show the Random Playback entry")
+        tapElement(randomButton)
+
+        let continueButton = app.buttons["mode.continue.button"]
+        XCTAssertTrue(
+            continueButton.waitForPublicElement("mode.continue.button", timeout: TestWait.seconds(.infrastructure(5))),
+            "The mode selection page should show the Continue button")
+        XCTAssertTrue(
+            continueButton.isEnabled, "After choosing Random Playback, the Continue button should be tappable")
+        tapElement(continueButton)
 
         XCTAssertTrue(
             app.buttons["slideshow.control.settings.button"].waitForPublicElement(
                 "slideshow.control.settings.button",
-                timeout: max(.zero, playbackDeadline.timeIntervalSinceNow)),
+                timeout: TestWait.seconds(.infrastructure(25))),
             "After entering random playback, the playback control bar should be shown"
         )
     }
 
     func startFilteredPlaybackFromModeSelection(app: XCUIApplication) {
-        guard
-            let summaryDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
-                "mode.filtered.button", destinationIdentifier: "filterSummary.startPlayback.button",
-                selectionTimeout: TestWait.seconds(.infrastructure(5)),
-                departureTimeout: TestWait.seconds(.infrastructure(12)))
-        else { return }
+        let filteredButton = app.buttons["mode.filtered.button"]
+        XCTAssertTrue(
+            filteredButton.waitForPublicElement("mode.filtered.button", timeout: TestWait.seconds(.infrastructure(5))),
+            "The filtered-playback harness should show the Filtered Playback entry")
+        tapElement(filteredButton)
+
+        let continueButton = app.buttons["mode.continue.button"]
+        XCTAssertTrue(
+            continueButton.waitForPublicElement("mode.continue.button", timeout: TestWait.seconds(.infrastructure(5))),
+            "Filtered playback should show the Continue button")
+        XCTAssertTrue(
+            continueButton.isEnabled, "The Continue button in the filtered-playback harness should be tappable")
+        tapElement(continueButton)
 
         let startButton = app.buttons["filterSummary.startPlayback.button"]
         XCTAssertTrue(
-            startButton.waitForFailureEvidence(timeout: max(.zero, summaryDeadline.timeIntervalSinceNow)),
+            startButton.waitForFailureEvidence(timeout: TestWait.seconds(.infrastructure(12))),
             "The filtered playback summary should show the Start Playback button")
         // Starting before the page swaps in the real album and person would play an empty pool.
         let selectionReady = app.staticTexts["filterSummary.visual.ready"]

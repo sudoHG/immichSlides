@@ -175,7 +175,8 @@ extension StrictE2EFirstBatchIOSUITests {
             identifier,
             destinationIdentifier: identifier == "mode.filtered.button"
                 ? "filterSummary.startPlayback.button" : "slideshow.control.settings.button",
-            selectionTimeout: TestWait.seconds(.product(8)),
+            selectionTimeout: TestWait.seconds(.product(8)) + TestWait.seconds(.product(2))
+                + TestWait.seconds(.product(2)) + TestWait.seconds(.product(2)),
             departureTimeout: departureTimeout)
     }
 }

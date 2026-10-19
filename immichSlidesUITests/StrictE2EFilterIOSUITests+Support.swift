@@ -58,7 +58,9 @@ extension StrictE2EFilterIOSUITests {
             identifier,
             destinationIdentifier: identifier == "mode.filtered.button"
                 ? "filterSummary.startPlayback.button" : "slideshow.control.settings.button",
-            selectionTimeout: TestWait.seconds(.product(8)),
+            selectionTimeout: TestWait.seconds(.product(8)) + TestWait.seconds(.product(2))
+                + TestWait.seconds(.product(4)) + TestWait.seconds(.product(4))
+                + TestWait.seconds(.product(4)),
             departureTimeout: TestWait.seconds(.product(20)))
     }
 
