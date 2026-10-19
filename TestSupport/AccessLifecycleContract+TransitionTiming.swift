@@ -20,9 +20,11 @@ extension AccessLifecycleContract {
             samples: samples, intervalSeconds: intervalSeconds
         )
         let signed = try officialStartSigned(for: verdict, continueMark: continueMark, intervalSeconds: intervalSeconds)
-        if case .detected(let requestElapsed, _, _) = verdict,
-            let start = samples.first(where: { $0.requestElapsed == requestElapsed })
-        {
+        if case .detected(let requestElapsed, _, _) = verdict {
+            guard let start = samples.first(where: { $0.requestElapsed == requestElapsed }) else {
+                throw AssertionError.message(
+                    "iPhone pause-continue evidence is invalid; detected start has no captured frame")
+            }
             try assertStableImageWithinTransitionDeadline(
                 start: start, stable: stable,
                 failureMessage: "iPhone new photo must be stably identifiable within 4 s of transition start"

@@ -93,6 +93,12 @@ extension SettingsResumeContractTests {
                     luma: luma, isControlBarVisible: signal != "controls", returnLag: 0.14
                 )
             }
+            if signal == "dark_baseline" {
+                for (index, luma) in [0.09, 0.07, 0.05].enumerated() {
+                    samples[index + 2] = watchSample(
+                        request: samples[index + 2].requestElapsed, mark: "A5", luma: luma, returnLag: 0.14)
+                }
+            }
             if signal == "two_frames" { samples.removeAll { abs($0.requestElapsed - 13.5) < 0.001 } }
             if signal == "gap" {
                 samples[2] = watchSample(request: 13.2, mark: "A5", luma: 0.49, returnLag: 0.01)
@@ -104,7 +110,7 @@ extension SettingsResumeContractTests {
                 samples[1] = watchSample(
                     request: 13.05, mark: "UNRECOGNIZABLE", status: "UNRECOGNIZABLE", returnLag: 0.14)
             }
-            let baseline: Double? = signal == "missing_baseline" ? nil : signal == "dark_baseline" ? 0.0 : 0.53
+            let baseline: Double? = signal == "missing_baseline" ? nil : signal == "dark_baseline" ? 0.1 : 0.53
             let evidence = try AccessLifecycleContract.assertIPhonePauseTimingEvidence(
                 continueMark: "A5", baselineLuma: baseline, samples: samples, intervalSeconds: 12
             )

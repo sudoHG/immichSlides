@@ -18,7 +18,6 @@ from ci_summary import (ContractError, decode, fields, identity_key, integer, ob
                         parse_identity, parse_summary, require, string, test_identity)
 from ci_verdict import tokens
 from run_host_checks import run_identity, source_metadata
-from strict_e2e_runner_support import IOS_LIFECYCLE_PAUSE_SUITE
 
 ROOT = Path(__file__).resolve().parent.parent
 MATRIX = ROOT / "scripts/nightly-matrix.json"
@@ -158,6 +157,7 @@ def matrix_equality(scheduled, observed):
 
 def aggregate_nightly(scheduled, summaries, *, live_in_scope, informational=(), review_packages=()):
     from strict_e2e_p2_contract import P2_CASES
+    from strict_e2e_runner_support import IOS_LIFECYCLE_PAUSE_SUITE
     review_suites = P2_CASES.keys() | {IOS_LIFECYCLE_PAUSE_SUITE}
     result = {"schema_version": 1, "status": "failed", "release_eligible": False,
               "release_ineligible_reasons": ["skeleton nightly: mandatory tiers are not built"],
