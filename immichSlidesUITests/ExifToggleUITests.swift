@@ -92,7 +92,18 @@ final class ExifToggleUITests: XCTestCase {
         driver.applyPlaybackSettings([.showExif(true)])
         try captureExifState("exif-reenabled", mark: fullMark, isExifEnabled: true, driver: driver, evidence: evidence)
 
-        let emptyMark = try driver.advance(toAnyOf: Self.emptyMetadataMarks)
+        let emptyMark = try driver.advance(toAnyOf: Self.emptyMetadataMarks) {
+            #if os(tvOS)
+            // The control bar spans narrow A2 and interrupts its public texture rectangle.
+            let receiver = driver.app.descendants(matching: .any)
+                .matching(identifier: "slideshow.hiddenWakeReceiver").firstMatch
+            XCTAssertTrue(
+                Wait.until(timeout: UITestSupportWaitTiming.screenTransitionTimeoutSeconds) {
+                    receiver.exists && receiver.hasFocus
+                },
+                "A2 identity evidence requires the hidden control receiver to have focus.")
+            #endif
+        }
         try captureExifState("exif-empty", mark: emptyMark, isExifEnabled: true, driver: driver, evidence: evidence)
 
         driver.applyPlaybackSettings([.displayMode(isSinglePhoto: false)])

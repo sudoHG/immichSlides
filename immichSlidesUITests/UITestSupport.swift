@@ -960,11 +960,15 @@ extension PlaybackDriver {
         return unchanged
     }
 
-    func advance(toAnyOf marks: Set<String>, maxNextPresses: Int = 6) throws -> String {
+    func advance(
+        toAnyOf marks: Set<String>, maxNextPresses: Int = 6, prepareIdentityEvidence: () -> Void = {}
+    ) throws -> String {
+        prepareIdentityEvidence()
         var current = stableMark()
         for _ in 0..<maxNextPresses {
             if let current, marks.contains(current) { return current }
             next()
+            prepareIdentityEvidence()
             current = stableMark(excluding: current)
         }
         if let current, marks.contains(current) { return current }

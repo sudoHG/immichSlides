@@ -113,6 +113,12 @@ Synthetic coverage includes A1/A2 and B1/B2 at iPhone, iPad and tvOS dimensions,
 both orientations, and motion scales 1.00/1.10. Background-only geometry controls
 must remain nonmatches; duplicate controls retain their original hue status and
 do not count as independent rejection coverage.
+The EXIF A2 flow on tvOS waits for the existing hidden control receiver to regain
+focus before starting its unchanged identity wait. The visible bar can span the
+entire narrow photo and break rectangle continuity; those occluded frames stay
+unrecognizable. This preparation uses the existing screen-transition deadline,
+keeps the six-Next limit and does not interpolate across an occlusion or relax a
+reader gate.
 
 The Swift `captureIdentity` and Python `capture_identity` readers locate each
 photo's palette rectangle, rather than assuming equal quadrants or full-span strips. They use
