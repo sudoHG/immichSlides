@@ -13,7 +13,6 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
     }
 
     private enum Timing {
-        static let focusMovementSettleSeconds: TimeInterval = TestWait.seconds(.product(0.15))
         static let focusPollingSeconds: TimeInterval = TestWait.seconds(.product(0.1))
         static let playbackSceneSettleSeconds: TimeInterval = TestWait.seconds(.product(3.5))
         static let autoPlayObservationSeconds: TimeInterval = TestWait.seconds(.product(6))
@@ -57,15 +56,13 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
                 "firstboot.serverURL.field", timeout: TestWait.seconds(.product(3))),
             "A cold launch with saved settings must not return to the first-boot form."
         )
-        let playPauseButton = app.buttons["slideshow.control.playPause.button"]
+        var didSendWake = false
         XCTAssertTrue(
-            waitForColdLaunchControls(app: app, timeout: TestWait.seconds(.product(30))),
+            waitForColdLaunchControls(app: app, timeout: TestWait.seconds(.product(30)), didSendWake: &didSendWake),
             "A configured cold launch must go straight to the playback page."
         )
         XCTAssertTrue(
-            waitForFocus(
-                on: playPauseButton, identifier: "slideshow.control.playPause.button",
-                timeout: TestWait.seconds(.product(8))),
+            waitForColdLaunchFocus(app: app, timeout: TestWait.seconds(.product(8)), didSendWake: &didSendWake),
             "Default focus on the cold-launch playback page must land on the Play/Pause button."
         )
         attachScreenshot(app: app, name: "tvos-cold-launch-02-configured-slideshow")
@@ -738,10 +735,11 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
         for _ in 0..<maximumPresses {
             if identifier == nil { identifier = (try? element.snapshot())?.identifier }
             let snapshots = XCUIApplication().evidenceSnapshotsByIdentifier()
-            guard let identifier, let target = snapshots[identifier] else { continue }
-            // Previous is reachable only while the current retained history has an earlier entry.
-            if target.identifier == "slideshow.control.previous.button", !target.isEnabled { break }
-            if target.hasFocus { return }
+            if let identifier, let target = snapshots[identifier] {
+                // Previous is reachable only while the current retained history has an earlier entry.
+                if target.identifier == "slideshow.control.previous.button", !target.isEnabled { break }
+                if target.hasFocus { return }
+            }
             _ = XCUIApplication().pressAndWaitForTVOSFocusMovement(
                 direction, to: identifier, timeout: TestWait.seconds(.product(1)))
         }
@@ -766,11 +764,15 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
     }
 
     @MainActor
-    private func waitForColdLaunchControls(app: XCUIApplication, timeout: TimeInterval) -> Bool {
+    private func waitForColdLaunchControls(
+        app: XCUIApplication, timeout: TimeInterval, didSendWake: inout Bool
+    ) -> Bool {
         FirstFailureContext.beginWait(seconds: timeout)
-        defer { FirstFailureContext.endWait() }
+        defer {
+            FirstFailureContext.endWait()
+            attachColdLaunchWakePath(phase: "controls", didSendWake: didSendWake)
+        }
         let deadline = Date().addingTimeInterval(timeout)
-        var didSendWake = false
         while Date() < deadline {
             let snapshots = app.evidenceSnapshotsByIdentifier()
             guard Date() < deadline else { return false }
@@ -782,6 +784,36 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(Timing.focusPollingSeconds))
         }
         return false
+    }
+
+    @MainActor
+    private func waitForColdLaunchFocus(
+        app: XCUIApplication, timeout: TimeInterval, didSendWake: inout Bool
+    ) -> Bool {
+        FirstFailureContext.beginWait(seconds: timeout)
+        defer {
+            FirstFailureContext.endWait()
+            attachColdLaunchWakePath(phase: "focus", didSendWake: didSendWake)
+        }
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            let snapshots = app.evidenceSnapshotsByIdentifier()
+            guard Date() < deadline else { return false }
+            if snapshots["slideshow.control.playPause.button"]?.hasFocus == true { return true }
+            if !didSendWake && snapshots["slideshow.hiddenWakeReceiver"]?.hasFocus == true {
+                FirstFailureRemote.press(.up)
+                didSendWake = true
+            }
+            RunLoop.current.run(until: min(deadline, Date().addingTimeInterval(Timing.focusPollingSeconds)))
+        }
+        return false
+    }
+
+    private func attachColdLaunchWakePath(phase: String, didSendWake: Bool) {
+        let attachment = XCTAttachment(string: "phase=\(phase);didSendWake=\(didSendWake)")
+        attachment.name = "cold-launch-\(phase)-wake-path"
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     @MainActor

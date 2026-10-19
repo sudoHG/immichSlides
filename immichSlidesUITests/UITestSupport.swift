@@ -337,18 +337,20 @@ extension XCUIApplication {
 extension XCUIApplication {
     // Return a confirmed move, a confirmed edge, or an unknown observation without failing the poll.
     func pressAndWaitForTVOSFocusMovement(
-        _ direction: XCUIRemote.Button, to identifier: String, timeout: TimeInterval
+        _ direction: XCUIRemote.Button, to identifier: String?, timeout: TimeInterval
     ) -> Bool? {
-        let previous = evidenceSnapshotsByIdentifier().values.first(where: \.hasFocus)
+        let previous = evidenceSnapshotsByIdentifier().sorted { $0.key < $1.key }.first { $0.value.hasFocus }?.value
         FirstFailureRemote.press(direction)
         let deadline = Date().addingTimeInterval(timeout)
         var hasConfirmedUnchangedFocus = false
         while Date() < deadline {
             let snapshots = evidenceSnapshotsByIdentifier()
             guard Date() < deadline else { return nil }
-            if snapshots[identifier]?.hasFocus == true { return true }
+            if let identifier, snapshots[identifier]?.hasFocus == true { return true }
             hasConfirmedUnchangedFocus = false
-            if let previous, let current = snapshots.values.first(where: \.hasFocus) {
+            if let previous,
+                let current = snapshots.sorted(by: { $0.key < $1.key }).first(where: { $0.value.hasFocus })?.value
+            {
                 if current.identifier != previous.identifier || current.elementType != previous.elementType {
                     return true
                 }

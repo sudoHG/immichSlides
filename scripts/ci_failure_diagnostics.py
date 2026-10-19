@@ -701,6 +701,7 @@ PREFIX_RULES = (
     ("After pausing, the control value must be play.", "control_action", "control_state"),
     ("Resuming must continue from the current photo, with the control value back to pause.", "control_action", "control_state"),
     ("Previous must be disabled at the history boundary when playback starts.", "history_navigation", "control_state"),
+    ("Playback must start with exactly one retained history entry.", "history_navigation", "control_state"),
     ("After two Next taps, Previous must be enabled.", "history_navigation", "control_state"),
     ("Visual ID failed ", "visible_scene_capture", "scene_identity"),
     ("After a pause of at least 10 seconds, autoplay must not resume on its own.", "paused_hold", "control_state"),

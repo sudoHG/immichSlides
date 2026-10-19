@@ -72,7 +72,9 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
             "Random mode must reach the playback page.")
         let previous = app.buttons["slideshow.control.previous.button"]
         var initialSnapshots: [String: XCUIElementSnapshot] = [:]
-        let initialBoundaryDeadline = Date().addingTimeInterval(TestWait.seconds(.product(8)))
+        let initialBoundaryTimeout = TestWait.seconds(.product(8))
+        let initialBoundaryDeadline = Date().addingTimeInterval(initialBoundaryTimeout)
+        FirstFailureContext.beginWait(seconds: initialBoundaryTimeout)
         var didReadInitialBoundary = false
         while Date() < initialBoundaryDeadline {
             initialSnapshots = app.evidenceSnapshotsByIdentifier()
@@ -86,6 +88,7 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
             }
             RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.1))))
         }
+        FirstFailureContext.endWait()
         XCTAssertTrue(
             didReadInitialBoundary,
             "The playback page must show the Previous button.")
@@ -96,7 +99,7 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
             initialPrevious.isEnabled, "Previous must be disabled at the history boundary when playback starts.")
         XCTAssertEqual(
             initialRender["historyCount"], "1",
-            "Previous must be disabled at the history boundary when playback starts.")
+            "Playback must start with exactly one retained history entry.")
         recordControlTimeline(app: app, event: "journey-b-initial-boundary")
         dismissPlaybackEntryHintIfNeeded(app: app)
         attachOrientationEvidence(app: app, name: "journey-b-random-playback-start")
