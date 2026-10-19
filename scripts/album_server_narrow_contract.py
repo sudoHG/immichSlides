@@ -352,7 +352,10 @@ def evaluate_album_empty_evidence(evidence_dir: Path, fixture_set: str = "a", *,
     result_path = evidence_dir / "empty-album-result.png"
     if not result_path.is_file():
         raise AlbumServerContractError("Missing empty-album result screenshot")
-    if _empty_result_shows_fixture_photo(result_path.read_bytes()):
+    from ci_failure_diagnostics import remember_validator_input
+    result_bytes = result_path.read_bytes()
+    remember_validator_input(result_bytes)
+    if _empty_result_shows_fixture_photo(result_bytes):
         raise AlbumServerContractError("After the empty album, photos from the old non-empty pool must not keep playing")
     report = {
         "verdict": "PASS",

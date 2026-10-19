@@ -651,12 +651,14 @@ classifier pattern/status/mark sets to their contract sources without adding ima
 dependencies to the isolated reader. The closed `unreadable public glyph:` exception
 names are `AttributeError`, `IndexError`,
 `KeyError`, `OSError`, `TypeError`, `UnidentifiedImageError` and `ValueError`.
-Screenshot names are hand-reviewed against `public_scene_photos_from_bytes` and server-switch
-`_require_public_pattern` callers: `history-*`,
+Screenshot names are hand-reviewed against `public_scene_photos_from_bytes`,
+`target_album_frame_identity` and server-switch `_require_public_pattern` callers: `history-*`,
 `pause-immediate`, `pause-after-10s`, `resumed`, `album-playback-N`, `album-play-1`/`album-play-2`/`album-play-3`, `person-normal`,
 `person-no-faces`, `person-conflict-normal(-N)`, `album-switch-b-play-N`,
 `server-switch-a-play-1` and `switch-b-play-1`/`switch-b-play-2` (all `.png`).
-No names are reserved for a future producer.
+The `album-play-[123]` reader shipped in PR #514 before its filter-album producer
+in PR #515. These stems also fit the existing public-pattern-mismatch grammar;
+the filter-album producer emits screenshot context, not that mismatch prefix.
 Unrecognized prefixes, filenames and suffixes are refused rather than treated as public
 text. The grammar accepts no URLs, keys, server addresses, directory paths, private
 xcresult text or pixel arrays. It does not decode images or change a visual check.
@@ -725,10 +727,19 @@ Neither evidence type changes its original result.
 The target-album validator registers its raw input before slot counting and includes
 the fixed `album-play-N.png` context in identity rejections. Its retained PNG uses
 the existing diagnostic budget, canonicalization and `read-failure` hash/attempt gate.
-Warm child-runner preparation failures project the current bounded ledger into the
-case manifest. The tracer accepts that preparation receipt only without official
+For iOS and tvOS album-empty, the empty-result image replaces the playback input
+before pixel checks. JSON-only failures and a missing result PNG still retain the
+last validated playback frame; that image is context, not proof of the empty-result
+screen or the JSON failure.
+Warm child-runner failures in either initial simulator preparation or the per-case
+reset before xcodebuild project only that call's events from the bounded ledger
+into the case manifest. Steps absent from the ledger remain `unknown`; no timing
+or image is invented. The tracer accepts that preparation receipt only without official
 method execution: the case stays failed, its attempt is `not-run`, and the raw runner
-exit (including 124) is retained. Failed official methods also supply their existing
+exit (including 124) is retained. Aggregation therefore counts these identities as
+`missing`, rather than `executed` with a `declared-not-compiled` error. Producer
+failure and matrix mismatch still fail the aggregate; this is a count change, not
+a verdict change. Failed official methods also supply their existing
 phase/class pair to the failed summary observation and attempt; validator or
 preparation failures do not acquire XCTest labels.
 
