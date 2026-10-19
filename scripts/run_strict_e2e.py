@@ -771,6 +771,19 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             case_manifest.update(result="FAILED", exit_code=primary_exit_code)
             write_case_manifest(arguments.evidence_dir, case_manifest)
 
+    def run_preparation(operation, *args, **kwargs):
+        from ci_failure_diagnostics import preparation_first_failure
+        recorder = active()
+        sequence = recorder.sequence if recorder else 0
+        try:
+            return operation(*args, **kwargs)
+        except CommandError:
+            ledger = recorder.receipt() if recorder else None
+            if ledger is not None:
+                ledger["events"] = [event for event in ledger["events"] if event["sequence"] > sequence]
+            case_manifest["first_failure"] = preparation_first_failure(ledger)
+            raise
+
     try:
         ensure_disk_for_xcodebuild(data_available_gib, arguments.min_free_gib)
         if "Simulator" not in arguments.destination:
@@ -823,7 +836,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             preparation_lines.append(line)
             print(line, flush=True)
         try:
-            _, preparation_log = prepare_simulator(simulator_udid, report=report_preparation)
+            _, preparation_log = run_preparation(prepare_simulator, simulator_udid, report=report_preparation)
         finally:
             (arguments.evidence_dir / "simulator-preparation.log").write_text(
                 preparation_log or ("\n".join(preparation_lines) + "\n"), encoding="utf-8")
@@ -918,7 +931,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             )
             service_log_path.write_text("scenario=unreachable listening=false\n", encoding="utf-8")
 
-        reset_log = reset_simulator_app(simulator_udid)
+        reset_log = run_preparation(reset_simulator_app, simulator_udid)
         (arguments.evidence_dir / "simulator-reset.log").write_text(reset_log, encoding="utf-8")
 
         environment = make_test_environment(
