@@ -65,7 +65,7 @@ not fix it. The four-candidate denominator, deadlines and isolation checks remai
 A and C, and B1–B5's image bytes, remain unchanged.
 
 B6–B8 use two RGB endpoints per identity, matched as a pair within tolerance 12
-in both the Python and Swift readers, rather than A1–A5's hue scoring. This adds
+in both the Python and Swift readers, rather than the original A1–A5 hue scoring. This adds
 endpoint-pair scoring and the shared A6–A8 color labels without changing the
 existing tolerances or confidence thresholds. A B frame rejected as
 `unreadable public glyph slot` or `mixed public glyphs` can indicate a collision with system
@@ -73,6 +73,56 @@ chrome: first compare the failing slot's pixels and surrounding controls/EXIF
 against both identity endpoints. Preserve the original frame and its slot/axis
 exception; do not change tolerances or exclude the frame. The measured collision
 history and corpus are in [#486](https://github.com/sudoHG/immichSlides/pull/486).
+
+Whole-frame A1/A2 matches additionally require both real RGB palette endpoints
+and clear public row texture from the same PNG. Support and row coverage are
+measured inside the detected sharp foreground rectangle, independently of the
+blurred surround and screen width. The readers reuse tolerance 12, minimum
+support 18, observed row coverage 85% and texture cell drift 2 pixels.
+Only one qualified candidate above the existing score floor can confirm an
+identity; multiple candidates remain a transition, and missing evidence stays
+unrecognizable. Blurred background colors, generic green/gray and a faded frame
+without its true RGB pair cannot confirm a new photo. Original black, dark-wash,
+score and ambiguity gates still run first. Independently verified composite
+rectangles retain their existing interior hue check and complete canvas gates.
+Striped candidates additionally need a sharp edge between their actual RGB
+endpoints, with at most the existing two-pixel unknown band. A blurred stripe's
+monochrome rows alone do not establish clear foreground texture.
+The stripe edge check reuses the identity reader's 96-pixel width, so normal
+display upscaling does not inflate a sharp source edge. Palette support, row
+texture and composite sampling retain their existing 480-pixel cap. An additional
+half-resolution probe, capped at 240 pixels wide, locates contiguous sharp
+palette runs before the original texture checks. Its rectangle needs the existing
+minimum image extent and at least 18 supported pixels per boundary/interior line;
+missing interior lines may span at most two probe pixels. White glyph ink can
+support rectangle continuity but cannot qualify a texture row. A bitmap whose
+entire canvas supplies public palette colors or white ink keeps its original
+bounds; fitted captures derive their bounds from independently supported lines.
+Candidate palette proof reads the PNG's encoded RGB channels in both languages;
+display color conversion must not change those values for a tagged video frame.
+The existing composite reader keeps its original color conversion.
+A narrow region can reuse qualification from the existing full-reference
+foreground when its original hue verdict agrees. Alternatively, the same PNG
+must pass the unchanged complete two/three-slot composite reader and independently
+prove the candidate's sharp texture; the region must supply both RGB endpoints,
+no sufficiently supported foreign palette, and one candidate above the existing
+score floor. A generic single-photo whole-frame match cannot supply either
+provenance. The filter's original surround checks still run before region checks.
+Evidence used to reject a side partner, an out-of-album photo or an old nonempty
+pool uses the ungated hue reader, so qualification cannot hide visible defects.
+Synthetic coverage includes A1/A2 and B1/B2 at iPhone, iPad and tvOS dimensions,
+both orientations, and motion scales 1.00/1.10. Background-only geometry controls
+must remain nonmatches; duplicate controls retain their original hue status and
+do not count as independent rejection coverage.
+For original 3840x2160 tvOS captures, sharp-foreground continuity and texture
+checks ignore only the scanner-approved shared color/glyph rectangle
+(1256,1436)-(2580,1925). Its pixels supply no palette counts or sharp edges;
+fully occluded lines supply neither support nor a missing-photo gap. The same
+rectangle is mapped into the sampled frame and translated with each foreground
+crop. Other dimensions and region crops grant no exclusion. In particular,
+iPhone landscape has no measured entry, and the portrait phone's glyph-only
+box grants no palette exclusion. EXIF uses the same reader without waiting for
+controls to hide; the six-Next limit and existing deadlines remain unchanged.
 
 The Swift `captureIdentity` and Python `capture_identity` readers locate each
 photo's palette rectangle, rather than assuming equal quadrants or full-span strips. They use

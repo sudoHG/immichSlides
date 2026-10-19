@@ -690,13 +690,19 @@ class AlbumEmptyFixtureBTests(unittest.TestCase):
                 (directory / "album-play-1.png").write_bytes(frame)
                 self.assertEqual(require_visual_identity(directory, "album-empty", fixture_set=fixture_set)["marks"],
                                  ["A2", "A1", "A2"])
+                # The mixed lower letter pins glyph consistency; outside_gap is
+                # a retained geometry control, not independent mutation coverage.
                 for case in ("foreign_bottom_half", "outside_gap"):
                     with self.subTest(case=case):
                         invalid = _iphone_control_split_frame(fixture_set, **{case: True})
-                        # Whole-frame MATCH must never rescue an unreadable stacked slot.
-                        self.assertEqual(classify_screenshot(invalid).status, "MATCH")
+                        # Both photos now qualify, but the multi-slot path must
+                        # still reject the damaged second glyph independently.
+                        self.assertEqual(classify_screenshot(invalid).status, "TRANSITION")
                         (directory / "album-play-1.png").write_bytes(invalid)
-                        with self.assertRaises(CommandError):
+                        with self.assertRaisesRegex(
+                            CommandError,
+                            r"^Visual assertion failed; cannot mark SUCCESS: unreadable public glyph slot; slot 2 \(vertical\)$",
+                        ):
                             require_visual_identity(directory, "album-empty", fixture_set=fixture_set)
 
     def test_system_home_indicator_does_not_hide_a_footer_photo_patch(self) -> None:
@@ -862,13 +868,14 @@ class EmptyResultIdentityTests(unittest.TestCase):
             self.assertIn("old non-empty pool", str(raised.exception))
 
     def test_blurred_real_photo_as_empty_result_still_fails(self) -> None:
-        with tempfile.TemporaryDirectory() as raw:
-            directory = Path(raw)
-            _write_album_empty_pass(directory)
-            (directory / "empty-album-result.png").write_bytes(_blurred_photo(_fixture_png("A4")))
-            with self.assertRaises(AlbumServerContractError) as raised:
-                evaluate_album_empty_evidence(directory, use_ios_album_geometry=True)
-            self.assertIn("old non-empty pool", str(raised.exception))
+        for mark in ("A4", "A2"):
+            with self.subTest(mark=mark), tempfile.TemporaryDirectory() as raw:
+                directory = Path(raw)
+                _write_album_empty_pass(directory)
+                (directory / "empty-album-result.png").write_bytes(_blurred_photo(_fixture_png(mark)))
+                with self.assertRaises(AlbumServerContractError) as raised:
+                    evaluate_album_empty_evidence(directory, use_ios_album_geometry=True)
+                self.assertIn("old non-empty pool", str(raised.exception))
 
     def test_empty_copy_with_real_photo_still_fails(self) -> None:
         background = _empty_result_screen(TV_SCREEN)
@@ -961,7 +968,7 @@ class DisplayPolicyNegativeTests(unittest.TestCase):
             ("unknown", _png(Image.new("RGB", (320, 568), (25, 25, 25))),
              "^after-change cannot use a transition or unknown frame as passing$"),
             ("undecodable", b"not a PNG", "^after-change cannot use a transition or unknown frame as passing$"),
-            ("multi", _side_by_side(_fixture_png("A1", "b"), _fixture_png("A2", "b")),
+            ("multi", _side_by_side(_fixture_png("A3", "b"), _fixture_png("A4", "b")),
              "^after-change cannot use a transition or unknown frame as passing: the stable photo region is still transitioning$"),
             ("unchanged", _side_by_side(_fixture_png("A2", "b"), _fixture_png("A3", "b")),
              "^after-change cannot use a transition or unknown frame as passing$"),

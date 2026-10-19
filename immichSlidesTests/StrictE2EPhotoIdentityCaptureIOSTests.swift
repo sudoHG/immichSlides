@@ -67,6 +67,33 @@ struct StrictE2EPhotoIdentityCaptureIOSTests {
         #expect(identity.mark == "A5")
     }
 
+    @Test(arguments: ["A1", "A2", "p3-A2"])
+    func `portrait single photo needs its public colors and sharp texture`(mark: String) throws {
+        let photoMark = mark.hasPrefix("p3-") ? String(mark.dropFirst(3)) : mark
+        var png = try renderPNG(width: 480, height: 1040) { context in
+            context.setFillColor(color(180, 180, 180))
+            context.fill(CGRect(x: 0, y: 0, width: 480, height: 1040))
+            context.setFillColor(color(55, 135, 38))
+            context.fill(CGRect(x: 0, y: 0, width: 240, height: 1040))
+            fillSyntheticMark(photoMark, in: CGRect(x: 0, y: 385, width: 480, height: 270), context: context)
+        }
+        if mark.hasPrefix("p3-") {
+            let source = try #require(CGImageSourceCreateWithData(png as CFData, nil))
+            let image = try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
+            let space = try #require(CGColorSpace(name: CGColorSpace.displayP3))
+            let tagged = try #require(image.copy(colorSpace: space))
+            let output = NSMutableData()
+            let destination = try #require(CGImageDestinationCreateWithData(output, "public.png" as CFString, 1, nil))
+            CGImageDestinationAddImage(destination, tagged, nil)
+            try #require(CGImageDestinationFinalize(destination))
+            png = output as Data
+        }
+        for identity in [StrictE2EPhotoIdentity.classify(png: png), StrictE2EPhotoIdentity.captureIdentity(png: png)] {
+            #expect(identity.status == .match)
+            #expect(identity.mark == photoMark)
+        }
+    }
+
     @Test(arguments: [0.4, 0.5, 0.6])
     func `two photos placed side by side keep a composite identity`(share: Double) throws {
         let boundary = 480 * share

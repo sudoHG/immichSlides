@@ -110,6 +110,16 @@ def _pil_image():
 
 @functools.lru_cache(maxsize=4096)
 def classify_screenshot(image_bytes: bytes) -> PhotoIdentity:
+    return _classify_screenshot(image_bytes, qualify_single_photo=True)
+
+
+def classify_rejection_evidence(image_bytes: bytes) -> PhotoIdentity:
+    """Hue evidence may reject a frame; it cannot establish a qualified photo."""
+    return _classify_screenshot(image_bytes, qualify_single_photo=False)
+
+
+@functools.lru_cache(maxsize=4096)
+def _classify_screenshot(image_bytes: bytes, *, qualify_single_photo: bool) -> PhotoIdentity:
     if not image_bytes:
         return PhotoIdentity("UNRECOGNIZABLE", None, {}, 0.0, ("empty-bytes",))
     Image = _pil_image()
@@ -226,6 +236,13 @@ def classify_screenshot(image_bytes: bytes) -> PhotoIdentity:
     close = second_score > 0 and best_score < second_score * IDENTITY_AMBIGUOUS_SCORE_RATIO and (best_score - second_score) < IDENTITY_AMBIGUOUS_SCORE_MARGIN
     if mixed or close:
         return PhotoIdentity("TRANSITION", None, scores, mean_luma, notes)
+    if qualify_single_photo and best_mark in ("A1", "A2"):
+        candidates = _single_photo_candidates(rgb)
+        if len(candidates) > 1:
+            return PhotoIdentity("TRANSITION", None, scores, mean_luma, notes + ("multiple-public-candidates",))
+        if len(candidates) != 1 or scores[candidates[0]] < IDENTITY_MINIMUM_MATCH_SCORE:
+            return PhotoIdentity("UNRECOGNIZABLE", None, scores, mean_luma, notes + ("unsupported-public-candidate",))
+        best_mark = candidates[0]
     return PhotoIdentity("MATCH", best_mark, scores, mean_luma, notes)
 
 
@@ -238,6 +255,239 @@ FRAME_GLYPH_MAXIMUM_BLANK_ROWS = 4
 FRAME_GLYPH_MINIMUM_BAND_HEIGHT = 10
 FRAME_TEXTURE_MAXIMUM_CELL_DRIFT_PIXELS = 2
 FRAME_PALETTE_EDGE_BAND_RAW_PIXELS = 8
+
+
+def _single_photo_candidates(image: object) -> list[str]:
+    # Locate sharp cells before measuring their rectangle; the blurred surround
+    # supplies neither row width nor texture evidence.
+    rgb = sample_public_frame(image)
+    color_box, glyph_box = PUBLIC_SCENE_GEOMETRIES.get(image.size, (None, None))
+    # Only TV's shared color/glyph rectangle excludes control chrome. Phone's
+    # glyph-only rectangle and unmeasured landscape captures grant no color exclusion.
+    exclusion = _public_frame_sample_box(color_box if color_box == glyph_box else None, image.size, rgb.size)
+    candidates = []
+    for mark in ("A1", "A2"):
+        qualified = _sharp_public_foreground(rgb, mark, exclusion)
+        if qualified is None:
+            continue
+        foreground, foreground_exclusion = qualified
+        count = [0, 0]
+        for index, color in enumerate(foreground.getdata()):
+            if _inside_box(index % foreground.width, index // foreground.width, foreground_exclusion):
+                continue
+            assignment = public_palette_assignment(color)
+            if assignment is not None and assignment[0] == mark:
+                count[assignment[1]] += 1
+        if min(count) < IDENTITY_MINIMUM_CHROMATIC_PIXEL_COUNT:
+            continue
+        try:
+            pattern = _public_slot_pattern(foreground, mark, foreground_exclusion)
+        except IdentityAssertionError:
+            continue
+        if pattern is not None and (pattern != "B" or _has_sharp_public_stripe(foreground, mark, foreground_exclusion)):
+            candidates.append(mark)
+    return candidates
+
+
+def _inside_box(x: int, y: int, box: tuple[int, int, int, int] | None) -> bool:
+    return box is not None and box[0] <= x < box[2] and box[1] <= y < box[3]
+
+
+def _sharp_public_foreground(rgb: object, mark: str, exclusion: tuple[int, int, int, int] | None = None) -> tuple | None:
+    # Half-resolution capture separates a bilinear edge's footprint from blur;
+    # the existing 96-pixel stripe proof and two-pixel drift bound still apply.
+    width = min(rgb.width, max(IDENTITY_MINIMUM_IMAGE_PIXELS, rgb.width // 2))
+    height = max(IDENTITY_MINIMUM_IMAGE_PIXELS, round(rgb.height * width / rgb.width))
+    probe = rgb.resize((width, height), _pil_image().Resampling.NEAREST)
+    probe_exclusion = _public_frame_sample_box(exclusion, rgb.size, probe.size) if exclusion else None
+    assignments = [public_palette_assignment(color) for color in probe.getdata()]
+    seeds, runs = [[], []], [[], []]
+    for vertical in (False, True):
+        axis = int(vertical)
+        for line in range(width if vertical else height):
+            start = previous = previous_position = None
+            sharp = False
+            unknown = 0
+            for position in range((height if vertical else width) + 1):
+                x, y = (line, position) if vertical else (position, line)
+                if _inside_box(x, y, probe_exclusion):
+                    # Overlay pixels cannot create an edge, including across the mask.
+                    if sharp:
+                        runs[axis].append((line, start, previous_position + 1))
+                    start = previous = previous_position = None
+                    sharp = False
+                    unknown = 0
+                    continue
+                value = None
+                if position < (height if vertical else width):
+                    assignment = assignments[position * width + line if vertical else line * width + position]
+                    if assignment is not None and assignment[0] == mark:
+                        value = assignment[1]
+                if value is None:
+                    unknown += 1
+                    if unknown > FRAME_TEXTURE_MAXIMUM_CELL_DRIFT_PIXELS or position == (height if vertical else width):
+                        if sharp:
+                            runs[axis].append((line, start, previous_position + 1))
+                        start = previous = previous_position = None
+                        sharp = False
+                    continue
+                if start is None:
+                    start = position
+                if previous is not None and previous != value:
+                    seeds[axis].extend(((line, previous_position), (line, position)) if vertical
+                                       else ((previous_position, line), (position, line)))
+                    sharp = True
+                previous, previous_position, unknown = value, position, 0
+    if not seeds[0] and not seeds[1]:
+        return None
+    horizontal, vertical = seeds
+    if vertical and max(x for x, _ in vertical) - min(x for x, _ in vertical) + 1 >= IDENTITY_MINIMUM_IMAGE_PIXELS:
+        left, right = min(x for x, _ in vertical), max(x for x, _ in vertical) + 1
+    elif runs[0]:
+        left, right = min(a for _, a, _ in runs[0]), max(b for _, _, b in runs[0])
+    else:
+        return None
+    # A stripe meeting its blurred side margin is a boundary, not a checker cell.
+    horizontal = [(x, y) for x, y in horizontal
+                  if left + FRAME_TEXTURE_MAXIMUM_CELL_DRIFT_PIXELS <= x < right - FRAME_TEXTURE_MAXIMUM_CELL_DRIFT_PIXELS]
+    if horizontal and max(y for _, y in horizontal) - min(y for _, y in horizontal) + 1 >= IDENTITY_MINIMUM_IMAGE_PIXELS:
+        top, bottom = min(y for _, y in horizontal), max(y for _, y in horizontal) + 1
+    elif runs[1]:
+        top, bottom = min(a for _, a, _ in runs[1]), max(b for _, _, b in runs[1])
+    else:
+        return None
+    if min(right - left, bottom - top) < IDENTITY_MINIMUM_IMAGE_PIXELS:
+        return None
+    # A fully observed public bitmap keeps its original edges and pattern rejects.
+    full_support = [((a := public_palette_assignment(color)) is not None and a[0] == mark)
+                    or min(color) >= 240 for color in rgb.getdata()]
+    if all(full_support):
+        bounds = (0, 0, rgb.width, rgb.height)
+    else:
+        bounds = (int((left + .5) * rgb.width / width), int((top + .5) * rgb.height / height),
+                  int((right - .5) * rgb.width / width) + 1, int((bottom - .5) * rgb.height / height) + 1)
+    foreground = rgb.crop(bounds)
+    foreground_exclusion = _relative_box(exclusion, bounds)
+    supported = [not _inside_box(i % foreground.width, i // foreground.width, foreground_exclusion)
+                 and (((a := public_palette_assignment(color)) is not None and a[0] == mark) or min(color) >= 240)
+                 for i, color in enumerate(foreground.getdata())]
+    rows = [y for y in range(foreground.height)
+            if sum(supported[y * foreground.width:(y + 1) * foreground.width]) >= IDENTITY_MINIMUM_CHROMATIC_PIXEL_COUNT]
+    columns = [x for x in range(foreground.width)
+               if sum(supported[y * foreground.width + x] for y in range(foreground.height)) >= IDENTITY_MINIMUM_CHROMATIC_PIXEL_COUNT]
+    if not rows or not columns:
+        return None
+    # Run endpoints can touch a few background pixels. Only independently
+    # supported boundary lines belong to the detected rectangle.
+    trim = (columns[0], rows[0], columns[-1] + 1, rows[-1] + 1)
+    foreground = foreground.crop(trim)
+    foreground_exclusion = _relative_box(foreground_exclusion, trim)
+    if min(foreground.width, foreground.height) * width / rgb.width < IDENTITY_MINIMUM_IMAGE_PIXELS:
+        return None
+    supported = [not _inside_box(i % foreground.width, i // foreground.width, foreground_exclusion)
+                 and (((a := public_palette_assignment(color)) is not None and a[0] == mark) or min(color) >= 240)
+                 for i, color in enumerate(foreground.getdata())]
+    # Reuse complete-slot line support: neither detached patches nor a thin edge
+    # can provide a coherent photo rectangle. White public ink is an occlusion.
+    for vertical in (False, True):
+        matches = []
+        for line in range(foreground.width if vertical else foreground.height):
+            length = foreground.height if vertical else foreground.width
+            if all(_inside_box(line if vertical else position, position if vertical else line,
+                               foreground_exclusion) for position in range(length)):
+                # A wholly occluded line supplies neither support nor a missing-photo gap.
+                continue
+            count = sum(supported[position * foreground.width + line if vertical
+                                  else line * foreground.width + position]
+                        for position in range(foreground.height if vertical else foreground.width))
+            matches.append(count >= IDENTITY_MINIMUM_CHROMATIC_PIXEL_COUNT)
+        if not matches or not matches[0] or not matches[-1]:
+            return None
+        missing = 0
+        for present in matches:
+            missing = 0 if present else missing + 1
+            if missing * width / rgb.width > FRAME_TEXTURE_MAXIMUM_CELL_DRIFT_PIXELS:
+                return None
+    if foreground_exclusion and not (foreground_exclusion[0] < foreground.width and foreground_exclusion[2] > 0
+                                    and foreground_exclusion[1] < foreground.height and foreground_exclusion[3] > 0):
+        foreground_exclusion = None
+    return foreground, foreground_exclusion
+
+
+def _has_sharp_public_stripe(rgb: object, mark: str, exclusion: tuple[int, int, int, int] | None = None) -> bool:
+    # A monochrome row also occurs in a blurred striped background. Require
+    # a sharp palette edge at the existing identity scale, so display upscaling
+    # does not turn a source edge into an apparently blurred capture edge.
+    width = min(rgb.width, IDENTITY_SAMPLE_WIDTH_PIXELS)
+    height = max(IDENTITY_MINIMUM_IMAGE_PIXELS, round(rgb.height * width / rgb.width))
+    if exclusion:
+        # A foreground-relative overlay can extend beyond the cropped photo.
+        exclusion = (exclusion[0] * width // rgb.width, exclusion[1] * height // rgb.height,
+                     (exclusion[2] * width + rgb.width - 1) // rgb.width,
+                     (exclusion[3] * height + rgb.height - 1) // rgb.height)
+    rgb = rgb.resize((width, height), _pil_image().Resampling.NEAREST)
+    pixels = rgb.load()
+    for x in range(rgb.width):
+        previous = None
+        unknown_run = 0
+        for y in range(rgb.height):
+            if _inside_box(x, y, exclusion):
+                previous = None
+                unknown_run = 0
+                continue
+            assignment = public_palette_assignment(pixels[x, y])
+            if assignment is not None and assignment[0] == mark:
+                if previous is not None and assignment[1] != previous and unknown_run <= FRAME_TEXTURE_MAXIMUM_CELL_DRIFT_PIXELS:
+                    return True
+                previous = assignment[1]
+                unknown_run = 0
+            else:
+                unknown_run += 1
+    return False
+
+
+@functools.lru_cache(maxsize=1)
+def _complete_scene_candidates(image_bytes: bytes) -> tuple[str, ...]:
+    from access_lifecycle_contract import capture_identity
+    capture = capture_identity(image_bytes)
+    marks = (capture.mark or "").split("+")
+    if capture.status != "MATCH" or not 2 <= len(marks) <= 3:
+        return ()
+    with _pil_image().open(io.BytesIO(image_bytes)) as image:
+        return tuple(mark for mark in _single_photo_candidates(image.convert("RGB")) if mark in marks)
+
+
+def classify_screenshot_region(image_bytes: bytes, *, reference_matched_foreground: bytes | None = None,
+                               complete_scene: bytes | None = None) -> PhotoIdentity:
+    # Only the existing full-reference/surround pipeline may supply this same-PNG
+    # foreground. A generic whole-frame match cannot prove an arbitrary region.
+    if reference_matched_foreground is not None:
+        whole = classify_screenshot(reference_matched_foreground)
+        region = _classify_screenshot(image_bytes, qualify_single_photo=False)
+        if whole.mark in ("A1", "A2") and region.status == "MATCH" and region.mark == whole.mark:
+            return region
+    qualified = classify_screenshot(image_bytes)
+    if qualified.status != "UNRECOGNIZABLE" or complete_scene is None:
+        return qualified
+    region = _classify_screenshot(image_bytes, qualify_single_photo=False)
+    if region.status != "MATCH" or region.mark not in ("A1", "A2"):
+        return qualified
+    context = _complete_scene_candidates(complete_scene)
+    if not context:
+        return qualified
+    counts = {mark: [0, 0] for mark in MARKS}
+    with _pil_image().open(io.BytesIO(image_bytes)) as image:
+        for color in sample_public_frame(image).getdata():
+            assignment = public_palette_assignment(color)
+            if assignment is not None:
+                counts[assignment[0]][assignment[1]] += 1
+    candidates = [mark for mark in context if min(counts[mark]) >= IDENTITY_MINIMUM_CHROMATIC_PIXEL_COUNT
+                  and not any(sum(count) >= IDENTITY_MINIMUM_CHROMATIC_PIXEL_COUNT
+                              for other, count in counts.items() if other != mark)]
+    if len(candidates) == 1 and region.scores[candidates[0]] >= IDENTITY_MINIMUM_MATCH_SCORE:
+        return PhotoIdentity("MATCH", candidates[0], region.scores, region.mean_luma,
+                             region.notes + ("complete-public-scene-region",))
+    return qualified
 
 # Scanner-approved captures; TV has no home indicator. Its entry hint and
 # control bar share this bounded rectangle, which cannot hide a full-span slot.

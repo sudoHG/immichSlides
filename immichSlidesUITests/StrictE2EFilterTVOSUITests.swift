@@ -549,7 +549,8 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
             throw StrictE2EFilterContract.AssertionError.message("Missing STRICT_E2E_EVIDENCE_DIR")
         }
         let candidate = try StrictE2EFilterContract.displayCandidatePNG(png, evidenceDirectory: directory)
-        let regions = StrictE2EPhotoIdentity.classifyRegions(png: candidate)
+        let regions = StrictE2EPhotoIdentity.classifyRegions(
+            png: candidate, hasReferenceMatchedForeground: candidate != png)
         func mark(_ name: String) -> String? {
             guard regions[name]?.status == .match else { return nil }
             return regions[name]?.mark

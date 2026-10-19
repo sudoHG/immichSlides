@@ -55,13 +55,284 @@ from strict_e2e_filter_contract import (  # noqa: E402
 )
 
 
-from strict_e2e_photo_identity import classify_screenshot  # noqa: E402
+from strict_e2e_photo_identity import (  # noqa: E402
+    _public_photo_palettes,
+    classify_screenshot,
+)
 
 
 from strict_e2e_server import PUBLIC_API_KEY, _fixture_data, fixture_manifest  # noqa: E402
 
 
 from test_strict_e2e_server import RunningServer  # noqa: E402
+
+
+def single_photo_candidate_cases():
+    """Public fit controls and named candidate/region regressions.
+
+    Background-only A2/B2, tagged background A1, gray-chrome backgrounds and
+    geometry background variants duplicate missing-foreground rejection. They
+    are geometry/profile controls, not independent branch coverage.
+    """
+    import base64
+    # Public Display P3 metadata changes no encoded RGB samples in these inputs.
+    display_p3 = base64.b64decode(
+        "AAACGGFwcGwEAAAAbW50clJHQiBYWVogB+YAAQABAAAAAAAAYWNzcEFQUEwAAAAAQVBQTAAAAAAAAAAAAAAAAAAAAAAA"
+        "APbWAAEAAAAA0y1hcHBsAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKZGVzYwAA"
+        "APwAAAAwY3BydAAAASwAAABQd3RwdAAAAXwAAAAUclhZWgAAAZAAAAAUZ1hZWgAAAaQAAAAUYlhZWgAAAbgAAAAU"
+        "clRSQwAAAcwAAAAgY2hhZAAAAewAAAAsYlRSQwAAAcwAAAAgZ1RSQwAAAcwAAAAgbWx1YwAAAAAAAAABAAAADGVu"
+        "VVMAAAAUAAAAHABEAGkAcwBwAGwAYQB5ACAAUAAzbWx1YwAAAAAAAAABAAAADGVuVVMAAAA0AAAAHABDAG8AcAB5"
+        "AHIAaQBnAGgAdAAgAEEAcABwAGwAZQAgAEkAbgBjAC4ALAAgADIAMAAyADJYWVogAAAAAAAA9tUAAQAAAADTLFhZ"
+        "WiAAAAAAAACD3wAAPb////+7WFlaIAAAAAAAAEq/AACxNwAACrlYWVogAAAAAAAAKDgAABELAADIuXBhcmEAAAAAAAMA"
+        "AAACZmYAAPKnAAANWQAAE9AAAApbc2YzMgAAAAAAAQxCAAAF3v//8yYAAAeTAAD9kP//+6L///2jAAAD3AAAwG4=")
+    photos = [Image.open(io.BytesIO(_fixture_data("a")["images"][f"asset-a-{index}"])).convert("RGB")
+              for index in (1, 2)]
+    cases = []
+    for index, photo in enumerate(photos, start=1):
+        cases.append((f"raw-A{index}", photo, ("MATCH", f"A{index}"), ("MATCH", f"A{index}")))
+        background = ImageOps.fit(photo, (480, 1039)).filter(ImageFilter.GaussianBlur(60))
+        scene = background.copy()
+        fitted = ImageOps.contain(photo, scene.size)
+        scene.paste(fitted, (0, (scene.height - fitted.height) // 2))
+        scene.paste((180, 180, 180), (0, 955, 480, 1005))
+        cases.append((f"portrait-fit-A{index}", scene, ("MATCH", f"A{index}"), ("MATCH", f"A{index}")))
+        tagged = scene.copy()
+        tagged.info["icc_profile"] = display_p3
+        cases.append((f"profile-tagged-fit-A{index}", tagged, ("MATCH", f"A{index}"), ("MATCH", f"A{index}")))
+        cases.append((f"background-only-A{index}", background,
+                      ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
+        if index == 1:
+            tagged_background = background.copy()
+            tagged_background.info["icc_profile"] = display_p3
+            cases.append(("profile-tagged-background-A1", tagged_background,
+                          ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
+    side_by_side = Image.open(io.BytesIO(_side_by_side(
+        _fixture_data("a")["images"]["asset-a-1"], _fixture_data("a")["images"]["asset-a-2"]
+    ))).convert("RGB")
+    cases.append(("complete-scene-region-A2", side_by_side,
+                  ("TRANSITION", None), ("MATCH", "A1+A2")))
+    foreign_region = Image.new("RGB", (480, 568))
+    foreign_region.paste(photos[0].resize((341, 568)), (0, 0))
+    photo_a3 = Image.open(io.BytesIO(_fixture_data("a")["images"]["asset-a-3"])).convert("RGB")
+    foreign_region.paste(photo_a3.resize((139, 568)), (341, 0))
+    cases.append(("complete-scene-foreign-region", foreign_region,
+                  ("MATCH", "A1"), ("MATCH", "A1+A3")))
+    a1_palette = _public_photo_palettes()["A1"]
+    pair_below_minimum = foreign_region.copy()
+    for y in range(68, 466):
+        for x in range(86):
+            pair_below_minimum.putpixel((x, y), (45, 132, 23) if (x // 4 + (y - 68) // 4) % 2 == 0
+                                        else (120, 80, 120))
+    for color, x in ((a1_palette[0], 4), (a1_palette[1], 12)):
+        pair_below_minimum.paste(color, (x, 72, x + 4, 76))
+    cases.append(("complete-scene-region-pair-below-18", pair_below_minimum,
+                  ("MATCH", "A1"), ("MATCH", "A1+A3")))
+    score_below_floor = foreign_region.copy()
+    score_below_floor.paste((55, 135, 38), (0, 68, 43, 466))
+    score_below_floor.paste((180, 180, 180), (43, 68, 86, 466))
+    a1_strip = photos[0].resize((86, 12), Image.Resampling.NEAREST)
+    score_below_floor.paste(a1_strip, (0, 261))
+    cases.append(("complete-scene-region-score-below-floor", score_below_floor,
+                  ("MATCH", "A1"), ("MATCH", "A1+A3")))
+    # Sharp horizontal stripes pass the existing public B texture semantics.
+    # Only the green differs from A2: hue and generic gray cannot prove its RGB pair.
+    wrong_green = Image.new("RGB", (480, 1039), (128, 122, 110))
+    for y in range(0, 1039, 80):
+        wrong_green.paste((37, 109, 19), (0, y, 480, min(1039, y + 40)))
+    cases.append(("non-A2-green", wrong_green, ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
+    # White ink preserves the coherent row while gray stays below the RGB-pair minimum.
+    a2_palette = _public_photo_palettes()["A2"]
+    unsupported = Image.new("RGB", (18, 36), a2_palette[0])
+    unsupported.paste(a2_palette[1], (0, 1, 17, 2))
+    unsupported.putpixel((17, 1), (255, 255, 255))
+    cases.append(("insufficient-second-color", unsupported,
+                  ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
+    double = Image.new("RGB", (480, 1040))
+    for photo, box in zip(photos, ((0, 0, 480, 312), (0, 312, 480, 1040))):
+        double.paste(ImageOps.fit(photo, (box[2] - box[0], box[3] - box[1])), box)
+    cases.append(("two-qualified-photos", double, ("TRANSITION", None), ("MATCH", "A1+A2")))
+    transition = Image.blend(photos[0], photos[1].resize(photos[0].size), .6)
+    cases.append(("blended-photos", transition, ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
+    for name, widths in (("irregular-cells", (16, 48, 48, 48, 80, 32, 48, 48, 48, 48, 16)),
+                         ("oversized-edge-cell", (120, 40, 40, 40, 40, 40, 40, 40, 40, 40))):
+        scene = Image.new("RGB", (480, 270))
+        left = 0
+        for index, width in enumerate(widths):
+            scene.paste(((37, 109, 19), (91, 61, 91))[index % 2], (left, 0, left + width, 270))
+            left += width
+        cases.append((name, scene, ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
+    conflicting = photos[0].resize((480, 270), Image.Resampling.NEAREST)
+    conflicting.paste((37, 109, 19), (0, 135, 480, 270))
+    cases.append(("incomplete-public-bitmap", conflicting,
+                  ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
+    conflicting = photos[0].resize((480, 270), Image.Resampling.NEAREST)
+    conflicting.paste((37, 109, 19), (0, 90, 480, 180))
+    cases.append(("conflicting-row-patterns", conflicting,
+                  ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
+    for name, sparse in (("rectangle-missing-band", False), ("rectangle-sparse-bridge", True)):
+        scene = photos[0].resize((480, 270), Image.Resampling.NEAREST)
+        scene.paste((55, 135, 38), (0, 84, 480, 90))
+        if sparse:
+            scene.paste((37, 109, 19), (1, 84, 2, 90))
+        cases.append((name, scene, ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
+    thin_stripe = Image.new("RGB", (480, 270), (74, 170, 38))
+    thin_stripe.paste((128, 122, 110), (0, 1, 480, 2))
+    cases.append(("stripe-below-identity-scale", thin_stripe,
+                  ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
+    for name in ("white-in-every-row", "insufficient-row-coverage"):
+        scene = photos[0].resize((480, 270), Image.Resampling.NEAREST)
+        if name == "white-in-every-row":
+            scene.paste((255, 255, 255), (240, 0, 241, 270))
+        else:
+            # Monochrome stripe rows isolate coverage from checker-cell consistency.
+            for y in range(scene.height):
+                scene.paste(a2_palette[(y // 20) % 2], (0, y, scene.width, y + 1))
+            pixels = scene.load()
+            assert pixels is not None
+            for y in range(scene.height):
+                for x in range(y % 5, scene.width, 5):
+                    pixels[x, y] = (55, 135, 38)
+        cases.append((name, scene, ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
+    low_score = Image.new("RGB", (480, 1039), (180, 180, 180))
+    low_score.paste((55, 135, 38), (0, 0, 240, 1039))
+    low_score.paste(photos[0].resize((480, 40), Image.Resampling.NEAREST), (0, 500))
+    cases.append(("qualified-below-score-floor", low_score,
+                  ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
+    unverified = photos[0].resize((480, 270), Image.Resampling.NEAREST)
+    # One ROI has the same hues but neither true palette endpoint. The whole
+    # scene's remaining A1 texture cannot prove that ROI without reference provenance.
+    for y in range(32, 224, 12):
+        unverified.paste((45, 132, 23) if (y - 32) // 12 % 2 else (120, 80, 120),
+                         (0, y, 88, min(224, y + 12)))
+    cases.append(("unverified-region-palette", unverified, ("MATCH", "A1"), ("MATCH", "A1")))
+    reference_fit = ImageOps.fit(photos[0], (320, 696)).filter(ImageFilter.GaussianBlur(40))
+    reference_fit.paste(photos[0], (0, 258))
+    cases.append(("reference-fit-A1", reference_fit, ("MATCH", "A1"), ("MATCH", "A1")))
+    for index in (1, 2):
+        photo = Image.open(io.BytesIO(_fixture_data("b")["images"][f"asset-b-{index}"])).convert("RGB")
+        cases.append((f"raw-B{index}", photo, ("MATCH", f"A{index}"), ("MATCH", f"A{index}")))
+        if index == 1:
+            from test_album_server_narrow_contract import IPAD_SCREEN, IPHONE_SCREEN, _full_screen
+            for screen in (IPHONE_SCREEN, IPAD_SCREEN):
+                clipped = Image.open(io.BytesIO(_full_screen("A1", screen, "b"))).convert("RGB")
+                cases.append((f"zoomed-B1-{screen[0]}", clipped, ("MATCH", "A1"), ("MATCH", "A1")))
+        background = ImageOps.fit(photo, (480, 1039)).filter(ImageFilter.GaussianBlur(60))
+        fitted = ImageOps.contain(photo, background.size)
+        scene = background.copy()
+        scene.paste(fitted, ((scene.width - fitted.width) // 2, (scene.height - fitted.height) // 2))
+        cases.append((f"portrait-fit-B{index}", scene, ("MATCH", f"A{index}"), ("MATCH", f"A{index}")))
+        cases.append((f"background-only-B{index}", background,
+                      ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
+        chrome = background.copy()
+        chrome.paste((180, 180, 180), (0, 955, 480, 1005))
+        cases.append((f"background-and-gray-UI-B{index}", chrome,
+                      ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
+
+    # Repeat the same fit and background-only checks over recorded device geometries.
+    # Background-only rows are geometry duplicates of the same missing-foreground branch.
+    screen_geometries = {
+        "iphone-portrait": (1170, 2532),
+        "iphone-landscape": (2532, 1170),
+        "ipad-portrait": (1640, 2360),
+        "ipad-landscape": (2360, 1640),
+        "tvos-landscape": (3840, 2160),
+        "tvos-portrait": (2160, 3840),
+    }
+    for fixture_set in ("a", "b"):
+        for index in (1, 2):
+            photo = Image.open(io.BytesIO(_fixture_data(fixture_set)["images"][f"asset-{fixture_set}-{index}"])).convert("RGB")
+            label = f"{'A' if fixture_set == 'a' else 'B'}{index}"
+            logical_mark = f"A{index}"
+            for geometry, size in screen_geometries.items():
+                background = ImageOps.fit(photo, size).filter(ImageFilter.GaussianBlur(48))
+                for motion_scale in (1.00, 1.10):
+                    fitted = ImageOps.contain(photo, size)
+                    scaled_size = (
+                        max(1, round(fitted.width * motion_scale)),
+                        max(1, round(fitted.height * motion_scale)),
+                    )
+                    foreground = fitted.resize(scaled_size, Image.Resampling.LANCZOS)
+                    scene = background.copy()
+                    scene.paste(
+                        foreground,
+                        ((scene.width - foreground.width) // 2, (scene.height - foreground.height) // 2),
+                    )
+                    if scene.width > 480:
+                        reduced_height = max(1, round(scene.height * 480 / scene.width))
+                        scene = scene.resize((480, reduced_height), Image.Resampling.NEAREST)
+                    cases.append((
+                        f"geometry-fit-{label}-{geometry}-motion-{motion_scale:.2f}", scene,
+                        ("MATCH", logical_mark), ("MATCH", logical_mark),
+                    ))
+
+                background_only = background
+                if background_only.width > 480:
+                    reduced_height = max(1, round(background_only.height * 480 / background_only.width))
+                    background_only = background_only.resize((480, reduced_height), Image.Resampling.NEAREST)
+                # Duplicate geometry checks preserve the original language-specific
+                # ambiguity verdict; neither TRANSITION nor UNKNOWN confirms a photo.
+                background_status = "UNRECOGNIZABLE" if (label, geometry) == ("A2", "tvos-landscape") else "NOT_MATCH"
+                cases.append((
+                    f"geometry-background-only-{label}-{geometry}-duplicate", background_only,
+                    (background_status, None), (background_status, None),
+                ))
+    # Keep native dimensions: an approved overlay must never be inferred from
+    # aspect ratio or carried into an arbitrary cropped/resized input.
+    from strict_e2e_photo_identity import PUBLIC_SCENE_GEOMETRIES
+    tv_size = (3840, 2160)
+    bar = PUBLIC_SCENE_GEOMETRIES[tv_size][0]
+    for fixture_set in ("a", "b"):
+        photo = Image.open(io.BytesIO(_fixture_data(fixture_set)["images"][f"asset-{fixture_set}-2"])).convert("RGB")
+        background = ImageOps.fit(photo, tv_size).filter(ImageFilter.GaussianBlur(48))
+        fitted = ImageOps.contain(photo, tv_size)
+        scene = background.copy()
+        scene.paste(fitted, ((scene.width - fitted.width) // 2, 0))
+        scene.paste((55, 55, 55), bar)
+        label = "A2" if fixture_set == "a" else "B2"
+        cases.append((f"approved-TV-bar-{label}", scene, ("MATCH", "A2"), ("MATCH", "A2")))
+        if fixture_set == "a":
+            # A gray palette endpoint in chrome must not turn checker rows into
+            # fixture B stripes. This isolates texture exclusion from continuity.
+            palette_bar = scene.copy()
+            palette_bar.paste((128, 122, 110), bar)
+            cases.append(("approved-TV-palette-bar-A2", palette_bar,
+                          ("MATCH", "A2"), ("MATCH", "A2")))
+            background.paste((55, 55, 55), bar)
+            cases.append(("approved-TV-bar-background-only", background,
+                          ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
+            wrong_size = scene.resize((3840, 2161), Image.Resampling.NEAREST)
+            cases.append(("unapproved-TV-bar-geometry", wrong_size,
+                          ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
+            outside = scene.copy()
+            outside.paste((55, 55, 55), (bar[0], 1100, bar[2], 1160))
+            cases.append(("outside-approved-TV-bar-gap", outside,
+                          ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
+    # This photo lies entirely left of the approved box. Its damaged checker
+    # rows share the bar's y range but must retain every texture gate.
+    outside_texture = Image.new("RGB", (480, 270), (180, 180, 180))
+    for y in range(270):
+        for x in range(100):
+            cell = ((x // 20) + (y // 20)) % 2
+            if 200 <= y < 220:
+                cell = int(10 <= x < 50 or 60 <= x)
+            outside_texture.putpixel((x, y), ((74, 170, 38), (128, 122, 110))[cell])
+    cases.append(("outside-approved-TV-bar-horizontal-texture", outside_texture.resize(tv_size, Image.Resampling.NEAREST),
+                  ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
+    # The detected foreground begins exactly at the sampled control box's right
+    # edge. Touching supplies no overlap and cannot exempt damaged texture rows.
+    for damaged in (False, True):
+        touching = Image.new("RGB", (480, 270), (180, 180, 180))
+        for y in range(270):
+            for x in range(323, 480):
+                column = x - 323
+                cell = ((column // 20) + (y // 20)) % 2
+                if damaged and 200 <= y < 220:
+                    cell = int(10 <= column < 50 or 60 <= column)
+                touching.putpixel((x, y), ((74, 170, 38), (128, 122, 110))[cell])
+        expected = ("UNRECOGNIZABLE", None) if damaged else ("MATCH", "A2")
+        cases.append(("touching-approved-TV-bar-damaged" if damaged else "touching-approved-TV-bar-clear",
+                      touching.resize(tv_size, Image.Resampling.NEAREST), expected, expected))
+    return cases
 
 
 # Real public-fixture chrome, sampled by dominant RGB bins without averaging.

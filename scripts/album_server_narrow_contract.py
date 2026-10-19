@@ -476,7 +476,7 @@ def _empty_result_shows_fixture_photo(image_bytes: bytes) -> bool:
         raise AlbumServerContractError("Unrecognizable input: empty-album result screenshot cannot be decoded") from error
     # Still identify photos: full screen plus main regions. The empty-result copy is no reason to skip
     # classification.
-    regions = classify_display_regions(image_bytes)
+    regions = classify_display_regions(image_bytes, for_rejection=True)
     identities = [regions[name] for name in EMPTY_RESULT_PHOTO_REGIONS if name in regions]
     return any(item.status == "MATCH" and item.mark in MARKS for item in identities)
 

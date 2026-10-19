@@ -1220,8 +1220,9 @@ class FailureDiagnosticsTests(unittest.TestCase):
         self.assertEqual(set(diagnostics.VALIDATOR_MANIFEST_PREFIXES),
                          fixed_messages(tree("strict_e2e_filter_manifest.py")))
         identity_tree = tree("strict_e2e_photo_identity.py")
+        # Qualified and rejection entry points share this status-producing implementation.
         classifier = next(node for node in identity_tree.body
-                          if isinstance(node, ast.FunctionDef) and node.name == "classify_screenshot")
+                          if isinstance(node, ast.FunctionDef) and node.name == "_classify_screenshot")
         identities = [node for node in ast.walk(classifier) if isinstance(node, ast.Call)
                       and isinstance(node.func, ast.Name) and node.func.id == "PhotoIdentity"]
         self.assertEqual(set(diagnostics.VALIDATOR_IDENTITY_STATUSES),

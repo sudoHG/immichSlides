@@ -57,6 +57,7 @@ from strict_e2e_filter_contract_test_fixtures import (
     union_selection_labels,
     unittest,
     write_member_manifest,
+    single_photo_candidate_cases,
 )
 
 class DeviceFilterVisualIdentityTestsCases:
@@ -228,7 +229,7 @@ class DeviceFilterVisualIdentityTestsCases:
                 for case in ("foreign_bottom_half", "outside_gap"):
                     with self.subTest(case=case):
                         invalid = _iphone_control_split_frame(fixture_set, **{case: True})
-                        self.assertEqual(classify_screenshot(invalid).status, "MATCH")
+                        self.assertEqual(classify_screenshot(invalid).status, "TRANSITION")
                         (evidence / "album-play-1.png").write_bytes(invalid)
                         with self.assertRaises(FilterContractError):
                             evaluate_filter_visual_identity(evidence, "filter-album")
@@ -531,10 +532,33 @@ for offset in stride(from: 2, to: CommandLine.arguments.count, by: 2) {
 let path = CommandLine.arguments[offset]
 let mode = CommandLine.arguments[offset + 1]
 let original = try Data(contentsOf: URL(fileURLWithPath: path))
-if mode == "capture" {
-let result = StrictE2EPhotoIdentity.captureIdentity(png: original)
+if mode == "rejection" || mode == "rejection-center" {
+let regionName = mode == "rejection-center" ? "center" : "full"
+let result = StrictE2EPhotoIdentity.rejectionRegions(png: original)[regionName]!
 print(String(data: try JSONSerialization.data(withJSONObject: ["status": result.status.rawValue,
-    "mark": result.mark ?? "nil"]), encoding: .utf8)!)
+    "mark": result.mark ?? "nil", "notes": result.notes]), encoding: .utf8)!)
+continue
+}
+if mode == "region-center" || mode == "region-right" || mode == "region-left" {
+let regions = StrictE2EPhotoIdentity.classifyRegions(png: original)
+let regionName = mode == "region-right" ? "right" : (mode == "region-left" ? "left" : "center")
+let result = regions[regionName]!
+print(String(data: try JSONSerialization.data(withJSONObject: ["status": result.status.rawValue,
+    "mark": result.mark ?? "nil", "notes": result.notes]), encoding: .utf8)!)
+continue
+}
+if mode == "verified-region" || mode == "unverified-region" {
+let candidate = mode == "verified-region" ? try StrictE2EFilterContract.displayCandidatePNG(original, evidenceDirectory: root) : original
+let regions = StrictE2EPhotoIdentity.classifyRegions(png: candidate, hasReferenceMatchedForeground: candidate != original)
+let result = regions[mode == "verified-region" ? "center" : "left"]!
+print(String(data: try JSONSerialization.data(withJSONObject: ["status": result.status.rawValue,
+    "mark": result.mark ?? "nil", "notes": result.notes]), encoding: .utf8)!)
+continue
+}
+if mode == "capture" || mode == "classify" {
+let result = mode == "capture" ? StrictE2EPhotoIdentity.captureIdentity(png: original) : StrictE2EPhotoIdentity.classify(png: original)
+print(String(data: try JSONSerialization.data(withJSONObject: ["status": result.status.rawValue,
+    "mark": result.mark ?? "nil", "notes": result.notes]), encoding: .utf8)!)
 continue
 }
 let candidate = mode == "slot" ? original : try StrictE2EFilterContract.displayCandidatePNG(original, evidenceDirectory: root)
@@ -552,9 +576,57 @@ print(String(data: try JSONSerialization.data(withJSONObject: report), encoding:
 ''', encoding="utf-8")
             executable = directory / "recognize"
             subprocess.run([
-                "swiftc", str(SCRIPT_DIR.parent / "TestSupport/StrictE2EFilterContract.swift"),
+                "swiftc", "-O", str(SCRIPT_DIR.parent / "TestSupport/StrictE2EFilterContract.swift"),
                 str(SCRIPT_DIR.parent / "TestSupport/StrictE2EPhotoIdentity.swift"), str(main), "-o", str(executable),
             ], check=True, capture_output=True, text=True)
+            candidate_arguments = []
+            candidate_expectations = []
+            blurred = ImageOps.fit(Image.open(io.BytesIO(_fixture_png("A2"))).convert("RGB"), (480, 1039))
+            blurred = blurred.filter(ImageFilter.GaussianBlur(60))
+            blurred_path = directory / "blurred-rejection-A2.png"
+            blurred.save(blurred_path)
+            for mode, expected in (
+                ("classify", ("UNRECOGNIZABLE", None)), ("region-center", ("UNRECOGNIZABLE", None)),
+                ("rejection", ("MATCH", "A2")), ("rejection-center", ("MATCH", "A2")),
+            ):
+                candidate_arguments.extend((str(blurred_path), mode))
+                candidate_expectations.append(("blurred-rejection-A2", mode, expected))
+            for name, scene, full_expected, capture_expected in single_photo_candidate_cases():
+                path = directory / f"candidate-{name}.png"
+                scene.save(path)
+                for mode, expected in (("classify", full_expected), ("capture", capture_expected)):
+                    candidate_arguments.extend((str(path), mode))
+                    candidate_expectations.append((name, mode, expected))
+                if name in ("reference-fit-A1", "unverified-region-palette"):
+                    mode = "verified-region" if name == "reference-fit-A1" else "unverified-region"
+                    expected = ("MATCH", "A1") if mode == "verified-region" else ("UNRECOGNIZABLE", None)
+                    candidate_arguments.extend((str(path), mode))
+                    candidate_expectations.append((name, mode, expected))
+                if name in ("raw-A1", "complete-scene-region-A2", "complete-scene-foreign-region",
+                            "complete-scene-region-pair-below-18", "complete-scene-region-score-below-floor"):
+                    if name == "complete-scene-region-A2":
+                        mode, expected = "region-right", ("MATCH", "A2")
+                    elif name.startswith("complete-scene-region-") and name != "complete-scene-region-A2":
+                        mode, expected = "region-left", ("UNRECOGNIZABLE", None)
+                    else:
+                        mode, expected = "region-center", ("UNRECOGNIZABLE", None)
+                    candidate_arguments.extend((str(path), mode))
+                    candidate_expectations.append((name, mode, expected))
+            candidates = subprocess.run([str(executable), str(directory), *candidate_arguments],
+                                        check=True, capture_output=True, text=True, timeout=300)
+            self.assertEqual(len(candidates.stdout.splitlines()), len(candidate_expectations))
+            for (name, mode, expected), line in zip(candidate_expectations, candidates.stdout.splitlines()):
+                with self.subTest(candidate=name, reader=mode):
+                    report = json.loads(line)
+                    if expected[0] == "NOT_MATCH":
+                        self.assertIn(report["status"], ("UNRECOGNIZABLE", "TRANSITION", "BLACK", "BLANK"))
+                        self.assertEqual(report["mark"], "nil")
+                    else:
+                        self.assertEqual((report["status"], report["mark"]), (expected[0], expected[1] or "nil"))
+                    if expected[0] == "UNRECOGNIZABLE":
+                        self.assertIn("unsupported-public-candidate", report["notes"])
+                    if name == "two-qualified-photos" and expected[0] == "TRANSITION":
+                        self.assertIn("multiple-public-candidates", report["notes"])
             cases = []
             for fixture_set in ("a", "b"):
                 photo = Image.open(io.BytesIO(_fixture_png("A1", fixture_set))).convert("RGB")
@@ -792,7 +864,7 @@ print(String(data: try JSONSerialization.data(withJSONObject: report), encoding:
             ("single", _fixture_png("A1"), "The before-change frame must actually show at least two different photos"),
             (
                 "transition",
-                _full_frame_transition(_fixture_png("A1"), _fixture_png("A2")),
+                _full_frame_transition(_fixture_png("A3"), _fixture_png("A4")),
                 "Multiple before-change photos cannot be faked by a transition",
             ),
             ("unknown", _solid_png((25, 25, 25)), "The before-change frame must be recognizable as a public fixture photo"),
@@ -824,16 +896,27 @@ print(String(data: try JSONSerialization.data(withJSONObject: report), encoding:
 
 
     def test_display_policy_rejects_multi_mixed_transition_and_unknown_after_frame(self) -> None:
+        with Image.open(io.BytesIO(_fixture_png("A3"))) as source:
+            after_image = source.convert("RGB")
+        from PIL import ImageDraw
+
+        width, height = after_image.size
+        ImageDraw.Draw(after_image).rectangle(
+            (int(width * 0.82), int(height * 0.12), width - 1, int(height * 0.82)),
+            fill=(0, 0, 0),
+        )
+        buffer = io.BytesIO()
+        after_image.save(buffer, format="PNG")
         invalid_frames = (
             (
                 "multi",
                 _side_by_side(_fixture_png("A1"), _fixture_png("A2")),
-                "The after-change frame must be a recognizable, stable single-photo frame",
+                "after-change cannot use a transition or unknown frame as passing",
             ),
             (
                 "mixed_server",
                 _side_by_side(_fixture_png("A1", "a"), _fixture_png("A2", "b")),
-                "after-change frame must contain only target album photos from fixture A",
+                "after-change cannot use a transition or unknown frame as passing",
             ),
             (
                 "transition",
@@ -841,6 +924,11 @@ print(String(data: try JSONSerialization.data(withJSONObject: report), encoding:
                 "after-change cannot use a transition or unknown frame as passing",
             ),
             ("unknown", _solid_png((25, 25, 25)), "after-change cannot use a transition or unknown frame as passing"),
+            (
+                "single-photo-with-unrecognizable-region",
+                buffer.getvalue(),
+                "The after-change frame must be a recognizable, stable single-photo frame",
+            ),
         )
         before = _side_by_side(_fixture_png("A1"), _fixture_png("A2"))
         for name, after, expected_error in invalid_frames:

@@ -430,7 +430,8 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
                 let mark = identity.mark,
                 targetMarks.contains(mark)
             else { return false }
-            let regions = StrictE2EPhotoIdentity.classifyRegions(png: candidate)
+            let regions = StrictE2EPhotoIdentity.classifyRegions(
+                png: candidate, hasReferenceMatchedForeground: candidate != png)
             let stableNames = ["center", "left", "right", "mid_left", "mid_right", "upper"]
             guard
                 stableNames.allSatisfy({ name in
@@ -486,7 +487,14 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
             try StrictE2EVisualEvidence.writeRequiredPNG(png, name: step)
 
             let candidate = try displayCandidatePNG(png)
-            let marks = distinctRegionMarks(StrictE2EPhotoIdentity.classifyRegions(png: candidate))
+            let marks = distinctRegionMarks(
+                StrictE2EPhotoIdentity.classifyRegions(
+                    png: candidate, hasReferenceMatchedForeground: candidate != png))
+            let rejectionMarks = distinctRegionMarks(StrictE2EPhotoIdentity.rejectionRegions(png: candidate))
+            XCTAssertTrue(
+                Set(rejectionMarks).isSubset(of: Set(targetMarks)),
+                "Every photo in the before-change multi-photo frame must belong to the manifest target album: \(rejectionMarks)"
+            )
             if marks.count >= 2 {
                 XCTAssertTrue(
                     Set(marks).isSubset(of: Set(targetMarks)),
@@ -618,7 +626,10 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
             guard identity.status == .match,
                 let mark = identity.mark,
                 targetMarksB.contains(mark),
-                self.distinctRegionMarks(StrictE2EPhotoIdentity.classifyRegions(png: candidate)).count < 2
+                self.distinctRegionMarks(
+                    StrictE2EPhotoIdentity.classifyRegions(
+                        png: candidate, hasReferenceMatchedForeground: candidate != png)
+                ).count < 2
             else {
                 return false
             }
