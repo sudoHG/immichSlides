@@ -133,29 +133,29 @@ extension StrictE2EFilterTVOSUITests {
                     app: app, deadline: stableFrameDeadline, name: names[0])
             }
             FirstFailureRemote.press(.select)
-            if let readyFrame {
-                readyMark = readyFrame.mark
-                attachStrictSceneObservation(
-                    before: readyFrame.before, after: readyFrame.after, name: "\(names[0])-before-pause")
-                let attachment = XCTAttachment(data: readyFrame.png, uniformTypeIdentifier: "public.png")
-                attachment.name = "\(names[0])-before-pause"
-                attachment.lifetime = .keepAlways
-                add(attachment)
-                try StrictE2EVisualEvidence.writeRequiredJSON(
-                    [
-                        "proof_duration_seconds": readyFrame.durationSeconds,
-                        "proof_attempts": readyFrame.attempts, "refocus_count": readyFrame.refocusCount,
-                        "entry_hint_visible": readyFrame.isEntryHintVisible,
-                        "select_focus": "slideshow.control.playPause.button"
-                    ],
-                    name: "\(names[0])-pause-readiness.json")
-            }
+            readyMark = readyFrame?.mark
         }
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(4))) {
                 let current = String(describing: playPauseButton.value ?? "")
                 return current.contains("播放") || current.lowercased() == "play"
             }, "Playback must be paused before sampling candidates.")
+        if let readyFrame {
+            attachStrictSceneObservation(
+                before: readyFrame.before, after: readyFrame.after, name: "\(names[0])-before-pause")
+            let attachment = XCTAttachment(data: readyFrame.png, uniformTypeIdentifier: "public.png")
+            attachment.name = "\(names[0])-before-pause"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            try StrictE2EVisualEvidence.writeRequiredJSON(
+                [
+                    "proof_duration_seconds": readyFrame.durationSeconds,
+                    "proof_attempts": readyFrame.attempts, "refocus_count": readyFrame.refocusCount,
+                    "entry_hint_visible": readyFrame.isEntryHintVisible,
+                    "select_focus": "slideshow.control.playPause.button"
+                ],
+                name: "\(names[0])-pause-readiness.json")
+        }
         RunLoop.current.run(until: Date().addingTimeInterval(Timing.playbackSceneSettleSeconds))
 
         let nextButton = app.buttons["slideshow.control.next.button"]
