@@ -209,6 +209,33 @@ def _with_exif_card(png: bytes, model: str) -> bytes:
 
 
 class FrameGlyphBoundaryTests(unittest.TestCase):
+    def test_native_exif_and_hd_tv_controls_supply_no_public_photo_pixels(self) -> None:
+        from strict_e2e_filter_contract_test_fixtures import public_overlay_frame
+        from strict_e2e_photo_identity import public_scene_photos_from_bytes
+
+        for kind, expected in (("ipad-exif", [("B", "A3")]), ("tv-flow", [("B", "A4")]),
+                               ("tv-person", [("A", "A3"), ("A", "A5")])):
+            with self.subTest(frame=kind):
+                photos = public_scene_photos_from_bytes(_png(public_overlay_frame(kind)))
+                self.assertEqual([(p.letter, p.mark) for p in photos], expected)
+            defects = ["outside", "wrong-size"]
+            if kind == "ipad-exif":
+                defects += ["outside-bottom"]
+            if kind == "tv-person":
+                defects += ["outside-left", "wrong-letter", "wrong-digit", "mixed", "covered"]
+            for defect in defects:
+                with self.subTest(frame=kind, defect=defect):
+                    if kind == "tv-person" and defect == "mixed":
+                        message = r"^mixed public glyphs; 2 slots \(horizontal\)$"
+                    elif kind == "tv-person":
+                        index = 1 if defect in ("wrong-size", "outside-left", "covered") else 2
+                        message = rf"^unreadable public glyph slot; slot {index} \(horizontal\)$"
+                    else:
+                        message = (r"^unreadable public glyph slot: public photo colors are missing or mixed; "
+                                   r"vertical axis, slot count unresolved$")
+                    with self.assertRaisesRegex(IdentityAssertionError, message):
+                        public_scene_photos_from_bytes(_png(public_overlay_frame(kind, defect)))
+
     def test_control_bar_clipping_the_last_glyph_row_preserves_the_full_cell_grid(self) -> None:
         from strict_e2e_filter_contract_test_fixtures import journey_b_clipped_glyph_frame
         from strict_e2e_photo_identity import public_scene_photos_from_bytes

@@ -703,7 +703,7 @@ print(String(data: try JSONSerialization.data(withJSONObject: report), encoding:
             # The TV A5+A3 40% split straddled the old upper-left quadrant.
             # Use the same public frames for both readers, including one-defect negatives.
             from access_lifecycle_contract import capture_identity
-            from strict_e2e_filter_contract_test_fixtures import journey_b_clipped_glyph_frame
+            from strict_e2e_filter_contract_test_fixtures import journey_b_clipped_glyph_frame, public_overlay_frame
             capture_cases = []
             for fixture_set in ("a", "b"):
                 pair = (5, 3) if fixture_set == "a" else (7, 8)
@@ -780,6 +780,8 @@ print(String(data: try JSONSerialization.data(withJSONObject: report), encoding:
                     capture_cases.extend((("black-seam", black_seam, ("TRANSITION", "nil")),
                                           ("double-seam", double_seam, ("TRANSITION", "nil"))))
             capture_cases.append(("journey-b-clipped-glyph", journey_b_clipped_glyph_frame(), ("MATCH", "A3+A8")))
+            for kind, mark in (("ipad-exif", "A3"), ("tv-flow", "A4"), ("tv-person", "A3+A5")):
+                capture_cases.append((kind, public_overlay_frame(kind), ("MATCH", mark)))
             from access_lifecycle_contract_test_fixtures import _stand_in_png
             for name, parts, expected in (
                 ("clipped-edge", ("iphone", "failure-late-frames", "late-178.png"), "A3+A5"),

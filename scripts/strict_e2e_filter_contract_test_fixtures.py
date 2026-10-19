@@ -63,9 +63,11 @@ from strict_e2e_photo_identity import (  # noqa: E402
 
 from strict_e2e_server import PUBLIC_API_KEY, _fixture_data, fixture_manifest  # noqa: E402
 
+from test_strict_e2e_server import RunningServer  # noqa: E402
+
 
 def journey_b_clipped_glyph_frame(defect: str | None = None) -> Image.Image:
-    # Hosted E5's projected B3+B8 scene: equal vertical slots, 1.2x motion scale.
+    # Projected B3+B8 scene: equal vertical slots, 1.2x motion scale.
     # Rebuild from public fixtures at native phone size; the projection is not raw input.
     from PIL import ImageDraw
 
@@ -75,13 +77,15 @@ def journey_b_clipped_glyph_frame(defect: str | None = None) -> Image.Image:
         if index == 8 and defect in ("wrong-letter", "wrong-digit", "missing", "mixed"):
             from strict_e2e_server import _png
             label = {"wrong-letter": "C8", "wrong-digit": "B7", "missing": "", "mixed": "A8"}[defect]
+            palette = tuple(dict.fromkeys(color for color in photo.convert("RGB").getdata() if min(color) < 240))
             photo = Image.open(io.BytesIO(_png(300, 300, 8, label, striped=True,
-                                              palette=((255, 75, 255), (255, 75, 220)))))
+                                              palette=palette)))
         enlarged = photo.resize((1519, 1519), Image.Resampling.BILINEAR)
         frame.paste(enlarged.crop((174, 126, 1344, 1392)), (0, top))
     ImageDraw.Draw(frame).rounded_rectangle((72, 2130, 1098, 2310), radius=80, fill=(255, 163, 253))
     if defect == "covered":
-        ImageDraw.Draw(frame).rectangle((72, 1616, 1098, 2130), fill="black")
+        # Cover part of letter rows 3-6 above the mask; leave the digit's band intact.
+        ImageDraw.Draw(frame).rectangle((72, 1860, 600, 2125), fill="black")
     elif defect == "gap":
         ImageDraw.Draw(frame).rectangle((0, 1258, 1169, 1273), fill="black")
     elif defect == "overlap":
@@ -93,7 +97,55 @@ def journey_b_clipped_glyph_frame(defect: str | None = None) -> Image.Image:
     return frame
 
 
-from test_strict_e2e_server import RunningServer  # noqa: E402
+def public_overlay_frame(kind: str, defect: str | None = None) -> Image.Image:
+    """Reconstruct the native public B3 EXIF / HD TV flow and person frames."""
+    from PIL import ImageDraw
+
+    size = (2064, 2752) if kind == "ipad-exif" else (1920, 1080)
+    frame = Image.new("RGB", size)
+    slots = (("a", 3, (0, 0, 1152, 1080)), ("a", 5, (1152, 0, 1920, 1080))) if kind == "tv-person" else (
+        ("b", 3 if kind == "ipad-exif" else 4, (0, 0, *size)),)
+    for fixture, index, box in slots:
+        photo = Image.open(io.BytesIO(_fixture_data(fixture)["images"][f"asset-{fixture}-{index}"])).convert("RGB")
+        if index == 5 and defect in ("wrong-letter", "wrong-digit", "mixed"):
+            from strict_e2e_server import _png
+            label = {"wrong-letter": "C5", "wrong-digit": "A4", "mixed": "B5"}[defect]
+            palette = tuple(dict.fromkeys(color for color in photo.getdata() if min(color) < 240))
+            photo = Image.open(io.BytesIO(_png(photo.width, photo.height, 5, label, palette=palette)))
+        # EXIF's alias must share a row with fixture RGB, not an interpolated stripe edge.
+        resampling = Image.Resampling.NEAREST if kind == "ipad-exif" else Image.Resampling.BILINEAR
+        frame.paste(ImageOps.fit(photo, (box[2] - box[0], box[3] - box[1]), resampling), box)
+    draw = ImageDraw.Draw(frame)
+    if kind == "ipad-exif":
+        # Native B3 SHA 67c7d5aa...: panel (1308,60)-(2004,442).
+        # Dominant encoded RGB along its lower glass edge; sample row 102 aliases A8.
+        draw.rounded_rectangle((1308, 60, 2003, 441), radius=48, fill=(190, 70, 155))
+        draw.rectangle((1350, 438, 1960, 441), fill=(249, 79, 244))
+    else:
+        # Native HD captures: bar (632,858)-(1288,960); focused Next (1134,879)-(1248,940).
+        draw.rounded_rectangle((632, 858, 1287, 959), radius=50, fill=(110, 90, 100))
+        if kind == "tv-flow":
+            # Synthetic A2 palette endpoint, not a measured glass RGB; reproduces its alias.
+            draw.rectangle((674, 938, 1220, 951), fill=(128, 122, 110))
+        draw.rounded_rectangle((1134, 879, 1247, 939), radius=30, fill="white")
+    if defect == "outside":
+        # Same alias / white control above the registered rectangle.
+        if kind == "ipad-exif":
+            draw.rectangle((1350, 50, 1960, 57), fill=(249, 79, 244))
+        elif kind == "tv-flow":
+            draw.rectangle((674, 700, 1220, 715), fill=(128, 122, 110))
+        else:
+            draw.rectangle((1134, 650, 1247, 710), fill="white")
+    elif defect == "outside-bottom":
+        draw.rectangle((1350, 446, 1960, 450), fill=(249, 79, 244))
+    elif defect == "outside-left":
+        draw.rectangle((520, 880, 615, 939), fill="white")
+    elif defect == "covered":
+        # Part of A3 rows 3-5 above y=718, within the mask's x span; keep its top strokes.
+        draw.rectangle((660, 510, 850, 692), fill="black")
+    elif defect == "wrong-size":
+        frame = frame.resize((size[0], size[1] + 1), Image.Resampling.NEAREST)
+    return frame
 
 
 def single_photo_candidate_cases():
@@ -335,6 +387,23 @@ def single_photo_candidate_cases():
             outside = scene.copy()
             outside.paste((55, 55, 55), (bar[0], 1100, bar[2], 1160))
             cases.append(("outside-approved-TV-bar-gap", outside,
+                          ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
+    for fixture_set in ("a", "b"):
+        photo = Image.open(io.BytesIO(_fixture_data(fixture_set)["images"][f"asset-{fixture_set}-2"])).convert("RGB")
+        background = ImageOps.fit(photo, (1920, 1080)).filter(ImageFilter.GaussianBlur(48))
+        scene = background.copy()
+        fitted = ImageOps.contain(photo, scene.size)
+        scene.paste(fitted, ((scene.width - fitted.width) // 2, 0))
+        scene.paste((55, 55, 55), (632, 858, 1288, 960))
+        cases.append((f"approved-HD-TV-bar-{fixture_set.upper()}2", scene,
+                      ("MATCH", "A2"), ("MATCH", "A2")))
+        if fixture_set == "a":
+            wrong_size = scene.resize((1920, 1081), Image.Resampling.NEAREST)
+            cases.append(("unapproved-HD-TV-bar-geometry", wrong_size,
+                          ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
+            outside = scene.copy()
+            outside.paste((55, 55, 55), (656, 650, 1264, 680))
+            cases.append(("outside-approved-HD-TV-bar-gap", outside,
                           ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
     # This photo lies entirely left of the approved box. Its damaged checker
     # rows share the bar's y range but must retain every texture gate.

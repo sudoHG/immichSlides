@@ -115,11 +115,13 @@ both orientations, and motion scales 1.00/1.10. Background-only geometry control
 must remain nonmatches; duplicate controls retain their original hue status and
 do not count as independent rejection coverage.
 For original 3840x2160 tvOS captures, sharp-foreground continuity and texture
-checks ignore only the scanner-approved shared color/glyph rectangle
-(1256,1436)-(2580,1925). Its pixels supply no palette counts or sharp edges;
+checks ignore the scanner-approved shared color/glyph rectangle
+(1256,1436)-(2580,1925). At 1920x1080 the rectangle is (628,718)-(1290,963):
+the bar was measured locally, while the hint area is scaled from 4K and was not
+observed in the HD inputs. These pixels supply no palette counts or sharp edges;
 fully occluded lines supply neither support nor a missing-photo gap. The same
 rectangle is mapped into the sampled frame and translated with each foreground
-crop. Other dimensions and region crops grant no exclusion. In particular,
+crop. Other dimensions and region crops grant no sharp-foreground exclusion. In particular,
 iPhone landscape has no measured entry, and the portrait phone's glyph-only
 box grants no palette exclusion. EXIF uses the same reader without waiting for
 controls to hide; the six-Next limit and existing deadlines remain unchanged.
@@ -304,14 +306,51 @@ cannot hide a full-height or full-width slot. Overlay ink cannot create bitmap
 bands or supply observed cells; letters and digits must still agree with every
 remaining cell and meet the unchanged evidence minima. The device-pin guard
 requires a measured geometry for all three pinned strict devices.
+Two non-pinned local device types supply additional exact-size geometries below.
+Hosted CI does not produce either 2064x2752 or 1920x1080: its pinned iPhone,
+iPad and TV outputs are 1170x2532, 1640x2360 and 3840x2160. The pinned-device
+runs are regression checks only, not proof of a hosted fix; every replayed
+3840x2160 frame already passed the base reader.
+
+Local Debug `tvos-flow` B and `tvos-person` A runs on the Apple TV 4K
+(3rd generation) **at 1080p** simulator type produced the 1920x1080 originals.
+They register the same point-space hint/control rectangle, rounded outward
+from the 4K coordinates. The bar (632,858)-(1288,960) was measured in these
+frames; neither contains the hint. The HD hint band at y=718-858 is scaled
+from 4K, rather than measured or scanner-approved in HD. In the original B4 flow
+frame (SHA-256 `581e539f2f1e36093425a950eec690a1f93734182e9c13e2303f84ecf5bb76e2`),
+the bar's lower glass edge aliases A2 in sampled rows 235/237. In the original
+A3+A5 person frame (`341e2760950bcc2a96f25e1e9afebf98e4ff5fe79209984d5f5e5a6bb91ebaf0`),
+the focused Next pill supplies an extra white band in slot 2. Both retain clear
+photo glyphs above the bar; the scaled hint mask clips A3's lower rows in the
+person frame, which exercises cell-scale inference. HD qualification mirrors
+the same rectangle in Swift. Existing 1920x1080 synthetic access-lifecycle and
+album-contract frames also pass through this HD mask.
+
+A local Debug `journey-b` B run on an iPad Pro 13-inch produced the 2064x2752
+EXIF original. Only its measured panel (1308,60)-(2004,442) is excluded from
+palette segmentation and texture, with no glyph mask. This box was measured
+from one B3 frame: the right-aligned panel's width depends on its EXIF text,
+so another photo at this size can still fail closed outside this box.
+The original single B3
+(`67c7d5aa96b6998de36482b08a23682bfe27f2ef8193567126728c0162dcaea8`)
+has 142 false A8 pixels in sampled row 102, entirely at that panel's lower edge.
+This entry does not infer EXIF bounds at other sizes or affect sharp-foreground
+qualification. Public-fixture reconstructions cover the EXIF palette alias,
+HD flow palette alias and HD person glyph obstruction. Each rejects controls
+above the box and a one-pixel-taller frame; EXIF also rejects an alias below
+the box, and the person frame rejects white ink left of the HD box. Only the
+person reconstruction has wrong-letter/digit, mixed and partial-occlusion
+glyph negatives; its partial occlusion preserves A3's top strokes and letter.
 When a measured overlay splits a glyph, ink fragments are joined only across a
 gap wholly inside that overlay and within one palette slot. The ten-pixel band
 minimum is applied after joining; short unjoined fragments remain excluded.
 If the overlay clips the bottom of a glyph, surviving complete top-row strokes
-can also recover its square cell scale. The inferred bottom must remain inside
-the same measured overlay and slot; no additional pixels are excluded. Every
-visible letter and digit cell still has to agree, with the existing minimum
-observed-cell and white-cell counts. The native-size B3+B8 phone regression
+can also recover its square cell scale. Candidate generation bounds the inferred
+bottom to the same measured overlay and slot; these bounds limit the search.
+Acceptance is gated by agreement with every observed letter and digit cell and
+the existing observed-cell and white-cell minima. No additional pixels are
+excluded. The native-size B3+B8 phone regression
 reconstructs the hosted scene from public fixtures, rather than treating its
 downscaled failure projection as original pixels.
 
