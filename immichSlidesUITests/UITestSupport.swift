@@ -458,12 +458,11 @@ struct IOSFirstBootNavigation {
     }
 
     private func windowObservations(host: XCUIApplication) throws -> [Observation] {
-        // A password sheet can be in a later window; one atomic host snapshot keeps each window's title/action paired.
-        let root = try host.snapshot()
-        let windows = root.children.filter { $0.elementType == .window }
-        if windows.isEmpty { return [observation(window: root, host: host, windowIndex: .zero)] }
-        return windows.enumerated().map { index, window in
-            observation(window: window, host: host, windowIndex: index)
+        // App snapshots can omit the main window; keep each real window's title/action and tap index paired.
+        let windows = host.windows.allElementsBoundByIndex
+        guard !windows.isEmpty else { throw NSError(domain: "IOSFirstBootNavigation", code: 1) }
+        return try windows.enumerated().map { index, window in
+            observation(window: try window.snapshot(), host: host, windowIndex: index)
         }
     }
 
@@ -570,6 +569,7 @@ struct IOSFirstBootNavigation {
         var didSelect = false
         var didDecline = false
         var didSeePrompt = false
+        var didConfirmPromptGone = false
         var didIssueContinue = false
         var didReturnContinue = false
         var lastSnapshotError: Int?
@@ -596,6 +596,8 @@ struct IOSFirstBootNavigation {
             if didIssueContinue { didObserveAfterContinue = true }
             if observation.hasPasswordPrompt {
                 didSeePrompt = true
+                didConfirmPromptGone = false
+                step = "save-password-prompt"
                 if !didDecline, let decline = observation.decline {
                     didDecline = tap(
                         decline, observation: observation, deadline: deadline, step: "save-password-prompt")
@@ -604,10 +606,15 @@ struct IOSFirstBootNavigation {
                 poll(until: deadline)
                 continue
             }
+            if didDecline && !didConfirmPromptGone {
+                didConfirmPromptGone = true
+                print("Exact Save Password prompt disappearance confirmed")
+            }
+            step = didIssueContinue ? "mode-departure" : "mode-card"
             if didIssueContinue {
                 if !observation.isModePage && observation.hasDestination {
                     print(
-                        "First-boot mode departure confirmed; Continue issued=true returned=\(didReturnContinue); passwordPromptDismissed=\(didDecline)"
+                        "First-boot mode departure confirmed; Continue issued=true returned=\(didReturnContinue); passwordPromptDismissed=\(didConfirmPromptGone)"
                     )
                     return departureDeadline
                 }
@@ -638,7 +645,7 @@ struct IOSFirstBootNavigation {
         }
         FirstFailureContext.mark(step, element: didIssueContinue ? "mode.continue.button" : identifier)
         let detail =
-            "step=\(step), Continue issued=\(didIssueContinue) returned=\(didReturnContinue), passwordPromptObserved=\(didSeePrompt), passwordPromptDismissed=\(didDecline), modePage=\(lastModePage.map(String.init) ?? "unknown"), postContinueSnapshotObserved=\(didObserveAfterContinue), lastSnapshotSucceeded=\(didReadLastSnapshot), lastSnapshotError=\(lastSnapshotError.map(String.init) ?? "none")"
+            "step=\(step), Continue issued=\(didIssueContinue) returned=\(didReturnContinue), passwordPromptObserved=\(didSeePrompt), passwordDeclineReturned=\(didDecline), passwordPromptDismissed=\(didConfirmPromptGone), modePage=\(lastModePage.map(String.init) ?? "unknown"), postContinueSnapshotObserved=\(didObserveAfterContinue), lastSnapshotSucceeded=\(didReadLastSnapshot), lastSnapshotError=\(lastSnapshotError.map(String.init) ?? "none")"
         if didIssueContinue && !didSeePrompt && didReadLastSnapshot && didObserveAfterContinue && lastModePage == true {
             XCTFail(
                 "Mode departure failed after one hittable Continue without a password prompt; possible App navigation defect (\(detail))",
