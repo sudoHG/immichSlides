@@ -996,35 +996,46 @@ def _read_public_slot(rgb: object, mark: str, glyph_overlay_box: tuple[int, int,
     for top, bottom in bands:
         if bottom - top < FRAME_GLYPH_MINIMUM_BAND_HEIGHT:
             continue
-        cell = (bottom - top) / 7
         band_photos = []
-        origins: set[float] = set()
-        for row_index in range(7):
-            row = white_rows[int(top + (row_index + 0.5) * cell)]
-            for x in range(1, width):
-                y = int(top + (row_index + 0.5) * cell)
-                if is_observed(x, y) and is_observed(x - 1, y) and row[x] != row[x - 1]:
-                    origins.update(round(x - column * cell, 1) for column in range(6))
-        for origin in origins:
-            observed = []
+        cells = {(bottom - top) / 7}
+        if glyph_overlay_box is not None and top < glyph_overlay_box[1] <= bottom <= glyph_overlay_box[3]:
+            # A bottom-clipped band is not seven rows tall. Square public cells
+            # also encode their scale in the surviving top-row horizontal strokes.
+            boundaries = [0] + [x for x in range(1, width) if white_rows[top][x] != white_rows[top][x - 1]] + [width]
+            for left, right in zip(boundaries, boundaries[1:]):
+                if white_rows[top][left] and left > 0 and right < width:
+                    for columns in range(1, 6):
+                        cell = (right - left) / columns
+                        if bottom < top + 7 * cell <= min(height, glyph_overlay_box[3]):
+                            cells.add(cell)
+        for cell in cells:
+            origins: set[float] = set()
             for row_index in range(7):
                 y = int(top + (row_index + 0.5) * cell)
-                for column in range(5):
-                    x = round(origin + (column + 0.5) * cell)
-                    if 0 <= x < width and is_observed(x, y):
-                        observed.append((row_index, column, white_rows[y][x]))
-            for letter in _public_letters_for_cells(observed):
-                # A visible digit must agree with this slot's color identity, so
-                # an isolated digit cannot be mistaken for a cropped letter.
-                digit = GLYPHS[mark[-1]]
-                if any(
-                    (digit[row][column] == "1") != white_rows[int(top + (row + 0.5) * cell)][x]
-                    for row in range(7) for column in range(5)
-                    if 0 <= (x := round(origin + (6 + column + 0.5) * cell)) < width
-                    and is_observed(x, int(top + (row + 0.5) * cell))
-                ):
-                    continue
-                band_photos.append(PublicFramePhoto(letter, mark))
+                row = white_rows[y]
+                for x in range(1, width):
+                    if is_observed(x, y) and is_observed(x - 1, y) and row[x] != row[x - 1]:
+                        origins.update(round(x - column * cell, 1) for column in range(6))
+            for origin in origins:
+                observed = []
+                for row_index in range(7):
+                    y = int(top + (row_index + 0.5) * cell)
+                    for column in range(5):
+                        x = round(origin + (column + 0.5) * cell)
+                        if 0 <= x < width and is_observed(x, y):
+                            observed.append((row_index, column, white_rows[y][x]))
+                for letter in _public_letters_for_cells(observed):
+                    # A visible digit must agree with this slot's color identity, so
+                    # an isolated digit cannot be mistaken for a cropped letter.
+                    digit = GLYPHS[mark[-1]]
+                    if any(
+                        (digit[row][column] == "1") != white_rows[int(top + (row + 0.5) * cell)][x]
+                        for row in range(7) for column in range(5)
+                        if 0 <= (x := round(origin + (6 + column + 0.5) * cell)) < width
+                        and is_observed(x, int(top + (row + 0.5) * cell))
+                    ):
+                        continue
+                    band_photos.append(PublicFramePhoto(letter, mark))
         if not band_photos:
             ink_x = [x for y in range(top, bottom) for x, white in enumerate(white_rows[y]) if white]
             if max(ink_x) - min(ink_x) + 1 <= (bottom - top) * 11 / 7 + 2:
