@@ -59,8 +59,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
         )
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
         XCTAssertTrue(
-            playPauseButton.waitForPublicElement(
-                "slideshow.control.playPause.button", timeout: TestWait.seconds(.product(30))),
+            waitForColdLaunchControls(app: app, timeout: TestWait.seconds(.product(30))),
             "A configured cold launch must go straight to the playback page."
         )
         XCTAssertTrue(
@@ -731,9 +730,13 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
         message: String
     ) {
         for _ in 0..<maximumPresses {
-            if element.exists && element.hasFocus { return }
-            FirstFailureRemote.press(direction)
-            RunLoop.current.run(until: Date().addingTimeInterval(Timing.focusMovementSettleSeconds))
+            let snapshots = XCUIApplication().evidenceSnapshotsByIdentifier()
+            guard let target = snapshots[element.identifier] else { continue }
+            // Previous is reachable only while the current retained history has an earlier entry.
+            if target.identifier == "slideshow.control.previous.button", !target.isEnabled { break }
+            if target.hasFocus { return }
+            _ = XCUIApplication().pressAndWaitForTVOSFocusMovement(
+                direction, to: element.identifier, timeout: TestWait.seconds(.product(1)))
         }
         XCTAssertTrue(waitForFocus(on: element, timeout: TestWait.seconds(.product(4))), message)
     }
@@ -742,10 +745,33 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
     private func waitForFocus(on element: XCUIElement, timeout: TimeInterval) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            if element.exists && element.hasFocus { return true }
+            let snapshots = XCUIApplication().evidenceSnapshotsByIdentifier()
+            if let target = snapshots[element.identifier], target.hasFocus {
+                if target.identifier == "slideshow.control.previous.button", !target.isEnabled { return false }
+                return Date() < deadline
+            }
             RunLoop.current.run(until: Date().addingTimeInterval(Timing.focusPollingSeconds))
         }
-        return element.exists && element.hasFocus
+        return false
+    }
+
+    @MainActor
+    private func waitForColdLaunchControls(app: XCUIApplication, timeout: TimeInterval) -> Bool {
+        FirstFailureContext.beginWait(seconds: timeout)
+        defer { FirstFailureContext.endWait() }
+        let deadline = Date().addingTimeInterval(timeout)
+        var didSendWake = false
+        while Date() < deadline {
+            let snapshots = app.evidenceSnapshotsByIdentifier()
+            guard Date() < deadline else { return false }
+            if snapshots["slideshow.control.playPause.button"] != nil { return true }
+            if !didSendWake && snapshots["slideshow.hiddenWakeReceiver"]?.hasFocus == true {
+                FirstFailureRemote.press(.up)
+                didSendWake = true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(Timing.focusPollingSeconds))
+        }
+        return false
     }
 
     @MainActor

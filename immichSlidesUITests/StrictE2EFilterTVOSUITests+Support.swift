@@ -101,7 +101,9 @@ extension StrictE2EFilterTVOSUITests {
     }
 
     @MainActor
-    func capturePausedPlaybackPNGs(app: XCUIApplication, names: [String]) throws {
+    func capturePausedPlaybackPNGs(
+        app: XCUIApplication, names: [String], stableFrameDeadline: Date? = nil
+    ) throws {
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
         XCTAssertTrue(
             playPauseButton.waitForPublicElement(
@@ -120,10 +122,14 @@ extension StrictE2EFilterTVOSUITests {
             playPauseButton, directions: [.left, .right],
             message: "Focus must be able to move to Play/Pause.")
         let playingValue = String(describing: playPauseButton.value ?? "")
+        var readyMark: String?
         if playingValue.contains("暂停") || playingValue.lowercased().contains("pause") {
             moveFocusTo(
                 playPauseButton, directions: [.left, .right],
                 message: "Focus must be able to move to Play/Pause.")
+            if let stableFrameDeadline {
+                readyMark = try requireStablePersonFrame(app: app, deadline: stableFrameDeadline, name: names[0])
+            }
             FirstFailureRemote.press(.select)
         }
         XCTAssertTrue(
@@ -136,7 +142,14 @@ extension StrictE2EFilterTVOSUITests {
         let nextButton = app.buttons["slideshow.control.next.button"]
         for (index, name) in names.enumerated() {
             ensureControlBarVisible(app: app)
-            try writeScreenshotPNG(app: app, name: name, attachmentName: name)
+            let png = app.screenshotForFailureEvidence().pngRepresentation
+            if index == 0, let readyMark {
+                let identity = StrictE2EPhotoIdentity.captureIdentity(png: png)
+                XCTAssertTrue(
+                    identity.status == .match && identity.mark == readyMark,
+                    "Visual ID failed \(name): paused frame must retain the stable readable scene")
+            }
+            try writeScreenshotPNG(app: app, name: name, attachmentName: name, capturedPNG: png)
             if index + 1 < names.count {
                 ensureControlBarVisible(app: app)
                 moveFocus(.right, to: nextButton, maximumPresses: 3, message: "Focus must be able to move to Next.")
@@ -144,6 +157,44 @@ extension StrictE2EFilterTVOSUITests {
                 RunLoop.current.run(until: Date().addingTimeInterval(Timing.playbackSceneSettleSeconds))
             }
         }
+    }
+
+    @MainActor
+    private func requireStablePersonFrame(app: XCUIApplication, deadline: Date, name: String) throws -> String {
+        var previousMark: String?
+        while Date() < deadline {
+            let before = strictSceneFrameObservation(app: app)
+            let png = app.screenshotForFailureEvidence().pngRepresentation
+            let after = strictSceneFrameObservation(app: app)
+            let identity = StrictE2EPhotoIdentity.captureIdentity(png: png)
+            let beforeRefs = SharedSceneEvidenceManifest.parseKeyValueFields(before["manifest"] ?? "")[
+                "ledgerSceneAssets"]
+            let afterRefs = SharedSceneEvidenceManifest.parseKeyValueFields(after["manifest"] ?? "")[
+                "ledgerSceneAssets"]
+            #if DEBUG
+            let isStable =
+                StrictE2ESceneCapture.isStableWindow(before)
+                && StrictE2ESceneCapture.isStableWindow(after) && beforeRefs != nil && beforeRefs == afterRefs
+            #else
+            let isStable = true  // Release proves stability through consecutive readable pixel identities below.
+            #endif
+            if isStable, identity.status == .match, let mark = identity.mark {
+                if previousMark == mark && Date() < deadline {
+                    attachStrictSceneObservation(before: before, after: after, name: "\(name)-before-pause")
+                    let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+                    attachment.name = "\(name)-before-pause"
+                    attachment.lifetime = .keepAlways
+                    add(attachment)
+                    return mark
+                }
+                previousMark = mark
+            } else {
+                previousMark = nil
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(Timing.focusPollingSeconds))
+        }
+        throw StrictE2EPhotoIdentity.AssertionError.message(
+            "Visual ID failed \(name): no stable readable frame before Pause")
     }
 
     @MainActor
@@ -313,36 +364,8 @@ extension StrictE2EFilterTVOSUITests {
 
     @MainActor
     private func pressAndWaitForFocusMovement(_ direction: XCUIRemote.Button, to target: XCUIElement) -> Bool? {
-        let app = XCUIApplication()
-        let focused = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "hasFocus == %@", NSNumber(value: true))).firstMatch
-        let previous = try? focused.snapshot()
-        FirstFailureRemote.press(direction)
-        guard let previous, previous.hasFocus, !previous.identifier.isEmpty else {
-            RunLoop.current.run(until: Date().addingTimeInterval(Timing.focusMovementSettleSeconds))
-            // Unidentifiable focus retains the legacy cadence without declaring a directional edge.
-            return nil
-        }
-        let deadline = Date().addingTimeInterval(Timing.focusObservationWindowSeconds)
-        var hasConfirmedUnchangedFocus = false
-        while Date() < deadline {
-            let current = try? focused.snapshot()
-            if (try? target.snapshot())?.hasFocus == true { return true }
-            hasConfirmedUnchangedFocus = false
-            if let current, current.hasFocus, !current.identifier.isEmpty {
-                if current.identifier != previous.identifier || current.elementType != previous.elementType {
-                    return true
-                }
-                hasConfirmedUnchangedFocus = true
-            }
-            let focusPollSeconds = min(
-                Timing.focusPollingSeconds, max(TestWait.seconds(.product(0)), deadline.timeIntervalSinceNow))
-            RunLoop.current.run(
-                until: Date().addingTimeInterval(focusPollSeconds)
-            )
-        }
-        // Only the last identifiable, unchanged observation confirms an edge; a lost read is unknown.
-        return hasConfirmedUnchangedFocus ? false : nil
+        XCUIApplication().pressAndWaitForTVOSFocusMovement(
+            direction, to: target.identifier, timeout: Timing.focusObservationWindowSeconds)
     }
 
     @MainActor
@@ -395,8 +418,9 @@ extension StrictE2EFilterTVOSUITests {
     }
 
     @MainActor
-    func writeScreenshotPNG(app: XCUIApplication, name: String, attachmentName: String) throws {
-        let png = app.screenshotForFailureEvidence().pngRepresentation
+    func writeScreenshotPNG(app: XCUIApplication, name: String, attachmentName: String, capturedPNG: Data? = nil) throws
+    {
+        let png = capturedPNG ?? app.screenshotForFailureEvidence().pngRepresentation
         let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
         attachment.name = attachmentName
         attachment.lifetime = .keepAlways
