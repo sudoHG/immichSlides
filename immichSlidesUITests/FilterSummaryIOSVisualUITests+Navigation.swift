@@ -588,29 +588,33 @@ extension FilterSummaryIOSVisualUITests {
     }
 
     func startRandomPlaybackFromModeSelection(app: XCUIApplication) {
-        IOSFirstBootNavigation(app: app).selectModeAndContinue(
-            "mode.random.button",
-            selectionTimeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
-            departureTimeout: FilterSummaryIOSVisualUITestsWaitTiming.screenTransitionTimeoutSeconds)
+        guard
+            let playbackDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
+                "mode.random.button",
+                selectionTimeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+                departureTimeout: TestWait.seconds(.infrastructure(25)))
+        else { return }
 
         var diagnostic = ""
         XCTAssertTrue(
             waitForSlideshowSettingsButton(
-                app: app, timeout: TestWait.seconds(.infrastructure(25)),
+                app: app, timeout: max(.zero, playbackDeadline.timeIntervalSinceNow),
                 onTimeout: { diagnostic = " (\($0))" }),
             "After entering the playback page, the settings button should be visible\(diagnostic)"
         )
     }
 
     func startFilteredFlowFromModeSelection(app: XCUIApplication) {
-        IOSFirstBootNavigation(app: app).selectModeAndContinue(
-            "mode.filtered.button",
-            selectionTimeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
-            departureTimeout: FilterSummaryIOSVisualUITestsWaitTiming.screenTransitionTimeoutSeconds)
+        guard
+            let summaryDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
+                "mode.filtered.button",
+                selectionTimeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+                departureTimeout: FilterSummaryIOSVisualUITestsWaitTiming.screenTransitionTimeoutSeconds)
+        else { return }
 
         XCTAssertTrue(
             app.buttons["filterSummary.startPlayback.button"].waitForFailureEvidence(
-                timeout: FilterSummaryIOSVisualUITestsWaitTiming.screenTransitionTimeoutSeconds))
+                timeout: max(.zero, summaryDeadline.timeIntervalSinceNow)))
     }
 
     @MainActor

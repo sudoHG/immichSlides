@@ -94,15 +94,17 @@ extension FilterSummaryIOSVisualUITests {
             acceptanceLocale: acceptanceLocale
         )
 
-        IOSFirstBootNavigation(app: app).selectModeAndContinue(
-            "mode.filtered.button",
-            selectionTimeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
-            departureTimeout: FilterSummaryIOSVisualUITestsWaitTiming.screenTransitionTimeoutSeconds)
+        guard
+            let summaryDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
+                "mode.filtered.button",
+                selectionTimeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+                departureTimeout: FilterSummaryIOSVisualUITestsWaitTiming.screenTransitionTimeoutSeconds)
+        else { return app }
 
         let startPlaybackButton = app.buttons["filterSummary.startPlayback.button"]
         XCTAssertTrue(
             startPlaybackButton.waitForFailureEvidence(
-                timeout: FilterSummaryIOSVisualUITestsWaitTiming.screenTransitionTimeoutSeconds))
+                timeout: max(.zero, summaryDeadline.timeIntervalSinceNow)))
         XCTAssertTrue(
             app.buttons["filterSummary.album.button"].waitForFailureEvidence(
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.navigationTimeoutSeconds))

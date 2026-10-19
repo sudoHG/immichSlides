@@ -123,21 +123,26 @@ extension immichSlidesUITests {
     }
 
     func startRandomPlaybackFromModeSelection(app: XCUIApplication) {
-        IOSFirstBootNavigation(app: app).selectModeAndContinue(
-            "mode.random.button", selectionTimeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds,
-            departureTimeout: immichSlidesUITestsWaitTiming.navigationTimeoutSeconds)
+        guard
+            let playbackDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
+                "mode.random.button", selectionTimeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds,
+                departureTimeout: TestWait.seconds(.product(25)))
+        else { return }
 
-        XCTAssertTrue(waitForSlideshowSettingsButton(app: app, timeout: TestWait.seconds(.product(25))))
+        XCTAssertTrue(
+            waitForSlideshowSettingsButton(app: app, timeout: max(.zero, playbackDeadline.timeIntervalSinceNow)))
     }
 
     func startFilteredFlowFromModeSelection(app: XCUIApplication) {
-        IOSFirstBootNavigation(app: app).selectModeAndContinue(
-            "mode.filtered.button", selectionTimeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds,
-            departureTimeout: immichSlidesUITestsWaitTiming.navigationTimeoutSeconds)
+        guard
+            let summaryDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
+                "mode.filtered.button", selectionTimeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds,
+                departureTimeout: immichSlidesUITestsWaitTiming.navigationTimeoutSeconds)
+        else { return }
 
         XCTAssertTrue(
             app.buttons["filterSummary.startPlayback.button"].waitForFailureEvidence(
-                timeout: immichSlidesUITestsWaitTiming.navigationTimeoutSeconds))
+                timeout: max(.zero, summaryDeadline.timeIntervalSinceNow)))
     }
 
     func openSettingsFromSlideshow(app: XCUIApplication) {

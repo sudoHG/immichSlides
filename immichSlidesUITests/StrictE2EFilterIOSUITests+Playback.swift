@@ -161,8 +161,9 @@ extension StrictE2EFilterIOSUITests {
 
     @MainActor
     func enterFilterSummary(app: XCUIApplication) {
-        chooseOnboardingModeAndContinue(app: app, identifier: "mode.filtered.button")
-        let reached = waitUntil(timeout: TestWait.seconds(.product(20))) {
+        guard let summaryDeadline = chooseOnboardingModeAndContinue(app: app, identifier: "mode.filtered.button")
+        else { return }
+        let reached = waitUntil(timeout: max(.zero, summaryDeadline.timeIntervalSinceNow)) {
             app.buttons["filterSummary.album.button"].exists
                 || app.descendants(matching: .any)["filterSummary.album.button"].exists
         }
@@ -185,7 +186,7 @@ extension StrictE2EFilterIOSUITests {
         let deadline = Date().addingTimeInterval(TestWait.seconds(.product(15)))
         var didTap = false
         while Date() < deadline {
-            if isSystemSavePasswordPromptVisible(app: app) {
+            if isSystemSavePasswordPromptVisible(app: app, deadline: deadline) {
                 guard dismissSystemSavePasswordPromptIfPresent(app: app, deadline: deadline)
                 else { break }
                 _ = captureNamedPNG(app: app, name: "server-switch-entry-password-prompt-dismissed")
@@ -263,7 +264,7 @@ extension StrictE2EFilterIOSUITests {
         let deadline = Date().addingTimeInterval(TestWait.seconds(.product(12)))
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(12))) {
-                if self.isSystemSavePasswordPromptVisible(app: app) {
+                if self.isSystemSavePasswordPromptVisible(app: app, deadline: deadline) {
                     _ = self.dismissSystemSavePasswordPromptIfPresent(
                         app: app, deadline: deadline)
                     return false
@@ -273,7 +274,9 @@ extension StrictE2EFilterIOSUITests {
             "Album must be visible and hittable; state injection is no substitute"
         )
         if isAlbumCardSelected(card) != isSelectionRequested {
-            guard !isSystemSavePasswordPromptVisible(app: app), card.isHittable else {
+            guard dismissSystemSavePasswordPromptIfPresent(app: app, deadline: deadline), card.isHittable,
+                Date() < deadline
+            else {
                 XCTFail("Before the tap, the album must still be visible and not covered by a system prompt")
                 return
             }
@@ -301,8 +304,8 @@ extension StrictE2EFilterIOSUITests {
     }
 
     @MainActor
-    func isSystemSavePasswordPromptVisible(app: XCUIApplication) -> Bool {
-        (try? IOSFirstBootNavigation(app: app).observe().hasPasswordPrompt) ?? true
+    func isSystemSavePasswordPromptVisible(app: XCUIApplication, deadline: Date) -> Bool {
+        IOSFirstBootNavigation(app: app).isPasswordPromptVisible(until: deadline)
     }
 
     @discardableResult

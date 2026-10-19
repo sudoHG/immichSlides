@@ -183,8 +183,10 @@ authorize a tap or prove disappearance. Receipts distinguish `window-index-N`
 from `alert-snapshot`. A still-present prompt needs a fresh exact snapshot and
 live-hittable decline action before another decline within the same deadline.
 Record a returned decline separately from a later snapshot confirming disappearance.
-Public snapshots do not expose hittability: immediately before a real tap, check
-only the target's live `isHittable`, then check the same absolute deadline again.
+Public snapshots do not expose hittability: immediately before a real tap, match
+both the observed identifier and label, require exactly one live match, and check
+its label, frame and `isHittable`. An alert source must still contain exactly one
+alert. Receipts include the live decline label. Check the same absolute deadline again.
 Never equate a visible frame with hittability, decline an unrelated alert, or save
 credentials. Do not capture screenshots between detecting the prompt and declining
 it. Mode cards, Not Now and Continue all require live hittability; a non-hittable
@@ -192,8 +194,10 @@ card waits for a fresh observation, without a coordinate tap that can invoke
 XCTest's generic interruption handler. Confirm the prompt is absent and the intended mode is selected before issuing
 one Continue; record its issue and return separately, then prove mode disappeared
 and the destination appeared within the existing departure deadline. A returned,
-hittable Continue without a prompt that leaves mode visible is a navigation failure,
+hittable Continue without a post-Continue prompt that leaves mode visible is a navigation failure,
 including a possible App defect; do not resend Continue or retry the flow.
+Callers use the returned absolute deadline for the remaining destination wait;
+snapshot errors re-observe within that same budget and never authorize a tap.
 
 For iOS slideshow Settings readiness, use one fallible window snapshot for enabled
 state and a non-empty button frame fully contained in that window. This is a snapshot

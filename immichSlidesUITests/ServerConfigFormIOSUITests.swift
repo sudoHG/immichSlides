@@ -164,12 +164,14 @@ final class ServerConfigFormIOSUITests: XCTestCase {
     }
 
     private func startRandomPlaybackFromModeSelection(app: XCUIApplication) {
-        IOSFirstBootNavigation(app: app).selectModeAndContinue(
-            "mode.random.button", selectionTimeout: WaitTiming.controlAppearanceTimeoutSeconds,
-            departureTimeout: TestWait.seconds(.product(25)))
+        guard
+            let playbackDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
+                "mode.random.button", selectionTimeout: WaitTiming.controlAppearanceTimeoutSeconds,
+                departureTimeout: TestWait.seconds(.product(25)))
+        else { return }
 
         XCTAssertTrue(
-            waitForSlideshowSettingsButton(app: app, timeout: TestWait.seconds(.product(25))),
+            waitForSlideshowSettingsButton(app: app, timeout: max(.zero, playbackDeadline.timeIntervalSinceNow)),
             "After entering playback, the settings button should be visible"
         )
     }

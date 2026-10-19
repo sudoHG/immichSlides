@@ -48,7 +48,9 @@ struct IOSDriver: PlaybackDriver {
             "A successful save must lead to mode selection.")
         guard
             let playbackDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
-                "mode.random.button", selectionTimeout: UITestSupportWaitTiming.readbackTimeoutSeconds,
+                "mode.random.button",
+                selectionTimeout: UITestSupportWaitTiming.readbackTimeoutSeconds
+                    + UITestSupportWaitTiming.elementAppearanceTimeoutSeconds,
                 departureTimeout: UITestSupportWaitTiming.playbackStartupTimeoutSeconds)
         else { return }
         XCTAssertTrue(

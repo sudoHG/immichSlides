@@ -269,14 +269,16 @@ private extension PlaybackRequestLifecycleDiagnosticsUITests {
     }
 
     func startRandomPlaybackFromModeSelection(app: XCUIApplication) {
-        IOSFirstBootNavigation(app: app).selectModeAndContinue(
-            "mode.random.button", selectionTimeout: TestWait.seconds(.infrastructure(10)),
-            departureTimeout: TestWait.seconds(.product(10)))
+        guard
+            let playbackDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
+                "mode.random.button", selectionTimeout: TestWait.seconds(.infrastructure(10)),
+                departureTimeout: TestWait.seconds(.product(30)))
+        else { return }
 
         XCTAssertTrue(
             app.buttons["slideshow.control.settings.button"].waitForPublicElement(
                 "slideshow.control.settings.button",
-                timeout: TestWait.seconds(.product(30))),
+                timeout: max(.zero, playbackDeadline.timeIntervalSinceNow)),
             "After entering playback, the control bar should be shown"
         )
     }

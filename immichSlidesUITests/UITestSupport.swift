@@ -486,7 +486,7 @@ struct IOSFirstBootNavigation {
             pending.append(contentsOf: node.children)
         }
         // ui-label-lookup: The simulator-owned password prompt follows the system language.
-        let titles = ["保存密码？", "保存密码?", "Save Password?"]
+        let titles = ["保存密码？", "Save Password?"]
         let hasTitle = nodes.contains {
             ($0.elementType == .staticText || $0.elementType == .sheet || $0.elementType == .alert)
                 && (titles.contains($0.label) || titles.contains($0.identifier))
@@ -523,27 +523,33 @@ struct IOSFirstBootNavigation {
         guard isDecline || !observation.hasModalObstacle else { return false }
         guard node.isEnabled, !node.frame.isEmpty, frame.contains(node.frame), Date() < deadline
         else { return false }
-        let target: XCUIElement
+        if isDecline && observation.isPromptAlert && host.alerts.count != 1 { return false }
         let container =
             isDecline && observation.isPromptAlert
             ? host.alerts.element(boundBy: .zero)
             : host.windows.element(boundBy: isDecline ? observation.promptWindowIndex : observation.windowIndex)
-        if node.identifier.isEmpty {
-            // ui-label-lookup: Only the exact password prompt's unique decline action reaches this branch.
-            target = container.buttons.matching(NSPredicate(format: "label == %@", node.label)).firstMatch
-        } else {
-            target = container.buttons.matching(identifier: node.identifier).firstMatch
-        }
+        // ui-label-lookup: Bind the live action to both attributes of the observed button, including an empty ID.
+        let matches = container.buttons.matching(
+            NSPredicate(format: "identifier == %@ AND label == %@", node.identifier, node.label))
+        guard matches.count == 1 else { return false }
+        let target = matches.element(boundBy: .zero)
+        let liveLabel = target.label
+        guard liveLabel == node.label, target.frame == node.frame else { return false }
+        if isDecline && observation.isPromptAlert && host.alerts.count != 1 { return false }
         let isHittable = target.isHittable
         guard isHittable, Date() < deadline else { return false }
         FirstFailureContext.mark(step, element: node.identifier.isEmpty ? "unknown" : node.identifier)
         willTap()
         if step == "save-password-prompt" {
-            print("Exact Save Password prompt observed; Not Now issued; source=\(observation.promptSource)")
+            print(
+                "Exact Save Password prompt observed; Not Now issued; source=\(observation.promptSource); liveLabel=\(liveLabel)"
+            )
         }
         FirstFailureContext.action("tap") { target.tap() }
         if step == "save-password-prompt" {
-            print("First-boot prompt receipt: source=\(observation.promptSource); Not Now returned=true")
+            print(
+                "First-boot prompt receipt: source=\(observation.promptSource); liveLabel=\(liveLabel); Not Now returned=true"
+            )
         }
         return true
     }
@@ -567,6 +573,15 @@ struct IOSFirstBootNavigation {
             poll(until: deadline)
         } while Date() < deadline
         return false
+    }
+
+    func isPasswordPromptVisible(until deadline: Date) -> Bool {
+        repeat {
+            if let observation = try? observe() { return observation.hasPasswordPrompt }
+            poll(until: deadline)
+        } while Date() < deadline
+        // Unknown at the caller's deadline cannot authorize an unobstructed action.
+        return true
     }
 
     @discardableResult
@@ -593,6 +608,7 @@ struct IOSFirstBootNavigation {
         var didSelect = false
         var didDecline = false
         var didSeePrompt = false
+        var didSeePromptAfterContinue = false
         var didConfirmPromptGone = false
         var promptSource = "not-observed"
         var didIssueContinue = false
@@ -621,6 +637,7 @@ struct IOSFirstBootNavigation {
             if didIssueContinue { didObserveAfterContinue = true }
             if observation.hasPasswordPrompt {
                 didSeePrompt = true
+                if didIssueContinue { didSeePromptAfterContinue = true }
                 didConfirmPromptGone = false
                 promptSource = observation.promptSource
                 step = "save-password-prompt"
@@ -676,8 +693,10 @@ struct IOSFirstBootNavigation {
         }
         FirstFailureContext.mark(step, element: didIssueContinue ? "mode.continue.button" : identifier)
         let detail =
-            "step=\(step), Continue issued=\(didIssueContinue) returned=\(didReturnContinue), passwordPromptObserved=\(didSeePrompt), passwordDeclineReturned=\(didDecline), passwordPromptDismissed=\(didConfirmPromptGone), promptSource=\(promptSource), modePage=\(lastModePage.map(String.init) ?? "unknown"), postContinueSnapshotObserved=\(didObserveAfterContinue), lastSnapshotSucceeded=\(didReadLastSnapshot), lastSnapshotError=\(lastSnapshotError.map(String.init) ?? "none")"
-        if didIssueContinue && !didSeePrompt && didReadLastSnapshot && didObserveAfterContinue && lastModePage == true {
+            "step=\(step), Continue issued=\(didIssueContinue) returned=\(didReturnContinue), passwordPromptObserved=\(didSeePrompt), postContinuePromptObserved=\(didSeePromptAfterContinue), passwordDeclineReturned=\(didDecline), passwordPromptDismissed=\(didConfirmPromptGone), promptSource=\(promptSource), modePage=\(lastModePage.map(String.init) ?? "unknown"), postContinueSnapshotObserved=\(didObserveAfterContinue), lastSnapshotSucceeded=\(didReadLastSnapshot), lastSnapshotError=\(lastSnapshotError.map(String.init) ?? "none")"
+        if didIssueContinue && !didSeePromptAfterContinue && didReadLastSnapshot && didObserveAfterContinue
+            && lastModePage == true
+        {
             XCTFail(
                 "Mode departure failed after one hittable Continue without a password prompt; possible App navigation defect (\(detail))",
                 file: file, line: line)

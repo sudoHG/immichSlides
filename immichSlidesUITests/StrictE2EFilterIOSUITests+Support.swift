@@ -53,10 +53,10 @@ extension StrictE2EFilterIOSUITests {
     func chooseOnboardingModeAndContinue(
         app: XCUIApplication,
         identifier: String
-    ) {
+    ) -> Date? {
         IOSFirstBootNavigation(app: app).selectModeAndContinue(
             identifier, selectionTimeout: TestWait.seconds(.product(8)),
-            departureTimeout: TestWait.seconds(.product(8)))
+            departureTimeout: TestWait.seconds(.product(20)))
     }
 
     @MainActor

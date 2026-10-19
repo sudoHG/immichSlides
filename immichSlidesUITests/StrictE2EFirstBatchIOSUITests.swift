@@ -61,14 +61,18 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
 
         try completeFirstBootToModeSelection(app: app, input: input, evidencePrefix: "journey-b")
 
-        chooseOnboardingModeAndContinue(app: app, identifier: "mode.filtered.button")
-        waitForFilterSummary(app: app)
+        guard
+            let summaryDeadline = chooseOnboardingModeAndContinue(
+                app: app, identifier: "mode.filtered.button", departureTimeout: TestWait.seconds(.product(20)))
+        else { return }
+        waitForFilterSummary(app: app, deadline: summaryDeadline)
         attachOrientationEvidence(app: app, name: "journey-b-filter-summary")
         returnToModeSelectionFromFilterSummary(app: app)
 
-        chooseOnboardingModeAndContinue(app: app, identifier: "mode.random.button")
+        guard let playbackDeadline = chooseOnboardingModeAndContinue(app: app, identifier: "mode.random.button")
+        else { return }
         XCTAssertTrue(
-            waitForPlaybackControls(app: app, timeout: TestWait.seconds(.product(30))),
+            waitForPlaybackControls(app: app, timeout: max(.zero, playbackDeadline.timeIntervalSinceNow)),
             "Random mode must reach the playback page.")
         dismissPlaybackEntryHintIfNeeded(app: app)
         attachOrientationEvidence(app: app, name: "journey-b-random-playback-start")
@@ -178,12 +182,14 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
         defer { app.terminateForFailureEvidence() }
 
         try completeFirstBootToModeSelection(app: app, input: input, evidencePrefix: "pause-stage")
-        chooseOnboardingModeAndContinue(
-            app: app,
-            identifier: "mode.random.button"
-        )
+        guard
+            let playbackDeadline = chooseOnboardingModeAndContinue(
+                app: app,
+                identifier: "mode.random.button"
+            )
+        else { return }
         XCTAssertTrue(
-            waitForPlaybackControls(app: app, timeout: TestWait.seconds(.product(30))),
+            waitForPlaybackControls(app: app, timeout: max(.zero, playbackDeadline.timeIntervalSinceNow)),
             "Random mode must reach the playback page.")
         dismissPlaybackEntryHintIfNeeded(app: app)
 
@@ -225,12 +231,14 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
                 "mode.random.button", timeout: TestWait.seconds(.infrastructure(20))),
             "After injecting the public fixture, the app must reach the mode page."
         )
-        chooseOnboardingModeAndContinue(
-            app: app,
-            identifier: "mode.random.button"
-        )
+        guard
+            let playbackDeadline = chooseOnboardingModeAndContinue(
+                app: app,
+                identifier: "mode.random.button"
+            )
+        else { return }
         XCTAssertTrue(
-            waitForPlaybackControls(app: app, timeout: TestWait.seconds(.product(30))),
+            waitForPlaybackControls(app: app, timeout: max(.zero, playbackDeadline.timeIntervalSinceNow)),
             "Random mode must reach the playback page.")
         dismissPlaybackEntryHintIfNeeded(app: app)
         pausePlaybackIfNeeded(app: app)

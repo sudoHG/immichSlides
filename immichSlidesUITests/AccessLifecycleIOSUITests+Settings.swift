@@ -34,9 +34,8 @@ extension AccessLifecycleIOSUITests {
     }
 
     @MainActor
-    func isSystemSavePasswordPromptVisible(app: XCUIApplication) -> Bool {
-        // A failed snapshot is unknown, never evidence that the prompt is absent.
-        (try? IOSFirstBootNavigation(app: app).observe().hasPasswordPrompt) ?? true
+    func isSystemSavePasswordPromptVisible(app: XCUIApplication, deadline: Date) -> Bool {
+        IOSFirstBootNavigation(app: app).isPasswordPromptVisible(until: deadline)
     }
 
     @MainActor
@@ -172,7 +171,7 @@ extension AccessLifecycleIOSUITests {
             return self.firstExistingSettingsItem(
                 app: app,
                 identifier: "settings.item.accessProtection"
-            ) != nil && !self.isSystemSavePasswordPromptVisible(app: app)
+            ) != nil && !self.isSystemSavePasswordPromptVisible(app: app, deadline: accessDeadline)
         }
         XCTAssertTrue(
             isAccessReady,
@@ -187,7 +186,7 @@ extension AccessLifecycleIOSUITests {
             firstExistingSettingsItem(
                 app: app,
                 identifier: "settings.item.accessProtection"
-            ) != nil && !isSystemSavePasswordPromptVisible(app: app),
+            ) != nil && !isSystemSavePasswordPromptVisible(app: app, deadline: holdUntil),
             "After a steady wait, Access Protection must still be tappable and the Save Password prompt must be gone."
         )
         openSettingsSection(app: app, sectionID: "settings.item.accessProtection")

@@ -195,13 +195,15 @@ extension PlaybackSmartFillVisualUITests {
     }
 
     func startRandomPlaybackFromModeSelection(app: XCUIApplication) {
-        IOSFirstBootNavigation(app: app).selectModeAndContinue(
-            "mode.random.button", selectionTimeout: TestWait.seconds(.product(8)),
-            departureTimeout: TestWait.seconds(.product(30)))
+        guard
+            let playbackDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
+                "mode.random.button", selectionTimeout: TestWait.seconds(.product(8)),
+                departureTimeout: TestWait.seconds(.product(30)))
+        else { return }
         XCTAssertTrue(
             app.buttons["slideshow.control.settings.button"].waitForPublicElement(
                 "slideshow.control.settings.button",
-                timeout: TestWait.seconds(.product(30))),
+                timeout: max(.zero, playbackDeadline.timeIntervalSinceNow)),
             "After starting random playback, the playback control bar should appear"
         )
     }
@@ -232,13 +234,15 @@ extension PlaybackSmartFillVisualUITests {
     }
 
     func startFilteredPlaybackFromModeSelection(app: XCUIApplication) {
-        IOSFirstBootNavigation(app: app).selectModeAndContinue(
-            "mode.filtered.button", selectionTimeout: TestWait.seconds(.product(8)),
-            departureTimeout: TestWait.seconds(.product(20)))
+        guard
+            let summaryDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
+                "mode.filtered.button", selectionTimeout: TestWait.seconds(.product(8)),
+                departureTimeout: TestWait.seconds(.product(20)))
+        else { return }
 
         let startButton = app.buttons["filterSummary.startPlayback.button"]
         XCTAssertTrue(
-            startButton.waitForFailureEvidence(timeout: TestWait.seconds(.product(20))),
+            startButton.waitForFailureEvidence(timeout: max(.zero, summaryDeadline.timeIntervalSinceNow)),
             "Filter summary should show the Start playback button")
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(20))) { startButton.isEnabled },

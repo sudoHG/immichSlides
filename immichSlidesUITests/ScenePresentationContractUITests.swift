@@ -650,11 +650,13 @@ final class ScenePresentationContractUITests: XCTestCase {
         XCTAssertTrue(startButton.hasFocus, "The tvOS Start Playback button must be able to take focus")
         FirstFailureRemote.press(.select)
         #else
-        IOSFirstBootNavigation(app: app).selectModeAndContinue(
-            "mode.filtered.button", selectionTimeout: WaitTiming.controlAppearanceTimeoutSeconds,
-            departureTimeout: WaitTiming.screenTransitionTimeoutSeconds)
-        XCTAssertTrue(startButton.waitForFailureEvidence(timeout: WaitTiming.screenTransitionTimeoutSeconds))
-        XCTAssertTrue(waitUntil(timeout: WaitTiming.screenTransitionTimeoutSeconds) { startButton.isEnabled })
+        guard
+            let summaryDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
+                "mode.filtered.button", selectionTimeout: WaitTiming.controlAppearanceTimeoutSeconds,
+                departureTimeout: WaitTiming.screenTransitionTimeoutSeconds)
+        else { return }
+        XCTAssertTrue(startButton.waitForFailureEvidence(timeout: max(.zero, summaryDeadline.timeIntervalSinceNow)))
+        XCTAssertTrue(waitUntil(timeout: max(.zero, summaryDeadline.timeIntervalSinceNow)) { startButton.isEnabled })
         tap(startButton)
         #endif
     }

@@ -688,7 +688,6 @@ PREFIX_RULES = (
     ("Save must become enabled after a real connection test succeeds.", "firstboot_setup", "control_state"),
     ("A cold launch with saved settings must not return to the first-boot page.", "cold_relaunch", "navigation"),
     ("A configured cold launch must go straight to the playback page.", "cold_relaunch", "navigation"),
-    ("The mode page must offer ", "mode_selection", "navigation"),
     ("Chose filter but reached the playback page, so the mode card tap did not register.", "mode_selection", "navigation"),
     ("Still on the mode page after Continue; filter mode did not start.", "mode_selection", "navigation"),
     ("Filter mode must reach the filter summary page.", "mode_selection", "navigation"),

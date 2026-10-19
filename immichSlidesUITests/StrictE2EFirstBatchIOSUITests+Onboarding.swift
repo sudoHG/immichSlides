@@ -168,11 +168,12 @@ extension StrictE2EFirstBatchIOSUITests {
     @MainActor
     func chooseOnboardingModeAndContinue(
         app: XCUIApplication,
-        identifier: String
-    ) {
+        identifier: String,
+        departureTimeout: TimeInterval = TestWait.seconds(.product(30))
+    ) -> Date? {
         IOSFirstBootNavigation(app: app).selectModeAndContinue(
             identifier, selectionTimeout: TestWait.seconds(.product(8)),
-            departureTimeout: TestWait.seconds(.product(4)))
+            departureTimeout: departureTimeout)
     }
 }
 
@@ -185,8 +186,8 @@ extension StrictE2EOnboardingIOS {
 
 extension StrictE2EFirstBatchIOSUITests {
     @MainActor
-    func waitForFilterSummary(app: XCUIApplication) {
-        let reached = waitUntil(timeout: TestWait.seconds(.product(20))) {
+    func waitForFilterSummary(app: XCUIApplication, deadline: Date) {
+        let reached = waitUntil(timeout: max(.zero, deadline.timeIntervalSinceNow)) {
             app.buttons["filterSummary.album.button"].exists
                 || app.descendants(matching: .any)["filterSummary.album.button"].exists
                 || app.staticTexts["filterSummary.page.title"].exists

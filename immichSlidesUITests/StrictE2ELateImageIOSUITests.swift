@@ -64,12 +64,15 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
 
     @MainActor
     private func enterPlaybackThenAdvanceTwice(app: XCUIApplication) throws {
-        IOSFirstBootNavigation(app: app).selectModeAndContinue(
-            "mode.random.button", selectionTimeout: TestWait.seconds(.product(8)),
-            departureTimeout: TestWait.seconds(.product(8)))
+        guard
+            let playbackDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
+                "mode.random.button", selectionTimeout: TestWait.seconds(.product(8)),
+                departureTimeout: TestWait.seconds(.product(8)))
+        else { return }
         let next = app.buttons["slideshow.control.next.button"]
         XCTAssertTrue(
-            next.waitForPublicElement("slideshow.control.next.button", timeout: TestWait.seconds(.product(8))),
+            next.waitForPublicElement(
+                "slideshow.control.next.button", timeout: max(.zero, playbackDeadline.timeIntervalSinceNow)),
             "Next must be tappable twice right after entering the slideshow, before old image requests finish.")
         let banner = app.descendants(matching: .any)["slideshow.entryHint.banner"]
         if (try? banner.snapshot()) != nil { tapElement(banner) }

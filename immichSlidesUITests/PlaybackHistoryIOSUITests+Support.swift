@@ -458,26 +458,30 @@ extension PlaybackHistoryIOSUITests {
     }
 
     func startRandomPlaybackFromModeSelection(app: XCUIApplication) {
-        IOSFirstBootNavigation(app: app).selectModeAndContinue(
-            "mode.random.button", selectionTimeout: TestWait.seconds(.infrastructure(5)),
-            departureTimeout: TestWait.seconds(.infrastructure(12)))
+        guard
+            let playbackDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
+                "mode.random.button", selectionTimeout: TestWait.seconds(.infrastructure(5)),
+                departureTimeout: TestWait.seconds(.infrastructure(25)))
+        else { return }
 
         XCTAssertTrue(
             app.buttons["slideshow.control.settings.button"].waitForPublicElement(
                 "slideshow.control.settings.button",
-                timeout: TestWait.seconds(.infrastructure(25))),
+                timeout: max(.zero, playbackDeadline.timeIntervalSinceNow)),
             "After entering random playback, the playback control bar should be shown"
         )
     }
 
     func startFilteredPlaybackFromModeSelection(app: XCUIApplication) {
-        IOSFirstBootNavigation(app: app).selectModeAndContinue(
-            "mode.filtered.button", selectionTimeout: TestWait.seconds(.infrastructure(5)),
-            departureTimeout: TestWait.seconds(.infrastructure(12)))
+        guard
+            let summaryDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
+                "mode.filtered.button", selectionTimeout: TestWait.seconds(.infrastructure(5)),
+                departureTimeout: TestWait.seconds(.infrastructure(12)))
+        else { return }
 
         let startButton = app.buttons["filterSummary.startPlayback.button"]
         XCTAssertTrue(
-            startButton.waitForFailureEvidence(timeout: TestWait.seconds(.infrastructure(12))),
+            startButton.waitForFailureEvidence(timeout: max(.zero, summaryDeadline.timeIntervalSinceNow)),
             "The filtered playback summary should show the Start Playback button")
         // Starting before the page swaps in the real album and person would play an empty pool.
         let selectionReady = app.staticTexts["filterSummary.visual.ready"]
