@@ -663,6 +663,7 @@ PREFIX_RULES = (
     ("The same public pattern must stay for the first half of T after Continue", "continue_timing", "scene_identity"),
     ("tvOS pause-continue evidence is invalid;", "continue_timing", "evidence_capture"),
     ("tvOS new photo must be stably identifiable within 4 s of transition start", "continue_timing", "scene_identity"),
+    ("iPhone new photo must be stably identifiable within 4 s of transition start", "continue_timing", "scene_identity"),
     ("All black must not count as a pass", "unknown", "scene_identity"),
     ("Blank must not count as a pass", "unknown", "scene_identity"),
     ("Unrecognizable input must not count as a pass", "unknown", "scene_identity"),

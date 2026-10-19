@@ -1,6 +1,36 @@
 import Foundation
 
 extension AccessLifecycleContract {
+    static func assertIPhonePauseTimingEvidence(
+        continueMark: String,
+        baselineLuma: Double?,
+        samples: [ContinueWatchSample],
+        intervalSeconds: TimeInterval
+    ) throws -> (verdict: FirstTransitionStartVerdict, isOfficialStartSigned: Bool) {
+        try assertSamplesStayOnSceneBeforeAdvanceWindow(
+            continueMark: continueMark,
+            samples: samples.map { (elapsed: $0.requestElapsed, mark: $0.mark) },
+            intervalSeconds: intervalSeconds
+        )
+        guard let stable = firstStableNewImage(continueMark: continueMark, samples: samples) else {
+            throw AssertionError.message("Black screen without a new photo must not pass automatically")
+        }
+        let verdict = assessFirstTransitionStart(
+            continueMark: continueMark, baselineLuma: baselineLuma,
+            samples: samples, intervalSeconds: intervalSeconds
+        )
+        let signed = try officialStartSigned(for: verdict, continueMark: continueMark, intervalSeconds: intervalSeconds)
+        if case .detected(let requestElapsed, _, _) = verdict,
+            let start = samples.first(where: { $0.requestElapsed == requestElapsed })
+        {
+            try assertStableImageWithinTransitionDeadline(
+                start: start, stable: stable,
+                failureMessage: "iPhone new photo must be stably identifiable within 4 s of transition start"
+            )
+        }
+        return (verdict, signed)
+    }
+
     static func assertTVOSPauseTimingEvidence(
         continueMark: String,
         baselineLuma: Double,
@@ -485,16 +515,36 @@ extension AccessLifecycleContract {
             return false
         }
 
-        guard
-            let firstStart = ordered.first(where: { sample in
-                isAutoTransitionStart(status: sample.status, mark: sample.mark, continueMark: continueMark)
-            })
+        let stable = firstStableNewImage(continueMark: continueMark, samples: ordered)
+        let startIndex = ordered.indices.first { index in
+            let sample = ordered[index]
+            if isAutoTransitionStart(status: sample.status, mark: sample.mark, continueMark: continueMark) {
+                return true
+            }
+            guard let baselineLuma, baselineLuma.isFinite, baselineLuma > minimumBaselineLuminance,
+                index > 0, sample.status == "MATCH", sample.mark == continueMark,
+                sample.meanLuma.isFinite,
+                ordered[index - 1].status == "MATCH", ordered[index - 1].mark == continueMark,
+                ordered[index - 1].isControlBarVisible == sample.isControlBarVisible
+            else { return false }
+            let threshold = baselineLuma * sustainedDimmingLuminanceRatio
+            guard sample.meanLuma < threshold else { return false }
+            let recovered = ordered.dropFirst(index + 1).prefix {
+                $0.requestElapsed <= (stable?.requestElapsed ?? .infinity)
+            }.contains { $0.status == "MATCH" && $0.mark == continueMark && $0.meanLuma >= threshold }
+            return !recovered
+                && hasSustainedDimming(
+                    from: index, continueMark: continueMark, threshold: threshold, samples: ordered
+                )
+        }
+        guard let startIndex
         else {
             if ordered.contains(where: hasUncertainSignal) {
                 return .pendingVideoReview(reason: "Unusable changes in window; auto start cannot be reliably judged")
             }
             return .missing
         }
+        let firstStart = ordered[startIndex]
         if firstStart.requestElapsed + timingToleranceSeconds < earliest {
             return .tooEarly(requestElapsed: firstStart.requestElapsed, mark: firstStart.mark)
         }
@@ -510,7 +560,7 @@ extension AccessLifecycleContract {
         return .detected(
             requestElapsed: firstStart.requestElapsed,
             mark: firstStart.mark,
-            status: firstStart.status
+            status: firstStart.mark == continueMark ? "DIMMING" : firstStart.status
         )
     }
 
@@ -522,14 +572,17 @@ extension AccessLifecycleContract {
         intervalSeconds: TimeInterval
     ) throws {
         try assertPresentMark(continueMark)
-        try assertBlackZoomBarOrClassificationIsNotAdvance(
-            status: startStatus,
-            mark: startMark,
-            continueMark: continueMark,
-            isControlBarVisible: true
-        )
-        if isAutoTransitionStart(status: startStatus, mark: startMark, continueMark: continueMark) == false {
-            throw AssertionError.message("Black screen, zoom, control bar gone or unrecognized is not a transition")
+        let isSustainedDimmingStart = startStatus == "DIMMING" && startMark == continueMark
+        if !isSustainedDimmingStart {
+            try assertBlackZoomBarOrClassificationIsNotAdvance(
+                status: startStatus,
+                mark: startMark,
+                continueMark: continueMark,
+                isControlBarVisible: true
+            )
+            if isAutoTransitionStart(status: startStatus, mark: startMark, continueMark: continueMark) == false {
+                throw AssertionError.message("Black screen, zoom, control bar gone or unrecognized is not a transition")
+            }
         }
         let earliest = intervalSeconds - continueCaptureSlackSeconds
         let latest = intervalSeconds + continueCaptureSlackSeconds

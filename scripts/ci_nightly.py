@@ -18,6 +18,7 @@ from ci_summary import (ContractError, decode, fields, identity_key, integer, ob
                         parse_identity, parse_summary, require, string, test_identity)
 from ci_verdict import tokens
 from run_host_checks import run_identity, source_metadata
+from strict_e2e_runner_support import IOS_LIFECYCLE_PAUSE_SUITE
 
 ROOT = Path(__file__).resolve().parent.parent
 MATRIX = ROOT / "scripts/nightly-matrix.json"
@@ -157,7 +158,7 @@ def matrix_equality(scheduled, observed):
 
 def aggregate_nightly(scheduled, summaries, *, live_in_scope, informational=(), review_packages=()):
     from strict_e2e_p2_contract import P2_CASES
-    review_suites = P2_CASES.keys() | {"ios-lifecycle-pause"}
+    review_suites = P2_CASES.keys() | {IOS_LIFECYCLE_PAUSE_SUITE}
     result = {"schema_version": 1, "status": "failed", "release_eligible": False,
               "release_ineligible_reasons": ["skeleton nightly: mandatory tiers are not built"],
               "tiers": {"strict": "failed", **{tier: "not yet in scope" for tier in UNBUILT_TIERS}},
@@ -407,7 +408,7 @@ def main(argv=None):
         ui = result["ui"]
         lines.extend(["", f"UI scheduled {ui['verdict']['matrix']['scheduled']}; executed {ui['verdict']['matrix']['executed']}; deselected {ui['verdict']['matrix']['deselected']}; missing {len(ui['verdict']['matrix']['missing'])}.",
                       f"UI shards {ui['capacity']['shards']}; max-parallel {ui['capacity']['max_parallel']}; minimum waves {ui['capacity']['minimum_shard_waves']}; observed waves {len(ui['capacity']['start_order_waves'])}; wall {ui['capacity']['wall_seconds']:.1f}s."])
-    lines.extend(["", f"P2 contracts needing human review: {len(result['needs_human_review'])}.",
+    lines.extend(["", f"Contracts needing human review (P2 and pause timing): {len(result['needs_human_review'])}.",
                   f"Informational Vision outcomes: {len(result['informational'])}.", "", "| Case | Outcome |", "|---|---|"])
     lines.extend(f"| {identity_key(item['identity'])} | {item['outcome']} |" for item in result["observed"])
     lines.extend(["", *result["errors"]])

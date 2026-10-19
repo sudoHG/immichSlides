@@ -844,6 +844,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
         cases = (
             ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "tvOS pause-continue evidence is invalid;", "continue_timing", "evidence_capture"),
             ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "tvOS new photo must be stably identifiable within 4 s of transition start", "continue_timing", "scene_identity"),
+            ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "iPhone new photo must be stably identifiable within 4 s of transition start", "continue_timing", "scene_identity"),
             ("TestSupport/AccessLifecycleContract.swift", "All black must not count as a pass", "unknown", "scene_identity"),
             ("TestSupport/AccessLifecycleContract.swift", "Blank must not count as a pass", "unknown", "scene_identity"),
             ("TestSupport/AccessLifecycleContract.swift", "Unrecognizable input must not count as a pass", "unknown", "scene_identity"),

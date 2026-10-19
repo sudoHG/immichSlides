@@ -466,22 +466,22 @@ an exact offered request does not require interval review. All timing assertions
 continue to use actual T with the existing T±2 and four-second confirmation rules.
 
 Pause/continue timing distinguishes transition onset from stable new-photo confirmation.
-tvOS shares the iPad iOS observer's sustained-dimming predicate and constants in
+iPhone and tvOS share the iPad observer's sustained-dimming predicate and constants in
 `AccessLifecycleContract`: the identified old photo drops below 95% of its baseline
 luminance for three consecutive, strictly decreasing samples, with the control-bar
 state unchanged and gaps between screenshot return and the next request no greater
 than the existing 0.1-second poll cadence plus its tolerance. An isolated black
 frame, a constant whole-screen dim or a dimming sequence that recovers the old
-photo's brightness cannot establish the tvOS start. A transition identity or a
+photo's brightness cannot establish the iPhone or tvOS start. A transition identity or a
 different identified photo remains direct onset evidence. iPad's existing
 conservative screenshot bounds and one-second stable-photo requirement are unchanged.
 
-The tvOS T±2 check uses the detected onset's screenshot-request offset, independently
+The iPhone and tvOS T±2 check uses the detected onset's screenshot-request offset, independently
 of when the new photo becomes readable. A different public photo must then remain
 identified and bright for the shared 0.8-second stable confirmation window; no new
 photo means failure. Dense capture continues through the shared T+2+4-second
 look-ahead, before classification, so a designed fade beginning inside T±2 can pass
-when the new photo becomes stable after T+2. Like iPad, tvOS requires stable-photo
+when the new photo becomes stable after T+2. Like iPad, iPhone and tvOS require stable-photo
 confirmation to return within four seconds of the onset request, using the same
 deadline check and constant. Every screenshot requested before T−2 (including the
 existing timing tolerance) must still identify the old photo: black, blank,
@@ -490,6 +490,14 @@ Detected starts before T−2 or after T+2 also fail. Evidence records the onset,
 stable new photo and request/return/classification
 times separately, retaining the matching cached PNGs. Pause-hold equality and the
 first-half-window old-photo check are unchanged.
+iPhone retains `pending_video_review` (H) when an in-window change cannot establish
+an onset, even if a new photo is later confirmed. Sustained dimming can be signed
+only with the new photo confirmed within the shared four-second bound; it does
+not turn an isolated black frame or uniform dim into a start. The iPhone receipt
+records the start-to-stable return delay and retains cached dense PNGs requested
+from T−2 through confirmation as `continue-transition-<sample index>.png`, alongside
+the sample request/return/classification times. These exports happen after dense
+capture and use the existing public fixture evidence path.
 Continue issued is zero, aligning tvOS with iOS `press.issued`; the remote Select
 return time is recorded separately and never becomes the screenshot-request
 clock's origin. This intentionally replaces tvOS's former Select-return origin.

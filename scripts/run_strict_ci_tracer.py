@@ -25,7 +25,7 @@ from run_strict_e2e import (CommandError, FILTER_PERSON_SESSIONS, resolve_suite_
 from strict_e2e_build import build_settings, write_json
 from strict_e2e_p2_contract import P2_CASES, RAW_VERDICT, official_tests_facts
 from strict_e2e_server import PUBLIC_API_KEY
-from strict_e2e_runner_support import SIMULATOR_READINESS_TIMEOUT_SECONDS, pause_timing_verdict
+from strict_e2e_runner_support import IOS_LIFECYCLE_PAUSE_SUITE, SIMULATOR_READINESS_TIMEOUT_SECONDS, pause_timing_verdict
 
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = ROOT / "scripts/strict-tracer.json"
@@ -99,7 +99,7 @@ def evaluate_tracer(declared, results, *, interrupted=False, informational=()):
                   and official.get("skippedTests") == 0)
         p2 = result["identity"]["dimensions"]["suite"] in P2_CASES
         passed = passed and (not p2 or result.get("p2_verdict") == RAW_VERDICT)
-        pending_timing = (result["identity"]["dimensions"]["suite"] == "ios-lifecycle-pause"
+        pending_timing = (result["identity"]["dimensions"]["suite"] == IOS_LIFECYCLE_PAUSE_SUITE
                           and result.get("p2_verdict") != "PASS")
         outcome = ("needs-human-review" if p2 or pending_timing else "passed") if passed else "failed"
         observed.append(observation(result["identity"], outcome, result["duration_seconds"],
@@ -343,7 +343,7 @@ def main(argv=None):
         phase.update(log_present=log_path.is_file(), build_operations=len(builds), products_unchanged=unchanged,
                      official_summary=official, p2_verdict=details.get("visual_identity", {}).get("verdict"),
                      automated_contract_failed=contract_failed)
-        if case["suite"] == "ios-lifecycle-pause":
+        if case["suite"] == IOS_LIFECYCLE_PAUSE_SUITE:
             # This existing field carries visual verdicts despite its legacy P2 name.
             phase["p2_verdict"] = pause_timing_verdict(evidence)
         if contract_failed:
