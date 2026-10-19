@@ -557,7 +557,7 @@ shorter spikes may be missed and unrelated runner activity is included.
 Products and failed strict contracts fail the tracer. P2 contract success is
 `needs-human-review`, with overall producer status `unverified`, never visual PASS.
 The iOS pause/Next/Continue suite also reports `needs-human-review` unless its
-existing `pause-next-continue.json` contains exactly one `first_transition_start`
+existing `pause-next-continue.json` has `suite == "pause-next-continue"` and contains exactly one `first_transition_start`
 with `status: detected` and boolean `official_signed: true`. Pending, unsigned,
 missing or unreadable timing evidence remains review-pending; it does not turn
 an official XCTest pass into a test failure. The runner's visual receipt records

@@ -400,6 +400,13 @@ extension AccessLifecycleIOSUITests {
                 "request_elapsed": confirmedElapsed,
                 "mark": confirmedMark
             ]
+            if let confirmation = samples.first(where: { $0.requestElapsed == confirmedElapsed }) {
+                confirmationItem["return_elapsed"] = confirmation.returnElapsed
+                confirmationItem["stable_window_seconds"] = AccessLifecycleContract.newStableMarkConfirmWindow
+                if case .detected(let start, _, _) = startVerdict {
+                    confirmationItem["delay_from_start_request_seconds"] = confirmation.returnElapsed - start
+                }
+            }
             if let ipadTimingEvidence {
                 confirmationItem["return_elapsed"] = ipadTimingEvidence.stableImageReturnElapsed
                 confirmationItem["stable_window_seconds"] = AccessLifecycleContract.ipadNewStableMarkConfirmWindow
@@ -644,6 +651,12 @@ extension AccessLifecycleIOSUITests {
 
         let samples = frames.map(\.sample)
         let startVerdict = assessStart(samples)
+        if !isIPad {
+            // Persist the cached dense sequence after capture so fade evidence is auditable without slowing requests.
+            for (index, frame) in frames.enumerated() where frame.sample.requestElapsed >= earliestAdvance {
+                try persistRequiredPNG(frame.png, name: "continue-transition-\(index)")
+            }
+        }
         if isIPad {
             try persistWatchDiagnostic(samples: samples, verdict: startVerdict, phase: "complete_capture")
             watchDiagnosticPersisted = true
@@ -672,10 +685,7 @@ extension AccessLifecycleIOSUITests {
         }
         try AccessLifecycleContract.assertSamplesStayOnSceneBeforeAdvanceWindow(
             continueMark: continueMark,
-            samples: samples.compactMap { sample in
-                guard isUsableSceneMark(sample.mark) else { return nil }
-                return (sample.requestElapsed, sample.mark)
-            },
+            samples: samples.map { ($0.requestElapsed, $0.mark) },
             intervalSeconds: interval
         )
         let isOfficialSigned: Bool
@@ -694,9 +704,10 @@ extension AccessLifecycleIOSUITests {
             )
             isOfficialSigned = true
         } else {
-            isOfficialSigned = try AccessLifecycleContract.officialStartSigned(
-                for: startVerdict, continueMark: continueMark, intervalSeconds: interval
-            )
+            isOfficialSigned = try AccessLifecycleContract.assertIPhonePauseTimingEvidence(
+                continueMark: continueMark, baselineLuma: baselineLuma,
+                samples: samples, intervalSeconds: interval
+            ).isOfficialStartSigned
         }
         if case .detected(let requestElapsed, _, _) = startVerdict {
             let startFrame = frames.first { frame in

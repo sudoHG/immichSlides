@@ -69,6 +69,7 @@ from ci_flaky import SERVER_SWITCH_RECORDING_SUITES
 EXAMPLE_XCCONFIG = Path("Config/env.example.xcconfig")
 TASK_XCCONFIG = Path("Config/env.xcconfig")
 MIN_DATA_GIB = 80
+IOS_LIFECYCLE_PAUSE_SUITE = "ios-lifecycle-pause"
 # xcodebuild timeout for compile plus one UI test. Diagnostic collection is disabled.
 XCODEBUILD_TIMEOUT_SECONDS = 300
 SIMULATOR_RESET_TIMEOUT_SECONDS = 120
@@ -796,7 +797,7 @@ def pause_timing_verdict(evidence_dir: Path) -> str:
 
 
 def require_visual_identity(evidence_dir: Path, suite: str, *, fixture_set: str = "a") -> dict[str, object]:
-    if suite == "ios-lifecycle-pause":
+    if suite == IOS_LIFECYCLE_PAUSE_SUITE:
         payload = {"verdict": pause_timing_verdict(evidence_dir), "suite": suite}
         _write_visual_runner_report(evidence_dir, payload)
         return payload

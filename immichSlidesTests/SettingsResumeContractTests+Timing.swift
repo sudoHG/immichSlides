@@ -1,6 +1,151 @@
 import XCTest
 
 extension SettingsResumeContractTests {
+    func testIPhonePauseSignsSustainedFadeOnRequestClockBeforeLateStablePhoto() throws {
+        for start in [10.0, 13.2, 14.0] {
+            let evidence = try AccessLifecycleContract.assertIPhonePauseTimingEvidence(
+                continueMark: "A5", baselineLuma: 0.53,
+                samples: iphoneFadeSamples(start: start), intervalSeconds: 12
+            )
+            XCTAssertEqual(evidence.verdict, .detected(requestElapsed: start, mark: "A5", status: "DIMMING"))
+            XCTAssertTrue(evidence.isOfficialStartSigned)
+        }
+    }
+
+    func testIPhonePauseRejectsEarlyAndLateSustainedFade() {
+        for (start, message) in [
+            (
+                9.8,
+                "Automatic photo change occurred before T-2; first check test timing and image recognition instead of immediately calling it a product bug"
+            ),
+            (
+                14.1,
+                "No automatic photo change was captured within T±2; if waiting for idleness crossed the window, classify this as a test timing failure"
+            )
+        ] {
+            XCTAssertThrowsError(
+                try AccessLifecycleContract.assertIPhonePauseTimingEvidence(
+                    continueMark: "A5", baselineLuma: 0.53,
+                    samples: iphoneFadeSamples(start: start), intervalSeconds: 12
+                )
+            ) { XCTAssertEqual($0.localizedDescription, message) }
+        }
+    }
+
+    func testIPhonePauseRejectsLongBlackAfterInWindowFade() {
+        let fade = iphoneFadeSamples(start: 13.2).filter { $0.requestElapsed < 14.1 }
+        for newStart in [16.01, 16.012, 16.3] {
+            let black = (0...20).map { index in
+                watchSample(
+                    request: 14.1 + Double(index) * 0.15, mark: "BLACK", status: "BLACK", luma: 0.01, returnLag: 0.14)
+            }.filter { $0.returnElapsed <= newStart }
+            let newPhoto = (0...8).map { index in
+                watchSample(request: newStart + Double(index) * 0.15, mark: "A1", luma: 0.47, returnLag: 0.14)
+            }
+            if newStart == 16.01 {
+                XCTAssertNoThrow(
+                    try AccessLifecycleContract.assertIPhonePauseTimingEvidence(
+                        continueMark: "A5", baselineLuma: 0.53, samples: fade + black + newPhoto, intervalSeconds: 12
+                    ))
+            } else {
+                XCTAssertThrowsError(
+                    try AccessLifecycleContract.assertIPhonePauseTimingEvidence(
+                        continueMark: "A5", baselineLuma: 0.53, samples: fade + black + newPhoto, intervalSeconds: 12
+                    )
+                ) {
+                    XCTAssertEqual(
+                        $0.localizedDescription,
+                        "iPhone new photo must be stably identifiable within 4 s of transition start")
+                }
+            }
+        }
+    }
+
+    func testIPhonePauseRejectsEveryUnusableFrameBeforeWindowEvenWhenRecovered() {
+        for (mark, message) in [
+            ("BLACK", "All black must not count as a pass"),
+            ("BLANK", "Blank must not count as a pass"),
+            ("UNRECOGNIZABLE", "Unrecognizable input must not count as a pass"),
+            ("TRANSITION", "Unrecognizable input must not count as a pass")
+        ] {
+            let samples =
+                [watchSample(request: 7.6, mark: mark, status: mark, returnLag: 0.14)] + iphoneFadeSamples(start: 13.2)
+            XCTAssertThrowsError(
+                try AccessLifecycleContract.assertIPhonePauseTimingEvidence(
+                    continueMark: "A5", baselineLuma: 0.53, samples: samples, intervalSeconds: 12
+                )
+            ) { XCTAssertEqual($0.localizedDescription, message) }
+        }
+    }
+
+    func testIPhonePauseKeepsIsolatedBlackUniformDimAndUndecidableEvidenceUnsigned() throws {
+        for signal in [
+            "BLACK", "UNRECOGNIZABLE", "uniform", "two_frames", "recovered", "controls", "gap", "missing_baseline",
+            "dark_baseline", "unknown_previous"
+        ] {
+            var samples = iphoneFadeSamples(start: 13.2)
+            for index in 2...4 {
+                let sample = samples[index]
+                let unusable = signal == "BLACK" || signal == "UNRECOGNIZABLE"
+                let luma = signal == "uniform" ? 0.3 : sample.meanLuma
+                samples[index] = watchSample(
+                    request: sample.requestElapsed, mark: unusable ? signal : "A5", status: unusable ? signal : "MATCH",
+                    luma: luma, isControlBarVisible: signal != "controls", returnLag: 0.14
+                )
+            }
+            if signal == "dark_baseline" {
+                for (index, luma) in [0.09, 0.07, 0.05].enumerated() {
+                    samples[index + 2] = watchSample(
+                        request: samples[index + 2].requestElapsed, mark: "A5", luma: luma, returnLag: 0.14)
+                }
+            }
+            if signal == "two_frames" { samples.removeAll { abs($0.requestElapsed - 13.5) < 0.001 } }
+            if signal == "gap" {
+                samples[2] = watchSample(request: 13.2, mark: "A5", luma: 0.49, returnLag: 0.01)
+            }
+            if signal == "recovered" {
+                samples[6] = watchSample(request: samples[6].requestElapsed, mark: "A5", luma: 0.53, returnLag: 0.14)
+            }
+            if signal == "unknown_previous" {
+                samples[1] = watchSample(
+                    request: 13.05, mark: "UNRECOGNIZABLE", status: "UNRECOGNIZABLE", returnLag: 0.14)
+            }
+            let baseline: Double? = signal == "missing_baseline" ? nil : signal == "dark_baseline" ? 0.1 : 0.53
+            let evidence = try AccessLifecycleContract.assertIPhonePauseTimingEvidence(
+                continueMark: "A5", baselineLuma: baseline, samples: samples, intervalSeconds: 12
+            )
+            guard case .pendingVideoReview = evidence.verdict else { return XCTFail("\(signal) must await review") }
+            XCTAssertFalse(evidence.isOfficialStartSigned, signal)
+        }
+    }
+
+    func testIPhonePauseRequiresStableNewPhotoAfterDimming() {
+        let samples = iphoneFadeSamples(start: 13.2).filter { $0.mark != "A1" }
+        XCTAssertThrowsError(
+            try AccessLifecycleContract.assertIPhonePauseTimingEvidence(
+                continueMark: "A5", baselineLuma: 0.53, samples: samples, intervalSeconds: 12
+            )
+        ) { XCTAssertEqual($0.localizedDescription, "Black screen without a new photo must not pass automatically") }
+    }
+
+    private func iphoneFadeSamples(start: TimeInterval) -> [AccessLifecycleContract.ContinueWatchSample] {
+        let old = [start - 0.3, start - 0.15].map {
+            watchSample(request: $0, mark: "A5", luma: 0.53, returnLag: 0.14)
+        }
+        let fade = [0.49, 0.35, 0.16].enumerated().map { index, luma in
+            watchSample(request: start + Double(index) * 0.15, mark: "A5", luma: luma, returnLag: 0.14)
+        }
+        let trough = (3...7).map { index in
+            watchSample(
+                request: start + Double(index) * 0.15, mark: "UNRECOGNIZABLE", status: "UNRECOGNIZABLE", luma: 0.03,
+                returnLag: 0.14)
+        }
+        let newPhoto = (8...16).map { index in
+            watchSample(request: start + Double(index) * 0.15, mark: "A1", luma: 0.47, returnLag: 0.14)
+        }
+        return old + fade + trough + newPhoto
+    }
+
     func testTVOSPauseJudgesSharedSustainedFadeBeforeLateNewPhoto() throws {
         for start in [10.0, 13.2, 14.0] {
             let evidence = try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
