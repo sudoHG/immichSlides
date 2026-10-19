@@ -140,10 +140,11 @@ def single_photo_candidate_cases():
     for y in range(0, 1039, 80):
         wrong_green.paste((37, 109, 19), (0, y, 480, min(1039, y + 40)))
     cases.append(("non-A2-green", wrong_green, ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
-    # Both A2 endpoints are present with sharp edges, but gray has only sixteen pixels.
-    unsupported = Image.new("RGB", (18, 18), (37, 109, 19))
-    for box in ((0, 0, 2, 2), (16, 0, 18, 2), (0, 16, 2, 18), (16, 16, 18, 18)):
-        unsupported.paste((128, 122, 110), box)
+    # White ink preserves the coherent row while gray stays below the RGB-pair minimum.
+    a2_palette = _public_photo_palettes()["A2"]
+    unsupported = Image.new("RGB", (18, 36), a2_palette[0])
+    unsupported.paste(a2_palette[1], (0, 1, 17, 2))
+    unsupported.putpixel((17, 1), (255, 255, 255))
     cases.append(("insufficient-second-color", unsupported,
                   ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
     double = Image.new("RGB", (480, 1040))
@@ -178,11 +179,14 @@ def single_photo_candidate_cases():
     thin_stripe.paste((128, 122, 110), (0, 1, 480, 2))
     cases.append(("stripe-below-identity-scale", thin_stripe,
                   ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
-    for name, fraction in (("white-in-every-row", 240), ("insufficient-row-coverage", 96)):
+    for name in ("white-in-every-row", "insufficient-row-coverage"):
         scene = photos[0].resize((480, 270), Image.Resampling.NEAREST)
         if name == "white-in-every-row":
-            scene.paste((255, 255, 255), (fraction, 0, fraction + 1, 270))
+            scene.paste((255, 255, 255), (240, 0, 241, 270))
         else:
+            # Monochrome stripe rows isolate coverage from checker-cell consistency.
+            for y in range(scene.height):
+                scene.paste(a2_palette[(y // 20) % 2], (0, y, scene.width, y + 1))
             pixels = scene.load()
             assert pixels is not None
             for y in range(scene.height):
