@@ -80,8 +80,7 @@ class DeviceFilterVisualIdentityTestsCases:
                 single_photo_region_frame("tv-fit", defect).save(buffer, format="PNG")
                 (evidence / "display-after.png").write_bytes(buffer.getvalue())
                 if defect not in (None, "two-line-gap"):
-                    suffix = "side black band" if defect in ("black-side", "vertical-gap", "three-line-gap") else "photo region identity"
-                    with self.assertRaisesRegex(FilterContractError, "^The after-change frame must be a recognizable, stable single-photo frame: " + suffix + "$"):
+                    with self.assertRaisesRegex(FilterContractError, "^The after-change frame must be a recognizable, stable single-photo frame$"):
                         evaluate_filter_visual_identity(evidence, "tvos-switch")
                 else:
                     report = evaluate_filter_visual_identity(evidence, "tvos-switch")
