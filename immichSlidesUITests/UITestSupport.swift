@@ -398,6 +398,119 @@ extension XCUIApplication {
 struct IOSFirstBootNavigation {
     let app: XCUIApplication
 
+    enum ModeModalSource: String {
+        case none
+        case appAlert = "app-alert"
+        case appSheet = "app-sheet"
+        case springboardAlert = "springboard-alert"
+        case springboardSheet = "springboard-sheet"
+        case springboardOtherWindow = "springboard-other-window"
+        case alertsQuery = "alerts-query"
+    }
+
+    final class ModeNavigationDiagnostics {
+        enum Stage: String {
+            case appWindows = "app-windows"
+            case fastPath = "fast-path"
+            case springboardWindows = "springboard-windows"
+            case alertsQuery = "alerts-query"
+            case complete
+        }
+
+        enum TapGuard: String {
+            case notAttempted = "not-attempted"
+            case modal, snapshot, deadline
+            case alertCount = "alert-count"
+            case liveCount = "live-count"
+            case liveLabel = "live-label"
+            case liveFrame = "live-frame"
+            case notHittable = "not-hittable"
+            case issued
+        }
+
+        let targetIdentifier: String
+        var observations = 0
+        var fastPathObservations = 0
+        var lastObsSeconds: TimeInterval = .zero
+        var maxObsSeconds: TimeInterval = .zero
+        var targetMatches: Int?
+        var targetSelected: Bool?
+        var descendantSelected: Bool?
+        var continueMatches: Int?
+        var continueEnabled: Bool?
+        var continueHittable: Bool?
+        var targetHittable: Bool?
+        var modalObstacle: Bool?
+        var modalSource = ModeModalSource.none
+        var stage = Stage.appWindows
+        var tapGuard = TapGuard.notAttempted
+        var tapMatches: Int?
+
+        init(targetIdentifier: String) { self.targetIdentifier = targetIdentifier }
+
+        func beginModeDiagnosticObservation() {
+            observations = min(4096, observations + 1)
+            targetMatches = nil
+            targetSelected = nil
+            descendantSelected = nil
+            continueMatches = nil
+            continueEnabled = nil
+            continueHittable = nil
+            targetHittable = nil
+            modalObstacle = nil
+            modalSource = .none
+            stage = .appWindows
+            tapGuard = .notAttempted
+            tapMatches = nil
+        }
+
+        func finishModeDiagnosticObservation(since start: TimeInterval) {
+            lastObsSeconds = min(86_400, max(.zero, ProcessInfo.processInfo.systemUptime - start))
+            maxObsSeconds = max(maxObsSeconds, lastObsSeconds)
+        }
+
+        func captureModeDiagnosticSnapshot(_ observation: Observation) {
+            let targets = observation.nodes.filter { $0.identifier == targetIdentifier && $0.elementType == .button }
+            let continues = observation.nodes.filter {
+                $0.identifier == "mode.continue.button" && $0.elementType == .button
+            }
+            targetMatches = min(4096, targets.count)
+            continueMatches = min(4096, continues.count)
+            if targets.count == 1 {
+                targetSelected = targets[0].isSelected
+                var pending = targets[0].children
+                var selected = false
+                while let node = pending.popLast() {
+                    selected = selected || node.isSelected
+                    pending.append(contentsOf: node.children)
+                }
+                descendantSelected = selected
+            }
+            continueEnabled = continues.count == 1 ? continues[0].isEnabled : nil
+            modalObstacle = observation.hasModalObstacle
+            modalSource = observation.modalSource
+        }
+
+        func captureModeDiagnosticHittability(identifier: String, value: Bool) {
+            if identifier == targetIdentifier { targetHittable = value }
+            if identifier == "mode.continue.button" { continueHittable = value }
+        }
+
+        var modeDiagnosticMessage: String {
+            func modeDiagnosticBoolean(_ value: Bool?) -> String { value.map(String.init) ?? "unknown" }
+            func modeDiagnosticCount(_ value: Int?) -> String { value.map(String.init) ?? "unknown" }
+            let last = String(format: "%.3f", lastObsSeconds)
+            let maximum = String(format: "%.3f", maxObsSeconds)
+            return "observations=\(observations), fastPathObservations=\(fastPathObservations), "
+                + "lastObsSeconds=\(last), maxObsSeconds=\(maximum), targetMatches=\(modeDiagnosticCount(targetMatches)), "
+                + "targetSelected=\(modeDiagnosticBoolean(targetSelected)), descendantSelected=\(modeDiagnosticBoolean(descendantSelected)), "
+                + "continueMatches=\(modeDiagnosticCount(continueMatches)), continueEnabled=\(modeDiagnosticBoolean(continueEnabled)), "
+                + "continueHittable=\(modeDiagnosticBoolean(continueHittable)), targetHittable=\(modeDiagnosticBoolean(targetHittable)), "
+                + "modalObstacle=\(modeDiagnosticBoolean(modalObstacle)), modalSource=\(modalSource.rawValue), "
+                + "observationStage=\(stage.rawValue), tapGuard=\(tapGuard.rawValue), tapMatches=\(modeDiagnosticCount(tapMatches))"
+        }
+    }
+
     struct Observation {
         let window: XCUIElementSnapshot
         let windowElement: XCUIElement
@@ -407,6 +520,7 @@ struct IOSFirstBootNavigation {
         let hasPasswordPrompt: Bool
         let hasPromptClue: Bool
         let hasModalObstacle: Bool
+        let modalSource: ModeModalSource
         let promptHost: XCUIApplication
         let promptFrame: CGRect
         let promptWindowIndex: Int
@@ -430,26 +544,34 @@ struct IOSFirstBootNavigation {
         }
     }
 
-    func observe(modeIdentifier: String? = nil, destinationIdentifier: String? = nil) throws -> Observation {
+    func observe(
+        modeIdentifier: String? = nil, destinationIdentifier: String? = nil,
+        diagnostics: ModeNavigationDiagnostics? = nil
+    ) throws -> Observation {
         let ownWindows = try windowObservations(host: app)
         let own =
             ownWindows.first(where: { window in
                 window.isModePage || destinationIdentifier.map { window.hasDestination($0) } == true
             }) ?? ownWindows[0]
+        diagnostics?.captureModeDiagnosticSnapshot(combine(own, prompts: [], windows: ownWindows))
         let ownPrompts = ownWindows.filter(\.hasPasswordPrompt)
         if !ownPrompts.isEmpty { return combine(own, prompts: ownPrompts, windows: ownWindows) }
         if let modeIdentifier, own.isModePage,
             !ownWindows.contains(where: { $0.hasPromptClue || $0.hasModalObstacle }),
-            modeControlsAreHittable(own, modeIdentifier: modeIdentifier)
+            modeControlsAreHittable(own, modeIdentifier: modeIdentifier, diagnostics: diagnostics)
         {
+            diagnostics?.fastPathObservations = min(4096, (diagnostics?.fastPathObservations ?? 0) + 1)
             return combine(own, prompts: [], windows: ownWindows)
         }
         let system = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        let systemWindows = try windowObservations(host: system)
+        diagnostics?.stage = .springboardWindows
+        let systemWindows = try windowObservations(host: system, isSpringboard: true)
         let systemPrompts = systemWindows.filter(\.hasPasswordPrompt)
         let windows = ownWindows + systemWindows
+        diagnostics?.captureModeDiagnosticSnapshot(combine(own, prompts: [], windows: windows))
         if !systemPrompts.isEmpty { return combine(own, prompts: systemPrompts, windows: windows) }
         // A remote credential alert can be absent from every window snapshot on iPad.
+        diagnostics?.stage = .alertsQuery
         let alerts = app.alerts.allElementsBoundByIndex
         guard alerts.count <= 1 else { throw NSError(domain: "IOSFirstBootNavigation", code: 2) }
         guard let alert = alerts.first else { return combine(own, prompts: [], windows: windows) }
@@ -465,13 +587,17 @@ struct IOSFirstBootNavigation {
             decline: prompt?.decline, hasPasswordPrompt: !prompts.isEmpty,
             hasPromptClue: windows.contains(where: \.hasPromptClue),
             hasModalObstacle: windows.contains(where: \.hasModalObstacle),
+            modalSource: windows.first(where: \.hasModalObstacle)?.modalSource ?? .none,
             promptHost: prompt?.promptHost ?? app, promptFrame: prompt?.window.frame ?? .zero,
             promptWindowIndex: prompt?.windowIndex ?? .zero, isPromptAlert: prompt?.isPromptAlert ?? false,
             promptContainer: prompt?.promptContainer ?? own.windowElement,
             promptSource: prompt?.promptSource ?? (prompts.isEmpty ? "not-observed" : "ambiguous"))
     }
 
-    private func modeControlsAreHittable(_ observation: Observation, modeIdentifier: String) -> Bool {
+    private func modeControlsAreHittable(
+        _ observation: Observation, modeIdentifier: String, diagnostics: ModeNavigationDiagnostics?
+    ) -> Bool {
+        diagnostics?.stage = .fastPath
         // A blocked mode surface still needs the complete remote credential-prompt search.
         for identifier in [modeIdentifier, "mode.continue.button"] {
             guard let button = observation.button(identifier), button.isEnabled, !button.frame.isEmpty,
@@ -481,23 +607,27 @@ struct IOSFirstBootNavigation {
             let target = observation.windowElement.buttons.matching(
                 NSPredicate(format: "identifier == %@ AND label == %@", button.identifier, button.label)
             ).firstMatch
-            guard target.isHittable else { return false }
+            let isHittable = target.isHittable
+            diagnostics?.captureModeDiagnosticHittability(identifier: identifier, value: isHittable)
+            guard isHittable else { return false }
         }
         return true
     }
 
-    private func windowObservations(host: XCUIApplication) throws -> [Observation] {
+    private func windowObservations(host: XCUIApplication, isSpringboard: Bool = false) throws -> [Observation] {
         // App snapshots can omit the main window; keep each real window's title/action and tap index paired.
         let windows = host.windows.allElementsBoundByIndex
         guard !windows.isEmpty else { throw NSError(domain: "IOSFirstBootNavigation", code: 1) }
         return try windows.enumerated().map { index, window in
-            observation(window: try window.snapshot(), element: window, host: host, windowIndex: index)
+            observation(
+                window: try window.snapshot(), element: window, host: host, windowIndex: index,
+                isSpringboard: isSpringboard)
         }
     }
 
     private func observation(
         window: XCUIElementSnapshot, element: XCUIElement, host: XCUIApplication,
-        windowIndex: Int, isPromptAlert: Bool = false
+        windowIndex: Int, isPromptAlert: Bool = false, isSpringboard: Bool = false
     ) -> Observation {
         var pending = [window]
         var nodes: [XCUIElementSnapshot] = []
@@ -522,11 +652,26 @@ struct IOSFirstBootNavigation {
         }
         // ui-label-lookup: Never act on a generic Not Now button without the exact password title.
         let declines = nodes.filter { $0.elementType == .button && ["以后", "Not Now"].contains($0.label) }
+        let hasAlert = nodes.contains { $0.elementType == .alert }
+        let hasSheet = nodes.contains { $0.elementType == .sheet }
+        let modalSource: ModeModalSource
+        if isPromptAlert {
+            modalSource = .alertsQuery
+        } else if hasAlert {
+            modalSource = isSpringboard ? .springboardAlert : .appAlert
+        } else if hasSheet {
+            modalSource = isSpringboard ? .springboardSheet : .appSheet
+        } else if hasTitle {
+            modalSource = isSpringboard ? .springboardOtherWindow : .appAlert
+        } else {
+            modalSource = .none
+        }
         return Observation(
             window: window, windowElement: element, windowIndex: windowIndex, nodes: nodes,
             decline: hasTitle && !hasOtherModal && declines.count == 1 ? declines[0] : nil,
             hasPasswordPrompt: hasTitle, hasPromptClue: hasTitle || !declines.isEmpty,
             hasModalObstacle: hasTitle || nodes.contains { $0.elementType == .alert || $0.elementType == .sheet },
+            modalSource: modalSource,
             promptHost: host, promptFrame: window.frame, promptWindowIndex: windowIndex,
             isPromptAlert: isPromptAlert, promptContainer: element,
             promptSource: isPromptAlert ? "alert-snapshot" : "window-index-\(windowIndex)")
@@ -535,26 +680,63 @@ struct IOSFirstBootNavigation {
     // Snapshot attributes are fallible; XCTest exposes hittability only on the live element.
     private func tap(
         _ node: XCUIElementSnapshot, observation: Observation, deadline: Date, step: String,
+        diagnostics: ModeNavigationDiagnostics? = nil,
         willTap: () -> Void = {}
     ) -> Bool {
         let isDecline = step == "save-password-prompt"
         let host = isDecline ? observation.promptHost : app
         let frame = isDecline ? observation.promptFrame : observation.window.frame
-        guard isDecline || !observation.hasModalObstacle else { return false }
-        guard node.isEnabled, !node.frame.isEmpty, frame.contains(node.frame), Date() < deadline
-        else { return false }
-        if isDecline && observation.isPromptAlert && host.alerts.count != 1 { return false }
+        guard isDecline || !observation.hasModalObstacle else {
+            diagnostics?.tapGuard = .modal
+            return false
+        }
+        guard node.isEnabled, !node.frame.isEmpty, frame.contains(node.frame) else {
+            diagnostics?.tapGuard = .snapshot
+            return false
+        }
+        guard Date() < deadline else {
+            diagnostics?.tapGuard = .deadline
+            return false
+        }
+        if isDecline && observation.isPromptAlert && host.alerts.count != 1 {
+            diagnostics?.tapGuard = .alertCount
+            return false
+        }
         let container = isDecline ? observation.promptContainer : observation.windowElement
         // ui-label-lookup: Bind the live action to both attributes of the observed button, including an empty ID.
         let matches = container.buttons.matching(
             NSPredicate(format: "identifier == %@ AND label == %@", node.identifier, node.label))
-        guard matches.count == 1 else { return false }
+        let matchCount = matches.count
+        diagnostics?.tapMatches = min(4096, matchCount)
+        guard matchCount == 1 else {
+            diagnostics?.tapGuard = .liveCount
+            return false
+        }
         let target = matches.element(boundBy: .zero)
         let liveLabel = target.label
-        guard liveLabel == node.label, target.frame == node.frame else { return false }
+        guard liveLabel == node.label else {
+            diagnostics?.tapGuard = .liveLabel
+            return false
+        }
+        guard target.frame == node.frame else {
+            diagnostics?.tapGuard = .liveFrame
+            return false
+        }
         let isHittable = target.isHittable
-        if isDecline && observation.isPromptAlert && host.alerts.count != 1 { return false }
-        guard isHittable, Date() < deadline else { return false }
+        diagnostics?.captureModeDiagnosticHittability(identifier: node.identifier, value: isHittable)
+        if isDecline && observation.isPromptAlert && host.alerts.count != 1 {
+            diagnostics?.tapGuard = .alertCount
+            return false
+        }
+        guard isHittable else {
+            diagnostics?.tapGuard = .notHittable
+            return false
+        }
+        guard Date() < deadline else {
+            diagnostics?.tapGuard = .deadline
+            return false
+        }
+        diagnostics?.tapGuard = .issued
         FirstFailureContext.mark(step, element: node.identifier.isEmpty ? "unknown" : node.identifier)
         willTap()
         if step == "save-password-prompt" {
@@ -641,20 +823,28 @@ struct IOSFirstBootNavigation {
         var didObserveAfterContinue = false
         var departureDeadline: Date?
         var step = "mode-card"
+        let diagnostics = ModeNavigationDiagnostics(targetIdentifier: identifier)
         FirstFailureContext.beginWait(seconds: selectionTimeout)
         defer { FirstFailureContext.endWait() }
         while Date() < (departureDeadline ?? selectionDeadline) {
             let deadline = departureDeadline ?? selectionDeadline
             FirstFailureContext.mark(step, element: didIssueContinue ? "mode.continue.button" : identifier)
             let observation: Observation
+            diagnostics.beginModeDiagnosticObservation()
+            let observationStartedAt = ProcessInfo.processInfo.systemUptime
             do {
-                observation = try observe(modeIdentifier: identifier, destinationIdentifier: destinationIdentifier)
+                observation = try observe(
+                    modeIdentifier: identifier, destinationIdentifier: destinationIdentifier, diagnostics: diagnostics)
             } catch {
+                diagnostics.finishModeDiagnosticObservation(since: observationStartedAt)
                 lastSnapshotError = (error as NSError).code
                 didReadLastSnapshot = false
                 poll(until: deadline)
                 continue
             }
+            diagnostics.finishModeDiagnosticObservation(since: observationStartedAt)
+            diagnostics.captureModeDiagnosticSnapshot(observation)
+            diagnostics.stage = .complete
             guard Date() < deadline else { break }
             didReadLastSnapshot = true
             lastModePage = observation.isModePage
@@ -667,7 +857,8 @@ struct IOSFirstBootNavigation {
                 step = "save-password-prompt"
                 if let decline = observation.decline {
                     let returned = tap(
-                        decline, observation: observation, deadline: deadline, step: "save-password-prompt")
+                        decline, observation: observation, deadline: deadline, step: "save-password-prompt",
+                        diagnostics: diagnostics)
                     didDecline = didDecline || returned
                     if returned && !didIssueContinue { didSelect = false }
                 }
@@ -696,7 +887,7 @@ struct IOSFirstBootNavigation {
                     // The departure budget is absolute, including the real tap and any late prompt.
                     let end = Date().addingTimeInterval(departureTimeout)
                     if tap(
-                        button, observation: observation, deadline: deadline, step: step,
+                        button, observation: observation, deadline: deadline, step: step, diagnostics: diagnostics,
                         willTap: {
                             didIssueContinue = true
                             print("First-boot Continue issued=true; targetModeSelected=true")
@@ -711,13 +902,14 @@ struct IOSFirstBootNavigation {
                     }
                 }
             } else if !didIssueContinue && !didSelect, let button = observation.button(identifier) {
-                didSelect = tap(button, observation: observation, deadline: deadline, step: step)
+                didSelect = tap(
+                    button, observation: observation, deadline: deadline, step: step, diagnostics: diagnostics)
             }
             poll(until: departureDeadline ?? selectionDeadline)
         }
         FirstFailureContext.mark(step, element: didIssueContinue ? "mode.continue.button" : identifier)
         let detail =
-            "step=\(step), Continue issued=\(didIssueContinue) returned=\(didReturnContinue), passwordPromptObserved=\(didSeePrompt), postContinuePromptObserved=\(didSeePromptAfterContinue), passwordDeclineReturned=\(didDecline), passwordPromptDismissed=\(didConfirmPromptGone), promptSource=\(promptSource), modePage=\(lastModePage.map(String.init) ?? "unknown"), postContinueSnapshotObserved=\(didObserveAfterContinue), lastSnapshotSucceeded=\(didReadLastSnapshot), lastSnapshotError=\(lastSnapshotError.map(String.init) ?? "none")"
+            "step=\(step), Continue issued=\(didIssueContinue) returned=\(didReturnContinue), passwordPromptObserved=\(didSeePrompt), postContinuePromptObserved=\(didSeePromptAfterContinue), passwordDeclineReturned=\(didDecline), passwordPromptDismissed=\(didConfirmPromptGone), promptSource=\(promptSource), modePage=\(lastModePage.map(String.init) ?? "unknown"), postContinueSnapshotObserved=\(didObserveAfterContinue), lastSnapshotSucceeded=\(didReadLastSnapshot), lastSnapshotError=\(lastSnapshotError.map(String.init) ?? "none"), \(diagnostics.modeDiagnosticMessage)"
         if didIssueContinue && !didSeePromptAfterContinue && didReadLastSnapshot && didObserveAfterContinue
             && lastModePage == true
         {

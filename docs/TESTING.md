@@ -208,6 +208,11 @@ Callers use the returned absolute deadline for the remaining destination wait;
 snapshot errors re-observe within that same budget and never authorize a tap.
 A successful prompt-visibility observation remains evidence even after the retry
 deadline; callers that act must independently check their action deadline.
+Mode-navigation failures append bounded observation counts/durations, snapshot match
+counts and selection traits, previously queried live hittability, and closed modal
+source/stage/tap-guard enums. Unknown values stay unknown. The latest observation is
+retained even when the deadline rejects it; diagnostics issue no extra live queries
+and do not change navigation guards, budgets or the existing failure prefixes.
 
 For iOS slideshow Settings readiness, use one fallible window snapshot for enabled
 state and a non-empty button frame fully contained in that window. This is a snapshot
