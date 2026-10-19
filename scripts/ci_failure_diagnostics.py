@@ -578,7 +578,7 @@ VALIDATOR_IDENTITY_MARKS = ("A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", None
 # See CI_STRICT_RUNNER.md#public-validator-failure-receipts for the public receipt contract.
 _VALIDATOR_SCREENSHOT_STEM = (
     r"(?:person-normal|person-no-faces|person-conflict-normal(?:-[1-9][0-9]?)?|"
-    r"album-playback-[123]|album-switch-b-play-[12]|server-switch-a-play-1|switch-b-play-[12]|"
+    r"album-playback-[123]|album-play-[123]|album-switch-b-play-[12]|server-switch-a-play-1|switch-b-play-[12]|"
     r"history-(?:start|first-next|second-next|first-previous|second-previous)|"
     r"pause-immediate|pause-after-10s|resumed)"
 )

@@ -653,7 +653,7 @@ names are `AttributeError`, `IndexError`,
 `KeyError`, `OSError`, `TypeError`, `UnidentifiedImageError` and `ValueError`.
 Screenshot names are hand-reviewed against `public_scene_photos_from_bytes` and server-switch
 `_require_public_pattern` callers: `history-*`,
-`pause-immediate`, `pause-after-10s`, `resumed`, `album-playback-N`, `person-normal`,
+`pause-immediate`, `pause-after-10s`, `resumed`, `album-playback-N`, `album-play-1`/`album-play-2`/`album-play-3`, `person-normal`,
 `person-no-faces`, `person-conflict-normal(-N)`, `album-switch-b-play-N`,
 `server-switch-a-play-1` and `switch-b-play-1`/`switch-b-play-2` (all `.png`).
 No names are reserved for a future producer.
