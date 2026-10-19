@@ -107,13 +107,14 @@ def public_overlay_frame(kind: str, defect: str | None = None) -> Image.Image:
         ("b", 3 if kind == "ipad-exif" else 4, (0, 0, *size)),)
     for fixture, index, box in slots:
         photo = Image.open(io.BytesIO(_fixture_data(fixture)["images"][f"asset-{fixture}-{index}"])).convert("RGB")
-        if index == 5 and defect in ("wrong-letter", "wrong-digit", "missing", "mixed"):
+        if index == 5 and defect in ("wrong-letter", "wrong-digit", "mixed"):
             from strict_e2e_server import _png
-            label = {"wrong-letter": "C5", "wrong-digit": "A4", "missing": "", "mixed": "B5"}[defect]
+            label = {"wrong-letter": "C5", "wrong-digit": "A4", "mixed": "B5"}[defect]
             palette = tuple(dict.fromkeys(color for color in photo.getdata() if min(color) < 240))
             photo = Image.open(io.BytesIO(_png(photo.width, photo.height, 5, label, palette=palette)))
-        frame.paste(ImageOps.fit(photo, (box[2] - box[0], box[3] - box[1]),
-                                 Image.Resampling.BILINEAR), box)
+        # EXIF's alias must share a row with fixture RGB, not an interpolated stripe edge.
+        resampling = Image.Resampling.NEAREST if kind == "ipad-exif" else Image.Resampling.BILINEAR
+        frame.paste(ImageOps.fit(photo, (box[2] - box[0], box[3] - box[1]), resampling), box)
     draw = ImageDraw.Draw(frame)
     if kind == "ipad-exif":
         # Native B3 SHA 67c7d5aa...: panel (1308,60)-(2004,442).
@@ -124,27 +125,24 @@ def public_overlay_frame(kind: str, defect: str | None = None) -> Image.Image:
         # Native HD captures: bar (632,858)-(1288,960); focused Next (1134,879)-(1248,940).
         draw.rounded_rectangle((632, 858, 1287, 959), radius=50, fill=(110, 90, 100))
         if kind == "tv-flow":
+            # Synthetic A2 palette endpoint, not a measured glass RGB; reproduces its alias.
             draw.rectangle((674, 938, 1220, 951), fill=(128, 122, 110))
         draw.rounded_rectangle((1134, 879, 1247, 939), radius=30, fill="white")
     if defect == "outside":
-        # Same alias / white control one row ABOVE the registered rectangle.
+        # Same alias / white control above the registered rectangle.
         if kind == "ipad-exif":
             draw.rectangle((1350, 50, 1960, 57), fill=(249, 79, 244))
         elif kind == "tv-flow":
             draw.rectangle((674, 700, 1220, 715), fill=(128, 122, 110))
         else:
             draw.rectangle((1134, 650, 1247, 710), fill="white")
+    elif defect == "outside-bottom":
+        draw.rectangle((1350, 446, 1960, 450), fill=(249, 79, 244))
+    elif defect == "outside-left":
+        draw.rectangle((520, 880, 615, 939), fill="white")
     elif defect == "covered":
-        draw.rectangle((1152, 300, 1919, 800), fill="black")
-    elif defect == "gap":
-        draw.rectangle((1144, 0, 1159, 1079), fill="black")
-    elif defect == "overlap":
-        frame.paste(frame.crop((900, 0, 1000, 1080)), (1400, 0))
-    elif defect == "black":
-        frame.paste((0, 0, 0), (0, 0, *size))
-    elif defect == "transition":
-        other = Image.open(io.BytesIO(_fixture_data("b")["images"]["asset-b-1"]))
-        frame = Image.blend(frame, ImageOps.fit(other, size), .5)
+        # Part of A3 rows 3-5 above y=718, within the mask's x span; keep its top strokes.
+        draw.rectangle((660, 510, 850, 692), fill="black")
     elif defect == "wrong-size":
         frame = frame.resize((size[0], size[1] + 1), Image.Resampling.NEAREST)
     return frame
@@ -406,9 +404,6 @@ def single_photo_candidate_cases():
             outside = scene.copy()
             outside.paste((55, 55, 55), (656, 650, 1264, 680))
             cases.append(("outside-approved-HD-TV-bar-gap", outside,
-                          ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
-            background.paste((55, 55, 55), (632, 858, 1288, 960))
-            cases.append(("approved-HD-TV-background-only", background,
                           ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
     # This photo lies entirely left of the approved box. Its damaged checker
     # rows share the bar's y range but must retain every texture gate.

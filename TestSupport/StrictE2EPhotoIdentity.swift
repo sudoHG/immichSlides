@@ -124,6 +124,7 @@ enum StrictE2EPhotoIdentity {
     private static let extendedPaletteChannelTolerance = 12
     private static let approvedTVFrameWidthPixels = 3840
     private static let approvedTVFrameHeightPixels = 2160
+    private static let tv4KToHDResolutionScale = 2
     private static let approvedTVControlBarMinXPixels = 1256.0
     private static let approvedTVControlBarMinYPixels = 1436.0
     private static let approvedTVControlBarMaxXPixels = 2580.0
@@ -393,7 +394,8 @@ enum StrictE2EPhotoIdentity {
         // phone box or an inferred landscape geometry. Cropped inputs grant no mask.
         let exclusion: CGRect? =
             ((image.width == approvedTVFrameWidthPixels && image.height == approvedTVFrameHeightPixels)
-                || (image.width == approvedTVFrameWidthPixels / 2 && image.height == approvedTVFrameHeightPixels / 2))
+                || (image.width == approvedTVFrameWidthPixels / tv4KToHDResolutionScale
+                    && image.height == approvedTVFrameHeightPixels / tv4KToHDResolutionScale))
             ? CGRect(
                 x: floor(approvedTVControlBarMinXPixels * Double(frame.width) / Double(approvedTVFrameWidthPixels)),
                 y: floor(approvedTVControlBarMinYPixels * Double(frame.height) / Double(approvedTVFrameHeightPixels)),

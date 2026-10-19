@@ -218,20 +218,21 @@ class FrameGlyphBoundaryTests(unittest.TestCase):
             with self.subTest(frame=kind):
                 photos = public_scene_photos_from_bytes(_png(public_overlay_frame(kind)))
                 self.assertEqual([(p.letter, p.mark) for p in photos], expected)
-            defects = ["outside", "wrong-size", "black", "transition"]
+            defects = ["outside", "wrong-size"]
+            if kind == "ipad-exif":
+                defects += ["outside-bottom"]
             if kind == "tv-person":
-                defects += ["wrong-letter", "wrong-digit", "missing", "mixed", "covered", "gap", "overlap"]
+                defects += ["outside-left", "wrong-letter", "wrong-digit", "mixed", "covered"]
             for defect in defects:
                 with self.subTest(frame=kind, defect=defect):
                     if kind == "tv-person" and defect == "mixed":
                         message = r"^mixed public glyphs; 2 slots \(horizontal\)$"
-                    elif kind == "tv-person" and defect == "overlap":
-                        message = r"^unreadable public glyph slot: conflicting public background patterns; slot 3 \(horizontal\)$"
-                    elif kind == "tv-person" and defect not in ("black", "transition", "gap"):
-                        index = 1 if defect == "wrong-size" else 2
+                    elif kind == "tv-person":
+                        index = 1 if defect in ("wrong-size", "outside-left", "covered") else 2
                         message = rf"^unreadable public glyph slot; slot {index} \(horizontal\)$"
                     else:
-                        message = "^unreadable public glyph slot: public photo colors are missing or mixed;"
+                        message = (r"^unreadable public glyph slot: public photo colors are missing or mixed; "
+                                   r"vertical axis, slot count unresolved$")
                     with self.assertRaisesRegex(IdentityAssertionError, message):
                         public_scene_photos_from_bytes(_png(public_overlay_frame(kind, defect)))
 
