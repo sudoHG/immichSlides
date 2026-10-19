@@ -625,7 +625,10 @@ enum StrictE2EPhotoIdentity {
                 if Double(missing * width) / Double(frame.width) > Double(textureMaximumCellDriftPixels) { return nil }
             }
         }
-        return ((croppedWidth, croppedHeight, pixels), croppedColors, foregroundExclusion)
+        // A matching y range alone cannot exempt texture wholly beside the overlay.
+        let textureExclusion = foregroundExclusion?.intersection(
+            CGRect(x: 0, y: 0, width: croppedWidth, height: croppedHeight))
+        return ((croppedWidth, croppedHeight, pixels), croppedColors, textureExclusion)
     }
 
     private static func hasPublicTexture(

@@ -408,6 +408,9 @@ def _sharp_public_foreground(rgb: object, mark: str, exclusion: tuple[int, int, 
             missing = 0 if present else missing + 1
             if missing * width / rgb.width > FRAME_TEXTURE_MAXIMUM_CELL_DRIFT_PIXELS:
                 return None
+    if foreground_exclusion and not (foreground_exclusion[0] < foreground.width and foreground_exclusion[2] > 0
+                                    and foreground_exclusion[1] < foreground.height and foreground_exclusion[3] > 0):
+        foreground_exclusion = None
     return foreground, foreground_exclusion
 
 

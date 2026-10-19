@@ -307,6 +307,17 @@ def single_photo_candidate_cases():
             outside.paste((55, 55, 55), (bar[0], 1100, bar[2], 1160))
             cases.append(("outside-approved-TV-bar-gap", outside,
                           ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
+    # This photo lies entirely left of the approved box. Its damaged checker
+    # rows share the bar's y range but must retain every texture gate.
+    outside_texture = Image.new("RGB", (480, 270), (180, 180, 180))
+    for y in range(270):
+        for x in range(100):
+            cell = ((x // 20) + (y // 20)) % 2
+            if 200 <= y < 220:
+                cell = int(10 <= x < 50 or 60 <= x)
+            outside_texture.putpixel((x, y), ((74, 170, 38), (128, 122, 110))[cell])
+    cases.append(("outside-approved-TV-bar-horizontal-texture", outside_texture.resize(tv_size, Image.Resampling.NEAREST),
+                  ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
     return cases
 
 
