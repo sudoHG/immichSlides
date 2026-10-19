@@ -172,7 +172,10 @@ extension StrictE2EFirstBatchIOSUITests {
         departureTimeout: TimeInterval = TestWait.seconds(.product(30))
     ) -> Date? {
         IOSFirstBootNavigation(app: app).selectModeAndContinue(
-            identifier, selectionTimeout: TestWait.seconds(.product(8)),
+            identifier,
+            destinationIdentifier: identifier == "mode.filtered.button"
+                ? "filterSummary.startPlayback.button" : "slideshow.control.settings.button",
+            selectionTimeout: TestWait.seconds(.product(8)),
             departureTimeout: departureTimeout)
     }
 }

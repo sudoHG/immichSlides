@@ -191,13 +191,19 @@ Never equate a visible frame with hittability, decline an unrelated alert, or sa
 credentials. Do not capture screenshots between detecting the prompt and declining
 it. Mode cards, Not Now and Continue all require live hittability; a non-hittable
 card waits for a fresh observation, without a coordinate tap that can invoke
-XCTest's generic interruption handler. Confirm the prompt is absent and the intended mode is selected before issuing
+XCTest's generic interruption handler. Read selection from the unique mode card's
+snapshot `isSelected` trait, rather than a generic system-symbol identifier.
+Confirm the prompt is absent and the intended mode is selected before issuing
 one Continue; record its issue and return separately, then prove mode disappeared
-and the destination appeared within the existing departure deadline. A returned,
+and the caller's exact destination identifier appeared within the existing departure
+deadline. Callers name only their own destination; the shared observer does not
+reference unrelated playback or filter surfaces. A returned,
 hittable Continue without a post-Continue prompt that leaves mode visible is a navigation failure,
 including a possible App defect; do not resend Continue or retry the flow.
 Callers use the returned absolute deadline for the remaining destination wait;
 snapshot errors re-observe within that same budget and never authorize a tap.
+A successful prompt-visibility observation remains evidence even after the retry
+deadline; callers that act must independently check their action deadline.
 
 For iOS slideshow Settings readiness, use one fallible window snapshot for enabled
 state and a non-empty button frame fully contained in that window. This is a snapshot

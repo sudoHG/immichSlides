@@ -271,7 +271,8 @@ private extension PlaybackRequestLifecycleDiagnosticsUITests {
     func startRandomPlaybackFromModeSelection(app: XCUIApplication) {
         guard
             let playbackDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
-                "mode.random.button", selectionTimeout: TestWait.seconds(.infrastructure(10)),
+                "mode.random.button", destinationIdentifier: "slideshow.control.settings.button",
+                selectionTimeout: TestWait.seconds(.infrastructure(10)),
                 departureTimeout: TestWait.seconds(.product(30)))
         else { return }
 

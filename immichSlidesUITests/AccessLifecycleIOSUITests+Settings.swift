@@ -20,7 +20,8 @@ extension AccessLifecycleIOSUITests {
         tapElement(saveButton)
         guard
             let playbackDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
-                "mode.random.button", selectionTimeout: TestWait.seconds(.product(15)),
+                "mode.random.button", destinationIdentifier: "slideshow.control.settings.button",
+                selectionTimeout: TestWait.seconds(.product(15)),
                 departureTimeout: TestWait.seconds(.product(30)))
         else { return }
         XCTAssertTrue(

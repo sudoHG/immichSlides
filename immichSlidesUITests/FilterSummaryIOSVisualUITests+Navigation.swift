@@ -590,7 +590,7 @@ extension FilterSummaryIOSVisualUITests {
     func startRandomPlaybackFromModeSelection(app: XCUIApplication) {
         guard
             let playbackDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
-                "mode.random.button",
+                "mode.random.button", destinationIdentifier: "slideshow.control.settings.button",
                 selectionTimeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
                 departureTimeout: TestWait.seconds(.infrastructure(25)))
         else { return }
@@ -607,7 +607,7 @@ extension FilterSummaryIOSVisualUITests {
     func startFilteredFlowFromModeSelection(app: XCUIApplication) {
         guard
             let summaryDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
-                "mode.filtered.button",
+                "mode.filtered.button", destinationIdentifier: "filterSummary.startPlayback.button",
                 selectionTimeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
                 departureTimeout: FilterSummaryIOSVisualUITestsWaitTiming.screenTransitionTimeoutSeconds)
         else { return }

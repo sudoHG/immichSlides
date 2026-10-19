@@ -96,7 +96,7 @@ extension FilterSummaryIOSVisualUITests {
 
         guard
             let summaryDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
-                "mode.filtered.button",
+                "mode.filtered.button", destinationIdentifier: "filterSummary.startPlayback.button",
                 selectionTimeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
                 departureTimeout: FilterSummaryIOSVisualUITestsWaitTiming.screenTransitionTimeoutSeconds)
         else { return app }

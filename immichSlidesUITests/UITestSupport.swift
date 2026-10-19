@@ -416,32 +416,23 @@ struct IOSFirstBootNavigation {
             return matches.count == 1 ? matches[0] : nil
         }
 
-        func isSelected(_ identifier: String) -> Bool {
-            guard let button = button(identifier) else { return false }
-            var pending = [button]
-            while let node = pending.popLast() {
-                if node.isSelected || (node.elementType == .image && node.identifier == "checkmark.circle.fill") {
-                    return true
-                }
-                pending.append(contentsOf: node.children)
-            }
-            return false
+        func isModeCardSelected(_ identifier: String) -> Bool {
+            guard ["mode.random.button", "mode.filtered.button"].contains(identifier) else { return false }
+            return button(identifier)?.isSelected == true
         }
 
         var isModePage: Bool { nodes.contains { $0.identifier.hasPrefix("mode.") } }
-        var hasDestination: Bool {
-            nodes.contains {
-                $0.identifier == "filterSummary.startPlayback.button"
-                    || $0.identifier == "slideshow.currentAssetId.flag"
-                    || $0.identifier == "slideshow.control.next.button"
-                    || $0.identifier == "slideshow.entryHint.banner"
-            }
+        func hasDestination(_ identifier: String) -> Bool {
+            !identifier.isEmpty && nodes.contains { $0.identifier == identifier }
         }
     }
 
-    func observe() throws -> Observation {
+    func observe(destinationIdentifier: String? = nil) throws -> Observation {
         let ownWindows = try windowObservations(host: app)
-        let own = ownWindows.first(where: { $0.isModePage || $0.hasDestination }) ?? ownWindows[0]
+        let own =
+            ownWindows.first(where: { window in
+                window.isModePage || destinationIdentifier.map { window.hasDestination($0) } == true
+            }) ?? ownWindows[0]
         let ownPrompts = ownWindows.filter(\.hasPasswordPrompt)
         if !ownPrompts.isEmpty { return combine(own, prompts: ownPrompts, windows: ownWindows) }
         let system = XCUIApplication(bundleIdentifier: "com.apple.springboard")
@@ -577,7 +568,7 @@ struct IOSFirstBootNavigation {
 
     func isPasswordPromptVisible(until deadline: Date) -> Bool {
         repeat {
-            if let observation = try? observe() { return observation.hasPasswordPrompt || Date() > deadline }
+            if let observation = try? observe() { return observation.hasPasswordPrompt }
             poll(until: deadline)
         } while Date() < deadline
         // Unknown at the caller's deadline cannot authorize an unobstructed action.
@@ -588,20 +579,25 @@ struct IOSFirstBootNavigation {
     func selectMode(
         _ identifier: String, timeout: TimeInterval, file: StaticString = #filePath, line: UInt = #line
     ) -> Bool {
-        navigateMode(identifier, selectionTimeout: timeout, departureTimeout: nil, file: file, line: line) != nil
+        navigateMode(
+            identifier, destinationIdentifier: nil, selectionTimeout: timeout, departureTimeout: nil,
+            file: file, line: line) != nil
     }
 
     @discardableResult
     func selectModeAndContinue(
-        _ identifier: String, selectionTimeout: TimeInterval, departureTimeout: TimeInterval,
+        _ identifier: String, destinationIdentifier: String,
+        selectionTimeout: TimeInterval, departureTimeout: TimeInterval,
         file: StaticString = #filePath, line: UInt = #line
     ) -> Date? {
         navigateMode(
-            identifier, selectionTimeout: selectionTimeout, departureTimeout: departureTimeout, file: file, line: line)
+            identifier, destinationIdentifier: destinationIdentifier, selectionTimeout: selectionTimeout,
+            departureTimeout: departureTimeout, file: file, line: line)
     }
 
     private func navigateMode(
-        _ identifier: String, selectionTimeout: TimeInterval, departureTimeout: TimeInterval?,
+        _ identifier: String, destinationIdentifier: String?,
+        selectionTimeout: TimeInterval, departureTimeout: TimeInterval?,
         file: StaticString, line: UInt
     ) -> Date? {
         let selectionDeadline = Date().addingTimeInterval(selectionTimeout)
@@ -625,7 +621,7 @@ struct IOSFirstBootNavigation {
             let deadline = departureDeadline ?? selectionDeadline
             FirstFailureContext.mark(step, element: didIssueContinue ? "mode.continue.button" : identifier)
             let observation: Observation
-            do { observation = try observe() } catch {
+            do { observation = try observe(destinationIdentifier: destinationIdentifier) } catch {
                 lastSnapshotError = (error as NSError).code
                 didReadLastSnapshot = false
                 poll(until: deadline)
@@ -656,13 +652,13 @@ struct IOSFirstBootNavigation {
             }
             step = didIssueContinue ? "mode-departure" : "mode-card"
             if didIssueContinue {
-                if !observation.isModePage && observation.hasDestination {
+                if !observation.isModePage && destinationIdentifier.map({ observation.hasDestination($0) }) == true {
                     print(
                         "First-boot mode departure confirmed; Continue issued=true returned=\(didReturnContinue); passwordPromptDismissed=\(didConfirmPromptGone); promptSource=\(promptSource)"
                     )
                     return departureDeadline
                 }
-            } else if observation.isSelected(identifier) && !observation.hasModalObstacle {
+            } else if observation.isModeCardSelected(identifier) && !observation.hasModalObstacle {
                 guard let departureTimeout else {
                     print("First-boot target mode selection confirmed; Continue issued=false")
                     return selectionDeadline

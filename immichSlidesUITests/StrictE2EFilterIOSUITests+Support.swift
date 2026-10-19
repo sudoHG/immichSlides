@@ -55,7 +55,10 @@ extension StrictE2EFilterIOSUITests {
         identifier: String
     ) -> Date? {
         IOSFirstBootNavigation(app: app).selectModeAndContinue(
-            identifier, selectionTimeout: TestWait.seconds(.product(8)),
+            identifier,
+            destinationIdentifier: identifier == "mode.filtered.button"
+                ? "filterSummary.startPlayback.button" : "slideshow.control.settings.button",
+            selectionTimeout: TestWait.seconds(.product(8)),
             departureTimeout: TestWait.seconds(.product(20)))
     }
 

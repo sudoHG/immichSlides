@@ -48,7 +48,7 @@ struct IOSDriver: PlaybackDriver {
             "A successful save must lead to mode selection.")
         guard
             let playbackDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
-                "mode.random.button",
+                "mode.random.button", destinationIdentifier: "slideshow.control.settings.button",
                 selectionTimeout: UITestSupportWaitTiming.readbackTimeoutSeconds
                     + UITestSupportWaitTiming.elementAppearanceTimeoutSeconds,
                 departureTimeout: UITestSupportWaitTiming.playbackStartupTimeoutSeconds)
@@ -204,7 +204,7 @@ struct IOSDriver: PlaybackDriver {
 
     private func openSettings() {
         revealControls()
-        // A first-boot credential sheet can arrive after mode departure; share the old 15 + 5 s budget.
+        // A first-boot credential sheet can arrive after mode departure; share the old 15 + 8 = 23 s budget.
         let deadline = Date().addingTimeInterval(
             UITestSupportWaitTiming.connectionTimeoutSeconds + UITestSupportWaitTiming.controlAppearanceTimeoutSeconds)
         let settingsButton = app.buttons["slideshow.control.settings.button"]
@@ -213,6 +213,8 @@ struct IOSDriver: PlaybackDriver {
                 timeout: max(.zero, deadline.timeIntervalSinceNow),
                 {
                     guard IOSFirstBootNavigation(app: app).dismissPasswordPrompt(until: deadline) else { return false }
+                    guard Date() < deadline else { return false }
+                    revealControls(until: deadline)
                     return settingsButton.exists && settingsButton.isHittable && Date() < deadline
                 })
         else {
@@ -308,13 +310,16 @@ struct IOSDriver: PlaybackDriver {
         .allSatisfy { app.buttons[$0].isHittable }
     }
 
-    private func revealControls() {
+    private func revealControls(until deadline: Date? = nil) {
         FirstFailureContext.mark("reveal-controls", element: "slideshow.control.playPause.button")
+        guard deadline.map({ Date() < $0 }) ?? true else { return }
         if app.buttons["slideshow.control.settings.button"].exists { return }
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tapForFailureEvidence()
         _ = app.buttons["slideshow.control.settings.button"].waitForPublicElement(
             "slideshow.control.settings.button",
-            timeout: UITestSupportWaitTiming.shortInteractionTimeoutSeconds)
+            timeout: min(
+                UITestSupportWaitTiming.shortInteractionTimeoutSeconds,
+                max(.zero, deadline?.timeIntervalSinceNow ?? UITestSupportWaitTiming.shortInteractionTimeoutSeconds)))
     }
 
     private func waitForPlaybackControls(timeout: TimeInterval) -> Bool {

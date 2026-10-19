@@ -125,7 +125,8 @@ extension immichSlidesUITests {
     func startRandomPlaybackFromModeSelection(app: XCUIApplication) {
         guard
             let playbackDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
-                "mode.random.button", selectionTimeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds,
+                "mode.random.button", destinationIdentifier: "slideshow.control.settings.button",
+                selectionTimeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds,
                 departureTimeout: TestWait.seconds(.product(25)))
         else { return }
 
@@ -136,7 +137,8 @@ extension immichSlidesUITests {
     func startFilteredFlowFromModeSelection(app: XCUIApplication) {
         guard
             let summaryDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
-                "mode.filtered.button", selectionTimeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds,
+                "mode.filtered.button", destinationIdentifier: "filterSummary.startPlayback.button",
+                selectionTimeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds,
                 departureTimeout: immichSlidesUITestsWaitTiming.navigationTimeoutSeconds)
         else { return }
 

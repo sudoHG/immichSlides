@@ -652,11 +652,12 @@ final class ScenePresentationContractUITests: XCTestCase {
         #else
         guard
             let summaryDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
-                "mode.filtered.button", selectionTimeout: WaitTiming.controlAppearanceTimeoutSeconds,
+                "mode.filtered.button", destinationIdentifier: "filterSummary.startPlayback.button",
+                selectionTimeout: WaitTiming.controlAppearanceTimeoutSeconds,
                 departureTimeout: WaitTiming.screenTransitionTimeoutSeconds)
         else { return }
         XCTAssertTrue(startButton.waitForFailureEvidence(timeout: max(.zero, summaryDeadline.timeIntervalSinceNow)))
-        XCTAssertTrue(waitUntil(timeout: max(.zero, summaryDeadline.timeIntervalSinceNow)) { startButton.isEnabled })
+        XCTAssertTrue(waitUntil(timeout: WaitTiming.screenTransitionTimeoutSeconds) { startButton.isEnabled })
         tap(startButton)
         #endif
     }

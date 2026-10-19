@@ -512,7 +512,7 @@ extension AppStoreScreenshotUITests {
     func startFilteredFlowFromModeSelection(_ app: XCUIApplication) throws {
         guard
             let summaryDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
-                "mode.filtered.button",
+                "mode.filtered.button", destinationIdentifier: "filterSummary.startPlayback.button",
                 selectionTimeout: AppStoreScreenshotUITestsWaitTiming.screenTransitionTimeoutSeconds,
                 departureTimeout: AppStoreScreenshotUITestsWaitTiming.connectionTimeoutSeconds)
         else { return }

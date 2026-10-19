@@ -166,7 +166,8 @@ final class ServerConfigFormIOSUITests: XCTestCase {
     private func startRandomPlaybackFromModeSelection(app: XCUIApplication) {
         guard
             let playbackDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
-                "mode.random.button", selectionTimeout: WaitTiming.controlAppearanceTimeoutSeconds,
+                "mode.random.button", destinationIdentifier: "slideshow.control.settings.button",
+                selectionTimeout: WaitTiming.controlAppearanceTimeoutSeconds,
                 departureTimeout: TestWait.seconds(.product(25)))
         else { return }
 

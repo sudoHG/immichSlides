@@ -185,7 +185,8 @@ final class immichSlidesUITests: XCTestCase {
 
         guard
             let playbackDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
-                "mode.random.button", selectionTimeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds,
+                "mode.random.button", destinationIdentifier: "slideshow.control.settings.button",
+                selectionTimeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds,
                 departureTimeout: immichSlidesUITestsWaitTiming.playbackControlTimeoutSeconds)
         else { return }
 
@@ -467,7 +468,7 @@ final class immichSlidesUITests: XCTestCase {
 
             guard
                 let summaryDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
-                    "mode.filtered.button",
+                    "mode.filtered.button", destinationIdentifier: "filterSummary.startPlayback.button",
                     selectionTimeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds,
                     departureTimeout: immichSlidesUITestsWaitTiming.controlAppearanceTimeoutSeconds)
             else { return }

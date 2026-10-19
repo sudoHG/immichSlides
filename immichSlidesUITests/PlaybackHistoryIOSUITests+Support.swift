@@ -460,7 +460,8 @@ extension PlaybackHistoryIOSUITests {
     func startRandomPlaybackFromModeSelection(app: XCUIApplication) {
         guard
             let playbackDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
-                "mode.random.button", selectionTimeout: TestWait.seconds(.infrastructure(5)),
+                "mode.random.button", destinationIdentifier: "slideshow.control.settings.button",
+                selectionTimeout: TestWait.seconds(.infrastructure(5)),
                 departureTimeout: TestWait.seconds(.infrastructure(25)))
         else { return }
 
@@ -475,7 +476,8 @@ extension PlaybackHistoryIOSUITests {
     func startFilteredPlaybackFromModeSelection(app: XCUIApplication) {
         guard
             let summaryDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
-                "mode.filtered.button", selectionTimeout: TestWait.seconds(.infrastructure(5)),
+                "mode.filtered.button", destinationIdentifier: "filterSummary.startPlayback.button",
+                selectionTimeout: TestWait.seconds(.infrastructure(5)),
                 departureTimeout: TestWait.seconds(.infrastructure(12)))
         else { return }
 
