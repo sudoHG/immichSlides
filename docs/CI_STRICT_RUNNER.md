@@ -307,6 +307,13 @@ requires a measured geometry for all three pinned strict devices.
 When a measured overlay splits a glyph, ink fragments are joined only across a
 gap wholly inside that overlay and within one palette slot. The ten-pixel band
 minimum is applied after joining; short unjoined fragments remain excluded.
+If the overlay clips the bottom of a glyph, surviving complete top-row strokes
+can also recover its square cell scale. The inferred bottom must remain inside
+the same measured overlay and slot; no additional pixels are excluded. Every
+visible letter and digit cell still has to agree, with the existing minimum
+observed-cell and white-cell counts. The native-size B3+B8 phone regression
+reconstructs the hosted scene from public fixtures, rather than treating its
+downscaled failure projection as original pixels.
 
 The iOS `album-empty` and `filter-album` contracts select their path by the raw
 capture size. Unmeasured sizes retain the original whole-frame classifier and

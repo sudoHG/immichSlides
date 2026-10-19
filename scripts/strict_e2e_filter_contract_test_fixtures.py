@@ -64,6 +64,35 @@ from strict_e2e_photo_identity import (  # noqa: E402
 from strict_e2e_server import PUBLIC_API_KEY, _fixture_data, fixture_manifest  # noqa: E402
 
 
+def journey_b_clipped_glyph_frame(defect: str | None = None) -> Image.Image:
+    # Hosted E5's projected B3+B8 scene: equal vertical slots, 1.2x motion scale.
+    # Rebuild from public fixtures at native phone size; the projection is not raw input.
+    from PIL import ImageDraw
+
+    frame = Image.new("RGB", (1170, 2532))
+    for index, top in ((3, 0), (8, 1266)):
+        photo = Image.open(io.BytesIO(_fixture_data("b")["images"][f"asset-b-{index}"]))
+        if index == 8 and defect in ("wrong-letter", "wrong-digit", "missing", "mixed"):
+            from strict_e2e_server import _png
+            label = {"wrong-letter": "C8", "wrong-digit": "B7", "missing": "", "mixed": "A8"}[defect]
+            photo = Image.open(io.BytesIO(_png(300, 300, 8, label, striped=True,
+                                              palette=((255, 75, 255), (255, 75, 220)))))
+        enlarged = photo.resize((1519, 1519), Image.Resampling.BILINEAR)
+        frame.paste(enlarged.crop((174, 126, 1344, 1392)), (0, top))
+    ImageDraw.Draw(frame).rounded_rectangle((72, 2130, 1098, 2310), radius=80, fill=(255, 163, 253))
+    if defect == "covered":
+        ImageDraw.Draw(frame).rectangle((72, 1616, 1098, 2130), fill="black")
+    elif defect == "gap":
+        ImageDraw.Draw(frame).rectangle((0, 1258, 1169, 1273), fill="black")
+    elif defect == "overlap":
+        frame.paste(frame.crop((0, 0, 1170, 32)), (0, 1400))
+    elif defect == "black":
+        frame.paste((0, 0, 0), (0, 0, *frame.size))
+    elif defect == "transition":
+        frame = Image.blend(frame, ImageOps.fit(Image.open(io.BytesIO(_fixture_data("b")["images"]["asset-b-5"])), frame.size), .5)
+    return frame
+
+
 from test_strict_e2e_server import RunningServer  # noqa: E402
 
 

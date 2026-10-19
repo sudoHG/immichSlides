@@ -209,6 +209,24 @@ def _with_exif_card(png: bytes, model: str) -> bytes:
 
 
 class FrameGlyphBoundaryTests(unittest.TestCase):
+    def test_control_bar_clipping_the_last_glyph_row_preserves_the_full_cell_grid(self) -> None:
+        from strict_e2e_filter_contract_test_fixtures import journey_b_clipped_glyph_frame
+        from strict_e2e_photo_identity import public_scene_photos_from_bytes
+
+        frame = journey_b_clipped_glyph_frame()
+        self.assertEqual([(photo.letter, photo.mark) for photo in public_scene_photos_from_bytes(_png(frame))],
+                         [("B", "A3"), ("B", "A8")])
+        for defect in ("wrong-letter", "wrong-digit", "missing", "mixed", "covered", "gap", "overlap", "black", "transition"):
+            with self.subTest(defect=defect):
+                if defect == "mixed":
+                    message = r"^mixed public glyphs; 2 slots \(vertical\)$"
+                elif defect in ("wrong-letter", "wrong-digit", "missing", "covered", "overlap"):
+                    message = r"^unreadable public glyph slot; slot 2 \(vertical\)$"
+                else:
+                    message = "^unreadable public glyph slot: public photo colors are missing or mixed;"
+                with self.assertRaisesRegex(IdentityAssertionError, message):
+                    public_scene_photos_from_bytes(_png(journey_b_clipped_glyph_frame(defect)))
+
     def test_expanded_b_identities_do_not_confuse_existing_photos_in_real_size_frames(self) -> None:
         from strict_e2e_photo_identity import public_scene_photos_from_bytes
         for fixture_set, count in (("a", 5), ("b", 8)):
