@@ -122,19 +122,23 @@ extension StrictE2EFilterTVOSUITests {
             playPauseButton, directions: [.left, .right],
             message: "Focus must be able to move to Play/Pause.")
         let playingValue = String(describing: playPauseButton.value ?? "")
+        let shouldSendPause = playingValue.contains("暂停") || playingValue.lowercased().contains("pause")
         var readyMark: String?
         var readyFrame: StablePersonFrame?
-        if playingValue.contains("暂停") || playingValue.lowercased().contains("pause") {
+        if shouldSendPause {
             moveFocusTo(
                 playPauseButton, directions: [.left, .right],
                 message: "Focus must be able to move to Play/Pause.")
-            if let stableFrameDeadline {
-                readyFrame = try requireFocusedStablePersonFrame(
-                    app: app, deadline: stableFrameDeadline, name: names[0])
-            }
-            FirstFailureRemote.press(.select)
-            readyMark = readyFrame?.mark
         }
+        if let stableFrameDeadline {
+            // Later person selections can retain Pause; prove those frames without another Select.
+            readyFrame = try requireFocusedStablePersonFrame(
+                app: app, deadline: stableFrameDeadline, name: names[0])
+        }
+        if shouldSendPause {
+            FirstFailureRemote.press(.select)
+        }
+        readyMark = readyFrame?.mark
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(4))) {
                 let current = String(describing: playPauseButton.value ?? "")
@@ -152,6 +156,7 @@ extension StrictE2EFilterTVOSUITests {
                     "proof_duration_seconds": readyFrame.durationSeconds,
                     "proof_attempts": readyFrame.attempts, "refocus_count": readyFrame.refocusCount,
                     "entry_hint_visible": readyFrame.isEntryHintVisible,
+                    "did_send_pause": shouldSendPause,
                     "select_focus": "slideshow.control.playPause.button"
                 ],
                 name: "\(names[0])-pause-readiness.json")
