@@ -364,8 +364,9 @@ extension StrictE2EFilterTVOSUITests {
 
     @MainActor
     private func pressAndWaitForFocusMovement(_ direction: XCUIRemote.Button, to target: XCUIElement) -> Bool? {
-        XCUIApplication().pressAndWaitForTVOSFocusMovement(
-            direction, to: target.identifier, timeout: Timing.focusObservationWindowSeconds)
+        guard let identifier = (try? target.snapshot())?.identifier else { return nil }
+        return XCUIApplication().pressAndWaitForTVOSFocusMovement(
+            direction, to: identifier, timeout: Timing.focusObservationWindowSeconds)
     }
 
     @MainActor

@@ -63,7 +63,9 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             "A configured cold launch must go straight to the playback page."
         )
         XCTAssertTrue(
-            waitForFocus(on: playPauseButton, timeout: TestWait.seconds(.product(8))),
+            waitForFocus(
+                on: playPauseButton, identifier: "slideshow.control.playPause.button",
+                timeout: TestWait.seconds(.product(8))),
             "Default focus on the cold-launch playback page must land on the Play/Pause button."
         )
         attachScreenshot(app: app, name: "tvos-cold-launch-02-configured-slideshow")
@@ -399,6 +401,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
         moveFocus(
             .left,
             to: previousButton,
+            identifier: "slideshow.control.previous.button",
             maximumPresses: 2,
             message: "Once history exists, focus must be able to move to Previous."
         )
@@ -420,6 +423,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
         moveFocus(
             .left,
             to: previousButton,
+            identifier: "slideshow.control.previous.button",
             maximumPresses: 2,
             message: "After going back once, focus must be able to move to Previous again."
         )
@@ -726,27 +730,33 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
     private func moveFocus(
         _ direction: XCUIRemote.Button,
         to element: XCUIElement,
+        identifier: String? = nil,
         maximumPresses: Int,
         message: String
     ) {
+        var identifier = identifier
         for _ in 0..<maximumPresses {
+            if identifier == nil { identifier = (try? element.snapshot())?.identifier }
             let snapshots = XCUIApplication().evidenceSnapshotsByIdentifier()
-            guard let target = snapshots[element.identifier] else { continue }
+            guard let identifier, let target = snapshots[identifier] else { continue }
             // Previous is reachable only while the current retained history has an earlier entry.
             if target.identifier == "slideshow.control.previous.button", !target.isEnabled { break }
             if target.hasFocus { return }
             _ = XCUIApplication().pressAndWaitForTVOSFocusMovement(
-                direction, to: element.identifier, timeout: TestWait.seconds(.product(1)))
+                direction, to: identifier, timeout: TestWait.seconds(.product(1)))
         }
-        XCTAssertTrue(waitForFocus(on: element, timeout: TestWait.seconds(.product(4))), message)
+        XCTAssertTrue(
+            waitForFocus(on: element, identifier: identifier, timeout: TestWait.seconds(.product(4))), message)
     }
 
     @MainActor
-    private func waitForFocus(on element: XCUIElement, timeout: TimeInterval) -> Bool {
+    private func waitForFocus(on element: XCUIElement, identifier: String? = nil, timeout: TimeInterval) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
+        var identifier = identifier
         while Date() < deadline {
+            if identifier == nil { identifier = (try? element.snapshot())?.identifier }
             let snapshots = XCUIApplication().evidenceSnapshotsByIdentifier()
-            if let target = snapshots[element.identifier], target.hasFocus {
+            if let identifier, let target = snapshots[identifier], target.hasFocus {
                 if target.identifier == "slideshow.control.previous.button", !target.isEnabled { return false }
                 return Date() < deadline
             }
