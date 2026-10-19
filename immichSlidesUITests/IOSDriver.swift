@@ -52,7 +52,7 @@ struct IOSDriver: PlaybackDriver {
                 departureTimeout: UITestSupportWaitTiming.playbackStartupTimeoutSeconds)
         else { return }
         XCTAssertTrue(
-            waitForPlaybackControls(timeout: max(0, playbackDeadline.timeIntervalSinceNow)),
+            waitForPlaybackControls(timeout: max(.zero, playbackDeadline.timeIntervalSinceNow)),
             "Random mode must reach the playback page.")
     }
 

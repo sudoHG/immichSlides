@@ -355,8 +355,12 @@ extension StrictE2EFilterIOSUITests {
     @MainActor
     func returnFromAlbumFilter(app: XCUIApplication) {
         let back = app.buttons["albumFilter.back.button"]
+        let deadline = Date().addingTimeInterval(TestWait.seconds(.product(8)))
         XCTAssertTrue(
-            back.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))), "Album filter must be able to go back"
+            waitUntil(timeout: TestWait.seconds(.product(8))) {
+                guard IOSFirstBootNavigation(app: app).dismissPasswordPrompt(until: deadline) else { return false }
+                return back.isHittable && Date() < deadline
+            }, "Album filter must be able to go back"
         )
         tapElement(back)
     }

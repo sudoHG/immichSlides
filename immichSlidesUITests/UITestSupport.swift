@@ -403,6 +403,8 @@ struct IOSFirstBootNavigation {
         let nodes: [XCUIElementSnapshot]
         let decline: XCUIElementSnapshot?
         let hasPasswordPrompt: Bool
+        let promptHost: XCUIApplication
+        let promptFrame: CGRect
 
         func button(_ identifier: String) -> XCUIElementSnapshot? {
             let matches = nodes.filter { $0.identifier == identifier && $0.elementType == .button }
@@ -434,6 +436,18 @@ struct IOSFirstBootNavigation {
 
     func observe() throws -> Observation {
         let window = try app.windows.firstMatch.snapshot()
+        let own = observation(window: window, host: app)
+        if own.hasPasswordPrompt { return own }
+        let system = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        // iOS can host the late credential sheet outside the app's accessibility tree.
+        let systemWindow = try system.windows.firstMatch.snapshot()
+        let prompt = observation(window: systemWindow, host: system)
+        return Observation(
+            window: own.window, nodes: own.nodes, decline: prompt.decline,
+            hasPasswordPrompt: prompt.hasPasswordPrompt, promptHost: system, promptFrame: systemWindow.frame)
+    }
+
+    private func observation(window: XCUIElementSnapshot, host: XCUIApplication) -> Observation {
         var pending = [window]
         var nodes: [XCUIElementSnapshot] = []
         while let node = pending.popLast() {
@@ -460,7 +474,7 @@ struct IOSFirstBootNavigation {
         return Observation(
             window: window, nodes: nodes,
             decline: hasTitle && !hasOtherModal && declines.count == 1 ? declines[0] : nil,
-            hasPasswordPrompt: hasTitle)
+            hasPasswordPrompt: hasTitle, promptHost: host, promptFrame: window.frame)
     }
 
     // Snapshot attributes are fallible; XCTest exposes hittability only on the live element.
@@ -468,14 +482,17 @@ struct IOSFirstBootNavigation {
         _ node: XCUIElementSnapshot, observation: Observation, deadline: Date, step: String,
         willTap: () -> Void = {}
     ) -> Bool {
-        guard node.isEnabled, !node.frame.isEmpty, observation.window.frame.contains(node.frame), Date() < deadline
+        let isDecline = step == "save-password-prompt"
+        let host = isDecline ? observation.promptHost : app
+        let frame = isDecline ? observation.promptFrame : observation.window.frame
+        guard node.isEnabled, !node.frame.isEmpty, frame.contains(node.frame), Date() < deadline
         else { return false }
         let target: XCUIElement
         if node.identifier.isEmpty {
             // ui-label-lookup: Only the exact password prompt's unique decline action reaches this branch.
-            target = app.buttons.matching(NSPredicate(format: "label == %@", node.label)).firstMatch
+            target = host.windows.firstMatch.buttons.matching(NSPredicate(format: "label == %@", node.label)).firstMatch
         } else {
-            target = app.buttons.matching(identifier: node.identifier).firstMatch
+            target = host.windows.firstMatch.buttons.matching(identifier: node.identifier).firstMatch
         }
         guard target.isHittable, Date() < deadline else { return false }
         FirstFailureContext.mark(step, element: node.identifier.isEmpty ? "unknown" : node.identifier)

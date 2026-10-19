@@ -24,7 +24,7 @@ extension AccessLifecycleIOSUITests {
                 departureTimeout: TestWait.seconds(.product(30)))
         else { return }
         XCTAssertTrue(
-            waitForPlaybackControls(app: app, timeout: max(0, playbackDeadline.timeIntervalSinceNow)),
+            waitForPlaybackControls(app: app, timeout: max(.zero, playbackDeadline.timeIntervalSinceNow)),
             "Random mode must reach the playback page.")
     }
 
