@@ -178,10 +178,9 @@ Public snapshots do not expose hittability: immediately before a real tap, check
 only the target's live `isHittable`, then check the same absolute deadline again.
 Never equate a visible frame with hittability, decline an unrelated alert, or save
 credentials. Do not capture screenshots between detecting the prompt and declining
-it. Mode cards retain their existing real coordinate path for a unique enabled
-frame fully inside the window when neither host snapshot contains a modal; their
-selection must still be read back. Not Now and Continue always require live
-hittability. Confirm the prompt is absent and the intended mode is selected before issuing
+it. Mode cards, Not Now and Continue all require live hittability; a non-hittable
+card waits for a fresh observation, without a coordinate tap that can invoke
+XCTest's generic interruption handler. Confirm the prompt is absent and the intended mode is selected before issuing
 one Continue; record its issue and return separately, then prove mode disappeared
 and the destination appeared within the existing departure deadline. A returned,
 hittable Continue without a prompt that leaves mode visible is a navigation failure,

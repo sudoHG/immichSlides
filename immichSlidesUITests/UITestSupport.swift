@@ -518,24 +518,13 @@ struct IOSFirstBootNavigation {
             target = window.buttons.matching(identifier: node.identifier).firstMatch
         }
         let isHittable = target.isHittable
-        guard Date() < deadline else { return false }
-        // SwiftUI mode cards can report non-hittable despite an unobstructed, fully visible frame.
-        guard isHittable || (step == "mode-card" && !observation.hasModalObstacle) else { return false }
+        guard isHittable, Date() < deadline else { return false }
         FirstFailureContext.mark(step, element: node.identifier.isEmpty ? "unknown" : node.identifier)
         willTap()
         if step == "save-password-prompt" {
             print("Exact Save Password prompt observed; Not Now issued; windowIndex=\(observation.promptWindowIndex)")
         }
-        FirstFailureContext.action("tap") {
-            if isHittable {
-                target.tap()
-            } else {
-                let origin = observation.window.frame.origin
-                print("First-boot mode-card issued using its unique unobstructed snapshot frame")
-                window.coordinate(withNormalizedOffset: .zero)
-                    .withOffset(CGVector(dx: node.frame.midX - origin.x, dy: node.frame.midY - origin.y)).tap()
-            }
-        }
+        FirstFailureContext.action("tap") { target.tap() }
         if step == "save-password-prompt" { print("Exact Save Password prompt: Not Now returned") }
         return true
     }
