@@ -400,12 +400,14 @@ struct IOSFirstBootNavigation {
 
     struct Observation {
         let window: XCUIElementSnapshot
+        let windowIndex: Int
         let nodes: [XCUIElementSnapshot]
         let decline: XCUIElementSnapshot?
         let hasPasswordPrompt: Bool
         let hasModalObstacle: Bool
         let promptHost: XCUIApplication
         let promptFrame: CGRect
+        let promptWindowIndex: Int
 
         func button(_ identifier: String) -> XCUIElementSnapshot? {
             let matches = nodes.filter { $0.identifier == identifier && $0.elementType == .button }
@@ -436,21 +438,36 @@ struct IOSFirstBootNavigation {
     }
 
     func observe() throws -> Observation {
-        let window = try app.windows.firstMatch.snapshot()
-        let own = observation(window: window, host: app)
-        if own.hasPasswordPrompt { return own }
+        let ownWindows = try windowObservations(host: app)
+        let own = ownWindows.first(where: { $0.isModePage || $0.hasDestination }) ?? ownWindows[0]
+        let ownPrompts = ownWindows.filter(\.hasPasswordPrompt)
+        if !ownPrompts.isEmpty { return combine(own, prompts: ownPrompts, windows: ownWindows) }
         let system = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        // iOS can host the late credential sheet outside the app's accessibility tree.
-        let systemWindow = try system.windows.firstMatch.snapshot()
-        let prompt = observation(window: systemWindow, host: system)
-        return Observation(
-            window: own.window, nodes: own.nodes, decline: prompt.decline,
-            hasPasswordPrompt: prompt.hasPasswordPrompt,
-            hasModalObstacle: own.hasModalObstacle || prompt.hasModalObstacle,
-            promptHost: system, promptFrame: systemWindow.frame)
+        let systemWindows = try windowObservations(host: system)
+        return combine(
+            own, prompts: systemWindows.filter(\.hasPasswordPrompt), windows: ownWindows + systemWindows)
     }
 
-    private func observation(window: XCUIElementSnapshot, host: XCUIApplication) -> Observation {
+    private func combine(_ own: Observation, prompts: [Observation], windows: [Observation]) -> Observation {
+        let prompt = prompts.count == 1 ? prompts[0] : nil
+        return Observation(
+            window: own.window, windowIndex: own.windowIndex, nodes: own.nodes, decline: prompt?.decline,
+            hasPasswordPrompt: !prompts.isEmpty, hasModalObstacle: windows.contains(where: \.hasModalObstacle),
+            promptHost: prompt?.promptHost ?? app, promptFrame: prompt?.window.frame ?? .zero,
+            promptWindowIndex: prompt?.windowIndex ?? .zero)
+    }
+
+    private func windowObservations(host: XCUIApplication) throws -> [Observation] {
+        // A password sheet can be in a later window; one atomic host snapshot keeps each window's title/action paired.
+        let root = try host.snapshot()
+        let windows = root.children.filter { $0.elementType == .window }
+        if windows.isEmpty { return [observation(window: root, host: host, windowIndex: .zero)] }
+        return windows.enumerated().map { index, window in
+            observation(window: window, host: host, windowIndex: index)
+        }
+    }
+
+    private func observation(window: XCUIElementSnapshot, host: XCUIApplication, windowIndex: Int) -> Observation {
         var pending = [window]
         var nodes: [XCUIElementSnapshot] = []
         while let node = pending.popLast() {
@@ -475,11 +492,11 @@ struct IOSFirstBootNavigation {
         // ui-label-lookup: Never act on a generic Not Now button without the exact password title.
         let declines = nodes.filter { $0.elementType == .button && ["以后", "Not Now"].contains($0.label) }
         return Observation(
-            window: window, nodes: nodes,
+            window: window, windowIndex: windowIndex, nodes: nodes,
             decline: hasTitle && !hasOtherModal && declines.count == 1 ? declines[0] : nil,
             hasPasswordPrompt: hasTitle,
             hasModalObstacle: hasTitle || nodes.contains { $0.elementType == .alert || $0.elementType == .sheet },
-            promptHost: host, promptFrame: window.frame)
+            promptHost: host, promptFrame: window.frame, promptWindowIndex: windowIndex)
     }
 
     // Snapshot attributes are fallible; XCTest exposes hittability only on the live element.
@@ -490,14 +507,16 @@ struct IOSFirstBootNavigation {
         let isDecline = step == "save-password-prompt"
         let host = isDecline ? observation.promptHost : app
         let frame = isDecline ? observation.promptFrame : observation.window.frame
+        guard isDecline || !observation.hasModalObstacle else { return false }
         guard node.isEnabled, !node.frame.isEmpty, frame.contains(node.frame), Date() < deadline
         else { return false }
         let target: XCUIElement
+        let window = host.windows.element(boundBy: isDecline ? observation.promptWindowIndex : observation.windowIndex)
         if node.identifier.isEmpty {
             // ui-label-lookup: Only the exact password prompt's unique decline action reaches this branch.
-            target = host.windows.firstMatch.buttons.matching(NSPredicate(format: "label == %@", node.label)).firstMatch
+            target = window.buttons.matching(NSPredicate(format: "label == %@", node.label)).firstMatch
         } else {
-            target = host.windows.firstMatch.buttons.matching(identifier: node.identifier).firstMatch
+            target = window.buttons.matching(identifier: node.identifier).firstMatch
         }
         let isHittable = target.isHittable
         guard Date() < deadline else { return false }
@@ -505,14 +524,16 @@ struct IOSFirstBootNavigation {
         guard isHittable || (step == "mode-card" && !observation.hasModalObstacle) else { return false }
         FirstFailureContext.mark(step, element: node.identifier.isEmpty ? "unknown" : node.identifier)
         willTap()
-        if step == "save-password-prompt" { print("Exact Save Password prompt observed; Not Now issued") }
+        if step == "save-password-prompt" {
+            print("Exact Save Password prompt observed; Not Now issued; windowIndex=\(observation.promptWindowIndex)")
+        }
         FirstFailureContext.action("tap") {
             if isHittable {
                 target.tap()
             } else {
                 let origin = observation.window.frame.origin
                 print("First-boot mode-card issued using its unique unobstructed snapshot frame")
-                app.windows.firstMatch.coordinate(withNormalizedOffset: .zero)
+                window.coordinate(withNormalizedOffset: .zero)
                     .withOffset(CGVector(dx: node.frame.midX - origin.x, dy: node.frame.midY - origin.y)).tap()
             }
         }

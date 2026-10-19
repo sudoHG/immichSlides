@@ -166,9 +166,11 @@ a derived property or a snapshot is outside this rule.
 Snapshots expose enabled state, not hittability, so pause-stage evidence uses `*_enabled` keys.
 For iOS first-boot mode navigation, use `IOSFirstBootNavigation` in `UITestSupport`.
 Each poll reads the exact English/Chinese Save Password title and unique Not Now
-action from one fallible window snapshot per host (the app or SpringBoard); mode
-selection and Continue attributes share the app window snapshot. A late credential
-sheet can belong to SpringBoard and be absent from the app's accessibility tree.
+action from the same window subtree in one fallible snapshot per host (the app or
+SpringBoard). Inspect every captured window: a late credential sheet can be in a
+later SpringBoard window and absent from the app's accessibility tree. Mode selection
+and Continue attributes share one app window subtree; taps use the captured window
+index. Multiple matching prompt windows are ambiguous and never authorize a tap.
 Public snapshots do not expose hittability: immediately before a real tap, check
 only the target's live `isHittable`, then check the same absolute deadline again.
 Never equate a visible frame with hittability, decline an unrelated alert, or save
