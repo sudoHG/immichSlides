@@ -857,8 +857,6 @@ class FailureDiagnosticsTests(unittest.TestCase):
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift", "Save must become enabled after a real connection test succeeds.", "firstboot_setup", "control_state"),
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift", "A cold launch with saved settings must not return to the first-boot page.", "cold_relaunch", "navigation"),
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift", "A configured cold launch must go straight to the playback page.", "cold_relaunch", "navigation"),
-            ("immichSlidesUITests/UITestSupport.swift", "First-boot mode navigation must dismiss the exact password prompt,", "mode_selection", "navigation"),
-            ("immichSlidesUITests/UITestSupport.swift", "Mode departure failed after one hittable Continue without a password prompt;", "playback_entry", "navigation"),
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift", "Chose filter but reached the playback page, so the mode card tap did not register.", "mode_selection", "navigation"),
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift", "Still on the mode page after Continue; filter mode did not start.", "mode_selection", "navigation"),
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift", "Filter mode must reach the filter summary page.", "mode_selection", "navigation"),
@@ -949,8 +947,6 @@ class FailureDiagnosticsTests(unittest.TestCase):
             ("immichSlidesUITests/PlaybackHistoryIOSUITests+Support.swift", "Could not return from the playback settings page to the slideshow", "settings_navigation", "navigation"),
         )
         failure_prefixes = {
-            "First-boot mode navigation must dismiss the exact password prompt,",
-            "Mode departure failed after one hittable Continue without a password prompt;",
             "The slideshow control never became tappable before the deadline.",
             "The slideshow Settings tap had no observed outcome before the deadline.",
             "A fresh install must reach the normal first-boot page.",
@@ -1076,6 +1072,13 @@ class FailureDiagnosticsTests(unittest.TestCase):
 
     def test_reviewed_prefixes_map_private_values_and_unmatched_messages_stay_unknown(self):
         from ci_failure_diagnostics import classify_messages, PREFIX_RULES, unknown_diagnostics
+        for message, phase in (
+            ("failed - First-boot mode navigation must dismiss the exact password prompt, select the target and leave mode within its deadline (step=mode-card, Continue issued=false returned=false, passwordPromptObserved=true)", "mode_selection"),
+            ("failed - Mode departure failed after one hittable Continue without a password prompt; possible App navigation defect (step=mode-departure, Continue issued=true returned=true, modePage=true)", "playback_entry"),
+        ):
+            with self.subTest(message=message):
+                self.assertEqual(classify_messages([message]), {"failure_phase": phase, "failure_class": "navigation"})
+                self.assertEqual(classify_messages([message, "unreviewed private text"]), unknown_diagnostics())
         for prefix, phase, kind in PREFIX_RULES:
             with self.subTest(prefix=prefix):
                 expected = {"failure_phase": phase, "failure_class": kind}

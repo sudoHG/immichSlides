@@ -537,6 +537,7 @@ struct IOSFirstBootNavigation {
         var lastSnapshotError: Int?
         var lastModePage: Bool?
         var didReadLastSnapshot = false
+        var didObserveAfterContinue = false
         var departureDeadline: Date?
         var step = "mode-card"
         FirstFailureContext.beginWait(seconds: selectionTimeout)
@@ -554,6 +555,7 @@ struct IOSFirstBootNavigation {
             guard Date() < deadline else { break }
             didReadLastSnapshot = true
             lastModePage = observation.isModePage
+            if didIssueContinue { didObserveAfterContinue = true }
             if observation.hasPasswordPrompt {
                 didSeePrompt = true
                 if !didDecline, let decline = observation.decline {
@@ -598,8 +600,8 @@ struct IOSFirstBootNavigation {
         }
         FirstFailureContext.mark(step, element: didIssueContinue ? "mode.continue.button" : identifier)
         let detail =
-            "step=\(step), Continue issued=\(didIssueContinue) returned=\(didReturnContinue), passwordPromptObserved=\(didSeePrompt), passwordPromptDismissed=\(didDecline), modePage=\(lastModePage.map(String.init) ?? "unknown"), lastSnapshotSucceeded=\(didReadLastSnapshot), lastSnapshotError=\(lastSnapshotError.map(String.init) ?? "none")"
-        if didIssueContinue && !didSeePrompt && didReadLastSnapshot && lastModePage == true {
+            "step=\(step), Continue issued=\(didIssueContinue) returned=\(didReturnContinue), passwordPromptObserved=\(didSeePrompt), passwordPromptDismissed=\(didDecline), modePage=\(lastModePage.map(String.init) ?? "unknown"), postContinueSnapshotObserved=\(didObserveAfterContinue), lastSnapshotSucceeded=\(didReadLastSnapshot), lastSnapshotError=\(lastSnapshotError.map(String.init) ?? "none")"
+        if didIssueContinue && !didSeePrompt && didReadLastSnapshot && didObserveAfterContinue && lastModePage == true {
             XCTFail(
                 "Mode departure failed after one hittable Continue without a password prompt; possible App navigation defect (\(detail))",
                 file: file, line: line)
