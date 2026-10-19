@@ -135,7 +135,9 @@ extension AccessLifecycleTVOSUITests {
         let initialInterval = initial["intervalSeconds"] as? Int ?? Int(TestWait.seconds(.product(5)))
         let isInitiallyExifEnabled = initial["showExif"] as? Bool ?? true
         let initialMode = initial["displayMode"] as? String ?? "smartFill"
-        let intervalTarget = initialInterval == 10 ? 15 : 10
+        let intervalTarget =
+            initialInterval == AccessLifecycleContract.tvOSRequestedIntervalSeconds
+            ? 15 : AccessLifecycleContract.tvOSRequestedIntervalSeconds
 
         try ensureInsidePlaybackSettingsPage(app: app)
         selectPlaybackToggle(
@@ -205,7 +207,7 @@ extension AccessLifecycleTVOSUITests {
         record("settings.save.autoplay")
         // When the requested interval is unavailable, the substituted interval needs a desktop closeout run.
         let resolved = try AccessLifecycleContract.resolveTimingInterval(
-            requested: AccessLifecycleContract.requestedIntervalSeconds,
+            requested: AccessLifecycleContract.tvOSRequestedIntervalSeconds,
             available: AccessLifecycleContract.tvOSSelectableIntervals
         )
         selectPlaybackToggle(

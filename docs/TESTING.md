@@ -447,7 +447,7 @@ Interior adjustments correct the last requested normalized position by
 only endpoints use a thumb-start drag past the track end. The settings-persistence
 flow requires a displayed interval different from its initial value and preserves
 that same value across restart, without requiring an exact interior target.
-Pause/background lifecycle flows request 12 seconds and require displayed T in
+The iOS pause/background lifecycle flows request 12 seconds and require displayed T in
 the inclusive 10–15 second window, enabled explicitly at the timing-contract call.
 Other callers retain exact requested values. T/2 is therefore at least 5 seconds
 and T−2 at least 8 seconds, while the upper bound limits run time. Every timing
@@ -455,6 +455,15 @@ assertion uses that displayed T; T±2 tolerances, capture deadlines relative to 
 hidden-control and visible-scene checks stay unchanged. First-wake requires exactly
 30 seconds, and `IOSDriver` continues to require its exact 15/30 second settings.
 Unreadable values and values outside the timing window fail.
+
+The tvOS lifecycle timing flows request 10 seconds, an offered value in
+`SettingsViewTV.intervalOptions` and different from the initial 5-second setting.
+Settings persistence uses that same request, or 15 seconds if the initial value
+is already 10 seconds, so all four settings still change. Timing receipts record
+the requested and actual interval separately. A genuinely unavailable request
+still falls back to the nearest offered interval and requires desktop closeout;
+an exact offered request does not require interval review. All timing assertions
+continue to use actual T with the existing T±2 and four-second confirmation rules.
 
 Pause/continue timing distinguishes transition onset from stable new-photo confirmation.
 tvOS shares the iPad iOS observer's sustained-dimming predicate and constants in
