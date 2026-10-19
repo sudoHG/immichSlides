@@ -58,9 +58,33 @@ from strict_e2e_filter_contract_test_fixtures import (
     unittest,
     write_member_manifest,
     single_photo_candidate_cases,
+    single_photo_region_frame,
 )
 
 class DeviceFilterVisualIdentityTestsCases:
+    def test_single_photo_switch_keeps_blurred_sides_consistent_with_the_sharp_photo(self) -> None:
+        for defect in (None, "foreign-side", "black-side", "vertical-gap"):
+            with self.subTest(defect=defect), tempfile.TemporaryDirectory() as raw:
+                evidence = Path(raw)
+                _write_server_switch_pass(evidence)
+                _write_switch_display_bridge(evidence)
+                (evidence / "switch-b-playback.png").write_bytes(_fixture_png("A1", "b"))
+                (evidence / "observed-ids-after-switch.json").write_bytes((evidence / "observed-ids.json").read_bytes())
+                (evidence / "empty-selection-after-switch.json").write_text(json.dumps({
+                    "selection_source": "accessibility_ui",
+                    "album_summary": "筛选相册 0 个相册 · 0 张照片",
+                    "person_summary": "筛选人物 0 个人物 · 0 张照片",
+                }))
+                buffer = io.BytesIO()
+                single_photo_region_frame("tv-fit", defect).save(buffer, format="PNG")
+                (evidence / "display-after.png").write_bytes(buffer.getvalue())
+                if defect:
+                    with self.assertRaisesRegex(FilterContractError, "The after-change frame must be a recognizable, stable single-photo frame"):
+                        evaluate_filter_visual_identity(evidence, "tvos-switch")
+                else:
+                    report = evaluate_filter_visual_identity(evidence, "tvos-switch")
+                    self.assertEqual(report["server_switch"]["display"]["finite_rotation"]["after_mark"], "A2")
+
     def test_merged_switch_requires_original_evidence_and_a_finite_multi_photo_before(self) -> None:
         for suite in ("filter-switch", "tvos-switch"):
             with self.subTest(suite=suite), tempfile.TemporaryDirectory() as raw:

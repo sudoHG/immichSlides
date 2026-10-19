@@ -148,6 +148,41 @@ def public_overlay_frame(kind: str, defect: str | None = None) -> Image.Image:
     return frame
 
 
+def single_photo_region_frame(kind: str, defect: str | None = None) -> Image.Image:
+    """Rebuild pinned TV B2 fit and iPhone B1 zoom/EXIF reader regressions."""
+    from PIL import ImageDraw
+
+    if kind == "iphone-zoom":
+        from test_album_server_narrow_contract import _full_screen
+        frame = Image.open(io.BytesIO(_full_screen("A1", (1170, 2532), "b"))).convert("RGB")
+        draw = ImageDraw.Draw(frame)
+        # Same overlay positions as the native B1 input; ink is a public stand-in.
+        draw.rounded_rectangle((333, 186, 1129, 593), radius=60, fill=(65, 135, 45))
+        draw.rounded_rectangle((72, 2130, 1098, 2310), radius=80, fill=(190, 170, 190))
+        if defect == "gap":
+            draw.rectangle((0, 96, 1169, 127), fill="black")
+        elif defect == "top-edge":
+            draw.rectangle((0, 0, 1169, 7), fill=(40, 40, 40))
+        elif defect == "bottom-edge":
+            draw.rectangle((0, 2524, 1169, 2531), fill=(40, 40, 40))
+        return frame
+    photo = Image.open(io.BytesIO(_fixture_data("b")["images"]["asset-b-2"])).convert("RGB")
+    frame = ImageOps.fit(photo, (3840, 2160)).filter(ImageFilter.GaussianBlur(384))
+    fitted = ImageOps.contain(photo, frame.size)
+    if defect != "missing-sharp":
+        frame.paste(fitted, ((frame.width - fitted.width) // 2, 0))
+    # Native c02bdae1...: visible bar lies inside the existing 4K rectangle.
+    ImageDraw.Draw(frame).rounded_rectangle((1264, 1715, 2573, 1920), radius=100, fill=(55, 55, 55))
+    if defect == "foreign-side":
+        other = Image.open(io.BytesIO(_fixture_data("b")["images"]["asset-b-3"])).convert("RGB")
+        frame.paste(ImageOps.fit(other, (691, 2160)).filter(ImageFilter.GaussianBlur(160)), (0, 0))
+    elif defect == "black-side":
+        frame.paste((0, 0, 0), (0, 600, 691, 800))
+    elif defect == "vertical-gap":
+        frame.paste((0, 0, 0), (240, 0, 280, 2160))
+    return frame
+
+
 def single_photo_candidate_cases():
     """Public fit controls and named candidate/region regressions.
 
@@ -430,6 +465,14 @@ def single_photo_candidate_cases():
         expected = ("UNRECOGNIZABLE", None) if damaged else ("MATCH", "A2")
         cases.append(("touching-approved-TV-bar-damaged" if damaged else "touching-approved-TV-bar-clear",
                       touching.resize(tv_size, Image.Resampling.NEAREST), expected, expected))
+    for defect in (None, "gap", "top-edge", "bottom-edge"):
+        expected = ("UNRECOGNIZABLE", None) if defect else ("MATCH", "A1")
+        cases.append((f"viewport-clipped-B1-{defect}" if defect else "viewport-clipped-B1-with-EXIF",
+                      single_photo_region_frame("iphone-zoom", defect), expected, expected))
+    cases.append(("pinned-TV-B2-fit", single_photo_region_frame("tv-fit"),
+                  ("MATCH", "A2"), ("MATCH", "A2")))
+    cases.append(("pinned-TV-B2-without-sharp-photo", single_photo_region_frame("tv-fit", "missing-sharp"),
+                  ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
     return cases
 
 

@@ -406,7 +406,11 @@ enum StrictE2EPhotoIdentity {
                     - floor(approvedTVControlBarMinYPixels * Double(frame.height) / Double(approvedTVFrameHeightPixels))
             ) : nil
         return ["A1", "A2"].filter { mark in
-            guard let foreground = sharpPublicForeground(frame: frame, colors: colors, mark: mark, exclusion: exclusion)
+            guard
+                let foreground = sharpPublicForeground(frame: frame, colors: colors, mark: mark, exclusion: exclusion)
+                    ?? sharpPublicForeground(
+                        frame: frame, colors: colors, mark: mark, exclusion: exclusion, shouldIncludeViewportEdges: true
+                    )
             else { return false }
             var counts = [0, 0]
             for (index, color) in foreground.colors.enumerated() {
@@ -448,7 +452,8 @@ enum StrictE2EPhotoIdentity {
     }
 
     private static func sharpPublicForeground(
-        frame: (width: Int, height: Int, pixels: [UInt8]), colors: [(String, Int)?], mark: String, exclusion: CGRect?
+        frame: (width: Int, height: Int, pixels: [UInt8]), colors: [(String, Int)?], mark: String, exclusion: CGRect?,
+        shouldIncludeViewportEdges: Bool = false
     ) -> (frame: (width: Int, height: Int, pixels: [UInt8]), colors: [(String, Int)?], exclusion: CGRect?)? {
         // Half-resolution capture separates a bilinear footprint from blur. The 96-pixel proof remains below.
         let width = min(frame.width, max(minimumSampleHeightPixels, frame.width / 2))
@@ -556,9 +561,16 @@ enum StrictE2EPhotoIdentity {
             return nil
         }
         guard min(right - left, bottom - top) >= minimumSampleHeightPixels else { return nil }
-        let fullSupport = colors.indices.allSatisfy { index in
+        let support = colors.indices.map { index in
             colors[index]?.0 == mark || (0..<3).allSatisfy { frame.pixels[index * pixelChannelCount + $0] >= 240 }
         }
+        // Overlay-interrupted runs may crop a zoomed photo's observed viewport edges.
+        // Full-width seeds and supported boundary rows permit the same checks on the whole viewport.
+        let viewportSupported =
+            shouldIncludeViewportEdges && left == 0 && right == width
+            && support.prefix(frame.width).allSatisfy { $0 } && support.suffix(frame.width).allSatisfy { $0 }
+        if shouldIncludeViewportEdges && !viewportSupported { return nil }
+        let fullSupport = support.allSatisfy { $0 } || viewportSupported
         let cropLeft = fullSupport ? 0 : Int((Double(left) + 0.5) * Double(frame.width) / Double(width))
         let cropTop = fullSupport ? 0 : Int((Double(top) + 0.5) * Double(frame.height) / Double(height))
         let cropRight = fullSupport ? frame.width : Int((Double(right) - 0.5) * Double(frame.width) / Double(width)) + 1

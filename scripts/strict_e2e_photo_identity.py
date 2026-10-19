@@ -267,7 +267,8 @@ def _single_photo_candidates(image: object) -> list[str]:
     exclusion = _public_frame_sample_box(color_box if color_box == glyph_box else None, image.size, rgb.size)
     candidates = []
     for mark in ("A1", "A2"):
-        qualified = _sharp_public_foreground(rgb, mark, exclusion)
+        qualified = (_sharp_public_foreground(rgb, mark, exclusion)
+                     or _sharp_public_foreground(rgb, mark, exclusion, include_viewport_edges=True))
         if qualified is None:
             continue
         foreground, foreground_exclusion = qualified
@@ -293,7 +294,8 @@ def _inside_box(x: int, y: int, box: tuple[int, int, int, int] | None) -> bool:
     return box is not None and box[0] <= x < box[2] and box[1] <= y < box[3]
 
 
-def _sharp_public_foreground(rgb: object, mark: str, exclusion: tuple[int, int, int, int] | None = None) -> tuple | None:
+def _sharp_public_foreground(rgb: object, mark: str, exclusion: tuple[int, int, int, int] | None = None,
+                             *, include_viewport_edges: bool = False) -> tuple | None:
     # Half-resolution capture separates a bilinear edge's footprint from blur;
     # the existing 96-pixel stripe proof and two-pixel drift bound still apply.
     width = min(rgb.width, max(IDENTITY_MINIMUM_IMAGE_PIXELS, rgb.width // 2))
@@ -361,7 +363,14 @@ def _sharp_public_foreground(rgb: object, mark: str, exclusion: tuple[int, int, 
     # A fully observed public bitmap keeps its original edges and pattern rejects.
     full_support = [((a := public_palette_assignment(color)) is not None and a[0] == mark)
                     or min(color) >= 240 for color in rgb.getdata()]
-    if all(full_support):
+    # A zoomed photo can fill the viewport while overlays interrupt its sharp
+    # runs. Keep its observed edges only with full-width seeds and supported
+    # top/bottom rows; the same continuity and texture checks still apply below.
+    viewport_supported = (include_viewport_edges and left == 0 and right == width
+                          and all(full_support[:rgb.width]) and all(full_support[-rgb.width:]))
+    if include_viewport_edges and not viewport_supported:
+        return None
+    if all(full_support) or viewport_supported:
         bounds = (0, 0, rgb.width, rgb.height)
     else:
         bounds = (int((left + .5) * rgb.width / width), int((top + .5) * rgb.height / height),

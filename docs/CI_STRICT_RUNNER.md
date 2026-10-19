@@ -98,6 +98,11 @@ missing interior lines may span at most two probe pixels. White glyph ink can
 support rectangle continuity but cannot qualify a texture row. A bitmap whose
 entire canvas supplies public palette colors or white ink keeps its original
 bounds; fitted captures derive their bounds from independently supported lines.
+A zoomed photo interrupted by overlays can retry the complete viewport only
+when independent sharp seeds reach both side edges and every pixel in its top
+and bottom rows supplies the same palette or white ink. This candidate still
+passes the unchanged line continuity, RGB pair, row texture and stripe-edge
+checks; the retry grants no overlay mask or weaker threshold.
 Candidate palette proof reads the PNG's encoded RGB channels in both languages;
 display color conversion must not change those values for a tagged video frame.
 The existing composite reader keeps its original color conversion.
@@ -108,6 +113,14 @@ prove the candidate's sharp texture; the region must supply both RGB endpoints,
 no sufficiently supported foreign palette, and one candidate above the existing
 score floor. A generic single-photo whole-frame match cannot supply either
 provenance. The filter's original surround checks still run before region checks.
+For single-photo display-policy validation, the full frame and center, upper,
+mid-left and mid-right regions must qualify positively. The left/right margins
+may contain the same photo's glyph-free blur: their ungated hue verdict must
+agree with the qualified photo, so foreign colors, black and unknown strips
+still reject. These margins never acquire a positive single-photo identity.
+Their existing 240-pixel surround probe also rejects full dark rows or columns
+longer than the two-pixel continuity allowance, using the unchanged black-luma
+threshold; matching hue cannot conceal a partial matte strip.
 Evidence used to reject a side partner, an out-of-album photo or an old nonempty
 pool uses the ungated hue reader, so qualification cannot hide visible defects.
 Synthetic coverage includes A1/A2 and B1/B2 at iPhone, iPad and tvOS dimensions,
