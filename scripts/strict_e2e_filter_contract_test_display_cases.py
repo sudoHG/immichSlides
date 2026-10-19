@@ -532,6 +532,14 @@ for offset in stride(from: 2, to: CommandLine.arguments.count, by: 2) {
 let path = CommandLine.arguments[offset]
 let mode = CommandLine.arguments[offset + 1]
 let original = try Data(contentsOf: URL(fileURLWithPath: path))
+if mode == "region-center" || mode == "region-right" || mode == "region-left" {
+let regions = StrictE2EPhotoIdentity.classifyRegions(png: original)
+let regionName = mode == "region-right" ? "right" : (mode == "region-left" ? "left" : "center")
+let result = regions[regionName]!
+print(String(data: try JSONSerialization.data(withJSONObject: ["status": result.status.rawValue,
+    "mark": result.mark ?? "nil", "notes": result.notes]), encoding: .utf8)!)
+continue
+}
 if mode == "verified-region" || mode == "unverified-region" {
 let candidate = mode == "verified-region" ? try StrictE2EFilterContract.displayCandidatePNG(original, evidenceDirectory: root) : original
 let regions = StrictE2EPhotoIdentity.classifyRegions(png: candidate, hasReferenceMatchedForeground: candidate != original)
@@ -561,7 +569,7 @@ print(String(data: try JSONSerialization.data(withJSONObject: report), encoding:
 ''', encoding="utf-8")
             executable = directory / "recognize"
             subprocess.run([
-                "swiftc", str(SCRIPT_DIR.parent / "TestSupport/StrictE2EFilterContract.swift"),
+                "swiftc", "-O", str(SCRIPT_DIR.parent / "TestSupport/StrictE2EFilterContract.swift"),
                 str(SCRIPT_DIR.parent / "TestSupport/StrictE2EPhotoIdentity.swift"), str(main), "-o", str(executable),
             ], check=True, capture_output=True, text=True)
             candidate_arguments = []
@@ -577,16 +585,30 @@ print(String(data: try JSONSerialization.data(withJSONObject: report), encoding:
                     expected = ("MATCH", "A1") if mode == "verified-region" else ("UNRECOGNIZABLE", None)
                     candidate_arguments.extend((str(path), mode))
                     candidate_expectations.append((name, mode, expected))
+                if name in ("raw-A1", "complete-scene-region-A2", "complete-scene-foreign-region",
+                            "complete-scene-region-pair-below-18", "complete-scene-region-score-below-floor"):
+                    if name == "complete-scene-region-A2":
+                        mode, expected = "region-right", ("MATCH", "A2")
+                    elif name.startswith("complete-scene-region-") and name != "complete-scene-region-A2":
+                        mode, expected = "region-left", ("UNRECOGNIZABLE", None)
+                    else:
+                        mode, expected = "region-center", ("UNRECOGNIZABLE", None)
+                    candidate_arguments.extend((str(path), mode))
+                    candidate_expectations.append((name, mode, expected))
             candidates = subprocess.run([str(executable), str(directory), *candidate_arguments],
                                         check=True, capture_output=True, text=True, timeout=300)
             self.assertEqual(len(candidates.stdout.splitlines()), len(candidate_expectations))
             for (name, mode, expected), line in zip(candidate_expectations, candidates.stdout.splitlines()):
                 with self.subTest(candidate=name, reader=mode):
                     report = json.loads(line)
-                    self.assertEqual((report["status"], report["mark"]), (expected[0], expected[1] or "nil"))
-                    if expected[0] == "UNRECOGNIZABLE" and name != "gray-only":
+                    if expected[0] == "NOT_MATCH":
+                        self.assertIn(report["status"], ("UNRECOGNIZABLE", "TRANSITION", "BLACK", "BLANK"))
+                        self.assertEqual(report["mark"], "nil")
+                    else:
+                        self.assertEqual((report["status"], report["mark"]), (expected[0], expected[1] or "nil"))
+                    if expected[0] == "UNRECOGNIZABLE":
                         self.assertIn("unsupported-public-candidate", report["notes"])
-                    if expected[0] == "TRANSITION":
+                    if name == "two-qualified-photos" and expected[0] == "TRANSITION":
                         self.assertIn("multiple-public-candidates", report["notes"])
             cases = []
             for fixture_set in ("a", "b"):
@@ -825,8 +847,8 @@ print(String(data: try JSONSerialization.data(withJSONObject: report), encoding:
             ("single", _fixture_png("A1"), "The before-change frame must actually show at least two different photos"),
             (
                 "transition",
-                _full_frame_transition(_fixture_png("A1"), _fixture_png("A2")),
-                "The before-change frame must be recognizable as a public fixture photo",
+                _full_frame_transition(_fixture_png("A3"), _fixture_png("A4")),
+                "Multiple before-change photos cannot be faked by a transition",
             ),
             ("unknown", _solid_png((25, 25, 25)), "The before-change frame must be recognizable as a public fixture photo"),
         )
@@ -857,6 +879,17 @@ print(String(data: try JSONSerialization.data(withJSONObject: report), encoding:
 
 
     def test_display_policy_rejects_multi_mixed_transition_and_unknown_after_frame(self) -> None:
+        with Image.open(io.BytesIO(_fixture_png("A3"))) as source:
+            after_image = source.convert("RGB")
+        from PIL import ImageDraw
+
+        width, height = after_image.size
+        ImageDraw.Draw(after_image).rectangle(
+            (int(width * 0.82), int(height * 0.12), width - 1, int(height * 0.82)),
+            fill=(0, 0, 0),
+        )
+        buffer = io.BytesIO()
+        after_image.save(buffer, format="PNG")
         invalid_frames = (
             (
                 "multi",
@@ -874,6 +907,11 @@ print(String(data: try JSONSerialization.data(withJSONObject: report), encoding:
                 "after-change cannot use a transition or unknown frame as passing",
             ),
             ("unknown", _solid_png((25, 25, 25)), "after-change cannot use a transition or unknown frame as passing"),
+            (
+                "single-photo-with-unrecognizable-region",
+                buffer.getvalue(),
+                "The after-change frame must be a recognizable, stable single-photo frame",
+            ),
         )
         before = _side_by_side(_fixture_png("A1"), _fixture_png("A2"))
         for name, after, expected_error in invalid_frames:

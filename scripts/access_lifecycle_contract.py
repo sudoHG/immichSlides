@@ -13,7 +13,7 @@ from typing import Any, Callable, Iterator, Mapping, Sequence, Optional, Tuple
 
 from strict_e2e_filter_contract import FROZEN_FIXTURE_SHA256
 from strict_e2e_photo_identity import (
-    MARKS, IdentityAssertionError, PhotoIdentity, classify_screenshot, classify_screenshot_region,
+    MARKS, IdentityAssertionError, PhotoIdentity, classify_screenshot, classify_screenshot_region, classify_rejection_evidence,
     IDENTITY_MINIMUM_CHROMATIC_PIXEL_COUNT, FRAME_PALETTE_CHANNEL_TOLERANCE,
     sample_public_frame, public_palette_assignment, public_palette_edge_assignment, public_frame_edge_band,
 )
@@ -485,8 +485,9 @@ def _crop_png_bytes(image_bytes: bytes, box: Tuple[float, float, float, float]) 
         return buffer.getvalue()
 
 
-def classify_display_regions(image_bytes: bytes) -> dict[str, PhotoIdentity]:
-    regions = {"full": classify_screenshot(image_bytes)}
+def classify_display_regions(image_bytes: bytes, *, for_rejection: bool = False) -> dict[str, PhotoIdentity]:
+    classify = classify_rejection_evidence if for_rejection else classify_screenshot_region
+    regions = {"full": classify(image_bytes)}
     for name, box in DISPLAY_REGION_BOXES.items():
         try:
             cropped = _crop_png_bytes(image_bytes, box)
@@ -499,7 +500,7 @@ def classify_display_regions(image_bytes: bytes) -> dict[str, PhotoIdentity]:
                 (f"crop-failed:{type(error).__name__}",),
             )
             continue
-        regions[name] = classify_screenshot_region(cropped)
+        regions[name] = classify(cropped) if for_rejection else classify_screenshot_region(cropped, complete_scene=image_bytes)
     return regions
 
 
@@ -685,7 +686,8 @@ def inspect_display_strategy(
     after_full = after_regions["full"]
     after_center = after_regions["center"]
     before_mark = before_full.mark if before_full.status == "MATCH" else None
-    before_partner_marks = _side_partner_marks(before_regions, before_mark)
+    before_rejection_regions = classify_display_regions(before_bytes, for_rejection=True)
+    before_partner_marks = _side_partner_marks(before_rejection_regions, before_mark)
     partner_marks = sorted(
         {
             identity.mark

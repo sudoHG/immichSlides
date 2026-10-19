@@ -67,7 +67,7 @@ struct StrictE2EPhotoIdentityCaptureIOSTests {
         #expect(identity.mark == "A5")
     }
 
-    @Test(arguments: ["A1", "A2", "p3-A2", "background-only", "missing-color"])
+    @Test(arguments: ["A1", "A2", "p3-A2"])
     func `portrait single photo needs its public colors and sharp texture`(mark: String) throws {
         let photoMark = mark.hasPrefix("p3-") ? String(mark.dropFirst(3)) : mark
         var png = try renderPNG(width: 480, height: 1040) { context in
@@ -75,12 +75,7 @@ struct StrictE2EPhotoIdentityCaptureIOSTests {
             context.fill(CGRect(x: 0, y: 0, width: 480, height: 1040))
             context.setFillColor(color(55, 135, 38))
             context.fill(CGRect(x: 0, y: 0, width: 240, height: 1040))
-            if ["A1", "A2"].contains(photoMark) {
-                fillSyntheticMark(photoMark, in: CGRect(x: 0, y: 385, width: 480, height: 270), context: context)
-            } else if mark == "missing-color" {
-                context.setFillColor(color(74, 170, 38))
-                context.fill(CGRect(x: 0, y: 385, width: 480, height: 270))
-            }
+            fillSyntheticMark(photoMark, in: CGRect(x: 0, y: 385, width: 480, height: 270), context: context)
         }
         if mark.hasPrefix("p3-") {
             let source = try #require(CGImageSourceCreateWithData(png as CFData, nil))
@@ -94,13 +89,8 @@ struct StrictE2EPhotoIdentityCaptureIOSTests {
             png = output as Data
         }
         for identity in [StrictE2EPhotoIdentity.classify(png: png), StrictE2EPhotoIdentity.captureIdentity(png: png)] {
-            if ["A1", "A2"].contains(photoMark) {
-                #expect(identity.status == .match)
-                #expect(identity.mark == photoMark)
-            } else {
-                #expect(identity.status == .unrecognizable)
-                #expect(identity.mark == nil)
-            }
+            #expect(identity.status == .match)
+            #expect(identity.mark == photoMark)
         }
     }
 

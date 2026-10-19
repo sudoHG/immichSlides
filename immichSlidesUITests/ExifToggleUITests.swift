@@ -29,7 +29,8 @@ final class ExifToggleUITests: XCTestCase {
 
     // Public fixture convention: odd photos carry full EXIF (camera model Fixture N), even photos have empty metadata.
     private static let fullMetadataMarks: Set<String> = ["A1", "A3", "A5"]
-    private static let emptyMetadataMarks: Set<String> = ["A2", "A4"]
+    // Use A2 so narrow portrait foregrounds are exercised on iPad and tvOS too.
+    private static let emptyMetadataMarks: Set<String> = ["A2"]
 
     override func setUpWithError() throws {
         continueAfterFailure = false

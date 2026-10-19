@@ -75,8 +75,10 @@ exception; do not change tolerances or exclude the frame. The measured collision
 history and corpus are in [#486](https://github.com/sudoHG/immichSlides/pull/486).
 
 Whole-frame A1/A2 matches additionally require both real RGB palette endpoints
-and clear public row texture from the same PNG. The readers reuse tolerance 12,
-minimum support 18, observed row coverage 85% and texture cell drift 2 pixels.
+and clear public row texture from the same PNG. Support and row coverage are
+measured inside the detected sharp foreground rectangle, independently of the
+blurred surround and screen width. The readers reuse tolerance 12, minimum
+support 18, observed row coverage 85% and texture cell drift 2 pixels.
 Only one qualified candidate above the existing score floor can confirm an
 identity; multiple candidates remain a transition, and missing evidence stays
 unrecognizable. Blurred background colors, generic green/gray and a faded frame
@@ -86,16 +88,31 @@ rectangles retain their existing interior hue check and complete canvas gates.
 Striped candidates additionally need a sharp edge between their actual RGB
 endpoints, with at most the existing two-pixel unknown band. A blurred stripe's
 monochrome rows alone do not establish clear foreground texture.
-The edge check reuses the identity reader's 96-pixel width, so normal display
-upscaling does not inflate a sharp source edge. Palette support, row texture and
-composite sampling retain their existing 480-pixel cap.
+The stripe edge check reuses the identity reader's 96-pixel width, so normal
+display upscaling does not inflate a sharp source edge. Palette support, row
+texture and composite sampling retain their existing 480-pixel cap. An additional
+half-resolution probe, capped at 240 pixels wide, locates contiguous sharp
+palette runs before the original texture checks. Its rectangle needs the existing
+minimum image extent and at least 18 supported pixels per boundary/interior line;
+missing interior lines may span at most two probe pixels. White glyph ink can
+support rectangle continuity but cannot qualify a texture row. A complete public
+bitmap keeps its original bounds, so damaged rows cannot disappear by cropping.
 Candidate palette proof reads the PNG's encoded RGB channels in both languages;
 display color conversion must not change those values for a tagged video frame.
 The existing composite reader keeps its original color conversion.
-Only a foreground returned by the existing full-reference matching pipeline can
-reuse its whole-photo qualification for a narrow region whose original hue
-verdict agrees. Generic whole-frame matches cannot supply this provenance;
-the filter's original surround checks still run before its region checks.
+A narrow region can reuse qualification from the existing full-reference
+foreground when its original hue verdict agrees. Alternatively, the same PNG
+must pass the unchanged complete two/three-slot composite reader and independently
+prove the candidate's sharp texture; the region must supply both RGB endpoints,
+no sufficiently supported foreign palette, and one candidate above the existing
+score floor. A generic single-photo whole-frame match cannot supply either
+provenance. The filter's original surround checks still run before region checks.
+Evidence used to reject a side partner, an out-of-album photo or an old nonempty
+pool uses the ungated hue reader, so qualification cannot hide visible defects.
+Synthetic coverage includes A1/A2 and B1/B2 at iPhone, iPad and tvOS dimensions,
+both orientations, and motion scales 1.00/1.10. Background-only geometry controls
+must remain nonmatches; duplicate controls retain their original hue status and
+do not count as independent rejection coverage.
 
 The Swift `captureIdentity` and Python `capture_identity` readers locate each
 photo's palette rectangle, rather than assuming equal quadrants or full-span strips. They use

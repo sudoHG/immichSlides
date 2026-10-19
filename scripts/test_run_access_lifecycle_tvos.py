@@ -692,17 +692,17 @@ class DeviceEvidenceTests(unittest.TestCase):
                 evaluate_device_evidence(root, fixture_set="a")
             self.assertIn("The comparison must not advance to the last pool photo A5", str(raised.exception))
 
-    def test_before_side_partner_is_not_letterbox(self) -> None:
+    def test_before_a2_side_partner_cross_photo_regression_is_not_letterbox(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
             _write_host_payload(root)
             _write_required_pngs(root)
-            (root / "display-before.png").write_bytes(_compose_side_partner("A2", "A3"))
-            (root / "display-after.png").write_bytes(_compose_smart_fill("A2", "A4"))
+            (root / "display-before.png").write_bytes(_compose_side_partner("A3", "A2"))
+            (root / "display-after.png").write_bytes(_compose_smart_fill("A3", "A4"))
             with self.assertRaises((CommandError, AccessLifecycleContractError)) as raised:
                 evaluate_device_evidence(root, fixture_set="a")
             self.assertIn(
-                "Unrecognizable input must not count as a pass: display-before",
+                "The side margins in before must not already show the second public fixture",
                 str(raised.exception),
             )
 
@@ -822,11 +822,11 @@ class DeviceEvidenceTests(unittest.TestCase):
             root = Path(raw)
             _write_host_payload(root)
             _write_required_pngs(root)
-            (root / "display-before.png").write_bytes(_fixture_png("A2"))
+            (root / "display-before.png").write_bytes(_fixture_png("A3"))
             from PIL import ImageEnhance
 
             darkened = ImageEnhance.Brightness(
-                Image.open(io.BytesIO(_fixture_png("A2"))).convert("RGB")
+                Image.open(io.BytesIO(_fixture_png("A3"))).convert("RGB")
             ).enhance(0.55)
             (root / "display-after.png").write_bytes(_png_bytes(darkened))
             with self.assertRaises(AccessLifecycleContractError) as raised:

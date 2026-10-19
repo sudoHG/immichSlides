@@ -15,7 +15,7 @@ from typing import Any, Mapping, Sequence
 from strict_e2e_photo_identity import (
     MARKS, IdentityAssertionError, classify_public_pattern, classify_screenshot,
     public_frame_photos_from_bytes, public_frame_slot_count_from_bytes, public_letter_from_bytes,
-    public_scene_photos_from_bytes, classify_screenshot_region,
+    public_scene_photos_from_bytes, classify_screenshot_region, classify_rejection_evidence,
 )
 from strict_e2e_server import PUBLIC_API_KEY, _fixture_data, fixture_manifest, public_visual_label
 
@@ -303,7 +303,7 @@ def _display_foreground_png(image_bytes: bytes) -> bytes:
     return image_bytes
 
 
-def _classify_display_regions(image_bytes: bytes) -> dict[str, Any]:
+def _classify_display_regions(image_bytes: bytes, *, for_rejection: bool = False) -> dict[str, Any]:
     try:
         from PIL import Image
         import io
@@ -326,10 +326,14 @@ def _classify_display_regions(image_bytes: bytes) -> dict[str, Any]:
                 )
                 buffer = io.BytesIO()
                 crop.save(buffer, format="PNG")
-                regions[name] = classify_screenshot_region(
-                    buffer.getvalue(),
-                    reference_matched_foreground=foreground_png if foreground_png != image_bytes else None,
-                )
+                if for_rejection:
+                    regions[name] = classify_rejection_evidence(buffer.getvalue())
+                else:
+                    regions[name] = classify_screenshot_region(
+                        buffer.getvalue(),
+                        reference_matched_foreground=foreground_png if foreground_png != image_bytes else None,
+                        complete_scene=foreground_png,
+                    )
     except FilterContractError:
         raise
     except Exception as error:
@@ -485,10 +489,12 @@ def _evaluate_display_policy(evidence_dir: Path, suite: str, *, manifest: Mappin
             region_marks = list(dict.fromkeys(_scene_slot_marks(foreground, fixture_set)))
         else:
             region_marks = _display_region_marks(regions)
-        if region_marks:
-            for mark in region_marks:
+        rejection_marks = _display_region_marks(_classify_display_regions(image_bytes, for_rejection=True))
+        if rejection_marks:
+            for mark in rejection_marks:
                 if mark not in allowed:
                     raise FilterContractError(f"before-change multi-photo frame contains a photo outside the target album: {mark}")
+        if region_marks:
             if not switched_server and classify_public_pattern(image_bytes) not in (None, fixture_set):
                 raise FilterContractError(f"before-change multi-photo frame must not mix in another server fixture: {step}")
         candidate_marks.append(region_marks)

@@ -165,13 +165,22 @@ class DisplayStrategyContractTestsCases:
         self.assertIn("portrait or square photo", str(raised.exception))
 
 
-    def test_before_side_partner_is_not_letterbox(self) -> None:
-        with self.assertRaises(AccessLifecycleContractError) as raised:
-            assert_display_strategy_visible(
-                _compose_side_partner("A2", "A3"),
-                _compose_smart_fill("A2", "A4"),
-            )
-        self.assertEqual(str(raised.exception), "Unrecognizable input must not count as a pass: display-before")
+    def test_before_a2_side_partner_cross_photo_regression_is_not_letterbox(self) -> None:
+        original = _compose_side_partner("A3", "A2")
+        with Image.open(io.BytesIO(original)) as image:
+            blurred_sides = image.convert("RGB")
+            for box in ((0, 0, 280, 1080), (1640, 0, 1920, 1080)):
+                blurred_sides.paste(blurred_sides.crop(box).filter(ImageFilter.GaussianBlur(48)), box)
+        # The sharp mirror pins the side-margin guard; blur independently pins
+        # rejection-only hue evidence when single-photo qualification refuses it.
+        for name, before in (("sharp-mirror", original), ("blurred-partner", _png_bytes(blurred_sides))):
+            with self.subTest(name=name):
+                with self.assertRaises(AccessLifecycleContractError) as raised:
+                    assert_display_strategy_visible(before, _compose_smart_fill("A3", "A4"))
+                self.assertEqual(
+                    str(raised.exception),
+                    "The side margins in before must not already show the second public fixture",
+                )
 
 
     def test_assert_display_before_letterbox_rejects_fullbleed_and_pool_end(self) -> None:

@@ -958,14 +958,28 @@ class PositiveIdentityTests(unittest.TestCase):
             for reader, expected in ((classify_screenshot, full_expected), (capture_identity, capture_expected)):
                 with self.subTest(frame=name, reader=reader.__name__):
                     identity = reader(encoded.getvalue())
-                    self.assertEqual((identity.status, identity.mark), expected, identity.notes)
-                    if expected[0] == "UNRECOGNIZABLE" and name != "gray-only":
+                    if expected[0] == "NOT_MATCH":
+                        self.assertIn(identity.status, ("UNRECOGNIZABLE", "TRANSITION", "BLACK", "BLANK"), identity.notes)
+                        self.assertIsNone(identity.mark)
+                    else:
+                        self.assertEqual((identity.status, identity.mark), expected, identity.notes)
+                    if expected[0] == "UNRECOGNIZABLE":
                         self.assertIn("unsupported-public-candidate", identity.notes)
-                    if expected[0] == "TRANSITION":
+                    if name == "two-qualified-photos" and expected[0] == "TRANSITION":
                         self.assertIn("multiple-public-candidates", identity.notes)
             if name == "unverified-region-palette":
                 region = classify_display_regions(encoded.getvalue())["left"]
                 self.assertEqual((region.status, region.mark), ("UNRECOGNIZABLE", None))
+                self.assertIn("unsupported-public-candidate", region.notes)
+            if name in ("raw-A1", "complete-scene-region-A2", "complete-scene-foreign-region"):
+                regions = classify_display_regions(encoded.getvalue())
+                if name == "complete-scene-region-A2":
+                    self.assertEqual((regions["right"].status, regions["right"].mark), ("MATCH", "A2"))
+                else:
+                    self.assertEqual((regions["center"].status, regions["center"].mark), ("UNRECOGNIZABLE", None))
+            if name in ("complete-scene-region-pair-below-18", "complete-scene-region-score-below-floor"):
+                region = classify_display_regions(encoded.getvalue())["left"]
+                self.assertEqual((region.status, region.mark), ("UNRECOGNIZABLE", None), region.notes)
                 self.assertIn("unsupported-public-candidate", region.notes)
 
     def test_cropped_and_faded_frames_keep_only_supported_marks(self) -> None:

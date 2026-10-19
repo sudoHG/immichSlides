@@ -490,6 +490,11 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
             let marks = distinctRegionMarks(
                 StrictE2EPhotoIdentity.classifyRegions(
                     png: candidate, hasReferenceMatchedForeground: candidate != png))
+            let rejectionMarks = distinctRegionMarks(StrictE2EPhotoIdentity.rejectionRegions(png: candidate))
+            XCTAssertTrue(
+                Set(rejectionMarks).isSubset(of: Set(targetMarks)),
+                "Every photo in the before-change multi-photo frame must belong to the manifest target album: \(rejectionMarks)"
+            )
             if marks.count >= 2 {
                 XCTAssertTrue(
                     Set(marks).isSubset(of: Set(targetMarks)),

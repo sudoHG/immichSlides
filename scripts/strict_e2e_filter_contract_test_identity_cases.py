@@ -491,6 +491,13 @@ class FilterVisualIdentityFromScreenshotsTestsCases:
                 "process_id_after": 45,
                 "error": "same App process remained alive",
             },
+            {
+                "name": "single-photo-outside-target-album",
+                "screenshot": _fixture_png("A4", "b"),
+                "setting_source": "accessibility_ui",
+                "process_id_after": 44,
+                "error": "frame must contain only target album photos from fixture B",
+            },
         )
         for invalid in invalid_bridges:
             with self.subTest(name=invalid["name"]), tempfile.TemporaryDirectory() as raw_directory:

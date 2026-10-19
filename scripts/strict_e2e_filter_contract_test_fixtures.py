@@ -55,7 +55,10 @@ from strict_e2e_filter_contract import (  # noqa: E402
 )
 
 
-from strict_e2e_photo_identity import classify_screenshot  # noqa: E402
+from strict_e2e_photo_identity import (  # noqa: E402
+    _public_photo_palettes,
+    classify_screenshot,
+)
 
 
 from strict_e2e_server import PUBLIC_API_KEY, _fixture_data, fixture_manifest  # noqa: E402
@@ -65,7 +68,12 @@ from test_strict_e2e_server import RunningServer  # noqa: E402
 
 
 def single_photo_candidate_cases():
-    """Frozen public photos in portrait fit scenes and isolated identity defects."""
+    """Public fit controls and named candidate/region regressions.
+
+    Background-only A2/B2, tagged background A1, gray-chrome backgrounds and
+    geometry background variants duplicate missing-foreground rejection. They
+    are geometry/profile controls, not independent branch coverage.
+    """
     import base64
     # Public Display P3 metadata changes no encoded RGB samples in these inputs.
     display_p3 = base64.b64decode(
@@ -98,19 +106,44 @@ def single_photo_candidate_cases():
             tagged_background.info["icc_profile"] = display_p3
             cases.append(("profile-tagged-background-A1", tagged_background,
                           ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
-    for name, color in (("gray-only", (180, 180, 180)), ("missing-gray", (74, 170, 38))):
-        cases.append((name, Image.new("RGB", (480, 1039), color),
-                      ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
+    side_by_side = Image.open(io.BytesIO(_side_by_side(
+        _fixture_data("a")["images"]["asset-a-1"], _fixture_data("a")["images"]["asset-a-2"]
+    ))).convert("RGB")
+    cases.append(("complete-scene-region-A2", side_by_side,
+                  ("TRANSITION", None), ("MATCH", "A1+A2")))
+    foreign_region = Image.new("RGB", (480, 568))
+    foreign_region.paste(photos[0].resize((341, 568)), (0, 0))
+    photo_a3 = Image.open(io.BytesIO(_fixture_data("a")["images"]["asset-a-3"])).convert("RGB")
+    foreign_region.paste(photo_a3.resize((139, 568)), (341, 0))
+    cases.append(("complete-scene-foreign-region", foreign_region,
+                  ("MATCH", "A1"), ("MATCH", "A1+A3")))
+    a1_palette = _public_photo_palettes()["A1"]
+    pair_below_minimum = foreign_region.copy()
+    for y in range(68, 466):
+        for x in range(86):
+            pair_below_minimum.putpixel((x, y), (45, 132, 23) if (x // 4 + (y - 68) // 4) % 2 == 0
+                                        else (120, 80, 120))
+    for color, x in ((a1_palette[0], 4), (a1_palette[1], 12)):
+        pair_below_minimum.paste(color, (x, 72, x + 4, 76))
+    cases.append(("complete-scene-region-pair-below-18", pair_below_minimum,
+                  ("MATCH", "A1"), ("MATCH", "A1+A3")))
+    score_below_floor = foreign_region.copy()
+    score_below_floor.paste((55, 135, 38), (0, 68, 43, 466))
+    score_below_floor.paste((180, 180, 180), (43, 68, 86, 466))
+    a1_strip = photos[0].resize((86, 12), Image.Resampling.NEAREST)
+    score_below_floor.paste(a1_strip, (0, 261))
+    cases.append(("complete-scene-region-score-below-floor", score_below_floor,
+                  ("MATCH", "A1"), ("MATCH", "A1+A3")))
     # Sharp horizontal stripes pass the existing public B texture semantics.
     # Only the green differs from A2: hue and generic gray cannot prove its RGB pair.
     wrong_green = Image.new("RGB", (480, 1039), (128, 122, 110))
     for y in range(0, 1039, 80):
         wrong_green.paste((37, 109, 19), (0, y, 480, min(1039, y + 40)))
     cases.append(("non-A2-green", wrong_green, ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
-    # The stripe is sharp, but its second endpoint has only sixteen actual pixels.
-    unsupported = Image.new("RGB", (8, 8), (74, 170, 38))
-    for row in (3, 7):
-        unsupported.paste((128, 122, 110), (0, row, 8, row + 1))
+    # Both A2 endpoints are present with sharp edges, but gray has only sixteen pixels.
+    unsupported = Image.new("RGB", (18, 18), (37, 109, 19))
+    for box in ((0, 0, 2, 2), (16, 0, 18, 2), (0, 16, 2, 18), (16, 16, 18, 18)):
+        unsupported.paste((128, 122, 110), box)
     cases.append(("insufficient-second-color", unsupported,
                   ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
     double = Image.new("RGB", (480, 1040))
@@ -129,15 +162,36 @@ def single_photo_candidate_cases():
         cases.append((name, scene, ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
     conflicting = photos[0].resize((480, 270), Image.Resampling.NEAREST)
     conflicting.paste((37, 109, 19), (0, 135, 480, 270))
+    cases.append(("incomplete-public-bitmap", conflicting,
+                  ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
+    conflicting = photos[0].resize((480, 270), Image.Resampling.NEAREST)
+    conflicting.paste((37, 109, 19), (0, 90, 480, 180))
     cases.append(("conflicting-row-patterns", conflicting,
                   ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
-    for name, fraction in (("white-in-every-row", 1), ("insufficient-row-coverage", 96)):
+    for name, sparse in (("rectangle-missing-band", False), ("rectangle-sparse-bridge", True)):
         scene = photos[0].resize((480, 270), Image.Resampling.NEAREST)
-        scene.paste((255, 255, 255) if fraction == 1 else (55, 135, 38), (0, 0, fraction, 270))
+        scene.paste((55, 135, 38), (0, 84, 480, 90))
+        if sparse:
+            scene.paste((37, 109, 19), (1, 84, 2, 90))
+        cases.append((name, scene, ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
+    thin_stripe = Image.new("RGB", (480, 270), (74, 170, 38))
+    thin_stripe.paste((128, 122, 110), (0, 1, 480, 2))
+    cases.append(("stripe-below-identity-scale", thin_stripe,
+                  ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
+    for name, fraction in (("white-in-every-row", 240), ("insufficient-row-coverage", 96)):
+        scene = photos[0].resize((480, 270), Image.Resampling.NEAREST)
+        if name == "white-in-every-row":
+            scene.paste((255, 255, 255), (fraction, 0, fraction + 1, 270))
+        else:
+            pixels = scene.load()
+            assert pixels is not None
+            for y in range(scene.height):
+                for x in range(y % 5, scene.width, 5):
+                    pixels[x, y] = (55, 135, 38)
         cases.append((name, scene, ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
     low_score = Image.new("RGB", (480, 1039), (180, 180, 180))
     low_score.paste((55, 135, 38), (0, 0, 240, 1039))
-    low_score.paste(photos[0].resize((480, 8), Image.Resampling.NEAREST), (0, 500))
+    low_score.paste(photos[0].resize((480, 40), Image.Resampling.NEAREST), (0, 500))
     cases.append(("qualified-below-score-floor", low_score,
                   ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
     unverified = photos[0].resize((480, 270), Image.Resampling.NEAREST)
@@ -169,6 +223,55 @@ def single_photo_candidate_cases():
         chrome.paste((180, 180, 180), (0, 955, 480, 1005))
         cases.append((f"background-and-gray-UI-B{index}", chrome,
                       ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
+
+    # Repeat the same fit and background-only checks over recorded device geometries.
+    # Background-only rows are geometry duplicates of the same missing-foreground branch.
+    screen_geometries = {
+        "iphone-portrait": (1170, 2532),
+        "iphone-landscape": (2532, 1170),
+        "ipad-portrait": (1640, 2360),
+        "ipad-landscape": (2360, 1640),
+        "tvos-landscape": (3840, 2160),
+        "tvos-portrait": (2160, 3840),
+    }
+    for fixture_set in ("a", "b"):
+        for index in (1, 2):
+            photo = Image.open(io.BytesIO(_fixture_data(fixture_set)["images"][f"asset-{fixture_set}-{index}"])).convert("RGB")
+            label = f"{'A' if fixture_set == 'a' else 'B'}{index}"
+            logical_mark = f"A{index}"
+            for geometry, size in screen_geometries.items():
+                background = ImageOps.fit(photo, size).filter(ImageFilter.GaussianBlur(48))
+                for motion_scale in (1.00, 1.10):
+                    fitted = ImageOps.contain(photo, size)
+                    scaled_size = (
+                        max(1, round(fitted.width * motion_scale)),
+                        max(1, round(fitted.height * motion_scale)),
+                    )
+                    foreground = fitted.resize(scaled_size, Image.Resampling.LANCZOS)
+                    scene = background.copy()
+                    scene.paste(
+                        foreground,
+                        ((scene.width - foreground.width) // 2, (scene.height - foreground.height) // 2),
+                    )
+                    if scene.width > 480:
+                        reduced_height = max(1, round(scene.height * 480 / scene.width))
+                        scene = scene.resize((480, reduced_height), Image.Resampling.NEAREST)
+                    cases.append((
+                        f"geometry-fit-{label}-{geometry}-motion-{motion_scale:.2f}", scene,
+                        ("MATCH", logical_mark), ("MATCH", logical_mark),
+                    ))
+
+                background_only = background
+                if background_only.width > 480:
+                    reduced_height = max(1, round(background_only.height * 480 / background_only.width))
+                    background_only = background_only.resize((480, reduced_height), Image.Resampling.NEAREST)
+                # Duplicate geometry checks preserve the original language-specific
+                # ambiguity verdict; neither TRANSITION nor UNKNOWN confirms a photo.
+                background_status = "UNRECOGNIZABLE" if (label, geometry) == ("A2", "tvos-landscape") else "NOT_MATCH"
+                cases.append((
+                    f"geometry-background-only-{label}-{geometry}-duplicate", background_only,
+                    (background_status, None), (background_status, None),
+                ))
     return cases
 
 

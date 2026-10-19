@@ -199,6 +199,10 @@ enum StrictE2EPhotoIdentity {
         classify(png: png, shouldQualifySinglePhoto: true)
     }
 
+    static func classifyRejectionEvidence(png: Data) -> Result {
+        classify(png: png, shouldQualifySinglePhoto: false)
+    }
+
     private static func classify(png: Data, shouldQualifySinglePhoto: Bool) -> Result {
         guard !png.isEmpty,
             let source = CGImageSourceCreateWithData(png as CFData, nil),
@@ -378,8 +382,20 @@ enum StrictE2EPhotoIdentity {
         // Palette proof uses encoded RGB, matching Python; display color conversion changes tagged video channels.
         let colorSpace = image.colorSpace.flatMap { $0.model == .rgb ? $0 : nil }
         guard let frame = capturePixels(image: image, colorSpace: colorSpace) else { return [] }
+        let colors = paletteColors(frame: frame)
+        return ["A1", "A2"].filter { mark in
+            guard let foreground = sharpPublicForeground(frame: frame, colors: colors, mark: mark) else { return false }
+            var counts = [0, 0]
+            for color in foreground.colors {
+                if let (observed, index) = color, observed == mark { counts[index] += 1 }
+            }
+            return counts.min()! >= minimumChromaticPixelCount
+                && hasPublicTexture(frame: foreground.frame, colors: foreground.colors, mark: mark)
+        }
+    }
+
+    private static func paletteColors(frame: (width: Int, height: Int, pixels: [UInt8])) -> [(String, Int)?] {
         var assignments = [Int: (String, Int)]()
-        var counts = ["A1": [0, 0], "A2": [0, 0]]
         var colors = [(String, Int)?]()
         for offset in stride(from: 0, to: frame.pixels.count, by: pixelChannelCount) {
             let channels = (0..<3).map { Int(frame.pixels[offset + $0]) }
@@ -398,18 +414,175 @@ enum StrictE2EPhotoIdentity {
                 assignments[key] = assignment ?? ("", 0)
             }
             colors.append(assignment)
-            if let (mark, index) = assignment, counts[mark] != nil { counts[mark]![index] += 1 }
         }
-        return ["A1", "A2"].filter { mark in
-            counts[mark]!.min()! >= minimumChromaticPixelCount
-                && hasPublicTexture(frame: frame, colors: colors, mark: mark)
+        return colors
+    }
+
+    private static func sharpPublicForeground(
+        frame: (width: Int, height: Int, pixels: [UInt8]), colors: [(String, Int)?], mark: String
+    ) -> (frame: (width: Int, height: Int, pixels: [UInt8]), colors: [(String, Int)?])? {
+        // Half-resolution capture separates a bilinear footprint from blur. The 96-pixel proof remains below.
+        let width = min(frame.width, max(minimumSampleHeightPixels, frame.width / 2))
+        let height = max(
+            minimumSampleHeightPixels,
+            Int((Double(frame.height) * Double(width) / Double(frame.width)).rounded(.toNearestOrEven)))
+        var probe = [Int?]()
+        for row in 0..<height {
+            let sourceRow = min(frame.height - 1, Int((Double(row) + 0.5) * Double(frame.height) / Double(height)))
+            for column in 0..<width {
+                let sourceColumn = min(
+                    frame.width - 1, Int((Double(column) + 0.5) * Double(frame.width) / Double(width)))
+                let color = colors[sourceRow * frame.width + sourceColumn]
+                probe.append(color?.0 == mark ? color?.1 : nil)
+            }
         }
+        var seeds = [[(Int, Int)]](repeating: [], count: 2)
+        var runs = [[(Int, Int, Int)]](repeating: [], count: 2)
+        for vertical in [false, true] {
+            let axis = vertical ? 1 : 0
+            let extent = vertical ? width : height
+            let length = vertical ? height : width
+            for line in 0..<extent {
+                var start: Int?
+                var previous: Int?
+                var previousPosition: Int?
+                var isSharp = false
+                var unknownRun = 0
+                for position in 0...length {
+                    let value =
+                        position < length ? probe[vertical ? position * width + line : line * width + position] : nil
+                    guard let value else {
+                        unknownRun += 1
+                        if unknownRun > textureMaximumCellDriftPixels || position == length {
+                            if isSharp, let start, let previousPosition {
+                                runs[axis].append((line, start, previousPosition + 1))
+                            }
+                            start = nil
+                            previous = nil
+                            previousPosition = nil
+                            isSharp = false
+                        }
+                        continue
+                    }
+                    if start == nil { start = position }
+                    if let previous, let previousPosition, previous != value {
+                        seeds[axis].append(vertical ? (line, previousPosition) : (previousPosition, line))
+                        seeds[axis].append(vertical ? (line, position) : (position, line))
+                        isSharp = true
+                    }
+                    previous = value
+                    previousPosition = position
+                    unknownRun = 0
+                }
+            }
+        }
+        guard !seeds[0].isEmpty || !seeds[1].isEmpty else { return nil }
+        let vertical = seeds[1]
+        let left: Int
+        let right: Int
+        let top: Int
+        let bottom: Int
+        if let first = vertical.map(\.0).min(), let last = vertical.map(\.0).max(),
+            last - first + 1 >= minimumSampleHeightPixels
+        {
+            (left, right) = (first, last + 1)
+        } else if let first = runs[0].map(\.1).min(), let last = runs[0].map(\.2).max() {
+            (left, right) = (first, last)
+        } else {
+            return nil
+        }
+        // A stripe touching the blurred side margin is a boundary, not a checker cell.
+        let horizontal = seeds[0].filter {
+            $0.0 >= left + textureMaximumCellDriftPixels && $0.0 < right - textureMaximumCellDriftPixels
+        }
+        if let first = horizontal.map(\.1).min(), let last = horizontal.map(\.1).max(),
+            last - first + 1 >= minimumSampleHeightPixels
+        {
+            (top, bottom) = (first, last + 1)
+        } else if let first = runs[1].map(\.1).min(), let last = runs[1].map(\.2).max() {
+            (top, bottom) = (first, last)
+        } else {
+            return nil
+        }
+        guard min(right - left, bottom - top) >= minimumSampleHeightPixels else { return nil }
+        let fullSupport = colors.indices.allSatisfy { index in
+            colors[index]?.0 == mark || (0..<3).allSatisfy { frame.pixels[index * pixelChannelCount + $0] >= 240 }
+        }
+        let cropLeft = fullSupport ? 0 : Int((Double(left) + 0.5) * Double(frame.width) / Double(width))
+        let cropTop = fullSupport ? 0 : Int((Double(top) + 0.5) * Double(frame.height) / Double(height))
+        let cropRight = fullSupport ? frame.width : Int((Double(right) - 0.5) * Double(frame.width) / Double(width)) + 1
+        let cropBottom =
+            fullSupport ? frame.height : Int((Double(bottom) - 0.5) * Double(frame.height) / Double(height)) + 1
+        var pixels = [UInt8]()
+        var croppedColors = [(String, Int)?]()
+        for row in cropTop..<cropBottom {
+            for column in cropLeft..<cropRight {
+                let index = row * frame.width + column
+                pixels.append(contentsOf: frame.pixels[(index * pixelChannelCount)..<((index + 1) * pixelChannelCount)])
+                croppedColors.append(colors[index])
+            }
+        }
+        var croppedWidth = cropRight - cropLeft
+        var croppedHeight = cropBottom - cropTop
+        var supported = croppedColors.indices.map { index in
+            croppedColors[index]?.0 == mark || (0..<3).allSatisfy { pixels[index * pixelChannelCount + $0] >= 240 }
+        }
+        let rows = (0..<croppedHeight).filter { row in
+            supported[(row * croppedWidth)..<((row + 1) * croppedWidth)].filter { $0 }.count
+                >= minimumChromaticPixelCount
+        }
+        let columns = (0..<croppedWidth).filter { column in
+            (0..<croppedHeight).filter { supported[$0 * croppedWidth + column] }.count >= minimumChromaticPixelCount
+        }
+        guard let firstRow = rows.first, let lastRow = rows.last,
+            let firstColumn = columns.first, let lastColumn = columns.last
+        else { return nil }
+        // A run may touch sparse background pixels; only supported boundary lines belong to its rectangle.
+        var trimmedPixels = [UInt8]()
+        var trimmedColors = [(String, Int)?]()
+        for row in firstRow...lastRow {
+            for column in firstColumn...lastColumn {
+                let index = row * croppedWidth + column
+                trimmedPixels.append(
+                    contentsOf: pixels[(index * pixelChannelCount)..<((index + 1) * pixelChannelCount)])
+                trimmedColors.append(croppedColors[index])
+            }
+        }
+        croppedWidth = lastColumn - firstColumn + 1
+        croppedHeight = lastRow - firstRow + 1
+        guard
+            Double(min(croppedWidth, croppedHeight) * width) / Double(frame.width) >= Double(minimumSampleHeightPixels)
+        else { return nil }
+        pixels = trimmedPixels
+        croppedColors = trimmedColors
+        supported = croppedColors.indices.map { index in
+            croppedColors[index]?.0 == mark || (0..<3).allSatisfy { pixels[index * pixelChannelCount + $0] >= 240 }
+        }
+        // Complete-slot line support excludes detached patches and thin edges; public white ink is an occlusion.
+        for vertical in [false, true] {
+            var matches = [Bool]()
+            for line in 0..<(vertical ? croppedWidth : croppedHeight) {
+                let count = (0..<(vertical ? croppedHeight : croppedWidth)).reduce(0) { count, position in
+                    count
+                        + (supported[vertical ? position * croppedWidth + line : line * croppedWidth + position]
+                            ? 1 : 0)
+                }
+                matches.append(count >= minimumChromaticPixelCount)
+            }
+            guard matches.first == true, matches.last == true else { return nil }
+            var missing = 0
+            for present in matches {
+                missing = present ? 0 : missing + 1
+                if Double(missing * width) / Double(frame.width) > Double(textureMaximumCellDriftPixels) { return nil }
+            }
+        }
+        return ((croppedWidth, croppedHeight, pixels), croppedColors)
     }
 
     private static func hasPublicTexture(
         frame: (width: Int, height: Int, pixels: [UInt8]), colors: [(String, Int)?], mark: String
     ) -> Bool {
-        // Mirror Python's public row texture semantics without cropping away the surround.
+        // Mirror Python's existing row texture gates inside the independently detected foreground.
         var pattern: String?
         for row in 0..<frame.height {
             var count = [0, 0]
@@ -485,6 +658,7 @@ enum StrictE2EPhotoIdentity {
     static func classifyRegions(png: Data, hasReferenceMatchedForeground: Bool = false) -> [String: Result] {
         let full = classify(png: png)
         var regions = ["full": full]
+        var completeCandidates: [String]?
         for item in displayRegionBoxes {
             if let cropped = cropPNG(png, box: item.box) {
                 // The caller derives this flag only from displayCandidatePNG returning a real reference crop.
@@ -494,7 +668,18 @@ enum StrictE2EPhotoIdentity {
                 {
                     regions[item.name] = region
                 } else {
-                    regions[item.name] = classify(png: cropped)
+                    let qualified = classify(png: cropped)
+                    regions[item.name] = qualified
+                    if qualified.status == .unrecognizable, region.status == .match,
+                        ["A1", "A2"].contains(region.mark ?? "")
+                    {
+                        if completeCandidates == nil { completeCandidates = completeSceneCandidates(png: png) }
+                        if let inherited = regionFromCompleteScene(
+                            png: cropped, region: region, candidates: completeCandidates ?? [])
+                        {
+                            regions[item.name] = inherited
+                        }
+                    }
                 }
             } else {
                 regions[item.name] = Result(
@@ -504,6 +689,49 @@ enum StrictE2EPhotoIdentity {
                     meanLuma: 0,
                     notes: ["crop-failed"]
                 )
+            }
+        }
+        return regions
+    }
+
+    private static func completeSceneCandidates(png: Data) -> [String] {
+        let capture = captureIdentity(png: png)
+        let completeMarks = (capture.mark ?? "").split(separator: "+").map(String.init)
+        guard capture.status == .match, (2...3).contains(completeMarks.count),
+            let source = CGImageSourceCreateWithData(png as CFData, nil),
+            let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
+        else { return [] }
+        return singlePhotoCandidates(image: image).filter { completeMarks.contains($0) }
+    }
+
+    private static func regionFromCompleteScene(png: Data, region: Result, candidates: [String]) -> Result? {
+        guard !candidates.isEmpty, let source = CGImageSourceCreateWithData(png as CFData, nil),
+            let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
+            let frame = capturePixels(
+                image: image, colorSpace: image.colorSpace.flatMap { $0.model == .rgb ? $0 : nil })
+        else { return nil }
+        var counts = Dictionary(uniqueKeysWithValues: marks.map { ($0, [0, 0]) })
+        for color in paletteColors(frame: frame) {
+            if let (mark, index) = color { counts[mark]![index] += 1 }
+        }
+        let supported = candidates.filter { mark in
+            counts[mark]!.min()! >= minimumChromaticPixelCount
+                && !counts.contains { other, count in other != mark && count.reduce(0, +) >= minimumChromaticPixelCount
+                }
+        }
+        guard supported.count == 1, let mark = supported.first, (region.scores[mark] ?? 0) >= minimumMatchScore else {
+            return nil
+        }
+        return Result(
+            status: .match, mark: mark, scores: region.scores, meanLuma: region.meanLuma,
+            notes: region.notes + ["complete-public-scene-region"])
+    }
+
+    static func rejectionRegions(png: Data) -> [String: Result] {
+        var regions = ["full": classifyRejectionEvidence(png: png)]
+        for item in displayRegionBoxes {
+            if let cropped = cropPNG(png, box: item.box) {
+                regions[item.name] = classifyRejectionEvidence(png: cropped)
             }
         }
         return regions
