@@ -16,6 +16,7 @@ from strict_e2e_photo_identity import (
     MARKS, IdentityAssertionError, classify_public_pattern, classify_screenshot,
     public_frame_photos_from_bytes, public_frame_slot_count_from_bytes, public_letter_from_bytes,
     public_scene_photos_from_bytes, classify_screenshot_region, classify_rejection_evidence,
+    IDENTITY_BLACK_LUMA_THRESHOLD, FRAME_TEXTURE_MAXIMUM_CELL_DRIFT_PIXELS,
 )
 from strict_e2e_server import PUBLIC_API_KEY, _fixture_data, fixture_manifest, public_visual_label
 
@@ -303,7 +304,29 @@ def _display_foreground_png(image_bytes: bytes) -> bytes:
     return image_bytes
 
 
-def _classify_display_regions(image_bytes: bytes, *, for_rejection: bool = False) -> dict[str, Any]:
+def _has_black_side_gap(rgb: object) -> bool:
+    from PIL import Image
+
+    width = min(rgb.width, DISPLAY_SURROUND_SAMPLE_WIDTH_PIXELS)
+    height = max(DISPLAY_MINIMUM_SAMPLE_HEIGHT_PIXELS, round(rgb.height * width / rgb.width))
+    sample = rgb.resize((width, height), Image.Resampling.NEAREST)
+    dark = [(0.299 * r + 0.587 * g + 0.114 * b) / 255 < IDENTITY_BLACK_LUMA_THRESHOLD
+            for r, g, b in sample.getdata()]
+    # Hue agreement cannot reveal a matte strip through otherwise matching blur.
+    # This side-band probe reuses the sample width and continuity allowance.
+    for vertical in (False, True):
+        missing = 0
+        for line in range(width if vertical else height):
+            is_black = all(dark[position * width + line if vertical else line * width + position]
+                           for position in range(height if vertical else width))
+            missing = missing + 1 if is_black else 0
+            if missing > FRAME_TEXTURE_MAXIMUM_CELL_DRIFT_PIXELS:
+                return True
+    return False
+
+
+def _classify_display_regions(image_bytes: bytes, *, for_rejection: bool = False,
+                              reject_side_gaps: bool = False) -> dict[str, Any]:
     try:
         from PIL import Image
         import io
@@ -324,6 +347,8 @@ def _classify_display_regions(image_bytes: bytes, *, for_rejection: bool = False
                         max(int(height * top) + 1, int(height * bottom)),
                     )
                 )
+                if reject_side_gaps and name in ("left", "right") and _has_black_side_gap(crop):
+                    raise FilterContractError("The after-change frame must be a recognizable, stable single-photo frame")
                 buffer = io.BytesIO()
                 crop.save(buffer, format="PNG")
                 if for_rejection:
@@ -530,13 +555,15 @@ def _evaluate_display_policy(evidence_dir: Path, suite: str, *, manifest: Mappin
         label="after-change",
     )
     after_regions = _classify_display_regions(after_bytes)
-    stable_regions = [
-        after_regions[name]
-        for name in ("center", "left", "right", "mid_left", "mid_right", "upper")
-    ]
+    stable_region_names = ("center", "left", "right", "mid_left", "mid_right", "upper")
+    stable_regions = [after_regions[name] for name in stable_region_names]
     if any(identity.status == "TRANSITION" for identity in stable_regions):
         raise FilterContractError("after-change cannot use a transition or unknown frame as passing: the stable photo region is still transitioning")
-    for identity in stable_regions:
+    # Glyph-free blurred margins supply rejection evidence, never positive
+    # identity. The complete frame and the inner regions still require proof.
+    rejection_regions = _classify_display_regions(after_bytes, for_rejection=True, reject_side_gaps=True)
+    for name in stable_region_names:
+        identity = rejection_regions[name] if name in ("left", "right") else after_regions[name]
         if identity.status != "MATCH" or identity.mark != after_mark:
             raise FilterContractError("The after-change frame must be a recognizable, stable single-photo frame")
     after_marks = _display_region_marks(after_regions)
