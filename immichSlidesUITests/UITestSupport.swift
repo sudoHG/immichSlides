@@ -11,6 +11,21 @@ enum FirstFailureEvidence {
     private static let lock = NSLock()
     private static var recorded = Set<String>()
 
+    static func preservingThrownFailure<T>(_ test: XCTestCase, _ operation: () throws -> T) rethrows -> T {
+        do {
+            return try operation()
+        } catch {
+            if !(error is XCTSkip) {
+                record(
+                    test,
+                    issue: XCTIssue(
+                        type: .thrownError, compactDescription: String(describing: error), associatedError: error))
+            }
+            // XCTest must still receive the exact original error after the caller's teardown.
+            throw error
+        }
+    }
+
     static func record(_ test: XCTestCase, issue: XCTIssue) {
         guard issue.isFailure, FirstFailureContext.isEnabled else { return }
         let environment = ProcessInfo.processInfo.environment

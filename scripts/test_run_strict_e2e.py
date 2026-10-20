@@ -738,6 +738,27 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
 
 
 class FailureDiagnosticsTests(unittest.TestCase):
+    def test_reader_adds_only_fixed_display_after_and_person_screenshot_contexts(self):
+        from ci_failure_diagnostics import public_validator_failure_message, validate_validator_failure_message
+        # Existing person names and historical prefixes remain valid alongside display-after.
+        for name in ("display-after", "person-normal", "person-no-faces", "person-conflict-normal",
+                     "person-conflict-normal-2", "person-conflict-normal-99", "person-normal-1",
+                     "person-nofaces-1", "vision-solo-1"):
+            message = "unreadable public glyph slot; slot 1 (horizontal); screenshot " + name + ".png"
+            with self.subTest(name=name):
+                self.assertEqual(message, public_validator_failure_message(message))
+                validate_validator_failure_message(message)
+        for name in ("display-before", "display-after-1", "display-after.png/private", "Display-after",
+                     "display-after-private", "../display-after", "person-conflict-normal-0",
+                     "person-conflict-normal-100", "person-normal-private", "person-normal-2", "person-nofaces-2",
+                     "person-solo", "person-conflict-solo", "person-solo-1", "person-conflict-solo-1",
+                     "vision-solo", "vision-solo-0", "vision-solo-2", "vision-solo-1-private"):
+            message = "unreadable public glyph slot; slot 1 (horizontal); screenshot " + name + ".png"
+            with self.subTest(name=name):
+                self.assertEqual("[redacted validator failure]", public_validator_failure_message(message))
+                with self.assertRaisesRegex(ValueError, "not public context"):
+                    validate_validator_failure_message(message)
+
     def test_validator_failure_retains_its_actual_input_without_claiming_an_app_snapshot(self):
         from unittest.mock import patch
         from PIL import Image

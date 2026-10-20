@@ -224,37 +224,39 @@ final class AccessLifecycleTVOSUITests: XCTestCase {
         let input = try requireStrictE2EInput()
         let app = try launchStrictE2EApp()
         defer { app.terminateForFailureEvidence() }
-        try AccessLifecycleContract.assertProgressProbeNotUsed(launchEnvironment: app.launchEnvironment)
+        try FirstFailureEvidence.preservingThrownFailure(self) {
+            try AccessLifecycleContract.assertProgressProbeNotUsed(launchEnvironment: app.launchEnvironment)
 
-        try configureServerThroughFirstBoot(app: app, input: input)
-        try enterRandomPlayback(app: app)
-        let playPauseButton = app.buttons["slideshow.control.playPause.button"]
-        let nextButton = app.buttons["slideshow.control.next.button"]
-        XCTAssertTrue(
-            playPauseButton.waitForPublicElement(
-                "slideshow.control.playPause.button",
-                timeout: AccessLifecycleTVOSUITestsWaitTiming.playbackStartupTimeoutSeconds),
-            "Control bar must show after random playback.")
-        ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
+            try configureServerThroughFirstBoot(app: app, input: input)
+            try enterRandomPlayback(app: app)
+            let playPauseButton = app.buttons["slideshow.control.playPause.button"]
+            let nextButton = app.buttons["slideshow.control.next.button"]
+            XCTAssertTrue(
+                playPauseButton.waitForPublicElement(
+                    "slideshow.control.playPause.button",
+                    timeout: AccessLifecycleTVOSUITestsWaitTiming.playbackStartupTimeoutSeconds),
+                "Control bar must show after random playback.")
+            ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
 
-        let interval = try configureTVOSTimingPlaybackSettings(app: app)
-        let timeline = try exerciseTVOSPauseNextContinueVisibleTiming(
-            app: app,
-            playPauseButton: playPauseButton,
-            nextButton: nextButton,
-            intervalSeconds: interval.actual
-        )
-        try writeTVOSResumeJSON(
-            name: "pause-next-continue.json",
-            extra: [
-                "suite": "pause-next-continue",
-                "interval_requested": AccessLifecycleContract.tvOSRequestedIntervalSeconds,
-                "interval_actual": interval.actual,
-                "desktop_closeout_required": interval.shouldRequireIntervalReview,
-                "interval_options": AccessLifecycleContract.tvOSSelectableIntervals,
-                "timeline": timeline
-            ]
-        )
+            let interval = try configureTVOSTimingPlaybackSettings(app: app)
+            let timeline = try exerciseTVOSPauseNextContinueVisibleTiming(
+                app: app,
+                playPauseButton: playPauseButton,
+                nextButton: nextButton,
+                intervalSeconds: interval.actual
+            )
+            try writeTVOSResumeJSON(
+                name: "pause-next-continue.json",
+                extra: [
+                    "suite": "pause-next-continue",
+                    "interval_requested": AccessLifecycleContract.tvOSRequestedIntervalSeconds,
+                    "interval_actual": interval.actual,
+                    "desktop_closeout_required": interval.shouldRequireIntervalReview,
+                    "interval_options": AccessLifecycleContract.tvOSSelectableIntervals,
+                    "timeline": timeline
+                ]
+            )
+        }
     }
 
     @MainActor

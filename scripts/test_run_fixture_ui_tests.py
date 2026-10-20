@@ -3,6 +3,7 @@
 import copy
 import contextlib
 import io
+import itertools
 import json
 import os
 import plistlib
@@ -18,6 +19,43 @@ from run_fixture_ui_tests import clean_environment, compiled_tests, coverage_row
 
 
 class FixtureCoverageTests(unittest.TestCase):
+    def test_same_named_target_and_class_keeps_failure_identity_through_summary(self):
+        from ci_failure_diagnostics import first_failure_environment, collect_first_failure_spool, attach_first_failures
+        from ci_summary import observation, test_identity, write_summary, parse_summary
+        from test_ci_summary import first_failure_receipt, valid_summary
+        method = "testPlaybackSettingsBlocksFilteredModeWhenSelectionEmpty"
+        key = "immichSlidesUITests/" + method
+        identity = test_identity("ui", key, platform="ios")
+        receipt = first_failure_receipt()
+        receipt["screenshot"] = {"status": "unavailable", "width": None, "height": None, "bytes": None}
+        for selector, official_key in itertools.product((key, "immichSlidesUITests/" + key), repeat=2):
+            for defect in (None, "wrong-method", "wrong-attempt"):
+                with self.subTest(selector=selector, official_key=official_key, defect=defect), tempfile.TemporaryDirectory() as raw:
+                    root = Path(raw)
+                    mapping = json.loads(first_failure_environment(root, [selector])["STRICT_E2E_FIRST_FAILURE_TESTS"])
+                    # This is the Class/method key constructed from XCTestCase type and name in Swift.
+                    swift_key = "/".join(("immichSlidesUITests", method))
+                    self.assertEqual({swift_key: 0}, mapping)
+                    (root / "0.json").write_text(json.dumps(receipt))
+                    original = official_key + ("Other()" if defect == "wrong-method" else "()")
+                    node = {"nodeType": "Test Case", "nodeIdentifier": original, "result": "Failed"}
+                    collect_first_failure_spool(root, [selector], [node], root)
+                    entry = observation(identity, "failed", 1, exit_code=65)
+                    attach_first_failures([entry], {"testNodes": [node]}, 2 if defect == "wrong-attempt" else 1)
+                    self.assertEqual(original, node["nodeIdentifier"])
+                    summary = valid_summary()
+                    summary["run"].update(tier="ui", job="ui-iphone")
+                    summary["population"].update(declared=[identity], compiled=[identity], observed=[entry])
+                    summary["status"] = "failed"
+                    write_summary(summary, root)
+                    entry = parse_summary((root / "summary.json").read_text())["population"]["observed"][0]
+                    self.assertEqual(65, entry["attempts"][0]["exit_code"])
+                    if defect is None:
+                        self.assertEqual(receipt, entry["first_failure"])
+                        self.assertEqual(receipt, entry["attempts"][0]["first_failure"])
+                    else:
+                        self.assertNotIn("first_failure", entry)
+
     def test_slow_official_result_steps_keep_phase_elapsed_and_missing_identities(self):
         from types import SimpleNamespace
         from ci_summary import parse_summary, test_identity

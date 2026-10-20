@@ -58,7 +58,7 @@ struct FirstFailureTimeline {
 }
 
 enum FirstFailureContext {
-    static let isEnabled = ProcessInfo.processInfo.environment["STRICT_E2E_FIRST_FAILURE_ENABLED"] == "1"
+    static var isEnabled: Bool { ProcessInfo.processInfo.environment["STRICT_E2E_FIRST_FAILURE_ENABLED"] == "1" }
     private static let lock = NSLock()
     private static var timeline = FirstFailureTimeline()
     private static var step = "unknown"

@@ -723,14 +723,19 @@ classifier pattern/status/mark sets to their contract sources without adding ima
 dependencies to the isolated reader. The closed `unreadable public glyph:` exception
 names are `AttributeError`, `IndexError`,
 `KeyError`, `OSError`, `TypeError`, `UnidentifiedImageError` and `ValueError`.
-Screenshot names are hand-reviewed against `public_scene_photos_from_bytes`,
-`target_album_frame_identity` and server-switch `_require_public_pattern` callers: `history-*`,
-`pause-immediate`, `pause-after-10s`, `resumed`, `album-playback-N`, `album-play-1`/`album-play-2`/`album-play-3`, `person-normal`,
-`person-no-faces`, `person-conflict-normal(-N)`, `album-switch-b-play-N`,
-`server-switch-a-play-1` and `switch-b-play-1`/`switch-b-play-2` (all `.png`).
+The exact screenshot stems admitted for retained evidence and reader-first producers are
+`history-start`, `history-first-next`, `history-second-next`, `history-first-previous`,
+`history-second-previous`, `pause-immediate`, `pause-after-10s`, `resumed`,
+`album-playback-1`/`album-playback-2`/`album-playback-3`, `album-play-1`/`album-play-2`/`album-play-3`,
+`person-normal`, `person-normal-1`, `person-no-faces`, `person-nofaces-1`, `vision-solo-1`,
+`person-conflict-normal` and `person-conflict-normal-N` (N = 1 through 99),
+`album-switch-b-play-1`/`album-switch-b-play-2`,
+`server-switch-a-play-1`, `switch-b-play-1`/`switch-b-play-2`, and `display-after` (all `.png`).
 The `album-play-[123]` reader shipped in PR #514 before its filter-album producer
 in PR #515. These stems also fit the existing public-pattern-mismatch grammar;
 the filter-album producer emits screenshot context, not that mismatch prefix.
+`display-after` and `vision-solo-1` are admitted before the corresponding input-registration producer;
+`person-solo` and `person-conflict-solo` have no receipt producer and are not admitted.
 Unrecognized prefixes, filenames and suffixes are refused rather than treated as public
 text. The grammar accepts no URLs, keys, server addresses, directory paths, private
 xcresult text or pixel arrays. It does not decode images or change a visual check.
@@ -767,6 +772,15 @@ method and existing attempt. Historical records without
 `first_failure` remain valid. No App code, workflow, assertion, deadline, retry,
 threshold, verdict or population changes. The accepting reader must be on main
 before a producer PR uses the field; see [reader-first evolution](CI_SUMMARY.md#reader-first-evolution).
+
+Pause/continue and playback-rotation tests hand thrown helper failures to the
+recorder before terminating the App, then rethrow the original error to XCTest.
+The recorder observes the actual App state; teardown must not replace the business
+action or imply that the App crashed. Existing captured frames and timing outputs
+remain evidence of their original capture, rather than a reconstructed failure snapshot.
+Fixture selectors use `Class/method` throughout environment lookup, spool collection
+and attachment. Strip the target prefix only from `target/Class/method`; a class
+named `immichSlidesUITests` remains part of the key. Official identifiers are retained.
 
 The optional receipt has exactly `schema_version: 1`, `source` (`xctest`,
 `validator`, `preparation`), `step`, `element`, `action`, `timing`, `state`,
