@@ -883,6 +883,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift", "Pause window bright proof must be one frozen opaque scene.", "pause_window", "probe_readback"),
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift", "Pause window midpoint must contain visible photo pixels.", "pause_window", "scene_identity"),
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift", "Target window shows the wrong image; cannot count as SUCCESS.", "pause_window", "scene_identity"),
+            ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests+PauseWindow.swift", "The control bar must be visible before opening settings.", "control_action", "hidden_controls"),
             ("immichSlidesUITests/StrictE2ELateImageIOSUITests.swift", "After late completion the current public mark must stay: no flash back, all black or unreadable: ", "late_image", "scene_identity"),
             ("immichSlidesUITests/StrictE2ELateImageIOSUITests.swift", "Next must be tappable twice right after entering the slideshow, before old image requests finish.", "late_image", "navigation"),
             ("immichSlidesUITests/ScenePresentationContractUITests.swift", "The fixture must actually deliver a failing image response", "image_recovery", "fixture_response"),

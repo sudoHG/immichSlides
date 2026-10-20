@@ -724,6 +724,7 @@ PREFIX_RULES = (
     ("Pause window bright proof must be one frozen opaque scene.", "pause_window", "probe_readback"),
     ("Pause window midpoint must contain visible photo pixels.", "pause_window", "scene_identity"),
     ("Target window shows the wrong image; cannot count as SUCCESS.", "pause_window", "scene_identity"),
+    ("The control bar must be visible before opening settings.", "control_action", "hidden_controls"),
     ("After late completion the current public mark must stay: no flash back, all black or unreadable: ", "late_image", "scene_identity"),
     ("Next must be tappable twice right after entering the slideshow, before old image requests finish.", "late_image", "navigation"),
     ("The fixture must actually deliver a failing image response", "image_recovery", "fixture_response"),

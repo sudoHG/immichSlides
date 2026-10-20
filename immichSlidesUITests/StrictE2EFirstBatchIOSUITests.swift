@@ -293,10 +293,12 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
             brightIdentity.status == .match && brightIdentity.mark == "A2",
             "Pause window bright proof must show A2."
         )
-        let brightReference = try XCTUnwrap(
-            brightPauseWindowReference(brightFrame),
+        let brightReference = brightPauseWindowReference(brightFrame)
+        XCTAssertNotNil(
+            brightReference,
             "Pause window bright proof must be one frozen opaque scene."
         )
+        guard let brightReference else { return }
         do {
             try StrictE2EPhotoIdentity.assertExifCorrespondence(brightIdentity, overlayText: brightOverlayText)
         } catch {
