@@ -336,14 +336,43 @@ extension StrictE2EFilterIOSUITests {
 
     @MainActor
     func selectPerson(app: XCUIApplication, personID: String, isSoloOnly: Bool) {
+        let identifier = "personFilter.person.\(personID).button"
         let card = personNameElement(app: app, personID: personID)
         let toggle = personSoloOnlySwitch(app: app, personID: personID)
-        if !toggle.exists {
-            tapElement(card)
+        let deadline = Date().addingTimeInterval(TestWait.seconds(.product(6)))
+        let navigation = IOSFirstBootNavigation(app: app)
+        var didTapCard = false
+        var promptDeclines = 0
+        let didSelect = Wait.until(timeout: max(.zero, deadline.timeIntervalSinceNow)) {
+            guard Date() < deadline,
+                let observation = try? navigation.observe(destinationIdentifier: identifier), Date() < deadline
+            else { return false }
+            if observation.hasPasswordPrompt {
+                _ = navigation.dismissPasswordPrompt(until: deadline) { promptDeclines += 1 }
+                return false
+            }
+            guard !observation.hasModalObstacle else { return false }
+            let switches = observation.nodes.filter {
+                $0.identifier == identifier && $0.elementType == .switch
+            }
+            if switches.count == 1 { return Date() < deadline }
+            guard switches.isEmpty, !didTapCard, Date() < deadline,
+                card.wait(
+                    for: \.isHittable, toEqual: true,
+                    timeout: min(TestWait.seconds(.product(0.1)), max(.zero, deadline.timeIntervalSinceNow))),
+                Date() < deadline
+            else { return false }
+            didTapCard = true
+            card.tapForFailureEvidence()
+            return false
         }
-        XCTAssertTrue(
-            toggle.waitForFailureEvidence(timeout: TestWait.seconds(.product(6))),
-            "Solo-only switch must appear after selecting the person")
+        print(
+            "Person selection: switchObserved=\(didSelect), cardTapCount=\(didTapCard ? 1 : 0), promptDeclines=\(promptDeclines)"
+        )
+        guard didSelect else {
+            XCTFail("Solo-only switch must appear after selecting the person")
+            return
+        }
         let isOn = (toggle.value as? String) == "1"
         if isSoloOnly != isOn {
             // Tap the actual knob on the right of the switch; tapping the middle of the combined SwiftUI label
