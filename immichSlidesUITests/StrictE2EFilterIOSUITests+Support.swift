@@ -61,7 +61,7 @@ extension StrictE2EFilterIOSUITests {
             selectionTimeout: TestWait.seconds(.product(8)) + TestWait.seconds(.product(2))
                 + TestWait.seconds(.product(4)) + TestWait.seconds(.product(4))
                 + TestWait.seconds(.product(4)),
-            departureTimeout: TestWait.seconds(.product(20)))
+            departureTimeout: TestWait.seconds(.product(28)))
     }
 
     @MainActor

@@ -438,6 +438,7 @@ struct IOSFirstBootNavigation {
         case none
         case appAlert = "app-alert"
         case appSheet = "app-sheet"
+        case appOtherWindow = "app-other-window"
         case springboardAlert = "springboard-alert"
         case springboardSheet = "springboard-sheet"
         case springboardOtherWindow = "springboard-other-window"
@@ -559,7 +560,6 @@ struct IOSFirstBootNavigation {
         let modalSource: ModeModalSource
         let promptHost: XCUIApplication
         let promptFrame: CGRect
-        let promptWindowIndex: Int
         let isPromptAlert: Bool
         let promptContainer: XCUIElement
         let promptSource: String
@@ -625,7 +625,7 @@ struct IOSFirstBootNavigation {
             hasModalObstacle: windows.contains(where: \.hasModalObstacle),
             modalSource: windows.first(where: \.hasModalObstacle)?.modalSource ?? .none,
             promptHost: prompt?.promptHost ?? app, promptFrame: prompt?.window.frame ?? .zero,
-            promptWindowIndex: prompt?.windowIndex ?? .zero, isPromptAlert: prompt?.isPromptAlert ?? false,
+            isPromptAlert: prompt?.isPromptAlert ?? false,
             promptContainer: prompt?.promptContainer ?? own.windowElement,
             promptSource: prompt?.promptSource ?? (prompts.isEmpty ? "not-observed" : "ambiguous"))
     }
@@ -698,7 +698,7 @@ struct IOSFirstBootNavigation {
         } else if hasSheet {
             modalSource = isSpringboard ? .springboardSheet : .appSheet
         } else if hasTitle {
-            modalSource = isSpringboard ? .springboardOtherWindow : .appAlert
+            modalSource = isSpringboard ? .springboardOtherWindow : .appOtherWindow
         } else {
             modalSource = .none
         }
@@ -708,7 +708,7 @@ struct IOSFirstBootNavigation {
             hasPasswordPrompt: hasTitle, hasPromptClue: hasTitle || !declines.isEmpty,
             hasModalObstacle: hasTitle || nodes.contains { $0.elementType == .alert || $0.elementType == .sheet },
             modalSource: modalSource,
-            promptHost: host, promptFrame: window.frame, promptWindowIndex: windowIndex,
+            promptHost: host, promptFrame: window.frame,
             isPromptAlert: isPromptAlert, promptContainer: element,
             promptSource: isPromptAlert ? "alert-snapshot" : "window-index-\(windowIndex)")
     }
@@ -870,7 +870,8 @@ struct IOSFirstBootNavigation {
             let observationStartedAt = ProcessInfo.processInfo.systemUptime
             do {
                 observation = try observe(
-                    modeIdentifier: identifier, destinationIdentifier: destinationIdentifier, diagnostics: diagnostics)
+                    modeIdentifier: didIssueContinue ? nil : identifier,
+                    destinationIdentifier: destinationIdentifier, diagnostics: diagnostics)
             } catch {
                 diagnostics.finishModeDiagnosticObservation(since: observationStartedAt)
                 lastSnapshotError = (error as NSError).code

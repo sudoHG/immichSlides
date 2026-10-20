@@ -170,10 +170,14 @@ pack. Use `selectMode` for selection-only screenshots and `selectModeAndContinue
 to leave the mode page; both use the same observation, prompt handling and selection
 checks. Fixture paths that inject configuration retain their original card tap,
 Continue readiness check, single Continue tap and destination assertions, with the
-original independent waits. They do not use this credential-prompt observer.
+original independent waits. The exception is `testSinglePhotoOutgoingPauseWindowCapture`
+(strict `pause-window`): it launches with injected configuration but retains the full
+helper through `StrictE2EFirstBatchIOSUITests+Onboarding.swift`, because that path
+already handled the prompt before the shared observer was introduced.
 Each poll first reads actual App windows. Only an unobstructed mode page with no
 password-title/decline clues and both the target card and Continue live-hittable
-can omit the SpringBoard and alert search. Other surfaces, modal clues or either
+can omit the SpringBoard and alert search before Continue is issued. After Continue,
+always perform the complete search. Other surfaces, modal clues or either
 blocked control still use the complete search. Each prompt's exact English/Chinese
 Save Password title and unique Not Now action come from the same fallible window snapshot.
 Enumerate real window elements rather than an application snapshot's children:
@@ -214,6 +218,8 @@ When replacing independent credential-entry card and Continue waits with one
 selection cap, preserve their sum, the first-attempt hittability/selected-state
 readbacks and any existing prompt allowance. Do not
 borrow repeated-tap or whole-flow retry budgets, or extend the departure deadline.
+The strict Filter departure cap is 28 seconds, preserving the original fixed
+8-second post-Continue wait plus the 20-second summary wait as one absolute budget.
 A successful prompt-visibility observation remains evidence even after the retry
 deadline; callers that act must independently check their action deadline.
 Mode-navigation failures append bounded observation counts/durations, snapshot match
