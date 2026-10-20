@@ -990,6 +990,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
         cases = (
             ("immichSlidesUITests/UITestSupport.swift", "First-boot mode navigation must dismiss the exact password prompt,", "mode_selection", "navigation"),
             ("immichSlidesUITests/UITestSupport.swift", "Mode departure failed after one hittable Continue without a password prompt;", "playback_entry", "navigation"),
+            ("immichSlidesUITests/StrictE2EFilterIOSUITests+Playback.swift", "Person selection preparation must provide an actionable card;", "filter_selection", "control_state"),
             ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "tvOS pause-continue evidence is invalid;", "continue_timing", "evidence_capture"),
             ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "iPhone pause-continue evidence is invalid;", "continue_timing", "evidence_capture"),
             ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "tvOS new photo must be stably identifiable within 4 s of transition start", "continue_timing", "scene_identity"),
@@ -1114,6 +1115,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
         failure_prefixes = {
             "First-boot mode navigation must dismiss the exact password prompt,",
             "Mode departure failed after one hittable Continue without a password prompt;",
+            "Person selection preparation must provide an actionable card;",
             "The slideshow control never became tappable before the deadline.",
             "The slideshow Settings tap had no observed outcome before the deadline.",
             "A fresh install must reach the normal first-boot page.",

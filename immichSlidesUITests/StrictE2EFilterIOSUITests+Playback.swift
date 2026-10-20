@@ -343,11 +343,17 @@ extension StrictE2EFilterIOSUITests {
         let navigation = IOSFirstBootNavigation(app: app)
         var isAlreadySelected = false
         var promptDeclines = 0
+        var hasAppModal = false
+        var isCardHittable = false
+        var isPromptAmbiguous = false
         let isReady = Wait.until(timeout: max(.zero, preparationDeadline.timeIntervalSinceNow)) {
             guard Date() < preparationDeadline,
                 let observation = try? navigation.observe(destinationIdentifier: identifier),
                 Date() < preparationDeadline
             else { return false }
+            hasAppModal = observation.hasModalObstacle && !observation.hasPasswordPrompt
+            isPromptAmbiguous = observation.hasPromptClue && observation.decline == nil
+            isCardHittable = false
             if observation.hasPasswordPrompt {
                 _ = navigation.dismissPasswordPrompt(until: preparationDeadline) { promptDeclines += 1 }
                 return false
@@ -359,17 +365,20 @@ extension StrictE2EFilterIOSUITests {
             isAlreadySelected = switches.count == 1
             if isAlreadySelected { return Date() < preparationDeadline }
             guard switches.isEmpty, Date() < preparationDeadline else { return false }
-            return card.wait(
+            isCardHittable = card.wait(
                 for: \.isHittable, toEqual: true,
                 timeout: min(TestWait.seconds(.product(0.1)), max(.zero, preparationDeadline.timeIntervalSinceNow)))
-                && Date() < preparationDeadline
+            return isCardHittable && Date() < preparationDeadline
         }
         guard isReady else {
-            XCTFail("Solo-only switch must appear after selecting the person")
+            XCTFail(
+                "Person selection preparation must provide an actionable card; appModal=\(hasAppModal), cardHittable=\(isCardHittable), promptAmbiguous=\(isPromptAmbiguous)"
+            )
             return
         }
         if !isAlreadySelected { card.tapForFailureEvidence() }
         let deadline = Date().addingTimeInterval(TestWait.seconds(.product(6)))
+        var isOn = false
         let didSelect = Wait.until(timeout: max(.zero, deadline.timeIntervalSinceNow)) {
             guard Date() < deadline,
                 let observation = try? navigation.observe(destinationIdentifier: identifier), Date() < deadline
@@ -378,8 +387,16 @@ extension StrictE2EFilterIOSUITests {
                 _ = navigation.dismissPasswordPrompt(until: deadline) { promptDeclines += 1 }
                 return false
             }
-            return !observation.hasModalObstacle
-                && observation.nodes.filter { $0.identifier == identifier && $0.elementType == .switch }.count == 1
+            guard !observation.hasModalObstacle else { return false }
+            let switches = observation.nodes.filter { $0.identifier == identifier && $0.elementType == .switch }
+            guard switches.count == 1, let value = switches[0].value as? String, value == "0" || value == "1" else {
+                return false
+            }
+            isOn = value == "1"
+            if isSoloOnly == isOn { return Date() < deadline }
+            return toggle.wait(
+                for: \.isHittable, toEqual: true,
+                timeout: min(TestWait.seconds(.product(0.1)), max(.zero, deadline.timeIntervalSinceNow)))
                 && Date() < deadline
         }
         print(
@@ -389,11 +406,8 @@ extension StrictE2EFilterIOSUITests {
             XCTFail("Solo-only switch must appear after selecting the person")
             return
         }
-        let isOn = (toggle.value as? String) == "1"
         if isSoloOnly != isOn {
-            // Tap the actual knob on the right of the switch; tapping the middle of the combined SwiftUI label
-            // may not toggle the value.
-            toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tapForFailureEvidence()
+            toggle.tapForFailureEvidence()
         }
         assertPersonNavigation(
             waitUntil(timeout: TestWait.seconds(.product(6))) { (toggle.value as? String) == (isSoloOnly ? "1" : "0") },

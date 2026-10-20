@@ -776,6 +776,7 @@ PREFIX_RULES = (
     ("Back from the people list must return to the filter screen.", "filter_selection", "navigation"),
     ("Back from the album list must return to the filter screen.", "unknown", "navigation"),
     ("Focus must land on the target person.", "filter_selection", "focus"),
+    ("Person selection preparation must provide an actionable card;", "filter_selection", "control_state"),
     ("Start Playback must open the playback screen.", "unknown", "navigation"),
     ("Clear selection must actually receive remote focus", "filter_edit", "focus"),
     ("The editor's Done must actually receive remote focus", "filter_edit", "focus"),
