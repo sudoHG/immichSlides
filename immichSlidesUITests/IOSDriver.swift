@@ -169,7 +169,11 @@ struct IOSDriver: PlaybackDriver {
         let identifier = "slideshow.control.next.button"
         let deadline = Date().addingTimeInterval(UITestSupportWaitTiming.stateChangeTimeoutSeconds)
         var action = ControlAction()
-        guard prepareControl(identifier, until: deadline, action: &action) != nil else {
+        guard
+            let initial = prepareControl(
+                identifier, until: deadline, action: &action, shouldRequireHittability: false),
+            !initial.hasSettingsNavigationEvidence
+        else {
             XCTFail("Next control must be actionable before tapping. (\(action.diagnostic))")
             return
         }
@@ -443,7 +447,8 @@ struct IOSDriver: PlaybackDriver {
 
     private func prepareControl(
         _ identifier: String, until deadline: Date, action: inout ControlAction,
-        shouldDismissPasswordPrompt: Bool = false, alsoRequiring additionalIdentifiers: [String] = []
+        shouldDismissPasswordPrompt: Bool = false, alsoRequiring additionalIdentifiers: [String] = [],
+        shouldRequireHittability: Bool = true
     ) -> SlideshowControlBarButtonObservation? {
         FirstFailureContext.beginWait(seconds: max(.zero, deadline.timeIntervalSinceNow))
         defer { FirstFailureContext.endWait() }
@@ -457,6 +462,8 @@ struct IOSDriver: PlaybackDriver {
                 action.isBarVisible = hasVisibleControlBar(observation)
                 action.isHittable = nil
                 if observation.isReady, action.isBarVisible {
+                    // Next verifies live hittability after its sole wake, avoiding a hidden receiver's query retries.
+                    if !shouldRequireHittability { return observation }
                     // Snapshot attributes are fallible; XCTest exposes hittability only on the live button.
                     action.isHittable = ([identifier] + additionalIdentifiers).allSatisfy { requiredIdentifier in
                         guard Date() < deadline, let button = observation.snapshots[requiredIdentifier],

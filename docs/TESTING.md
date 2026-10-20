@@ -617,7 +617,10 @@ and the pixel-difference limit remain unchanged. Thrown failures are recorded
 before app termination. Stable-frame diagnostics separate control preparation,
 screenshot capture and pixel analysis without additional UI reads. IOSDriver Next
 also separates its pre-tap scene capture and classification durations, within its
-existing preparation budget.
+existing preparation budget. Its initial control preparation uses snapshot
+attributes; live hittability is required by the final fresh preparation after the
+single wake. A hidden receiver's automatic query retries therefore cannot consume
+the budget before the baseline photo is read.
 
 Run serially within a checkout because the runner manages temporary test configuration. Use a new evidence directory outside the repository for each run. The runner prepares the fixture and app state, reads official test statistics, checks result contracts and cleans up. Zero selected tests, skipped strict tests, missing evidence or an unknown image are failures. A successful contract check does not replace human visual review; inspect the current run's original screenshots. The separate [iPad host tool](../scripts/ipad-pause-host-testing.md) remains diagnostic tooling and does not replace an XCTest result.
 
