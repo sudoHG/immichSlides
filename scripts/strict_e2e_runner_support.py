@@ -283,7 +283,7 @@ def simulator_command(command: list[str], phase: str, *, deadline: float | None 
     if budget <= 0:
         raise InfrastructureTimeout(phase, 0)
     recorder = active()
-    recorder = recorder if phase in ("simulator-boot", "simulator-bootstatus", "simulator-container") else None
+    recorder = recorder if phase in ("simulator-boot", "simulator-bootstatus", "simulator-container", "simulator-readiness") else None
     started, cpu = time.monotonic(), time.process_time()
     sequence = recorder.next_sequence() if recorder else 0
     def mark(state):
@@ -512,6 +512,19 @@ def wait_for_simulator_app_response(simulator_udid: str, bundle_id: str, *, repo
         "simulator-readiness", report=report, deadline=deadline)
 
 
+def wait_for_simulator_service_response(simulator_udid: str, *, report: Callable[[str], None],
+                                       deadline: float):
+    """Check the bootstrap service before builds without querying the cold app database."""
+    def query(deadline, timeout):
+        # simctl resolves a bare executable in the device; absolute paths refer to the host.
+        completed = simulator_command(
+            ["xcrun", "simctl", "spawn", simulator_udid, "launchctl", "print", "system/com.apple.lsd"],
+            "simulator-readiness", deadline=deadline, timeout_seconds=timeout)
+        if completed.returncode:
+            raise CommandError(f"Simulator LaunchServices registration check failed (exit {completed.returncode}).")
+    return _wait_for_simulator_response(query, "simulator-readiness", report=report, deadline=deadline)
+
+
 def simulator_inventory(*, report: Callable[[str], None] | None = None) -> dict:
     """Apply the existing readiness retry only to timed-out inventory queries."""
     def query(deadline, timeout):
@@ -576,8 +589,9 @@ def _wait_for_simulator_response(query, phase: str, *, report: Callable[[str], N
 
 
 def prepare_simulator(simulator_udid: str, bundle_id: str = "com.331works.immichSlides", *,
-                      report: Callable[[str], None] | None = None, boot_submitted: bool = False) -> tuple[str | None, str]:
-    """Absorb cold-device stalls before inventory, fixture health checks or reset mutations."""
+                      report: Callable[[str], None] | None = None, boot_submitted: bool = False,
+                      should_check_app: bool = True) -> tuple[str | None, str]:
+    """Gate preparation; prebuild callers may request service registration only, returning no container fact."""
     report = report or (lambda line: print(line, flush=True))
     recorder = active()
     initial_sample = recorder.sample("preparation", initial=True) if recorder else None
@@ -590,7 +604,13 @@ def prepare_simulator(simulator_udid: str, bundle_id: str = "com.331works.immich
         start_event = recorder.event("preparation", "simulator-preparation", "started", sequence)
     try:
         lines.extend(boot_simulator(simulator_udid, report=report, deadline=deadline, boot_submitted=boot_submitted).splitlines())
-        container, readiness_log = wait_for_simulator_app_response(simulator_udid, bundle_id, report=report, deadline=deadline)
+        if should_check_app:
+            container, readiness_log = wait_for_simulator_app_response(simulator_udid, bundle_id, report=report, deadline=deadline)
+        else:
+            line = "simulator-readiness: probe=launch-services-registration"
+            lines.append(line)
+            report(line)
+            container, readiness_log = wait_for_simulator_service_response(simulator_udid, report=report, deadline=deadline)
         lines.extend(readiness_log.splitlines())
         outcome = "passed"
     finally:

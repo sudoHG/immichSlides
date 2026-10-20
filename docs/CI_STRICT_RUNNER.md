@@ -609,8 +609,19 @@ also gate before simulator lookups and fixture health checks; resets use the sam
 gate again, normally returning on the first warm query. UI consumers pass their
 successful preparation state to the fixture runner, which skips the redundant
 `simctl boot`; fixture resets and retries do the same after their initial gate.
-Bootstatus, readiness queries and all reset mutations still run. Strict hosted jobs prepare
-the device before cold builds or case runners. Toolchain/pins checks run before
+Bootstatus, readiness queries and all reset mutations still run. Strict nightly jobs use
+`prepare_simulator(..., should_check_app=False)` before cold builds: after
+`bootstatus -b`, the bounded query is `simctl spawn UDID launchctl print
+system/com.apple.lsd`. This checks that the simulator can spawn a process and its
+bootstrap server has registered LaunchServices, without asking the cold app database
+for an app container. A nonzero service check fails immediately; only timeouts
+repeat under the same 300-second readiness and 600-second preparation budgets.
+Logs identify this probe as `launch-services-registration`. Its returned `None`
+is not an app-absence result; this mode is only for callers that discard the
+container value. The default mode and every reset still query the real container,
+terminate an installed app, uninstall and verify absence before tests. Service
+registration does not claim app-database readiness or successful test execution.
+Toolchain/pins checks run before
 early boot; only archive downloads overlap boot in the UI workflows.
 
 The fixture UI device-inventory query uses the same timed-out-query retry logic

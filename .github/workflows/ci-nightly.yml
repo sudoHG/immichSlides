@@ -212,7 +212,7 @@ jobs:
               with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as summary:
                   summary.write(line + "\n")
           with session(Path(os.environ["RUNNER_TEMP"]) / "preparation-diagnostics.json"):
-              prepare_simulator(os.environ["NIGHTLY_SIMULATOR"], report=report)
+              prepare_simulator(os.environ["NIGHTLY_SIMULATOR"], report=report, should_check_app=False)
           PY
       - name: Warm the shard once and execute every scheduled case
         env:

@@ -692,6 +692,53 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                 strict_runner.read_official_test_results_summary(bundle)
             self.assertEqual(raised.exception.entry["code"], "official-summary-export-timeout")
 
+    def test_prebuild_preparation_checks_launch_services_without_a_container_lookup(self):
+        import ci_execution_diagnostics as diagnostics
+        import strict_e2e_runner_support as support
+        for mode in ("ready", "missing-service", "recover", "timeout", "late-response", "long-boot"):
+            with self.subTest(mode=mode):
+                clock, commands, reports = [0.0], [], []
+                def run(command, **kwargs):
+                    commands.append(command)
+                    if command[2] == "bootstatus" and mode == "long-boot":
+                        clock[0] += 550
+                    if command[2] == "spawn":
+                        self.assertEqual(command, ["xcrun", "simctl", "spawn", "SIM-UDID",
+                                                   "launchctl", "print", "system/com.apple.lsd"])
+                        if mode in ("timeout", "long-boot") or mode == "recover" and len(commands) == 3:
+                            clock[0] += kwargs["timeout"]
+                            raise subprocess.TimeoutExpired(["private-input"], kwargs["timeout"])
+                        if mode == "late-response":
+                            clock[0] += 301
+                        return subprocess.CompletedProcess(command, 113 if mode == "missing-service" else 0,
+                                                           "private-input", "private-input")
+                    self.assertIn(command[2], ("boot", "bootstatus"), "prebuild must not query app containers")
+                    return subprocess.CompletedProcess(command, 0, "", "")
+                with diagnostics.session() as recorder, \
+                        mock.patch.object(diagnostics, "system_sample", return_value=None), \
+                        mock.patch.object(support.subprocess, "run", side_effect=run), \
+                        mock.patch.object(support.time, "monotonic", side_effect=lambda: clock[0]):
+                    if mode in ("ready", "recover"):
+                        container, log = support.prepare_simulator("SIM-UDID", report=reports.append,
+                                                                  should_check_app=False)
+                        self.assertIsNone(container)
+                        self.assertIn("simulator-preparation: passed", log)
+                        self.assertEqual(["boot", "bootstatus", "spawn"] + (["spawn"] if mode == "recover" else []),
+                                         [command[2] for command in commands])
+                    else:
+                        message = (r"^Simulator LaunchServices registration check failed \(exit 113\)\.$"
+                                   if mode == "missing-service" else
+                                   "^simulator-readiness timed out after " + ("50" if mode == "long-boot" else "300") + r"\.0s\.$")
+                        with self.assertRaisesRegex(CommandError, message) as raised:
+                            support.prepare_simulator("SIM-UDID", report=reports.append, should_check_app=False)
+                        self.assertNotIn("private-input", str(raised.exception))
+                        self.assertFalse(any("passed" in line for line in reports if line.startswith("simulator-preparation:")))
+                        if mode in ("timeout", "long-boot"):
+                            self.assertEqual(clock[0], 600 if mode == "long-boot" else 300)
+                if mode in ("recover", "timeout", "long-boot"):
+                    self.assertTrue(any(event["phase"] == "simulator-readiness" and event["state"] == "reap-completed"
+                                        for event in recorder.events), "timed-out service queries must retain cleanup diagnostics")
+
     def test_ordinary_and_person_results_never_expose_raw_bundles(self) -> None:
         # Raw XCTest activities may retain UI-entered credentials even in failed sessions.
         for suite, count in (("smoke", 1), ("filter-person", 3)):
