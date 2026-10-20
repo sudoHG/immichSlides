@@ -336,13 +336,40 @@ extension StrictE2EFilterIOSUITests {
 
     @MainActor
     func selectPerson(app: XCUIApplication, personID: String, isSoloOnly: Bool) {
+        let preparationDeadline = Date().addingTimeInterval(TestWait.seconds(.infrastructure(20)))
         let identifier = "personFilter.person.\(personID).button"
         let card = personNameElement(app: app, personID: personID)
         let toggle = personSoloOnlySwitch(app: app, personID: personID)
-        let deadline = Date().addingTimeInterval(TestWait.seconds(.product(6)))
         let navigation = IOSFirstBootNavigation(app: app)
-        var didTapCard = false
+        var isAlreadySelected = false
         var promptDeclines = 0
+        let isReady = Wait.until(timeout: max(.zero, preparationDeadline.timeIntervalSinceNow)) {
+            guard Date() < preparationDeadline,
+                let observation = try? navigation.observe(destinationIdentifier: identifier),
+                Date() < preparationDeadline
+            else { return false }
+            if observation.hasPasswordPrompt {
+                _ = navigation.dismissPasswordPrompt(until: preparationDeadline) { promptDeclines += 1 }
+                return false
+            }
+            guard !observation.hasModalObstacle else { return false }
+            let switches = observation.nodes.filter {
+                $0.identifier == identifier && $0.elementType == .switch
+            }
+            isAlreadySelected = switches.count == 1
+            if isAlreadySelected { return Date() < preparationDeadline }
+            guard switches.isEmpty, Date() < preparationDeadline else { return false }
+            return card.wait(
+                for: \.isHittable, toEqual: true,
+                timeout: min(TestWait.seconds(.product(0.1)), max(.zero, preparationDeadline.timeIntervalSinceNow)))
+                && Date() < preparationDeadline
+        }
+        guard isReady else {
+            XCTFail("Solo-only switch must appear after selecting the person")
+            return
+        }
+        if !isAlreadySelected { card.tapForFailureEvidence() }
+        let deadline = Date().addingTimeInterval(TestWait.seconds(.product(6)))
         let didSelect = Wait.until(timeout: max(.zero, deadline.timeIntervalSinceNow)) {
             guard Date() < deadline,
                 let observation = try? navigation.observe(destinationIdentifier: identifier), Date() < deadline
@@ -351,23 +378,12 @@ extension StrictE2EFilterIOSUITests {
                 _ = navigation.dismissPasswordPrompt(until: deadline) { promptDeclines += 1 }
                 return false
             }
-            guard !observation.hasModalObstacle else { return false }
-            let switches = observation.nodes.filter {
-                $0.identifier == identifier && $0.elementType == .switch
-            }
-            if switches.count == 1 { return Date() < deadline }
-            guard switches.isEmpty, !didTapCard, Date() < deadline,
-                card.wait(
-                    for: \.isHittable, toEqual: true,
-                    timeout: min(TestWait.seconds(.product(0.1)), max(.zero, deadline.timeIntervalSinceNow))),
-                Date() < deadline
-            else { return false }
-            didTapCard = true
-            card.tapForFailureEvidence()
-            return false
+            return !observation.hasModalObstacle
+                && observation.nodes.filter { $0.identifier == identifier && $0.elementType == .switch }.count == 1
+                && Date() < deadline
         }
         print(
-            "Person selection: switchObserved=\(didSelect), cardTapCount=\(didTapCard ? 1 : 0), promptDeclines=\(promptDeclines)"
+            "Person selection: switchObserved=\(didSelect), cardTapCount=\(isAlreadySelected ? 0 : 1), promptDeclines=\(promptDeclines)"
         )
         guard didSelect else {
             XCTFail("Solo-only switch must appear after selecting the person")
