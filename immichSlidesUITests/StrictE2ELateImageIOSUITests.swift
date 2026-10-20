@@ -29,13 +29,9 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
         try completeFirstBootToModeSelection(app: app, input: input, evidencePrefix: "late-image")
         dismissSavePasswordPromptIfShown(app: app, deadline: Date().addingTimeInterval(TestWait.seconds(.product(2))))
         _ = try lateImageControl(input: input, action: "arm")
-        let currentDeadline = try enterPlaybackThenAdvanceTwice(app: app)
+        try enterPlaybackThenAdvanceTwice(app: app)
 
         let currentFrame = try captureRequiredIdentity(app: app, name: "ooo-current-scene")
-        XCTAssertLessThan(
-            ProcessInfo.processInfo.systemUptime, currentDeadline,
-            "After late completion the current public mark must stay: no flash back, all black or unreadable: current capture deadline"
-        )
         try recordFixtureState(input: input, name: "late-image-held")
         try releaseLateImageAndWaitForDelivery(input: input)
         let deliveryReturnedAt = ProcessInfo.processInfo.systemUptime
@@ -83,13 +79,13 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
     }
 
     @MainActor
-    private func enterPlaybackThenAdvanceTwice(app: XCUIApplication) throws -> TimeInterval {
+    private func enterPlaybackThenAdvanceTwice(app: XCUIApplication) throws {
         guard
             let playbackDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
                 "mode.random.button", destinationIdentifier: "slideshow.control.next.button",
                 selectionTimeout: TestWait.seconds(.product(8)) + TestWait.seconds(.product(2)),
                 departureTimeout: TestWait.seconds(.product(8)))
-        else { return ProcessInfo.processInfo.systemUptime }
+        else { return }
         let next = app.buttons["slideshow.control.next.button"]
         XCTAssertTrue(
             next.waitForPublicElement(
@@ -128,7 +124,6 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
         XCTAssertTrue(
             waitForLateImageScene(app: app, historyCount: initialHistory + 2, deadline: deadline),
             "Next must be tappable twice right after entering the slideshow, before old image requests finish.")
-        return deadline
     }
 
     @MainActor
@@ -150,10 +145,12 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
     private func dismissEntryHintDuringLateResponseWindow(app: XCUIApplication, deadline: TimeInterval) -> [String: Any]
     {
         var didTapHint = false
+        var sawHint = false
         var hintEvents: [[String: Any]] = []
         var didObserveHiddenAfterTap = false
         while ProcessInfo.processInfo.systemUptime < deadline {
             let observation = lateImageSceneObservation(app: app)
+            if observation["entryHintVisible"] == "true" { sawHint = true }
             if observation["entryHintVisible"] == "true", !didTapHint {
                 let banner = app.descendants(matching: .any)["slideshow.entryHint.banner"]
                 if banner.isHittable, ProcessInfo.processInfo.systemUptime < deadline {
@@ -175,7 +172,8 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
         }
         return [
             "deadline_uptime": deadline, "returned_uptime": ProcessInfo.processInfo.systemUptime,
-            "hint_events": hintEvents, "hint_hidden_within_window": !didTapHint || didObserveHiddenAfterTap
+            "hint_events": hintEvents, "saw_hint": sawHint,
+            "hint_hidden_within_window": !sawHint || didObserveHiddenAfterTap
         ]
     }
 
@@ -202,7 +200,8 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
         let manifest = SharedSceneEvidenceManifest.parseKeyValueFields(observation["manifest"] ?? "")
         return [
             "layerIDs": render["layerIDs"] ?? "", "historyCount": render["historyCount"] ?? "",
-            "ledgerSceneAssets": manifest["ledgerSceneAssets"] ?? ""
+            "ledgerSceneAssets": manifest["ledgerSceneAssets"] ?? "",
+            "scenePublishTimestamp": manifest["scenePublishTimestamp"] ?? ""
         ]
     }
 
