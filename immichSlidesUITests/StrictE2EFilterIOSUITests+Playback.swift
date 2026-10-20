@@ -340,6 +340,7 @@ extension StrictE2EFilterIOSUITests {
         let identifier = "personFilter.person.\(personID).button"
         let card = personNameElement(app: app, personID: personID)
         let toggle = personSoloOnlySwitch(app: app, personID: personID)
+        let switchControl = toggle.switches.element(boundBy: 0)
         let navigation = IOSFirstBootNavigation(app: app)
         var isAlreadySelected = false
         var promptDeclines = 0
@@ -394,7 +395,8 @@ extension StrictE2EFilterIOSUITests {
             }
             isOn = value == "1"
             if isSoloOnly == isOn { return Date() < deadline }
-            return toggle.wait(
+            guard switches[0].children.filter({ $0.elementType == .switch }).count == 1 else { return false }
+            return switchControl.wait(
                 for: \.isHittable, toEqual: true,
                 timeout: min(TestWait.seconds(.product(0.1)), max(.zero, deadline.timeIntervalSinceNow)))
                 && Date() < deadline
@@ -407,7 +409,8 @@ extension StrictE2EFilterIOSUITests {
             return
         }
         if isSoloOnly != isOn {
-            toggle.tapForFailureEvidence()
+            // The identified parent includes the label; its child is the native switch control.
+            switchControl.tapForFailureEvidence()
         }
         assertPersonNavigation(
             waitUntil(timeout: TestWait.seconds(.product(6))) { (toggle.value as? String) == (isSoloOnly ? "1" : "0") },
