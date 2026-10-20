@@ -242,12 +242,12 @@ attributes are unknown only until a snapshot first succeeds. Diagnostic reads ne
 deadline or turn a timeout into success.
 The iOS control-bar tap helper takes a preparatory window snapshot, then spends
 one proactive reveal immediately before a fresh target snapshot and one real
-coordinate tap at that frame's centre, relative to the retained window. The
+coordinate tap at that frame's centre, relative to the observed window frame. The
 playback-area tap only shows the bar and restarts auto-hide; it does not hide an
 already visible bar. The existing eight-second appearance budget starts before
-preparation, includes the reveal and never restarts. The coordinate uses the
-observed window without enumerating windows again, and the helper checks the
-same deadline immediately before the tap. Next/Previous/Play-Pause receive
+preparation, includes the reveal and never restarts. The coordinate reuses the
+snapshot frame and offset; XCTest re-resolves the window query at tap time.
+The helper checks the same deadline immediately before the tap. Next/Previous/Play-Pause receive
 one real tap and return immediately; their callers retain their scene-change,
 Play/Pause and EXIF retry budgets. The shared helper does not compare their values.
 Only Settings verifies an outcome: a Settings entry or the playback toggle. Its
@@ -268,6 +268,8 @@ step's existing timeout on one reveal and a fresh ready snapshot; neither failed
 snapshots nor navigation evidence authorize a reveal. Playback History refreshes
 after its back-navigation loop, including the early-ready path, before returning.
 No refresh restarts a deadline or sends a second reveal.
+Callers immediately followed by the action helper leave the proactive reveal to
+that helper instead of refreshing twice.
 If a snapshot shows playback with the control outside the window, the waiter
 may reveal once within its original deadline, then only observe; a failed
 snapshot never authorizes a reveal. Settings readiness failures are classified from

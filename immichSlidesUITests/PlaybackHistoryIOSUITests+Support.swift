@@ -61,13 +61,6 @@ extension PlaybackHistoryIOSUITests {
     }
 
     func openPlaybackSettingsFromSlideshow(app: XCUIApplication) {
-        var diagnostic = ""
-        XCTAssertTrue(
-            app.refreshSlideshowControlBarButton(
-                identifier: "slideshow.control.settings.button",
-                timeout: TestWait.seconds(.infrastructure(8)), pollSeconds: TestWait.seconds(.product(0.2)),
-                onTimeout: { diagnostic = " (\($0))" }),
-            "The slideshow Settings button must be ready before opening playback settings.\(diagnostic)")
         app.tapSlideshowControlBarButton(identifier: "slideshow.control.settings.button")
 
         let playbackEntry: XCUIElement

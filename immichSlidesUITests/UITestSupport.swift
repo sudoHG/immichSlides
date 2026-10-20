@@ -1177,7 +1177,7 @@ extension XCUIApplication {
                 {
                     let frame = button.frame
                     let startedAt = Date()
-                    // Retain the observed window; do not enumerate windows again after the final snapshot.
+                    // Reuse the snapshot frame and offset; XCTest re-resolves the window query at tap time.
                     let coordinate = observation.windowElement.coordinate(withNormalizedOffset: .zero)
                         .withOffset(
                             CGVector(
