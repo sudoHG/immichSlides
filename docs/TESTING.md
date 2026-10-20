@@ -610,6 +610,15 @@ unchanged. The combined runner uses Debug, where the measured-progress probes ex
 
 `p2-cache-smoke` on iPad pauses on a recognized single photo with a 30-second interval, then requires both cache completion and a recognized public photo in `cache-returned.png` after returning to playback; as with `p2-cache`, a signed review must list that same photo. It retains its smoke designation and does not claim the full P2 disk-usage review.
 
+`p2-ipad-layout` checks the multi-photo identity of each frame used by its stable
+pair, instead of taking a separate scene-check screenshot before the saved frame.
+Control readiness, orientation, the 10-second budget, the 0.5-second pair spacing
+and the pixel-difference limit remain unchanged. Thrown failures are recorded
+before app termination. Stable-frame diagnostics separate control preparation,
+screenshot capture and pixel analysis without additional UI reads. IOSDriver Next
+also separates its pre-tap scene capture and classification durations, within its
+existing preparation budget.
+
 Run serially within a checkout because the runner manages temporary test configuration. Use a new evidence directory outside the repository for each run. The runner prepares the fixture and app state, reads official test statistics, checks result contracts and cleans up. Zero selected tests, skipped strict tests, missing evidence or an unknown image are failures. A successful contract check does not replace human visual review; inspect the current run's original screenshots. The separate [iPad host tool](../scripts/ipad-pause-host-testing.md) remains diagnostic tooling and does not replace an XCTest result.
 
 For explicit shard warm-up, build reuse, cold/warm budgets, full simulator resets and

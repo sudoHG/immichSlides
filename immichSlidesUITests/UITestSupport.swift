@@ -1423,12 +1423,31 @@ struct StableFrame {
         accept: (Data) -> Bool
     ) -> StableFrame {
         let deadline = Date().addingTimeInterval(timeout)
+        FirstFailureContext.mark("capture-frame", element: "app-window")
+        FirstFailureContext.beginWait(seconds: timeout)
+        defer { FirstFailureContext.endWait() }
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        var prepareSeconds: TimeInterval = .zero
+        var captureSeconds: TimeInterval = .zero
+        var analysisSeconds: TimeInterval = .zero
+        var iterations = 0
+        defer {
+            print(
+                "Stable frame wait: orientation=\(orientation.rawValue), iterations=\(iterations), timeoutSeconds=\(timeout), prepareSeconds=\(prepareSeconds), captureSeconds=\(captureSeconds), analysisSeconds=\(analysisSeconds), totalSeconds=\(ProcessInfo.processInfo.systemUptime - startedAt)"
+            )
+        }
         var previous: Data?
         while true {
+            iterations += 1
+            let prepareStartedAt = ProcessInfo.processInfo.systemUptime
             let window = app.frame.size
             let isPrepared = orientation.matches(window) && prepare()
+            prepareSeconds += ProcessInfo.processInfo.systemUptime - prepareStartedAt
             let capturedAt = Date()
+            let captureStartedAt = ProcessInfo.processInfo.systemUptime
             let png = uprightScreenPNG()
+            captureSeconds += ProcessInfo.processInfo.systemUptime - captureStartedAt
+            let analysisStartedAt = ProcessInfo.processInfo.systemUptime
             let pixels = pixelSize(png) ?? .zero
             var candidate: Data?
             let detail: String
@@ -1445,6 +1464,7 @@ struct StableFrame {
                 if let difference = difference(previous, png) {
                     let formatted = String(format: "%.4f", difference)
                     if difference <= layoutJumpLimit {
+                        analysisSeconds += ProcessInfo.processInfo.systemUptime - analysisStartedAt
                         return StableFrame(
                             png: png, capturedAt: capturedAt, isStable: true, detail: "frame diff \(formatted)")
                     }
@@ -1456,6 +1476,7 @@ struct StableFrame {
                 candidate = png
                 detail = "waiting for the second frame"
             }
+            analysisSeconds += ProcessInfo.processInfo.systemUptime - analysisStartedAt
             previous = candidate
             let nextAt = capturedAt.addingTimeInterval(Timing.stableFramePair)
             guard nextAt <= deadline else {
@@ -1480,6 +1501,11 @@ struct StableFrame {
     // classify as TRANSITION.
     static func showsFixturePhoto(_ png: Data) -> Bool {
         [.match, .transition].contains(StrictE2EPhotoIdentity.classify(png: png).status)
+    }
+
+    static func showsMultiPhotoFixture(_ png: Data) -> Bool {
+        let identity = StrictE2EPhotoIdentity.captureIdentity(png: png)
+        return identity.status == .match && (identity.mark?.split(separator: "+").count ?? 0) >= 2
     }
 
     static func pixelSize(_ png: Data) -> CGSize? {
@@ -1644,8 +1670,7 @@ extension PlaybackDriver {
         guard orientation.matches(app.frame.size) else { return false }
         let png = StableFrame.uprightScreenPNG()
         guard let pixels = StableFrame.pixelSize(png), orientation.matches(pixels) else { return false }
-        let identity = StrictE2EPhotoIdentity.captureIdentity(png: png)
-        return identity.status == .match && (identity.mark?.split(separator: "+").count ?? 0) >= 2
+        return StableFrame.showsMultiPhotoFixture(png)
     }
 
     private func snapshotNodes(where include: (XCUIElementSnapshot) -> Bool) -> [XCUIElementSnapshot] {

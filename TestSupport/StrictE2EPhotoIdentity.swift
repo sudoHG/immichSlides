@@ -430,16 +430,21 @@ enum StrictE2EPhotoIdentity {
     private static func paletteColors(frame: (width: Int, height: Int, pixels: [UInt8])) -> [(String, Int)?] {
         var assignments = [Int: (String, Int)]()
         var colors = [(String, Int)?]()
+        colors.reserveCapacity(frame.pixels.count / pixelChannelCount)
         for offset in stride(from: 0, to: frame.pixels.count, by: pixelChannelCount) {
-            let channels = (0..<3).map { Int(frame.pixels[offset + $0]) }
-            let key = channels[0] << 16 | channels[1] << 8 | channels[2]
+            let red = Int(frame.pixels[offset])
+            let green = Int(frame.pixels[offset + 1])
+            let blue = Int(frame.pixels[offset + 2])
+            let key = red << 16 | green << 8 | blue
             let assignment: (String, Int)?
             if let cached = assignments[key] {
                 assignment = cached.0.isEmpty ? nil : cached
             } else {
                 let matches = capturePalettes.flatMap { mark, palette in
                     palette.enumerated().compactMap { index, reference -> (String, Int)? in
-                        zip(channels, reference).allSatisfy { abs($0 - $1) <= extendedPaletteChannelTolerance }
+                        abs(red - reference[0]) <= extendedPaletteChannelTolerance
+                            && abs(green - reference[1]) <= extendedPaletteChannelTolerance
+                            && abs(blue - reference[2]) <= extendedPaletteChannelTolerance
                             ? (mark, index) : nil
                     }
                 }
@@ -675,7 +680,11 @@ enum StrictE2EPhotoIdentity {
             for column in 0..<frame.width {
                 if exclusion?.contains(CGPoint(x: column, y: row)) == true { continue }
                 let index = row * frame.width + column
-                hasWhite = hasWhite || (0..<3).allSatisfy { frame.pixels[index * pixelChannelCount + $0] >= 240 }
+                let offset = index * pixelChannelCount
+                hasWhite =
+                    hasWhite
+                    || (frame.pixels[offset] >= 240 && frame.pixels[offset + 1] >= 240
+                        && frame.pixels[offset + 2] >= 240)
                 if let (observedMark, color) = colors[index], observedMark == mark {
                     count[color] += 1
                     if let previous, previous != color { transitions.append(Double(previousX + column) / 2) }

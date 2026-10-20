@@ -26,19 +26,21 @@ final class RotationUITests: XCTestCase {
         let input = try requireStrictE2EInput()
         let app = try launchStrictE2EApp()
         defer { app.terminateForFailureEvidence() }
-        let driver = IOSDriver(app: app)
-        let evidence = Evidence()
-        driver.launchToPlayback(input: input)
-        driver.applyPlaybackSettings([.interval30Seconds, .displayMode(isSinglePhoto: false)])
-        let targets: [(name: String, device: UIDeviceOrientation, orientation: StepOrientation)] = [
-            ("layout-landscape-multi", .landscapeLeft, .landscape),
-            ("layout-portrait-multi", .portrait, .portrait)
-        ]
-        for target in targets {
-            try rotate(app, to: target.device, expecting: target.orientation)
-            try driver.advanceToMultiPhotoScene(in: target.orientation)
-            try captureStable(target.name, orientation: target.orientation, driver: driver, evidence: evidence) {
-                driver.isShowingMultiPhotoScene(in: target.orientation)
+        try FirstFailureEvidence.preservingThrownFailure(self) {
+            let driver = IOSDriver(app: app)
+            let evidence = Evidence()
+            driver.launchToPlayback(input: input)
+            driver.applyPlaybackSettings([.interval30Seconds, .displayMode(isSinglePhoto: false)])
+            let targets: [(name: String, device: UIDeviceOrientation, orientation: StepOrientation)] = [
+                ("layout-landscape-multi", .landscapeLeft, .landscape),
+                ("layout-portrait-multi", .portrait, .portrait)
+            ]
+            for target in targets {
+                try rotate(app, to: target.device, expecting: target.orientation)
+                try driver.advanceToMultiPhotoScene(in: target.orientation)
+                try captureStable(
+                    target.name, orientation: target.orientation, driver: driver, evidence: evidence,
+                    isSceneReady: StableFrame.showsMultiPhotoFixture)
             }
         }
     }
@@ -187,8 +189,8 @@ final class RotationUITests: XCTestCase {
         return identity.status == .match ? identity.mark : nil
     }
 
-    // Save the required PNG only when a photo is visible, all three control bar buttons are tappable and isSceneReady
-    // holds. If not stable by the deadline, keep only the -rejected capture and fail.
+    // Check isSceneReady on the saved frame's pixels, alongside control readiness and stable orientation.
+    // If not stable by the deadline, keep only the -rejected capture and fail.
     @MainActor
     private func captureStable(
         _ name: String,
@@ -196,15 +198,15 @@ final class RotationUITests: XCTestCase {
         driver: IOSDriver,
         evidence: Evidence,
         deadline: Date? = nil,
-        isSceneReady: () -> Bool = { true }
+        isSceneReady: (Data) -> Bool = StableFrame.showsFixturePhoto
     ) throws {
         let timeout = deadline?.timeIntervalSinceNow ?? Timing.stableFrameTimeout
         let frame = StableFrame.wait(
             in: driver.app,
             orientation: orientation,
             timeout: timeout,
-            prepare: { driver.revealUsableControls() && isSceneReady() },
-            accept: StableFrame.showsFixturePhoto
+            prepare: { driver.revealUsableControls() },
+            accept: isSceneReady
         )
         guard frame.isStable else {
             try evidence.reject(name, png: frame.png)
