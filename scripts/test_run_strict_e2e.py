@@ -1673,6 +1673,9 @@ raise SystemExit(65)
                  ("ios", "iphone", "display-policy", "a", "display-after", "display-black"),
                  ("ios", "iphone", "display-policy", "a", "display-after", "display-malformed"),
                  ("ios", "iphone", "filter-edit-switch", "a", "album-switch-b-play-1", "edit"),
+                 ("ios", "iphone", "filter-edit-switch", "a", "album-switch-b-play-1", "edit-member"),
+                 ("ios", "iphone", "filter-person", "a", "person-nofaces-1", "person-json"),
+                 ("ios", "iphone", "filter-vision", "a", "vision-solo-1", "vision-json"),
                  ("tvos", "tv", "tvos-switch", "a", "switch-b-single-after", "switch-single"),
                  ("tvos", "tv", "tvos-switch", "a", "display-before-candidate-01", "candidate"),
                  ("tvos", "tv", "tvos-switch", "a", "display-before-candidate-01", "candidate-malformed"))
@@ -1683,6 +1686,9 @@ raise SystemExit(65)
                 failing = displays[picture_fixture] if kind == "display" else (
                     b"malformed public PNG" if kind in {"malformed", "display-malformed", "candidate-malformed"} else
                     _fixture_png("A4", "b") if kind == "edit" else
+                    _fixture_png("A1") if kind == "edit-member" else
+                    _fixture_png("A4") if kind == "person-json" else
+                    _fixture_png("A2") if kind == "vision-json" else
                     display_frame("a", "A2", side_gap=False) if kind == "candidate" else
                     _fixture_png("A2") if kind in {"missing", "unreadable"} else black.getvalue())
                 case = {"platform": platform, "device": device, "configuration": "Debug" if suite in {"filter-person", "filter-vision"} else "Release",
@@ -1696,6 +1702,9 @@ raise SystemExit(65)
                     "display-black": "after-change cannot use a transition or unknown frame as passing",
                     "display-malformed": "after-change cannot use a transition or unknown frame as passing",
                     "edit": "frames after the album switch must show the public glyph of fixture A: album-switch-b-play-1",
+                    "edit-member": "frames after the album switch must belong to non-target album album-a-non-target: ['A1', 'A5']",
+                    "person-json": "Simulator Vision cannot substitute for a device; soloOnly must not be marked PASS",
+                    "vision-json": "Vision unavailable; soloOnly must not pass by accident",
                     "switch-single": "single photo after server switch cannot use a transition or unknown frame as passing",
                     "candidate": "every slot must show the public glyph of fixture B; observed fixture A in all 1 slot (both axes)",
                     "candidate-malformed": "display-policy screenshot regions cannot be classified: UnidentifiedImageError",
@@ -1707,11 +1716,11 @@ raise SystemExit(65)
                         for step, mark in (("person-normal-1", "A1"), ("person-conflict-normal-1", "A2"), ("person-nofaces-1", "A4")):
                             (evidence / (step + ".png")).write_bytes(_fixture_png(mark, fixture))
                         (evidence / "person-results.json").write_text(json.dumps({"cases": {
-                            "solo_only": {"environment": "simulator", "verdict": "UNVERIFIED"}}}))
+                            "solo_only": {"environment": "simulator", "verdict": "PASS" if kind == "person-json" else "UNVERIFIED"}}}))
                     elif suite == "filter-vision":
                         write_member_manifest(evidence / "member-manifest.json", fixture)
                         (evidence / "vision-environment.json").write_text(json.dumps({
-                            "environment": "device", "vision_available": True,
+                            "environment": "device", "vision_available": kind != "vision-json",
                             "qualified_marks": ["A2"], "face_counts": {"A2": 1}}))
                     elif suite == "filter-edit-switch":
                         AlbumEditSwitchVisualContractTests()._write_valid_evidence(evidence, fixture)
@@ -1765,15 +1774,17 @@ raise SystemExit(65)
                 failed = summary["population"]["observed"][0]
                 self.assertEqual("failed", failed["outcome"])
                 self.assertEqual(2, failed["attempts"][0]["exit_code"])
-                if kind in {"missing", "unreadable", "edit", "switch-single", "display-black", "display-malformed", "candidate-malformed"}:
+                if kind in {"missing", "unreadable", "edit", "edit-member", "switch-single", "display-black", "display-malformed", "candidate-malformed"}:
                     self.assertEqual("[redacted validator failure]", failed["validator_failure_message"])
+                elif kind in {"person-json", "vision-json"}:
+                    self.assertEqual(expected + "; context unresolved", failed["validator_failure_message"])
                 elif kind == "candidate":
                     self.assertEqual(expected, failed["validator_failure_message"])
                 else:
                     self.assertIn("screenshot " + name + ".png", failed["validator_failure_message"])
                 published = root / "published"
                 self.assertEqual(0, export_shard(records.parent, published))
-                if kind in {"malformed", "missing", "unreadable", "display-malformed", "candidate-malformed"}:
+                if kind in {"malformed", "missing", "unreadable", "display-malformed", "candidate-malformed", "person-json", "vision-json"}:
                     self.assertEqual("unavailable", failed["first_failure"]["screenshot"]["status"])
                     self.assertEqual([], list(published.rglob("first-failure.png")))
                 else:
@@ -1784,7 +1795,7 @@ raise SystemExit(65)
                     self.assertEqual(expected_sha, manifest["image_sha256"])
                     self.assertEqual(expected_sha, hashlib.sha256((package / "first-failure.png").read_bytes()).hexdigest())
                     self.assertNotEqual(manifest["image_sha256"], hashlib.sha256(canonical_first_failure_png(before)[0]).hexdigest())
-                    if kind == "edit":
+                    if kind in {"edit", "edit-member"}:
                         self.assertNotEqual(manifest["image_sha256"],
                             hashlib.sha256(canonical_first_failure_png(_fixture_png("A5", fixture))[0]).hexdigest())
 

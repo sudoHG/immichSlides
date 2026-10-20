@@ -860,6 +860,11 @@ def _evaluate_filter_edit_switch(evidence_dir: Path, suite: str) -> dict[str, An
               for mark in _scene_slot_marks((evidence_dir / f"{name}.png").read_bytes(), fixture_set, screenshot_name=f"{name}.png")])
     allowed = set(manifest["non_target_album"]["labels"])
     if not allowed or not set(marks).issubset(allowed):
+        if suite != "tvos-edit-switch":
+            for name, mark in zip(FILTER_EDIT_SWITCH_STEPS, marks):
+                if mark not in allowed:
+                    remember_validator_input((evidence_dir / f"{name}.png").read_bytes())
+                    break
         raise FilterContractError(f"frames after the album switch must belong to non-target album {expected_album_id}: {marks}")
     for name in FILTER_EDIT_SWITCH_STEPS:
         image_bytes = (evidence_dir / f"{name}.png").read_bytes()
@@ -917,6 +922,8 @@ def _evaluate_filter_empty(evidence_dir: Path) -> dict[str, Any]:
 
 
 def _evaluate_filter_person(evidence_dir: Path) -> dict[str, Any]:
+    from ci_failure_diagnostics import remember_validator_input
+
     manifest = load_member_manifest(evidence_dir / "member-manifest.json")
     results = _read_json_object(evidence_dir / "person-results.json", "person-results.json")
     if "wins" in results:
@@ -944,6 +951,7 @@ def _evaluate_filter_person(evidence_dir: Path) -> dict[str, Any]:
     if [no_faces] != expected_no_faces:
         raise FilterContractError(f"no-faces person normal playback member is not in the manifest: {no_faces}")
 
+    remember_validator_input(b"")
     solo_case = cases.get("solo_only")
     if not isinstance(solo_case, dict):
         raise FilterContractError("person-results.json is missing solo_only")
@@ -1031,6 +1039,8 @@ def _evaluate_switch_display_policy(
 
 
 def _evaluate_filter_vision(evidence_dir: Path) -> dict[str, Any]:
+    from ci_failure_diagnostics import remember_validator_input
+
     load_member_manifest(evidence_dir / "member-manifest.json")
     payload = _read_json_object(evidence_dir / "vision-environment.json", "vision-environment.json")
     environment = payload.get("environment")
@@ -1055,6 +1065,7 @@ def _evaluate_filter_vision(evidence_dir: Path) -> dict[str, Any]:
     mark = _classified_mark_from_png(evidence_dir, "vision-solo-1")
     if mark not in marks:
         raise FilterContractError(f"device Vision screenshot mark is not in qualified_marks: {mark}")
+    remember_validator_input(b"")
     assert_solo_only_not_vacuous(
         environment="device",
         vision_available=vision_available,

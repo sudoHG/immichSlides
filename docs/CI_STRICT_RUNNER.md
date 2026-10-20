@@ -821,8 +821,11 @@ the full `display-after.png` before cached foreground or region analysis. Intern
 crops do not replace that input. Undecodable bytes make the image unavailable,
 rather than retaining a previously registered playback or before image.
 Named-PNG classification also clears the retained input before missing-file or read errors.
+The person `solo_only` JSON checks and device Vision's non-vacuity JSON check clear
+the retained input; their rejections report an unavailable image.
 Edit-switch slot checks register the frame being checked, including when a later frame
-was already classified. Server-switch candidates and the post-switch single-photo input
+was already classified. Its iOS whole-frame membership rejection registers the first
+frame outside the non-target album. Server-switch candidates and the post-switch single-photo input
 retain full frames; nested crop analysis restores the original frame before returning
 or propagating a rejection. These registration-only paths add no screenshot-name context.
 For iOS and tvOS album-empty, the empty-result image replaces the playback input
