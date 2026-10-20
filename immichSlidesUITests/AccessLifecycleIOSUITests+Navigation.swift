@@ -388,13 +388,9 @@ extension AccessLifecycleIOSUITests {
 
     @MainActor
     func openSettingsFromSlideshow(app: XCUIApplication) {
-        revealPlaybackControls(app: app)
-        let settingsButton = app.buttons["slideshow.control.settings.button"]
-        XCTAssertTrue(
-            settingsButton.waitForPublicElement(
-                "slideshow.control.settings.button", timeout: TestWait.seconds(.product(15))),
-            "The playback page must provide a settings entry.")
-        tapElement(settingsButton)
+        // Read the successor inside the original entry deadline before callers query settings items.
+        let deadline = Date().addingTimeInterval(TestWait.seconds(.product(15)))
+        IOSDriver(app: app).openSettings(until: deadline, shouldAllowPINEntry: true)
     }
 
     @MainActor

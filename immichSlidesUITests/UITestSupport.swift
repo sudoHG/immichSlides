@@ -986,6 +986,7 @@ struct SlideshowControlBarButtonObservation {
     let identifier: String
     let snapshots: [String: XCUIElementSnapshot]
     let windowFrame: CGRect
+    let windowElement: XCUIElement
 
     var button: XCUIElementSnapshot? { snapshots[identifier] }
     var hasPlaybackMarker: Bool { snapshots["slideshow.currentAssetId.flag"] != nil }
@@ -1060,7 +1061,8 @@ struct SlideshowControlBarTiming {
 
 extension XCUIApplication {
     func slideshowControlBarButtonObservation(identifier: String) throws -> SlideshowControlBarButtonObservation {
-        let window = try windows.firstMatch.snapshot()
+        let windowElement = windows.firstMatch
+        let window = try windowElement.snapshot()
         var pending = window.children
         var snapshots: [String: XCUIElementSnapshot] = [:]
         while let node = pending.popLast() {
@@ -1072,7 +1074,7 @@ extension XCUIApplication {
             pending.append(contentsOf: node.children)
         }
         return SlideshowControlBarButtonObservation(
-            identifier: identifier, snapshots: snapshots, windowFrame: window.frame)
+            identifier: identifier, snapshots: snapshots, windowFrame: window.frame, windowElement: windowElement)
     }
 
     func waitForSlideshowSettingsSnapshot(
