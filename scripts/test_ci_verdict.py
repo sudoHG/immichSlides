@@ -291,6 +291,48 @@ class NightlyVerdictTests(unittest.TestCase):
                 with self.assertRaises(ci_summary.ContractError):
                     parse_manifest(changed)
 
+    def test_nightly_early_boot_records_failures_without_waiting_for_readiness(self):
+        import contextlib
+        import io
+        import os
+        import subprocess
+        import tempfile
+        import yaml
+        import strict_e2e_runner_support as support
+        from ci_failure_diagnostics import preparation_first_failure
+        job = yaml.safe_load((Path(__file__).parent.parent / ".github/workflows/ci-nightly.yml").read_text())["jobs"]["strict"]
+        step = next(step for step in job["steps"] if step.get("id") == "simulator")
+        source = step["run"].split("<<'PY'\n", 1)[1].rsplit("PY", 1)[0]
+        for state in ("ready", "nonzero", "timeout"):
+            with self.subTest(state=state), tempfile.TemporaryDirectory() as raw:
+                calls, clock = [], [0.0]
+                def run(command, **kwargs):
+                    calls.append(command)
+                    self.assertEqual(["xcrun", "simctl", "boot", "TEST"], command)
+                    self.assertEqual(support.SIMULATOR_COMMAND_TIMEOUT_SECONDS, kwargs["timeout"])
+                    if state == "timeout":
+                        clock[0] += kwargs["timeout"]
+                        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+                    return subprocess.CompletedProcess(command, int(state == "nonzero"), "", "")
+                with patch.dict(os.environ, {"RUNNER_TEMP": raw, "NIGHTLY_SIMULATOR": "TEST"}), \
+                        patch.object(support.subprocess, "run", side_effect=run), \
+                        patch.object(support.time, "monotonic", side_effect=lambda: clock[0]), \
+                        patch("ci_execution_diagnostics.system_sample", return_value=None), contextlib.redirect_stdout(io.StringIO()):
+                    if state == "ready":
+                        exec(source, {})
+                    else:
+                        with self.assertRaisesRegex(support.CommandError, "^Early simulator boot failed \\(exit 1\\)\\.$"
+                                if state == "nonzero" else "^simulator-boot timed out after 60.0s\\.$"):
+                            exec(source, {})
+                self.assertEqual(1, len(calls), "early boot must not retry or run readiness")
+                ledger = json.loads(Path(raw, "preparation-diagnostics.json").read_text())["receipt"]
+                if state == "timeout":
+                    receipt = preparation_first_failure(ledger)
+                    self.assertEqual(("simulator-boot", 60), (receipt["step"], receipt["timing"]["wait_elapsed_seconds"]))
+                else:
+                    self.assertEqual(["started", "completed"] if state == "ready" else ["started"],
+                                     [event["state"] for event in ledger["events"]])
+
     def test_workflow_budgets_cover_preparation_execution_and_diagnostic_margin(self):
         import yaml
         import shlex
@@ -309,28 +351,28 @@ class NightlyVerdictTests(unittest.TestCase):
             job = yaml.safe_load((root / ".github/workflows" / filename).read_text())["jobs"][job_name]
             steps = job["steps"]
             setup = next(i for i, step in enumerate(steps) if "setup_ci_python.py" in step.get("run", ""))
-            preparation = next(i for i, step in enumerate(steps) if "prepare_simulator(" in step.get("run", ""))
             consumer = next(i for i, step in enumerate(steps) if "scripts/run_strict_ci_tracer.py" in step.get("run", ""))
+            preparation = (consumer if filename == "ci-nightly.yml" else
+                           next(i for i, step in enumerate(steps) if "prepare_simulator(" in step.get("run", "")))
             accounting = next(i for i, step in enumerate(steps) if "--preparation-failed" in step.get("run", ""))
             upload = next(i for i, step in enumerate(steps) if "actions/upload-artifact@" in step.get("uses", "")
                           and "/records" in step.get("with", {}).get("path", ""))
             creation = next(i for i, step in enumerate(steps) if "simctl create" in step.get("run", ""))
             self.assertLess(setup, preparation)
-            self.assertLess(preparation, consumer)
+            self.assertLess(creation if filename == "ci-nightly.yml" else preparation, consumer)
             self.assertLess(consumer, accounting)
             self.assertLess(accounting, upload)
             self.assertEqual("simulator", steps[creation].get("id"))
-            self.assertEqual("preparation", steps[preparation].get("id"))
             if filename == "ci-nightly.yml":
-                source = "\n".join(steps[preparation]["run"].splitlines()[1:-1])
-                calls = [node for node in ast.walk(ast.parse(source)) if isinstance(node, ast.Call)
-                         and isinstance(node.func, ast.Name) and node.func.id == "prepare_simulator"]
-                self.assertEqual([False], [ast.literal_eval(keyword.value) for call in calls
-                                          for keyword in call.keywords if keyword.arg == "should_check_app"],
-                                 "nightly prebuild preparation must request the service probe")
-            self.assertGreaterEqual(steps[preparation]["timeout-minutes"] * 60,
-                                    SIMULATOR_PREPARATION_TIMEOUT_SECONDS + 180)
-            self.assertEqual("always() && (steps.simulator.outcome == 'failure' || steps.preparation.outcome == 'failure')",
+                self.assertIn("--simulator-boot-submitted", shlex.split(steps[consumer]["run"]),
+                              "nightly must gate the early boot after the cold build")
+                self.assertIn('"simctl", "boot"', steps[creation]["run"])
+            else:
+                self.assertEqual("preparation", steps[preparation].get("id"))
+                self.assertGreaterEqual(steps[preparation]["timeout-minutes"] * 60,
+                                        SIMULATOR_PREPARATION_TIMEOUT_SECONDS + 180)
+            self.assertEqual("always() && steps.simulator.outcome == 'failure'" if filename == "ci-nightly.yml" else
+                             "always() && (steps.simulator.outcome == 'failure' || steps.preparation.outcome == 'failure')",
                              steps[accounting]["if"])
             accounting_args = shlex.split(steps[accounting]["run"])
             output_dir = accounting_args[accounting_args.index("--output-dir") + 1]

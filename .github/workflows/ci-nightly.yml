@@ -185,7 +185,7 @@ jobs:
           /usr/bin/python3 -c 'import json; print("DEVELOPER_DIR=" + json.load(open("scripts/ci-pins.json"))["xcode"]["developer_dir"])' >> "$GITHUB_ENV"
           /usr/bin/python3 -B scripts/setup_ci_python.py --python /usr/bin/python3 \
             --venv "$RUNNER_TEMP/nightly-python" --verify-toolchain
-      - name: Create a dedicated simulator for this shard
+      - name: Create and submit early boot for the dedicated simulator
         id: simulator
         env:
           NIGHTLY_DEVICE: ${{ matrix.device }}
@@ -197,24 +197,21 @@ jobs:
           echo "NIGHTLY_SIMULATOR=$udid" >> "$GITHUB_ENV"
           os_name=$([ "$NIGHTLY_PLATFORM" = ios ] && echo iOS || echo tvOS)
           echo "NIGHTLY_DESTINATION=platform=$os_name Simulator,id=$udid" >> "$GITHUB_ENV"
-      - name: Prepare the dedicated simulator before fixture health checks and case resets
-        id: preparation
-        timeout-minutes: 13
-        run: |
+          export NIGHTLY_SIMULATOR="$udid"
           "$RUNNER_TEMP/nightly-python/bin/python3" -B - <<'PY'
           import os, sys
           from pathlib import Path
           sys.path.insert(0, "scripts")
-          from strict_e2e_runner_support import prepare_simulator
+          from strict_e2e_runner_support import simulator_command, CommandError
           from ci_execution_diagnostics import session
-          def report(line):
-              print(line, flush=True)
-              with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as summary:
-                  summary.write(line + "\n")
+          # simctl boot submits startup; bootstatus/readiness wait until after the cold build.
           with session(Path(os.environ["RUNNER_TEMP"]) / "preparation-diagnostics.json"):
-              prepare_simulator(os.environ["NIGHTLY_SIMULATOR"], report=report, should_check_app=False)
+              boot = simulator_command(["xcrun", "simctl", "boot", os.environ["NIGHTLY_SIMULATOR"]], "simulator-boot")
+              if boot.returncode:
+                  raise CommandError(f"Early simulator boot failed (exit {boot.returncode}).")
+          print("simulator-early-boot: submitted; settling overlaps the cold build", flush=True)
           PY
-      - name: Warm the shard once and execute every scheduled case
+      - name: Build cold, gate the settled simulator and execute every scheduled case
         env:
           NIGHTLY_SHARD: ${{ matrix.id }}
           NIGHTLY_PLATFORM: ${{ matrix.platform }}
@@ -224,9 +221,10 @@ jobs:
             --platform "$NIGHTLY_PLATFORM" --destination "$NIGHTLY_DESTINATION" \
             --output-dir "$RUNNER_TEMP/nightly-strict" --min-free-gib 30 \
             --cold-timeout-seconds 1200 --warm-timeout-seconds 600 \
+            --simulator-boot-submitted \
             --preparation-diagnostics "$RUNNER_TEMP/preparation-diagnostics.json"
       - name: Account for every case after simulator preparation failure
-        if: always() && (steps.simulator.outcome == 'failure' || steps.preparation.outcome == 'failure')
+        if: always() && steps.simulator.outcome == 'failure'
         env:
           NIGHTLY_SHARD: ${{ matrix.id }}
           NIGHTLY_PLATFORM: ${{ matrix.platform }}

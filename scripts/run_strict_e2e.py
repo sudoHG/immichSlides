@@ -667,6 +667,8 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
     parser.add_argument("--destination", required=True)
     parser.add_argument("--evidence-dir", type=Path, required=True)
     parser.add_argument("--diagnostics-receipt", type=Path, help="shared job measurement ledger")
+    parser.add_argument("--simulator-boot-submitted", action="store_true",
+                        help="Reuse a dedicated device's submitted boot; still require bootstatus, readiness and resets")
     parser.add_argument("--fixture-set", choices=("a", "b"), default="a")
     parser.add_argument("--scenario", choices=RUNNER_SCENARIOS, default="normal")
     parser.add_argument("--suite", choices=RUNNER_SUITES, default="smoke")
@@ -836,7 +838,8 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             preparation_lines.append(line)
             print(line, flush=True)
         try:
-            _, preparation_log = run_preparation(prepare_simulator, simulator_udid, report=report_preparation)
+            _, preparation_log = run_preparation(prepare_simulator, simulator_udid, report=report_preparation,
+                                                  boot_submitted=arguments.simulator_boot_submitted)
         finally:
             (arguments.evidence_dir / "simulator-preparation.log").write_text(
                 preparation_log or ("\n".join(preparation_lines) + "\n"), encoding="utf-8")
@@ -931,7 +934,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             )
             service_log_path.write_text("scenario=unreachable listening=false\n", encoding="utf-8")
 
-        reset_log = run_preparation(reset_simulator_app, simulator_udid)
+        reset_log = run_preparation(reset_simulator_app, simulator_udid, boot_submitted=True)
         (arguments.evidence_dir / "simulator-reset.log").write_text(reset_log, encoding="utf-8")
 
         environment = make_test_environment(
@@ -980,12 +983,12 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                                                         [service_log_path, service_log_b_path])
                 def reset_retry():
                     if arguments.suite == "late-image":
-                        retry_reset_log = reset_simulator_app(simulator_udid)
+                        retry_reset_log = reset_simulator_app(simulator_udid, boot_submitted=True)
                         reset_late_image_fixture(server_url, input_key)
                         attempt_evidence.before_retry()
                     else:
                         attempt_evidence.before_retry()
-                        retry_reset_log = reset_simulator_app(simulator_udid)
+                        retry_reset_log = reset_simulator_app(simulator_udid, boot_submitted=True)
                     (arguments.evidence_dir / (log_path.stem + "-retry-reset.log")).write_text(retry_reset_log, encoding="utf-8")
                     with (arguments.evidence_dir / "simulator-reset.log").open("a") as log:
                         log.write(retry_reset_log)
@@ -1091,7 +1094,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             log_parts: list[str] = []
             for index, session in enumerate(FILTER_PERSON_SESSIONS):
                 if index > 0:
-                    reset_logs.append(reset_simulator_app(simulator_udid))
+                    reset_logs.append(reset_simulator_app(simulator_udid, boot_submitted=True))
                     with (arguments.evidence_dir / "simulator-reset.log").open("a") as log:
                         log.write(reset_logs[-1])
                 session_bundle = prepare_private_result_bundle_path(f"filter-person-{session['name']}")

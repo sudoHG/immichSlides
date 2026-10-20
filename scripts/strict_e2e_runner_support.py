@@ -575,6 +575,10 @@ def _wait_for_simulator_response(query, phase: str, *, report: Callable[[str], N
                 continue
             if time.monotonic() >= deadline:
                 raise InfrastructureTimeout(phase, budget)
+            line = (f"{phase}: query completed; attempt={attempts}; "
+                    f"query_elapsed={time.monotonic() - query_started:.3f}s; elapsed={time.monotonic() - started:.3f}s")
+            lines.append(line)
+            report(line)
             outcome = "passed"
             break
     finally:
