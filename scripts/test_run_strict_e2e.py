@@ -1662,6 +1662,7 @@ raise SystemExit(65)
         cases = (("ios", "iphone", "filter-person", "a", "person-normal-1", "person"),
                  ("ios", "iphone", "filter-person", "b", "person-conflict-normal-1", "person"),
                  ("ios", "iphone", "filter-person", "a", "person-nofaces-1", "person"),
+                 ("ios", "iphone", "filter-vision", "a", "vision-solo-1", "vision"),
                  ("ios", "iphone", "display-policy", "a", "display-after", "display"),
                  ("tvos", "tv", "tvos-display-policy", "a", "display-after", "display"),
                  ("tvos", "tv", "tvos-switch", "a", "display-after", "display"),
@@ -1672,7 +1673,7 @@ raise SystemExit(65)
                 picture_fixture = "b" if suite == "tvos-switch" else fixture
                 failing = displays[picture_fixture] if kind == "display" else (
                     b"malformed public PNG" if kind == "malformed" else black.getvalue())
-                case = {"platform": platform, "device": device, "configuration": "Debug" if suite == "filter-person" else "Release",
+                case = {"platform": platform, "device": device, "configuration": "Debug" if suite in {"filter-person", "filter-vision"} else "Release",
                         "suite": suite, "scenario": "normal", "fixture": fixture}
                 status = "UNRECOGNIZABLE" if kind == "malformed" else "BLACK"
                 expected = ("The after-change frame must be a recognizable, stable single-photo frame" if kind == "display" else
@@ -1685,6 +1686,11 @@ raise SystemExit(65)
                             (evidence / (step + ".png")).write_bytes(_fixture_png(mark, fixture))
                         (evidence / "person-results.json").write_text(json.dumps({"cases": {
                             "solo_only": {"environment": "simulator", "verdict": "UNVERIFIED"}}}))
+                    elif suite == "filter-vision":
+                        write_member_manifest(evidence / "member-manifest.json", fixture)
+                        (evidence / "vision-environment.json").write_text(json.dumps({
+                            "environment": "device", "vision_available": True,
+                            "qualified_marks": ["A2"], "face_counts": {"A2": 1}}))
                     elif suite == "tvos-switch":
                         _write_server_switch_pass(evidence)
                         _write_switch_display_bridge(evidence)
@@ -1705,11 +1711,14 @@ raise SystemExit(65)
                     return str(raised.exception.__cause__)
                 code, records, trace, summary = self._produce_validator_records(
                     root, reject, case=case, receipt_suite=suite, nightly=True)
-                self.assertEqual((1, "failed", 2), (code, summary["status"], trace["warm"][0]["exit_code"]))
+                expected_shard = (0, "passed", 2) if suite == "filter-vision" else (1, "failed", 2)
+                self.assertEqual(expected_shard, (code, summary["status"], trace["warm"][0]["exit_code"]))
+                self.assertTrue(trace["warm"][0]["automated_contract_failed"])
                 methods = trace["warm"][0]["official_methods"]
                 self.assertEqual(3 if suite == "filter-person" else 1, len(methods))
                 self.assertTrue(all(method["result"] == "Passed" for method in methods))
                 failed = summary["population"]["observed"][0]
+                self.assertEqual("failed", failed["outcome"])
                 self.assertEqual(2, failed["attempts"][0]["exit_code"])
                 self.assertIn("screenshot " + name + ".png", failed["validator_failure_message"])
                 published = root / "published"
