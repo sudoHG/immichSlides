@@ -283,7 +283,7 @@ def simulator_command(command: list[str], phase: str, *, deadline: float | None 
     if budget <= 0:
         raise InfrastructureTimeout(phase, 0)
     recorder = active()
-    recorder = recorder if phase in ("simulator-boot", "simulator-bootstatus", "simulator-container", "simulator-readiness") else None
+    recorder = recorder if phase in ("simulator-boot", "simulator-bootstatus", "simulator-container", "simulator-preparation") else None
     started, cpu = time.monotonic(), time.process_time()
     sequence = recorder.next_sequence() if recorder else 0
     def mark(state):
@@ -519,7 +519,7 @@ def wait_for_simulator_service_response(simulator_udid: str, *, report: Callable
         # simctl resolves a bare executable in the device; absolute paths refer to the host.
         completed = simulator_command(
             ["xcrun", "simctl", "spawn", simulator_udid, "launchctl", "print", "system/com.apple.lsd"],
-            "simulator-readiness", deadline=deadline, timeout_seconds=timeout)
+            "simulator-preparation", deadline=deadline, timeout_seconds=timeout)
         if completed.returncode:
             raise CommandError(f"Simulator LaunchServices registration check failed (exit {completed.returncode}).")
     return _wait_for_simulator_response(query, "simulator-readiness", report=report, deadline=deadline)

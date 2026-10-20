@@ -618,11 +618,15 @@ for an app container. A nonzero service check fails immediately; only timeouts
 repeat under the same 300-second readiness and 600-second preparation budgets.
 Logs identify this probe as `launch-services-registration`. Its returned `None`
 is not an app-absence result; this mode is only for callers that discard the
-container value. The default mode and every reset still query the real container,
+container value. Each service query records a `simulator-preparation` invocation
+with its own sequence; only the enclosing wait records a `simulator-readiness`
+timeout, preserving the full wait duration in first-failure receipts.
+The default mode and every reset still query the real container,
 terminate an installed app, uninstall and verify absence before tests. Service
 registration does not claim app-database readiness or successful test execution.
-Toolchain/pins checks run before
-early boot; only archive downloads overlap boot in the UI workflows.
+The separate `ci-strict-tracer.yml` workflow still prepares before cold builds in
+the default app-container mode. Toolchain/pins checks run before early boot;
+only archive downloads overlap boot in the UI workflows.
 
 The fixture UI device-inventory query uses the same timed-out-query retry logic
 and a separate 300-second readiness budget: 10, 20, 40, then at most 60 seconds

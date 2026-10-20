@@ -321,6 +321,13 @@ class NightlyVerdictTests(unittest.TestCase):
             self.assertLess(accounting, upload)
             self.assertEqual("simulator", steps[creation].get("id"))
             self.assertEqual("preparation", steps[preparation].get("id"))
+            if filename == "ci-nightly.yml":
+                source = "\n".join(steps[preparation]["run"].splitlines()[1:-1])
+                calls = [node for node in ast.walk(ast.parse(source)) if isinstance(node, ast.Call)
+                         and isinstance(node.func, ast.Name) and node.func.id == "prepare_simulator"]
+                self.assertEqual([False], [ast.literal_eval(keyword.value) for call in calls
+                                          for keyword in call.keywords if keyword.arg == "should_check_app"],
+                                 "nightly prebuild preparation must request the service probe")
             self.assertGreaterEqual(steps[preparation]["timeout-minutes"] * 60,
                                     SIMULATOR_PREPARATION_TIMEOUT_SECONDS + 180)
             self.assertEqual("always() && (steps.simulator.outcome == 'failure' || steps.preparation.outcome == 'failure')",
