@@ -152,6 +152,8 @@ class StrictE2ERunnerTests(StrictE2ERunnerTestsCasesConfiguration, StrictE2ERunn
                             self.assertAlmostEqual(clock[0], 135, delta=.1)
                         else:
                             query.assert_not_called()
+                            if state == "build-timeout":
+                                self.assertAlmostEqual(clock[0], support.SERVICE_FIXTURE_BUILD_TIMEOUT_SECONDS, delta=.1)
                         self.assertEqual(error.exception.code, 2 if exit_phase else 124)
                         if state == "late-build":
                             self.assertEqual(late_reads, [0.0])
