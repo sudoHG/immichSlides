@@ -2467,6 +2467,7 @@ raise SystemExit(65)
         import run_strict_ci_tracer as tracer
         import ci_execution_diagnostics as diagnostics
         from ci_nightly import parse_manifest, shards
+        from types import SimpleNamespace
         matrix = tracer.ROOT / "scripts/nightly-matrix.json"
         selected = next(shard for shard in shards(parse_manifest(matrix.read_text()))
                         if shard["id"] == "iphone-immichSlides-iOS-debug-0")
@@ -2509,9 +2510,13 @@ raise SystemExit(65)
                     "nodeType": "Unit test bundle", "name": bundle, "children": [{
                     "nodeType": "Test Case", "nodeIdentifier": method + "()", "result": result}]}]}))
                 return 124 if last else 0
+        # The fake IO clock must not race real worker scheduling or Event.wait timeouts.
         with tempfile.TemporaryDirectory() as raw, \
                 mock.patch.object(diagnostics.Recorder, "ledger_io", measured_io), \
                 mock.patch.object(diagnostics.time, "perf_counter", side_effect=lambda: clock[0]), \
+                mock.patch.object(diagnostics, "threading", SimpleNamespace(
+                    Event=diagnostics.threading.Event,
+                    Thread=lambda *, target, daemon: SimpleNamespace(start=target))), \
                 mock.patch.object(tracer, "run_runner", side_effect=runner), mock.patch.object(tracer, "workspace_preflight"), \
                 mock.patch.object(tracer, "run_identity", return_value=identity), \
                 mock.patch.object(tracer, "source_metadata", return_value=(None, False)), \
