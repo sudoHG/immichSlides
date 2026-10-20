@@ -43,7 +43,7 @@ FIRST_FAILURE_ELEMENTS = (
 )
 FIRST_FAILURE_STEPS = ("unknown", "launch-app", "reveal-controls", "query-element", "select", "capture-frame",
     "settings-readback", "focus", "history-readback", "rotate", "wait-scene", "simulator-boot",
-    "simulator-bootstatus", "simulator-readiness")
+    "simulator-bootstatus", "simulator-readiness", "mode-card", "mode-continue", "mode-departure", "save-password-prompt")
 FIRST_FAILURE_ACTIONS = ("unknown", "none", "tap", "select", "up", "down", "left", "right", "back", "home",
     "play-pause", "rotate", "launch", "activate", "terminate", "type", "adjust")
 FIRST_FAILURE_TIMING_FIELDS = ("since_action_issued_seconds", "since_action_returned_seconds", "action_duration_seconds",
@@ -688,12 +688,13 @@ PREFIX_RULES = (
     ("Save must become enabled after a real connection test succeeds.", "firstboot_setup", "control_state"),
     ("A cold launch with saved settings must not return to the first-boot page.", "cold_relaunch", "navigation"),
     ("A configured cold launch must go straight to the playback page.", "cold_relaunch", "navigation"),
-    ("The mode page must offer ", "mode_selection", "navigation"),
     ("Chose filter but reached the playback page, so the mode card tap did not register.", "mode_selection", "navigation"),
     ("Still on the mode page after Continue; filter mode did not start.", "mode_selection", "navigation"),
     ("Filter mode must reach the filter summary page.", "mode_selection", "navigation"),
     ("Going back from the filter summary must return to mode selection.", "mode_selection", "navigation"),
     ("Random mode must reach the playback page.", "playback_entry", "navigation"),
+    ("Mode departure failed after one hittable Continue without a password prompt;", "playback_entry", "navigation"),
+    ("First-boot mode navigation must dismiss the exact password prompt,", "mode_selection", "navigation"),
     ("The playback page must show the Previous button.", "control_action", "hidden_controls"),
     ("After auto-advance, the playback controls must be revealable.", "control_action", "hidden_controls"),
     ("The playback page must show Play/Pause.", "control_action", "hidden_controls"),

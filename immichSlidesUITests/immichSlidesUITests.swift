@@ -449,28 +449,30 @@ final class immichSlidesUITests: XCTestCase {
                         "mode.random.button",
                         timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
 
-                tapElement(app.buttons["mode.random.button"])
+                IOSFirstBootNavigation(app: app).selectMode(
+                    "mode.random.button", timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds)
                 attachScreenshot(
                     app: app,
                     name: "audit-mode-random-selected-\(scheme)-\(orientation.name)-\(currentDeviceTag())"
                 )
 
-                tapElement(app.buttons["mode.filtered.button"])
+                IOSFirstBootNavigation(app: app).selectMode(
+                    "mode.filtered.button", timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds)
                 attachScreenshot(
                     app: app,
                     name: "audit-mode-filtered-selected-\(scheme)-\(orientation.name)-\(currentDeviceTag())"
                 )
             }
 
-            let continueButton = app.buttons["mode.continue.button"]
-            XCTAssertTrue(
-                continueButton.waitForPublicElement(
-                    "mode.continue.button", timeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds))
-            XCTAssertTrue(continueButton.isEnabled)
-            tapElement(continueButton)
+            guard
+                let summaryDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
+                    "mode.filtered.button", destinationIdentifier: "filterSummary.startPlayback.button",
+                    selectionTimeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds,
+                    departureTimeout: immichSlidesUITestsWaitTiming.controlAppearanceTimeoutSeconds)
+            else { return }
             XCTAssertTrue(
                 app.buttons["filterSummary.album.button"].waitForFailureEvidence(
-                    timeout: immichSlidesUITestsWaitTiming.controlAppearanceTimeoutSeconds))
+                    timeout: max(.zero, summaryDeadline.timeIntervalSinceNow)))
 
             attachScreenshot(
                 app: app,

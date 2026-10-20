@@ -164,6 +164,64 @@ It matches the same receiver passed as a complete argument (optionally labeled o
 when the true branch starts with a call, including calls nested inside it; passing another element,
 a derived property or a snapshot is outside this rule.
 Snapshots expose enabled state, not hittability, so pause-stage evidence uses `*_enabled` keys.
+For iOS first-boot paths that type and save server credentials, use
+`IOSFirstBootNavigation` in `UITestSupport`, including the interactive visual-audit
+pack. Use `selectMode` for selection-only screenshots and `selectModeAndContinue`
+to leave the mode page; both use the same observation, prompt handling and selection
+checks. Fixture paths that inject configuration retain their original card tap,
+Continue readiness check, single Continue tap and destination assertions, with the
+original independent waits. They do not use this credential-prompt observer.
+Each poll first reads actual App windows. Only an unobstructed mode page with no
+password-title/decline clues and both the target card and Continue live-hittable
+can omit the SpringBoard and alert search. Other surfaces, modal clues or either
+blocked control still use the complete search. Each prompt's exact English/Chinese
+Save Password title and unique Not Now action come from the same fallible window snapshot.
+Enumerate real window elements rather than an application snapshot's children:
+an application snapshot can omit the main window and change the apparent indices.
+Inspect every captured window: a late credential sheet can be in a
+later SpringBoard window and absent from the app's accessibility tree. Mode selection
+and Continue attributes share one app window subtree. Retain the actual window
+elements from that enumeration for live checks and taps within the observation;
+do not enumerate them again. Multiple matching prompt windows are ambiguous and never authorize a tap.
+Only when both hosts' window snapshots lack the prompt, inspect one fallible
+`app.alerts` snapshot: iPad can expose the remote credential modal only there.
+Require exactly one alert, the exact password title and one decline button in
+that same snapshot. Multiple alerts or a failed snapshot are unknown and cannot
+authorize a tap or prove disappearance. Receipts distinguish `window-index-N`
+from `alert-snapshot`. A still-present prompt needs a fresh exact snapshot and
+live-hittable decline action before another decline within the same deadline.
+Record a returned decline separately from a later snapshot confirming disappearance.
+Public snapshots do not expose hittability: immediately before a real tap, match
+both the observed identifier and label, require exactly one live match, and check
+its label, frame and `isHittable`. An alert source must still contain exactly one
+alert. Receipts include the live decline label. Check the same absolute deadline again.
+Never equate a visible frame with hittability, decline an unrelated alert, or save
+credentials. Do not capture screenshots between detecting the prompt and declining
+it. Mode cards, Not Now and Continue all require live hittability; a non-hittable
+card waits for a fresh observation, without a coordinate tap that can invoke
+XCTest's generic interruption handler. Read selection from the unique mode card's
+snapshot `isSelected` trait, rather than a generic system-symbol identifier.
+Confirm the prompt is absent and the intended mode is selected before issuing
+one Continue; record its issue and return separately, then prove mode disappeared
+and the caller's exact destination identifier appeared within the existing departure
+deadline. Callers name only their own destination; the shared observer does not
+reference unrelated playback or filter surfaces. A returned,
+hittable Continue without a post-Continue prompt that leaves mode visible is a navigation failure,
+including a possible App defect; do not resend Continue or retry the flow.
+Callers use the returned absolute deadline for the remaining destination wait;
+snapshot errors re-observe within that same budget and never authorize a tap.
+When replacing independent credential-entry card and Continue waits with one
+selection cap, preserve their sum, the first-attempt hittability/selected-state
+readbacks and any existing prompt allowance. Do not
+borrow repeated-tap or whole-flow retry budgets, or extend the departure deadline.
+A successful prompt-visibility observation remains evidence even after the retry
+deadline; callers that act must independently check their action deadline.
+Mode-navigation failures append bounded observation counts/durations, snapshot match
+counts and selection traits, previously queried live hittability, and closed modal
+source/stage/tap-guard enums. Unknown values stay unknown. The latest observation is
+retained even when the deadline rejects it; diagnostics issue no extra live queries
+and do not change navigation guards, budgets or the existing failure prefixes.
+
 For iOS slideshow Settings readiness, use one fallible window snapshot for enabled
 state and a non-empty button frame fully contained in that window. This is a snapshot
 readiness gate, not a claim of live hittability: the shared tap verifies the resulting

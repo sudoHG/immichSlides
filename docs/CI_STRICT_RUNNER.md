@@ -1048,7 +1048,8 @@ New enum meanings and why the previous vocabulary cannot express them:
 | `Save must become enabled after a real connection test succeeds.` | `firstboot_setup` | `control_state` | [StrictE2EFirstBatchIOSUITests+Onboarding.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift) |
 | `A cold launch with saved settings must not return to the first-boot page.` | `cold_relaunch` | `navigation` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
 | `A configured cold launch must go straight to the playback page.` | `cold_relaunch` | `navigation` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
-| `The mode page must offer ` | `mode_selection` | `navigation` | [StrictE2EFirstBatchIOSUITests+Onboarding.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift) |
+| `First-boot mode navigation must dismiss the exact password prompt,` | `mode_selection` | `navigation` | [UITestSupport.swift](../immichSlidesUITests/UITestSupport.swift) |
+| `Mode departure failed after one hittable Continue without a password prompt;` | `playback_entry` | `navigation` | [UITestSupport.swift](../immichSlidesUITests/UITestSupport.swift) |
 | `Chose filter but reached the playback page, so the mode card tap did not register.` | `mode_selection` | `navigation` | [StrictE2EFirstBatchIOSUITests+Onboarding.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift) |
 | `Still on the mode page after Continue; filter mode did not start.` | `mode_selection` | `navigation` | [StrictE2EFirstBatchIOSUITests+Onboarding.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift) |
 | `Filter mode must reach the filter summary page.` | `mode_selection` | `navigation` | [StrictE2EFirstBatchIOSUITests+Onboarding.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift) |

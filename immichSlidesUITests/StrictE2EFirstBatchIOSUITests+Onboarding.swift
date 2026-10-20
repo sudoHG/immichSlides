@@ -168,85 +168,30 @@ extension StrictE2EFirstBatchIOSUITests {
     @MainActor
     func chooseOnboardingModeAndContinue(
         app: XCUIApplication,
-        identifier: String
-    ) {
-        let modeButton = firstBootControl(in: app, identifier: identifier)
-        XCTAssertTrue(
-            modeButton.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
-            "The mode page must offer \(identifier).")
-        let continueButton = firstBootControl(
-            in: app,
-            identifier: "mode.continue.button"
-        )
-        // First boot preselects random, so Continue is enabled from the start; isEnabled does not mean the
-        // filter mode is selected.
-        _ = waitUntil(timeout: TestWait.seconds(.product(2))) { continueButton.exists && continueButton.isEnabled }
-        if !isOnboardingModeSelected(modeButton) {
-            modeButton.tapForFailureEvidence()
-        }
-        if !waitUntil(timeout: TestWait.seconds(.product(2)), condition: { self.isOnboardingModeSelected(modeButton) })
-        {
-            modeButton.tapForFailureEvidence()
-            _ = waitUntil(
-                timeout: TestWait.seconds(.product(2)), condition: { self.isOnboardingModeSelected(modeButton) })
-        }
-        // A late system "Save Password?" prompt, shown in the simulator's language, can swallow the
-        // Continue tap. Dismiss it with Not Now only, so the test credential is never saved, and tap
-        // Continue again while the mode page is still showing.
-        for _ in 0..<3 {
-            dismissSavePasswordPromptIfShown(app: app)
-            guard continueButton.exists else { return }
-            if continueButton.isHittable {
-                continueButton.tapForFailureEvidence()
-            }
-            let settled = waitUntil(timeout: TestWait.seconds(.product(4))) {
-                !continueButton.exists || self.isSavePasswordPromptShown(app: app)
-            }
-            if settled && !continueButton.exists {
-                return
-            }
-        }
+        identifier: String,
+        departureTimeout: TimeInterval = TestWait.seconds(.product(30))
+    ) -> Date? {
+        IOSFirstBootNavigation(app: app).selectModeAndContinue(
+            identifier,
+            destinationIdentifier: identifier == "mode.filtered.button"
+                ? "filterSummary.startPlayback.button" : "slideshow.control.settings.button",
+            selectionTimeout: TestWait.seconds(.product(8)) + TestWait.seconds(.product(2))
+                + TestWait.seconds(.product(2)) + TestWait.seconds(.product(2)),
+            departureTimeout: departureTimeout)
     }
-
 }
 
 extension StrictE2EOnboardingIOS {
     @MainActor
-    func isSavePasswordPromptShown(app: XCUIApplication) -> Bool {
-        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        return [app, springboard].contains { host in
-            // ui-label-lookup: Detect the simulator-owned Save Password prompt.
-            ["以后", "Not Now"].contains { host.buttons[$0].exists }
-        }
+    func dismissSavePasswordPromptIfShown(app: XCUIApplication, deadline: Date) {
+        _ = IOSFirstBootNavigation(app: app).dismissPasswordPrompt(until: deadline)
     }
-
-    @MainActor
-    func dismissSavePasswordPromptIfShown(app: XCUIApplication) {
-        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        for host in [app, springboard] {
-            // ui-label-lookup: Dismiss the simulator-owned Save Password prompt with Not Now.
-            for label in ["以后", "Not Now"] where host.buttons[label].exists {
-                // ui-label-lookup: Dismiss the system Save Password sheet without saving credentials.
-                host.buttons[label].tapForFailureEvidence()
-                _ = waitUntil(timeout: TestWait.seconds(.product(2))) {
-                    !self.isSavePasswordPromptShown(app: app)
-                }
-                return
-            }
-        }
-    }
-
 }
 
 extension StrictE2EFirstBatchIOSUITests {
     @MainActor
-    func isOnboardingModeSelected(_ modeButton: XCUIElement) -> Bool {
-        modeButton.isSelected || modeButton.images["checkmark.circle.fill"].exists
-    }
-
-    @MainActor
-    func waitForFilterSummary(app: XCUIApplication) {
-        let reached = waitUntil(timeout: TestWait.seconds(.product(20))) {
+    func waitForFilterSummary(app: XCUIApplication, deadline: Date) {
+        let reached = waitUntil(timeout: max(.zero, deadline.timeIntervalSinceNow)) {
             app.buttons["filterSummary.album.button"].exists
                 || app.descendants(matching: .any)["filterSummary.album.button"].exists
                 || app.staticTexts["filterSummary.page.title"].exists

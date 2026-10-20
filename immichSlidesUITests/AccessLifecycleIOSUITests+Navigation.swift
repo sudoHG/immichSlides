@@ -376,10 +376,11 @@ extension AccessLifecycleIOSUITests {
     @MainActor
     func tapSettingsPinInput(app: XCUIApplication, id: String) {
         let pinInputButton = app.buttons[id]
+        let deadline = Date().addingTimeInterval(TestWait.seconds(.product(8)))
         let ready = waitUntil(timeout: TestWait.seconds(.product(8))) {
-            self.dismissSystemSavePromptIfPresent(app: app, timeout: TestWait.seconds(.product(0)))
+            self.dismissSystemSavePromptIfPresent(app: app, deadline: deadline)
             return pinInputButton.exists && pinInputButton.isHittable
-                && !self.isSystemSavePasswordPromptVisible(app: app)
+                && !self.isSystemSavePasswordPromptVisible(app: app, deadline: deadline)
         }
         XCTAssertTrue(ready, "PIN input entry not found.")
         tapElement(pinInputButton)
@@ -549,19 +550,19 @@ extension AccessLifecycleIOSUITests {
         }
         // While the Save Password prompt covers the screen the hit point is {-1,-1}; tap "Not Now" first,
         // then Access Protection.
-        for attempt in 0..<20 {
-            dismissSystemSavePromptIfPresent(app: app, timeout: TestWait.seconds(.product(0)))
+        // Preserve the old 20 attempts: each already allowed a 2 s decline readback and a 0.3 s poll.
+        let deadline = Date().addingTimeInterval(TestWait.seconds(.product(20 * (2 + 0.3))))
+        for attempt in 0..<20 where Date() < deadline {
+            let isPromptGone = IOSFirstBootNavigation(app: app).dismissPasswordPrompt(until: deadline)
             if let candidate = firstExistingSettingsItem(
                 app: app,
                 identifier: sectionID
-            ), !isSystemSavePasswordPromptVisible(app: app) {
+            ), isPromptGone, Date() < deadline {
                 tapElement(candidate)
                 return
             }
-            if isSystemSavePasswordPromptVisible(app: app)
-                || settingsControl(app: app, identifier: sectionID).exists
-            {
-                RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.3))))
+            if !isPromptGone || settingsControl(app: app, identifier: sectionID).exists {
+                RunLoop.current.run(until: min(deadline, Date().addingTimeInterval(TestWait.seconds(.product(0.3)))))
                 continue
             }
             if attempt % 2 == 0 {
@@ -601,8 +602,9 @@ extension AccessLifecycleIOSUITests {
     // about 60 s for Ken Burns to go idle.
     @MainActor
     func waitForPlaybackControls(app: XCUIApplication, timeout: TimeInterval) -> Bool {
-        waitUntil(timeout: timeout) {
-            self.dismissSystemSavePromptIfPresent(app: app, timeout: TestWait.seconds(.product(0)))
+        let deadline = Date().addingTimeInterval(timeout)
+        return waitUntil(timeout: timeout) {
+            self.dismissSystemSavePromptIfPresent(app: app, deadline: deadline)
             return AccessLifecycleContract.hasPlaybackPageArrived(
                 isSettingsPresent: app.buttons["slideshow.control.settings.button"].exists,
                 isNextPresent: app.buttons["slideshow.control.next.button"].exists,
