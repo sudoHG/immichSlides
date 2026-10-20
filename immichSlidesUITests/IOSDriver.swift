@@ -166,21 +166,25 @@ struct IOSDriver: PlaybackDriver {
         let identifier = "slideshow.control.next.button"
         let deadline = Date().addingTimeInterval(UITestSupportWaitTiming.stateChangeTimeoutSeconds)
         var action = ControlAction()
-        guard let before = prepareControl(identifier, until: deadline, action: &action) else {
+        guard prepareControl(identifier, until: deadline, action: &action) != nil else {
             XCTFail("Next control must be actionable before tapping. (\(action.diagnostic))")
             return
         }
-        // Read the public photo after preparation/wake, immediately before the single target tap.
+        // Classifying the baseline can outlast auto-hide; revalidate the target before the single tap.
         var sceneBefore: String?
         _ = Wait.until(timeout: max(.zero, deadline.timeIntervalSinceNow)) {
             guard Date() < deadline else { return false }
-            let verifyStartedAt = Date()
-            defer { action.timing.verifySeconds += Date().timeIntervalSince(verifyStartedAt) }
+            let sceneReadStartedAt = ProcessInfo.processInfo.systemUptime
+            defer { action.sceneReadSeconds += ProcessInfo.processInfo.systemUptime - sceneReadStartedAt }
             sceneBefore = visiblePhotoObservation().mark
             return sceneBefore != nil && Date() < deadline
         }
         guard let sceneBefore, Date() < deadline else {
             XCTFail("The current scene must be readable before tapping Next. (\(action.diagnostic))")
+            return
+        }
+        guard let before = prepareControl(identifier, until: deadline, action: &action) else {
+            XCTFail("Next control must be actionable before tapping. (\(action.diagnostic))")
             return
         }
         activateControl(before, action: &action)
@@ -393,6 +397,8 @@ struct IOSDriver: PlaybackDriver {
         var isHittable: Bool?
         var isBarVisible = false
         var preparedTarget = "unknown"
+        var preparedAt: TimeInterval?
+        var sceneReadSeconds: TimeInterval = .zero
         var issuedAt: TimeInterval?
         var returnedAt: TimeInterval?
 
@@ -401,7 +407,9 @@ struct IOSDriver: PlaybackDriver {
         }
 
         var diagnostic: String {
-            "\(timing.diagnostic), preparedTarget={\(preparedTarget)}, barVisible=\(isBarVisible), hittable=\(isHittable.map(String.init) ?? "unknown"), wakeIssued=\(didWake), tapIssuedAt=\(issuedAt.map(String.init(describing:)) ?? "none"), tapReturnedAt=\(returnedAt.map(String.init(describing:)) ?? "none")"
+            let actionableToTapSeconds = preparedAt.flatMap { preparedAt in issuedAt.map { $0 - preparedAt } }
+            return
+                "\(timing.diagnostic), preparedTarget={\(preparedTarget)}, barVisible=\(isBarVisible), hittable=\(isHittable.map(String.init) ?? "unknown"), wakeIssued=\(didWake), sceneReadSeconds=\(sceneReadSeconds), actionableToTapSeconds=\(actionableToTapSeconds.map(String.init(describing:)) ?? "none"), tapIssuedAt=\(issuedAt.map(String.init(describing:)) ?? "none"), tapReturnedAt=\(returnedAt.map(String.init(describing:)) ?? "none")"
         }
     }
 
@@ -443,6 +451,7 @@ struct IOSDriver: PlaybackDriver {
                     }
                     if action.isHittable == true, Date() < deadline {
                         action.preparedTarget = observation.diagnostic
+                        action.preparedAt = ProcessInfo.processInfo.systemUptime
                         return observation
                     }
                 }
