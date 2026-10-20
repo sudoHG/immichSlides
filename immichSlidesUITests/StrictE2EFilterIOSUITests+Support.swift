@@ -66,7 +66,8 @@ extension StrictE2EFilterIOSUITests {
 
     @MainActor
     func pausePlaybackIfNeeded(app: XCUIApplication) {
-        IOSDriver(app: app).pause(until: Date().addingTimeInterval(TestWait.seconds(.product(4))))
+        IOSDriver(app: app).pause(
+            until: Date().addingTimeInterval(TestWait.seconds(.product(4)) + TestWait.seconds(.product(4))))
     }
 
     @MainActor
