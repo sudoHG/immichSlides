@@ -19,7 +19,24 @@ class NightlyVerdictTests(unittest.TestCase):
         import yaml
         root = Path(__file__).parent.parent
         jobs = yaml.safe_load((root / ".github/workflows/ci-nightly.yml").read_text())["jobs"]
-        self.assertEqual({"change", "plan", "ui-archive"}, set(jobs["ui-shards"]["needs"]))
+
+        def declared_needs(job):
+            needs = job.get("needs", [])
+            return {needs} if isinstance(needs, str) else set(needs)
+
+        pending = list(declared_needs(jobs["ui-shards"]))
+        dependencies = set()
+        while pending:
+            dependency = pending.pop()
+            if dependency not in dependencies:
+                dependencies.add(dependency)
+                pending.extend(declared_needs(jobs[dependency]))
+        self.assertNotIn("strict", dependencies, "UI shards must not wait for the strict matrix")
+        for job_id, job in jobs.items():
+            with self.subTest(job=job_id):
+                referenced = set(re.findall(r"\bneeds\.([\w-]+)", yaml.safe_dump(job)))
+                self.assertFalse(referenced - declared_needs(job),
+                                 f"{job_id} references undeclared needs: {sorted(referenced - declared_needs(job))}")
         self.assertEqual({"change", "plan", "ui-archive", "ui-shards"}, set(jobs["ui-aggregate"]["needs"]))
         self.assertEqual({"change", "plan", "strict", "ui-aggregate"}, set(jobs["aggregate"]["needs"]))
         for job_id in ("strict", "ui-shards"):

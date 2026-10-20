@@ -6,8 +6,8 @@ top of the hour, and supports
 `workflow_dispatch` on a selected branch. GitHub has typically started scheduled
 runs 3–4 hours late and can miss a trigger entirely; these times are requests, not
 start-time guarantees. Strict and fixture UI work overlap after archive selection;
-the full nightly waits for the slower tier, followed by aggregation and any remaining
-live jobs. Runner queues, shard durations and trigger delays determine completion,
+the full nightly waits for the slower tier, plus aggregation.
+Runner queues, shard durations and trigger delays determine completion,
 so neither schedule guarantees a morning result. PRs touching its entry points
 run planning and credential-free live probes. Branch dispatches provide diagnostic
 execution evidence. It has read-only permissions and no publisher, reporter or
