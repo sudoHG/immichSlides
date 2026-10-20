@@ -1639,11 +1639,11 @@ raise SystemExit(65)
         from ci_review_packages import export_shard, read_failure_package
         from strict_e2e_filter_contract import target_album_frame_identity
         from strict_e2e_filter_contract_test_fixtures import _fixture_png, _side_by_side, _write_switch_display_bridge
-        from test_strict_e2e_filter_contract import DisplayPolicyVisualContractTests
+        from test_strict_e2e_filter_contract import DisplayPolicyVisualContractTests, AlbumEditSwitchVisualContractTests
         from test_album_server_narrow_contract import _write_server_switch_pass
 
-        def display_frame(fixture):
-            with Image.open(io.BytesIO(_fixture_png("A3", fixture))) as source:
+        def display_frame(fixture, mark="A3", side_gap=True):
+            with Image.open(io.BytesIO(_fixture_png(mark, fixture))) as source:
                 photo = source.convert("RGB")
             frame = ImageOps.fit(photo, (1170, 2532)).filter(ImageFilter.GaussianBlur(146.25))
             fitted = ImageOps.contain(photo, frame.size)
@@ -1651,7 +1651,8 @@ raise SystemExit(65)
             frame.paste(fitted, (0, top))
             # Three native columns inside the left photo region fail the side-gap check,
             # while the full-photo match still permits the real foreground crop.
-            frame.paste((0, 0, 0), (84, top, 87, top + fitted.height))
+            if side_gap:
+                frame.paste((0, 0, 0), (84, top, 87, top + fitted.height))
             buffer = io.BytesIO()
             frame.save(buffer, format="PNG")
             return buffer.getvalue()
@@ -1666,18 +1667,39 @@ raise SystemExit(65)
                  ("ios", "iphone", "display-policy", "a", "display-after", "display"),
                  ("tvos", "tv", "tvos-display-policy", "a", "display-after", "display"),
                  ("tvos", "tv", "tvos-switch", "a", "display-after", "display"),
-                 ("ios", "iphone", "filter-person", "a", "person-normal-1", "malformed"))
+                 ("ios", "iphone", "filter-person", "a", "person-normal-1", "malformed"),
+                 ("ios", "iphone", "filter-person", "a", "person-conflict-normal-1", "missing"),
+                 ("ios", "iphone", "filter-person", "a", "person-conflict-normal-1", "unreadable"),
+                 ("ios", "iphone", "display-policy", "a", "display-after", "display-black"),
+                 ("ios", "iphone", "display-policy", "a", "display-after", "display-malformed"),
+                 ("ios", "iphone", "filter-edit-switch", "a", "album-switch-b-play-1", "edit"),
+                 ("tvos", "tv", "tvos-switch", "a", "switch-b-single-after", "switch-single"),
+                 ("tvos", "tv", "tvos-switch", "a", "display-before-candidate-01", "candidate"),
+                 ("tvos", "tv", "tvos-switch", "a", "display-before-candidate-01", "candidate-malformed"))
         for platform, device, suite, fixture, name, kind in cases:
             with self.subTest(suite=suite, fixture=fixture, name=name, kind=kind), tempfile.TemporaryDirectory() as raw:
                 root = Path(raw)
                 picture_fixture = "b" if suite == "tvos-switch" else fixture
                 failing = displays[picture_fixture] if kind == "display" else (
-                    b"malformed public PNG" if kind == "malformed" else black.getvalue())
+                    b"malformed public PNG" if kind in {"malformed", "display-malformed", "candidate-malformed"} else
+                    _fixture_png("A4", "b") if kind == "edit" else
+                    display_frame("a", "A2", side_gap=False) if kind == "candidate" else
+                    _fixture_png("A2") if kind in {"missing", "unreadable"} else black.getvalue())
                 case = {"platform": platform, "device": device, "configuration": "Debug" if suite in {"filter-person", "filter-vision"} else "Release",
                         "suite": suite, "scenario": "normal", "fixture": fixture}
                 status = "UNRECOGNIZABLE" if kind == "malformed" else "BLACK"
                 expected = ("The after-change frame must be a recognizable, stable single-photo frame" if kind == "display" else
                             f"Unrecognizable input cannot count as passing: status={status} mark=None")
+                expected = {
+                    "missing": "Missing visual input person-conflict-normal-1.png",
+                    "unreadable": "cannot read visual input person-conflict-normal-1.png: synthetic unreadable PNG",
+                    "display-black": "after-change cannot use a transition or unknown frame as passing",
+                    "display-malformed": "after-change cannot use a transition or unknown frame as passing",
+                    "edit": "frames after the album switch must show the public glyph of fixture A: album-switch-b-play-1",
+                    "switch-single": "single photo after server switch cannot use a transition or unknown frame as passing",
+                    "candidate": "every slot must show the public glyph of fixture B; observed fixture A in all 1 slot (both axes)",
+                    "candidate-malformed": "display-policy screenshot regions cannot be classified: UnidentifiedImageError",
+                }.get(kind, expected)
                 before = _fixture_png("A3", fixture)
                 def reject(evidence):
                     if suite == "filter-person":
@@ -1691,6 +1713,8 @@ raise SystemExit(65)
                         (evidence / "vision-environment.json").write_text(json.dumps({
                             "environment": "device", "vision_available": True,
                             "qualified_marks": ["A2"], "face_counts": {"A2": 1}}))
+                    elif suite == "filter-edit-switch":
+                        AlbumEditSwitchVisualContractTests()._write_valid_evidence(evidence, fixture)
                     elif suite == "tvos-switch":
                         _write_server_switch_pass(evidence)
                         _write_switch_display_bridge(evidence)
@@ -1699,16 +1723,37 @@ raise SystemExit(65)
                         (evidence / "empty-selection-after-switch.json").write_text(json.dumps({
                             "selection_source": "accessibility_ui", "album_summary": "筛选相册 0 个相册 · 0 张照片",
                             "person_summary": "筛选人物 0 个人物 · 0 张照片"}))
+                        if kind in {"candidate", "candidate-malformed"}:
+                            (evidence / "display-before-candidate-02.png").write_bytes((evidence / "display-before.png").read_bytes())
+                            policy_path = evidence / "display-policy.json"
+                            policy = json.loads(policy_path.read_text())
+                            policy.update(before_candidate_steps=["display-before-candidate-01", "display-before-candidate-02"],
+                                          selected_before_step="display-before-candidate-02")
+                            policy_path.write_text(json.dumps(policy))
+                            (evidence / (name + ".png")).write_bytes(display_frame("b", "A2", side_gap=False))
+                            self.assertEqual("PASS", require_visual_identity(evidence, suite, fixture_set=fixture)["verdict"])
                     else:
                         DisplayPolicyVisualContractTests()._write_evidence(evidence,
                             before=_side_by_side(_fixture_png("A1"), _fixture_png("A2")), after=displays["a"])
-                    (evidence / (name + ".png")).write_bytes(failing)
-                    with self.assertRaisesRegex(CommandError, "^Visual assertion failed; cannot mark SUCCESS: " + re.escape(expected)) as raised:
+                    failing_path = evidence / (name + ".png")
+                    failing_path.write_bytes(failing)
+                    if kind == "missing":
+                        failing_path.unlink()
+                    with ExitStack() as stack:
+                        if kind == "unreadable":
+                            original_read = Path.read_bytes
+                            def read_bytes(path):
+                                if path == failing_path:
+                                    raise PermissionError("synthetic unreadable PNG")
+                                return original_read(path)
+                            stack.enter_context(mock.patch.object(Path, "read_bytes", read_bytes))
+                        stack_error = stack.enter_context(self.assertRaisesRegex(CommandError,
+                            "^Visual assertion failed; cannot mark SUCCESS: " + re.escape(expected)))
                         with public_fixture_validator_scope(evidence, screenshots=True):
                             # A real previous input must not survive a later image rejection.
                             target_album_frame_identity(before, fixture, screenshot_name="album-play-1.png")
                             require_visual_identity(evidence, suite, fixture_set=fixture)
-                    return str(raised.exception.__cause__)
+                    return str(stack_error.exception.__cause__)
                 code, records, trace, summary = self._produce_validator_records(
                     root, reject, case=case, receipt_suite=suite, nightly=True)
                 expected_shard = (0, "passed", 2) if suite == "filter-vision" else (1, "failed", 2)
@@ -1720,10 +1765,15 @@ raise SystemExit(65)
                 failed = summary["population"]["observed"][0]
                 self.assertEqual("failed", failed["outcome"])
                 self.assertEqual(2, failed["attempts"][0]["exit_code"])
-                self.assertIn("screenshot " + name + ".png", failed["validator_failure_message"])
+                if kind in {"missing", "unreadable", "edit", "switch-single", "display-black", "display-malformed", "candidate-malformed"}:
+                    self.assertEqual("[redacted validator failure]", failed["validator_failure_message"])
+                elif kind == "candidate":
+                    self.assertEqual(expected, failed["validator_failure_message"])
+                else:
+                    self.assertIn("screenshot " + name + ".png", failed["validator_failure_message"])
                 published = root / "published"
                 self.assertEqual(0, export_shard(records.parent, published))
-                if kind == "malformed":
+                if kind in {"malformed", "missing", "unreadable", "display-malformed", "candidate-malformed"}:
                     self.assertEqual("unavailable", failed["first_failure"]["screenshot"]["status"])
                     self.assertEqual([], list(published.rglob("first-failure.png")))
                 else:
@@ -1734,6 +1784,9 @@ raise SystemExit(65)
                     self.assertEqual(expected_sha, manifest["image_sha256"])
                     self.assertEqual(expected_sha, hashlib.sha256((package / "first-failure.png").read_bytes()).hexdigest())
                     self.assertNotEqual(manifest["image_sha256"], hashlib.sha256(canonical_first_failure_png(before)[0]).hexdigest())
+                    if kind == "edit":
+                        self.assertNotEqual(manifest["image_sha256"],
+                            hashlib.sha256(canonical_first_failure_png(_fixture_png("A5", fixture))[0]).hexdigest())
 
     def test_target_album_rejection_exports_its_actual_input_bound_to_the_failed_attempt(self):
         from PIL import Image

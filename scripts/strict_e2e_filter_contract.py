@@ -96,14 +96,16 @@ def _read_json_object(path: Path, label: str) -> dict[str, Any]:
 
 
 def _classify_named_png(evidence_dir: Path, name: str) -> Any:
+    from ci_failure_diagnostics import remember_validator_input
     path = evidence_dir / f"{name}.png"
     if not path.is_file():
+        remember_validator_input(b"")
         raise FilterContractError(f"Missing visual input {name}.png")
     try:
         payload = path.read_bytes()
     except OSError as error:
+        remember_validator_input(b"")
         raise FilterContractError(f"cannot read visual input {name}.png: {error}") from error
-    from ci_failure_diagnostics import remember_validator_input
     remember_validator_input(payload)
     return classify_screenshot(payload)
 
@@ -467,6 +469,7 @@ def _display_photo_identity(image_bytes: bytes, *, fixture_set: str, labels: Seq
 
 
 def _evaluate_display_policy(evidence_dir: Path, suite: str, *, manifest: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    from ci_failure_diagnostics import remember_validator_input
     switched_server = manifest is not None
     manifest = manifest if switched_server else load_member_manifest(evidence_dir / "member-manifest.json")
     fixture_set = str(manifest["fixture_set"])
@@ -508,12 +511,18 @@ def _evaluate_display_policy(evidence_dir: Path, suite: str, *, manifest: Mappin
         if not path.is_file():
             raise FilterContractError(f"missing raw candidate screenshot {step}.png")
         image_bytes = path.read_bytes()
+        if switched_server:
+            remember_validator_input(image_bytes)
         candidate_bytes.append(image_bytes)
         regions = _classify_display_regions(image_bytes)
         if switched_server:
             # Single candidates stay in the rotation; their surround must pass the existing display contract.
-            foreground = _display_foreground_png(image_bytes)
-            region_marks = list(dict.fromkeys(_scene_slot_marks(foreground, fixture_set)))
+            try:
+                foreground = _display_foreground_png(image_bytes)
+                region_marks = list(dict.fromkeys(_scene_slot_marks(foreground, fixture_set)))
+            finally:
+                # The nested scene reader registers its crop; retain the original on rejection too.
+                remember_validator_input(image_bytes)
         else:
             region_marks = _display_region_marks(regions)
         rejection_marks = (region_marks if switched_server else
@@ -550,7 +559,6 @@ def _evaluate_display_policy(evidence_dir: Path, suite: str, *, manifest: Mappin
         raise FilterContractError("The before-change frame must contain only fixture A; do not mix fixtures A and B or unknown content")
 
     after_bytes = (evidence_dir / "display-after.png").read_bytes() if (evidence_dir / "display-after.png").is_file() else b""
-    from ci_failure_diagnostics import remember_validator_input
     # Register the full input outside cached crop/region helpers, including cache hits.
     remember_validator_input(after_bytes)
     try:
@@ -576,7 +584,7 @@ def _evaluate_display_policy(evidence_dir: Path, suite: str, *, manifest: Mappin
         if len(after_marks) >= 2:
             raise FilterContractError("after-change frame must be a recognizable single-photo frame")
     except FilterContractError as error:
-        raise FilterContractError(f"{error}; screenshot display-after.png") from None
+        raise type(error)(f"{error}; screenshot display-after.png") from error
     return {
         "verdict": "PASS",
         "suite": suite,
@@ -733,7 +741,7 @@ def _classified_mark_from_png(evidence_dir: Path, name: str) -> str:
     try:
         return require_photo_mark("public_fixture_photo_mark", identity.status, identity.mark)
     except FilterContractError as error:
-        raise FilterContractError(f"{error}; screenshot {name}.png") from None
+        raise type(error)(f"{error}; screenshot {name}.png") from error
 
 
 def _scene_slot_marks(image_bytes: bytes, fixture_set: str, *, screenshot_name: str | None = None) -> tuple[str, ...]:
@@ -828,6 +836,7 @@ def _evaluate_filter_album(evidence_dir: Path) -> dict[str, Any]:
 
 
 def _evaluate_filter_edit_switch(evidence_dir: Path, suite: str) -> dict[str, Any]:
+    from ci_failure_diagnostics import remember_validator_input
     manifest = load_member_manifest(evidence_dir / "member-manifest.json")
     modes = _read_json_object(evidence_dir / "album-edit-modes.json", "album-edit-modes.json")
     if modes.get("identity_source") != "accessibility_ui":
@@ -858,6 +867,7 @@ def _evaluate_filter_edit_switch(evidence_dir: Path, suite: str) -> dict[str, An
             # Both orientations were already read slot-by-slot above.
             letter = fixture_set.upper()
         else:
+            remember_validator_input(image_bytes)
             try:
                 photos = public_frame_photos_from_bytes(image_bytes)
             except IdentityAssertionError as error:
@@ -1007,6 +1017,8 @@ def _evaluate_switch_display_policy(
     process_id = _require_same_process(payload, "single-photo run evidence after server switch")
     screenshot_path = evidence_dir / "switch-b-single-after.png"
     image_bytes = screenshot_path.read_bytes() if screenshot_path.is_file() else b""
+    from ci_failure_diagnostics import remember_validator_input
+    remember_validator_input(image_bytes)
     mark = _display_photo_identity(
         image_bytes,
         fixture_set="b",

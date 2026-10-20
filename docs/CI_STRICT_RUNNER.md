@@ -820,6 +820,11 @@ These emitted stems are a subset of the reader allowlist above. Display-policy v
 the full `display-after.png` before cached foreground or region analysis. Internal
 crops do not replace that input. Undecodable bytes make the image unavailable,
 rather than retaining a previously registered playback or before image.
+Named-PNG classification also clears the retained input before missing-file or read errors.
+Edit-switch slot checks register the frame being checked, including when a later frame
+was already classified. Server-switch candidates and the post-switch single-photo input
+retain full frames; nested crop analysis restores the original frame before returning
+or propagating a rejection. These registration-only paths add no screenshot-name context.
 For iOS and tvOS album-empty, the empty-result image replaces the playback input
 before pixel checks. JSON-only failures and a missing result PNG still retain the
 last validated playback frame; that image is context, not proof of the empty-result
