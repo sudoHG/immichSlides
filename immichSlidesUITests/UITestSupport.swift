@@ -1015,6 +1015,8 @@ struct SlideshowControlBarTiming {
     var snapshotSeconds: TimeInterval = .zero
     var revealSeconds: TimeInterval = .zero
     var tapSeconds: TimeInterval = .zero
+    var revealDurationsSeconds: [TimeInterval] = []
+    var tapDurationsSeconds: [TimeInterval] = []
     var verifySeconds: TimeInterval = .zero
     var iterations = 0
     var tapCount = 0
@@ -1030,15 +1032,19 @@ struct SlideshowControlBarTiming {
         let phases = String(
             format: "snapshot=%.3fs, reveal=%.3fs, tap=%.3fs, verify=%.3fs",
             snapshotSeconds, revealSeconds, tapSeconds, verifySeconds)
+        let reveals = revealDurationsSeconds.map { String(format: "%.3f", $0) }.joined(separator: ",")
+        let taps = tapDurationsSeconds.map { String(format: "%.3f", $0) }.joined(separator: ",")
         return
-            "\(lastObservation), lastSnapshotSucceeded=\(didReadLastSnapshot), snapshotErrors=\(snapshotErrors), lastError=\(lastErrorCode.map(String.init) ?? "none"), iterations=\(iterations), tapCount=\(tapCount), settingsOutcomeExpected=\(shouldVerifySettingsOutcome), settingsOutcomeObserved=\(hasSettingsOutcome), settingsNavigationObserved=\(didObserveSettingsNavigation), \(phases)"
+            "\(lastObservation), lastSnapshotSucceeded=\(didReadLastSnapshot), snapshotErrors=\(snapshotErrors), lastError=\(lastErrorCode.map(String.init) ?? "none"), iterations=\(iterations), tapCount=\(tapCount), settingsOutcomeExpected=\(shouldVerifySettingsOutcome), settingsOutcomeObserved=\(hasSettingsOutcome), settingsNavigationObserved=\(didObserveSettingsNavigation), \(phases), revealDurationsSeconds=[\(reveals)], tapDurationsSeconds=[\(taps)]"
     }
 
     mutating func reveal(app: XCUIApplication) {
         FirstFailureContext.mark("reveal-controls", element: "slideshow.control.playPause.button")
         let startedAt = Date()
         FirstFailureContext.action("tap") { app.tap() }
-        revealSeconds += Date().timeIntervalSince(startedAt)
+        let duration = Date().timeIntervalSince(startedAt)
+        revealSeconds += duration
+        revealDurationsSeconds.append(duration)
     }
 
     mutating func observe(app: XCUIApplication, identifier: String) -> SlideshowControlBarButtonObservation? {
@@ -1086,30 +1092,19 @@ extension XCUIApplication {
         defer { FirstFailureContext.endWait() }
         let deadline = Date().addingTimeInterval(timeout)
         var timing = SlideshowControlBarTiming()
-        var hiddenSince: Date?
-        var hiddenRevealCount = 0
+        defer { print("Slideshow Settings readiness: \(timing.diagnostic)") }
+        var didReveal = false
         while Date() < deadline {
             let observation = timing.observe(app: self, identifier: "slideshow.control.settings.button")
             guard Date() < deadline else { break }
             if let observation {
                 if observation.isReady {
-                    timing.reveal(app: self)
-                    guard Date() < deadline else { break }
+                    // The action helper refreshes auto-hide before tapping; readiness needs no event.
                     return true
                 }
-                if observation.isInsideWindow {
-                    hiddenSince = nil
-                    hiddenRevealCount = 0
-                } else if observation.hasPlaybackMarker {
-                    let startedAt = hiddenSince ?? Date()
-                    hiddenSince = startedAt
-                    if hiddenRevealCount == 0
-                        || (hiddenRevealCount == 1
-                            && Date().timeIntervalSince(startedAt) > TestWait.seconds(.product(1)))
-                    {
-                        timing.reveal(app: self)
-                        hiddenRevealCount += 1
-                    }
+                if !observation.isInsideWindow, observation.hasPlaybackMarker, !didReveal {
+                    didReveal = true
+                    timing.reveal(app: self)
                 }
             }
             guard Date() < deadline else { break }
@@ -1132,6 +1127,7 @@ extension XCUIApplication {
     ) {
         var timing = SlideshowControlBarTiming()
         timing.shouldVerifySettingsOutcome = identifier == "slideshow.control.settings.button"
+        defer { print("Slideshow control action: \(timing.diagnostic)") }
         // A playback-area tap only shows the bar and resets auto-hide; it never toggles it off.
         timing.reveal(app: self)
         let deadline = Date().addingTimeInterval(UITestSupportWaitTiming.controlAppearanceTimeoutSeconds)
@@ -1159,7 +1155,9 @@ extension XCUIApplication {
                                     dx: frame.midX - observation.windowFrame.minX,
                                     dy: frame.midY - observation.windowFrame.minY)
                             ).tapForFailureEvidence()
-                        timing.tapSeconds += Date().timeIntervalSince(startedAt)
+                        let duration = Date().timeIntervalSince(startedAt)
+                        timing.tapSeconds += duration
+                        timing.tapDurationsSeconds.append(duration)
                         // Callers own scene-change, Play/Pause and EXIF budgets after one real tap.
                         if !timing.shouldVerifySettingsOutcome { return }
                         isTapAttemptPrepared = false

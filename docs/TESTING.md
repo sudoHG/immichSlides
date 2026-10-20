@@ -257,15 +257,20 @@ and contain neither the system `BackButton` nor any `settings.*` identifier.
 Observing either navigation signal permanently suppresses further taps. The retry
 then takes a new frame snapshot and checks the original control deadline before
 tapping; each returned Settings tap gets its own bounded appearance wait.
-Wait-only Settings callers refresh auto-hide once immediately before success and
-check the original deadline again afterward. A hidden streak permits one initial
-reveal and one further reveal if it lasts longer than one second; polls do not
-reveal on every visible iteration. Settings readiness failures are classified from
+Wait-only Settings callers return as soon as a snapshot proves readiness within
+the original deadline; they do not synthesize a redundant reveal on success.
+The action helper still refreshes auto-hide before taking its tap snapshot.
+If a snapshot shows playback with the control outside the window, the waiter
+may reveal once within its original deadline, then only observe; a failed
+snapshot never authorizes a reveal. Settings readiness failures are classified from
 the caller's assertion prefix, including the `hidden_controls` class; the waiter's
 text stays in the private suffix. Shared tap prefixes distinguish no tap and no
 Settings outcome. Private suffixes include the last sanitized observation,
 error count/code, iteration/tap counts, boolean
-Settings outcome/navigation fields and aggregate snapshot/reveal/tap/verify durations.
+Settings outcome/navigation fields, aggregate snapshot/reveal/tap/verify durations
+and individual reveal/tap durations in seconds.
+The same diagnostic is printed on successful readiness and action returns, so
+local XCTest activity logs can compare event latency without additional queries.
 The outcome field becomes true only after the wait accepts an observation within its window.
 Verify time includes its snapshot time; no extra diagnostic snapshot runs after
 timeout. Playback History Settings uses the same bounded snapshot waiter, without
