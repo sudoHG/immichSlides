@@ -114,8 +114,11 @@ struct IOSDriver: PlaybackDriver {
     }
 
     func pause() {
+        pause(until: Date().addingTimeInterval(UITestSupportWaitTiming.controlAppearanceTimeoutSeconds))
+    }
+
+    func pause(until deadline: Date) {
         let identifier = "slideshow.control.playPause.button"
-        let deadline = Date().addingTimeInterval(UITestSupportWaitTiming.controlAppearanceTimeoutSeconds)
         var action = ControlAction()
         guard let before = prepareControl(identifier, until: deadline, action: &action) else {
             XCTFail("Playback page must provide play/pause. (\(action.diagnostic))")

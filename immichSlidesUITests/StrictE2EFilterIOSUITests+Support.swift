@@ -66,15 +66,8 @@ extension StrictE2EFilterIOSUITests {
 
     @MainActor
     func pausePlaybackIfNeeded(app: XCUIApplication) {
-        revealPlaybackControls(app: app)
-        let playPause = app.buttons["slideshow.control.playPause.button"]
-        guard
-            playPause.waitForPublicElement("slideshow.control.playPause.button", timeout: TestWait.seconds(.product(4)))
-        else { return }
-        if playPauseState(playPause) != "play" {
-            tapElement(playPause)
-        }
-        _ = waitUntil(timeout: TestWait.seconds(.product(4))) { self.playPauseState(playPause) == "play" }
+        IOSDriver(app: app).pause(
+            until: Date().addingTimeInterval(TestWait.seconds(.product(4)) + TestWait.seconds(.product(4))))
     }
 
     @MainActor
@@ -116,10 +109,6 @@ extension StrictE2EFilterIOSUITests {
             testConnectionButton.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
             "Test Connection must be shown")
         tapElement(testConnectionButton)
-    }
-
-    func playPauseState(_ button: XCUIElement) -> String {
-        ((button.value as? String) ?? "").lowercased()
     }
 
     func currentDeviceTag() -> String {
