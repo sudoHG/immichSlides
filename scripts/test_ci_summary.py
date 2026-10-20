@@ -1078,11 +1078,23 @@ class HostResultTests(unittest.TestCase):
                 private_input = "private test input must not appear"
                 external = types.SimpleNamespace(f_code=types.SimpleNamespace(
                     co_filename="/private/local-config.py", co_name="private_dynamic_name"),
-                    f_lineno=1, f_back=sys._getframe())
+                    f_lineno=1, f_back=None)
                 progress.clock = lambda: 120.0
-                with self.subTest(input=private_input), \
-                        patch.object(run_python_tests.sys, "_current_frames", return_value={1: external}):
-                    progress.watch()
+                with tempfile.TemporaryDirectory() as raw:
+                    linked = Path(raw) / "linked-scripts"
+                    linked.symlink_to(Path(__file__).resolve().parent, target_is_directory=True)
+                    def frame(name, path):
+                        return types.SimpleNamespace(f_code=types.SimpleNamespace(
+                            co_filename=str(path), co_name=name), f_lineno=1, f_back=external)
+                    # A busy server can have more workers than the stack cap; put main last.
+                    frames = {888: frame("monitor_should_be_excluded", __file__)}
+                    frames.update({i: frame("background_worker", __file__) for i in range(10)})
+                    frames[999] = frame("test_slow", linked / Path(__file__).name)
+                    with self.subTest(input=private_input), \
+                            patch.object(run_python_tests.threading, "main_thread", return_value=types.SimpleNamespace(ident=999)), \
+                            patch.object(run_python_tests.threading, "get_ident", return_value=888), \
+                            patch.object(run_python_tests.sys, "_current_frames", return_value=frames):
+                        progress.watch()
 
         with patch.object(run_python_tests.os, "write") as write:
             payload, code = run_python_tests.run_suite(unittest.defaultTestLoader.loadTestsFromTestCase(Sample),
@@ -1096,6 +1108,9 @@ class HostResultTests(unittest.TestCase):
         self.assertEqual(2, descriptor)
         self.assertIn("PYTHON SLOW " + key + " 120.000s\n", raw.decode())
         self.assertRegex(raw.decode(), r"scripts/test_ci_summary\.py:\d+ in test_slow")
+        self.assertEqual("  scripts/test_ci_summary.py:1 in test_slow", raw.decode().splitlines()[2])
+        self.assertNotIn("monitor_should_be_excluded", raw.decode())
+        self.assertEqual(8, raw.decode().count(" (innermost first):"))
         for private in ("private test input", "/private/", "private_dynamic_name"):
             self.assertNotIn(private, stream.getvalue() + raw.decode())
 

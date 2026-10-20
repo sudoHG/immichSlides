@@ -47,7 +47,7 @@ class TestProgress:
         self.active = ("between tests after " + key, self.clock())
 
     def watch(self):
-        # At most 20 snapshots within the host's unchanged 1,200-second ceiling.
+        # At most 20 timer intervals (~20 min) within the unchanged host ceiling.
         for _ in range(20):
             if self.stopped.wait(60):
                 return
@@ -56,12 +56,16 @@ class TestProgress:
             if elapsed < 60:
                 continue
             lines = [f"PYTHON SLOW {key} {elapsed:.3f}s"]
-            for index, frame in enumerate(list(sys._current_frames().values())[:8]):
+            frames = sys._current_frames()
+            main_id, monitor_id = threading.main_thread().ident, threading.get_ident()
+            ordered = ([frames[main_id]] if main_id in frames and main_id != monitor_id else [])
+            ordered.extend(frame for ident, frame in frames.items() if ident not in {main_id, monitor_id})
+            for index, frame in enumerate(ordered[:8]):
                 lines.append(f"thread {index} (innermost first):")
                 for _ in range(32):
                     if frame is None:
                         break
-                    source = self.sources.get(frame.f_code.co_filename)
+                    source = self.sources.get(os.path.realpath(frame.f_code.co_filename))
                     if source:
                         lines.append(f"  {source}:{frame.f_lineno} in {frame.f_code.co_name}")
                     frame = frame.f_back

@@ -585,7 +585,8 @@ The Python executor flushes `PYTHON START` and `PYTHON FINISH` lines with the
 discovered test identity, outcome and elapsed time. If one test (or discovery or
 the interval between tests) remains active for at least 60 seconds, a daemon
 monitor emits a code-only stack snapshot at its next 60-second tick. Collection
-is capped at 20 snapshots, eight threads and 32 frames per thread. Only Python
+is capped at 20 timer intervals (~20 min), eight threads and 32 frames per
+thread. The main thread is first and the monitor itself is excluded. Only Python
 files directly under `scripts/` appear, with repository-relative filenames,
 line numbers and function names; no locals, source lines, exception text,
 external paths or thread names are logged. This is log-only diagnostic evidence:
