@@ -40,6 +40,23 @@ from strict_e2e_filter_contract_test_fixtures import PUBLIC_APP_CHROME_SAMPLES, 
 from run_strict_e2e_test_fixtures import _write_pause_window_evidence  # noqa: E402
 
 
+def _write_pause_window(evidence: Path, *, window_png: bytes, overlay: str = "") -> None:
+    _write_pause_window_evidence(evidence, window_png)
+    for name in ("window-detected", "after-pause", "after-pause-0_3s"):
+        (evidence / f"{name}.png").write_bytes(window_png)
+    contract = evidence / "pause-window-contract.json"
+    payload = json.loads(contract.read_text())
+    try:
+        with Image.open(io.BytesIO(window_png)) as image:
+            for frame in payload["frames"].values():
+                frame["window_frame"] = [0, 0, image.width, image.height]
+    except OSError:
+        pass
+    payload["overlay_text_before_pause"] = overlay
+    contract.write_text(json.dumps(payload))
+    (evidence / "after-pause.overlay.txt").write_text(overlay, encoding="utf-8")
+
+
 REVIEWED_SCREENSHOT_RELATIVE_PATHS = (
     "iphone-history/01-auto-A2.png",
     "iphone-history/03-next-A3.png",
@@ -761,37 +778,15 @@ class NegativeIdentityTests(unittest.TestCase):
                 evaluate_visual_identity(evidence, "journey-b")
             self.assertIn("return to the original photo", str(raised.exception))
 
-    def _write_pause_window(
-        self,
-        evidence: Path,
-        *,
-        window_png: bytes,
-        overlay: str = "",
-    ) -> None:
-        _write_pause_window_evidence(evidence, window_png)
-        for name in ("window-detected", "after-pause", "after-pause-0_3s"):
-            (evidence / f"{name}.png").write_bytes(window_png)
-        contract = evidence / "pause-window-contract.json"
-        payload = json.loads(contract.read_text())
-        try:
-            with Image.open(io.BytesIO(window_png)) as image:
-                for frame in payload["frames"].values():
-                    frame["window_frame"] = [0, 0, image.width, image.height]
-        except OSError:
-            pass
-        payload["overlay_text_before_pause"] = overlay
-        contract.write_text(json.dumps(payload))
-        (evidence / "after-pause.overlay.txt").write_text(overlay, encoding="utf-8")
-
     def test_evaluate_pause_window_rejects_missing_window_and_wrong_exif(self) -> None:
         with tempfile.TemporaryDirectory() as raw_directory:
             evidence = Path(raw_directory)
-            self._write_pause_window(evidence, window_png=_darken(_fixture_png("A2"), 0.5))
+            _write_pause_window(evidence, window_png=_darken(_fixture_png("A2"), 0.5))
             (evidence / "window-detected.png").unlink()
             with self.assertRaises(IdentityAssertionError) as raised:
                 evaluate_visual_identity(evidence, "pause-window")
             self.assertIn("window-detected", str(raised.exception))
-            self._write_pause_window(evidence, window_png=_darken(_fixture_png("A2"), 0.5), overlay="Fixture 3")
+            _write_pause_window(evidence, window_png=_darken(_fixture_png("A2"), 0.5), overlay="Fixture 3")
             with self.assertRaisesRegex(IdentityAssertionError, "^EXIF does not match the photo") as raised:
                 evaluate_visual_identity(evidence, "pause-window")
             self.assertIn("EXIF", str(raised.exception))
@@ -808,7 +803,7 @@ class NegativeIdentityTests(unittest.TestCase):
         for label, (window_png, message) in cases.items():
             with self.subTest(window=label), tempfile.TemporaryDirectory() as raw_directory:
                 evidence = Path(raw_directory)
-                self._write_pause_window(evidence, window_png=window_png)
+                _write_pause_window(evidence, window_png=window_png)
                 with self.assertRaisesRegex(IdentityAssertionError, "^" + message):
                     evaluate_visual_identity(evidence, "pause-window")
 
@@ -827,7 +822,7 @@ class NegativeIdentityTests(unittest.TestCase):
         ):
             with self.subTest(defect=defect), tempfile.TemporaryDirectory() as raw_directory:
                 evidence = Path(raw_directory)
-                self._write_pause_window(evidence, window_png=_darken(_fixture_png("A2"), 0.5))
+                _write_pause_window(evidence, window_png=_darken(_fixture_png("A2"), 0.5))
                 contract = evidence / "pause-window-contract.json"
                 payload = json.loads(contract.read_text())
                 if defect == "moving":
@@ -865,7 +860,7 @@ class NegativeIdentityTests(unittest.TestCase):
     def test_evaluate_pause_window_allows_window_exif_mismatch_on_a2_boundary(self) -> None:
         with tempfile.TemporaryDirectory() as raw_directory:
             evidence = Path(raw_directory)
-            self._write_pause_window(
+            _write_pause_window(
                 evidence,
                 window_png=_darken(_with_exif_card(_fixture_png("A2"), "Fixture 3"), 0.5),
             )
@@ -1132,7 +1127,7 @@ class PositiveIdentityTests(unittest.TestCase):
 
             pause = Path(raw_directory) / "pause"
             pause.mkdir()
-            self._write_pause_window(pause, window_png=_darken(_fixture_png("A2"), 0.5))
+            _write_pause_window(pause, window_png=_darken(_fixture_png("A2"), 0.5))
             self.assertEqual(evaluate_visual_identity(pause, "pause-window")["verdict"], "PASS")
 
             tvos = Path(raw_directory) / "tvos"

@@ -828,7 +828,7 @@ class StrictE2ERunnerTestsCasesEvidence:
                     "from strict_e2e_server import _fixture_data",
                     "png = _fixture_data('a')['images']['asset-a-2']",
                     "evidence = Path(tempfile.mkdtemp())",
-                    "for name in ('window-detected', 'after-pause', 'after-pause-0_3s'):",
+                    "for name in ('a2-stable-before-play', 'window-detected', 'after-pause', 'after-pause-0_3s'):",
                     "    (evidence / f'{name}.png').write_bytes(png)",
                     "try:",
                     "    require_visual_identity(evidence, 'pause-window')",
