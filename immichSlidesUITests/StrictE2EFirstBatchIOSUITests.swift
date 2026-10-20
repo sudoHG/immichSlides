@@ -308,7 +308,8 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
 
         guard
             let playPause = preparePauseWindowPlayPause(
-                app: app, deadline: Date().addingTimeInterval(TestWait.seconds(.product(4))))
+                app: app, deadline: Date().addingTimeInterval(TestWait.seconds(.product(4))),
+                failureMessage: "The control bar must be visible before starting pause-window playback.")
         else { return }
         let playUptime = ProcessInfo.processInfo.systemUptime
         tapPauseWindowPlayPause(app: app, button: playPause)
@@ -422,6 +423,8 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
             visualVerdict = "MISSING_FRAMES"
         } else if postPauseBlackOrBlank {
             visualVerdict = "BLACK_OR_BLANK"
+        } else if seesCompleteA3 {
+            visualVerdict = "LATE"
         } else if probeHit == "HIT" && postPausePositive {
             visualVerdict = "NEEDS_HUMAN_REVIEW"
         } else {
@@ -474,6 +477,8 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
             )
         } else if visualVerdict == "BLACK_OR_BLANK" {
             XCTFail("visual_verdict=BLACK_OR_BLANK: synced probe missing after pause, or outgoing opacity already 0.")
+        } else if visualVerdict == "LATE" {
+            XCTFail("visual_verdict=LATE: a complete A3 is visible after pause. visible_mark=\(visibleMark)")
         } else if visualVerdict != "NEEDS_HUMAN_REVIEW" {
             XCTFail("After pausing, the synced probe does not meet outgoing opacity>0 and incoming opacity=0.")
         }
@@ -505,7 +510,7 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
         XCTAssertTrue(
             midpointFrames.allSatisfy {
                 let identity = StrictE2EPhotoIdentity.classifyRejectionEvidence(png: $0.sample.png)
-                return identity.status != .match || identity.mark == "A2"
+                return identity.status != .transition && (identity.status != .match || identity.mark == "A2")
             },
             "Target window shows the wrong image; cannot count as SUCCESS."
         )

@@ -1212,12 +1212,6 @@ def assert_exif_correspondence(identity: PhotoIdentity, overlay_text: str) -> No
         )
 
 
-def assert_pause_hold(immediate: PhotoIdentity, after: PhotoIdentity) -> None:
-    left, right = _require_marks((immediate, after), context="Pause hold")
-    if left != right:
-        raise IdentityAssertionError(f"Photo changed after pausing over 10 seconds: {left} → {right}")
-
-
 def assert_required_frames(present: Mapping[str, object], required: Iterable[str]) -> None:
     missing = [name for name in required if not present.get(name)]
     if missing:
@@ -1280,9 +1274,20 @@ def evaluate_visual_identity(evidence_dir: Path, suite: str) -> dict[str, object
 
 
 def _evaluate_pause_window(evidence_dir: Path) -> dict[str, object]:
+    from ci_failure_diagnostics import remember_validator_input
+    from strict_e2e_filter_manifest import DISPLAY_REGION_BOXES
+
+    def remember_frame(name: str) -> None:
+        try:
+            data = (evidence_dir / f"{name}.png").read_bytes()
+        except OSError:
+            data = b""
+        remember_validator_input(data)
+
     bright = _classify_named(evidence_dir, "a2-stable-before-play")
     if bright.status != "MATCH" or bright.mark != "A2":
         raise IdentityAssertionError("Pause window bright proof must show A2")
+    remember_frame("window-detected")
     try:
         contract = json.loads((evidence_dir / "pause-window-contract.json").read_text(encoding="utf-8"))
         if not isinstance(contract, dict) or contract.get("schema_version") != 1:
@@ -1294,6 +1299,7 @@ def _evaluate_pause_window(evidence_dir: Path) -> dict[str, object]:
             raise ValueError
     except (OSError, ValueError, KeyError, TypeError) as error:
         raise IdentityAssertionError("Pause window capture contract is missing or invalid") from error
+    remember_frame("a2-stable-before-play")
     assert_exif_correspondence(bright, overlay_text)
 
     def probe(raw: object) -> dict[str, str]:
@@ -1315,6 +1321,7 @@ def _evaluate_pause_window(evidence_dir: Path) -> dict[str, object]:
     frozen_probes = []
     names = ("window-detected", *PAUSE_WINDOW_STEPS)
     for name in names:
+        remember_frame(name)
         frame = frames.get(name)
         if not isinstance(frame, dict):
             raise IdentityAssertionError("Pause window capture contract is missing or invalid")
@@ -1333,20 +1340,22 @@ def _evaluate_pause_window(evidence_dir: Path) -> dict[str, object]:
                 valid = False
             if not valid or not all(state.get(key) for key in ("motionRawProgress", "layerIDs")):
                 raise IdentityAssertionError("The paused pause-window probe identity must not change")
-            frozen_probes.append({key: state.get(key) for key in (
-                "phase", "layerIDs", "layerRoles", "layerOpacities", "motionRawProgress")})
-    if any(state != frozen_probes[0] for state in frozen_probes[1:]):
-        raise IdentityAssertionError("The paused pause-window probe identity must not change")
+            frozen_probes.append((name, {key: state.get(key) for key in (
+                "phase", "layerIDs", "layerRoles", "layerOpacities", "motionRawProgress")}))
+    for name, state in frozen_probes[1:]:
+        if state != frozen_probes[0][1]:
+            remember_frame(name)
+            raise IdentityAssertionError("The paused pause-window probe identity must not change")
 
     steps = {"a2-stable-before-play": bright}
     images = {}
     for name in names:
+        remember_frame(name)
         identity = _classify_named(evidence_dir, name)
         try:
             with _pil_image().open(evidence_dir / f"{name}.png") as image:
                 image = image.convert("RGB")
                 # Use the existing center region to keep EXIF/chrome from disguising an empty photo.
-                from strict_e2e_filter_manifest import DISPLAY_REGION_BOXES
                 left, top, right, bottom = DISPLAY_REGION_BOXES["center"]
                 center = image.crop((math.floor(left * image.width), math.floor(top * image.height),
                                      math.ceil(right * image.width), math.ceil(bottom * image.height)))
@@ -1359,10 +1368,11 @@ def _evaluate_pause_window(evidence_dir: Path) -> dict[str, object]:
         if identity.status in ("BLACK", "BLANK") or center_identity.status in ("BLACK", "BLANK"):
             raise IdentityAssertionError("Pause window midpoint must contain visible photo pixels")
         rejection = classify_rejection_evidence((evidence_dir / f"{name}.png").read_bytes())
-        if rejection.status == "MATCH" and rejection.mark != "A2":
+        if rejection.status == "TRANSITION" or (rejection.status == "MATCH" and rejection.mark != "A2"):
             raise IdentityAssertionError("Target window shows the wrong image; cannot count as SUCCESS")
         steps[name] = identity
     for left, right in zip(names, names[1:]):
+        remember_frame(right)
         _assert_pause_window_pixels(images[left], frames[left], images[right], frames[right])
     payload = _report("pause-window", steps)
     payload["overlay_text_before_pause"] = overlay_text
@@ -1436,17 +1446,6 @@ def _report(suite: str, steps: Mapping[str, PhotoIdentity]) -> dict[str, object]
             for name, identity in steps.items()
         },
     }
-
-
-def _require_marks(identities: Sequence[PhotoIdentity], *, context: str) -> list[str]:
-    marks: list[str] = []
-    for index, identity in enumerate(identities):
-        if identity.status != "MATCH" or identity.mark not in MARKS:
-            raise IdentityAssertionError(
-                f"{context} step {index + 1} cannot be identified: status={identity.status} mark={identity.mark}"
-            )
-        marks.append(identity.mark)
-    return marks
 
 
 def _hue_saturation(red: int, green: int, blue: int) -> tuple[float | None, float]:

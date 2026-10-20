@@ -14,6 +14,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageOps
+from PIL.PngImagePlugin import PngInfo
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -21,10 +22,10 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 from strict_e2e_photo_identity import (  # noqa: E402
     IdentityAssertionError,
     assert_exif_correspondence,
-    assert_pause_hold,
     assert_required_frames,
     classify_public_pattern,
     classify_screenshot,
+    classify_rejection_evidence,
     evaluate_visual_identity,
     overlay_model_from_text,
     public_frame_letter_from_bytes,
@@ -33,6 +34,7 @@ from strict_e2e_photo_identity import (  # noqa: E402
     _public_letters_for_cells,
     public_asset_reference,
     PUBLIC_SCENE_GEOMETRIES,
+    _assert_pause_window_pixels,
 )
 from strict_e2e_server import GLYPHS, _fixture_data, _png as fixture_png  # noqa: E402
 from test_album_server_narrow_contract import IPHONE_SCREEN  # noqa: E402
@@ -724,21 +726,6 @@ class NegativeIdentityTests(unittest.TestCase):
         with self.assertRaises(IdentityAssertionError):
             assert_exif_correspondence(identity, "")
 
-    def test_pause_hold_rejects_changed_photo(self) -> None:
-        with self.assertRaises(IdentityAssertionError):
-            assert_pause_hold(
-                classify_screenshot(_fixture_png("A4")),
-                classify_screenshot(_fixture_png("A5")),
-            )
-
-    def test_pause_hold_rejects_black_after_wait(self) -> None:
-        with self.assertRaises(IdentityAssertionError):
-            assert_pause_hold(
-                classify_screenshot(_fixture_png("A4")),
-                classify_screenshot(_solid((0, 0, 0))),
-            )
-
-
     def test_missing_required_frames_cannot_succeed(self) -> None:
         with self.assertRaises(IdentityAssertionError) as raised:
             assert_required_frames(
@@ -792,6 +779,12 @@ class NegativeIdentityTests(unittest.TestCase):
             self.assertIn("EXIF", str(raised.exception))
 
     def test_evaluate_pause_window_rejects_wrong_or_unreadable_window_detected(self) -> None:
+        with Image.open(io.BytesIO(_fixture_png("A2"))) as outgoing, Image.open(io.BytesIO(_fixture_png("A3"))) as incoming:
+            mixed = outgoing.convert("RGB")
+            split = mixed.width // 2
+            mixed.paste(incoming.crop((split, 0, mixed.width, mixed.height)), (split, 0))
+            mixed_png = _png(mixed)
+        self.assertEqual(classify_rejection_evidence(mixed_png).status, "TRANSITION")
         cases = {
             "black": (_solid((0, 0, 0)), "Pause window midpoint must contain visible photo pixels"),
             "blank": (_solid((255, 255, 255)), "Pause window midpoint must contain visible photo pixels"),
@@ -799,6 +792,7 @@ class NegativeIdentityTests(unittest.TestCase):
             "wrong-photo": (_fixture_png("A5"), "Target window shows the wrong image"),
             "dim-wrong-photo": (_darken(_fixture_png("A1"), 0.5), "Target window shows the wrong image"),
             "incoming-photo": (_darken(_fixture_png("A3"), 0.5), "Target window shows the wrong image"),
+            "mixed-incoming": (mixed_png, "Target window shows the wrong image"),
         }
         for label, (window_png, message) in cases.items():
             with self.subTest(window=label), tempfile.TemporaryDirectory() as raw_directory:
@@ -809,13 +803,17 @@ class NegativeIdentityTests(unittest.TestCase):
 
         for defect, message in (
             ("moving", "Paused pause-window frames must be pixel-identical"),
+            ("moving-first-comparison", "Paused pause-window frames must be pixel-identical"),
             ("wrong-bright", "Pause window bright proof must show A2"),
             ("missing-bright", "Missing identification input a2-stable-before-play"),
             ("missing-contract", "Pause window capture contract is missing or invalid"),
             ("missing-frame-contract", "Pause window capture contract is missing or invalid"),
+            ("missing-middle-frame-contract", "Pause window capture contract is missing or invalid"),
             ("wrong-reference", "The paused pause-window probe identity must not change"),
             ("moving-probe", "The paused pause-window probe identity must not change"),
+            ("moving-middle-probe", "The paused pause-window probe identity must not change"),
             ("black-probe", "The paused pause-window probe identity must not change"),
+            ("incoming-probe", "The paused pause-window probe identity must not change"),
             ("bright-not-opaque", "Pause window bright proof must be one frozen opaque scene"),
             ("chrome-unreadable", "Pause window pixel comparison is not usable"),
             ("chrome-covers-photo", "Pause window pixel comparison is not usable"),
@@ -823,39 +821,64 @@ class NegativeIdentityTests(unittest.TestCase):
             with self.subTest(defect=defect), tempfile.TemporaryDirectory() as raw_directory:
                 evidence = Path(raw_directory)
                 _write_pause_window(evidence, window_png=_darken(_fixture_png("A2"), 0.5))
+                # Distinct encoded inputs preserve identical pixels and expose misattributed diagnostics.
+                for name in ("window-detected", "after-pause", "after-pause-0_3s"):
+                    with Image.open(evidence / f"{name}.png") as image:
+                        tag = PngInfo()
+                        tag.add_text("capture", name)
+                        image.save(evidence / f"{name}.png", pnginfo=tag)
                 contract = evidence / "pause-window-contract.json"
                 payload = json.loads(contract.read_text())
-                if defect == "moving":
-                    with Image.open(evidence / "after-pause-0_3s.png") as image:
+                failed_frame = "after-pause-0_3s"
+                if defect in ("moving", "moving-first-comparison"):
+                    failed_frame = "after-pause" if defect == "moving-first-comparison" else "after-pause-0_3s"
+                    with Image.open(evidence / f"{failed_frame}.png") as image:
                         image = image.convert("RGB")
                         image.putpixel((image.width // 2, image.height // 2), (255, 0, 0))
-                        image.save(evidence / "after-pause-0_3s.png")
+                        image.save(evidence / f"{failed_frame}.png")
                 elif defect == "wrong-bright":
+                    failed_frame = "a2-stable-before-play"
                     (evidence / "a2-stable-before-play.png").write_bytes(_fixture_png("A4"))
                 elif defect == "missing-bright":
                     (evidence / "a2-stable-before-play.png").unlink()
                 elif defect == "missing-contract":
+                    failed_frame = "window-detected"
                     contract.unlink()
                 elif defect == "missing-frame-contract":
                     payload["frames"].pop("after-pause-0_3s")
+                elif defect == "missing-middle-frame-contract":
+                    failed_frame = "after-pause"
+                    payload["frames"].pop(failed_frame)
                 elif defect == "bright-not-opaque":
+                    failed_frame = "a2-stable-before-play"
                     payload["bright"]["probe_after"] = payload["bright"]["probe_after"].replace("1.000000", "0.500000")
+                elif defect in ("wrong-reference", "black-probe", "incoming-probe"):
+                    failed_frame = "window-detected"
+                    old, new = {
+                        "wrong-reference": ("photo-2|photo-3", "photo-9|photo-3"),
+                        "black-probe": ("0.500000|0.000000", "0.000000|0.000000"),
+                        "incoming-probe": ("0.500000|0.000000", "0.500000|0.100000"),
+                    }[defect]
+                    for frame in payload["frames"].values():
+                        for key in ("probe_before", "probe_after"):
+                            frame[key] = frame[key].replace(old, new)
                 else:
-                    frame = payload["frames"]["after-pause-0_3s"]
-                    if defect == "wrong-reference":
-                        frame["probe_after"] = frame["probe_after"].replace("photo-2|photo-3", "photo-3|photo-2")
-                    elif defect == "moving-probe":
+                    if defect == "moving-middle-probe":
+                        failed_frame = "after-pause"
+                    frame = payload["frames"][failed_frame]
+                    if defect in ("moving-probe", "moving-middle-probe"):
                         frame["probe_after"] = frame["probe_after"].replace("1.000000|0.000000", "0.900000|0.000000")
-                    elif defect == "black-probe":
-                        frame["probe_after"] = frame["probe_after"].replace("0.500000|0.000000", "0.000000|0.000000")
                     elif defect == "chrome-unreadable":
                         frame["chrome_problem"] = "unreadable hierarchy"
                     elif defect == "chrome-covers-photo":
                         frame["excluded_rects"] = [frame["window_frame"]]
                 if defect != "missing-contract":
                     contract.write_text(json.dumps(payload))
-                with self.assertRaisesRegex(IdentityAssertionError, "^" + message):
-                    evaluate_visual_identity(evidence, "pause-window")
+                with patch("ci_failure_diagnostics.remember_validator_input") as remember:
+                    with self.assertRaisesRegex(IdentityAssertionError, "^" + message):
+                        evaluate_visual_identity(evidence, "pause-window")
+                    if defect != "missing-bright":
+                        self.assertEqual(remember.call_args.args[0], (evidence / f"{failed_frame}.png").read_bytes())
 
     def test_evaluate_pause_window_allows_window_exif_mismatch_on_a2_boundary(self) -> None:
         with tempfile.TemporaryDirectory() as raw_directory:
@@ -1101,11 +1124,6 @@ class PositiveIdentityTests(unittest.TestCase):
             "Fixture 5",
         )
 
-    def test_pause_hold_on_public_marks(self) -> None:
-        a4 = classify_screenshot(_fixture_png("A4"))
-        a4_dark = classify_screenshot(_darken(_fixture_png("A4"), 0.3))
-        assert_pause_hold(a4, a4_dark)
-
     def test_evaluate_visual_identity_accepts_public_fixture_sequences(self) -> None:
         with tempfile.TemporaryDirectory() as raw_directory:
             evidence = Path(raw_directory)
@@ -1204,7 +1222,16 @@ class ReviewedScreenshotCalibrationTests(unittest.TestCase):
         held = self._classify_file("tvos-pause/02-pause-after-11.860-seconds-A4.png")
         resumed = self._classify_file("tvos-pause/03-resumed-advanced-A5.png")
         self.assertEqual(immediate.mark, "A4")
-        assert_pause_hold(immediate, held)
+        self.assertEqual(held.mark, "A4")
+        with Image.open(self.root / "tvos-pause/01-pause-immediate-A4.png") as first, Image.open(
+            self.root / "tvos-pause/02-pause-after-11.860-seconds-A4.png"
+        ) as second:
+            chrome = PUBLIC_SCENE_GEOMETRIES[first.size][1]
+            self.assertIsNotNone(chrome)
+            left, top, right, bottom = chrome
+            frame = {"window_frame": [0, 0, first.width, first.height],
+                     "excluded_rects": [[left, top, right - left, bottom - top]], "chrome_problem": None}
+            _assert_pause_window_pixels(first.convert("RGB"), frame, second.convert("RGB"), frame)
         self.assertEqual(resumed.mark, "A5")
 
 

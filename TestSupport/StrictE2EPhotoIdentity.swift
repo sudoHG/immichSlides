@@ -854,13 +854,6 @@ enum StrictE2EPhotoIdentity {
         }
     }
 
-    static func assertPauseHold(_ immediate: Result, _ after: Result) throws {
-        let marks = try requireMarks([immediate, after], context: "Pause hold")
-        if marks[0] != marks[1] {
-            throw AssertionError.message("Photo changed after pausing over 10 seconds: \(marks[0]) → \(marks[1])")
-        }
-    }
-
     static func assertRequiredFrames(_ present: [String: Bool], required: [String]) throws {
         let missing = required.filter { present[$0] != true }
         if !missing.isEmpty {
@@ -876,17 +869,6 @@ enum StrictE2EPhotoIdentity {
             "notes": identity.notes,
             "scores": identity.scores
         ]
-    }
-
-    private static func requireMarks(_ identities: [Result], context: String) throws -> [String] {
-        try identities.enumerated().map { index, identity in
-            guard identity.status == .match, let mark = identity.mark, marks.contains(mark) else {
-                throw AssertionError.message(
-                    "\(context) step \(index + 1) cannot be identified: status=\(identity.status.rawValue) mark=\(identity.mark ?? "nil")"
-                )
-            }
-            return mark
-        }
     }
 
     private static func capturePixels(image: CGImage, colorSpace: CGColorSpace? = nil) -> (

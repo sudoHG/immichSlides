@@ -32,7 +32,8 @@ extension StrictE2EFirstBatchIOSUITests {
     func pausePlaybackIfNeeded(app: XCUIApplication) {
         guard
             let button = preparePauseWindowPlayPause(
-                app: app, deadline: Date().addingTimeInterval(TestWait.seconds(.product(4))))
+                app: app, deadline: Date().addingTimeInterval(TestWait.seconds(.product(4))),
+                failureMessage: "The control bar must be visible before opening settings.")
         else { return }
         if playPauseState(button) != "play" {
             tapPauseWindowPlayPause(app: app, button: button)
@@ -47,8 +48,14 @@ extension StrictE2EFirstBatchIOSUITests {
     }
 
     @MainActor
-    func preparePauseWindowPlayPause(app: XCUIApplication, deadline: Date) -> XCUIElementSnapshot? {
+    func preparePauseWindowPlayPause(app: XCUIApplication, deadline: Date, failureMessage: String)
+        -> XCUIElementSnapshot?
+    {
         let identifier = "slideshow.control.playPause.button"
+        // Refresh auto-hide once before observing; the playback surface is never the requested control.
+        if Date() < deadline {
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tapForFailureEvidence()
+        }
         while Date() < deadline {
             let observation = try? app.slideshowControlBarButtonObservation(identifier: identifier)
             guard Date() < deadline else { break }
@@ -57,15 +64,9 @@ extension StrictE2EFirstBatchIOSUITests {
             {
                 return button
             }
-            if let observation, observation.hasPlaybackMarker,
-                observation.button == nil || observation.button?.isEnabled == true, Date() < deadline
-            {
-                // Wake the real playback surface; the hidden receiver is never the requested control.
-                app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tapForFailureEvidence()
-            }
             RunLoop.current.run(until: min(deadline, Date().addingTimeInterval(TestWait.seconds(.product(0.06)))))
         }
-        XCTFail("The control bar must be visible before opening settings.")
+        XCTFail(failureMessage)
         return nil
     }
 
