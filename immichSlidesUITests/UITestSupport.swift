@@ -1156,60 +1156,56 @@ extension XCUIApplication {
         var timing = SlideshowControlBarTiming()
         timing.shouldVerifySettingsOutcome = identifier == "slideshow.control.settings.button"
         defer { print("Slideshow control action: \(timing.diagnostic)") }
-        // A playback-area tap only shows the bar and resets auto-hide; it never toggles it off.
-        timing.reveal(app: self)
         let deadline = Date().addingTimeInterval(UITestSupportWaitTiming.controlAppearanceTimeoutSeconds)
-        var isTapAttemptPrepared = true
+        var didReveal = false
         while Date() < deadline {
             let observation = timing.observe(app: self, identifier: identifier)
-            if timing.tapCount > 0 {
-                timing.didObserveSettingsNavigation =
-                    timing.didObserveSettingsNavigation || observation?.hasSettingsNavigationEvidence == true
-            }
+            timing.didObserveSettingsNavigation =
+                timing.didObserveSettingsNavigation || observation?.hasSettingsNavigationEvidence == true
             guard Date() < deadline else { break }
             if let observation {
-                // Once navigation starts, the first Settings tap is delivered; never tap an incoming page.
+                // Never reveal or tap an incoming Settings page.
                 guard !timing.didObserveSettingsNavigation else { break }
-                if observation.isInsideWindow,
+                if !didReveal, observation.hasPlaybackMarker {
+                    // Spend the sole wake immediately before a fresh target snapshot, within this deadline.
+                    didReveal = true
+                    timing.reveal(app: self)
+                    continue
+                }
+                if didReveal, observation.isInsideWindow,
                     let button = observation.button
                 {
-                    if isTapAttemptPrepared {
-                        let frame = button.frame
-                        let startedAt = Date()
-                        timing.tapCount += 1
-                        windows.firstMatch.coordinate(withNormalizedOffset: .zero)
-                            .withOffset(
-                                CGVector(
-                                    dx: frame.midX - observation.windowFrame.minX,
-                                    dy: frame.midY - observation.windowFrame.minY)
-                            ).tapForFailureEvidence()
-                        let duration = Date().timeIntervalSince(startedAt)
-                        timing.tapSeconds += duration
-                        timing.tapDurationsSeconds.append(duration)
-                        // Callers own scene-change, Play/Pause and EXIF budgets after one real tap.
-                        if !timing.shouldVerifySettingsOutcome { return }
-                        isTapAttemptPrepared = false
-                        // XCTest's idle wait belongs to the tap, not the destination appearance window.
-                        let didObserveOutcome = TestWait.until(
-                            .product(UITestSupportWaitTiming.elementAppearanceTimeoutSeconds),
-                            pollIntervalSeconds: UITestSupportWaitTiming.identityPollSeconds
-                        ) {
-                            let verifyStartedAt = Date()
-                            let outcome = timing.observe(app: self, identifier: identifier)
-                            timing.didObserveSettingsNavigation =
-                                timing.didObserveSettingsNavigation || outcome?.hasSettingsNavigationEvidence == true
-                            timing.verifySeconds += Date().timeIntervalSince(verifyStartedAt)
-                            return outcome?.hasSettingsOutcome ?? false
-                        }
-                        timing.hasSettingsOutcome = didObserveOutcome
-                        if didObserveOutcome { return }
-                        guard timing.tapCount < 2 else { break }
-                    } else if observation.hasPlaybackMarker {
-                        // Confirm no navigation in this iteration before revealing for the one retry.
-                        timing.reveal(app: self)
-                        isTapAttemptPrepared = true
-                        continue
+                    let frame = button.frame
+                    let startedAt = Date()
+                    // Retain the observed window; do not enumerate windows again after the final snapshot.
+                    let coordinate = observation.windowElement.coordinate(withNormalizedOffset: .zero)
+                        .withOffset(
+                            CGVector(
+                                dx: frame.midX - observation.windowFrame.minX,
+                                dy: frame.midY - observation.windowFrame.minY))
+                    guard Date() < deadline else { break }
+                    timing.tapCount += 1
+                    coordinate.tapForFailureEvidence()
+                    let duration = Date().timeIntervalSince(startedAt)
+                    timing.tapSeconds += duration
+                    timing.tapDurationsSeconds.append(duration)
+                    // Callers own scene-change, Play/Pause and EXIF budgets after one real tap.
+                    if !timing.shouldVerifySettingsOutcome { return }
+                    // The fixed outcome window starts at tap return, even if XCTest's idle wait was long.
+                    let didObserveOutcome = TestWait.until(
+                        .product(UITestSupportWaitTiming.elementAppearanceTimeoutSeconds),
+                        pollIntervalSeconds: UITestSupportWaitTiming.identityPollSeconds
+                    ) {
+                        let verifyStartedAt = Date()
+                        let outcome = timing.observe(app: self, identifier: identifier)
+                        timing.didObserveSettingsNavigation =
+                            timing.didObserveSettingsNavigation || outcome?.hasSettingsNavigationEvidence == true
+                        timing.verifySeconds += Date().timeIntervalSince(verifyStartedAt)
+                        return outcome?.hasSettingsOutcome ?? false
                     }
+                    timing.hasSettingsOutcome = didObserveOutcome
+                    if didObserveOutcome { return }
+                    break
                 }
             }
             guard Date() < deadline else { break }

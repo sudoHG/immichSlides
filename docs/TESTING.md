@@ -240,23 +240,25 @@ retains the last successful Settings poll and its playback-marker observation. A
 snapshot leaves that observation intact and sets `lastSnapshotSucceeded=false`;
 attributes are unknown only until a snapshot first succeeds. Diagnostic reads never restart the
 deadline or turn a timeout into success.
-The iOS control-bar tap helper reveals before each tap attempt, then takes a window
-snapshot and performs a real coordinate tap at that frame's centre, relative to the
-stable window. The playback-area tap only shows the bar and restarts auto-hide; it
-does not hide an already visible bar. The existing eight-second appearance budget
-starts after the first reveal and never restarts. Next/Previous/Play-Pause receive
+The iOS control-bar tap helper takes a preparatory window snapshot, then spends
+one proactive reveal immediately before a fresh target snapshot and one real
+coordinate tap at that frame's centre, relative to the retained window. The
+playback-area tap only shows the bar and restarts auto-hide; it does not hide an
+already visible bar. The existing eight-second appearance budget starts before
+preparation, includes the reveal and never restarts. The coordinate uses the
+observed window without enumerating windows again, and the helper checks the
+same deadline immediately before the tap. Next/Previous/Play-Pause receive
 one real tap and return immediately; their callers retain their scene-change,
 Play/Pause and EXIF retry budgets. The shared helper does not compare their values.
 Only Settings verifies an outcome: a Settings entry or the playback toggle. Its
 existing five-second product appearance wait starts when the coordinate tap returns,
 so XCTest's idle wait does not consume the outcome window. This window stays fixed
 under every wait factor; an observation completing after it expires never passes.
-At most one retry is allowed, within the original eight-second control deadline.
-Before its reveal, a fresh snapshot in the same iteration must still show playback
-and contain neither the system `BackButton` nor any `settings.*` identifier.
-Observing either navigation signal permanently suppresses further taps. The retry
-then takes a new frame snapshot and checks the original control deadline before
-tapping; each returned Settings tap gets its own bounded appearance wait.
+There is no control-tap retry: a call sends at most one reveal and one control tap.
+Before its reveal, a fresh snapshot must show playback and contain neither the
+system `BackButton` nor any `settings.*` identifier. Either navigation signal
+suppresses further actions. The one returned Settings tap gets its fixed appearance
+wait even if XCTest's event delivery outlasted preparation.
 Wait-only Settings callers return as soon as a snapshot proves readiness within
 the original deadline; they do not synthesize a redundant reveal on success.
 The action helper still refreshes auto-hide before taking its tap snapshot.
