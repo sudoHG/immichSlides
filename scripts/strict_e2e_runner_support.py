@@ -492,6 +492,11 @@ def boot_simulator(simulator_udid: str, *, report: Callable[[str], None] | None 
                                           phase, deadline=deadline, timeout_seconds=cap,
                                           accepts_nonzero=lambda result: step == "boot" and _is_already_booted(result.stderr))
             lines.append(f"{step}_exit={completed.returncode}")
+            if step == "bootstatus" and "Booting device..." in (completed.stdout or ""):
+                line = "simulator-bootstatus: started-device=true"
+                lines.append(line)
+                if report is not None:
+                    report(line)
             if completed.returncode and not (step == "boot" and _is_already_booted(completed.stderr)):
                 message = "Simulator boot failed" if step == "boot" else "Simulator did not become available"
                 raise CommandError(f"{message} (exit {completed.returncode}); cannot continue with a clean install.")
@@ -575,6 +580,10 @@ def _wait_for_simulator_response(query, phase: str, *, report: Callable[[str], N
                 continue
             if time.monotonic() >= deadline:
                 raise InfrastructureTimeout(phase, budget)
+            line = (f"{phase}: query completed; attempt={attempts}; "
+                    f"query_elapsed={time.monotonic() - query_started:.3f}s; elapsed={time.monotonic() - started:.3f}s")
+            lines.append(line)
+            report(line)
             outcome = "passed"
             break
     finally:

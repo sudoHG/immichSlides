@@ -381,6 +381,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
         retry: bool = False,
         timeout_phase: str | None = None,
         late_image_attempt=None,
+        boot_submitted: bool = False,
     ) -> tuple[int, str, str, dict[str, mock.Mock]]:
         destination = f"platform={'tvOS' if platform == 'tvos' else 'iOS'} Simulator,id={P2_UDID}"
         selector = (
@@ -441,7 +442,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                 {"BlueprintName": "immichSlidesUITests", "EnvironmentVariables": {}}]}]}))
             return run
 
-        def fake_preparation(udid, *, report):
+        def fake_preparation(udid, *, report, boot_submitted=False):
             report("simulator-preparation: " + ("failed" if timeout_phase in {"simulator-bootstatus", "simulator-readiness"} else "passed"))
             if timeout_phase in {"simulator-bootstatus", "simulator-readiness"}:
                 raise strict_runner.InfrastructureTimeout(timeout_phase, 60)
@@ -465,7 +466,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
             "run_strict_e2e.subprocess.run", side_effect=fake_subprocess
         ), mock.patch("run_strict_e2e.prepare_simulator", side_effect=fake_preparation) as prepare, mock.patch(
             "run_strict_e2e.reset_simulator_app", return_value="reset\n"
-        ), mock.patch(
+        ) as reset, mock.patch(
             "run_strict_e2e.run_command", side_effect=fake_run_command
         ), mock.patch(
             "run_strict_e2e.read_official_test_results_summary",
@@ -502,6 +503,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                     *(["--scenario", "out-of-order"] if suite == "late-image" else []),
                     *(["--test-without-building", "--derived-data-path", str(evidence.parent / "derived")] if warm else []),
                     *(["--listed-retry-device", "iphone"] if retry else []),
+                    *(["--simulator-boot-submitted"] if boot_submitted else []),
                     *(["--warm-timeout-seconds", "600"] if timeout_phase == "xcodebuild" else []),
                 ],
                 stdout=stdout,
@@ -509,6 +511,8 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
             )
         return exit_code, stdout.getvalue(), stderr.getvalue(), {
             "dirty": dirty,
+            "prepare": prepare,
+            "reset": reset,
             "facts": facts,
             "start": start,
             "stop": stop,
@@ -516,6 +520,26 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
             "invocations": invocations,
             "attempt_environments": attempt_environments,
         }
+
+    def test_warm_runner_reuses_submitted_boot_for_every_reset(self):
+        for submitted, suite, retry, resets in (
+                (False, "smoke", False, 1), (True, "smoke", False, 1),
+                (True, "filter-person", False, 3), (True, "filter-person", True, 4),
+                (True, "late-image", True, 2)):
+            with self.subTest(boot_submitted=submitted, suite=suite, retry=retry), tempfile.TemporaryDirectory() as raw:
+                def request_preview(environment, _number):
+                    import urllib.request
+                    request = urllib.request.Request(environment["STRICT_E2E_INPUT_SERVER_URL"] +
+                        "/assets/asset-a-2/thumbnail?size=preview", headers={"x-api-key": strict_runner.PUBLIC_API_KEY})
+                    with urllib.request.urlopen(request, timeout=5) as response:
+                        response.read()
+                code, _, stderr, calls = self._run_p2_main(Path(raw) / "evidence", suite=suite,
+                    platform="ios", model="iPhone", warm=True, boot_submitted=submitted, retry=retry,
+                    late_image_attempt=request_preview if suite == "late-image" else None)
+                self.assertEqual(0, code, stderr)
+                self.assertEqual(submitted, calls["prepare"].call_args.kwargs.get("boot_submitted", False))
+                calls["prepare"].assert_called_once()
+                self.assertEqual([mock.call(P2_UDID, boot_submitted=True)] * resets, calls["reset"].call_args_list)
 
     def test_strict_retry_configures_independent_spools_and_disables_a_failed_reconfiguration(self):
         from ci_failure_diagnostics import configure_first_failure_attempt
@@ -783,10 +807,13 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                             raise subprocess.TimeoutExpired(["private-input"], kwargs["timeout"])
                         if mode == "late-response":
                             clock[0] += 301
+                        elif mode in ("ready", "recover"):
+                            clock[0] += 0.125
                         return subprocess.CompletedProcess(command, 113 if mode in ("missing-service", "timeout-then-missing-service") else 0,
                                                            "private-input", "private-input")
                     self.assertIn(command[2], ("boot", "bootstatus"), "prebuild must not query app containers")
-                    return subprocess.CompletedProcess(command, 0, "", "")
+                    return subprocess.CompletedProcess(command, 0, "Booting device...\n"
+                        if command[2] == "bootstatus" and mode == "ready" else "", "")
                 with diagnostics.session() as recorder, \
                         mock.patch.object(diagnostics, "system_sample", return_value=None), \
                         mock.patch.object(support.subprocess, "run", side_effect=run), \
@@ -796,6 +823,10 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                                                                   should_check_app=False)
                         self.assertIsNone(container)
                         self.assertIn("simulator-preparation: passed", log)
+                        self.assertEqual(mode == "ready", "simulator-bootstatus: started-device=true" in log)
+                        self.assertEqual(mode == "ready", "simulator-bootstatus: started-device=true" in reports)
+                        self.assertIn("query completed; attempt=" + ("2" if mode == "recover" else "1") +
+                                      "; query_elapsed=0.125s", log)
                         self.assertEqual(["boot", "bootstatus", "spawn"] + (["spawn"] if mode == "recover" else []),
                                          [command[2] for command in commands])
                     else:
@@ -1522,6 +1553,93 @@ class FailureDiagnosticsTests(unittest.TestCase):
 
 
 class StrictCITracerTests(unittest.TestCase):
+    def test_submitted_boot_settles_during_cold_build_and_gates_every_warm_case(self):
+        import run_strict_ci_tracer as tracer
+        import strict_e2e_runner_support as support
+        from ci_summary import parse_summary
+        identity = {"schema_version": 1, "event": "local", "repository": "sudoHG/immichSlides",
+                    "commit_sha": "0" * 40, "tree_sha": "0" * 40, "dirty": False}
+        for failure in (None, "readiness", "service", "cold", "hard-timeout"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as raw:
+                root, order, clock = Path(raw), [], [0.0]
+                case = dict(platform="ios", device="ipad", configuration="Debug", suite="journey-a",
+                            scenario="normal", fixture="a")
+                manifest = root / "manifest.json"
+                manifest.write_text(json.dumps({"cases": [case, dict(case, suite="journey-b")], "exclusions": []}))
+                def run(command, *_args, **_kwargs):
+                    if "--prepare-simulator-only" in command:
+                        self.assertEqual(support.SIMULATOR_PREPARATION_TIMEOUT_SECONDS + 180, _kwargs["timeout_seconds"])
+                        if failure == "hard-timeout":
+                            order.append("child-timeout")
+                            raise subprocess.TimeoutExpired(command, _kwargs["timeout_seconds"])
+                        return tracer.main(command[3:])
+                    if "--warm-up-only" in command:
+                        order.append("cold")
+                        self.assertNotIn("--simulator-boot-submitted", command)
+                        clock[0] += 420
+                        derived = Path(command[command.index("--derived-data-path") + 1])
+                        derived.mkdir(parents=True)
+                        (derived / "strict-warm-build.json").write_text(json.dumps({"signing_mode": "adhoc"}))
+                        return 1 if failure == "cold" else 0
+                    order.append("warm")
+                    self.assertIn("--simulator-boot-submitted", command)
+                    evidence = Path(command[command.index("--evidence-dir") + 1])
+                    evidence.mkdir(parents=True)
+                    suite = command[command.index("--suite") + 1]
+                    bundle, method = tracer.resolve_suite_selector("ios", suite).split("/", 1)
+                    (evidence / "xcodebuild.log").write_text("test-without-building\n")
+                    (evidence / "xcodebuild-reuse.json").write_text(json.dumps({"products_unchanged": True}))
+                    (evidence / "official-summary.json").write_text(json.dumps({"totalTestCount": 1, "passedTests": 1,
+                        "failedTests": 0, "skippedTests": 0, "result": "Passed"}))
+                    (evidence / "official-tests.json").write_text(json.dumps({"testNodes": [{
+                        "nodeType": "Unit test bundle", "name": bundle, "children": [{"nodeType": "Test Case",
+                        "nodeIdentifier": method + "()", "result": "Passed"}]}]}))
+                    return 0
+                def simctl(command, **kwargs):
+                    order.append(command[2])
+                    self.assertIn(command[2], ("bootstatus", "spawn"), "never resubmit boot or query the cold app container")
+                    self.assertEqual(order[0], "cold", "readiness must start after the cold build")
+                    if command[2] == "spawn":
+                        if failure == "readiness":
+                            clock[0] += kwargs["timeout"]
+                            raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+                        return subprocess.CompletedProcess(command, int(failure == "service"), "", "")
+                    return subprocess.CompletedProcess(command, 0, "", "")
+                output = root / "trace"
+                with mock.patch.object(tracer, "run_runner", side_effect=run), \
+                        mock.patch.object(tracer, "workspace_preflight"), mock.patch.object(tracer, "run_identity", return_value=identity), \
+                        mock.patch.object(tracer, "source_metadata", return_value=(None, False)), \
+                        mock.patch.object(tracer.shutil, "disk_usage", return_value=mock.Mock(total=200 * 1024**3, free=100 * 1024**3)), \
+                        mock.patch.object(tracer, "toolchain", return_value={"versions": {"python": "test"}, "signing_mode": "not-applicable"}), \
+                        mock.patch.object(support.subprocess, "run", side_effect=simctl), \
+                        mock.patch("ci_execution_diagnostics.system_sample", return_value=None), \
+                        mock.patch.object(support.time, "monotonic", side_effect=lambda: clock[0]), \
+                        mock.patch("builtins.print"):
+                    code = tracer.main(["--platform", "ios", "--destination", "platform=iOS Simulator,id=TEST",
+                        "--manifest", str(manifest), "--output-dir", str(output), "--simulator-boot-submitted"])
+                summary = parse_summary((output / "records/summary.json").read_text())
+                if failure is None:
+                    self.assertEqual(0, code)
+                    self.assertEqual("passed", summary["status"])
+                    self.assertEqual(["cold", "bootstatus", "spawn", "warm", "warm"], order)
+                else:
+                    self.assertEqual(1, code)
+                    self.assertNotIn("warm", order)
+                    if failure == "cold":
+                        self.assertEqual(["cold"], order)
+                        continue
+                    self.assertEqual(0 if failure == "hard-timeout" else 1, order.count("bootstatus"),
+                                     "failed preparation must not retry the shard")
+                    self.assertEqual("simulator-preparation-failed", summary["infrastructure"][0]["code"])
+                    for item in summary["population"]["observed"]:
+                        self.assertEqual(("failed", "not-run", None),
+                            (item["outcome"], item["attempts"][0]["outcome"], item["attempts"][0]["exit_code"]))
+                        receipt = item["first_failure"]
+                        self.assertEqual(receipt, item["attempts"][0]["first_failure"])
+                        self.assertEqual(("simulator-readiness", 300) if failure == "readiness" else ("unknown", None),
+                            (receipt["step"], receipt["timing"]["wait_elapsed_seconds"]))
+                    self.assertEqual([], summary["population"]["compiled"])
+
     def test_pause_timing_signature_survives_runner_tracer_nightly_and_method_reporting(self):
         import copy
         import ci_report
@@ -2024,7 +2142,7 @@ raise SystemExit(65)
                 "suite": "filter-person", "scenario": "normal", "fixture": "a"}
         identity = {"schema_version": 1, "event": "local", "repository": "sudoHG/immichSlides",
                     "commit_sha": "0" * 40, "tree_sha": "0" * 40, "dirty": False}
-        for failed_stage in ("initial-boot", "reset-boot", "reset-readiness", "reset-uninstall"):
+        for failed_stage in ("initial-boot", "reset-bootstatus", "reset-readiness", "reset-uninstall"):
             with self.subTest(stage=failed_stage), tempfile.TemporaryDirectory() as raw:
                 root = Path(raw)
                 manifest = root / "manifest.json"
@@ -2048,10 +2166,10 @@ raise SystemExit(65)
                             return subprocess.CompletedProcess(call, 0, "", "")
                         self.assertEqual(["xcrun", "simctl"], call[:2])
                         step = call[2]
-                        if step == "boot":
+                        if step == "bootstatus":
                             boot_calls.append(call)
                         should_timeout = ((failed_stage == "initial-boot" and step == "boot")
-                            or (len(boot_calls) == 2 and ((failed_stage == "reset-boot" and step == "boot")
+                            or (len(boot_calls) == 2 and ((failed_stage == "reset-bootstatus" and step == "bootstatus")
                                 or (failed_stage == "reset-readiness" and step == "get_app_container")
                                 or (failed_stage == "reset-uninstall" and step == "uninstall"))))
                         if should_timeout:
@@ -2070,7 +2188,7 @@ raise SystemExit(65)
                             mock.patch.object(support.subprocess, "run", side_effect=preparation_command):
                         code = runner.main(command[3:], stdout=io.StringIO(), stderr=io.StringIO())
                     self.assertEqual(124, code)
-                    self.assertEqual(1 if failed_stage == "initial-boot" else 2, len(boot_calls))
+                    self.assertEqual(0 if failed_stage == "initial-boot" else 2, len(boot_calls))
                     child_manifest = json.loads(Path(command[command.index("--evidence-dir") + 1], "case-manifest.json").read_text())
                     self.assertEqual(("FAILED", 124), (child_manifest["result"], child_manifest["exit_code"]))
                     return code
@@ -2090,6 +2208,7 @@ raise SystemExit(65)
                 self.assertEqual(receipt, failed["attempts"][0]["first_failure"])
                 expected_step, expected_elapsed = (("simulator-readiness", support.SIMULATOR_READINESS_TIMEOUT_SECONDS)
                     if failed_stage == "reset-readiness" else ("unknown", None) if failed_stage == "reset-uninstall"
+                    else ("simulator-bootstatus", support.SIMULATOR_BOOT_TIMEOUT_SECONDS) if failed_stage == "reset-bootstatus"
                     else ("simulator-boot", support.SIMULATOR_COMMAND_TIMEOUT_SECONDS))
                 self.assertEqual(("preparation", expected_step, expected_elapsed),
                     (receipt["source"], receipt["step"], receipt["timing"]["wait_elapsed_seconds"]))
