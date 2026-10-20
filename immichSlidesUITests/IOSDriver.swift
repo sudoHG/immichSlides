@@ -124,23 +124,35 @@ struct IOSDriver: PlaybackDriver {
         let initialValue = playPauseValue(before)
         guard initialValue == "pause" || initialValue == "play" else {
             XCTFail(
-                "After pausing, the control value must be play. (button-value-read-inconsistent; before=\(initialValue), \(action.diagnostic))"
+                "Play/pause value must be readable before pausing. (button-value-read-inconsistent; before=\(initialValue), \(action.diagnostic))"
             )
             return
         }
         if initialValue == "pause" { activateControl(before, action: &action) }
         let stateDeadline = Date().addingTimeInterval(UITestSupportWaitTiming.stateChangeTimeoutSeconds)
         var observedValues: Set<String> = []
+        var didObserveLatePausedValue = false
         let paused = Wait.until(timeout: max(.zero, stateDeadline.timeIntervalSinceNow)) {
             guard Date() < stateDeadline else { return false }
+            let verifyStartedAt = Date()
+            defer { action.timing.verifySeconds += Date().timeIntervalSince(verifyStartedAt) }
             guard let observation = action.observe(app: app, identifier: identifier) else { return false }
             let value = playPauseValue(observation)
             observedValues.insert(value)
-            return value == "play" && Date() < stateDeadline
+            let observedAt = Date()
+            didObserveLatePausedValue = value == "play" && observedAt >= stateDeadline
+            return value == "play" && observedAt < stateDeadline
         }
-        let reason =
-            action.issuedAt != nil && observedValues == ["pause"]
-            ? "tap-had-no-observed-effect" : "button-value-read-inconsistent-or-unavailable"
+        let reason: String
+        if didObserveLatePausedValue {
+            reason = "paused-value-observed-after-deadline"
+        } else if action.issuedAt == nil, initialValue == "play", observedValues.contains("pause") {
+            reason = "initially-paused-value-changed-without-tap"
+        } else if action.issuedAt != nil, observedValues == ["pause"] {
+            reason = "tap-had-no-observed-effect"
+        } else {
+            reason = "button-value-read-inconsistent-or-unavailable"
+        }
         XCTAssertTrue(
             paused,
             "After pausing, the control value must be play. (\(reason); before=\(initialValue), after=\(observedValues.sorted()), \(action.diagnostic))"
@@ -152,35 +164,43 @@ struct IOSDriver: PlaybackDriver {
 
     func next() {
         let identifier = "slideshow.control.next.button"
-        // Strict fixture flows expose no DEBUG scene probes; compare the actual public photo instead.
         let deadline = Date().addingTimeInterval(UITestSupportWaitTiming.stateChangeTimeoutSeconds)
+        var action = ControlAction()
+        guard let before = prepareControl(identifier, until: deadline, action: &action) else {
+            XCTFail("Next control must be actionable before tapping. (\(action.diagnostic))")
+            return
+        }
+        // Read the public photo after preparation/wake, immediately before the single target tap.
         var sceneBefore: String?
         _ = Wait.until(timeout: max(.zero, deadline.timeIntervalSinceNow)) {
             guard Date() < deadline else { return false }
+            let verifyStartedAt = Date()
+            defer { action.timing.verifySeconds += Date().timeIntervalSince(verifyStartedAt) }
             sceneBefore = visiblePhotoObservation().mark
             return sceneBefore != nil && Date() < deadline
         }
-        var action = ControlAction()
-        guard let before = prepareControl(identifier, until: deadline, action: &action),
-            let sceneBefore
-        else {
-            XCTFail("Playback page must provide Next. (\(action.diagnostic))")
+        guard let sceneBefore, Date() < deadline else {
+            XCTFail("The current scene must be readable before tapping Next. (\(action.diagnostic))")
             return
         }
         activateControl(before, action: &action)
+        // Use the existing post-tap state-change window, independently of control preparation.
+        let stateDeadline = Date().addingTimeInterval(UITestSupportWaitTiming.stateChangeTimeoutSeconds)
         var lastVisiblePhoto: String?
         var lastCaptureRemainingSeconds: TimeInterval?
-        let changed = Wait.until(timeout: max(.zero, deadline.timeIntervalSinceNow)) {
-            guard Date() < deadline else { return false }
+        let changed = Wait.until(timeout: max(.zero, stateDeadline.timeIntervalSinceNow)) {
+            guard Date() < stateDeadline else { return false }
+            let verifyStartedAt = Date()
+            defer { action.timing.verifySeconds += Date().timeIntervalSince(verifyStartedAt) }
             let observation = visiblePhotoObservation()
-            lastCaptureRemainingSeconds = deadline.timeIntervalSince(observation.capturedAt)
-            guard observation.capturedAt < deadline, let sceneAfter = observation.mark else { return false }
+            lastCaptureRemainingSeconds = stateDeadline.timeIntervalSince(observation.capturedAt)
+            guard observation.capturedAt < stateDeadline, let sceneAfter = observation.mark else { return false }
             lastVisiblePhoto = sceneAfter
             return sceneAfter != sceneBefore
         }
         XCTAssertTrue(
             changed,
-            "Playback page must provide Next. (Next must show a different public photo after one tap; before=\(sceneBefore), after=\(lastVisiblePhoto ?? "unrecognized"), captureRemainingSeconds=\(lastCaptureRemainingSeconds.map(String.init(describing:)) ?? "unknown"), \(action.diagnostic))"
+            "One Next tap must change the visible scene. (before=\(sceneBefore), after=\(lastVisiblePhoto ?? "unrecognized"), captureRemainingSeconds=\(lastCaptureRemainingSeconds.map(String.init(describing:)) ?? "unknown"), \(action.diagnostic))"
         )
         print(
             "IOSDriver Next: successorSceneChanged=\(changed), before=\(sceneBefore), after=\(lastVisiblePhoto ?? "unrecognized"), captureRemainingSeconds=\(lastCaptureRemainingSeconds.map(String.init(describing:)) ?? "unknown"), \(action.diagnostic)"
@@ -272,6 +292,8 @@ struct IOSDriver: PlaybackDriver {
         activateControl(before, action: &action)
         let opened = Wait.until(timeout: max(.zero, deadline.timeIntervalSinceNow)) {
             guard Date() < deadline else { return false }
+            let verifyStartedAt = Date()
+            defer { action.timing.verifySeconds += Date().timeIntervalSince(verifyStartedAt) }
             let observation = action.observe(app: app, identifier: "slideshow.control.settings.button")
             action.timing.hasSettingsOutcome = observation?.hasSettingsOutcome == true
             let hasPINEntry = shouldAllowPINEntry && observation?.snapshots["pinEntry.close.button"] != nil
@@ -360,14 +382,9 @@ struct IOSDriver: PlaybackDriver {
     func revealUsableControls() -> Bool {
         let deadline = Date().addingTimeInterval(UITestSupportWaitTiming.shortInteractionTimeoutSeconds)
         var action = ControlAction()
-        guard let observation = prepareControl("slideshow.control.playPause.button", until: deadline, action: &action)
-        else { return false }
-        return hasVisibleControlBar(observation)
-            && [
-                "slideshow.control.playPause.button", "slideshow.control.next.button",
-                "slideshow.control.settings.button"
-            ]
-            .allSatisfy { app.buttons[$0].isHittable && Date() < deadline }
+        return prepareControl(
+            "slideshow.control.playPause.button", until: deadline, action: &action,
+            alsoRequiring: ["slideshow.control.next.button", "slideshow.control.settings.button"]) != nil
     }
 
     private struct ControlAction {
@@ -399,7 +416,7 @@ struct IOSDriver: PlaybackDriver {
 
     private func prepareControl(
         _ identifier: String, until deadline: Date, action: inout ControlAction,
-        shouldDismissPasswordPrompt: Bool = false
+        shouldDismissPasswordPrompt: Bool = false, alsoRequiring additionalIdentifiers: [String] = []
     ) -> SlideshowControlBarButtonObservation? {
         FirstFailureContext.beginWait(seconds: max(.zero, deadline.timeIntervalSinceNow))
         defer { FirstFailureContext.endWait() }
@@ -414,10 +431,16 @@ struct IOSDriver: PlaybackDriver {
                 action.isHittable = nil
                 if observation.isReady, action.isBarVisible {
                     // Snapshot attributes are fallible; XCTest exposes hittability only on the live button.
-                    action.isHittable = observation.windowElement.buttons[identifier].wait(
-                        for: \.isHittable, toEqual: true,
-                        timeout: min(
-                            UITestSupportWaitTiming.identityPollSeconds, max(.zero, deadline.timeIntervalSinceNow)))
+                    action.isHittable = ([identifier] + additionalIdentifiers).allSatisfy { requiredIdentifier in
+                        guard Date() < deadline, let button = observation.snapshots[requiredIdentifier],
+                            button.elementType == .button, button.isEnabled, !button.frame.isEmpty,
+                            observation.windowFrame.contains(button.frame)
+                        else { return false }
+                        return observation.windowElement.buttons[requiredIdentifier].wait(
+                            for: \.isHittable, toEqual: true,
+                            timeout: min(
+                                UITestSupportWaitTiming.identityPollSeconds, max(.zero, deadline.timeIntervalSinceNow)))
+                    }
                     if action.isHittable == true, Date() < deadline {
                         action.preparedTarget = observation.diagnostic
                         return observation
@@ -464,11 +487,13 @@ struct IOSDriver: PlaybackDriver {
         return (identity.status == .match ? identity.mark : nil, capturedAt)
     }
 
-    private func revealControls(until originalDeadline: Date? = nil) {
+    private func revealControls(until originalDeadline: Date? = nil, shouldDismissPasswordPrompt: Bool = false) {
         let deadline =
             originalDeadline ?? Date().addingTimeInterval(UITestSupportWaitTiming.shortInteractionTimeoutSeconds)
         var action = ControlAction()
-        _ = prepareControl("slideshow.control.settings.button", until: deadline, action: &action)
+        _ = prepareControl(
+            "slideshow.control.settings.button", until: deadline, action: &action,
+            shouldDismissPasswordPrompt: shouldDismissPasswordPrompt)
     }
 
     private func waitForPlaybackControls(timeout: TimeInterval) -> Bool {
@@ -479,7 +504,7 @@ struct IOSDriver: PlaybackDriver {
             let banner = app.descendants(matching: .any).matching(identifier: "slideshow.entryHint.banner").firstMatch
             if banner.exists { tap(banner) }
             if app.buttons["slideshow.control.settings.button"].isHittable { return true }
-            revealControls(until: deadline)
+            revealControls(until: deadline, shouldDismissPasswordPrompt: true)
             return app.buttons["slideshow.control.settings.button"].isHittable
         }
     }
