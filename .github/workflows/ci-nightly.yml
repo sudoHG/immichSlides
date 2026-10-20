@@ -407,7 +407,7 @@ jobs:
 
   ui-shards:
     name: ui-${{ matrix.device }}-${{ matrix.shard }}
-    needs: [change, plan, ui-archive, strict]
+    needs: [change, plan, ui-archive]
     if: ${{ !cancelled() && !(github.event_name == 'schedule' && needs.change.result == 'success' && needs.change.outputs.run_nightly == 'false') && needs.ui-archive.result == 'success' && needs.ui-archive.outputs.run_ui == 'true' }}
     runs-on: xcode-27
     timeout-minutes: 110

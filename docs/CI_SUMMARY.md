@@ -219,9 +219,12 @@ The approved per-job ceilings apply across repeated preparations and Xcode invoc
 Both the 25 strict jobs and 18 fixture UI jobs use the shared producers: at most
 43 × 5 s = 3.59 machine minutes/night for preparation. Xcode diagnostics add at
 most 10 s (0.167 machine minutes) per failed strict job. With one such failed
-job, the combined ceiling is 3.75 machine minutes/night and 2.00 minutes wall
-time at two jobs per matrix (13 strict waves
-and nine UI waves, conservatively summed). These are ceilings and ideal parallel
+job, the combined ceiling is 3.75 machine minutes/night. Strict and UI can overlap
+after archive selection, each at two jobs per matrix. Preparation and Xcode
+diagnostics add at most 75 s along the strict tier (13 waves plus one failure)
+and 45 s along UI (nine waves); summing them gives a conservative 2.00-minute
+wall-time allowance. The final aggregate waits for both tiers. These are ceilings
+and ideal parallel
 estimates, not hosted measurements or billing. Existing readiness, Xcode and
 service deadlines remain unchanged.
 

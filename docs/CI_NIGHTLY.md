@@ -5,10 +5,10 @@
 top of the hour, and supports
 `workflow_dispatch` on a selected branch. GitHub has typically started scheduled
 runs 3–4 hours late and can miss a trigger entirely; these times are requests, not
-start-time guarantees. A full nightly takes about seven hours, so the primary is
-expected to deliver results in the Beijing morning, around 08:07–09:07 with that
-delay (05:07 without it). If the primary is lost, the backup targets 10:07 without
-delay; the same delay can push its results to 13:07–14:07. PRs touching its entry points
+start-time guarantees. Strict and fixture UI work overlap after archive selection;
+the full nightly waits for the slower tier, followed by aggregation and any remaining
+live jobs. Runner queues, shard durations and trigger delays determine completion,
+so neither schedule guarantees a morning result. PRs touching its entry points
 run planning and credential-free live probes. Branch dispatches provide diagnostic
 execution evidence. It has read-only permissions and no publisher, reporter or
 release authority. Separate [live unit jobs](CI_LIVE_TESTS.md) use the main-only
@@ -343,8 +343,17 @@ that earlier boot. The existing readiness budgets are unchanged.
 The gate does not prove simulator readiness, app behavior or runner survival; later
 relocation, signing, extraction and UI checks remain required.
 
-The UI matrix waits for the strict matrix to settle, then runs with `max-parallel: 2`
-and `fail-fast: false`. Minimum waves round the actual shard count up after division
+The UI matrix needs only the change check, plan and archive selection, so it can
+start alongside strict once both platform archives are ready. Both matrices retain
+`max-parallel: 2` and `fail-fast: false`. Within the
+[five shared hosted macOS slots](CI_PUBLISHER.md#main-push-coalescing), strict and
+UI together use at most four, leaving one for PR work once live jobs finish.
+The two `live-build` jobs precede `ui-archive`; selection and both aggregate jobs
+run on Linux. `live-unit` (at most two jobs) and `live-canary` can briefly compete
+with strict, UI and PR jobs for the shared slots; none has a reserved slot.
+The UI aggregate still waits for its plan, archive selection and all UI shards;
+the final aggregate waits for both strict and the UI aggregate.
+Minimum waves round the actual shard count up after division
 by two: the current six shards on each of three devices require 18 jobs and nine
 start-order waves, without reserved runner slots. Existing invocation, export and
 job timeouts remain bounded.

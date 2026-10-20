@@ -15,6 +15,17 @@ from test_ci_summary import valid_summary
 
 
 class NightlyVerdictTests(unittest.TestCase):
+    def test_fixture_ui_starts_after_archives_and_aggregates_wait_for_consumed_inputs(self):
+        import yaml
+        root = Path(__file__).parent.parent
+        jobs = yaml.safe_load((root / ".github/workflows/ci-nightly.yml").read_text())["jobs"]
+        self.assertEqual({"change", "plan", "ui-archive"}, set(jobs["ui-shards"]["needs"]))
+        self.assertEqual({"change", "plan", "ui-archive", "ui-shards"}, set(jobs["ui-aggregate"]["needs"]))
+        self.assertEqual({"change", "plan", "strict", "ui-aggregate"}, set(jobs["aggregate"]["needs"]))
+        for job_id in ("strict", "ui-shards"):
+            with self.subTest(job=job_id):
+                self.assertEqual(2, jobs[job_id]["strategy"]["max-parallel"])
+
     def test_identity_failure_upload_is_standalone_and_only_runs_when_the_receipt_exists(self):
         import os
         import subprocess
