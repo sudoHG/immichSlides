@@ -347,12 +347,14 @@ extension FilterSummaryIOSVisualUITests {
 
         startRandomPlaybackFromModeSelection(app: app)
 
-        let playPauseButton = app.buttons["slideshow.control.playPause.button"]
+        var playbackEntryDiagnostic = ""
         XCTAssertTrue(
-            playPauseButton.waitForPublicElement(
-                "slideshow.control.playPause.button",
-                timeout: FilterSummaryIOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
-            "After random playback opens the playback page, the play/pause button should be visible"
+            app.refreshSlideshowControlBarButton(
+                identifier: "slideshow.control.playPause.button",
+                timeout: FilterSummaryIOSVisualUITestsWaitTiming.navigationTimeoutSeconds,
+                pollSeconds: FilterSummaryIOSVisualUITestsWaitTiming.readbackPollSeconds,
+                onTimeout: { playbackEntryDiagnostic = " (\($0))" }),
+            "After random playback opens the playback page, the play/pause button should be visible\(playbackEntryDiagnostic)"
         )
 
         RunLoop.current.run(
@@ -653,12 +655,13 @@ extension FilterSummaryIOSVisualUITests {
                 onTimeout: { playbackEntryDiagnostic = " (\($0))" }),
             "After starting playback, the playback page should open and show the control bar\(playbackEntryDiagnostic)")
 
-        let playPauseButton = app.buttons["slideshow.control.playPause.button"]
         XCTAssertTrue(
-            playPauseButton.waitForPublicElement(
-                "slideshow.control.playPause.button",
-                timeout: FilterSummaryIOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
-            "Playback page should show the play/pause button")
+            app.refreshSlideshowControlBarButton(
+                identifier: "slideshow.control.playPause.button",
+                timeout: FilterSummaryIOSVisualUITestsWaitTiming.navigationTimeoutSeconds,
+                pollSeconds: FilterSummaryIOSVisualUITestsWaitTiming.readbackPollSeconds,
+                onTimeout: { playbackEntryDiagnostic = " (\($0))" }),
+            "Playback page should show the play/pause button\(playbackEntryDiagnostic)")
 
         RunLoop.current.run(
             until: Date().addingTimeInterval(FilterSummaryIOSVisualUITestsWaitTiming.playbackEntrySettleSeconds))

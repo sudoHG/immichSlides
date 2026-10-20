@@ -240,35 +240,52 @@ retains the last successful Settings poll and its playback-marker observation. A
 snapshot leaves that observation intact and sets `lastSnapshotSucceeded=false`;
 attributes are unknown only until a snapshot first succeeds. Diagnostic reads never restart the
 deadline or turn a timeout into success.
-The iOS control-bar tap helper reveals before each tap attempt, then takes a window
-snapshot and performs a real coordinate tap at that frame's centre, relative to the
-stable window. The playback-area tap only shows the bar and restarts auto-hide; it
-does not hide an already visible bar. The existing eight-second appearance budget
-starts after the first reveal and never restarts. Next/Previous/Play-Pause receive
+The iOS control-bar tap helper takes a preparatory window snapshot, then spends
+one proactive reveal immediately before a fresh target snapshot and one real
+coordinate tap at that frame's centre, relative to the observed window frame. The
+playback-area tap only shows the bar and restarts auto-hide; it does not hide an
+already visible bar. The existing eight-second appearance budget starts before
+preparation, includes the reveal and never restarts. The coordinate reuses the
+snapshot frame and offset; XCTest re-resolves the window query at tap time.
+The helper checks the same deadline immediately before the tap. Next/Previous/Play-Pause receive
 one real tap and return immediately; their callers retain their scene-change,
 Play/Pause and EXIF retry budgets. The shared helper does not compare their values.
 Only Settings verifies an outcome: a Settings entry or the playback toggle. Its
 existing five-second product appearance wait starts when the coordinate tap returns,
 so XCTest's idle wait does not consume the outcome window. This window stays fixed
 under every wait factor; an observation completing after it expires never passes.
-At most one retry is allowed, within the original eight-second control deadline.
-Before its reveal, a fresh snapshot in the same iteration must still show playback
-and contain neither the system `BackButton` nor any `settings.*` identifier.
-Observing either navigation signal permanently suppresses further taps. The retry
-then takes a new frame snapshot and checks the original control deadline before
-tapping; each returned Settings tap gets its own bounded appearance wait.
-Wait-only Settings callers refresh auto-hide once immediately before success and
-check the original deadline again afterward. A hidden streak permits one initial
-reveal and one further reveal if it lasts longer than one second; polls do not
-reveal on every visible iteration. Settings readiness failures are classified from
+There is no control-tap retry: a call sends at most one reveal and one control tap.
+Before its reveal, a fresh snapshot must show playback and contain neither the
+system `BackButton` nor any `settings.*` identifier. Either navigation signal
+suppresses further actions. The one returned Settings tap gets its fixed appearance
+wait even if XCTest's event delivery outlasted preparation.
+Wait-only Settings callers return as soon as a snapshot proves readiness within
+the original deadline; they do not synthesize a redundant reveal on success.
+The action helper still refreshes auto-hide before taking its tap snapshot.
+Wait-only launch, EXIF capture/Next preparation and Playback History callers that
+need the bar use `refreshSlideshowControlBarButton` explicitly. It spends the
+step's existing timeout on one reveal and a fresh ready snapshot; neither failed
+snapshots nor navigation evidence authorize a reveal. Playback History refreshes
+after its back-navigation loop, including the early-ready path, before returning.
+No refresh restarts a deadline or sends a second reveal.
+Playback History Settings entry and sampling-overlay pre-Next retain their
+explicit refresh assertions so their mapped failure prefixes stay available.
+If a snapshot shows playback with the control outside the window, the waiter
+may reveal once within its original deadline, then only observe; a failed
+snapshot never authorizes a reveal. Settings readiness failures are classified from
 the caller's assertion prefix, including the `hidden_controls` class; the waiter's
 text stays in the private suffix. Shared tap prefixes distinguish no tap and no
 Settings outcome. Private suffixes include the last sanitized observation,
 error count/code, iteration/tap counts, boolean
-Settings outcome/navigation fields and aggregate snapshot/reveal/tap/verify durations.
+Settings outcome/navigation fields, aggregate snapshot/reveal/tap/verify durations
+and individual reveal/tap durations in seconds.
+The same diagnostic is printed on every return from readiness, refresh and action helpers, so
+local XCTest activity logs can compare event latency without additional queries.
+IOSDriver wake and tap paths append each measured duration to the same lists
+as their aggregate timing fields.
 The outcome field becomes true only after the wait accepts an observation within its window.
 Verify time includes its snapshot time; no extra diagnostic snapshot runs after
-timeout. Playback History Settings uses the same bounded snapshot waiter, without
+timeout. Playback History Settings uses the explicit bounded refresh, without
 the generic waiter's final condition call. Playback History
 Play/Pause polls, including manual lifecycle pause/resume, read the value from one
 fallible application snapshot per poll and reveal an absent control within the original deadline.

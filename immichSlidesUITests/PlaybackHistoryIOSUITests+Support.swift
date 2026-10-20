@@ -63,7 +63,8 @@ extension PlaybackHistoryIOSUITests {
     func openPlaybackSettingsFromSlideshow(app: XCUIApplication) {
         var diagnostic = ""
         XCTAssertTrue(
-            app.waitForSlideshowSettingsSnapshot(
+            app.refreshSlideshowControlBarButton(
+                identifier: "slideshow.control.settings.button",
                 timeout: TestWait.seconds(.infrastructure(8)), pollSeconds: TestWait.seconds(.product(0.2)),
                 onTimeout: { diagnostic = " (\($0))" }),
             "The slideshow Settings button must be ready before opening playback settings.\(diagnostic)")
@@ -109,7 +110,7 @@ extension PlaybackHistoryIOSUITests {
     func returnToSlideshowFromPlaybackSettings(app: XCUIApplication) {
         for _ in 0..<6 {
             if slideshowSettingsButtonIsReady(app: app) {
-                return
+                break
             }
 
             let globalBack = app.buttons["global.back.button"]
@@ -133,7 +134,8 @@ extension PlaybackHistoryIOSUITests {
         }
         var diagnostic = ""
         XCTAssertTrue(
-            app.waitForSlideshowSettingsSnapshot(
+            app.refreshSlideshowControlBarButton(
+                identifier: "slideshow.control.settings.button",
                 timeout: TestWait.seconds(.infrastructure(6)), pollSeconds: TestWait.seconds(.product(0.2)),
                 onTimeout: { diagnostic = " (\($0))" }),
             "Could not return from the playback settings page to the slideshow\(diagnostic)"

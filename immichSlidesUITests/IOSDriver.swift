@@ -193,7 +193,9 @@ struct IOSDriver: PlaybackDriver {
             // EXIF passes hits through; the upper photo area stays clear of the bar, tip and DEBUG buttons.
             let playbackWakePoint = CGVector(dx: 0.5, dy: 0.2)
             app.coordinate(withNormalizedOffset: playbackWakePoint).tapForFailureEvidence()
-            action.timing.revealSeconds += Date().timeIntervalSince(revealStartedAt)
+            let duration = Date().timeIntervalSince(revealStartedAt)
+            action.timing.revealSeconds += duration
+            action.timing.revealDurationsSeconds.append(duration)
         }
         guard let before = prepareControl(identifier, until: deadline, action: &action) else {
             XCTFail("Final Next preparation must provide an actionable control. (\(action.diagnostic))")
@@ -470,7 +472,11 @@ struct IOSDriver: PlaybackDriver {
                 if !action.didWake, !observation.hasSettingsNavigationEvidence, Date() < deadline {
                     action.didWake = true
                     FirstFailureContext.mark("reveal-controls", element: identifier)
+                    let revealStartedAt = Date()
                     app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tapForFailureEvidence()
+                    let duration = Date().timeIntervalSince(revealStartedAt)
+                    action.timing.revealSeconds += duration
+                    action.timing.revealDurationsSeconds.append(duration)
                 }
             }
             guard Date() < deadline else { break }
@@ -492,7 +498,9 @@ struct IOSDriver: PlaybackDriver {
                 dy: button.frame.midY - observation.windowFrame.minY)
         ).tapForFailureEvidence()
         action.returnedAt = ProcessInfo.processInfo.systemUptime
-        action.timing.tapSeconds += (action.returnedAt ?? .zero) - (action.issuedAt ?? .zero)
+        let duration = (action.returnedAt ?? .zero) - (action.issuedAt ?? .zero)
+        action.timing.tapSeconds += duration
+        action.timing.tapDurationsSeconds.append(duration)
     }
 
     private func playPauseValue(_ observation: SlideshowControlBarButtonObservation) -> String {
