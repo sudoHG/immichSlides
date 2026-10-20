@@ -734,7 +734,8 @@ The exact screenshot stems admitted for retained evidence and reader-first produ
 The `album-play-[123]` reader shipped in PR #514 before its filter-album producer
 in PR #515. These stems also fit the existing public-pattern-mismatch grammar;
 the filter-album producer emits screenshot context, not that mismatch prefix.
-`display-after` and `vision-solo-1` are admitted before the corresponding input-registration producer;
+`display-after`, `person-normal-1`, `person-nofaces-1` and `vision-solo-1` are admitted
+before the corresponding input-registration producer;
 `person-solo` and `person-conflict-solo` have no receipt producer and are not admitted.
 Unrecognized prefixes, filenames and suffixes are refused rather than treated as public
 text. The grammar accepts no URLs, keys, server addresses, directory paths, private
