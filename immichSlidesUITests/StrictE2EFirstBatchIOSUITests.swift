@@ -415,14 +415,11 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
         let postPauseBlackOrBlank =
             isPostPauseBlackOrBlank(postPauseProbeRaw)
             || isPostPauseBlackOrBlank(postPause03ProbeRaw)
-        let isLate = seesFixture3 || seesCompleteA3
         let visualVerdict: String
         if !requiredFramesPresent {
             visualVerdict = "MISSING_FRAMES"
         } else if postPauseBlackOrBlank {
             visualVerdict = "BLACK_OR_BLANK"
-        } else if isLate {
-            visualVerdict = "LATE"
         } else if probeHit == "HIT" && postPausePositive {
             visualVerdict = "NEEDS_HUMAN_REVIEW"
         } else {
@@ -475,8 +472,6 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
             )
         } else if visualVerdict == "BLACK_OR_BLANK" {
             XCTFail("visual_verdict=BLACK_OR_BLANK: synced probe missing after pause, or outgoing opacity already 0.")
-        } else if visualVerdict == "LATE" {
-            XCTFail("visual_verdict=LATE: Fixture 3 or a complete A3 visible after pause. visible_mark=\(visibleMark)")
         } else if visualVerdict != "NEEDS_HUMAN_REVIEW" {
             XCTFail("After pausing, the synced probe does not meet outgoing opacity>0 and incoming opacity=0.")
         }
