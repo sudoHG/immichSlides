@@ -12,7 +12,8 @@ extension AccessLifecycleIOSUITests {
             identifier: "firstboot.saveConfig.button"
         )
         XCTAssertTrue(
-            saveButton.waitForFailureEvidence(timeout: TestWait.seconds(.infrastructure(8))),
+            saveButton.waitForPublicElement(
+                "firstboot.saveConfig.button", timeout: TestWait.seconds(.infrastructure(8))),
             "The first-boot page must show the Save Settings button.")
         XCTAssertTrue(
             waitForSaveEnabled(app: app, saveButton: saveButton, timeout: TestWait.seconds(.infrastructure(45))),

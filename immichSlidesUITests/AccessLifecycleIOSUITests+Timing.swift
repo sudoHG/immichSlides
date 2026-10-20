@@ -56,7 +56,8 @@ extension AccessLifecycleIOSUITests {
         )
         let visible = playPauseButton(app)
         XCTAssertTrue(
-            visible.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
+            visible.waitForPublicElement(
+                "slideshow.control.playPause.button", timeout: TestWait.seconds(.product(8))),
             "The playback page must have play/pause.")
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(2))) { self.playPauseButton(app).isHittable },
@@ -85,7 +86,8 @@ extension AccessLifecycleIOSUITests {
         revealPlaybackControls(app: app)
         let playPause = playPauseButton(app)
         XCTAssertTrue(
-            playPause.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
+            playPause.waitForPublicElement(
+                "slideshow.control.playPause.button", timeout: TestWait.seconds(.product(8))),
             "The playback page must have play/pause.")
         XCTAssertTrue(playPause.exists, "Play/pause must be in the tree before continuing.")
         XCTAssertTrue(
@@ -224,7 +226,8 @@ extension AccessLifecycleIOSUITests {
         requests.append("settings.save.interval")
         let picker = app.segmentedControls["settings.playback.displayMode.picker"]
         XCTAssertTrue(
-            picker.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
+            picker.waitForPublicElement(
+                "settings.playback.displayMode.picker", timeout: TestWait.seconds(.product(8))),
             "The pause/background cases must be able to switch to single-photo mode.")
         let singlePhoto = picker.buttons["settings.playback.displayMode.singlePhoto.option"]
         XCTAssertTrue(

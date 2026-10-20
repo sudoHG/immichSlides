@@ -636,7 +636,8 @@ extension AccessLifecycleIOSUITests {
             identifier: "firstboot.testConnection.button"
         )
         XCTAssertTrue(
-            testConnectionButton.waitForFailureEvidence(timeout: TestWait.seconds(.infrastructure(8))),
+            testConnectionButton.waitForPublicElement(
+                "firstboot.testConnection.button", timeout: TestWait.seconds(.infrastructure(8))),
             "Test Connection must be shown")
         tapElement(testConnectionButton)
     }
