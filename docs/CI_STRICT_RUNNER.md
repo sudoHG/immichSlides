@@ -759,7 +759,8 @@ The exact screenshot stems admitted for retained evidence and reader-first produ
 The `album-play-[123]` reader shipped in PR #514 before its filter-album producer
 in PR #515. These stems also fit the existing public-pattern-mismatch grammar;
 the filter-album producer emits screenshot context, not that mismatch prefix.
-`display-after` and `vision-solo-1` are admitted before the corresponding input-registration producer;
+`display-after`, `person-normal-1`, `person-nofaces-1` and `vision-solo-1` are admitted
+before the corresponding input-registration producer;
 `person-solo` and `person-conflict-solo` have no receipt producer and are not admitted.
 Unrecognized prefixes, filenames and suffixes are refused rather than treated as public
 text. The grammar accepts no URLs, keys, server addresses, directory paths, private
@@ -838,6 +839,20 @@ Neither evidence type changes its original result.
 The target-album validator registers its raw input before slot counting and includes
 the fixed `album-play-N.png` context in identity rejections. Its retained PNG uses
 the existing diagnostic budget, canonicalization and `read-failure` hash/attempt gate.
+Named person PNGs and the device Vision `vision-solo-1.png` register their original bytes
+before classification and retain the fixed screenshot name in identity rejections.
+These emitted stems are a subset of the reader allowlist above. Display-policy validators register
+the full `display-after.png` before cached foreground or region analysis. Internal
+crops do not replace that input. Undecodable bytes make the image unavailable,
+rather than retaining a previously registered playback or before image.
+Named-PNG classification also clears the retained input before missing-file or read errors.
+The person `solo_only` JSON checks and device Vision's non-vacuity JSON check clear
+the retained input; their rejections report an unavailable image.
+Edit-switch slot checks register the frame being checked, including when a later frame
+was already classified. Its iOS whole-frame membership rejection registers the first
+frame outside the non-target album. Server-switch candidates and the post-switch single-photo input
+retain full frames; nested crop analysis restores the original frame before returning
+or propagating a rejection. These registration-only paths add no screenshot-name context.
 For iOS and tvOS album-empty, the empty-result image replaces the playback input
 before pixel checks. JSON-only failures and a missing result PNG still retain the
 last validated playback frame; that image is context, not proof of the empty-result

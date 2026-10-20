@@ -960,18 +960,18 @@ class DisplayPolicyNegativeTests(unittest.TestCase):
         from strict_e2e_filter_contract_test_fixtures import _full_frame_transition
         cases = [
             ("transition", _full_frame_transition(_fixture_png("A1", "b"), _fixture_png("A3", "b")),
-             "^after-change cannot use a transition or unknown frame as passing$"),
+             r"^after-change cannot use a transition or unknown frame as passing; screenshot display-after\.png$"),
             ("black", _png(Image.new("RGB", (320, 568), (0, 0, 0))),
-             "^after-change cannot use a transition or unknown frame as passing$"),
+             r"^after-change cannot use a transition or unknown frame as passing; screenshot display-after\.png$"),
             ("blank", _png(Image.new("RGB", (320, 568), (255, 255, 255))),
-             "^after-change cannot use a transition or unknown frame as passing$"),
+             r"^after-change cannot use a transition or unknown frame as passing; screenshot display-after\.png$"),
             ("unknown", _png(Image.new("RGB", (320, 568), (25, 25, 25))),
-             "^after-change cannot use a transition or unknown frame as passing$"),
-            ("undecodable", b"not a PNG", "^after-change cannot use a transition or unknown frame as passing$"),
+             r"^after-change cannot use a transition or unknown frame as passing; screenshot display-after\.png$"),
+            ("undecodable", b"not a PNG", r"^after-change cannot use a transition or unknown frame as passing; screenshot display-after\.png$"),
             ("multi", _side_by_side(_fixture_png("A3", "b"), _fixture_png("A4", "b")),
-             "^after-change cannot use a transition or unknown frame as passing: the stable photo region is still transitioning$"),
+             r"^after-change cannot use a transition or unknown frame as passing: the stable photo region is still transitioning; screenshot display-after\.png$"),
             ("unchanged", _side_by_side(_fixture_png("A2", "b"), _fixture_png("A3", "b")),
-             "^after-change cannot use a transition or unknown frame as passing$"),
+             r"^after-change cannot use a transition or unknown frame as passing; screenshot display-after\.png$"),
         ]
         for name, frame, message in cases:
             with self.subTest(defect=name), tempfile.TemporaryDirectory() as raw:

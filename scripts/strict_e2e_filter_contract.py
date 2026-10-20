@@ -96,13 +96,17 @@ def _read_json_object(path: Path, label: str) -> dict[str, Any]:
 
 
 def _classify_named_png(evidence_dir: Path, name: str) -> Any:
+    from ci_failure_diagnostics import remember_validator_input
     path = evidence_dir / f"{name}.png"
     if not path.is_file():
+        remember_validator_input(b"")
         raise FilterContractError(f"Missing visual input {name}.png")
     try:
         payload = path.read_bytes()
     except OSError as error:
+        remember_validator_input(b"")
         raise FilterContractError(f"cannot read visual input {name}.png: {error}") from error
+    remember_validator_input(payload)
     return classify_screenshot(payload)
 
 
@@ -465,6 +469,7 @@ def _display_photo_identity(image_bytes: bytes, *, fixture_set: str, labels: Seq
 
 
 def _evaluate_display_policy(evidence_dir: Path, suite: str, *, manifest: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    from ci_failure_diagnostics import remember_validator_input
     switched_server = manifest is not None
     manifest = manifest if switched_server else load_member_manifest(evidence_dir / "member-manifest.json")
     fixture_set = str(manifest["fixture_set"])
@@ -506,12 +511,18 @@ def _evaluate_display_policy(evidence_dir: Path, suite: str, *, manifest: Mappin
         if not path.is_file():
             raise FilterContractError(f"missing raw candidate screenshot {step}.png")
         image_bytes = path.read_bytes()
+        if switched_server:
+            remember_validator_input(image_bytes)
         candidate_bytes.append(image_bytes)
         regions = _classify_display_regions(image_bytes)
         if switched_server:
             # Single candidates stay in the rotation; their surround must pass the existing display contract.
-            foreground = _display_foreground_png(image_bytes)
-            region_marks = list(dict.fromkeys(_scene_slot_marks(foreground, fixture_set)))
+            try:
+                foreground = _display_foreground_png(image_bytes)
+                region_marks = list(dict.fromkeys(_scene_slot_marks(foreground, fixture_set)))
+            finally:
+                # The nested scene reader registers its crop; retain the original on rejection too.
+                remember_validator_input(image_bytes)
         else:
             region_marks = _display_region_marks(regions)
         rejection_marks = (region_marks if switched_server else
@@ -548,27 +559,32 @@ def _evaluate_display_policy(evidence_dir: Path, suite: str, *, manifest: Mappin
         raise FilterContractError("The before-change frame must contain only fixture A; do not mix fixtures A and B or unknown content")
 
     after_bytes = (evidence_dir / "display-after.png").read_bytes() if (evidence_dir / "display-after.png").is_file() else b""
-    after_mark = _display_photo_identity(
-        after_bytes,
-        fixture_set=fixture_set,
-        labels=allowed,
-        label="after-change",
-    )
-    after_regions = _classify_display_regions(after_bytes)
-    stable_region_names = ("center", "left", "right", "mid_left", "mid_right", "upper")
-    stable_regions = [after_regions[name] for name in stable_region_names]
-    if any(identity.status == "TRANSITION" for identity in stable_regions):
-        raise FilterContractError("after-change cannot use a transition or unknown frame as passing: the stable photo region is still transitioning")
-    # Glyph-free blurred margins supply rejection evidence, never positive
-    # identity. The complete frame and the inner regions still require proof.
-    rejection_regions = _classify_display_regions(after_bytes, for_rejection=True, reject_side_gaps=True)
-    for name in stable_region_names:
-        identity = rejection_regions[name] if name in ("left", "right") else after_regions[name]
-        if identity.status != "MATCH" or identity.mark != after_mark:
-            raise FilterContractError("The after-change frame must be a recognizable, stable single-photo frame")
-    after_marks = _display_region_marks(after_regions)
-    if len(after_marks) >= 2:
-        raise FilterContractError("after-change frame must be a recognizable single-photo frame")
+    # Register the full input outside cached crop/region helpers, including cache hits.
+    remember_validator_input(after_bytes)
+    try:
+        after_mark = _display_photo_identity(
+            after_bytes,
+            fixture_set=fixture_set,
+            labels=allowed,
+            label="after-change",
+        )
+        after_regions = _classify_display_regions(after_bytes)
+        stable_region_names = ("center", "left", "right", "mid_left", "mid_right", "upper")
+        stable_regions = [after_regions[name] for name in stable_region_names]
+        if any(identity.status == "TRANSITION" for identity in stable_regions):
+            raise FilterContractError("after-change cannot use a transition or unknown frame as passing: the stable photo region is still transitioning")
+        # Glyph-free blurred margins supply rejection evidence, never positive
+        # identity. The complete frame and the inner regions still require proof.
+        rejection_regions = _classify_display_regions(after_bytes, for_rejection=True, reject_side_gaps=True)
+        for name in stable_region_names:
+            identity = rejection_regions[name] if name in ("left", "right") else after_regions[name]
+            if identity.status != "MATCH" or identity.mark != after_mark:
+                raise FilterContractError("The after-change frame must be a recognizable, stable single-photo frame")
+        after_marks = _display_region_marks(after_regions)
+        if len(after_marks) >= 2:
+            raise FilterContractError("after-change frame must be a recognizable single-photo frame")
+    except FilterContractError as error:
+        raise type(error)(f"{error}; screenshot display-after.png") from error
     return {
         "verdict": "PASS",
         "suite": suite,
@@ -722,7 +738,10 @@ def _evaluate_tvos_switch(evidence_dir: Path) -> dict[str, Any]:
 
 def _classified_mark_from_png(evidence_dir: Path, name: str) -> str:
     identity = _classify_named_png(evidence_dir, name)
-    return require_photo_mark("public_fixture_photo_mark", identity.status, identity.mark)
+    try:
+        return require_photo_mark("public_fixture_photo_mark", identity.status, identity.mark)
+    except FilterContractError as error:
+        raise type(error)(f"{error}; screenshot {name}.png") from error
 
 
 def _scene_slot_marks(image_bytes: bytes, fixture_set: str, *, screenshot_name: str | None = None) -> tuple[str, ...]:
@@ -817,6 +836,7 @@ def _evaluate_filter_album(evidence_dir: Path) -> dict[str, Any]:
 
 
 def _evaluate_filter_edit_switch(evidence_dir: Path, suite: str) -> dict[str, Any]:
+    from ci_failure_diagnostics import remember_validator_input
     manifest = load_member_manifest(evidence_dir / "member-manifest.json")
     modes = _read_json_object(evidence_dir / "album-edit-modes.json", "album-edit-modes.json")
     if modes.get("identity_source") != "accessibility_ui":
@@ -840,6 +860,11 @@ def _evaluate_filter_edit_switch(evidence_dir: Path, suite: str) -> dict[str, An
               for mark in _scene_slot_marks((evidence_dir / f"{name}.png").read_bytes(), fixture_set, screenshot_name=f"{name}.png")])
     allowed = set(manifest["non_target_album"]["labels"])
     if not allowed or not set(marks).issubset(allowed):
+        if suite != "tvos-edit-switch":
+            for name, mark in zip(FILTER_EDIT_SWITCH_STEPS, marks):
+                if mark not in allowed:
+                    remember_validator_input((evidence_dir / f"{name}.png").read_bytes())
+                    break
         raise FilterContractError(f"frames after the album switch must belong to non-target album {expected_album_id}: {marks}")
     for name in FILTER_EDIT_SWITCH_STEPS:
         image_bytes = (evidence_dir / f"{name}.png").read_bytes()
@@ -847,6 +872,7 @@ def _evaluate_filter_edit_switch(evidence_dir: Path, suite: str) -> dict[str, An
             # Both orientations were already read slot-by-slot above.
             letter = fixture_set.upper()
         else:
+            remember_validator_input(image_bytes)
             try:
                 photos = public_frame_photos_from_bytes(image_bytes)
             except IdentityAssertionError as error:
@@ -896,6 +922,8 @@ def _evaluate_filter_empty(evidence_dir: Path) -> dict[str, Any]:
 
 
 def _evaluate_filter_person(evidence_dir: Path) -> dict[str, Any]:
+    from ci_failure_diagnostics import remember_validator_input
+
     manifest = load_member_manifest(evidence_dir / "member-manifest.json")
     results = _read_json_object(evidence_dir / "person-results.json", "person-results.json")
     if "wins" in results:
@@ -923,6 +951,7 @@ def _evaluate_filter_person(evidence_dir: Path) -> dict[str, Any]:
     if [no_faces] != expected_no_faces:
         raise FilterContractError(f"no-faces person normal playback member is not in the manifest: {no_faces}")
 
+    remember_validator_input(b"")
     solo_case = cases.get("solo_only")
     if not isinstance(solo_case, dict):
         raise FilterContractError("person-results.json is missing solo_only")
@@ -996,6 +1025,8 @@ def _evaluate_switch_display_policy(
     process_id = _require_same_process(payload, "single-photo run evidence after server switch")
     screenshot_path = evidence_dir / "switch-b-single-after.png"
     image_bytes = screenshot_path.read_bytes() if screenshot_path.is_file() else b""
+    from ci_failure_diagnostics import remember_validator_input
+    remember_validator_input(image_bytes)
     mark = _display_photo_identity(
         image_bytes,
         fixture_set="b",
@@ -1008,6 +1039,8 @@ def _evaluate_switch_display_policy(
 
 
 def _evaluate_filter_vision(evidence_dir: Path) -> dict[str, Any]:
+    from ci_failure_diagnostics import remember_validator_input
+
     load_member_manifest(evidence_dir / "member-manifest.json")
     payload = _read_json_object(evidence_dir / "vision-environment.json", "vision-environment.json")
     environment = payload.get("environment")
@@ -1032,6 +1065,7 @@ def _evaluate_filter_vision(evidence_dir: Path) -> dict[str, Any]:
     mark = _classified_mark_from_png(evidence_dir, "vision-solo-1")
     if mark not in marks:
         raise FilterContractError(f"device Vision screenshot mark is not in qualified_marks: {mark}")
+    remember_validator_input(b"")
     assert_solo_only_not_vacuous(
         environment="device",
         vision_available=vision_available,
