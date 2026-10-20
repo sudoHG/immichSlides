@@ -708,6 +708,7 @@ PREFIX_RULES = (
     ("After pausing, the playback controls must still be revealable.", "control_action", "hidden_controls"),
     ("After pausing, the control value must be play.", "control_action", "control_state"),
     ("Next control must be actionable before tapping.", "control_action", "hidden_controls"),
+    ("Final Next preparation must provide an actionable control.", "control_action", "hidden_controls"),
     ("The current scene must be readable before tapping Next.", "visible_scene_capture", "scene_identity"),
     ("One Next tap must change the visible scene.", "control_action", "scene_identity"),
     ("Play/pause value must be readable before pausing.", "control_action", "probe_readback"),
