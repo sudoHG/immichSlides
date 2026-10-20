@@ -142,7 +142,10 @@ Only demonstrated fixture/server gaps may become `nightly-live` deselections.
 
 The [UI-shard workflow](CI_UI.md) schedules iPhone, iPad and Apple TV on pull
 requests; the [nightly fixture UI tier](CI_NIGHTLY.md#complete-fixture-ui) schedules
-the same three devices. Main pushes use trusted reuse or explicit nightly deferral.
+the same three devices as soon as archive selection and planning finish, alongside
+the strict matrix. Each nightly matrix remains limited to two concurrent jobs;
+the final aggregate waits for both tiers. Main pushes use trusted reuse or explicit
+nightly deferral.
 The PR records the per-test measurements,
 real run links and any proposed exceptions; proposals remain inactive.
 
