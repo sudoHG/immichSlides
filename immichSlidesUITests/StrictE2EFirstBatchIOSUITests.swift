@@ -536,11 +536,11 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
             StrictE2EVisualEvidence.writeJSON(
                 [
                     "schema_version": 1, "overlay_text_before_pause": brightOverlayText,
-                    "bright": brightFrame.payload,
+                    "bright": brightFrame.pauseWindowEvidence,
                     "frames": [
-                        "window-detected": windowFrame.payload,
-                        "after-pause": afterPauseFrame.payload,
-                        "after-pause-0_3s": afterPause03Frame.payload
+                        "window-detected": windowFrame.pauseWindowEvidence,
+                        "after-pause": afterPauseFrame.pauseWindowEvidence,
+                        "after-pause-0_3s": afterPause03Frame.pauseWindowEvidence
                     ]
                 ], name: "pause-window-contract.json")
         }

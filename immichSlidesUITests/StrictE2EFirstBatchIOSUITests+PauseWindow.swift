@@ -82,7 +82,7 @@ extension StrictE2EFirstBatchIOSUITests {
         let probeBefore: String
         let probeAfter: String
 
-        var payload: [String: Any] {
+        var pauseWindowEvidence: [String: Any] {
             func rect(_ frame: CGRect) -> [CGFloat] { [frame.minX, frame.minY, frame.width, frame.height] }
             return [
                 "probe_before": probeBefore, "probe_after": probeAfter,
