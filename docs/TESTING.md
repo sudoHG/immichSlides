@@ -268,8 +268,8 @@ step's existing timeout on one reveal and a fresh ready snapshot; neither failed
 snapshots nor navigation evidence authorize a reveal. Playback History refreshes
 after its back-navigation loop, including the early-ready path, before returning.
 No refresh restarts a deadline or sends a second reveal.
-Callers immediately followed by the action helper leave the proactive reveal to
-that helper instead of refreshing twice.
+Playback History Settings entry and sampling-overlay pre-Next retain their
+explicit refresh assertions so their mapped failure prefixes stay available.
 If a snapshot shows playback with the control outside the window, the waiter
 may reveal once within its original deadline, then only observe; a failed
 snapshot never authorizes a reveal. Settings readiness failures are classified from

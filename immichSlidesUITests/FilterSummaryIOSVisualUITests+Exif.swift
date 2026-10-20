@@ -160,6 +160,17 @@ extension FilterSummaryIOSVisualUITests {
 
             guard index < expectedCount - 1 else { continue }
 
+            if shouldWaitForSamplingOverlay {
+                XCTAssertTrue(
+                    app.refreshSlideshowControlBarButton(
+                        identifier: "slideshow.control.settings.button",
+                        timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+                        pollSeconds: FilterSummaryIOSVisualUITestsWaitTiming.readbackPollSeconds,
+                        onTimeout: { diagnostic = " (\($0))" }),
+                    "The control bar may have auto-hidden while waiting for the sampling overlay; it should wake up again before tapping next\(diagnostic)"
+                )
+            }
+
             XCTAssertTrue(
                 advanceToNextDistinctDiagnosticSlide(app: app),
                 "After tapping next, the current photo should change (and expose an asset id or date label to observe it), so the same photo is not captured twice"
