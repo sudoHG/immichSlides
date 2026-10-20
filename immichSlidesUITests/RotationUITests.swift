@@ -51,68 +51,71 @@ final class RotationUITests: XCTestCase {
         let input = try requireStrictE2EInput()
         let app = try launchStrictE2EApp()
         defer { app.terminateForFailureEvidence() }
-        let driver = IOSDriver(app: app)
-        let evidence = Evidence()
-        driver.launchToPlayback(input: input)
-        driver.applyPlaybackSettings([.interval30Seconds, .displayMode(isSinglePhoto: false)])
-        var observedMark: String?
-        _ = Wait.until(timeout: Timing.multiPhotoWait) {
-            observedMark = visibleSceneMark()
-            return observedMark?.isEmpty == false
-        }
-        guard let sceneBeforeNext = observedMark, !sceneBeforeNext.isEmpty else {
-            try evidence.reject("rotation-scene-before-next", png: app.screenshotForFailureEvidence().pngRepresentation)
-            throw Failure(
-                "Could not recognize a public photo on screen within \(Int(Timing.multiPhotoWait)) seconds before next, so the photo change cannot be confirmed."
+        try FirstFailureEvidence.preservingThrownFailure(self) {
+            let driver = IOSDriver(app: app)
+            let evidence = Evidence()
+            driver.launchToPlayback(input: input)
+            driver.applyPlaybackSettings([.interval30Seconds, .displayMode(isSinglePhoto: false)])
+            var observedMark: String?
+            _ = Wait.until(timeout: Timing.multiPhotoWait) {
+                observedMark = visibleSceneMark()
+                return observedMark?.isEmpty == false
+            }
+            guard let sceneBeforeNext = observedMark, !sceneBeforeNext.isEmpty else {
+                try evidence.reject(
+                    "rotation-scene-before-next", png: app.screenshotForFailureEvidence().pngRepresentation)
+                throw Failure(
+                    "Could not recognize a public photo on screen within \(Int(Timing.multiPhotoWait)) seconds before next, so the photo change cannot be confirmed."
+                )
+            }
+            let sceneStartedAt = Date()
+            try evidence.markStep("next-requested")
+            driver.next()
+            guard
+                Wait.until(
+                    timeout: Timing.multiPhotoWait,
+                    {
+                        guard let mark = visibleSceneMark() else { return false }
+                        return mark != sceneBeforeNext
+                    })
+            else {
+                throw Failure(
+                    "The public photo on screen did not change after next; the start of the 30-second timer is unknown, so a natural switch cannot be ruled out."
+                )
+            }
+            try captureStable("rotation-start-portrait", orientation: .portrait, driver: driver, evidence: evidence)
+            var playPauseValue = ""
+            let isPlaying = Wait.until(timeout: Timing.multiPhotoWait) {
+                _ = driver.revealUsableControls()
+                let playPause = app.evidenceSnapshotsByIdentifier()["slideshow.control.playPause.button"]
+                playPauseValue = playPause.map { (($0.value as? String) ?? "").lowercased() } ?? "notVisible"
+                return playPauseValue == "pause"
+            }
+            guard isPlaying else {
+                try evidence.reject("rotation-play-state", png: app.screenshotForFailureEvidence().pngRepresentation)
+                throw Failure(
+                    "Before rotating, the play button value must be pause (playing), but it was '\(playPauseValue.isEmpty ? "empty" : playPauseValue)'."
+                )
+            }
+            try evidence.markStep("rotate-to-landscape")
+            let landscapeDeadline = try rotate(app, to: .landscapeLeft, expecting: .landscape)
+            try captureStable(
+                "rotation-landscape-stable", orientation: .landscape, driver: driver, evidence: evidence,
+                deadline: landscapeDeadline
             )
-        }
-        let sceneStartedAt = Date()
-        try evidence.markStep("next-requested")
-        driver.next()
-        guard
-            Wait.until(
-                timeout: Timing.multiPhotoWait,
-                {
-                    guard let mark = visibleSceneMark() else { return false }
-                    return mark != sceneBeforeNext
-                })
-        else {
-            throw Failure(
-                "The public photo on screen did not change after next; the start of the 30-second timer is unknown, so a natural switch cannot be ruled out."
+            try evidence.markStep("rotate-to-portrait")
+            let portraitDeadline = try rotate(app, to: .portrait, expecting: .portrait)
+            try captureStable(
+                "rotation-portrait-stable", orientation: .portrait, driver: driver, evidence: evidence,
+                deadline: portraitDeadline
             )
-        }
-        try captureStable("rotation-start-portrait", orientation: .portrait, driver: driver, evidence: evidence)
-        var playPauseValue = ""
-        let isPlaying = Wait.until(timeout: Timing.multiPhotoWait) {
-            _ = driver.revealUsableControls()
-            let playPause = app.evidenceSnapshotsByIdentifier()["slideshow.control.playPause.button"]
-            playPauseValue = playPause.map { (($0.value as? String) ?? "").lowercased() } ?? "notVisible"
-            return playPauseValue == "pause"
-        }
-        guard isPlaying else {
-            try evidence.reject("rotation-play-state", png: app.screenshotForFailureEvidence().pngRepresentation)
-            throw Failure(
-                "Before rotating, the play button value must be pause (playing), but it was '\(playPauseValue.isEmpty ? "empty" : playPauseValue)'."
-            )
-        }
-        try evidence.markStep("rotate-to-landscape")
-        let landscapeDeadline = try rotate(app, to: .landscapeLeft, expecting: .landscape)
-        try captureStable(
-            "rotation-landscape-stable", orientation: .landscape, driver: driver, evidence: evidence,
-            deadline: landscapeDeadline
-        )
-        try evidence.markStep("rotate-to-portrait")
-        let portraitDeadline = try rotate(app, to: .portrait, expecting: .portrait)
-        try captureStable(
-            "rotation-portrait-stable", orientation: .portrait, driver: driver, evidence: evidence,
-            deadline: portraitDeadline
-        )
-        let elapsed = Date().timeIntervalSince(sceneStartedAt)
-        let limit = RotationTiming.naturalSwitchEarliest
-        guard elapsed < limit else {
-            throw Failure(
-                "The rotation sequence took \(Int(elapsed)) seconds, reaching the \(Int(limit))-second earliest natural switch; a timed switch cannot be told apart from the rotation. Rerun."
-            )
+            let elapsed = Date().timeIntervalSince(sceneStartedAt)
+            let limit = RotationTiming.naturalSwitchEarliest
+            guard elapsed < limit else {
+                throw Failure(
+                    "The rotation sequence took \(Int(elapsed)) seconds, reaching the \(Int(limit))-second earliest natural switch; a timed switch cannot be told apart from the rotation. Rerun."
+                )
+            }
         }
     }
 

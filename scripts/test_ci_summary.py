@@ -678,7 +678,9 @@ class SummaryContractTests(unittest.TestCase):
         album_messages = ["unreadable public glyph slot: public photo colors are missing or mixed; "
                           f"vertical axis, 0 completed slots; horizontal axis, 0 completed slots; screenshot album-play-{index}.png"
                           for index in (1, 2, 3)]
-        for value in (message, "unresolved", "[redacted validator failure]", boundary, *album_messages):
+        added_messages = [message.replace("person-normal.png", name + ".png") for name in
+                          ("display-after", "person-normal-1", "person-nofaces-1", "person-solo", "person-conflict-solo")]
+        for value in (message, "unresolved", "[redacted validator failure]", boundary, *album_messages, *added_messages):
             failed["validator_failure_message"] = failed["attempts"][0]["validator_failure_message"] = value
             self.assertEqual(ci_summary.parse_summary(json.dumps(summary)), summary)
         for value, prefix in ((None, "validator failure message"), ("", "validator failure message"),
@@ -687,7 +689,7 @@ class SummaryContractTests(unittest.TestCase):
                               (message.replace("person-normal.png", "album-play-4.png"), "validator failure message is not public"),
                               (message.replace("person-normal.png", "album-play-0.png"), "validator failure message is not public"),
                               (message + "; server 192.0.2.1", "validator failure message is not public"),
-                              (message.replace("person-normal.png", "display-after.png"), "validator failure message is not public")):
+                              (message.replace("person-normal.png", "display-after-1.png"), "validator failure message is not public")):
             with self.subTest(value=value):
                 broken = copy.deepcopy(summary)
                 broken["population"]["observed"][0]["validator_failure_message"] = value

@@ -173,9 +173,15 @@ def public_fixture_validator_scope(directory, *, screenshots=False):
         _validator_input.reset(image_token)
 
 
+def first_failure_test_key(identifier):
+    key = str(identifier).removesuffix("()")
+    parts = key.split("/")
+    return "/".join(parts[1:]) if len(parts) == 3 and parts[0] == "immichSlidesUITests" else key
+
+
 def first_failure_environment(directory, selectors, *, screenshots=True):
     """Called only by public-fixture runners; never forward these keys to the App."""
-    selectors = [key.removeprefix("immichSlidesUITests/").removesuffix("()") for key in selectors]
+    selectors = [first_failure_test_key(key) for key in selectors]
     return {"STRICT_E2E_FIRST_FAILURE_ENABLED": "1", "STRICT_E2E_FIRST_FAILURE_DIR": str(directory),
             "STRICT_E2E_FIRST_FAILURE_SCREENSHOT": "1" if screenshots else "0",
             "STRICT_E2E_FIRST_FAILURE_TESTS": json.dumps({key: index for index, key in enumerate(selectors)}),
@@ -212,9 +218,9 @@ def attach_first_failures(observed, official, number):
             return
         receipt = public_first_failure(node.get(FIRST_FAILURE_FIELD))
         if node.get("nodeType") == "Test Case" and node.get("result") == "Failed" and receipt is not None:
-            key = str(node.get("nodeIdentifier", "")).removeprefix("immichSlidesUITests/").removesuffix("()")
+            key = first_failure_test_key(node.get("nodeIdentifier", ""))
             for entry in observed:
-                if entry["identity"]["key"].removeprefix("immichSlidesUITests/") != key:
+                if first_failure_test_key(entry["identity"]["key"]) != key:
                     continue
                 first = next((attempt for attempt in entry["attempts"] if attempt["outcome"] != "passed"), None)
                 for attempt in entry["attempts"]:
@@ -239,10 +245,10 @@ def collect_first_failure_spool(directory, selectors, failed_nodes, output):
     from ci_summary import decode
     if not directory.is_dir() or directory.is_symlink():
         return
-    nodes = {str(node.get("nodeIdentifier", "")).removeprefix("immichSlidesUITests/").removesuffix("()"): node
+    nodes = {first_failure_test_key(node.get("nodeIdentifier", "")): node
              for node in failed_nodes}
     for index, selector in enumerate(selectors):
-        key = selector.removeprefix("immichSlidesUITests/").removesuffix("()")
+        key = first_failure_test_key(selector)
         node = nodes.get(key)
         if node is None:
             continue
@@ -577,10 +583,11 @@ VALIDATOR_IDENTITY_MARKS = ("A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", None
 # No arbitrary filename, exception suffix or pixel values.
 # See CI_STRICT_RUNNER.md#public-validator-failure-receipts for the public receipt contract.
 _VALIDATOR_SCREENSHOT_STEM = (
-    r"(?:person-normal|person-no-faces|person-conflict-normal(?:-[1-9][0-9]?)?|"
+    r"(?:person-normal(?:-1)?|person-no-faces|person-nofaces-1|person-solo|person-conflict-solo|"
+    r"person-conflict-normal(?:-[1-9][0-9]?)?|"
     r"album-playback-[123]|album-play-[123]|album-switch-b-play-[12]|server-switch-a-play-1|switch-b-play-[12]|"
     r"history-(?:start|first-next|second-next|first-previous|second-previous)|"
-    r"pause-immediate|pause-after-10s|resumed)"
+    r"pause-immediate|pause-after-10s|resumed|display-after)"
 )
 _VALIDATOR_SCREENSHOT = _VALIDATOR_SCREENSHOT_STEM + r"\.png"
 _VALIDATOR_PREFIX = (

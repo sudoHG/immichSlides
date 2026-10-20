@@ -11,6 +11,66 @@ final class PrivateEvidenceDirectoryTests: XCTestCase {
         super.record(issue)
     }
 
+    @MainActor
+    func testThrownBusinessFailureIsRecordedBeforeTeardown() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        var cases: [XCTestCase] = [self]
+        var keys = ["PrivateEvidenceDirectoryTests/testThrownBusinessFailureIsRecordedBeforeTeardown"]
+        #if os(iOS)
+        let method = "testPlaybackSettingsBlocksFilteredModeWhenSelectionEmpty"
+        cases.append(immichSlidesUITests(selector: NSSelectorFromString(method)))
+        keys.append("immichSlidesUITests/\(method)")
+        #endif
+        let map = Dictionary(uniqueKeysWithValues: keys.enumerated().map { ($0.element, $0.offset) })
+        let tests = try XCTUnwrap(String(data: JSONSerialization.data(withJSONObject: map), encoding: .utf8))
+        let environment = [
+            "STRICT_E2E_FIRST_FAILURE_ENABLED": "1",
+            "STRICT_E2E_FIRST_FAILURE_DIR": root.path,
+            "STRICT_E2E_FIRST_FAILURE_TESTS": tests,
+            "STRICT_E2E_FIRST_FAILURE_ELEMENTS": "[\"unknown\",\"app-window\"]",
+            "STRICT_E2E_FIRST_FAILURE_SCREENSHOT": "0",
+            "STRICT_E2E_INPUT_SERVER_URL": "http://127.0.0.1/api",
+            "STRICT_E2E_INPUT_PUBLIC_KEY": "immichslides-public-e2e-key"
+        ]
+        let original = ProcessInfo.processInfo.environment
+        for (key, value) in environment {
+            setenv(key, value, 1)
+        }
+        defer {
+            for key in environment.keys {
+                if let value = original[key] { setenv(key, value, 1) } else { unsetenv(key) }
+            }
+            FirstFailureContext.reset()
+        }
+        FirstFailureContext.reset()
+        func runBusinessFlow(_ test: XCTestCase) throws {
+            defer { FirstFailureContext.action("terminate") {} }
+            try FirstFailureEvidence.preservingThrownFailure(test) {
+                FirstFailureContext.mark("wait-scene", element: "app-window")
+                FirstFailureContext.action("play-pause") {}
+                try AccessLifecycleContract.assertContinueEarlyStillSameScene(
+                    continueMark: "A1", earlyMark: "A2", elapsedSeconds: 1, intervalSeconds: 30)
+            }
+        }
+        for (index, test) in cases.enumerated() {
+            XCTAssertThrowsError(try runBusinessFlow(test)) { error in
+                XCTAssertEqual(
+                    String(describing: error),
+                    String(
+                        describing: AccessLifecycleContract.AssertionError.message(
+                            "The same public pattern must stay for the first half of T after Continue")))
+            }
+            let data = try Data(contentsOf: root.appendingPathComponent("\(index).json"))
+            let receipt = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            XCTAssertEqual(receipt["action"] as? String, "play-pause")
+            XCTAssertEqual(receipt["step"] as? String, "wait-scene")
+            let timing = try XCTUnwrap(receipt["timing"] as? [String: Any])
+            XCTAssertNotNil(timing["since_action_returned_seconds"] as? Double)
+            XCTAssertEqual(FirstFailureContext.snapshot().timeline.action, "terminate")
+        }
+    }
+
     func testMissingRootDoesNotCreateImplicitRepositoryFallback() throws {
         let directory = try PrivateEvidenceDirectory.resolve(
             rootPath: nil,

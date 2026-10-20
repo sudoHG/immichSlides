@@ -726,8 +726,9 @@ names are `AttributeError`, `IndexError`,
 Screenshot names are hand-reviewed against `public_scene_photos_from_bytes`,
 `target_album_frame_identity` and server-switch `_require_public_pattern` callers: `history-*`,
 `pause-immediate`, `pause-after-10s`, `resumed`, `album-playback-N`, `album-play-1`/`album-play-2`/`album-play-3`, `person-normal`,
-`person-no-faces`, `person-conflict-normal(-N)`, `album-switch-b-play-N`,
-`server-switch-a-play-1` and `switch-b-play-1`/`switch-b-play-2` (all `.png`).
+`person-normal-1`, `person-no-faces`, `person-nofaces-1`, `person-solo`,
+`person-conflict-solo`, `person-conflict-normal(-N)`, `album-switch-b-play-N`,
+`server-switch-a-play-1`, `switch-b-play-1`/`switch-b-play-2`, and `display-after` (all `.png`).
 The `album-play-[123]` reader shipped in PR #514 before its filter-album producer
 in PR #515. These stems also fit the existing public-pattern-mismatch grammar;
 the filter-album producer emits screenshot context, not that mismatch prefix.
@@ -767,6 +768,15 @@ method and existing attempt. Historical records without
 `first_failure` remain valid. No App code, workflow, assertion, deadline, retry,
 threshold, verdict or population changes. The accepting reader must be on main
 before a producer PR uses the field; see [reader-first evolution](CI_SUMMARY.md#reader-first-evolution).
+
+Pause/continue and playback-rotation tests hand thrown helper failures to the
+recorder before terminating the App, then rethrow the original error to XCTest.
+The recorder observes the actual App state; teardown must not replace the business
+action or imply that the App crashed. Existing captured frames and timing outputs
+remain evidence of their original capture, rather than a reconstructed failure snapshot.
+Fixture selectors use `Class/method` throughout environment lookup, spool collection
+and attachment. Strip the target prefix only from `target/Class/method`; a class
+named `immichSlidesUITests` remains part of the key. Official identifiers are retained.
 
 The optional receipt has exactly `schema_version: 1`, `source` (`xctest`,
 `validator`, `preparation`), `step`, `element`, `action`, `timing`, `state`,
