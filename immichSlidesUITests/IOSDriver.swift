@@ -169,7 +169,10 @@ struct IOSDriver: PlaybackDriver {
         let identifier = "slideshow.control.next.button"
         let deadline = Date().addingTimeInterval(UITestSupportWaitTiming.stateChangeTimeoutSeconds)
         var action = ControlAction()
-        guard prepareControl(identifier, until: deadline, action: &action) != nil else {
+        guard
+            prepareControl(
+                identifier, until: deadline, action: &action, shouldRequireHittability: false) != nil
+        else {
             XCTFail("Next control must be actionable before tapping. (\(action.diagnostic))")
             return
         }
@@ -179,7 +182,10 @@ struct IOSDriver: PlaybackDriver {
             guard Date() < deadline else { return false }
             let sceneReadStartedAt = ProcessInfo.processInfo.systemUptime
             defer { action.sceneReadSeconds += ProcessInfo.processInfo.systemUptime - sceneReadStartedAt }
-            sceneBefore = visiblePhotoObservation().mark
+            let observation = visiblePhotoObservation()
+            action.sceneCaptureSeconds += observation.captureSeconds
+            action.sceneClassificationSeconds += observation.classificationSeconds
+            sceneBefore = observation.mark
             return sceneBefore != nil && Date() < deadline
         }
         guard let sceneBefore, Date() < deadline else {
@@ -413,6 +419,8 @@ struct IOSDriver: PlaybackDriver {
         var preparedTarget = "unknown"
         var preparedAt: TimeInterval?
         var sceneReadSeconds: TimeInterval = .zero
+        var sceneCaptureSeconds: TimeInterval = .zero
+        var sceneClassificationSeconds: TimeInterval = .zero
         var issuedAt: TimeInterval?
         var returnedAt: TimeInterval?
 
@@ -423,7 +431,7 @@ struct IOSDriver: PlaybackDriver {
         var diagnostic: String {
             let actionableToTapSeconds = preparedAt.flatMap { preparedAt in issuedAt.map { $0 - preparedAt } }
             return
-                "\(timing.diagnostic), preparedTarget={\(preparedTarget)}, barVisible=\(isBarVisible), hittable=\(isHittable.map(String.init) ?? "unknown"), wakeIssued=\(didWake), sceneReadSeconds=\(sceneReadSeconds), actionableToTapSeconds=\(actionableToTapSeconds.map(String.init(describing:)) ?? "none"), tapIssuedAt=\(issuedAt.map(String.init(describing:)) ?? "none"), tapReturnedAt=\(returnedAt.map(String.init(describing:)) ?? "none")"
+                "\(timing.diagnostic), preparedTarget={\(preparedTarget)}, barVisible=\(isBarVisible), hittable=\(isHittable.map(String.init) ?? "unknown"), wakeIssued=\(didWake), sceneReadSeconds=\(sceneReadSeconds), sceneCaptureSeconds=\(sceneCaptureSeconds), sceneClassificationSeconds=\(sceneClassificationSeconds), actionableToTapSeconds=\(actionableToTapSeconds.map(String.init(describing:)) ?? "none"), tapIssuedAt=\(issuedAt.map(String.init(describing:)) ?? "none"), tapReturnedAt=\(returnedAt.map(String.init(describing:)) ?? "none")"
         }
     }
 
@@ -438,7 +446,8 @@ struct IOSDriver: PlaybackDriver {
 
     private func prepareControl(
         _ identifier: String, until deadline: Date, action: inout ControlAction,
-        shouldDismissPasswordPrompt: Bool = false, alsoRequiring additionalIdentifiers: [String] = []
+        shouldDismissPasswordPrompt: Bool = false, alsoRequiring additionalIdentifiers: [String] = [],
+        shouldRequireHittability: Bool = true
     ) -> SlideshowControlBarButtonObservation? {
         FirstFailureContext.beginWait(seconds: max(.zero, deadline.timeIntervalSinceNow))
         defer { FirstFailureContext.endWait() }
@@ -451,7 +460,11 @@ struct IOSDriver: PlaybackDriver {
             if let observation = action.observe(app: app, identifier: identifier), Date() < deadline {
                 action.isBarVisible = hasVisibleControlBar(observation)
                 action.isHittable = nil
-                if observation.isReady, action.isBarVisible {
+                if observation.isReady, action.isBarVisible,
+                    shouldRequireHittability || !observation.hasSettingsNavigationEvidence
+                {
+                    // Next verifies live hittability after its sole wake, avoiding a hidden receiver's query retries.
+                    if !shouldRequireHittability { return observation }
                     // Snapshot attributes are fallible; XCTest exposes hittability only on the live button.
                     action.isHittable = ([identifier] + additionalIdentifiers).allSatisfy { requiredIdentifier in
                         guard Date() < deadline, let button = observation.snapshots[requiredIdentifier],
@@ -508,12 +521,21 @@ struct IOSDriver: PlaybackDriver {
         return ((button.value as? String) ?? "").lowercased()
     }
 
-    private func visiblePhotoObservation() -> (mark: String?, capturedAt: Date) {
+    private func visiblePhotoObservation() -> (
+        mark: String?, capturedAt: Date, captureSeconds: TimeInterval, classificationSeconds: TimeInterval
+    ) {
+        let captureStartedAt = ProcessInfo.processInfo.systemUptime
         let screenshot = app.screenshotForFailureEvidence()
         // Classification can be slow; only the acquisition of this immutable frame belongs to the deadline.
         let capturedAt = Date()
-        let identity = StrictE2EPhotoIdentity.captureIdentity(png: screenshot.pngRepresentation)
-        return (identity.status == .match ? identity.mark : nil, capturedAt)
+        let png = screenshot.pngRepresentation
+        let classificationStartedAt = ProcessInfo.processInfo.systemUptime
+        let identity = StrictE2EPhotoIdentity.captureIdentity(png: png)
+        return (
+            identity.status == .match ? identity.mark : nil, capturedAt,
+            classificationStartedAt - captureStartedAt,
+            ProcessInfo.processInfo.systemUptime - classificationStartedAt
+        )
     }
 
     private func revealControls(until originalDeadline: Date? = nil, shouldDismissPasswordPrompt: Bool = false) {
