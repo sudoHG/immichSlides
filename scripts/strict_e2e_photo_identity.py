@@ -272,9 +272,10 @@ def _single_photo_candidates(image: object) -> list[str]:
         if qualified is None:
             continue
         foreground, foreground_exclusion = qualified
+        foreground_width = foreground.width
         count = [0, 0]
         for index, color in enumerate(foreground.getdata()):
-            if _inside_box(index % foreground.width, index // foreground.width, foreground_exclusion):
+            if _inside_box(index % foreground_width, index // foreground_width, foreground_exclusion):
                 continue
             assignment = public_palette_assignment(color)
             if assignment is not None and assignment[0] == mark:
@@ -377,13 +378,14 @@ def _sharp_public_foreground(rgb: object, mark: str, exclusion: tuple[int, int, 
                   int((right - .5) * rgb.width / width) + 1, int((bottom - .5) * rgb.height / height) + 1)
     foreground = rgb.crop(bounds)
     foreground_exclusion = _relative_box(exclusion, bounds)
-    supported = [not _inside_box(i % foreground.width, i // foreground.width, foreground_exclusion)
+    foreground_width, foreground_height = foreground.size
+    supported = [not _inside_box(i % foreground_width, i // foreground_width, foreground_exclusion)
                  and (((a := public_palette_assignment(color)) is not None and a[0] == mark) or min(color) >= 240)
                  for i, color in enumerate(foreground.getdata())]
-    rows = [y for y in range(foreground.height)
-            if sum(supported[y * foreground.width:(y + 1) * foreground.width]) >= IDENTITY_MINIMUM_CHROMATIC_PIXEL_COUNT]
-    columns = [x for x in range(foreground.width)
-               if sum(supported[y * foreground.width + x] for y in range(foreground.height)) >= IDENTITY_MINIMUM_CHROMATIC_PIXEL_COUNT]
+    rows = [y for y in range(foreground_height)
+            if sum(supported[y * foreground_width:(y + 1) * foreground_width]) >= IDENTITY_MINIMUM_CHROMATIC_PIXEL_COUNT]
+    columns = [x for x in range(foreground_width)
+               if sum(supported[y * foreground_width + x] for y in range(foreground_height)) >= IDENTITY_MINIMUM_CHROMATIC_PIXEL_COUNT]
     if not rows or not columns:
         return None
     # Run endpoints can touch a few background pixels. Only independently
@@ -391,24 +393,25 @@ def _sharp_public_foreground(rgb: object, mark: str, exclusion: tuple[int, int, 
     trim = (columns[0], rows[0], columns[-1] + 1, rows[-1] + 1)
     foreground = foreground.crop(trim)
     foreground_exclusion = _relative_box(foreground_exclusion, trim)
-    if min(foreground.width, foreground.height) * width / rgb.width < IDENTITY_MINIMUM_IMAGE_PIXELS:
+    foreground_width, foreground_height = foreground.size
+    if min(foreground_width, foreground_height) * width / rgb.width < IDENTITY_MINIMUM_IMAGE_PIXELS:
         return None
-    supported = [not _inside_box(i % foreground.width, i // foreground.width, foreground_exclusion)
+    supported = [not _inside_box(i % foreground_width, i // foreground_width, foreground_exclusion)
                  and (((a := public_palette_assignment(color)) is not None and a[0] == mark) or min(color) >= 240)
                  for i, color in enumerate(foreground.getdata())]
     # Reuse complete-slot line support: neither detached patches nor a thin edge
     # can provide a coherent photo rectangle. White public ink is an occlusion.
     for vertical in (False, True):
         matches = []
-        for line in range(foreground.width if vertical else foreground.height):
-            length = foreground.height if vertical else foreground.width
+        for line in range(foreground_width if vertical else foreground_height):
+            length = foreground_height if vertical else foreground_width
             if all(_inside_box(line if vertical else position, position if vertical else line,
                                foreground_exclusion) for position in range(length)):
                 # A wholly occluded line supplies neither support nor a missing-photo gap.
                 continue
-            count = sum(supported[position * foreground.width + line if vertical
-                                  else line * foreground.width + position]
-                        for position in range(foreground.height if vertical else foreground.width))
+            count = sum(supported[position * foreground_width + line if vertical
+                                  else line * foreground_width + position]
+                        for position in range(foreground_height if vertical else foreground_width))
             matches.append(count >= IDENTITY_MINIMUM_CHROMATIC_PIXEL_COUNT)
         if not matches or not matches[0] or not matches[-1]:
             return None
@@ -417,8 +420,8 @@ def _sharp_public_foreground(rgb: object, mark: str, exclusion: tuple[int, int, 
             missing = 0 if present else missing + 1
             if missing * width / rgb.width > FRAME_TEXTURE_MAXIMUM_CELL_DRIFT_PIXELS:
                 return None
-    if foreground_exclusion and not (foreground_exclusion[0] < foreground.width and foreground_exclusion[2] > 0
-                                    and foreground_exclusion[1] < foreground.height and foreground_exclusion[3] > 0):
+    if foreground_exclusion and not (foreground_exclusion[0] < foreground_width and foreground_exclusion[2] > 0
+                                    and foreground_exclusion[1] < foreground_height and foreground_exclusion[3] > 0):
         foreground_exclusion = None
     return foreground, foreground_exclusion
 
@@ -645,9 +648,12 @@ def _public_photo_palettes() -> dict[str, tuple[tuple[int, int, int], ...]]:
 
 @functools.lru_cache(maxsize=4096)
 def public_palette_assignment(color: tuple[int, int, int]) -> tuple[str, int] | None:
+    # RGB's max-channel distance is the same three bounds; avoid a generator per palette entry.
     matches = [(mark, index) for mark, palette in _public_photo_palettes().items()
                for index, reference in enumerate(palette)
-               if max(abs(a - b) for a, b in zip(color, reference)) <= FRAME_PALETTE_CHANNEL_TOLERANCE]
+               if abs(color[0] - reference[0]) <= FRAME_PALETTE_CHANNEL_TOLERANCE
+               and abs(color[1] - reference[1]) <= FRAME_PALETTE_CHANNEL_TOLERANCE
+               and abs(color[2] - reference[2]) <= FRAME_PALETTE_CHANNEL_TOLERANCE]
     return matches[0] if len(matches) == 1 else None
 
 

@@ -1066,6 +1066,54 @@ class SummaryContractTests(unittest.TestCase):
 
 
 class HostResultTests(unittest.TestCase):
+    def test_python_progress_names_a_slow_test_without_exporting_its_inputs(self):
+        stream = io.StringIO()
+        progress = run_python_tests.TestProgress(stream)
+        progress.clock = lambda: 0.0
+        progress.stopped = unittest.mock.Mock()
+        progress.stopped.wait.side_effect = [False, True]
+
+        class Sample(unittest.TestCase):
+            def test_slow(self):
+                private_input = "private test input must not appear"
+                external = types.SimpleNamespace(f_code=types.SimpleNamespace(
+                    co_filename="/private/local-config.py", co_name="private_dynamic_name"),
+                    f_lineno=1, f_back=None)
+                progress.clock = lambda: 120.0
+                with tempfile.TemporaryDirectory() as raw:
+                    linked = Path(raw) / "linked-scripts"
+                    linked.symlink_to(Path(__file__).resolve().parent, target_is_directory=True)
+                    def frame(name, path):
+                        return types.SimpleNamespace(f_code=types.SimpleNamespace(
+                            co_filename=str(path), co_name=name), f_lineno=1, f_back=external)
+                    # A busy server can have more workers than the stack cap; put main last.
+                    frames = {888: frame("monitor_should_be_excluded", __file__)}
+                    frames.update({i: frame("background_worker", __file__) for i in range(10)})
+                    frames[999] = frame("test_slow", linked / Path(__file__).name)
+                    with self.subTest(input=private_input), \
+                            patch.object(run_python_tests.threading, "main_thread", return_value=types.SimpleNamespace(ident=999)), \
+                            patch.object(run_python_tests.threading, "get_ident", return_value=888), \
+                            patch.object(run_python_tests.sys, "_current_frames", return_value=frames):
+                        progress.watch()
+
+        with patch.object(run_python_tests.os, "write") as write:
+            payload, code = run_python_tests.run_suite(unittest.defaultTestLoader.loadTestsFromTestCase(Sample),
+                                                       stream, progress=progress)
+        self.assertEqual(0, code)
+        key = payload["compiled"][0]["key"]
+        self.assertIn("PYTHON START " + key + "\n", stream.getvalue())
+        self.assertIn("PYTHON FINISH " + key + " passed 120.000s\n", stream.getvalue())
+        write.assert_called_once()
+        descriptor, raw = write.call_args.args
+        self.assertEqual(2, descriptor)
+        self.assertIn("PYTHON SLOW " + key + " 120.000s\n", raw.decode())
+        self.assertRegex(raw.decode(), r"scripts/test_ci_summary\.py:\d+ in test_slow")
+        self.assertEqual("  scripts/test_ci_summary.py:1 in test_slow", raw.decode().splitlines()[2])
+        self.assertNotIn("monitor_should_be_excluded", raw.decode())
+        self.assertEqual(8, raw.decode().count(" (innermost first):"))
+        for private in ("private test input", "/private/", "private_dynamic_name"):
+            self.assertNotIn(private, stream.getvalue() + raw.decode())
+
     def test_host_partitions_execute_the_complete_discovered_suite_once_and_keep_separate_records(self):
         python = [ci_summary.test_identity("python", "portable.Sample.test_rule"),
                   ci_summary.test_identity("python", next(iter(run_host_checks.MACOS_PYTHON_TESTS)))]
