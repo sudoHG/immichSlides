@@ -19,7 +19,7 @@ enum FirstFailureEvidence {
                 record(
                     test,
                     issue: XCTIssue(
-                        type: .uncaughtError, compactDescription: String(describing: error), associatedError: error))
+                        type: .thrownError, compactDescription: String(describing: error), associatedError: error))
             }
             // XCTest must still receive the exact original error after the caller's teardown.
             throw error
