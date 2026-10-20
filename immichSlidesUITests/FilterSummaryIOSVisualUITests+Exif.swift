@@ -137,8 +137,10 @@ extension FilterSummaryIOSVisualUITests {
         for index in 0..<expectedCount {
             var diagnostic = ""
             XCTAssertTrue(
-                waitForSlideshowSettingsButton(
-                    app: app, timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+                app.refreshSlideshowControlBarButton(
+                    identifier: "slideshow.control.settings.button",
+                    timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+                    pollSeconds: FilterSummaryIOSVisualUITestsWaitTiming.readbackPollSeconds,
                     onTimeout: { diagnostic = " (\($0))" }),
                 "Before each screenshot, the playback control bar should wake up reliably\(diagnostic)"
             )
@@ -160,8 +162,10 @@ extension FilterSummaryIOSVisualUITests {
 
             if shouldWaitForSamplingOverlay {
                 XCTAssertTrue(
-                    waitForSlideshowSettingsButton(
-                        app: app, timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+                    app.refreshSlideshowControlBarButton(
+                        identifier: "slideshow.control.settings.button",
+                        timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+                        pollSeconds: FilterSummaryIOSVisualUITestsWaitTiming.readbackPollSeconds,
                         onTimeout: { diagnostic = " (\($0))" }),
                     "The control bar may have auto-hidden while waiting for the sampling overlay; it should wake up again before tapping next\(diagnostic)"
                 )
@@ -181,8 +185,10 @@ extension FilterSummaryIOSVisualUITests {
         for _ in 0..<3 {
             var diagnostic = ""
             XCTAssertTrue(
-                waitForSlideshowSettingsButton(
-                    app: app, timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+                app.refreshSlideshowControlBarButton(
+                    identifier: "slideshow.control.settings.button",
+                    timeout: FilterSummaryIOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds,
+                    pollSeconds: FilterSummaryIOSVisualUITestsWaitTiming.readbackPollSeconds,
                     onTimeout: { diagnostic = " (\($0))" }),
                 "Before retrying next, the playback control bar should wake up again\(diagnostic)"
             )

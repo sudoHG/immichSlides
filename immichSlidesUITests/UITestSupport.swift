@@ -1099,7 +1099,7 @@ extension XCUIApplication {
             guard Date() < deadline else { break }
             if let observation {
                 if observation.isReady {
-                    // The action helper refreshes auto-hide before tapping; readiness needs no event.
+                    // Callers that need a fresh auto-hide window explicitly refresh before reading or capturing.
                     return true
                 }
                 if !observation.isInsideWindow, observation.hasPlaybackMarker, !didReveal {
@@ -1111,6 +1111,34 @@ extension XCUIApplication {
             RunLoop.current.run(until: min(deadline, Date().addingTimeInterval(pollSeconds)))
         }
         onTimeout("The slideshow Settings waiter did not become ready before the deadline. (\(timing.diagnostic))")
+        return false
+    }
+
+    func refreshSlideshowControlBarButton(
+        identifier: String, timeout: TimeInterval, pollSeconds: TimeInterval, onTimeout: (String) -> Void
+    ) -> Bool {
+        FirstFailureContext.mark("reveal-controls", element: identifier)
+        FirstFailureContext.beginWait(seconds: timeout)
+        defer { FirstFailureContext.endWait() }
+        let deadline = Date().addingTimeInterval(timeout)
+        var timing = SlideshowControlBarTiming()
+        defer { print("Slideshow control refresh: \(timing.diagnostic)") }
+        var didReveal = false
+        while Date() < deadline {
+            let observation = timing.observe(app: self, identifier: identifier)
+            guard Date() < deadline else { break }
+            if let observation {
+                if didReveal, observation.isReady { return true }
+                if !didReveal, observation.hasPlaybackMarker, !observation.hasSettingsNavigationEvidence {
+                    didReveal = true
+                    timing.reveal(app: self)
+                    continue
+                }
+            }
+            guard Date() < deadline else { break }
+            RunLoop.current.run(until: min(deadline, Date().addingTimeInterval(pollSeconds)))
+        }
+        onTimeout("The slideshow control bar did not refresh before the deadline. (\(timing.diagnostic))")
         return false
     }
 

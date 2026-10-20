@@ -260,6 +260,12 @@ tapping; each returned Settings tap gets its own bounded appearance wait.
 Wait-only Settings callers return as soon as a snapshot proves readiness within
 the original deadline; they do not synthesize a redundant reveal on success.
 The action helper still refreshes auto-hide before taking its tap snapshot.
+Wait-only launch, EXIF capture/Next preparation and Playback History callers that
+need the bar use `refreshSlideshowControlBarButton` explicitly. It spends the
+step's existing timeout on one reveal and a fresh ready snapshot; neither failed
+snapshots nor navigation evidence authorize a reveal. Playback History refreshes
+after its back-navigation loop, including the early-ready path, before returning.
+No refresh restarts a deadline or sends a second reveal.
 If a snapshot shows playback with the control outside the window, the waiter
 may reveal once within its original deadline, then only observe; a failed
 snapshot never authorizes a reveal. Settings readiness failures are classified from
@@ -269,8 +275,10 @@ Settings outcome. Private suffixes include the last sanitized observation,
 error count/code, iteration/tap counts, boolean
 Settings outcome/navigation fields, aggregate snapshot/reveal/tap/verify durations
 and individual reveal/tap durations in seconds.
-The same diagnostic is printed on successful readiness and action returns, so
+The same diagnostic is printed on every return from readiness, refresh and action helpers, so
 local XCTest activity logs can compare event latency without additional queries.
+IOSDriver wake and tap paths append each measured duration to the same lists
+as their aggregate timing fields.
 The outcome field becomes true only after the wait accepts an observation within its window.
 Verify time includes its snapshot time; no extra diagnostic snapshot runs after
 timeout. Playback History Settings uses the same bounded snapshot waiter, without
