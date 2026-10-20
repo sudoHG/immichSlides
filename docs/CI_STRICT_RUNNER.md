@@ -813,6 +813,11 @@ Neither evidence type changes its original result.
 The target-album validator registers its raw input before slot counting and includes
 the fixed `album-play-N.png` context in identity rejections. Its retained PNG uses
 the existing diagnostic budget, canonicalization and `read-failure` hash/attempt gate.
+Named person PNGs register their original bytes before classification and retain
+the fixed screenshot name in identity rejections. Display-policy validators register
+the full `display-after.png` before cached foreground or region analysis. Internal
+crops do not replace that input. Undecodable bytes make the image unavailable,
+rather than retaining a previously registered playback or before image.
 For iOS and tvOS album-empty, the empty-result image replaces the playback input
 before pixel checks. JSON-only failures and a missing result PNG still retain the
 last validated playback frame; that image is context, not proof of the empty-result

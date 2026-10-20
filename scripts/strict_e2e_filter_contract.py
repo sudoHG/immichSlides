@@ -103,6 +103,8 @@ def _classify_named_png(evidence_dir: Path, name: str) -> Any:
         payload = path.read_bytes()
     except OSError as error:
         raise FilterContractError(f"cannot read visual input {name}.png: {error}") from error
+    from ci_failure_diagnostics import remember_validator_input
+    remember_validator_input(payload)
     return classify_screenshot(payload)
 
 
@@ -548,27 +550,33 @@ def _evaluate_display_policy(evidence_dir: Path, suite: str, *, manifest: Mappin
         raise FilterContractError("The before-change frame must contain only fixture A; do not mix fixtures A and B or unknown content")
 
     after_bytes = (evidence_dir / "display-after.png").read_bytes() if (evidence_dir / "display-after.png").is_file() else b""
-    after_mark = _display_photo_identity(
-        after_bytes,
-        fixture_set=fixture_set,
-        labels=allowed,
-        label="after-change",
-    )
-    after_regions = _classify_display_regions(after_bytes)
-    stable_region_names = ("center", "left", "right", "mid_left", "mid_right", "upper")
-    stable_regions = [after_regions[name] for name in stable_region_names]
-    if any(identity.status == "TRANSITION" for identity in stable_regions):
-        raise FilterContractError("after-change cannot use a transition or unknown frame as passing: the stable photo region is still transitioning")
-    # Glyph-free blurred margins supply rejection evidence, never positive
-    # identity. The complete frame and the inner regions still require proof.
-    rejection_regions = _classify_display_regions(after_bytes, for_rejection=True, reject_side_gaps=True)
-    for name in stable_region_names:
-        identity = rejection_regions[name] if name in ("left", "right") else after_regions[name]
-        if identity.status != "MATCH" or identity.mark != after_mark:
-            raise FilterContractError("The after-change frame must be a recognizable, stable single-photo frame")
-    after_marks = _display_region_marks(after_regions)
-    if len(after_marks) >= 2:
-        raise FilterContractError("after-change frame must be a recognizable single-photo frame")
+    from ci_failure_diagnostics import remember_validator_input
+    # Register the full input outside cached crop/region helpers, including cache hits.
+    remember_validator_input(after_bytes)
+    try:
+        after_mark = _display_photo_identity(
+            after_bytes,
+            fixture_set=fixture_set,
+            labels=allowed,
+            label="after-change",
+        )
+        after_regions = _classify_display_regions(after_bytes)
+        stable_region_names = ("center", "left", "right", "mid_left", "mid_right", "upper")
+        stable_regions = [after_regions[name] for name in stable_region_names]
+        if any(identity.status == "TRANSITION" for identity in stable_regions):
+            raise FilterContractError("after-change cannot use a transition or unknown frame as passing: the stable photo region is still transitioning")
+        # Glyph-free blurred margins supply rejection evidence, never positive
+        # identity. The complete frame and the inner regions still require proof.
+        rejection_regions = _classify_display_regions(after_bytes, for_rejection=True, reject_side_gaps=True)
+        for name in stable_region_names:
+            identity = rejection_regions[name] if name in ("left", "right") else after_regions[name]
+            if identity.status != "MATCH" or identity.mark != after_mark:
+                raise FilterContractError("The after-change frame must be a recognizable, stable single-photo frame")
+        after_marks = _display_region_marks(after_regions)
+        if len(after_marks) >= 2:
+            raise FilterContractError("after-change frame must be a recognizable single-photo frame")
+    except FilterContractError as error:
+        raise FilterContractError(f"{error}; screenshot display-after.png") from None
     return {
         "verdict": "PASS",
         "suite": suite,
@@ -722,7 +730,10 @@ def _evaluate_tvos_switch(evidence_dir: Path) -> dict[str, Any]:
 
 def _classified_mark_from_png(evidence_dir: Path, name: str) -> str:
     identity = _classify_named_png(evidence_dir, name)
-    return require_photo_mark("public_fixture_photo_mark", identity.status, identity.mark)
+    try:
+        return require_photo_mark("public_fixture_photo_mark", identity.status, identity.mark)
+    except FilterContractError as error:
+        raise FilterContractError(f"{error}; screenshot {name}.png") from None
 
 
 def _scene_slot_marks(image_bytes: bytes, fixture_set: str, *, screenshot_name: str | None = None) -> tuple[str, ...]:

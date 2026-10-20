@@ -1609,13 +1609,16 @@ raise SystemExit(65)
                     "suite": receipt_suite, "verdict": verdict, "error": message}))
             (evidence / "xcodebuild.log").write_text("test-without-building\n")
             (evidence / "xcodebuild-reuse.json").write_text(json.dumps({"products_unchanged": True}))
-            (evidence / "official-summary.json").write_text(json.dumps({"totalTestCount": 1, "passedTests": 1,
+            sessions = [("-" + entry["name"], entry["selector"]) for entry in FILTER_PERSON_SESSIONS] if case["suite"] == "filter-person" else [
+                ("", tracer.resolve_suite_selector(case["platform"], case["suite"]))]
+            (evidence / "official-summary.json").write_text(json.dumps({"totalTestCount": len(sessions), "passedTests": len(sessions),
                 "failedTests": 0, "skippedTests": 0, "result": "Passed"}))
-            selector = tracer.resolve_suite_selector(case["platform"], case["suite"])
-            bundle, method = selector.split("/", 1)
-            (evidence / "official-tests.json").write_text(json.dumps({"testNodes": [{
-                "nodeType": "Unit test bundle", "name": bundle, "children": [{
-                    "nodeType": "Test Case", "nodeIdentifier": method + "()", "result": "Passed"}]}]}))
+            for suffix, selector in sessions:
+                (evidence / ("xcodebuild" + suffix + "-reuse.json")).write_text(json.dumps({"products_unchanged": True}))
+                bundle, method = selector.split("/", 1)
+                (evidence / ("official-tests" + suffix + ".json")).write_text(json.dumps({"testNodes": [{
+                    "nodeType": "Unit test bundle", "name": bundle, "children": [{
+                        "nodeType": "Test Case", "nodeIdentifier": method + "()", "result": "Passed"}]}]}))
             return runner_exit
 
         with mock.patch.object(tracer, "run_runner", side_effect=runner), \
@@ -1628,6 +1631,100 @@ raise SystemExit(65)
                                      "--output-dir", str(output)] + options)
         return exit_code, output / "records", json.loads((output / "records/trace.json").read_text()), \
             json.loads((output / "records/summary.json").read_text())
+
+    def test_person_and_display_rejections_publish_the_whole_failing_input(self):
+        import hashlib
+        from PIL import Image, ImageOps, ImageFilter
+        from ci_failure_diagnostics import public_fixture_validator_scope, canonical_first_failure_png
+        from ci_review_packages import export_shard, read_failure_package
+        from strict_e2e_filter_contract import target_album_frame_identity
+        from strict_e2e_filter_contract_test_fixtures import _fixture_png, _side_by_side, _write_switch_display_bridge
+        from test_strict_e2e_filter_contract import DisplayPolicyVisualContractTests
+        from test_album_server_narrow_contract import _write_server_switch_pass
+
+        def display_frame(fixture):
+            with Image.open(io.BytesIO(_fixture_png("A3", fixture))) as source:
+                photo = source.convert("RGB")
+            frame = ImageOps.fit(photo, (1170, 2532)).filter(ImageFilter.GaussianBlur(146.25))
+            fitted = ImageOps.contain(photo, frame.size)
+            top = (frame.height - fitted.height) // 2
+            frame.paste(fitted, (0, top))
+            # Three native columns inside the left photo region fail the side-gap check,
+            # while the full-photo match still permits the real foreground crop.
+            frame.paste((0, 0, 0), (84, top, 87, top + fitted.height))
+            buffer = io.BytesIO()
+            frame.save(buffer, format="PNG")
+            return buffer.getvalue()
+
+        black = io.BytesIO()
+        Image.new("RGB", (320, 180), "black").save(black, format="PNG")
+        displays = {fixture: display_frame(fixture) for fixture in ("a", "b")}
+        cases = (("ios", "iphone", "filter-person", "a", "person-normal-1", "person"),
+                 ("ios", "iphone", "filter-person", "b", "person-conflict-normal-1", "person"),
+                 ("ios", "iphone", "filter-person", "a", "person-nofaces-1", "person"),
+                 ("ios", "iphone", "display-policy", "a", "display-after", "display"),
+                 ("tvos", "tv", "tvos-display-policy", "a", "display-after", "display"),
+                 ("tvos", "tv", "tvos-switch", "a", "display-after", "display"),
+                 ("ios", "iphone", "filter-person", "a", "person-normal-1", "malformed"))
+        for platform, device, suite, fixture, name, kind in cases:
+            with self.subTest(suite=suite, fixture=fixture, name=name, kind=kind), tempfile.TemporaryDirectory() as raw:
+                root = Path(raw)
+                picture_fixture = "b" if suite == "tvos-switch" else fixture
+                failing = displays[picture_fixture] if kind == "display" else (
+                    b"malformed public PNG" if kind == "malformed" else black.getvalue())
+                case = {"platform": platform, "device": device, "configuration": "Debug" if suite == "filter-person" else "Release",
+                        "suite": suite, "scenario": "normal", "fixture": fixture}
+                status = "UNRECOGNIZABLE" if kind == "malformed" else "BLACK"
+                expected = ("The after-change frame must be a recognizable, stable single-photo frame" if kind == "display" else
+                            f"Unrecognizable input cannot count as passing: status={status} mark=None")
+                before = _fixture_png("A3", fixture)
+                def reject(evidence):
+                    if suite == "filter-person":
+                        write_member_manifest(evidence / "member-manifest.json", fixture)
+                        for step, mark in (("person-normal-1", "A1"), ("person-conflict-normal-1", "A2"), ("person-nofaces-1", "A4")):
+                            (evidence / (step + ".png")).write_bytes(_fixture_png(mark, fixture))
+                        (evidence / "person-results.json").write_text(json.dumps({"cases": {
+                            "solo_only": {"environment": "simulator", "verdict": "UNVERIFIED"}}}))
+                    elif suite == "tvos-switch":
+                        _write_server_switch_pass(evidence)
+                        _write_switch_display_bridge(evidence)
+                        (evidence / "switch-b-playback.png").write_bytes(_fixture_png("A1", "b"))
+                        (evidence / "observed-ids-after-switch.json").write_bytes((evidence / "observed-ids.json").read_bytes())
+                        (evidence / "empty-selection-after-switch.json").write_text(json.dumps({
+                            "selection_source": "accessibility_ui", "album_summary": "筛选相册 0 个相册 · 0 张照片",
+                            "person_summary": "筛选人物 0 个人物 · 0 张照片"}))
+                    else:
+                        DisplayPolicyVisualContractTests()._write_evidence(evidence,
+                            before=_side_by_side(_fixture_png("A1"), _fixture_png("A2")), after=displays["a"])
+                    (evidence / (name + ".png")).write_bytes(failing)
+                    with self.assertRaisesRegex(CommandError, "^Visual assertion failed; cannot mark SUCCESS: " + re.escape(expected)) as raised:
+                        with public_fixture_validator_scope(evidence, screenshots=True):
+                            # A real previous input must not survive a later image rejection.
+                            target_album_frame_identity(before, fixture, screenshot_name="album-play-1.png")
+                            require_visual_identity(evidence, suite, fixture_set=fixture)
+                    return str(raised.exception.__cause__)
+                code, records, trace, summary = self._produce_validator_records(
+                    root, reject, case=case, receipt_suite=suite, nightly=True)
+                self.assertEqual((1, "failed", 2), (code, summary["status"], trace["warm"][0]["exit_code"]))
+                methods = trace["warm"][0]["official_methods"]
+                self.assertEqual(3 if suite == "filter-person" else 1, len(methods))
+                self.assertTrue(all(method["result"] == "Passed" for method in methods))
+                failed = summary["population"]["observed"][0]
+                self.assertEqual(2, failed["attempts"][0]["exit_code"])
+                self.assertIn("screenshot " + name + ".png", failed["validator_failure_message"])
+                published = root / "published"
+                self.assertEqual(0, export_shard(records.parent, published))
+                if kind == "malformed":
+                    self.assertEqual("unavailable", failed["first_failure"]["screenshot"]["status"])
+                    self.assertEqual([], list(published.rglob("first-failure.png")))
+                else:
+                    self.assertEqual("validated-input", failed["first_failure"]["screenshot"]["status"])
+                    package = next(published.rglob("attempt-1"))
+                    manifest = read_failure_package(package, summary)
+                    expected_sha = hashlib.sha256(canonical_first_failure_png(failing)[0]).hexdigest()
+                    self.assertEqual(expected_sha, manifest["image_sha256"])
+                    self.assertEqual(expected_sha, hashlib.sha256((package / "first-failure.png").read_bytes()).hexdigest())
+                    self.assertNotEqual(manifest["image_sha256"], hashlib.sha256(canonical_first_failure_png(before)[0]).hexdigest())
 
     def test_target_album_rejection_exports_its_actual_input_bound_to_the_failed_attempt(self):
         from PIL import Image
