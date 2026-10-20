@@ -5,12 +5,72 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+import threading
 import time
 import unittest
 from pathlib import Path
 
 from ci_summary import identity_key, observation, require, test_identity, validate_test_identity
+
+
+class TestProgress:
+    """Log identities and bounded code-only stacks without exporting test inputs."""
+
+    def __init__(self, stream):
+        self.stream = stream
+        # Tests replace module clocks and threading attributes; keep the monitor independent.
+        self.clock = time.monotonic
+        self.active = ("discovery", self.clock())
+        self.sources = {str(path): "scripts/" + path.name for path in Path(__file__).resolve().parent.glob("*.py")}
+        self.stopped = threading.Event()
+        self.worker = threading.Thread(target=self.watch, daemon=True)
+
+    def __enter__(self):
+        self.worker.start()
+        return self
+
+    def __exit__(self, *args):
+        self.stopped.set()
+        self.worker.join(timeout=1)
+
+    def start(self, key):
+        self.active = (key, self.clock())
+        self.stream.write(f"\nPYTHON START {key}\n")
+        self.stream.flush()
+
+    def finish(self, outcome):
+        key, started = self.active
+        self.stream.write(f"\nPYTHON FINISH {key} {outcome} {self.clock() - started:.3f}s\n")
+        self.stream.flush()
+        self.active = ("between tests after " + key, self.clock())
+
+    def watch(self):
+        # At most 20 snapshots within the host's unchanged 1,200-second ceiling.
+        for _ in range(20):
+            if self.stopped.wait(60):
+                return
+            key, started = self.active
+            elapsed = self.clock() - started
+            if elapsed < 60:
+                continue
+            lines = [f"PYTHON SLOW {key} {elapsed:.3f}s"]
+            for index, frame in enumerate(list(sys._current_frames().values())[:8]):
+                lines.append(f"thread {index} (innermost first):")
+                for _ in range(32):
+                    if frame is None:
+                        break
+                    source = self.sources.get(frame.f_code.co_filename)
+                    if source:
+                        lines.append(f"  {source}:{frame.f_lineno} in {frame.f_code.co_name}")
+                    frame = frame.f_back
+            # No locals, source lines, external paths, thread names or exception text.
+            # A blocked log pipe must not block test execution or interpreter shutdown.
+            try:
+                os.write(2, ("\n".join(lines) + "\n").encode("utf-8"))
+            except OSError:
+                return
 
 
 def test_cases(suite):
@@ -30,12 +90,13 @@ def failure_message(test, err):
 
 
 class RecordingResult(unittest.TextTestResult):
-    def __init__(self, *args, fixture_members, **kwargs):
+    def __init__(self, *args, fixture_members, progress=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.observed = []
         self.current = None
         self.fixture_members = fixture_members
         self.fixture_records = {}
+        self.progress = progress
 
     def record_fixture(self, key, outcome, *, reason=None, message=None):
         if key not in self.fixture_records:
@@ -53,6 +114,8 @@ class RecordingResult(unittest.TextTestResult):
 
     def startTest(self, test):
         super().startTest(test)
+        if self.progress:
+            self.progress.start(test.id())
         self.current = test
         self.started = time.monotonic()
         self.outcome = "not-run"
@@ -116,6 +179,8 @@ class RecordingResult(unittest.TextTestResult):
                                          round(time.monotonic() - self.started, 6), reason=self.reason,
                                          message=self.message, exit_code=0 if self.outcome == "passed" else None))
         super().stopTest(test)
+        if self.progress:
+            self.progress.finish(self.outcome)
         self.current = None
 
 
@@ -138,7 +203,7 @@ def partition_suite(suite, manifest):
     return unittest.TestSuite(case for case in cases if case.id() in selected)
 
 
-def run_suite(suite, stream, *, allow_empty=False):
+def run_suite(suite, stream, *, allow_empty=False, progress=None):
     # Snapshot discovery before unittest consumes the suite or skips a fixture's members.
     cases = list(test_cases(suite))
     compiled = [test_identity("python", test.id()) for test in cases]
@@ -149,7 +214,7 @@ def run_suite(suite, stream, *, allow_empty=False):
             fixture_members.setdefault(fixture, []).append(identity)
 
     def result_class(*args, **kwargs):
-        return RecordingResult(*args, fixture_members=fixture_members, **kwargs)
+        return RecordingResult(*args, fixture_members=fixture_members, progress=progress, **kwargs)
 
     result = unittest.TextTestRunner(stream=stream, verbosity=1, resultclass=result_class).run(suite)
     observed_keys = {entry["identity"]["key"] for entry in result.observed}
@@ -168,10 +233,11 @@ def main():
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--selection-path", type=Path, help="Complete static inventory and base-owned execution subset")
     args = parser.parse_args()
-    suite = unittest.defaultTestLoader.discover(str(Path(__file__).resolve().parent), pattern="test_*.py")
-    if args.selection_path:
-        suite = partition_suite(suite, json.loads(args.selection_path.read_text()))
-    payload, code = run_suite(suite, sys.stderr, allow_empty=bool(args.selection_path))
+    with TestProgress(sys.stderr) as progress:
+        suite = unittest.defaultTestLoader.discover(str(Path(__file__).resolve().parent), pattern="test_*.py")
+        if args.selection_path:
+            suite = partition_suite(suite, json.loads(args.selection_path.read_text()))
+        payload, code = run_suite(suite, sys.stderr, allow_empty=bool(args.selection_path), progress=progress)
     args.output.write_text(json.dumps(payload, indent=2, allow_nan=False) + "\n", encoding="utf-8")
     return code
 

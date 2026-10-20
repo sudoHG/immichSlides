@@ -546,16 +546,17 @@ def capture_identity(image_bytes: bytes) -> PhotoIdentity:
     try:
         with Image.open(io.BytesIO(image_bytes)) as image:
             rgb = sample_public_frame(image)
-            row_counts = {mark: [0] * rgb.height for mark in MARKS}
-            column_counts = {mark: [0] * rgb.width for mark in MARKS}
+            sample_width, sample_height = rgb.size
+            row_counts = {mark: [0] * sample_height for mark in MARKS}
+            column_counts = {mark: [0] * sample_width for mark in MARKS}
             edge_width, edge_height = public_frame_edge_band(image.size, rgb.size)
             assignments = []
             for index, color in enumerate(rgb.getdata()):
                 assignment = public_palette_assignment(color)
-                row, column = divmod(index, rgb.width)
+                row, column = divmod(index, sample_width)
                 mark = assignment[0] if assignment is not None else None
-                if mark is None and (column < edge_width or column >= rgb.width - edge_width
-                                     or row < edge_height or row >= rgb.height - edge_height):
+                if mark is None and (column < edge_width or column >= sample_width - edge_width
+                                     or row < edge_height or row >= sample_height - edge_height):
                     mark = public_palette_edge_assignment(color)
                 assignments.append(mark)
                 if mark is not None:
@@ -571,15 +572,15 @@ def capture_identity(image_bytes: bytes) -> PhotoIdentity:
                 return full
             canvas = (min(box[0] for _, box in slots), min(box[1] for _, box in slots),
                       max(box[2] for _, box in slots), max(box[3] for _, box in slots))
-            if not ((canvas[2] - canvas[0] == rgb.width or canvas[3] - canvas[1] == rgb.height)
-                    and canvas[0] <= rgb.width / 2 < canvas[2] and canvas[1] <= rgb.height / 2 < canvas[3]):
+            if not ((canvas[2] - canvas[0] == sample_width or canvas[3] - canvas[1] == sample_height)
+                    and canvas[0] <= sample_width / 2 < canvas[2] and canvas[1] <= sample_height / 2 < canvas[3]):
                 return full
             if not _capture_canvas_tiled([box for _, box in slots], canvas, rgb) or any(
                     max(a[0], b[0]) < min(a[2], b[2]) and max(a[1], b[1]) < min(a[3], b[3])
                     for index, (_, a) in enumerate(slots) for _, b in slots[index + 1:]):
                 return full
-            if any(color != (0, 0, 0) and not (canvas[0] <= index % rgb.width < canvas[2]
-                                             and canvas[1] <= index // rgb.width < canvas[3])
+            if any(color != (0, 0, 0) and not (canvas[0] <= index % sample_width < canvas[2]
+                                             and canvas[1] <= index // sample_width < canvas[3])
                    for index, color in enumerate(rgb.getdata())):
                 return full
             for mark, (left, top, right, bottom) in slots:
@@ -590,7 +591,7 @@ def capture_identity(image_bytes: bytes) -> PhotoIdentity:
                     for line in lines:
                         counts = dict.fromkeys(MARKS, 0)
                         for offset in offsets:
-                            observed = assignments[offset * rgb.width + line if horizontal else line * rgb.width + offset]
+                            observed = assignments[offset * sample_width + line if horizontal else line * sample_width + offset]
                             if observed is not None:
                                 counts[observed] += 1
                         if any(count >= IDENTITY_MINIMUM_CHROMATIC_PIXEL_COUNT and observed != mark
@@ -599,10 +600,10 @@ def capture_identity(image_bytes: bytes) -> PhotoIdentity:
                         matches.append(counts[mark] >= IDENTITY_MINIMUM_CHROMATIC_PIXEL_COUNT)
                     if not matches[0] or not matches[-1]:
                         return full
-                box = (int((left + (right - left) * CAPTURE_INNER_BOX[0]) * image.width / rgb.width),
-                       int((top + (bottom - top) * CAPTURE_INNER_BOX[1]) * image.height / rgb.height),
-                       math.ceil((left + (right - left) * CAPTURE_INNER_BOX[2]) * image.width / rgb.width),
-                       math.ceil((top + (bottom - top) * CAPTURE_INNER_BOX[3]) * image.height / rgb.height))
+                box = (int((left + (right - left) * CAPTURE_INNER_BOX[0]) * image.width / sample_width),
+                       int((top + (bottom - top) * CAPTURE_INNER_BOX[1]) * image.height / sample_height),
+                       math.ceil((left + (right - left) * CAPTURE_INNER_BOX[2]) * image.width / sample_width),
+                       math.ceil((top + (bottom - top) * CAPTURE_INNER_BOX[3]) * image.height / sample_height))
                 output = io.BytesIO()
                 image.crop(box).save(output, format="PNG")
                 # The complete rectangle already passed the existing RGB/coverage gates.
