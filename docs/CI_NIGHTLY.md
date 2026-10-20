@@ -249,12 +249,21 @@ The 25 shards use `max-parallel: 2`: at least 13 waves, with no reserved macOS s
 Cold warm-up has 1,200 seconds; each warm invocation has 600. Each case adds a 240-second
 reset/export/cleanup allowance plus 300 seconds of readiness per warm invocation;
 filter-person receives three invocation budgets.
-Both workflows and local reset callers use the shared preparation gate. The workflow
-boots and waits for responsive app queries in a separate step before cold builds,
-simulator lookups or fixture health checks, with a combined 600-second
-deadline (boot command capped at 60 seconds, post-boot queries at 300 seconds).
-Toolchain/pins verification precedes boot. It records both phase and total elapsed
-times in logs and the job summary. Before the reset bound, the hosted first iOS smoke
+Nightly budgets explicitly reserve another 600 seconds for the post-build gate,
+with seven minutes of remaining diagnostic/cleanup margin, including the gate's
+180-second hard-timeout headroom. Toolchain/pins verification precedes early boot.
+The nightly submits boot immediately after creating the dedicated device; startup
+and settling overlap the cold build. After a successful build, the tracer runs
+bootstatus and the LaunchServices spawn probe in a child process, before any warm
+case or fixture health check. Readiness retains its 300-second budget inside the
+600-second preparation budget; neither includes build time. The child has a hard
+780-second timeout with process-group cleanup. Logs live in the tracer's private
+`simulator-preparation.log`; phase and total elapsed lines are relayed to the job
+log, rather than the job summary. Bounded diagnostics continue into compact records.
+Every `run_strict_e2e` caller reuses its successful initial boot during later resets,
+including local runs, listed retries and filter-person sessions; all reset gates
+and mutations remain mandatory. The separate strict-tracer workflow still prepares
+before building. Before the reset bound, the hosted first iOS smoke
 completed in 457.7 seconds including preparation and test execution
 ([run](https://github.com/sudoHG/immichSlides/actions/runs/37726829510)); 600 seconds
 gives cold boot its own budget above that measured complete-case duration.

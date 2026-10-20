@@ -299,6 +299,7 @@ class NightlyVerdictTests(unittest.TestCase):
         import tempfile
         import yaml
         import strict_e2e_runner_support as support
+        from strict_e2e_runner_support import SIMULATOR_COMMAND_TIMEOUT_SECONDS
         from ci_failure_diagnostics import preparation_first_failure
         job = yaml.safe_load((Path(__file__).parent.parent / ".github/workflows/ci-nightly.yml").read_text())["jobs"]["strict"]
         step = next(step for step in job["steps"] if step.get("id") == "simulator")
@@ -322,13 +323,14 @@ class NightlyVerdictTests(unittest.TestCase):
                         exec(source, {})
                     else:
                         with self.assertRaisesRegex(support.CommandError, "^Early simulator boot failed \\(exit 1\\)\\.$"
-                                if state == "nonzero" else "^simulator-boot timed out after 60.0s\\.$"):
+                                if state == "nonzero" else f"^simulator-boot timed out after {SIMULATOR_COMMAND_TIMEOUT_SECONDS:.1f}s\\.$"):
                             exec(source, {})
                 self.assertEqual(1, len(calls), "early boot must not retry or run readiness")
                 ledger = json.loads(Path(raw, "preparation-diagnostics.json").read_text())["receipt"]
                 if state == "timeout":
                     receipt = preparation_first_failure(ledger)
-                    self.assertEqual(("simulator-boot", 60), (receipt["step"], receipt["timing"]["wait_elapsed_seconds"]))
+                    self.assertEqual(("simulator-boot", SIMULATOR_COMMAND_TIMEOUT_SECONDS),
+                                     (receipt["step"], receipt["timing"]["wait_elapsed_seconds"]))
                 else:
                     self.assertEqual(["started", "completed"] if state == "ready" else ["started"],
                                      [event["state"] for event in ledger["events"]])
@@ -344,7 +346,7 @@ class NightlyVerdictTests(unittest.TestCase):
         root = Path(__file__).parent.parent
         tracer = json.loads((root / "scripts/strict-tracer.json").read_text())
         for filename, job_name, groups, margin_minutes in (
-                ("ci-nightly.yml", "strict", shards(raw), 17),
+                ("ci-nightly.yml", "strict", shards(raw), 7),
                 ("ci-strict-tracer.yml", "tracer", [
                     {"cases": [case for case in tracer["cases"] if case["platform"] == platform]}
                     for platform in ("ios", "tvos")], 20)):
@@ -358,12 +360,14 @@ class NightlyVerdictTests(unittest.TestCase):
             upload = next(i for i, step in enumerate(steps) if "actions/upload-artifact@" in step.get("uses", "")
                           and "/records" in step.get("with", {}).get("path", ""))
             creation = next(i for i, step in enumerate(steps) if "simctl create" in step.get("run", ""))
-            self.assertLess(setup, preparation)
+            self.assertLess(setup, creation if filename == "ci-nightly.yml" else preparation)
             self.assertLess(creation if filename == "ci-nightly.yml" else preparation, consumer)
             self.assertLess(consumer, accounting)
             self.assertLess(accounting, upload)
             self.assertEqual("simulator", steps[creation].get("id"))
             if filename == "ci-nightly.yml":
+                from run_strict_ci_tracer import SIMULATOR_PREPARATION_HARD_TIMEOUT_SECONDS
+                self.assertEqual(SIMULATOR_PREPARATION_TIMEOUT_SECONDS + 180, SIMULATOR_PREPARATION_HARD_TIMEOUT_SECONDS)
                 self.assertIn("--simulator-boot-submitted", shlex.split(steps[consumer]["run"]),
                               "nightly must gate the early boot after the cold build")
                 self.assertIn('"simctl", "boot"', steps[creation]["run"])
@@ -390,6 +394,8 @@ class NightlyVerdictTests(unittest.TestCase):
                     (warm + SIMULATOR_READINESS_TIMEOUT_SECONDS)
                     * (len(FILTER_PERSON_SESSIONS) if case["suite"] == "filter-person" else 1) + 240
                     for case in cases)
+                if filename == "ci-nightly.yml":
+                    budget += SIMULATOR_PREPARATION_TIMEOUT_SECONDS
                 with self.subTest(workflow=filename, cases=cases):
                     self.assertGreaterEqual(job["timeout-minutes"] * 60, budget + margin_minutes * 60)
         for filename in ("ci-ui.yml", "ci-nightly.yml"):

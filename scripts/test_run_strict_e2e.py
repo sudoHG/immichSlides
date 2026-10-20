@@ -521,15 +521,25 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
             "attempt_environments": attempt_environments,
         }
 
-    def test_warm_runner_reuses_submitted_boot_and_reset_retains_its_gate(self):
-        for submitted in (False, True):
-            with self.subTest(boot_submitted=submitted), tempfile.TemporaryDirectory() as raw:
-                code, _, stderr, calls = self._run_p2_main(Path(raw) / "evidence", suite="smoke",
-                    platform="ios", model="iPhone", warm=True, boot_submitted=submitted)
+    def test_warm_runner_reuses_submitted_boot_for_every_reset(self):
+        for submitted, suite, retry, resets in (
+                (False, "smoke", False, 1), (True, "smoke", False, 1),
+                (True, "filter-person", False, 3), (True, "filter-person", True, 4),
+                (True, "late-image", True, 2)):
+            with self.subTest(boot_submitted=submitted, suite=suite, retry=retry), tempfile.TemporaryDirectory() as raw:
+                def request_preview(environment, _number):
+                    import urllib.request
+                    request = urllib.request.Request(environment["STRICT_E2E_INPUT_SERVER_URL"] +
+                        "/assets/asset-a-2/thumbnail?size=preview", headers={"x-api-key": strict_runner.PUBLIC_API_KEY})
+                    with urllib.request.urlopen(request, timeout=5) as response:
+                        response.read()
+                code, _, stderr, calls = self._run_p2_main(Path(raw) / "evidence", suite=suite,
+                    platform="ios", model="iPhone", warm=True, boot_submitted=submitted, retry=retry,
+                    late_image_attempt=request_preview if suite == "late-image" else None)
                 self.assertEqual(0, code, stderr)
                 self.assertEqual(submitted, calls["prepare"].call_args.kwargs.get("boot_submitted", False))
                 calls["prepare"].assert_called_once()
-                calls["reset"].assert_called_once_with(P2_UDID, boot_submitted=True)
+                self.assertEqual([mock.call(P2_UDID, boot_submitted=True)] * resets, calls["reset"].call_args_list)
 
     def test_strict_retry_configures_independent_spools_and_disables_a_failed_reconfiguration(self):
         from ci_failure_diagnostics import configure_first_failure_attempt
@@ -802,7 +812,8 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                         return subprocess.CompletedProcess(command, 113 if mode in ("missing-service", "timeout-then-missing-service") else 0,
                                                            "private-input", "private-input")
                     self.assertIn(command[2], ("boot", "bootstatus"), "prebuild must not query app containers")
-                    return subprocess.CompletedProcess(command, 0, "", "")
+                    return subprocess.CompletedProcess(command, 0, "Booting device...\n"
+                        if command[2] == "bootstatus" and mode == "ready" else "", "")
                 with diagnostics.session() as recorder, \
                         mock.patch.object(diagnostics, "system_sample", return_value=None), \
                         mock.patch.object(support.subprocess, "run", side_effect=run), \
@@ -812,6 +823,8 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                                                                   should_check_app=False)
                         self.assertIsNone(container)
                         self.assertIn("simulator-preparation: passed", log)
+                        self.assertEqual(mode == "ready", "simulator-bootstatus: started-device=true" in log)
+                        self.assertEqual(mode == "ready", "simulator-bootstatus: started-device=true" in reports)
                         self.assertIn("query completed; attempt=" + ("2" if mode == "recover" else "1") +
                                       "; query_elapsed=0.125s", log)
                         self.assertEqual(["boot", "bootstatus", "spawn"] + (["spawn"] if mode == "recover" else []),
@@ -1546,7 +1559,7 @@ class StrictCITracerTests(unittest.TestCase):
         from ci_summary import parse_summary
         identity = {"schema_version": 1, "event": "local", "repository": "sudoHG/immichSlides",
                     "commit_sha": "0" * 40, "tree_sha": "0" * 40, "dirty": False}
-        for failure in (None, "readiness", "service", "cold"):
+        for failure in (None, "readiness", "service", "cold", "hard-timeout"):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as raw:
                 root, order, clock = Path(raw), [], [0.0]
                 case = dict(platform="ios", device="ipad", configuration="Debug", suite="journey-a",
@@ -1554,6 +1567,12 @@ class StrictCITracerTests(unittest.TestCase):
                 manifest = root / "manifest.json"
                 manifest.write_text(json.dumps({"cases": [case, dict(case, suite="journey-b")], "exclusions": []}))
                 def run(command, *_args, **_kwargs):
+                    if "--prepare-simulator-only" in command:
+                        self.assertEqual(support.SIMULATOR_PREPARATION_TIMEOUT_SECONDS + 180, _kwargs["timeout_seconds"])
+                        if failure == "hard-timeout":
+                            order.append("child-timeout")
+                            raise subprocess.TimeoutExpired(command, _kwargs["timeout_seconds"])
+                        return tracer.main(command[3:])
                     if "--warm-up-only" in command:
                         order.append("cold")
                         self.assertNotIn("--simulator-boot-submitted", command)
@@ -1609,7 +1628,8 @@ class StrictCITracerTests(unittest.TestCase):
                     if failure == "cold":
                         self.assertEqual(["cold"], order)
                         continue
-                    self.assertEqual(1, order.count("bootstatus"), "failed preparation must not retry the shard")
+                    self.assertEqual(0 if failure == "hard-timeout" else 1, order.count("bootstatus"),
+                                     "failed preparation must not retry the shard")
                     self.assertEqual("simulator-preparation-failed", summary["infrastructure"][0]["code"])
                     for item in summary["population"]["observed"]:
                         self.assertEqual(("failed", "not-run", None),

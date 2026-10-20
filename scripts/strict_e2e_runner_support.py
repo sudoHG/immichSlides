@@ -492,6 +492,11 @@ def boot_simulator(simulator_udid: str, *, report: Callable[[str], None] | None 
                                           phase, deadline=deadline, timeout_seconds=cap,
                                           accepts_nonzero=lambda result: step == "boot" and _is_already_booted(result.stderr))
             lines.append(f"{step}_exit={completed.returncode}")
+            if step == "bootstatus" and "Booting device..." in (completed.stdout or ""):
+                line = "simulator-bootstatus: started-device=true"
+                lines.append(line)
+                if report is not None:
+                    report(line)
             if completed.returncode and not (step == "boot" and _is_already_booted(completed.stderr)):
                 message = "Simulator boot failed" if step == "boot" else "Simulator did not become available"
                 raise CommandError(f"{message} (exit {completed.returncode}); cannot continue with a clean install.")

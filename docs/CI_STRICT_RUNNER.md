@@ -661,6 +661,11 @@ bootstrap server has registered LaunchServices, without asking the cold app data
 for an app container. A nonzero service check fails immediately; only timeouts
 repeat under the same 300-second readiness and 600-second preparation budgets,
 starting after the build; settling time during compilation spends neither budget.
+The gate runs as a child process capped at
+`SIMULATOR_PREPARATION_TIMEOUT_SECONDS + 180` (780 seconds), using the same
+process-group timeout/cleanup as cold and warm runners. Its private
+`simulator-preparation.log` retains output; phase lines are relayed to the job log.
+Hard-timeout failures keep available diagnostics and mark every case failed/not-run.
 Logs identify this probe as `launch-services-registration`. Its returned `None`
 is not an app-absence result; this mode is only for callers that discard the
 container value. Each service query records a `simulator-preparation` invocation
@@ -676,6 +681,10 @@ its preparation receipt, without starting a test. Cold build failures remain bui
 failures. There is no new preparation or test retry.
 After the gate succeeds, each warm child receives `--simulator-boot-submitted`;
 after its own initial gate, every reset and existing listed retry reuses that boot.
+This reset behavior applies to every `run_strict_e2e` caller, including local runs
+and the separate strict-tracer workflow. When `bootstatus -b` reports
+`Booting device...`, logs add `simulator-bootstatus: started-device=true` to record
+that it initiated a boot or reboot; this does not claim the boot succeeded.
 They still run bootstatus, container readiness and every app reset mutation.
 The default mode and every reset still query the real container,
 terminate an installed app, uninstall and verify absence before tests. Service

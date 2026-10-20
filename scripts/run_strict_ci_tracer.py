@@ -26,10 +26,12 @@ from strict_e2e_build import build_settings, write_json
 from strict_e2e_p2_contract import P2_CASES, RAW_VERDICT, official_tests_facts
 from strict_e2e_server import PUBLIC_API_KEY
 from strict_e2e_runner_support import (IOS_LIFECYCLE_PAUSE_SUITE, SIMULATOR_READINESS_TIMEOUT_SECONDS,
+                                     SIMULATOR_PREPARATION_TIMEOUT_SECONDS,
                                      destination_udid, pause_timing_verdict, prepare_simulator)
 
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = ROOT / "scripts/strict-tracer.json"
+SIMULATOR_PREPARATION_HARD_TIMEOUT_SECONDS = SIMULATOR_PREPARATION_TIMEOUT_SECONDS + 180
 BUILD_OPERATIONS = re.compile(r"^(?:SwiftCompile|SwiftEmitModule|CompileC|Ld |CompileAssetCatalog|CodeSign |ProcessInfoPlistFile )", re.MULTILINE)
 
 
@@ -193,11 +195,20 @@ def main(argv=None):
     parser.add_argument("--preparation-failed", action="store_true",
                         help="Record infrastructure failure with every case not-run; do not start builds or tests")
     parser.add_argument("--preparation-diagnostics", type=Path, help="public preparation measurement receipt")
+    parser.add_argument("--prepare-simulator-only", action="store_true", help="Run only the bounded post-build service gate")
     parser.add_argument("--simulator-boot-submitted", action="store_true",
                         help="Gate an early-booted dedicated device after the first cold build, before any tests")
     args = parser.parse_args(argv)
     if args.cold_timeout_seconds <= 0 or args.warm_timeout_seconds <= 0 or args.min_free_gib < 0:
         parser.error("timeouts must be positive and free space nonnegative")
+    if args.prepare_simulator_only:
+        try:
+            with session(args.preparation_diagnostics, reuse=True):
+                prepare_simulator(destination_udid(args.destination), boot_submitted=True, should_check_app=False)
+            return 0
+        except CommandError as error:
+            print(f"CommandError: {error}", file=sys.stderr, flush=True)
+            return error.code
     output = args.output_dir.resolve()
     if output == ROOT or ROOT in output.parents or os.path.lexists(output):
         parser.error("output must be fresh and outside the checkout")
@@ -419,13 +430,26 @@ def main(argv=None):
             if args.simulator_boot_submitted and not simulator_prepared:
                 # Build time is settling time, outside the unchanged preparation/readiness budgets.
                 try:
-                    with session(diagnostics_path, reuse=True):
-                        prepare_simulator(destination_udid(args.destination), boot_submitted=True,
-                                          should_check_app=False)
-                except CommandError:
+                    preparation_log = output / "simulator-preparation.log"
+                    try:
+                        exit_code = run_runner([sys.executable, "-B", str(Path(__file__).resolve()),
+                            "--platform", args.platform, "--destination", args.destination, "--output-dir", str(output),
+                            "--prepare-simulator-only", "--preparation-diagnostics", str(diagnostics_path)],
+                            ROOT, preparation_log, timeout_seconds=SIMULATOR_PREPARATION_HARD_TIMEOUT_SECONDS,
+                            truncation_seen=child_truncated)
+                    finally:
+                        if preparation_log.is_file():
+                            for line in preparation_log.read_text().splitlines():
+                                if line.startswith(("simulator-bootstatus:", "simulator-readiness:", "simulator-preparation:")):
+                                    print(line, flush=True)
+                    if exit_code:
+                        raise CommandError(f"Simulator preparation child failed (exit {exit_code}).", code=exit_code)
+                except (CommandError, subprocess.TimeoutExpired) as error:
                     from ci_failure_diagnostics import preparation_first_failure
                     diagnostics.load(diagnostics_path)
                     preparation_failure = preparation_first_failure(diagnostics.receipt())
+                    if isinstance(error, subprocess.TimeoutExpired):
+                        raise CommandError(f"Simulator preparation child timed out after {SIMULATOR_PREPARATION_HARD_TIMEOUT_SECONDS}s.", code=124) from None
                     raise
                 simulator_prepared = True
             evidence = output / "cases" / (f"{cases.index(case):03d}-" + case["suite"])
