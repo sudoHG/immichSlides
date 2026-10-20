@@ -157,7 +157,7 @@ struct IOSDriver: PlaybackDriver {
         var sceneBefore: String?
         _ = Wait.until(timeout: max(.zero, deadline.timeIntervalSinceNow)) {
             guard Date() < deadline else { return false }
-            sceneBefore = visiblePhotoMark()
+            sceneBefore = visiblePhotoObservation().mark
             return sceneBefore != nil && Date() < deadline
         }
         var action = ControlAction()
@@ -169,18 +169,21 @@ struct IOSDriver: PlaybackDriver {
         }
         activateControl(before, action: &action)
         var lastVisiblePhoto: String?
+        var lastCaptureRemainingSeconds: TimeInterval?
         let changed = Wait.until(timeout: max(.zero, deadline.timeIntervalSinceNow)) {
             guard Date() < deadline else { return false }
-            guard let sceneAfter = visiblePhotoMark() else { return false }
+            let observation = visiblePhotoObservation()
+            lastCaptureRemainingSeconds = deadline.timeIntervalSince(observation.capturedAt)
+            guard observation.capturedAt < deadline, let sceneAfter = observation.mark else { return false }
             lastVisiblePhoto = sceneAfter
-            return sceneAfter != sceneBefore && Date() < deadline
+            return sceneAfter != sceneBefore
         }
         XCTAssertTrue(
             changed,
-            "Playback page must provide Next. (Next must show a different public photo after one tap; before=\(sceneBefore), after=\(lastVisiblePhoto ?? "unrecognized"), \(action.diagnostic))"
+            "Playback page must provide Next. (Next must show a different public photo after one tap; before=\(sceneBefore), after=\(lastVisiblePhoto ?? "unrecognized"), captureRemainingSeconds=\(lastCaptureRemainingSeconds.map(String.init(describing:)) ?? "unknown"), \(action.diagnostic))"
         )
         print(
-            "IOSDriver Next: successorSceneChanged=\(changed), before=\(sceneBefore), after=\(lastVisiblePhoto ?? "unrecognized"), \(action.diagnostic)"
+            "IOSDriver Next: successorSceneChanged=\(changed), before=\(sceneBefore), after=\(lastVisiblePhoto ?? "unrecognized"), captureRemainingSeconds=\(lastCaptureRemainingSeconds.map(String.init(describing:)) ?? "unknown"), \(action.diagnostic)"
         )
     }
 
@@ -453,9 +456,12 @@ struct IOSDriver: PlaybackDriver {
         return ((button.value as? String) ?? "").lowercased()
     }
 
-    private func visiblePhotoMark() -> String? {
-        let identity = StrictE2EPhotoIdentity.captureIdentity(png: app.screenshotForFailureEvidence().pngRepresentation)
-        return identity.status == .match ? identity.mark : nil
+    private func visiblePhotoObservation() -> (mark: String?, capturedAt: Date) {
+        let screenshot = app.screenshotForFailureEvidence()
+        // Classification can be slow; only the acquisition of this immutable frame belongs to the deadline.
+        let capturedAt = Date()
+        let identity = StrictE2EPhotoIdentity.captureIdentity(png: screenshot.pngRepresentation)
+        return (identity.status == .match ? identity.mark : nil, capturedAt)
     }
 
     private func revealControls(until originalDeadline: Date? = nil) {
