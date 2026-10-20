@@ -98,7 +98,17 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
             revealLateImageControls(app: app),
             "Next must be tappable twice right after entering the slideshow, before old image requests finish.")
         let playPause = app.buttons["slideshow.control.playPause.button"]
-        if (try? playPause.snapshot()).map({ playPauseState($0) }) != "play" { tapElement(playPause) }
+        let observedPlayPauseState = (try? playPause.snapshot()).map({ playPauseState($0) })
+        var playPauseTap: [String: Any] = ["control_state": observedPlayPauseState ?? "unknown", "tap_issued": false]
+        if observedPlayPauseState != "play" {
+            let probeStartedAt = Date().timeIntervalSince1970
+            let observation = strictSceneFrameObservation(app: app)
+            playPauseTap["scene_probe"] = pauseProbeEvidence(observation, startedAt: probeStartedAt)
+            playPauseTap["tap_issued"] = true
+            playPauseTap["tap_issued_unix"] = Date().timeIntervalSince1970
+            tapElement(playPause)
+            playPauseTap["tap_returned_unix"] = Date().timeIntervalSince1970
+        }
         var pausedHistoryCount: Int?
         var didDeclinePrompt = false
         var didObservePrompt = false
@@ -129,12 +139,17 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
                     promptState = "unknown"
                 }
             }
-            promptChecks.append([
+            var check: [String: Any] = [
                 "started_unix": startedAt, "returned_unix": Date().timeIntervalSince1970,
-                "helper_returned": isPromptGone, "prompt_declined": didDeclineThisRound, "prompt_state": promptState
-            ])
+                "helper_returned": isPromptGone, "prompt_declined": didDeclineThisRound, "prompt_state": promptState,
+                "probe_read_status": hasPromptObstacle ? "not_read_prompt_obstacle" : "not_read_deadline"
+            ]
+            defer { promptChecks.append(check) }
             guard !hasPromptObstacle, Date() < waitDeadline else { return false }
+            let probeStartedAt = Date().timeIntervalSince1970
             let observation = self.strictSceneFrameObservation(app: app)
+            check["probe_read_status"] = "read"
+            check["scene_probe"] = self.pauseProbeEvidence(observation, startedAt: probeStartedAt)
             let render = SharedSceneEvidenceManifest.parseKeyValueFields(observation["render"] ?? "")
             guard render["playbackPaused"] == "true", let count = Int(render["historyCount"] ?? "") else {
                 return false
@@ -148,7 +163,7 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
                 "departure_deadline_unix": playbackDeadline.timeIntervalSince1970,
                 "prompt_deadline_unix": promptDeadline.timeIntervalSince1970,
                 "prompt_declined": didDeclinePrompt, "prompt_observed": didObservePrompt,
-                "prompt_checks": promptChecks, "pause_ready": isPauseReady
+                "prompt_checks": promptChecks, "pause_ready": isPauseReady, "play_pause_tap": playPauseTap
             ], name: "late-image-playback-entry.json")
         guard isPauseReady else {
             if hasPromptObstacle {
@@ -174,6 +189,20 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
         XCTAssertTrue(
             waitForLateImageScene(app: app, historyCount: initialHistory + 2, deadline: deadline),
             "Next must be tappable twice right after entering the slideshow, before old image requests finish.")
+    }
+
+    private func pauseProbeEvidence(_ observation: [String: String], startedAt: TimeInterval) -> [String: Any] {
+        let render = SharedSceneEvidenceManifest.parseKeyValueFields(observation["render"] ?? "")
+        let scene = SharedSceneEvidenceManifest.manifestObservation(from: observation["manifest"] ?? "")
+        let layerCount: Any =
+            render["layerIDs"].map { ($0 == "none" ? 0 : $0.split(separator: "|").count) as Any } ?? NSNull()
+        return [
+            "started_unix": startedAt, "returned_unix": Date().timeIntervalSince1970, "raw": observation,
+            "scene_probe_status": render.isEmpty ? "absent_or_unreadable" : "present",
+            "playbackPaused": render["playbackPaused"] ?? "unknown", "phase": render["phase"] ?? "unknown",
+            "scene_status": scene.map { $0.isCompleteVisibleScene ? "complete" : "incomplete" } ?? "unavailable",
+            "layer_count": layerCount
+        ]
     }
 
     @MainActor
