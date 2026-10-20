@@ -352,7 +352,7 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
         }
 
         lastContractProbeRaw = contractProbeRaw(app: app)
-        var windowFrame: PauseWindowFrame?
+        var windowFrame: PauseWindowFrame? = nil
         if didDetectWindow {
             hitContractProbeRaw = lastContractProbeRaw
             if attachKeepAlwaysFrame(app: app, index: frameIndex) {
