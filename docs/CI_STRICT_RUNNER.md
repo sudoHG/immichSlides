@@ -579,6 +579,22 @@ the build cap and elapsed time, followed by the existing service phase records;
 the summary format is unchanged. Callers without a startup log retain their
 existing startup budget.
 
+Build and health timeouts both carry exit code 124 from the shared waiter;
+fixture UI retains its existing nonzero infrastructure-failure accounting.
+An early child exit observed by the build waiter names the last allowlisted
+startup phase in the main message, or `unknown` when no phase record is available.
+
+Each logged service has at most 120 seconds for build and 60 seconds for health.
+The two services in `filter-switch` / `tvos-switch` can therefore consume up to
+360 seconds sequentially. The tracer still caps a warm segment at
+`(warm timeout + 300-second simulator readiness) * invocations + 240 seconds`
+and a cold segment at `cold timeout + 240 seconds`. Those outer caps include
+startup and all other preparation; the 240-second margin is shared, not a
+guarantee that both service caps fit alongside fully consumed execution and
+readiness budgets. Dual startup alone can exceed that margin by 120 seconds.
+The outer deadline can stop the segment before all inner caps are consumed,
+which remains a timeout failure. This change does not increase tracer deadlines.
+
 The cap rounds three times the measured 36.480-second successful hosted maximum
 up to two minutes. A sample of 56 completed UI shard jobs from nightly runs
 [39431510164](https://github.com/sudoHG/immichSlides/actions/runs/39431510164),

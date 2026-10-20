@@ -730,9 +730,10 @@ def _wait_for_fixture_build(process: subprocess.Popen[bytes], startup_log: Path)
     print(f"fixture-service: build started; budget={SERVICE_FIXTURE_BUILD_TIMEOUT_SECONDS}s", flush=True)
     while time.monotonic() < deadline:
         exit_code = process.poll()
-        if exit_code is not None:
-            raise CommandError(f"Test service fixture build exited early with exit {exit_code}.")
         lines = _service_startup_diagnostics(startup_log)
+        if exit_code is not None:
+            phase = re.search(r"phase=([^;]+);", lines[-1]).group(1) if lines else "unknown"
+            raise CommandError(f"Test service exited early during {phase} with exit {exit_code}.")
         if any("phase=fixture-build; state=completed;" in line for line in lines) and time.monotonic() < deadline:
             print(f"fixture-service: build completed; elapsed={time.monotonic() - started:.1f}s; "
                   f"budget={SERVICE_FIXTURE_BUILD_TIMEOUT_SECONDS}s", flush=True)
@@ -775,7 +776,7 @@ def _wait_for_service(ready_path: Path, process: subprocess.Popen[bytes]) -> tup
                 last_state += f":{type(error).__name__}"
         time.sleep(min(0.05, max(0, deadline - time.monotonic())))
     raise CommandError(f"Test service health check timed out after {time.monotonic() - started:.1f}s "
-                       f"(budget={SERVICE_STARTUP_TIMEOUT_SECONDS}s; last_state={last_state}).")
+                       f"(budget={SERVICE_STARTUP_TIMEOUT_SECONDS}s; last_state={last_state}).", code=124)
 
 
 def stop_exact_process(process: subprocess.Popen[bytes]) -> int:
