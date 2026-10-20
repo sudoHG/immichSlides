@@ -86,6 +86,21 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
                 selectionTimeout: TestWait.seconds(.product(8)) + TestWait.seconds(.product(2)),
                 departureTimeout: TestWait.seconds(.product(8)))
         else { return }
+        let promptCheckStartedAt = Date().timeIntervalSince1970
+        var didDeclinePrompt = false
+        // A credential prompt can arrive after departure; use only the remaining departure budget.
+        let isPromptGone = IOSFirstBootNavigation(app: app).dismissPasswordPrompt(until: playbackDeadline) {
+            didDeclinePrompt = true
+        }
+        try StrictE2EVisualEvidence.writeRequiredJSON(
+            [
+                "started_unix": promptCheckStartedAt, "deadline_unix": playbackDeadline.timeIntervalSince1970,
+                "returned_unix": Date().timeIntervalSince1970, "prompt_declined": didDeclinePrompt,
+                "prompt_gone_within_deadline": isPromptGone
+            ], name: "late-image-playback-entry.json")
+        XCTAssertTrue(
+            isPromptGone,
+            "Next must be tappable twice right after entering the slideshow, before old image requests finish.")
         let next = app.buttons["slideshow.control.next.button"]
         XCTAssertTrue(
             next.waitForPublicElement(

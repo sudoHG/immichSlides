@@ -791,7 +791,7 @@ struct IOSFirstBootNavigation {
 
     /// Every decline needs a fresh exact prompt observation within the same absolute deadline.
     @discardableResult
-    func dismissPasswordPrompt(until deadline: Date) -> Bool {
+    func dismissPasswordPrompt(until deadline: Date, onDecline: () -> Void = {}) -> Bool {
         var didDecline = false
         repeat {
             if let observation = try? observe() {
@@ -802,6 +802,7 @@ struct IOSFirstBootNavigation {
                 if let decline = observation.decline {
                     let returned = tap(
                         decline, observation: observation, deadline: deadline, step: "save-password-prompt")
+                    if returned { onDecline() }
                     didDecline = didDecline || returned
                 }
             }
