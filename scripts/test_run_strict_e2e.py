@@ -764,6 +764,59 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                 strict_runner.read_official_test_results_summary(bundle)
             self.assertEqual(raised.exception.entry["code"], "official-summary-export-timeout")
 
+    def test_prebuild_preparation_checks_launch_services_without_a_container_lookup(self):
+        import ci_execution_diagnostics as diagnostics
+        import strict_e2e_runner_support as support
+        for mode in ("ready", "missing-service", "recover", "timeout", "late-response", "long-boot",
+                     "timeout-then-missing-service"):
+            with self.subTest(mode=mode):
+                clock, commands, reports = [0.0], [], []
+                def run(command, **kwargs):
+                    commands.append(command)
+                    if command[2] == "bootstatus" and mode == "long-boot":
+                        clock[0] += 550
+                    if command[2] == "spawn":
+                        self.assertEqual(command, ["xcrun", "simctl", "spawn", "SIM-UDID",
+                                                   "launchctl", "print", "system/com.apple.lsd"])
+                        if mode in ("timeout", "long-boot") or mode in ("recover", "timeout-then-missing-service") and len(commands) == 3:
+                            clock[0] += kwargs["timeout"]
+                            raise subprocess.TimeoutExpired(["private-input"], kwargs["timeout"])
+                        if mode == "late-response":
+                            clock[0] += 301
+                        return subprocess.CompletedProcess(command, 113 if mode in ("missing-service", "timeout-then-missing-service") else 0,
+                                                           "private-input", "private-input")
+                    self.assertIn(command[2], ("boot", "bootstatus"), "prebuild must not query app containers")
+                    return subprocess.CompletedProcess(command, 0, "", "")
+                with diagnostics.session() as recorder, \
+                        mock.patch.object(diagnostics, "system_sample", return_value=None), \
+                        mock.patch.object(support.subprocess, "run", side_effect=run), \
+                        mock.patch.object(support.time, "monotonic", side_effect=lambda: clock[0]):
+                    if mode in ("ready", "recover"):
+                        container, log = support.prepare_simulator("SIM-UDID", report=reports.append,
+                                                                  should_check_app=False)
+                        self.assertIsNone(container)
+                        self.assertIn("simulator-preparation: passed", log)
+                        self.assertEqual(["boot", "bootstatus", "spawn"] + (["spawn"] if mode == "recover" else []),
+                                         [command[2] for command in commands])
+                    else:
+                        message = (r"^Simulator LaunchServices registration check failed \(exit 113\)\.$"
+                                   if mode in ("missing-service", "timeout-then-missing-service") else
+                                   "^simulator-readiness timed out after " + ("50" if mode == "long-boot" else "300") + r"\.0s\.$")
+                        with self.assertRaisesRegex(CommandError, message) as raised:
+                            support.prepare_simulator("SIM-UDID", report=reports.append, should_check_app=False)
+                        self.assertNotIn("private-input", str(raised.exception))
+                        self.assertFalse(any("passed" in line for line in reports if line.startswith("simulator-preparation:")))
+                        if mode in ("timeout", "long-boot"):
+                            self.assertEqual(clock[0], 600 if mode == "long-boot" else 300)
+                if mode in ("recover", "timeout", "long-boot", "timeout-then-missing-service"):
+                    self.assertTrue(any(event["phase"] == "simulator-preparation" and event["state"] == "reap-completed"
+                                        for event in recorder.events), "timed-out service queries must retain cleanup diagnostics")
+                if mode == "timeout-then-missing-service":
+                    from ci_failure_diagnostics import preparation_first_failure
+                    receipt = preparation_first_failure(recorder.receipt())
+                    self.assertEqual("unknown", receipt["step"], "a recovered query timeout must not replace a later command failure")
+                    self.assertIsNone(receipt["timing"]["wait_elapsed_seconds"])
+
     def test_ordinary_and_person_results_never_expose_raw_bundles(self) -> None:
         # Raw XCTest activities may retain UI-entered credentials even in failed sessions.
         for suite, count in (("smoke", 1), ("filter-person", 3)):
@@ -2175,10 +2228,13 @@ raise SystemExit(65)
                 mock.patch.object(tracer, "toolchain", return_value={"versions": {"python": "test"}, "signing_mode": "not-applicable"}):
             output = Path(raw) / "trace"
             receipt_path = Path(raw) / "preparation.json"
-            clock = [0.0]
+            clock, query_budgets = [0.0], []
             def stats(command, **kwargs):
                 if command[0] == "xcrun":
-                    clock[0] = 301.5
+                    self.assertEqual(command, ["xcrun", "simctl", "spawn", "private-input",
+                                               "launchctl", "print", "system/com.apple.lsd"])
+                    query_budgets.append(kwargs["timeout"])
+                    clock[0] += kwargs["timeout"]
                     raise subprocess.TimeoutExpired(["private-input"], kwargs["timeout"], output="private-input")
                 return subprocess.CompletedProcess(command, 0,
                     "12 10 R /private-input/xcodebuild\n4 30 S /Library/Developer/PrivateFrameworks/CoreSimulator.framework/Resources/bin/com.apple.CoreSimulator.CoreSimulatorService\n9 20 S /private-input/unknown-name\n" if command[0] == "/bin/ps"
@@ -2189,7 +2245,8 @@ raise SystemExit(65)
                     mock.patch.object(diagnostics.subprocess, "run", side_effect=stats), \
                     mock.patch.dict(os.environ, {"ImageVersion": "20261016.1.2"}):
                 with self.assertRaisesRegex(support.InfrastructureTimeout, "simulator-readiness timed out after 300.0s"):
-                    support.prepare_simulator("private-input", report=lambda line: None)
+                    support.prepare_simulator("private-input", report=lambda line: None, should_check_app=False)
+            self.assertEqual([10, 20, 40, 60, 60, 60, 50], query_budgets)
             self.assertEqual(1, tracer.main(["--platform", "ios", "--destination", "unavailable",
                 "--manifest", str(tracer.ROOT / "scripts/nightly-matrix.json"), "--shard", selected["id"],
                 "--output-dir", str(output), "--preparation-failed", "--preparation-diagnostics", str(receipt_path)]))
@@ -2204,17 +2261,21 @@ raise SystemExit(65)
             for item in summary["population"]["observed"]:
                 receipt = item["first_failure"]
                 self.assertEqual(receipt, item["attempts"][0]["first_failure"])
-                self.assertEqual(("preparation", "simulator-readiness", 301.5, None),
-                    (receipt["source"], receipt["step"], receipt["timing"]["wait_elapsed_seconds"],
-                     receipt["timing"]["deadline_seconds"]))
+                self.assertEqual(("preparation", "simulator-readiness", None),
+                    (receipt["source"], receipt["step"], receipt["timing"]["deadline_seconds"]))
+                self.assertAlmostEqual(300, receipt["timing"]["wait_elapsed_seconds"], places=1)
                 self.assertEqual("not-applicable", receipt["screenshot"]["status"])
                 self.assertEqual("unknown", receipt["state"]["app"])
             events = summary["bounded_diagnostics"]["events"]
             self.assertIsNone(summary["bounded_diagnostics"]["collection_seconds"]["fixture"])
-            self.assertTrue(any(event["phase"] == "simulator-readiness" and event["state"] == "timeout"
-                                and event["elapsed_seconds"] == 301.5 for event in events))
-            self.assertEqual(["started", "timeout", "reap-completed"],
-                             [event["state"] for event in events if event["phase"] == "simulator-container"])
+            self.assertEqual([300], [event["elapsed_seconds"] for event in events
+                                     if event["phase"] == "simulator-readiness" and event["state"] == "timeout"])
+            queries = [event for event in events if event["phase"] == "simulator-preparation"
+                       and event["state"] == "reap-completed"]
+            self.assertEqual(query_budgets, [event["elapsed_seconds"] for event in queries])
+            for query in queries:
+                self.assertEqual(["started", "timeout", "reap-completed"],
+                                 [event["state"] for event in events if event["sequence"] == query["sequence"]])
             self.assertNotIn("private-input", json.dumps(summary["bounded_diagnostics"]))
             samples = [event["sample"] for event in events if event["sample"] is not None]
             self.assertEqual(2, len(samples))
