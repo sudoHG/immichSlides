@@ -1276,28 +1276,137 @@ def evaluate_visual_identity(evidence_dir: Path, suite: str) -> dict[str, object
                     raise IdentityAssertionError(prefix + ": scene publication did not advance")
         return {"verdict": "PASS", "suite": suite, "steps": {name: {"signature": list(signature)} for name, signature in steps.items()}}
 
-    # The target window must show an allowed public mark; at that moment EXIF may differ from the photo
-    # (A2+Fixture 3 transition boundary).
-    window = _classify_named(evidence_dir, "window-detected")
-    identities = [_classify_named(evidence_dir, name) for name in PAUSE_WINDOW_STEPS]
-    if window.status != "MATCH" or window.mark not in MARKS:
-        raise IdentityAssertionError(
-            f"Target window image is not recognized; cannot count as SUCCESS: status={window.status} mark={window.mark}"
-        )
-    overlay_text = _overlay_text(evidence_dir)
-    assert_exif_correspondence(identities[0], overlay_text)
-    assert_exif_correspondence(identities[1], overlay_text)
-    assert_pause_hold(identities[0], identities[1])
-    if window.mark != identities[0].mark:
-        raise IdentityAssertionError(
-            f"Target window shows the wrong image; cannot count as SUCCESS: window={window.mark} after-pause={identities[0].mark}"
-        )
-    steps = {"window-detected": window}
-    steps.update(dict(zip(PAUSE_WINDOW_STEPS, identities)))
-    payload = _report(suite, steps)
-    payload["overlay_text_after_pause"] = overlay_text
-    payload["overlay_model"] = overlay_model_from_text(overlay_text)
+    return _evaluate_pause_window(evidence_dir)
+
+
+def _evaluate_pause_window(evidence_dir: Path) -> dict[str, object]:
+    bright = _classify_named(evidence_dir, "a2-stable-before-play")
+    if bright.status != "MATCH" or bright.mark != "A2":
+        raise IdentityAssertionError("Pause window bright proof must show A2")
+    try:
+        contract = json.loads((evidence_dir / "pause-window-contract.json").read_text(encoding="utf-8"))
+        if not isinstance(contract, dict) or contract.get("schema_version") != 1:
+            raise ValueError
+        bright_frame = contract["bright"]
+        frames = contract["frames"]
+        overlay_text = contract["overlay_text_before_pause"]
+        if not isinstance(overlay_text, str) or not isinstance(bright_frame, dict) or not isinstance(frames, dict):
+            raise ValueError
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise IdentityAssertionError("Pause window capture contract is missing or invalid") from error
+    assert_exif_correspondence(bright, overlay_text)
+
+    def probe(raw: object) -> dict[str, str]:
+        if not isinstance(raw, str):
+            return {}
+        parts = [part.split("=", 1) for part in raw.split(";") if "=" in part]
+        return dict(parts) if len({part[0] for part in parts}) == len(parts) else {}
+
+    before = probe(bright_frame.get("probe_before"))
+    after = probe(bright_frame.get("probe_after"))
+    if not all(p.get("schemaVersion") == "scene-presentation-contract-probe-v1"
+               and p.get("phase") == "stablePhoto" and p.get("playbackPaused") == "true"
+               and p.get("layerRoles") == "stable" and p.get("layerOpacities") == "1.000000"
+               and p.get("loadingVisible") == "false" for p in (before, after)) or not all(
+                   before.get(key) and before.get(key) == after.get(key) for key in ("layerIDs", "motionRawProgress")
+               ) or before["layerIDs"] == "none" or "|" in before["layerIDs"]:
+        raise IdentityAssertionError("Pause window bright proof must be one frozen opaque scene")
+    reference = before["layerIDs"]
+    frozen_probes = []
+    names = ("window-detected", *PAUSE_WINDOW_STEPS)
+    for name in names:
+        frame = frames.get(name)
+        if not isinstance(frame, dict):
+            raise IdentityAssertionError("Pause window capture contract is missing or invalid")
+        for key in ("probe_before", "probe_after"):
+            state = probe(frame.get(key))
+            try:
+                roles = state.get("layerRoles", "").split("|")
+                references = state.get("layerIDs", "").split("|")
+                opacities = [float(value) for value in state.get("layerOpacities", "").split("|")]
+                valid = (state.get("schemaVersion") == "scene-presentation-contract-probe-v1"
+                         and state.get("phase") == "transition" and state.get("playbackPaused") == "true"
+                         and roles == ["outgoing", "incoming"] and len(references) == len(opacities) == 2
+                         and references[0] == reference and all(value not in ("", "none") for value in references)
+                         and 0 < opacities[0] < 1 and opacities[1] == 0)
+            except ValueError:
+                valid = False
+            if not valid or not all(state.get(key) for key in ("motionRawProgress", "layerIDs")):
+                raise IdentityAssertionError("The paused pause-window probe identity must not change")
+            frozen_probes.append({key: state.get(key) for key in (
+                "phase", "layerIDs", "layerRoles", "layerOpacities", "motionRawProgress")})
+    if any(state != frozen_probes[0] for state in frozen_probes[1:]):
+        raise IdentityAssertionError("The paused pause-window probe identity must not change")
+
+    steps = {"a2-stable-before-play": bright}
+    images = {}
+    for name in names:
+        identity = _classify_named(evidence_dir, name)
+        try:
+            with _pil_image().open(evidence_dir / f"{name}.png") as image:
+                image = image.convert("RGB")
+                # Use the existing center region to keep EXIF/chrome from disguising an empty photo.
+                from strict_e2e_filter_manifest import DISPLAY_REGION_BOXES
+                left, top, right, bottom = DISPLAY_REGION_BOXES["center"]
+                center = image.crop((math.floor(left * image.width), math.floor(top * image.height),
+                                     math.ceil(right * image.width), math.ceil(bottom * image.height)))
+                buffer = io.BytesIO()
+                center.save(buffer, format="PNG")
+                center_identity = classify_rejection_evidence(buffer.getvalue())
+                images[name] = image.copy()
+        except (OSError, ValueError) as error:
+            raise IdentityAssertionError("Pause window midpoint must contain visible photo pixels") from error
+        if identity.status in ("BLACK", "BLANK") or center_identity.status in ("BLACK", "BLANK"):
+            raise IdentityAssertionError("Pause window midpoint must contain visible photo pixels")
+        rejection = classify_rejection_evidence((evidence_dir / f"{name}.png").read_bytes())
+        if rejection.status == "MATCH" and rejection.mark != "A2":
+            raise IdentityAssertionError("Target window shows the wrong image; cannot count as SUCCESS")
+        steps[name] = identity
+    for left, right in zip(names, names[1:]):
+        _assert_pause_window_pixels(images[left], frames[left], images[right], frames[right])
+    payload = _report("pause-window", steps)
+    payload["overlay_text_before_pause"] = overlay_text
     return payload
+
+
+def _assert_pause_window_pixels(first: object, first_frame: dict, second: object, second_frame: dict) -> None:
+    # Same chrome exclusions and exact pixels as comparePausedPhotoPixels; no dim-frame identity qualification.
+    try:
+        window = first_frame["window_frame"]
+        if (first.size != second.size or window != second_frame["window_frame"] or len(window) != 4
+                or any(frame.get("chrome_problem") is not None for frame in (first_frame, second_frame))
+                or not all(isinstance(v, (int, float)) and math.isfinite(v) for v in window)
+                or window[2] <= 0 or window[3] <= 0):
+            raise ValueError
+        width, height = first.size
+        scale = width / window[2]
+        if abs(height / window[3] - scale) >= 0.01:
+            raise ValueError
+        rects = first_frame["excluded_rects"] + second_frame["excluded_rects"]
+        if not all(isinstance(rect, list) and len(rect) == 4 and all(
+                isinstance(v, (int, float)) and math.isfinite(v) for v in rect)
+                and rect[2] >= 0 and rect[3] >= 0 for rect in rects):
+            raise ValueError
+        first_bytes, second_bytes = first.tobytes(), second.tobytes()
+        compared, different = 0, False
+        for row in range(height):
+            y = (row + 0.5) / scale + window[1]
+            spans = sorted((max(0, math.floor((x - window[0]) * scale)),
+                            min(width, math.ceil((x + w - window[0]) * scale)))
+                           for x, top, w, h in rects if top <= y <= top + h)
+            start = 0
+            for lower, upper in [span for span in spans if span[0] < span[1]] + [(width, width)]:
+                stop = max(start, lower)
+                compared += stop - start
+                region = slice((row * width + start) * 3, (row * width + stop) * 3)
+                different = different or first_bytes[region] != second_bytes[region]
+                start = max(start, upper)
+        if compared < width * height * 0.5:
+            raise ValueError
+    except (KeyError, TypeError, ValueError, IndexError) as error:
+        raise IdentityAssertionError("Pause window pixel comparison is not usable") from error
+    if different:
+        raise IdentityAssertionError("Paused pause-window frames must be pixel-identical")
 
 
 def _classify_named(evidence_dir: Path, name: str) -> PhotoIdentity:
@@ -1311,21 +1420,6 @@ def _classify_named(evidence_dir: Path, name: str) -> PhotoIdentity:
     from ci_failure_diagnostics import remember_validator_input
     remember_validator_input(payload)
     return classify_screenshot(payload)
-
-
-def _overlay_text(evidence_dir: Path) -> str:
-    sidecar = evidence_dir / "after-pause.overlay.txt"
-    if sidecar.is_file():
-        return sidecar.read_text(encoding="utf-8")
-    report = evidence_dir / "visual-identity.json"
-    if report.is_file():
-        try:
-            payload = json.loads(report.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return ""
-        if isinstance(payload, dict):
-            return str(payload.get("overlay_text_after_pause") or "")
-    return ""
 
 
 def _report(suite: str, steps: Mapping[str, PhotoIdentity]) -> dict[str, object]:

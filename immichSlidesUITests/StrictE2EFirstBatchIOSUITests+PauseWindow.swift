@@ -30,17 +30,116 @@ extension StrictE2EFirstBatchIOSUITests {
 
     @MainActor
     func pausePlaybackIfNeeded(app: XCUIApplication) {
-        let playPause = app.buttons["slideshow.control.playPause.button"]
         guard
-            playPause.waitForPublicElement("slideshow.control.playPause.button", timeout: TestWait.seconds(.product(4)))
+            let button = preparePauseWindowPlayPause(
+                app: app, deadline: Date().addingTimeInterval(TestWait.seconds(.product(4))))
         else { return }
-        if playPauseState(playPause) != "play" {
-            tapElement(playPause)
+        if playPauseState(button) != "play" {
+            tapPauseWindowPlayPause(app: app, button: button)
         }
         XCTAssertTrue(
-            waitUntil(timeout: TestWait.seconds(.product(4))) { self.playPauseState(playPause) == "play" },
+            waitUntil(timeout: TestWait.seconds(.product(4))) {
+                let snapshots = app.evidenceSnapshotsByIdentifier()
+                return snapshots["slideshow.control.playPause.button"].map { self.playPauseState($0) } == "play"
+            },
             "Pause before opening settings or identifying photos, so autoplay does not move away."
         )
+    }
+
+    @MainActor
+    func preparePauseWindowPlayPause(app: XCUIApplication, deadline: Date) -> XCUIElementSnapshot? {
+        let identifier = "slideshow.control.playPause.button"
+        while Date() < deadline {
+            let observation = try? app.slideshowControlBarButtonObservation(identifier: identifier)
+            guard Date() < deadline else { break }
+            if let observation, observation.isReady, let button = observation.button,
+                app.buttons[identifier].isHittable, Date() < deadline
+            {
+                return button
+            }
+            if let observation, observation.hasPlaybackMarker,
+                observation.button == nil || observation.button?.isEnabled == true, Date() < deadline
+            {
+                // Wake the real playback surface; the hidden receiver is never the requested control.
+                app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tapForFailureEvidence()
+            }
+            RunLoop.current.run(until: min(deadline, Date().addingTimeInterval(TestWait.seconds(.product(0.06)))))
+        }
+        XCTFail("The control bar must be visible before opening settings.")
+        return nil
+    }
+
+    @MainActor
+    func tapPauseWindowPlayPause(app: XCUIApplication, button: XCUIElementSnapshot) {
+        FirstFailureContext.mark("select", element: "slideshow.control.playPause.button")
+        app.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: button.frame.midX, dy: button.frame.midY)).tapForFailureEvidence()
+    }
+
+    struct PauseWindowFrame {
+        let sample: PausedWindowSample
+        let probeBefore: String
+        let probeAfter: String
+
+        var payload: [String: Any] {
+            func rect(_ frame: CGRect) -> [CGFloat] { [frame.minX, frame.minY, frame.width, frame.height] }
+            return [
+                "probe_before": probeBefore, "probe_after": probeAfter,
+                "window_frame": rect(sample.windowFrame),
+                "excluded_rects": sample.chromeFrames.map {
+                    let margin = $0.isControlBar ? PlaybackHistoryIOSUITests.pausedControlBarMarginPoints : .zero
+                    return rect($0.rect.insetBy(dx: -margin, dy: -margin))
+                },
+                "chrome_problem": sample.chromeProblem as Any? ?? NSNull()
+            ]
+        }
+    }
+
+    @MainActor
+    func capturePauseWindowFrame(app: XCUIApplication) -> PauseWindowFrame {
+        let before = frameSynchronizedProbeRaw(app: app)
+        let sample = PlaybackHistoryIOSUITests.capturePausedWindowSample(app: app)
+        return PauseWindowFrame(sample: sample, probeBefore: before, probeAfter: frameSynchronizedProbeRaw(app: app))
+    }
+
+    func pauseWindowHasVisiblePhotoPixels(_ png: Data) -> Bool {
+        guard let image = UIImage(data: png)?.cgImage,
+            let box = StrictE2EPhotoIdentity.displayRegionBoxes.first(where: { $0.name == "center" })?.box,
+            let center = image.cropping(
+                to: CGRect(
+                    x: CGFloat(image.width) * box.0, y: CGFloat(image.height) * box.1,
+                    width: CGFloat(image.width) * (box.2 - box.0), height: CGFloat(image.height) * (box.3 - box.1)
+                ).integral),
+            let centerPNG = UIImage(cgImage: center).pngData()
+        else { return false }
+        let identity = StrictE2EPhotoIdentity.classifyRejectionEvidence(png: centerPNG)
+        return identity.status != .black && identity.status != .blank && !identity.notes.contains("unreadable")
+    }
+
+    func brightPauseWindowReference(_ frame: PauseWindowFrame) -> String? {
+        let before = probeFields(from: frame.probeBefore)
+        let after = probeFields(from: frame.probeAfter)
+        for fields in [before, after] {
+            guard fields["schemaVersion"] == "scene-presentation-contract-probe-v1",
+                fields["phase"] == "stablePhoto", fields["playbackPaused"] == "true",
+                fields["layerRoles"] == "stable", Double(fields["layerOpacities"] ?? "") == 1,
+                fields["loadingVisible"] == "false"
+            else { return nil }
+        }
+        guard let reference = before["layerIDs"], !reference.isEmpty, reference != "none",
+            list(reference).count == 1,
+            ["layerIDs", "motionRawProgress"].allSatisfy({ before[$0] != nil && before[$0] == after[$0] })
+        else { return nil }
+        return reference
+    }
+
+    func pauseWindowFrame(_ frame: PauseWindowFrame, hasOutgoingReference reference: String) -> Bool {
+        guard isSameFrozenProbeFrame(frame.probeBefore, frame.probeAfter) else { return false }
+        let fields = probeFields(from: frame.probeBefore)
+        let roles = list(fields["layerRoles"])
+        let references = list(fields["layerIDs"])
+        guard roles.count == references.count, let index = roles.firstIndex(of: "outgoing") else { return false }
+        return references[index] == reference
     }
 
     // iPad sidebar handling is copied from PlaybackHistoryIOSUITests.openPlaybackSettingsFromSlideshow, into
@@ -324,8 +423,8 @@ extension StrictE2EFirstBatchIOSUITests {
     // Positive condition after freezing: outgoing is still visible and incoming is still fully invisible.
     func isPostPauseProbePositive(_ raw: String) -> Bool {
         guard let state = probeState(from: raw),
-            state.isPaused,
-            let outgoing = layerOpacity(in: state, role: "outgoing"), outgoing > 0,
+            state.isPaused, state.phase == "transition", state.layerRoles == ["outgoing", "incoming"],
+            let outgoing = layerOpacity(in: state, role: "outgoing"), outgoing > 0, outgoing < 1,
             let incoming = layerOpacity(in: state, role: "incoming"), incoming == 0
         else {
             return false

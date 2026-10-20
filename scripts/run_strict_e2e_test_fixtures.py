@@ -142,11 +142,25 @@ def _rgb_png(color: tuple[int, int, int], width: int = 32, height: int = 32) -> 
 
 
 def _write_pause_window_evidence(evidence: Path, window_png: bytes) -> None:
+    from PIL import Image
+
     a2 = _fixture_data("a")["images"]["asset-a-2"]
+    (evidence / "a2-stable-before-play.png").write_bytes(a2)
     (evidence / "window-detected.png").write_bytes(window_png)
     (evidence / "after-pause.png").write_bytes(a2)
     (evidence / "after-pause-0_3s.png").write_bytes(a2)
     (evidence / "after-pause.overlay.txt").write_text("", encoding="utf-8")
+    stable = "schemaVersion=scene-presentation-contract-probe-v1;phase=stablePhoto;playbackPaused=true;layerRoles=stable;layerIDs=photo-2;layerOpacities=1.000000;motionRawProgress=0.000000;loadingVisible=false"
+    frozen = "schemaVersion=scene-presentation-contract-probe-v1;phase=transition;playbackPaused=true;layerRoles=outgoing|incoming;layerIDs=photo-2|photo-3;layerOpacities=0.500000|0.000000;motionRawProgress=1.000000|0.000000;loadingVisible=false"
+    with Image.open(io.BytesIO(a2)) as image:
+        width, height = image.size
+    frame = {"probe_before": frozen, "probe_after": frozen,
+             "window_frame": [0, 0, width, height], "excluded_rects": [], "chrome_problem": None}
+    (evidence / "pause-window-contract.json").write_text(json.dumps({
+        "schema_version": 1, "overlay_text_before_pause": "",
+        "bright": {"probe_before": stable, "probe_after": stable},
+        "frames": {name: frame for name in ("window-detected", "after-pause", "after-pause-0_3s")},
+    }), encoding="utf-8")
 
 
 def _run_runner_without_site(*args: str) -> subprocess.CompletedProcess[str]:
