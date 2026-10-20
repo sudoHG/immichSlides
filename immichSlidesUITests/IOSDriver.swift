@@ -183,8 +183,17 @@ struct IOSDriver: PlaybackDriver {
             XCTFail("The current scene must be readable before tapping Next. (\(action.diagnostic))")
             return
         }
+        if !action.didWake, Date() < deadline {
+            action.didWake = true
+            FirstFailureContext.mark("reveal-controls", element: identifier)
+            let revealStartedAt = Date()
+            // EXIF passes hits through; the upper photo area stays clear of the bar, tip and DEBUG buttons.
+            let playbackWakePoint = CGVector(dx: 0.5, dy: 0.2)
+            app.coordinate(withNormalizedOffset: playbackWakePoint).tapForFailureEvidence()
+            action.timing.revealSeconds += Date().timeIntervalSince(revealStartedAt)
+        }
         guard let before = prepareControl(identifier, until: deadline, action: &action) else {
-            XCTFail("Next control must be actionable before tapping. (\(action.diagnostic))")
+            XCTFail("Final Next preparation must provide an actionable control. (\(action.diagnostic))")
             return
         }
         activateControl(before, action: &action)

@@ -910,6 +910,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
             ("TestSupport/StrictE2EPhotoIdentity.swift", "EXIF does not match the photo: mark=", "unknown", "exif_correspondence"),
             ("immichSlidesUITests/IOSDriver.swift", "The EXIF toggle must reach the target state through the real settings.", "unknown", "control_state"),
             ("immichSlidesUITests/IOSDriver.swift", "Next control must be actionable before tapping.", "control_action", "hidden_controls"),
+            ("immichSlidesUITests/IOSDriver.swift", "Final Next preparation must provide an actionable control.", "control_action", "hidden_controls"),
             ("immichSlidesUITests/IOSDriver.swift", "The current scene must be readable before tapping Next.", "visible_scene_capture", "scene_identity"),
             ("immichSlidesUITests/IOSDriver.swift", "One Next tap must change the visible scene.", "control_action", "scene_identity"),
             ("immichSlidesUITests/IOSDriver.swift", "Play/pause value must be readable before pausing.", "control_action", "probe_readback"),
