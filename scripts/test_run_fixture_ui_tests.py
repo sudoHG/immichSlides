@@ -3,6 +3,7 @@
 import copy
 import contextlib
 import io
+import itertools
 import json
 import os
 import plistlib
@@ -27,16 +28,16 @@ class FixtureCoverageTests(unittest.TestCase):
         identity = test_identity("ui", key, platform="ios")
         receipt = first_failure_receipt()
         receipt["screenshot"] = {"status": "unavailable", "width": None, "height": None, "bytes": None}
-        for selector in (key, "immichSlidesUITests/" + key):
+        for selector, official_key in itertools.product((key, "immichSlidesUITests/" + key), repeat=2):
             for defect in (None, "wrong-method", "wrong-attempt"):
-                with self.subTest(selector=selector, defect=defect), tempfile.TemporaryDirectory() as raw:
+                with self.subTest(selector=selector, official_key=official_key, defect=defect), tempfile.TemporaryDirectory() as raw:
                     root = Path(raw)
                     mapping = json.loads(first_failure_environment(root, [selector])["STRICT_E2E_FIRST_FAILURE_TESTS"])
                     # This is the Class/method key constructed from XCTestCase type and name in Swift.
                     swift_key = "/".join(("immichSlidesUITests", method))
                     self.assertEqual({swift_key: 0}, mapping)
                     (root / "0.json").write_text(json.dumps(receipt))
-                    original = "immichSlidesUITests/" + key + ("Other()" if defect == "wrong-method" else "()")
+                    original = official_key + ("Other()" if defect == "wrong-method" else "()")
                     node = {"nodeType": "Test Case", "nodeIdentifier": original, "result": "Failed"}
                     collect_first_failure_spool(root, [selector], [node], root)
                     entry = observation(identity, "failed", 1, exit_code=65)

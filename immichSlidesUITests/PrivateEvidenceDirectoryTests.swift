@@ -18,10 +18,14 @@ final class PrivateEvidenceDirectoryTests: XCTestCase {
         var cases: [XCTestCase] = [self]
         var keys = ["PrivateEvidenceDirectoryTests/testThrownBusinessFailureIsRecordedBeforeTeardown"]
         #if os(iOS)
-        let method = "testPlaybackSettingsBlocksFilteredModeWhenSelectionEmpty"
+        let method = "testSyntheticThrownFailureIdentity"
         cases.append(immichSlidesUITests(selector: NSSelectorFromString(method)))
         keys.append("immichSlidesUITests/\(method)")
         #endif
+        let skipped = PrivateEvidenceDirectoryTests(
+            selector: NSSelectorFromString("testSyntheticSkippedFailureIdentity"))
+        let skippedIndex = keys.count
+        keys.append("PrivateEvidenceDirectoryTests/testSyntheticSkippedFailureIdentity")
         let map = Dictionary(uniqueKeysWithValues: keys.enumerated().map { ($0.element, $0.offset) })
         let tests = try XCTUnwrap(String(data: JSONSerialization.data(withJSONObject: map), encoding: .utf8))
         let environment = [
@@ -69,6 +73,12 @@ final class PrivateEvidenceDirectoryTests: XCTestCase {
             XCTAssertNotNil(timing["since_action_returned_seconds"] as? Double)
             XCTAssertEqual(FirstFailureContext.snapshot().timeline.action, "terminate")
         }
+        XCTAssertThrowsError(
+            try FirstFailureEvidence.preservingThrownFailure(skipped) { throw XCTSkip("Synthetic environment skip") }
+        ) { error in
+            XCTAssertTrue(error is XCTSkip)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("\(skippedIndex).json").path))
     }
 
     func testMissingRootDoesNotCreateImplicitRepositoryFallback() throws {
