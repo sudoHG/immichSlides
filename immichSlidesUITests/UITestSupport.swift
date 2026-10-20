@@ -1424,7 +1424,7 @@ struct StableFrame {
     ) -> StableFrame {
         let deadline = Date().addingTimeInterval(timeout)
         FirstFailureContext.mark("capture-frame", element: "app-window")
-        FirstFailureContext.beginWait(seconds: timeout)
+        FirstFailureContext.beginWait(seconds: max(.zero, timeout))
         defer { FirstFailureContext.endWait() }
         let startedAt = ProcessInfo.processInfo.systemUptime
         var prepareSeconds: TimeInterval = .zero
