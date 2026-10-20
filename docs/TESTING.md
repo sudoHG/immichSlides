@@ -281,7 +281,7 @@ IOSDriver wake and tap paths append each measured duration to the same lists
 as their aggregate timing fields.
 The outcome field becomes true only after the wait accepts an observation within its window.
 Verify time includes its snapshot time; no extra diagnostic snapshot runs after
-timeout. Playback History Settings uses the same bounded snapshot waiter, without
+timeout. Playback History Settings uses the explicit bounded refresh, without
 the generic waiter's final condition call. Playback History
 Play/Pause polls, including manual lifecycle pause/resume, read the value from one
 fallible application snapshot per poll and reveal an absent control within the original deadline.
