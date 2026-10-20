@@ -86,21 +86,6 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
                 selectionTimeout: TestWait.seconds(.product(8)) + TestWait.seconds(.product(2)),
                 departureTimeout: TestWait.seconds(.product(8)))
         else { return }
-        let promptCheckStartedAt = Date().timeIntervalSince1970
-        var didDeclinePrompt = false
-        // A credential prompt can arrive after departure; use only the remaining departure budget.
-        let isPromptGone = IOSFirstBootNavigation(app: app).dismissPasswordPrompt(until: playbackDeadline) {
-            didDeclinePrompt = true
-        }
-        try StrictE2EVisualEvidence.writeRequiredJSON(
-            [
-                "started_unix": promptCheckStartedAt, "deadline_unix": playbackDeadline.timeIntervalSince1970,
-                "returned_unix": Date().timeIntervalSince1970, "prompt_declined": didDeclinePrompt,
-                "prompt_gone_within_deadline": isPromptGone
-            ], name: "late-image-playback-entry.json")
-        XCTAssertTrue(
-            isPromptGone,
-            "Next must be tappable twice right after entering the slideshow, before old image requests finish.")
         let next = app.buttons["slideshow.control.next.button"]
         XCTAssertTrue(
             next.waitForPublicElement(
@@ -115,17 +100,67 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
         let playPause = app.buttons["slideshow.control.playPause.button"]
         if (try? playPause.snapshot()).map({ playPauseState($0) }) != "play" { tapElement(playPause) }
         var pausedHistoryCount: Int?
-        XCTAssertTrue(
-            waitUntil(timeout: TestWait.seconds(.product(2))) {
-                let observation = self.strictSceneFrameObservation(app: app)
-                let render = SharedSceneEvidenceManifest.parseKeyValueFields(observation["render"] ?? "")
-                guard render["playbackPaused"] == "true", let count = Int(render["historyCount"] ?? "") else {
-                    return false
+        var didDeclinePrompt = false
+        var didObservePrompt = false
+        var hasPromptObstacle = false
+        var promptChecks: [[String: Any]] = []
+        let waitDeadline = Date().addingTimeInterval(TestWait.seconds(.product(2)))
+        let promptDeadline = min(waitDeadline, playbackDeadline)
+        let isPauseReady = waitUntil(timeout: max(.zero, waitDeadline.timeIntervalSinceNow)) {
+            let startedAt = Date().timeIntervalSince1970
+            var didDeclineThisRound = false
+            let navigation = IOSFirstBootNavigation(app: app)
+            let isPromptGone = navigation.dismissPasswordPrompt(until: promptDeadline) {
+                didDeclineThisRound = true
+                didDeclinePrompt = true
+                didObservePrompt = true
+                print("Late-image pause-readiness prompt decline returned")
+            }
+            var promptState = "absent"
+            hasPromptObstacle = false
+            if !isPromptGone {
+                // An expired deadline also returns false without a prompt; that alone is not a failure.
+                if let observation = try? navigation.observe() {
+                    hasPromptObstacle = observation.hasPasswordPrompt
+                    didObservePrompt = didObservePrompt || observation.hasPasswordPrompt
+                    promptState = observation.hasPasswordPrompt ? "present" : "absent"
+                } else {
+                    hasPromptObstacle = true
+                    promptState = "unknown"
                 }
-                pausedHistoryCount = count
-                return true
-            },
-            "Next must be tappable twice right after entering the slideshow, before old image requests finish.")
+            }
+            promptChecks.append([
+                "started_unix": startedAt, "returned_unix": Date().timeIntervalSince1970,
+                "helper_returned": isPromptGone, "prompt_declined": didDeclineThisRound, "prompt_state": promptState
+            ])
+            guard !hasPromptObstacle, Date() < waitDeadline else { return false }
+            let observation = self.strictSceneFrameObservation(app: app)
+            let render = SharedSceneEvidenceManifest.parseKeyValueFields(observation["render"] ?? "")
+            guard render["playbackPaused"] == "true", let count = Int(render["historyCount"] ?? "") else {
+                return false
+            }
+            pausedHistoryCount = count
+            return true
+        }
+        try StrictE2EVisualEvidence.writeRequiredJSON(
+            [
+                "wait_deadline_unix": waitDeadline.timeIntervalSince1970,
+                "departure_deadline_unix": playbackDeadline.timeIntervalSince1970,
+                "prompt_deadline_unix": promptDeadline.timeIntervalSince1970,
+                "prompt_declined": didDeclinePrompt, "prompt_observed": didObservePrompt,
+                "prompt_checks": promptChecks, "pause_ready": isPauseReady
+            ], name: "late-image-playback-entry.json")
+        guard isPauseReady else {
+            if hasPromptObstacle {
+                XCTFail(
+                    "Environment precondition: the system password prompt must be absent before late-image pause readiness."
+                )
+            } else {
+                XCTFail(
+                    "Next must be tappable twice right after entering the slideshow, before old image requests finish.")
+            }
+            return
+        }
         let initialHistory = try XCTUnwrap(pausedHistoryCount)
         let deadline = ProcessInfo.processInfo.systemUptime + TestWait.seconds(.product(8))
         tapElement(next)
