@@ -170,9 +170,8 @@ struct IOSDriver: PlaybackDriver {
         let deadline = Date().addingTimeInterval(UITestSupportWaitTiming.stateChangeTimeoutSeconds)
         var action = ControlAction()
         guard
-            let initial = prepareControl(
-                identifier, until: deadline, action: &action, shouldRequireHittability: false),
-            !initial.hasSettingsNavigationEvidence
+            prepareControl(
+                identifier, until: deadline, action: &action, shouldRequireHittability: false) != nil
         else {
             XCTFail("Next control must be actionable before tapping. (\(action.diagnostic))")
             return
@@ -461,7 +460,9 @@ struct IOSDriver: PlaybackDriver {
             if let observation = action.observe(app: app, identifier: identifier), Date() < deadline {
                 action.isBarVisible = hasVisibleControlBar(observation)
                 action.isHittable = nil
-                if observation.isReady, action.isBarVisible {
+                if observation.isReady, action.isBarVisible,
+                    shouldRequireHittability || !observation.hasSettingsNavigationEvidence
+                {
                     // Next verifies live hittability after its sole wake, avoiding a hidden receiver's query retries.
                     if !shouldRequireHittability { return observation }
                     // Snapshot attributes are fallible; XCTest exposes hittability only on the live button.
