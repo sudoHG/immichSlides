@@ -79,6 +79,8 @@ SIMULATOR_PREPARATION_TIMEOUT_SECONDS = 600
 SIMULATOR_READINESS_TIMEOUT_SECONDS = 300
 SIMULATOR_READINESS_INITIAL_QUERY_TIMEOUT_SECONDS = 10
 SERVICE_STARTUP_TIMEOUT_SECONDS = 60
+# Hosted PNG generation can outlast health startup; keep its cap independent.
+SERVICE_FIXTURE_BUILD_TIMEOUT_SECONDS = 120
 # simctl writes Recording started only after processing the first frame; after SIGINT, wait for in-flight frames to write the moov atom.
 RECORDING_START_TIMEOUT_SECONDS = 15
 RECORDING_STOP_TIMEOUT_SECONDS = 30
@@ -695,6 +697,8 @@ def destination_udid(destination: str) -> str:
 def wait_for_service(ready_path: Path, process: subprocess.Popen[bytes], *,
                      startup_log: Path | None = None) -> tuple[str, int]:
     try:
+        if startup_log is not None:
+            _wait_for_fixture_build(process, startup_log)
         return _wait_for_service(ready_path, process)
     except CommandError as error:
         lines = _service_startup_diagnostics(startup_log)
@@ -718,6 +722,24 @@ def _service_startup_diagnostics(path: Path | None) -> list[str]:
     pattern = (r"fixture-startup: phase=(import|fixture-build|bind|ready-write); state=(started|completed); "
                r"elapsed=\d{1,9}\.\d{3}s; total=\d{1,9}\.\d{3}s")
     return [line for line in text.splitlines() if re.fullmatch(pattern, line)][:8]
+
+
+def _wait_for_fixture_build(process: subprocess.Popen[bytes], startup_log: Path) -> None:
+    started = time.monotonic()
+    deadline = started + SERVICE_FIXTURE_BUILD_TIMEOUT_SECONDS
+    print(f"fixture-service: build started; budget={SERVICE_FIXTURE_BUILD_TIMEOUT_SECONDS}s", flush=True)
+    while time.monotonic() < deadline:
+        exit_code = process.poll()
+        if exit_code is not None:
+            raise CommandError(f"Test service fixture build exited early with exit {exit_code}.")
+        lines = _service_startup_diagnostics(startup_log)
+        if any("phase=fixture-build; state=completed;" in line for line in lines) and time.monotonic() < deadline:
+            print(f"fixture-service: build completed; elapsed={time.monotonic() - started:.1f}s; "
+                  f"budget={SERVICE_FIXTURE_BUILD_TIMEOUT_SECONDS}s", flush=True)
+            return
+        time.sleep(min(0.05, max(0, deadline - time.monotonic())))
+    raise CommandError(f"Test service fixture build timed out after {time.monotonic() - started:.1f}s "
+                       f"(budget={SERVICE_FIXTURE_BUILD_TIMEOUT_SECONDS}s).", code=124)
 
 
 def _wait_for_service(ready_path: Path, process: subprocess.Popen[bytes]) -> tuple[str, int]:

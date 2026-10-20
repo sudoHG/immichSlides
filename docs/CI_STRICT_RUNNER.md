@@ -558,7 +558,7 @@ signing stays **Sign to Run Locally**, verified as `adhoc` by `codesign` after w
 
 ## Fixture service startup
 
-Fixture service startup uses a separate 60-second infrastructure budget, shared
+Fixture service health uses a separate 60-second infrastructure budget, shared
 by the strict, fixture UI, access-lifecycle and iPad pause host runners. It
 requires the ready file to identify the spawned child and `/healthz` to return
 HTTP 200; child exit or a mismatched PID fails immediately. Health requests are
@@ -569,6 +569,28 @@ that failed on [the hosted iPhone probe](https://github.com/sudoHG/immichSlides/
 after simulator preparation succeeded. Sixty seconds provides bounded startup
 headroom; the actual delayed recovery time was not recorded. Test and product
 deadlines are unchanged, and an unhealthy service still fails the run.
+
+For strict and fixture UI callers that capture the startup log, fixture PNG
+generation first gets its own 120-second cap, including child import. Only the
+child's allowlisted `fixture-build` completion starts the health budget; a ready
+file alone cannot bypass this step. Build exit and build timeout fail separately
+before health requests or tests, and neither can produce a passing result. Job logs record
+the build cap and elapsed time, followed by the existing service phase records;
+the summary format is unchanged. Callers without a startup log retain their
+existing startup budget.
+
+The cap rounds three times the measured 36.480-second successful hosted maximum
+up to two minutes. A sample of 56 completed UI shard jobs from nightly runs
+[39431510164](https://github.com/sudoHG/immichSlides/actions/runs/39431510164),
+[39337939502](https://github.com/sudoHG/immichSlides/actions/runs/39337939502),
+[39313506982](https://github.com/sudoHG/immichSlides/actions/runs/39313506982) and
+[39271039689](https://github.com/sudoHG/immichSlides/actions/runs/39271039689)
+contained 54 completed builds at 2.498–36.480 seconds, one job with no build
+completion record, and one health timeout at 60.4 seconds still in fixture build.
+That failed build's eventual duration is unknown. Five readable scoped PR shards
+in [39369116053](https://github.com/sudoHG/immichSlides/actions/runs/39369116053)
+completed builds at 1.962–5.286 seconds; unavailable logs in the six most recent
+PR runs do not establish absence of failures.
 
 The service flushes fixed startup-phase records for import, fixture build, bind
 and ready-file write, with elapsed and total seconds at each boundary. They
