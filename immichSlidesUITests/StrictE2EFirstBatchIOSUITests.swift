@@ -285,15 +285,40 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
 
         try locateStableA2WithoutFixture3(app: app)
         revealPlaybackControlsWithoutWaitHelper(app: app)
-        attachStrictE2EScreenshot(app: app, name: "a2-stable-before-play")
+        let brightFrame = capturePauseWindowFrame(app: app)
+        let brightPNG = captureNamedPNG(app: app, name: "a2-stable-before-play", capturedPNG: brightFrame.sample.png)
+        let brightIdentity = StrictE2EPhotoIdentity.classify(png: brightPNG)
+        let brightOverlayText = visibleExifOverlayText(app: app)
+        XCTAssertTrue(
+            brightIdentity.status == .match && brightIdentity.mark == "A2",
+            "Pause window bright proof must show A2."
+        )
+        let brightReference = brightPauseWindowReference(brightFrame)
+        XCTAssertNotNil(
+            brightReference,
+            "Pause window bright proof must be one frozen opaque scene."
+        )
+        guard let brightReference else { return }
+        do {
+            try StrictE2EPhotoIdentity.assertExifCorrespondence(brightIdentity, overlayText: brightOverlayText)
+        } catch {
+            XCTFail(error.localizedDescription)
+        }
         _ = capturePauseStage(app: app, stage: "a2-stable-before-play")
 
-        let playPause = app.buttons["slideshow.control.playPause.button"]
-        revealPlaybackControlsWithoutWaitHelper(app: app, shouldRefreshAutoHideTimer: true)
+        guard
+            let playPause = preparePauseWindowPlayPause(
+                app: app, deadline: Date().addingTimeInterval(TestWait.seconds(.product(4))),
+                failureMessage: "The control bar must be visible before starting pause-window playback.")
+        else { return }
         let playUptime = ProcessInfo.processInfo.systemUptime
-        playPause.tapForFailureEvidence()
+        tapPauseWindowPlayPause(app: app, button: playPause)
         XCTAssertTrue(
-            waitUntil(timeout: TestWait.seconds(.product(2))) { self.playPauseState(playPause) == "pause" },
+            waitUntil(timeout: TestWait.seconds(.product(2))) {
+                app.evidenceSnapshotsByIdentifier()["slideshow.control.playPause.button"].map {
+                    self.playPauseState($0)
+                } == "pause"
+            },
             "After tapping Play, the button value must become pause."
         )
 
@@ -327,16 +352,16 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
         }
 
         lastContractProbeRaw = contractProbeRaw(app: app)
-        var windowSample: PausedWindowSample?
+        var windowFrame: PauseWindowFrame? = nil
         if didDetectWindow {
             hitContractProbeRaw = lastContractProbeRaw
             if attachKeepAlwaysFrame(app: app, index: frameIndex) {
                 keepAlwaysFrameCount += 1
             }
             frameIndex += 1
-            let sample = PlaybackHistoryIOSUITests.capturePausedWindowSample(app: app)
-            windowSample = sample
-            let windowPNG = captureNamedPNG(app: app, name: "window-detected", capturedPNG: sample.png)
+            let frame = capturePauseWindowFrame(app: app)
+            windowFrame = frame
+            let windowPNG = captureNamedPNG(app: app, name: "window-detected", capturedPNG: frame.sample.png)
             if !windowPNG.isEmpty {
                 attachedNamedScreenshots.insert("window-detected")
             }
@@ -351,7 +376,8 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
             keepAlwaysFrameCount += 1
         }
         frameIndex += 1
-        let afterPauseSample = PlaybackHistoryIOSUITests.capturePausedWindowSample(app: app)
+        let afterPauseFrame = capturePauseWindowFrame(app: app)
+        let afterPauseSample = afterPauseFrame.sample
         let afterPausePNG = captureNamedPNG(app: app, name: "after-pause", capturedPNG: afterPauseSample.png)
         if !afterPausePNG.isEmpty {
             attachedNamedScreenshots.insert("after-pause")
@@ -362,7 +388,8 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
         if attachKeepAlwaysFrame(app: app, index: frameIndex) {
             keepAlwaysFrameCount += 1
         }
-        let afterPause03Sample = PlaybackHistoryIOSUITests.capturePausedWindowSample(app: app)
+        let afterPause03Frame = capturePauseWindowFrame(app: app)
+        let afterPause03Sample = afterPause03Frame.sample
         let afterPause03PNG = captureNamedPNG(app: app, name: "after-pause-0_3s", capturedPNG: afterPause03Sample.png)
         if !afterPause03PNG.isEmpty {
             attachedNamedScreenshots.insert("after-pause-0_3s")
@@ -375,6 +402,10 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
         let seesCompleteA3 = visibleMark == "A3"
         let afterPauseIdentity = StrictE2EPhotoIdentity.classify(png: afterPausePNG)
         let afterPause03Identity = StrictE2EPhotoIdentity.classify(png: afterPause03PNG)
+        let midpointFrames = [windowFrame, afterPauseFrame, afterPause03Frame].compactMap { $0 }
+        let midpointHasVisiblePixels = midpointFrames.allSatisfy {
+            pauseWindowHasVisiblePhotoPixels($0.sample.png)
+        }
         let probeHit = didDetectWindow ? "HIT" : "MISS"
         let requiredFramesPresent =
             keepAlwaysFrameCount > 0
@@ -387,13 +418,12 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
         let postPauseBlackOrBlank =
             isPostPauseBlackOrBlank(postPauseProbeRaw)
             || isPostPauseBlackOrBlank(postPause03ProbeRaw)
-        let isLate = seesFixture3 || seesCompleteA3
         let visualVerdict: String
         if !requiredFramesPresent {
             visualVerdict = "MISSING_FRAMES"
         } else if postPauseBlackOrBlank {
             visualVerdict = "BLACK_OR_BLANK"
-        } else if isLate {
+        } else if seesCompleteA3 {
             visualVerdict = "LATE"
         } else if probeHit == "HIT" && postPausePositive {
             visualVerdict = "NEEDS_HUMAN_REVIEW"
@@ -429,7 +459,8 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
             "probe_paused_after_hook": isPausedAfterHook,
             "frame_count": keepAlwaysFrameCount,
             "after_pause_identity": StrictE2EPhotoIdentity.payload(afterPauseIdentity),
-            "after_pause_0_3s_identity": StrictE2EPhotoIdentity.payload(afterPause03Identity)
+            "after_pause_0_3s_identity": StrictE2EPhotoIdentity.payload(afterPause03Identity),
+            "bright_identity": StrictE2EPhotoIdentity.payload(brightIdentity)
         ])
 
         XCTAssertTrue(
@@ -447,28 +478,41 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
         } else if visualVerdict == "BLACK_OR_BLANK" {
             XCTFail("visual_verdict=BLACK_OR_BLANK: synced probe missing after pause, or outgoing opacity already 0.")
         } else if visualVerdict == "LATE" {
-            XCTFail("visual_verdict=LATE: Fixture 3 or a complete A3 visible after pause. visible_mark=\(visibleMark)")
+            XCTFail("visual_verdict=LATE: a complete A3 is visible after pause. visible_mark=\(visibleMark)")
         } else if visualVerdict != "NEEDS_HUMAN_REVIEW" {
             XCTFail("After pausing, the synced probe does not meet outgoing opacity>0 and incoming opacity=0.")
         }
         XCTAssertTrue(
-            isSameFrozenProbeFrame(hitProbeRaw, postPauseProbeRaw)
+            midpointFrames.count == 3
+                && midpointFrames.allSatisfy {
+                    pauseWindowFrame($0, hasOutgoingReference: brightReference)
+                        && isSameFrozenProbeFrame(hitProbeRaw, $0.probeBefore)
+                }
+                && isSameFrozenProbeFrame(hitProbeRaw, postPauseProbeRaw)
                 && isSameFrozenProbeFrame(postPauseProbeRaw, postPause03ProbeRaw),
             "The paused pause-window probe identity must not change. Opacity and motion must remain frozen."
         )
         var pixelComparisons = [
             PlaybackHistoryIOSUITests.comparePausedPhotoPixels(afterPause03Sample, against: afterPauseSample)
         ]
-        if let windowSample {
+        if let windowSample = windowFrame?.sample {
             pixelComparisons.append(
                 PlaybackHistoryIOSUITests.comparePausedPhotoPixels(afterPauseSample, against: windowSample))
         }
         XCTAssertTrue(
-            windowSample != nil
+            windowFrame != nil
                 && pixelComparisons.allSatisfy {
                     $0.failureReason == nil && $0.differingPixelCount == 0
                 },
             "Paused pause-window frames must be pixel-identical. \(pixelComparisons.map(\.summary).joined(separator: "; "))"
+        )
+        XCTAssertTrue(midpointHasVisiblePixels, "Pause window midpoint must contain visible photo pixels.")
+        XCTAssertTrue(
+            midpointFrames.allSatisfy {
+                let identity = StrictE2EPhotoIdentity.classifyRejectionEvidence(png: $0.sample.png)
+                return identity.status != .transition && (identity.status != .match || identity.mark == "A2")
+            },
+            "Target window shows the wrong image; cannot count as SUCCESS."
         )
         do {
             try StrictE2EPhotoIdentity.assertRequiredFrames(
@@ -479,9 +523,6 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
                 ],
                 required: ["window-detected", "after-pause", "after-pause-0_3s"]
             )
-            try StrictE2EPhotoIdentity.assertExifCorrespondence(afterPauseIdentity, overlayText: overlayText)
-            try StrictE2EPhotoIdentity.assertExifCorrespondence(afterPause03Identity, overlayText: overlayText)
-            try StrictE2EPhotoIdentity.assertPauseHold(afterPauseIdentity, afterPause03Identity)
         } catch {
             XCTFail(error.localizedDescription)
         }
@@ -491,10 +532,23 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
                 options: .atomic
             )
         }
+        if let windowFrame {
+            StrictE2EVisualEvidence.writeJSON(
+                [
+                    "schema_version": 1, "overlay_text_before_pause": brightOverlayText,
+                    "bright": brightFrame.pauseWindowEvidence,
+                    "frames": [
+                        "window-detected": windowFrame.pauseWindowEvidence,
+                        "after-pause": afterPauseFrame.pauseWindowEvidence,
+                        "after-pause-0_3s": afterPause03Frame.pauseWindowEvidence
+                    ]
+                ], name: "pause-window-contract.json")
+        }
         StrictE2EVisualEvidence.writeJSON(
             [
                 "suite": "pause-window",
                 "device": currentDeviceTag(),
+                "before_pause": StrictE2EPhotoIdentity.payload(brightIdentity),
                 "overlay_text_after_pause": overlayText,
                 "required_frames": [
                     "window-detected": attachedNamedScreenshots.contains("window-detected"),

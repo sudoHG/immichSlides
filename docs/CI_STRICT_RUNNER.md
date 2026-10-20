@@ -244,14 +244,39 @@ user Play, through the same command as the user's Pause. Automatic fades before
 the first user Play cannot consume the hook. The UI test polls only the frame-synchronized probe
 until it reports paused with 0 < outgoing opacity < 1 and incoming opacity 0,
 then captures the frozen frame and verifies its identity, opacity and motion
-through the existing 0.3-second hold. The verdict records the actual outgoing
+through the existing 0.3-second hold. Before Play, `a2-stable-before-play.png`
+must qualify as the ordinary full-bright A2 photo and match its visible EXIF.
+Frame-synchronized probes bracket that paused, opaque capture. Its single layer
+reference must become the midpoint's outgoing reference; no asset ID substitutes
+for the bright PNG's pixel identity. The verdict records the actual outgoing
 opacity and the probe-derived paused state; a delayed midpoint callback still
 counts when it freezes a translucent outgoing frame. Exact screenshot pixel comparison reuses
 the paused-photo comparator's existing chrome exclusions and minimum compared
-area; the Python identity verdict remains unchanged. Preparation uses the
-existing control-bar tap helper before Next and Previous, and reveals the bar
-before starting Play's existing 7-second clock, so evidence reads cannot consume
-the bar's visibility window.
+area. The midpoint PNGs carry the freeze contract, rather than ordinary stable-photo
+qualification: all bracketing probes must retain the same paused translucent outgoing
+scene and hidden incoming scene, and all three PNGs must retain identical photo
+pixels. Black, blank, unreadable, TRANSITION and recognizable wrong-photo midpoint frames fail.
+The unchanged rejection-only hue reader rejects a different public mark even when
+dim; it never supplies positive identity or stable-photo qualification. EXIF at the
+fade boundary may already describe the incoming photo; only the bright
+proof carries EXIF correspondence. A complete A3 observed after the hold still fails
+as LATE; incoming EXIF text alone does not. No palette, luma or qualification threshold changes.
+`pause-window-contract.json` records the bright capture and each midpoint capture's
+before/after probes, window frame, expanded chrome exclusions and hierarchy-read
+problem. Python requires this sidecar and the bright PNG, independently compares
+the original midpoint pixels with those exclusions, and rejects comparisons covering
+less than the existing 50% minimum. Missing evidence fails closed. These are current
+run inputs, not retained-night summary fields. Probe/contract failures record their
+own capture PNG; pixel comparisons record the current candidate PNG, rather than
+whichever frame was classified last. Whole-contract failures use window-detected;
+bright identity, EXIF and probe failures use the bright PNG.
+Preparation uses the existing control-bar tap helper before Next and Previous.
+Immediately before each Play/Pause snapshot, one unconditional playback-surface
+wake refreshes auto-hide within the same existing 4-second budget; no polling
+iteration wakes again. A fallible snapshot and live hittability check prepare the
+real target. Play's existing 7-second probe clock starts immediately before its
+single action, and state readback retains the original deadline. Post-settings
+Play preparation has its own failure message.
 It no longer checks whether a human tap can land inside the fade window;
 `AutomaticTransitionPauseTests` covers the reducer's pause semantics. Release
 compiles out the timer and pause action and returns false for the launch flag.
@@ -1084,6 +1109,15 @@ New enum meanings and why the previous vocabulary cannot express them:
 | `After pausing, the synced probe does not meet outgoing opacity>0 and incoming opacity=0.` | `pause_window` | `probe_readback` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
 | `The paused pause-window probe identity must not change.` | `pause_window` | `scene_identity` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
 | `Paused pause-window frames must be pixel-identical.` | `pause_window` | `scene_identity` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
+| `Pause window bright proof must show A2.` | `pause_window` | `scene_identity` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
+| `Pause window bright proof must be one frozen opaque scene.` | `pause_window` | `probe_readback` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
+| `Pause window midpoint must contain visible photo pixels.` | `pause_window` | `scene_identity` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
+| `Target window shows the wrong image; cannot count as SUCCESS.` | `pause_window` | `scene_identity` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
+| `The control bar must be visible before opening settings.` | `control_action` | `hidden_controls` | [StrictE2EFirstBatchIOSUITests+PauseWindow.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+PauseWindow.swift) |
+| `The control bar must be visible before starting pause-window playback.` | `control_action` | `hidden_controls` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
+| `After tapping Play, the button value must become pause.` | `control_action` | `control_state` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
+| `Pause before opening settings or identifying photos, so autoplay does not move away.` | `control_action` | `control_state` | [StrictE2EFirstBatchIOSUITests+PauseWindow.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+PauseWindow.swift) |
+| `visual_verdict=LATE: a complete A3 is visible after pause.` | `pause_window` | `scene_identity` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
 | `After late completion the current public mark must stay: no flash back, all black or unreadable: ` | `late_image` | `scene_identity` | [StrictE2ELateImageIOSUITests.swift](../immichSlidesUITests/StrictE2ELateImageIOSUITests.swift) |
 | `Next must be tappable twice right after entering the slideshow, before old image requests finish.` | `late_image` | `navigation` | [StrictE2ELateImageIOSUITests.swift](../immichSlidesUITests/StrictE2ELateImageIOSUITests.swift) |
 | `The fixture must actually deliver a failing image response` | `image_recovery` | `fixture_response` | [ScenePresentationContractUITests.swift](../immichSlidesUITests/ScenePresentationContractUITests.swift) |

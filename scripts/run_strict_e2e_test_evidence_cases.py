@@ -782,7 +782,11 @@ class StrictE2ERunnerTestsCasesEvidence:
                 with self.assertRaises(CommandError) as raised:
                     require_visual_identity(evidence, "pause-window")
                 self.assertIn("Visual assertion failed; cannot mark SUCCESS", str(raised.exception))
-                self.assertIn("Target window", str(raised.exception))
+                self.assertIn(
+                    "Target window shows the wrong image" if label == "wrong-photo"
+                    else "Pause window midpoint must contain visible photo pixels",
+                    str(raised.exception),
+                )
                 report = json.loads((evidence / "visual-identity-runner.json").read_text(encoding="utf-8"))
                 self.assertEqual(report["verdict"], "FAIL")
 
@@ -824,7 +828,7 @@ class StrictE2ERunnerTestsCasesEvidence:
                     "from strict_e2e_server import _fixture_data",
                     "png = _fixture_data('a')['images']['asset-a-2']",
                     "evidence = Path(tempfile.mkdtemp())",
-                    "for name in ('window-detected', 'after-pause', 'after-pause-0_3s'):",
+                    "for name in ('a2-stable-before-play', 'window-detected', 'after-pause', 'after-pause-0_3s'):",
                     "    (evidence / f'{name}.png').write_bytes(png)",
                     "try:",
                     "    require_visual_identity(evidence, 'pause-window')",
