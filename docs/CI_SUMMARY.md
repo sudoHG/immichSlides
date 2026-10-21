@@ -665,7 +665,8 @@ Hogan approved this judgement policy on 2026-10-21. The strict tracer now emits
 merged proof, summary and official-method readers before publication. Existing nights,
 raw outcomes, first-attempt failure counts, deadlines, retries and thresholds remain unchanged. The scope is strictly
 GitHub-hosted `ci-nightly` strict shards, for `schedule` and `workflow_dispatch`;
-`ci-pr-gate`, fixture UI shards, local and self-hosted runs are excluded.
+`ci-pr-gate`, fixture UI shards, local and self-hosted runs are excluded. Suites marked
+`informational` in the manifest never receive a proof or change the nightly verdict.
 
 A failed strict observation and its sole failed attempt may carry the same optional
 `environment_limit` object. It contains exactly `schema_version: 1`, `policy_version: 1`,

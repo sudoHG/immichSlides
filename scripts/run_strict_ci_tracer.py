@@ -141,12 +141,14 @@ class RunnerGroupCleanupError(RuntimeError):
     """Build paths must be retained if runner descendants cannot be stopped."""
 
 
-def produce_environment_limits(summary, results):
+def produce_environment_limits(summary, results, *, informational=()):
     """Attach only reader-validated same-case proofs; retain every raw outcome."""
     from ci_failure_diagnostics import ENVIRONMENT_LIMIT_FIELD, environment_limit_evidence
     from ci_bounded_diagnostics import validate_receipt
     summary.pop("strict_case_evidence", None)
     for index, entry in enumerate(summary["population"]["observed"]):
+        if entry["identity"]["dimensions"]["suite"] in informational:
+            continue
         phases = [phase for phase in results if phase["identity"] == entry["identity"]]
         if len(phases) != 1:
             continue
@@ -378,7 +380,8 @@ def main(argv=None):
             for item in summary["population"]["observed"]:
                 item["attempts"][0]["first_failure"] = preparation_failure
         diagnostics.attach(summary)
-        exit_code = produce_environment_limits(summary, results)
+        exit_code = produce_environment_limits(summary, results,
+            informational=[entry["suite"] for entry in manifest.get("informational", [])])
         write_summary(summary, records)
 
     def invoke(case, evidence, derived, warm):
@@ -506,7 +509,7 @@ def main(argv=None):
                 try:
                     preparation_log = output / "simulator-preparation.log"
                     try:
-                        exit_code = run_runner([sys.executable, "-B", str(Path(__file__).resolve()),
+                        preparation_exit = run_runner([sys.executable, "-B", str(Path(__file__).resolve()),
                             "--platform", args.platform, "--destination", args.destination, "--output-dir", str(output),
                             "--prepare-simulator-only", "--preparation-diagnostics", str(diagnostics_path)],
                             ROOT, preparation_log, timeout_seconds=SIMULATOR_PREPARATION_HARD_TIMEOUT_SECONDS,
@@ -516,8 +519,8 @@ def main(argv=None):
                             for line in preparation_log.read_text().splitlines():
                                 if line.startswith(("simulator-bootstatus:", "simulator-readiness:", "simulator-preparation:")):
                                     print(line, flush=True)
-                    if exit_code:
-                        raise CommandError(f"Simulator preparation child failed (exit {exit_code}).", code=exit_code)
+                    if preparation_exit:
+                        raise CommandError(f"Simulator preparation child failed (exit {preparation_exit}).", code=preparation_exit)
                 except (CommandError, subprocess.TimeoutExpired) as error:
                     from ci_failure_diagnostics import preparation_first_failure
                     diagnostics.load(diagnostics_path)

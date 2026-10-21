@@ -2152,7 +2152,7 @@ class StrictCITracerTests(unittest.TestCase):
         from ci_report import method_observations
         from test_ci_summary import hosted_timeout_summary
 
-        mutations = (None, "local", "self-hosted", "missing host", "conflicting host", "missing samples",
+        mutations = (None, "informational", "local", "self-hosted", "missing host", "conflicting host", "missing samples",
             "unbound epoch", "one-sided", "idle above limit", "null idle", "outside window", "ambiguous invocation",
             "unknown surface", "wrong surface", "wrong element", "wrong step", "snapshot hang", "visible controls",
             "BLACK", "BLANK", "UNRECOGNIZABLE", "process", "validator", "scene_identity", "control_state",
@@ -2223,16 +2223,22 @@ class StrictCITracerTests(unittest.TestCase):
                         receipt_suite=None, runner_exit=124 if mutation == "outer timeout" else 130 if mutation == "interrupted" else 65,
                         nightly=mutation != "local", invocation_fault=mutation,
                         timing_failure=(row, ledger), case=dict(platform="ios", device="iphone", configuration="Debug",
-                            suite="smoke", scenario="normal", fixture="a"))
+                            suite="filter-vision" if mutation == "informational" else "smoke", scenario="normal", fixture="a"))
                 observed = parse_summary((records / "summary.json").read_text())["population"]["observed"][0]
                 self.assertEqual("failed", observed["outcome"])
                 self.assertEqual(124 if mutation == "outer timeout" else 130 if mutation == "interrupted" else 65,
                     observed["attempts"][0]["exit_code"])
-                self.assertEqual(0 if mutation is None else 1, code)
+                self.assertEqual(0 if mutation in {None, "informational"} else 1, code)
                 self.assertEqual(mutation is None, "environment_limit" in observed)
                 self.assertEqual(mutation is None, "::warning title=Environment-limited strict timing::" in output.getvalue())
-                aggregate = aggregate_nightly(summary["population"]["declared"], [summary], live_in_scope=False)
-                self.assertEqual("environment-limited" if mutation is None else "failed", aggregate["status"])
+                informational = [item["suite"] for item in json.loads((Path(raw) / "manifest.json").read_text()).get("informational", [])]
+                aggregate = aggregate_nightly(summary["population"]["declared"], [summary], live_in_scope=False,
+                    informational=informational)
+                self.assertEqual("environment-limited" if mutation is None else "passed" if mutation == "informational" else "failed",
+                    aggregate["status"])
+                if mutation == "informational":
+                    self.assertEqual("passed", summary["status"])
+                    self.assertEqual([observed], aggregate["informational"])
                 if mutation is None:
                     methods, missing = method_observations(summary, trace, runner_hosted=True)
                     self.assertEqual([], missing)
@@ -2253,18 +2259,19 @@ class StrictCITracerTests(unittest.TestCase):
             _, _, trace, summary = self._produce_validator_records(Path(raw), "unused", receipt_suite=None,
                 runner_exit=65, nightly=True, timing_failure=(row, seed["strict_case_evidence"][0]["bounded_diagnostics"]),
                 case=dict(platform="ios", device="iphone", configuration="Debug", suite="smoke", scenario="normal", fixture="a"))
-        for mutation in ("mixed", "missing", "infrastructure", "bad projection"):
+        for mutation in ("mixed", "missing", "missing observation", "infrastructure", "bad projection"):
             with self.subTest(mutation=mutation):
                 candidate = copy.deepcopy(summary)
                 candidate.pop("strict_case_evidence")
                 candidate["population"]["observed"], candidate["status"] = evaluate_tracer(
                     candidate["population"]["declared"], trace["warm"])
-                if mutation in {"mixed", "missing"}:
+                if mutation in {"mixed", "missing", "missing observation"}:
                     extra = copy.deepcopy(candidate["population"]["declared"][0])
                     extra["dimensions"]["fixture"] = "b"
                     candidate["population"]["declared"].append(extra)
-                    candidate["population"]["observed"].append(observation(extra,
-                        "failed" if mutation == "mixed" else "not-run", 0, exit_code=65 if mutation == "mixed" else None))
+                    if mutation != "missing observation":
+                        candidate["population"]["observed"].append(observation(extra,
+                            "failed" if mutation == "mixed" else "not-run", 0, exit_code=65 if mutation == "mixed" else None))
                 elif mutation == "infrastructure":
                     candidate["infrastructure"].append({"code": "cleanup-failed", "message": "Synthetic cleanup failure"})
                 proof = dict(summary["population"]["observed"][0]["environment_limit"], unexpected="refused")
