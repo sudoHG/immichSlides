@@ -69,12 +69,12 @@ extension AccessLifecycleContract {
             if sample.status == "MATCH", isUsableSceneMark(sample.mark), sample.mark != continueMark {
                 return true
             }
-            // A recovered old photo invalidates a dimming/transition proxy before the actual new photo.
-            let recovered = samples.dropFirst(index + 1).prefix {
-                $0.requestElapsed <= stable.requestElapsed
-            }.contains { $0.status == "MATCH" && $0.mark == continueMark && $0.meanLuma >= threshold }
-            if recovered { return false }
-            if sample.status == "TRANSITION" || sample.mark == "TRANSITION" { return true }
+            if sample.status == "TRANSITION" || sample.mark == "TRANSITION" {
+                let recovered = samples.dropFirst(index + 1).prefix {
+                    $0.requestElapsed <= stable.requestElapsed
+                }.contains { $0.status == "MATCH" && $0.mark == continueMark && $0.meanLuma >= threshold }
+                return !recovered
+            }
             guard index > 0, sample.status == "MATCH", sample.mark == continueMark,
                 sample.meanLuma < threshold,
                 samples[index - 1].status == "MATCH", samples[index - 1].mark == continueMark,
@@ -440,9 +440,16 @@ extension AccessLifecycleContract {
         threshold: Double,
         samples: [ContinueWatchSample]
     ) -> Bool {
-        guard startIndex + (requiredConsecutiveDimmingSampleCount - 1) < samples.count else { return false }
-        var previous = samples[startIndex]
-        for index in (startIndex + 1)...(startIndex + (requiredConsecutiveDimmingSampleCount - 1)) {
+        // A 4K capture can take 0.45 s: anchor the three-point fade in the preceding bright old photo.
+        guard startIndex > 0 else { return false }
+        let anchorIndex = startIndex - 1
+        let lastIndex = anchorIndex + requiredConsecutiveFadeSampleCount - 1
+        guard lastIndex < samples.count else { return false }
+        var previous = samples[anchorIndex]
+        guard previous.status == "MATCH", previous.mark == continueMark,
+            previous.meanLuma.isFinite, previous.meanLuma >= threshold
+        else { return false }
+        for index in startIndex...lastIndex {
             let sample = samples[index]
             let gap = sample.requestElapsed - previous.returnElapsed
             guard sample.status == "MATCH", sample.mark == continueMark,
@@ -455,7 +462,11 @@ extension AccessLifecycleContract {
             }
             previous = sample
         }
-        return true
+        // A flicker that recovers the old photo cannot establish fade onset on any platform.
+        let stable = firstStableNewImage(continueMark: continueMark, samples: samples)
+        return !samples.dropFirst(startIndex + 1).prefix {
+            $0.requestElapsed <= (stable?.requestElapsed ?? .infinity)
+        }.contains { $0.status == "MATCH" && $0.mark == continueMark && $0.meanLuma >= threshold }
     }
 
     static func assertIdentifiableNewImagePresent(
@@ -517,7 +528,6 @@ extension AccessLifecycleContract {
             return false
         }
 
-        let stable = firstStableNewImage(continueMark: continueMark, samples: ordered)
         let startIndex = ordered.indices.first { index in
             let sample = ordered[index]
             if isAutoTransitionStart(status: sample.status, mark: sample.mark, continueMark: continueMark) {
@@ -531,13 +541,9 @@ extension AccessLifecycleContract {
             else { return false }
             let threshold = baselineLuma * sustainedDimmingLuminanceRatio
             guard sample.meanLuma < threshold else { return false }
-            let recovered = ordered.dropFirst(index + 1).prefix {
-                $0.requestElapsed <= (stable?.requestElapsed ?? .infinity)
-            }.contains { $0.status == "MATCH" && $0.mark == continueMark && $0.meanLuma >= threshold }
-            return !recovered
-                && hasSustainedDimming(
-                    from: index, continueMark: continueMark, threshold: threshold, samples: ordered
-                )
+            return hasSustainedDimming(
+                from: index, continueMark: continueMark, threshold: threshold, samples: ordered
+            )
         }
         guard let startIndex
         else {
