@@ -96,7 +96,9 @@ class CheckAllTests(unittest.TestCase):
                     ["bash", str(self.repo / "scripts/check_all.sh"), "--with-unit-tests",
                      "--ios-destination", "i", "--tvos-destination", "t",
                      "--output-dir", str(self.tmp / ("interrupted-" + str(signum)))], env=self.env,
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
+                    # Background launchers can pass SIG_IGN through exec into bash.
+                    preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
                 try:
                     deadline = time.monotonic() + 5
                     while not self.calls() and time.monotonic() < deadline:

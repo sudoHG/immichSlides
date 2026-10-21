@@ -1333,9 +1333,13 @@ The whole-rotation deadline and onboarding iPad orientation assertion also use
 
 The pause-window suite's four `PRECONDITION_FAIL` prefixes describe the A2 search
 before Play, although they share `pause_window/scene_identity` with post-Play checks.
-Use the first-failure receipt's completed-wait deadline to distinguish these sites:
-the A2 search retains a 4 s deadline from `waitForSettledPhoto`, while post-Play
-checks retain the 2 s Play-state readback deadline. The screenshot context and a
+The first-failure receipt's completed-wait deadline can help locate these sites:
+three A2-search prefixes retain a 4 s deadline from `waitForSettledPhoto`, but
+`could not identify the large-text A2 using Next.` usually has no deadline after
+the final Next action; a final successor-check `continue` can instead retain 4 s.
+The pre-Play `Pause window bright proof must show A2.` check also retains 4 s,
+either from the settled-photo wait or a control reveal. Only the 2 s Play-state
+readback deadline identifies a post-Play check unambiguously. The screenshot context and a
 short elapsed wait alone do not identify the assertion; retain the raw XCTest
 message for exact attribution. `Show EXIF info must be on.` is an
 `interval_setup/control_state` precondition, like the autoplay setup check, rather
@@ -1584,7 +1588,7 @@ New enum meanings and why the previous vocabulary cannot express them:
 | `The new scene from a manual next while paused must stay still at p=0` | `paused_hold` | `scene_identity` | [PlaybackHistoryIOSUITests.swift](../immichSlidesUITests/PlaybackHistoryIOSUITests.swift) |
 | `The scene from a manual previous while paused must stay still at p=0` | `paused_hold` | `scene_identity` | [PlaybackHistoryIOSUITests.swift](../immichSlidesUITests/PlaybackHistoryIOSUITests.swift) |
 | `Play must make the current still scene start moving from p=0 immediately` | `control_action` | `scene_identity` | [PlaybackHistoryIOSUITests.swift](../immichSlidesUITests/PlaybackHistoryIOSUITests.swift) |
-| `SmartFill Pause preparation was rejected before the deadline.` | `control_action` | `timing_window` | [PlaybackHistoryIOSUITests.swift](../immichSlidesUITests/PlaybackHistoryIOSUITests.swift), SmartFill Pause delivery-margin gate; the detail names the last rejection reason and remaining margin |
+| `SmartFill Pause preparation was rejected before the deadline.` | `control_action` | `timing_window` | [PlaybackHistoryIOSUITests.swift](../immichSlidesUITests/PlaybackHistoryIOSUITests.swift), SmartFill Pause delivery-margin gate; the detail names the last gate observation's reason (possibly `none (snapshot gate passed)`) and its remaining margin |
 | `After starting playback, the playback page should open and show the control bar` | `playback_entry` | `navigation` | [FilterSummaryIOSVisualUITests+Launch.swift](../immichSlidesUITests/FilterSummaryIOSVisualUITests+Launch.swift) |
 | `The slideshow control never became tappable before the deadline.` | `control_action` | `hidden_controls` | [UITestSupport.swift](../immichSlidesUITests/UITestSupport.swift), shared playback control-bar tap callers; [ScenePresentationContractUITests.swift](../immichSlidesUITests/ScenePresentationContractUITests.swift), recovery Next/redo preparation |
 | `The slideshow Settings tap had no observed outcome before the deadline.` | `settings_navigation` | `navigation` | [UITestSupport.swift](../immichSlidesUITests/UITestSupport.swift) |

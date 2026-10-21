@@ -399,6 +399,7 @@ extension PlaybackHistoryIOSUITests {
                             ? "margin insufficient (timing unavailable)" : "margin insufficient"
                         return false
                     }
+                    lastPauseRejectionReason = "none (snapshot gate passed)"
                     return true
                 } : nil,
             onReadinessTimeout: mode == .smartFill
