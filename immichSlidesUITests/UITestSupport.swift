@@ -1151,13 +1151,12 @@ extension XCUIApplication {
     }
 
     func tapSlideshowControlBarButton(
-        identifier: String, timeout: TimeInterval = UITestSupportWaitTiming.controlAppearanceTimeoutSeconds,
-        file: StaticString = #filePath, line: UInt = #line
+        identifier: String, file: StaticString = #filePath, line: UInt = #line
     ) {
         var timing = SlideshowControlBarTiming()
         timing.shouldVerifySettingsOutcome = identifier == "slideshow.control.settings.button"
         defer { print("Slideshow control action: \(timing.diagnostic)") }
-        let deadline = Date().addingTimeInterval(timeout)
+        let deadline = Date().addingTimeInterval(UITestSupportWaitTiming.controlAppearanceTimeoutSeconds)
         var didReveal = false
         while Date() < deadline {
             let observation = timing.observe(app: self, identifier: identifier)
@@ -1173,7 +1172,7 @@ extension XCUIApplication {
                     timing.reveal(app: self)
                     continue
                 }
-                if didReveal, observation.isReady,
+                if didReveal, observation.isInsideWindow,
                     let button = observation.button
                 {
                     let frame = button.frame

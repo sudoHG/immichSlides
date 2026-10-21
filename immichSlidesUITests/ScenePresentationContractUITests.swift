@@ -243,12 +243,66 @@ final class ScenePresentationContractUITests: XCTestCase {
         }
         driver.pause()
         let nextPreparationTimeout = TestWait.seconds(.infrastructure(6))
-        let nextDeadline = Date().addingTimeInterval(nextPreparationTimeout + timeout)
-        app.tapSlideshowControlBarButton(identifier: "slideshow.control.next.button", timeout: nextPreparationTimeout)
+        // Strict launches need not expose a playback probe; prepare these taps from ordinary control snapshots.
+        func tapRecoveryNext() -> Date? {
+            let identifier = "slideshow.control.next.button"
+            let preparationDeadline = Date().addingTimeInterval(nextPreparationTimeout)
+            let totalDeadline = preparationDeadline.addingTimeInterval(timeout)
+            var timing = SlideshowControlBarTiming()
+            var didWake = false
+            FirstFailureContext.beginWait(seconds: nextPreparationTimeout)
+            defer {
+                FirstFailureContext.endWait()
+                print("Image recovery Next action: wakeIssued=\(didWake), \(timing.diagnostic)")
+            }
+            while Date() < preparationDeadline {
+                let observation = timing.observe(app: app, identifier: identifier)
+                guard Date() < preparationDeadline else { break }
+                if let observation {
+                    timing.didObserveSettingsNavigation =
+                        timing.didObserveSettingsNavigation || observation.hasSettingsNavigationEvidence
+                    guard !timing.didObserveSettingsNavigation else { break }
+                    if !didWake {
+                        didWake = true
+                        FirstFailureContext.mark("reveal-controls", element: identifier)
+                        let wakeStartedAt = Date()
+                        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)).tapForFailureEvidence()
+                        let duration = Date().timeIntervalSince(wakeStartedAt)
+                        timing.revealSeconds += duration
+                        timing.revealDurationsSeconds.append(duration)
+                        continue
+                    }
+                    if observation.isReady, let button = observation.button {
+                        let coordinate = observation.windowElement.coordinate(withNormalizedOffset: .zero)
+                            .withOffset(
+                                CGVector(
+                                    dx: button.frame.midX - observation.windowFrame.minX,
+                                    dy: button.frame.midY - observation.windowFrame.minY))
+                        guard Date() < preparationDeadline else { break }
+                        FirstFailureContext.mark("select", element: identifier)
+                        timing.tapCount += 1
+                        let tapStartedAt = Date()
+                        coordinate.tapForFailureEvidence()
+                        let tapReturnedAt = Date()
+                        let duration = tapReturnedAt.timeIntervalSince(tapStartedAt)
+                        timing.tapSeconds += duration
+                        timing.tapDurationsSeconds.append(duration)
+                        return min(totalDeadline, tapReturnedAt.addingTimeInterval(timeout))
+                    }
+                }
+                guard Date() < preparationDeadline else { break }
+                RunLoop.current.run(
+                    until: min(
+                        preparationDeadline, Date().addingTimeInterval(UITestSupportWaitTiming.identityPollSeconds)))
+            }
+            XCTFail("The slideshow control never became tappable before the deadline. (\(timing.diagnostic))")
+            return nil
+        }
+        guard let nextOutcomeDeadline = tapRecoveryNext() else { return }
         let next = try recordRecoveryStep(
             "singlePhoto-next",
             settledOn: driver.stableMark(
-                excluding: recovered, timeout: min(timeout, max(.zero, nextDeadline.timeIntervalSinceNow))), app: app,
+                excluding: recovered, timeout: max(.zero, nextOutcomeDeadline.timeIntervalSinceNow)), app: app,
             evidence: evidence
         ) { $0 != recovered }
         activatePlaybackControl(app: app, identifier: "slideshow.control.previous.button")
@@ -256,12 +310,11 @@ final class ScenePresentationContractUITests: XCTestCase {
             "singlePhoto-previous", settledOn: driver.stableMark(excluding: next, timeout: timeout), app: app,
             evidence: evidence
         ) { $0 == recovered }
-        let redoDeadline = Date().addingTimeInterval(nextPreparationTimeout + timeout)
-        app.tapSlideshowControlBarButton(identifier: "slideshow.control.next.button", timeout: nextPreparationTimeout)
+        guard let redoOutcomeDeadline = tapRecoveryNext() else { return }
         let redo = try recordRecoveryStep(
             "singlePhoto-redo",
             settledOn: driver.stableMark(
-                excluding: previous, timeout: min(timeout, max(.zero, redoDeadline.timeIntervalSinceNow))), app: app,
+                excluding: previous, timeout: max(.zero, redoOutcomeDeadline.timeIntervalSinceNow)), app: app,
             evidence: evidence
         ) { $0 == next }
         // Playback is already paused; pause() only reveals the control bar before Play.

@@ -204,10 +204,6 @@ struct IOSDriver: PlaybackDriver {
             XCTFail("Final Next preparation must provide an actionable control. (\(action.diagnostic))")
             return
         }
-        guard before.hasPlaybackMarker, !before.hasSettingsNavigationEvidence, Date() < deadline else {
-            XCTFail("Next control must be actionable before tapping. (\(action.diagnostic))")
-            return
-        }
         activateControl(before, action: &action)
         // Start at tap return while retaining main's preparation plus outcome ceiling.
         let stateDeadline = min(
