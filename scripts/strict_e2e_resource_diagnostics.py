@@ -5,6 +5,7 @@ from __future__ import annotations
 import ctypes
 import json
 import os
+import re
 import statistics
 import subprocess
 import sys
@@ -32,6 +33,7 @@ MAX_PROCESS_ROWS = 65536
 NATIVE_MATCH_TOLERANCE_SECONDS = 0.1
 NATIVE_CASE_BUDGET_SECONDS = 2
 NATIVE_JOB_BUDGET_SECONDS = 20
+CLOCK_DRIFT_TOLERANCE_SECONDS = 0.5
 
 
 class NativeActivityBudget:
@@ -209,6 +211,9 @@ class HostProbe:
         if self.unavailable or remaining <= 0:
             self.unavailable = True
             return None
+        # A slow native read may finish between ticks; never overlap it with a new worker.
+        if self.done is not None and not self.done.is_set():
+            return None
         done, values = Event(), []
         self.done = done
         def read():
@@ -231,8 +236,8 @@ class HostProbe:
         except (OSError, RuntimeError):
             finished = False
         self.spent += time.perf_counter() - started
-        self.unavailable = not finished or not values
-        return values[0] if not self.unavailable else None
+        self.unavailable = finished and not values
+        return values[0] if finished and values else None
 
     def close(self):
         self.unavailable = True
@@ -259,6 +264,7 @@ class CaseSampler:
         self.reserved = 0.0
         self.finished = False
         self.closed = False
+        self.clock_stable = False
 
     def start(self):
         if self.recorder is None or len(self.recorder.case_resources) >= MAX_RESOURCE_CASES:
@@ -287,7 +293,6 @@ class CaseSampler:
             host = HostProbe(self.device)
             if host.sample() is None:
                 self.truncated = True
-                return
             next_tick = time.monotonic() + SAMPLE_INTERVAL_SECONDS
             next_process = next_tick
             while not self.stopped.wait(max(0, next_tick - time.monotonic())):
@@ -298,10 +303,13 @@ class CaseSampler:
                 elapsed = time.monotonic() - self.origin
                 if sample is None:
                     self.truncated = True
-                    break
+                    if getattr(host, "unavailable", False):
+                        break
+                    next_tick = time.monotonic() + SAMPLE_INTERVAL_SECONDS
+                    continue
                 sample = dict(sample)
                 sample["cpu_percent"] = dict.fromkeys(RESOURCE_CATEGORIES)
-                if time.monotonic() >= next_process:
+                if not self.stopped.is_set() and time.monotonic() >= next_process:
                     remaining = self.reserved - self.spent
                     if remaining > SAMPLE_COMMAND_TIMEOUT_SECONDS:
                         started = time.perf_counter()
@@ -337,7 +345,9 @@ class CaseSampler:
         if self.closed:
             return
         self.closed = True
-        self.duration = min(MAX_DIAGNOSTIC_SECONDS, max(0, time.monotonic() - self.origin))
+        elapsed = time.monotonic() - self.origin
+        self.clock_stable = abs((time.time() - self.epoch) - elapsed) <= CLOCK_DRIFT_TOLERANCE_SECONDS
+        self.duration = min(MAX_DIAGNOSTIC_SECONDS, max(0, elapsed))
         self.stopped.set()
         if self.thread is not None:
             self.thread.join(STOP_TIMEOUT_SECONDS)
@@ -347,7 +357,7 @@ class CaseSampler:
             self.publish()
 
     def bind_failure(self, epoch):
-        elapsed = finite(epoch - self.epoch, self.duration) if type(epoch) in (int, float) else None
+        elapsed = finite(epoch - self.epoch, self.duration) if self.clock_stable and type(epoch) in (int, float) else None
         if elapsed is not None and (self.first_failure is None or elapsed < self.first_failure):
             self.first_failure = elapsed
         self.publish()
@@ -402,7 +412,10 @@ def native_time(node, field):
     if not isinstance(value, str):
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+        value = re.sub(r"([+-]\d{2})(\d{2})$", r"\1:\2", value)
+        if value.endswith("Z"):
+            value = value[:-1] + "+00:00"
+        return datetime.fromisoformat(value).timestamp()
     except (ValueError, OverflowError):
         return None
 
@@ -519,7 +532,7 @@ def collect_native_activity(bundle, root, failed_nodes, sampler, *, recorder, ti
         return
     budget = getattr(recorder, "native_activity_budget", None)
     if budget is None:
-        budget = recorder.native_activity_budget = NativeActivityBudget()
+        budget = recorder.native_activity_budget = NativeActivityBudget(NATIVE_CASE_BUDGET_SECONDS)
     def read(reference, deadline):
         remaining = deadline - time.monotonic()
         if remaining <= 0:

@@ -203,9 +203,11 @@ The first host read primes the counters. Host idle/load ticks follow two-second
 deadlines, skipping missed deadlines rather than issuing bursts. Each native host
 read runs in a daemon worker with a 0.2-second wait cap; observed host-read wall
 time has a separate five-second allowance per case, including thread startup.
-A timed-out host read disables further reads for that case; stop never waits for
-another interval. These cheap reads do not consume the process-snapshot pool and
-are excluded from `sampler_wall_seconds`.
+A timed-out host read skips ticks while its worker is still running, then fresh
+reads resume within the remaining allowance; late values are discarded. Stop
+never waits for another interval or starts a new process snapshot. These cheap
+reads do not consume the process-snapshot pool and are excluded from
+`sampler_wall_seconds`.
 Process snapshots run at most once per ten seconds and have a separate
 180-second active-wall allowance shared across
 the job ledger. Each successor subtracts all persisted `sampler_wall_seconds`
@@ -245,11 +247,17 @@ bind a failure epoch. No new collection-cost field is published.
 
 Extraction requires one tests reference, one matching selected method and a
 unique earliest failure timestamp. Missing/oversized objects, timeouts and
-ambiguous method, failure, tap or synthesis bindings leave the failure window
-empty. If the failure timestamp is unique but native action details are simply
-absent, the timestamp can still bind host samples while native durations remain
+ambiguous method, failure or synthesis bindings leave the failure window
+empty. Ambiguous tap durations also leave it empty unless a unique XCTest
+failure association identifies the native action. If the failure timestamp is
+unique but native action details are simply absent, the timestamp can still bind
+host samples while native durations remain
 null. Existing numeric-only native duration and failure-sample fields are used;
 timestamps, activity titles, paths and identifiers remain private.
+
+Native dates accept compact and colon-separated timezone offsets and `Z` on
+Python 3.9. At stop, the case compares wall-clock and monotonic elapsed time;
+a difference greater than 0.5 seconds prevents failure-window binding.
 
 Current producers collect preparation and Xcode diagnostics only. Fixture-scope
 events remain reader-compatible, but no fixture diagnostics are emitted or
