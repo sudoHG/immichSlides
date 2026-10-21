@@ -705,6 +705,7 @@ PREFIX_RULES = (
     ("Unrecognizable input must not count as a pass", "unknown", "scene_identity"),
     ("No automatic photo change was captured within T±2;", "continue_timing", "timing_window"),
     ("Automatic photo change occurred before T-2;", "continue_timing", "timing_window"),
+    ("Midpoint pause confirmation must finish before T-2;", "continue_timing", "timing_window"),
     ("After about a full T, it must switch to the next scene", "continue_timing", "scene_identity"),
     ("An automatic photo change during the pause hold must not count as a pass", "paused_hold", "scene_identity"),
     ("The pause hold must last at least T+2 seconds", "paused_hold", "timing_window"),

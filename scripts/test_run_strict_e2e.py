@@ -1045,6 +1045,8 @@ class FailureDiagnosticsTests(unittest.TestCase):
             ("immichSlidesUITests/StrictE2EFilterIOSUITests+Navigation.swift", "Album capture preparation must observe paused playback after one Pause.", "control_action", "control_state"),
             ("immichSlidesUITests/StrictE2EFilterIOSUITests+Navigation.swift", "Album capture preparation must reach a complete paused scene within the playback capture budget.", "visible_scene_capture", "probe_readback"),
             ("immichSlidesUITests/StrictE2EFilterIOSUITests+Navigation.swift", "Album Next must advance the paused scene within the playback capture budget.", "history_navigation", "navigation"),
+            ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "Midpoint pause confirmation must finish before T-2;", "continue_timing", "timing_window"),
+            ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "Automatic photo change occurred before T-2;", "continue_timing", "timing_window"),
             ("immichSlidesUITests/UITestSupport.swift", "First-boot mode navigation must dismiss the exact password prompt,", "mode_selection", "navigation"),
             ("immichSlidesUITests/UITestSupport.swift", "Mode departure failed after one hittable Continue without a password prompt;", "playback_entry", "navigation"),
             ("immichSlidesUITests/StrictE2EFilterIOSUITests+Playback.swift", "Person selection preparation must provide an actionable card;", "filter_selection", "control_state"),
@@ -1228,6 +1230,10 @@ class FailureDiagnosticsTests(unittest.TestCase):
                     wrappers = ("XCTAssertEqual failed: (PRIVATE_SENTINEL) - ",)
                 elif prefix in caught_prefixes:
                     wrappers = ('failed: caught error: "message(\\"',)
+                elif prefix == "Midpoint pause confirmation must finish before T-2;":
+                    wrappers = ("XCTAssertLessThan failed: (PRIVATE_SENTINEL) - ",)
+                elif prefix == "Automatic photo change occurred before T-2;":
+                    wrappers = ("XCTAssertEqual failed: (PRIVATE_SENTINEL) - ",)
                 elif prefix == "The fixture must actually deliver a failing image response":
                     wrappers = ("XCTAssertGreaterThan failed: (PRIVATE_SENTINEL) - ",)
                 elif prefix == "After the change, a still frame taken mid-transition must not pass":

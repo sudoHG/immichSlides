@@ -271,7 +271,7 @@ The `ios-lifecycle-settings`, `ios-lifecycle-pause` and `ios-lifecycle-backgroun
 selectors use an empty launch environment and forbid the scene probe.
 `ios-lifecycle-pause` pauses initial SmartFill playback through the real controls
 before opening Settings; configuration still turns autoplay on through the real
-toggle and selects single-photo mode. Before its midpoint pause, it pauses again,
+toggle and selects single-photo mode. Before its midpoint pause, it confirms the paused state,
 uses a real Next and the existing stable-photo capture window to establish a
 bright single-photo identity, then starts T/2 at the real Play press. Pause
 confirmation must finish before the existing T-2 boundary and retain that identity.
@@ -1268,6 +1268,7 @@ New enum meanings and why the previous vocabulary cannot express them:
 
 | Fixed source prefix | Phase | Class | Public source |
 |---|---|---|---|
+| `Midpoint pause confirmation must finish before T-2;` | `continue_timing` | `timing_window` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift) |
 | `tvOS pause-continue evidence is invalid;` | `continue_timing` | `evidence_capture` | [AccessLifecycleContract+TransitionTiming.swift](../TestSupport/AccessLifecycleContract+TransitionTiming.swift) |
 | `tvOS new photo must be stably identifiable within 4 s of transition start` | `continue_timing` | `scene_identity` | [AccessLifecycleContract+TransitionTiming.swift](../TestSupport/AccessLifecycleContract+TransitionTiming.swift) |
 | `All black must not count as a pass` | `unknown` | `scene_identity` | [AccessLifecycleContract.swift](../TestSupport/AccessLifecycleContract.swift) |
@@ -1315,7 +1316,7 @@ New enum meanings and why the previous vocabulary cannot express them:
 | `The control bar must be visible before opening settings.` | `control_action` | `hidden_controls` | [StrictE2EFirstBatchIOSUITests+PauseWindow.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+PauseWindow.swift) |
 | `The control bar must be visible before starting pause-window playback.` | `control_action` | `hidden_controls` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
 | `After tapping Play, the button value must become pause.` | `control_action` | `control_state` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
-| `Pause before opening settings or identifying photos, so autoplay does not move away.` | `control_action` | `control_state` | [StrictE2EFirstBatchIOSUITests+PauseWindow.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+PauseWindow.swift) |
+| `Pause before opening settings or identifying photos, so autoplay does not move away.` | `control_action` | `control_state` | [StrictE2EFirstBatchIOSUITests+PauseWindow.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+PauseWindow.swift), [AccessLifecycleIOSUITests.swift](../immichSlidesUITests/AccessLifecycleIOSUITests.swift), [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift) |
 | `visual_verdict=LATE: a complete A3 is visible after pause.` | `pause_window` | `scene_identity` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
 | `After late completion the current public mark must stay: no flash back, all black or unreadable: ` | `late_image` | `scene_identity` | [StrictE2ELateImageIOSUITests.swift](../immichSlidesUITests/StrictE2ELateImageIOSUITests.swift) |
 | `Next must be tappable twice right after entering the slideshow, before old image requests finish.` | `late_image` | `navigation` | [StrictE2ELateImageIOSUITests.swift](../immichSlidesUITests/StrictE2ELateImageIOSUITests.swift) |

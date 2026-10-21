@@ -255,7 +255,7 @@ extension AccessLifecycleIOSUITests {
             shouldTapIfNeeded: true,
             message: "Pause before opening settings or identifying photos, so autoplay does not move away."
         )
-        let controlBarReference = try captureControlBarReference(app: app)
+        var controlBarReference = try captureControlBarReference(app: app)
         let setupMark = classifyCurrentMark(app: app)
         revealPlaybackControls(app: app)
         tapElement(app.buttons["slideshow.control.next.button"])
@@ -275,15 +275,18 @@ extension AccessLifecycleIOSUITests {
             message: "Must be paused after the midpoint."
         )
         requests.append("playback.pause")
+        let midpointPauseElapsed = Date().timeIntervalSince(midpointPlay.issued)
         XCTAssertLessThan(
-            Date().timeIntervalSince(midpointPlay.issued),
+            midpointPauseElapsed,
             interval - AccessLifecycleContract.continueCaptureSlackSeconds,
-            "Must be paused after the midpoint."
+            "Midpoint pause confirmation must finish before T-2; elapsed=\(midpointPauseElapsed), T=\(interval)."
         )
         let beforePause = try captureImmediateRequiredMark(app: app, name: "before-pause")
-        try AccessLifecycleContract.assertHoldSampleUnchanged(
-            expectedMark: timingStart.mark, polled: beforePause.mark
+        XCTAssertEqual(
+            beforePause.mark, timingStart.mark,
+            "Automatic photo change occurred before T-2; expected=\(timingStart.mark), observed=\(beforePause.mark)."
         )
+        controlBarReference = try captureControlBarReference(app: app)
         revealPlaybackControls(app: app)
         tapElement(app.buttons["slideshow.control.next.button"])
         requests.append("playback.next")
