@@ -48,6 +48,7 @@ FIRST_FAILURE_ACTIONS = ("unknown", "none", "tap", "select", "up", "down", "left
     "play-pause", "rotate", "launch", "activate", "terminate", "type", "adjust")
 FIRST_FAILURE_TIMING_FIELDS = ("since_action_issued_seconds", "since_action_returned_seconds", "action_duration_seconds",
     "wait_elapsed_seconds", "deadline_seconds", "capture_request_seconds", "capture_return_seconds", "state_age_seconds")
+NATIVE_ACTIVITY_FIELDS = ("pre_event_idle", "find_window", "synthesize_event", "post_event_idle", "ax_root_acquisition")
 _validator_input = ContextVar("first_failure_validator_input", default=None)
 _validator_enabled = ContextVar("first_failure_validator_enabled", default=False)
 
@@ -358,8 +359,10 @@ def validate_first_failure(receipt):
     def number(value, maximum, where, *, minimum=0, integral=False):
         require(value is None or (type(value) in ((int,) if integral else (int, float))
                 and minimum <= value <= maximum and math.isfinite(value)), where + ": invalid number")
-    exact(receipt, {"schema_version", "source", "step", "element", "action", "timing", "state", "validator", "screenshot"},
-          "first failure")
+    fields = {"schema_version", "source", "step", "element", "action", "timing", "state", "validator", "screenshot"}
+    if isinstance(receipt, dict) and "native_activity_seconds" in receipt:
+        fields.add("native_activity_seconds")
+    exact(receipt, fields, "first failure")
     require(type(receipt["schema_version"]) is int and receipt["schema_version"] == 1, "first failure: unsupported version")
     choice(receipt["source"], ("xctest", "validator", "preparation"), "source")
     choice(receipt["step"], FIRST_FAILURE_STEPS, "step")
@@ -419,6 +422,11 @@ def validate_first_failure(receipt):
                 and state["observation"] == "unavailable" and state["history_count"] is None
                 and all(state[key] == "unknown" for key in ("surface", "control_bar", "focus", "autoplay", "orientation", "scene_status")),
                 "first failure: preparation cannot claim app evidence")
+    if "native_activity_seconds" in receipt:
+        require(receipt["source"] == "xctest", "first failure: native activity requires xctest source")
+        exact(receipt["native_activity_seconds"], NATIVE_ACTIVITY_FIELDS, "first failure native activity")
+        for value in receipt["native_activity_seconds"].values():
+            number(value, FIRST_FAILURE_MAX_SECONDS, "first failure native activity")
     require(len(json.dumps(receipt, ensure_ascii=True, allow_nan=False).encode()) <= FIRST_FAILURE_MAX_BYTES,
             "first failure: receipt exceeds size bound")
 
@@ -429,9 +437,14 @@ def render_first_failure(receipt):
     def measured(key):
         value = timing[key]
         return "unavailable" if value is None else f"{value:g}s"
-    return (f"{receipt['source']}/{receipt['step']}; {receipt['element']}; "
+    rendered = (f"{receipt['source']}/{receipt['step']}; {receipt['element']}; "
             f"since action={measured('since_action_issued_seconds')}; wait={measured('wait_elapsed_seconds')}; "
             f"deadline={measured('deadline_seconds')}; screenshot={receipt['screenshot']['status']}")
+    if "native_activity_seconds" in receipt:
+        rendered += "; native activity: " + ", ".join(
+            key + "=" + ("unavailable" if value is None else f"{value:g}s")
+            for key, value in receipt["native_activity_seconds"].items())
+    return rendered
 
 
 def public_first_failure(receipt):

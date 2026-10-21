@@ -27,6 +27,10 @@ PROCESS_NAMES = ("simctl", "CoreSimulatorService", "Simulator", "launchd_sim", "
                  "testmanagerd", "immichSlides", "immichSlidesUITests-Runner", "swift-frontend")
 PROCESS_STATES = ("running", "sleeping", "uninterruptible", "stopped", "zombie", "unknown")
 MAX_EVENTS = 512
+MAX_RESOURCE_CASES = 64
+MAX_RESOURCE_SAMPLES = 43201
+MAX_FAILURE_RESOURCE_SAMPLES = 6
+RESOURCE_CATEGORIES = ("app", "simulator_daemons", "test_tools", "other")
 
 
 def exact_fields(value, names, where):
@@ -71,7 +75,10 @@ def validate_sample(sample):
 
 
 def validate_receipt(receipt):
-    exact_fields(receipt, {"schema_version", "collection_seconds", "truncated", "events"}, "bounded diagnostics")
+    fields = {"schema_version", "collection_seconds", "truncated", "events"}
+    if isinstance(receipt, dict) and "case_resources" in receipt:
+        fields.add("case_resources")
+    exact_fields(receipt, fields, "bounded diagnostics")
     require(type(receipt["schema_version"]) is int and receipt["schema_version"] == 1,
             "bounded diagnostics: unsupported version")
     exact_fields(receipt["collection_seconds"], COLLECTION_BUDGET_SECONDS, "bounded diagnostics collection")
@@ -101,6 +108,53 @@ def validate_receipt(receipt):
             require(all(type(value) is bool for value in exports.values()), "bounded diagnostic exports: invalid boolean")
         if event["sample"] is not None:
             validate_sample(event["sample"])
+    if "case_resources" in receipt:
+        validate_case_resources(receipt["case_resources"])
+
+
+def validate_case_resources(cases):
+    require(isinstance(cases, list) and len(cases) <= MAX_RESOURCE_CASES, "case resources: invalid case count")
+    sequences = set()
+    for case in cases:
+        exact_fields(case, {"sequence", "duration_seconds", "sample_interval_seconds", "sample_count", "truncated",
+            "idle_percent_min", "idle_percent_median", "load_1m_max", "app_cpu_percent_peak", "sampler_wall_seconds",
+            "sampler_cpu_seconds", "first_failure_elapsed_seconds", "failure_samples"}, "case resources")
+        number(case["sequence"], MAX_INTEGER, "case resources sequence", integral=True)
+        require(case["sequence"] not in sequences, "case resources: duplicate sequence")
+        sequences.add(case["sequence"])
+        number(case["duration_seconds"], MAX_DIAGNOSTIC_SECONDS, "case resources duration")
+        number(case["sample_interval_seconds"], MAX_DIAGNOSTIC_SECONDS, "case resources interval", minimum=0.001)
+        number(case["sample_count"], MAX_RESOURCE_SAMPLES, "case resources sample count", integral=True)
+        require(type(case["truncated"]) is bool, "case resources: truncated must be boolean")
+        for field, ceiling, label in (("idle_percent_min", MAX_CPU_PERCENT, "idle"),
+                ("idle_percent_median", MAX_CPU_PERCENT, "idle"), ("load_1m_max", MAX_LOAD_AVERAGE, "load"),
+                ("app_cpu_percent_peak", MAX_PROCESS_CPU_PERCENT, "app cpu"),
+                ("sampler_wall_seconds", MAX_DIAGNOSTIC_SECONDS, "wall cost"),
+                ("sampler_cpu_seconds", MAX_CPU_SECONDS, "cpu cost"),
+                ("first_failure_elapsed_seconds", MAX_DIAGNOSTIC_SECONDS, "failure time")):
+            number(case[field], ceiling, "case resources " + label, nullable=True)
+        low, median = case["idle_percent_min"], case["idle_percent_median"]
+        require(low is None or median is None or low <= median, "case resources: idle statistics out of order")
+        failure = case["first_failure_elapsed_seconds"]
+        require(failure is None or failure <= case["duration_seconds"], "case resources: failure outside case")
+        samples = case["failure_samples"]
+        require(isinstance(samples, list) and len(samples) <= MAX_FAILURE_RESOURCE_SAMPLES,
+                "case resources: invalid failure samples")
+        require(len(samples) <= case["sample_count"], "case resources: samples exceed count")
+        previous = -1
+        for sample in samples:
+            exact_fields(sample, {"elapsed_seconds", "idle_percent", "load_1m", "cpu_percent"}, "case resource sample")
+            elapsed = sample["elapsed_seconds"]
+            number(elapsed, MAX_DIAGNOSTIC_SECONDS, "case resources sample time")
+            require(failure is not None and abs(elapsed - failure) <= 5, "case resources: sample outside failure window")
+            require(elapsed <= case["duration_seconds"], "case resources: sample outside case")
+            require(elapsed > previous, "case resources: samples out of order")
+            previous = elapsed
+            number(sample["idle_percent"], MAX_CPU_PERCENT, "case resources sample idle", nullable=True)
+            number(sample["load_1m"], MAX_LOAD_AVERAGE, "case resources sample load", nullable=True)
+            exact_fields(sample["cpu_percent"], RESOURCE_CATEGORIES, "case resource categories")
+            for value in sample["cpu_percent"].values():
+                number(value, MAX_PROCESS_CPU_PERCENT, "case resources category cpu", nullable=True)
 
 
 def render_receipt(receipt):
@@ -113,5 +167,14 @@ def render_receipt(receipt):
     latest = {event["scope"]: event for event in receipt["events"]}
     phases = "; ".join(f"{scope}: {event['phase']}/{event['state']} at {event['elapsed_seconds']:g} s"
                        for scope, event in latest.items()) or "none"
-    return (f"\nBounded diagnostics (measurements only): {'; '.join(costs)}; events={len(receipt['events'])}; "
+    rendered = (f"\nBounded diagnostics (measurements only): {'; '.join(costs)}; events={len(receipt['events'])}; "
             f"truncated={'yes' if receipt['truncated'] else 'no'}. Last retained phase: {phases}\n")
+    def measured(value):
+        return "unavailable" if value is None else f"{value:g}"
+    for case in receipt.get("case_resources", []):
+        rendered += (f"\nCase resources {case['sequence']} (measurements only): samples={case['sample_count']}; "
+            f"idle min/median={measured(case['idle_percent_min'])}/{measured(case['idle_percent_median'])}%; "
+            f"max load 1m={measured(case['load_1m_max'])}; peak app cpu={measured(case['app_cpu_percent_peak'])}%; "
+            f"sampler wall/cpu={measured(case['sampler_wall_seconds'])}/{measured(case['sampler_cpu_seconds'])}s; "
+            f"failure samples={len(case['failure_samples'])}; truncated={'yes' if case['truncated'] else 'no'}.\n")
+    return rendered

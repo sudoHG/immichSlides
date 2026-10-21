@@ -889,9 +889,10 @@ Fixture selectors use `Class/method` throughout environment lookup, spool collec
 and attachment. Strip the target prefix only from `target/Class/method`; a class
 named `immichSlidesUITests` remains part of the key. Official identifiers are retained.
 
-The optional receipt has exactly `schema_version: 1`, `source` (`xctest`,
+The optional receipt requires `schema_version: 1`, `source` (`xctest`,
 `validator`, `preparation`), `step`, `element`, `action`, `timing`, `state`,
-`validator`, and `screenshot`. All strings are closed vocabularies in
+`validator`, and `screenshot`, and accepts optional `native_activity_seconds`.
+All strings are closed vocabularies in
 `ci_failure_diagnostics.py`; `FIRST_FAILURE_ELEMENTS` is the single reviewed
 element table, supplied by fixture runners to the test-only recorder.
 Unknown elements become `unknown`, never arbitrary identifiers. Unknown numbers
@@ -906,6 +907,24 @@ and malformed JSON containing the field are refused without echoing candidates.
 | `state` | `app`, `surface`, `observation`, `control_bar`, `focus`, `history_count`, `autoplay`, `orientation`, `scene_status`, `query_error_code`; enums and bounded integers/null only |
 | `validator` | Null, or exactly closed `kind`, integer/null `slot` (1–64), and closed `axis`; requires validator source |
 | `screenshot` | `status`, `width`, `height`, `bytes`; a retained image needs positive dimensions <=1,536 and bytes <=1 MiB; unavailable images have null measurements |
+| `native_activity_seconds` | Optional, XCTest source only; exactly `pre_event_idle`, `find_window`, `synthesize_event`, `post_event_idle`, `ax_root_acquisition`, each finite 0–86,400 seconds or null |
+
+Native activity support is reader-only until its producer PR follows the
+[reader-first merge](CI_SUMMARY.md#reader-first-evolution). Durations describe
+native xcresult sub-activities bound to the first failing action, not estimates
+from adjacent log lines. Ambiguous or missing activities remain null; zero means
+a measured zero. Pre/post-event idle are separated around event synthesis;
+AX root acquisition measures only the native application-root acquisition, not
+all accessibility work. Nested intervals must not be double-counted. No native
+titles or raw logs enter the receipt. Summary/report rendering shows only these
+fixed duration labels and numbers, preserving the original attempt and failure.
+
+Reader support for bounded per-case host CPU/load evidence is specified in
+[bounded infrastructure diagnostics](CI_SUMMARY.md#bounded-infrastructure-diagnostics).
+Neither new field is currently produced. The later sampler must publish its own
+measured cost, retain samples within ±5 seconds of the first failure, and leave
+every test deadline, action, retry and verdict unchanged. A low idle measurement
+is contention evidence, not by itself proof of why an App action was slow.
 
 Capture offsets refer to the first failure's monotonic timestamp; they expose
 request/return lag rather than claiming an instantaneous image. `observation`

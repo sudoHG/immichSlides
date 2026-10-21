@@ -101,8 +101,9 @@ following [reader-first evolution](#reader-first-evolution). The isolated truste
 reader carries `ci_bounded_diagnostics.py`; source-free unit tools also carry the
 separate `ci_execution_diagnostics.py` producer.
 
-The object has exactly `schema_version: 1`, `collection_seconds`, boolean
-`truncated`, and `events` (at most 512 entries). `collection_seconds` contains
+The object requires `schema_version: 1`, `collection_seconds`, boolean
+`truncated`, and `events` (at most 512 entries), and accepts optional `case_resources`
+as specified below. `collection_seconds` contains
 exactly `preparation`, `xcode` and `fixture`: finite nonnegative diagnostic
 collection seconds up to a sanity cap of 86,400, or null when unavailable.
 The approved job collection budgets remain 5, 10 and 2 seconds respectively;
@@ -145,6 +146,34 @@ duplicate keys in a document containing this field. Summary Markdown displays
 collection costs, event count, truncation and the last retained phase per scope; detailed
 measurements stay in the summary JSON. Trusted report failure/missing counts and
 issue decisions do not consume the measurements.
+
+The reader also accepts `case_resources`, an array of at most 64 case measurements.
+This is reader-only support; current producers do not emit it. Each entry has
+exactly the following fields. All numbers are finite, booleans are not numbers,
+and unknown measurements remain null.
+
+| Fields | Bounds and meaning |
+| --- | --- |
+| `sequence` | Unique integer 0–2^31 - 1 identifying a case invocation in this receipt; never a case title or process identifier |
+| `duration_seconds`, `sample_interval_seconds` | Case duration 0–86,400 and nominal interval 0.001–86,400 seconds; the planned producer samples about every 2 seconds without waiting in the test thread |
+| `sample_count`, `truncated` | Integer 0–43,201 retained samples and boolean indicating incomplete collection or retention |
+| `idle_percent_min`, `idle_percent_median` | Host idle CPU percentages 0–100 or null; minimum cannot exceed median |
+| `load_1m_max`, `app_cpu_percent_peak` | Maximum 1-minute load and peak App CPU percentage, 0–10^6 or null; process CPU uses one core = 100% and may exceed 100% |
+| `sampler_wall_seconds`, `sampler_cpu_seconds` | Active collection wall time 0–86,400 and collector plus child-process CPU time 0–10^12 seconds, or null; sleeping time is excluded; wall collection is charged to the existing Xcode diagnostic budget |
+| `first_failure_elapsed_seconds` | Offset from this case's sampling origin, 0–case duration, or null if no failure is bound; absence never proves a passing case |
+| `failure_samples` | At most six samples, no more than `sample_count`, strictly increasing by `elapsed_seconds`, within both the case duration and ±5 seconds of the first failure; empty when the failure time is unavailable |
+
+Each failure sample has exactly `elapsed_seconds` (0–86,400), `idle_percent`
+(0–100 or null), `load_1m` (0–10^6 or null), and `cpu_percent`. The latter has
+exactly `app`, `simulator_daemons`, `test_tools`, and `other`, each 0–10^6 or null.
+These categories are disjoint: the App under test; simulator system daemons
+descended from `launchd_sim`; XCTest, testmanagerd and xcodebuild tools; and all
+remaining host processes. App and test-tool membership takes precedence over
+simulator ancestry. No executable names, PIDs, paths, arguments or activity
+titles are published. Measurements with unavailable membership must remain null.
+Sampling limitations, including missing intervals, do not alter a test result.
+Summary Markdown displays per-case sample counts, idle minimum/median, maximum
+load, peak App CPU, sampler costs and truncation; nearby samples remain in JSON.
 
 Current producers collect preparation and Xcode diagnostics only. Fixture-scope
 events remain reader-compatible, but no fixture diagnostics are emitted or
@@ -525,6 +554,9 @@ The validator receipt rollout uses two PRs: first install reader/scanner/report
 acceptance without changing producer output, then, only after that reader is on
 main, activate the strict producer. A stacked producer PR opened before the first
 PR reaches main still uses the old trusted base and is not a safe substitute.
+The same sequence applies to `bounded_diagnostics.case_resources` and
+`first_failure.native_activity_seconds`: merge reader support before opening the
+producer activation PR. Historical records without either optional field remain valid.
 
 ## Prepared version 2: scoped official discovery
 
