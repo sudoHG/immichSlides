@@ -196,7 +196,8 @@ App windows, then SpringBoard windows, then the final App alert query if no wind
 contains the prompt. On both idioms retain that final query for a late remote alert
 that becomes queryable after the system-window observations. Each observation uses
 at most two App alert queries on iPad and one on iPhone. Printed diagnostics count
-`earlyAlertHits` and `terminalAlertHits` separately without changing receipt sources.
+`earlyAlertHits` and `terminalAlertHits` separately, counting only exact password
+prompts with a unique decline action, without changing receipt sources.
 Require exactly one alert, the exact password title and one decline button in
 that same snapshot. Multiple alerts or a failed snapshot are unknown and cannot
 authorize a tap or prove disappearance. Receipts distinguish `window-index-N`
@@ -258,14 +259,9 @@ snapshot frame and offset; XCTest re-resolves the window query at tap time.
 The helper checks the same deadline immediately before the tap. Next/Previous/Play-Pause receive
 one real tap and return immediately; their callers retain their scene-change,
 Play/Pause and EXIF retry budgets. The shared helper does not compare their values.
-The lifecycle midpoint/Continue helpers always wake the canvas once before their
-appearance wait, retaining the existing 8-second appearance and 2-second readiness
-windows. They reuse one fallible snapshot's identity, enabled state, contained
-frame and value for at most one coordinate tap; the 4-second state readback uses
-snapshots without another wake or live control query. Pause's T-2 bound uses the
-tap return before readback; Continue's T origin remains its press.
-Only Settings verifies an outcome: a Settings entry or the playback toggle. Its
-existing five-second product appearance wait starts when the coordinate tap returns,
+Among the shared helper's actions, only Settings verifies an outcome: a Settings
+entry or the playback toggle. Its existing five-second product appearance wait
+starts when the coordinate tap returns,
 so XCTest's idle wait does not consume the outcome window. This window stays fixed
 under every wait factor; an observation completing after it expires never passes.
 There is no control-tap retry: a call sends at most one reveal and one control tap.
@@ -284,6 +280,7 @@ after its back-navigation loop, including the early-ready path, before returning
 No refresh restarts a deadline or sends a second reveal.
 Playback History Settings entry and sampling-overlay pre-Next retain their
 explicit refresh assertions so their mapped failure prefixes stay available.
+
 If a snapshot shows playback with the control outside the window, the waiter
 may reveal once within its original deadline, then only observe; a failed
 snapshot never authorizes a reveal. Settings readiness failures are classified from
@@ -303,6 +300,13 @@ timeout. Playback History Settings uses the explicit bounded refresh, without
 the generic waiter's final condition call. Playback History
 Play/Pause polls, including manual lifecycle pause/resume, read the value from one
 fallible application snapshot per poll and reveal an absent control within the original deadline.
+
+The lifecycle midpoint/Continue helpers always wake the canvas once before their
+appearance wait, retaining the existing 8-second appearance and 2-second readiness
+windows. They reuse one fallible snapshot's identity, enabled state, contained
+frame and value for at most one coordinate tap; the 4-second state readback uses
+snapshots without another wake or live control query. Pause's T-2 bound uses the
+tap return before readback; Continue's T origin remains its press.
 
 On tvOS, `refreshTVOSSlideshowControlBar` refreshes controls before dependent reads
 and Select actions. The visible bar consumes Up, so the helper moves focus to an

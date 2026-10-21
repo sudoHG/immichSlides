@@ -178,6 +178,7 @@ extension StrictE2EFilterIOSUITests {
         var before: [String: String] = [:]
         let previousRender = SharedSceneEvidenceManifest.parseKeyValueFields(previousScene?["render"] ?? "")
         var didAdvanceHistory: Bool?
+        var hasObservedHistoryAdvance = false
         var didChangeLayers = false
         FirstFailureContext.mark("wait-scene", element: "slideshow.scenePresentation.contract.summary")
         let isReady = TestWait.until(.product(max(.zero, deadline.timeIntervalSinceNow))) {
@@ -187,6 +188,8 @@ extension StrictE2EFilterIOSUITests {
                 Int(previousRender["historyCount"] ?? "").flatMap { previousCount in
                     Int(render["historyCount"] ?? "").map { $0 == previousCount + 1 }
                 }
+            // Retain progress for timeout diagnostics; readiness still requires the current snapshot.
+            hasObservedHistoryAdvance = hasObservedHistoryAdvance || didAdvanceHistory == true
             didChangeLayers =
                 render["layerIDs"] != nil && previousRender["layerIDs"] != nil
                 && render["layerIDs"] != previousRender["layerIDs"]
@@ -196,12 +199,13 @@ extension StrictE2EFilterIOSUITests {
         FirstFailureContext.mark("wait-scene", element: "slideshow.scenePresentation.contract.summary")
         guard isReady else {
             attachStrictSceneObservation(before: before, after: before, name: "\(name)-scene")
+            if previousScene == nil, rejectFrozenAlbumTransition(before) { return [:] }
             let render = SharedSceneEvidenceManifest.parseKeyValueFields(before["render"] ?? "")
             let isManifestComplete = SharedSceneEvidenceManifest.manifestObservation(from: before["manifest"] ?? "")?
                 .isCompleteVisibleScene
             let facts =
-                "historyAdvanced=\(didAdvanceHistory.map { String($0) } ?? "unknown"), layersChanged=\(didChangeLayers), phase=\(render["phase"] ?? "unknown"), paused=\(render["playbackPaused"] ?? "unknown"), manifestComplete=\(isManifestComplete.map { String($0) } ?? "unknown")"
-            if previousScene != nil, didAdvanceHistory != true, !didChangeLayers {
+                "historyAdvanced=\(hasObservedHistoryAdvance ? "true" : didAdvanceHistory.map { String($0) } ?? "unknown"), layersChanged=\(didChangeLayers), phase=\(render["phase"] ?? "unknown"), paused=\(render["playbackPaused"] ?? "unknown"), manifestComplete=\(isManifestComplete.map { String($0) } ?? "unknown")"
+            if previousScene != nil, !hasObservedHistoryAdvance, !didChangeLayers {
                 FirstFailureContext.mark("wait-scene", element: "slideshow.control.next.button")
                 XCTFail("Album Next must advance the paused scene within the playback capture budget. (\(facts))")
             } else {

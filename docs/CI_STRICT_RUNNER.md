@@ -159,7 +159,8 @@ its 4-second deadline. The outcome window starts at tap return, lasts at most
 Image-failure recovery locally prepares Next and redo without the playback probe:
 one preparatory snapshot must exclude Settings navigation, then at most one wake
 precedes a fresh snapshot of an enabled Next button with a nonempty frame inside
-the window. That frame supplies exactly one coordinate tap, with no live button
+the window. Every preparation poll also excludes Settings navigation evidence.
+That frame supplies exactly one coordinate tap, with no live button
 query. The original 6-second preparation budget includes the wake. Its stable-photo
 outcome starts at tap return, retains the 45-second limit, and is capped by the original 51-second
 preparation-plus-outcome total. Recovery still requires an observed advance and the
@@ -257,9 +258,14 @@ value `play` in the same window snapshot. Each playback
 capture uses the original 0.8 + 4 s preparation budget and takes one PNG. The
 second capture also requires history to advance by one or different layer IDs.
 Post-Pause transitions get that capture budget to recover, including the designed
-fill-in fade. On timeout, a Next that did not advance fails as navigation; an
-advanced but incomplete scene fails as probe readback. Both append the last
-history-advance, layer-change, phase, paused and manifest-completeness observations
+fill-in fade. On timeout, the first capture (`album-play-1`) reports a last-observed
+paused transition with the frozen-transition prefix (`control_action/control_state`);
+other incomplete first scenes fail as `visible_scene_capture/probe_readback`.
+For `album-play-2`, a Next with no observed history advance or last-observed layer
+change fails as navigation; an advanced but incomplete scene fails as probe readback,
+including a paused transition. History advance remains recorded across polls, so a
+later failed snapshot cannot erase it. Navigation and probe-readback failures append
+history-advance, last layer-change, phase, paused and manifest-completeness facts
 after their reviewed prefixes. The pixel validator still decides photo identity.
 For `tvos-person`, the scene key also exposes the existing read-only SmartFill
 manifest, motion-frame summary and EXIF tone accessibility anchors. These clear
@@ -272,12 +278,11 @@ selectors use an empty launch environment and forbid the scene probe.
 `ios-lifecycle-pause` pauses initial SmartFill playback through the real controls
 before opening Settings; configuration still turns autoplay on through the real
 toggle and selects single-photo mode. Before its midpoint pause, it confirms the
-paused state,
-uses a real Next and the existing stable-photo capture window to establish a
-bright single-photo identity, then starts T/2 at the real Play press. Pause
+paused state, uses a real Next and the existing stable-photo capture window to
+establish a bright single-photo identity, then starts T/2 at the real Play press. Pause
 tap must return before the existing T-2 boundary and retain that identity. The
 pause timestamp is recorded before the later state readback; Continue still counts
-from its press, when the old photo starts fading. Play/Pause preparation issues one
+T from its press until the old photo starts fading. Play/Pause preparation issues one
 canvas wake, then uses one fallible window snapshot per poll for button identity,
 enabled state, a nonempty frame inside the window and its current value. These are
 snapshot readiness checks, not live hittability queries. An already ready snapshot
@@ -1014,12 +1019,8 @@ The sampler's cadence, process-snapshot costs, retention and independent
 allowances are defined in that contract. It leaves every test deadline, action,
 retry and verdict unchanged. A low idle measurement
 is contention evidence, not by itself proof of why an App action was slow.
-The case manifest and `trace.json`'s `warm[].bounded_diagnostics` bind resource
-sequences to the enclosing case. These copies retain only that case's resources,
-shared collection-cost/truncation metadata and an empty `events` list, keeping
-them small independently of the job's event ledger. The tracer validates the
-contents with the bounded-diagnostics reader's `validate_receipt` before writing.
-Trusted trace readers ignore this field; they do not validate or use it for verdicts.
+The case manifest and `trace.json`'s `warm[].bounded_diagnostics` follow that
+[receipt binding and validation contract](CI_SUMMARY.md#bounded-infrastructure-diagnostics).
 Each `ps` query is capped at 0.5 seconds within the unchanged 180-second allowance.
 If no App process is identified, per-sample App CPU and its case peak remain null;
 an identified but idle App can report zero. Diagnostic shutdown or native-projection
@@ -1240,8 +1241,10 @@ rotation precondition messages map through the same reviewed prefix table.
 The five history prefixes previously mapped to `visible_scene_capture/scene_identity`;
 they now identify the capture site on both platforms, including
 `StrictE2ETVOSFlowUITests.swift:343/365/387/415/442` (`evidenceName` arguments).
-Empty screenshot data and Autoplay control-state assertions yield unknown for
-both fields because they do not establish scene identity or navigation.
+Empty screenshot data and `Turning off Autoplay in settings must take effect immediately`
+yield unknown for both fields. The interval-setup assertions
+`Autoplay must be turned on through the real settings.` and
+`Autoplay must be on for the pause/background cases.` identify `interval_setup/control_state`.
 These labels locate a check; they do not establish a product or infrastructure
 root cause. No assertion text, observed value, path, identifier or frame is
 added to public records by the mapper.
@@ -1274,7 +1277,9 @@ settings editor and server-switch flows, so their prefixes retain an `unknown` p
 The shared slideshow "never became tappable" prefix uses `control_action`: every
 caller acts on the playback control bar during playback, including Settings opening,
 retained-history navigation, Play/Pause, EXIF advance and pause-window A2 search.
-The existing lifecycle/XCTest rows remain unchanged.
+The lifecycle autoplay-toggle and single-photo-option availability sentences also
+serve Settings readback and display-policy changes, so they use an `unknown` phase
+and `hidden_controls` class.
 The shared `rotate()` orientation assertion serves portrait and landscape steps,
 iPad layout and orientation self-checks, so it retains an `unknown` phase.
 The whole-rotation deadline and onboarding iPad orientation assertion also use
@@ -1326,11 +1331,11 @@ New enum meanings and why the previous vocabulary cannot express them:
 | `Must be paused after the midpoint.` | `control_action` | `control_state` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift) |
 | `Should be playing after Continue.` | `continue_timing` | `control_state` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift) |
 | `This narrow entry must not enable a password.` | `settings_navigation` | `control_state` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift) |
-| `Playback settings must provide the autoplay toggle.` | `interval_setup` | `hidden_controls` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift) |
+| `Playback settings must provide the autoplay toggle.` | `unknown` | `hidden_controls` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift), [AccessLifecycleIOSUITests+Settings.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Settings.swift) |
 | `Autoplay must be turned on through the real settings.` | `interval_setup` | `control_state` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift) |
 | `Autoplay must be on for the pause/background cases.` | `interval_setup` | `control_state` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift) |
 | `The pause/background cases must be able to switch to single-photo mode.` | `interval_setup` | `hidden_controls` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift) |
-| `The display policy should offer single-photo mode.` | `interval_setup` | `hidden_controls` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift) |
+| `The display policy should offer single-photo mode.` | `unknown` | `hidden_controls` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift), [AccessLifecycleIOSUITests+Settings.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Settings.swift) |
 | `Must return to the playback page after settings.` | `settings_navigation` | `navigation` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift) |
 | `Failed to persist iPad watch sample diagnostics:` | `continue_timing` | `evidence_capture` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift) |
 | `First-half-window evidence after Continue crossed the window;` | `continue_timing` | `timing_window` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift) |
@@ -1352,7 +1357,6 @@ New enum meanings and why the previous vocabulary cannot express them:
 | `Do not tap again and toggle playback` | `control_action` | `control_state` | [AccessLifecycleContract+Controls.swift](../TestSupport/AccessLifecycleContract+Controls.swift) |
 | `The confirmation wait must not happen before continueAt` | `continue_timing` | `timing_window` | [AccessLifecycleContract+Controls.swift](../TestSupport/AccessLifecycleContract+Controls.swift) |
 | `A leftover settings button must not stand in for operable play/pause controls` | `control_action` | `hidden_controls` | [AccessLifecycleContract+Controls.swift](../TestSupport/AccessLifecycleContract+Controls.swift) |
-| `Do not use click return time to hide the action's elapsed time` | `continue_timing` | `timing_window` | [AccessLifecycleContract+TransitionTiming.swift](../TestSupport/AccessLifecycleContract+TransitionTiming.swift) |
 | `The click return time must not be earlier than the press` | `continue_timing` | `timing_window` | [AccessLifecycleContract+TransitionTiming.swift](../TestSupport/AccessLifecycleContract+TransitionTiming.swift) |
 | `Evidence crossing the window must not pass automatically` | `continue_timing` | `timing_window` | [AccessLifecycleContract+TransitionTiming.swift](../TestSupport/AccessLifecycleContract+TransitionTiming.swift) |
 | `Black screen without a new photo must not pass automatically` | `continue_timing` | `scene_identity` | [AccessLifecycleContract+TransitionTiming.swift](../TestSupport/AccessLifecycleContract+TransitionTiming.swift) |
@@ -1503,7 +1507,7 @@ New enum meanings and why the previous vocabulary cannot express them:
 | `The scene from a manual previous while paused must stay still at p=0` | `paused_hold` | `scene_identity` | [PlaybackHistoryIOSUITests.swift](../immichSlidesUITests/PlaybackHistoryIOSUITests.swift) |
 | `Play must make the current still scene start moving from p=0 immediately` | `control_action` | `scene_identity` | [PlaybackHistoryIOSUITests.swift](../immichSlidesUITests/PlaybackHistoryIOSUITests.swift) |
 | `After starting playback, the playback page should open and show the control bar` | `playback_entry` | `navigation` | [FilterSummaryIOSVisualUITests+Launch.swift](../immichSlidesUITests/FilterSummaryIOSVisualUITests+Launch.swift) |
-| `The slideshow control never became tappable before the deadline.` | `control_action` | `hidden_controls` | [UITestSupport.swift](../immichSlidesUITests/UITestSupport.swift), shared playback control-bar tap callers |
+| `The slideshow control never became tappable before the deadline.` | `control_action` | `hidden_controls` | [UITestSupport.swift](../immichSlidesUITests/UITestSupport.swift), shared playback control-bar tap callers; [ScenePresentationContractUITests.swift](../immichSlidesUITests/ScenePresentationContractUITests.swift), recovery Next/redo preparation |
 | `The slideshow Settings tap had no observed outcome before the deadline.` | `settings_navigation` | `navigation` | [UITestSupport.swift](../immichSlidesUITests/UITestSupport.swift) |
 | `The slideshow Settings button must be ready before opening playback settings.` | `settings_navigation` | `hidden_controls` | [PlaybackHistoryIOSUITests+Support.swift](../immichSlidesUITests/PlaybackHistoryIOSUITests+Support.swift) |
 | `Playback page should show the settings button` | `unknown` | `hidden_controls` | [FilterSummaryIOSVisualUITests+Navigation.swift](../immichSlidesUITests/FilterSummaryIOSVisualUITests+Navigation.swift), [FilterSummaryTVOSVisualUITests+Playback.swift](../immichSlidesUITests/FilterSummaryTVOSVisualUITests+Playback.swift) |
@@ -1518,13 +1522,16 @@ generic messages whose phase is ambiguous remain `unknown`. In particular, the r
 flow's step-name-led photo checks and shared driver messages beginning with a press
 count cannot be classified by this table. The complete-SmartFill-probe prefix diagnoses
 combined evidence readback, without deciding which component is absent. Screenshot-empty
-and Autoplay-setting prefixes retain their previous `unknown` pair. A mixed list containing
+and the turning-off-Autoplay prefix retain their previous `unknown` pair. A mixed list containing
 an unmatched message or different phase/class pairs still yields the `unknown` pair,
 even when another message matches a new row. No hosted hit-rate improvement is claimed
 until actual official failure summaries exercise these prefixes.
 
 Still unknown on the throwing path:
 
+- `Do not use click return time to hide the action's elapsed time` throws
+  `AssertionError.message` with the apostrophe escaped as `action\'s`; it has no
+  matching table row, like the escaped EXIF sentence below.
 - `Fixture image response control timed out` throws the `Failure` struct. Its
   `Failure(message:)` wrapper is supported, but the sentence has no table row;
   a direct caught-error description also remains unmatched.

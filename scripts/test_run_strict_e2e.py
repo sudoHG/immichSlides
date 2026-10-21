@@ -1156,11 +1156,13 @@ class FailureDiagnosticsTests(unittest.TestCase):
             ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "Must be paused after the midpoint.", "control_action", "control_state"),
             ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "Should be playing after Continue.", "continue_timing", "control_state"),
             ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "This narrow entry must not enable a password.", "settings_navigation", "control_state"),
-            ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "Playback settings must provide the autoplay toggle.", "interval_setup", "hidden_controls"),
+            ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "Playback settings must provide the autoplay toggle.", "unknown", "hidden_controls"),
+            ("immichSlidesUITests/AccessLifecycleIOSUITests+Settings.swift", "Playback settings must provide the autoplay toggle.", "unknown", "hidden_controls"),
             ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "Autoplay must be turned on through the real settings.", "interval_setup", "control_state"),
             ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "Autoplay must be on for the pause/background cases.", "interval_setup", "control_state"),
             ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "The pause/background cases must be able to switch to single-photo mode.", "interval_setup", "hidden_controls"),
-            ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "The display policy should offer single-photo mode.", "interval_setup", "hidden_controls"),
+            ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "The display policy should offer single-photo mode.", "unknown", "hidden_controls"),
+            ("immichSlidesUITests/AccessLifecycleIOSUITests+Settings.swift", "The display policy should offer single-photo mode.", "unknown", "hidden_controls"),
             ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "Must return to the playback page after settings.", "settings_navigation", "navigation"),
             ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "Failed to persist iPad watch sample diagnostics:", "continue_timing", "evidence_capture"),
             ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "First-half-window evidence after Continue crossed the window;", "continue_timing", "timing_window"),
@@ -1182,7 +1184,6 @@ class FailureDiagnosticsTests(unittest.TestCase):
             ("TestSupport/AccessLifecycleContract+Controls.swift", "Do not tap again and toggle playback", "control_action", "control_state"),
             ("TestSupport/AccessLifecycleContract+Controls.swift", "The confirmation wait must not happen before continueAt", "continue_timing", "timing_window"),
             ("TestSupport/AccessLifecycleContract+Controls.swift", "A leftover settings button must not stand in for operable play/pause controls", "control_action", "hidden_controls"),
-            ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "Do not use click return time to hide the action's elapsed time", "continue_timing", "timing_window"),
             ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "The click return time must not be earlier than the press", "continue_timing", "timing_window"),
             ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "Evidence crossing the window must not pass automatically", "continue_timing", "timing_window"),
             ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "Black screen without a new photo must not pass automatically", "continue_timing", "scene_identity"),
@@ -1316,6 +1317,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
             ("immichSlidesUITests/PlaybackHistoryIOSUITests+Support.swift", "Could not return from the playback settings page to the slideshow", "settings_navigation", "navigation"),
         )
         failure_prefixes = {
+            "Failed to persist iPad watch sample diagnostics:",
             "Playback page after uninstall means a dirty install container;",
             "Connection test showed a failure alert:",
             "Album capture preparation must reach a stable scene before Pause.",
@@ -1345,6 +1347,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
             "scene identity did not change",
         }
         false_prefixes = {
+            "This narrow entry must not enable a password.",
             "The iOS filter summary should no longer use a bottom back button,",
             "A cold launch with saved settings must not return to the first-boot page.",
             "Previous must be disabled at the history boundary when playback starts.",
@@ -1361,6 +1364,18 @@ class FailureDiagnosticsTests(unittest.TestCase):
             "Pausing must freeze the current transform progress",
         }
         caught_prefixes = {
+            "First-half-window evidence after Continue crossed the window;",
+            "Auto advance came before T-2;",
+            "A black screen with no new photo cannot pass automatically",
+            "The iPad transition criterion is missing the original photo luma before Continue",
+            "Next-photo stable confirmation does not match the current raw screenshot",
+            "Next photo did not form a stable new MATCH within ",
+            "Screenshot cannot be used as identity;",
+            "The playback page must have play/pause.",
+            "Play/pause must be hittable.",
+            "Play/pause must be hittable before continuing.",
+            "Play/pause value must be readable before acting.",
+            "Play/pause must be paused before continuing.",
             "No two distinct photos seen within four public album candidates; all failing originals are kept.",
             "No two distinct target-album photos were seen in one full four-frame candidate rotation; all candidate originals were kept.",
         }
@@ -1398,9 +1413,9 @@ class FailureDiagnosticsTests(unittest.TestCase):
                     wrappers = ("XCTAssertFalse failed - ",)
                 elif prefix in equal_prefixes:
                     wrappers = ("XCTAssertEqual failed: (PRIVATE_SENTINEL) - ",)
-                elif prefix in caught_prefixes:
+                elif prefix in caught_prefixes or source.startswith("TestSupport/AccessLifecycleContract"):
                     wrappers = ('failed: caught error: "message(\\"',)
-                elif prefix == "Midpoint pause confirmation must finish before T-2;":
+                elif prefix == "Midpoint pause tap must return before T-2;":
                     wrappers = ("XCTAssertLessThan failed: (PRIVATE_SENTINEL) - ",)
                 elif prefix == "Automatic photo change occurred before T-2;":
                     wrappers = ("XCTAssertEqual failed: (PRIVATE_SENTINEL) - ",)
@@ -1416,7 +1431,12 @@ class FailureDiagnosticsTests(unittest.TestCase):
                 if prefix.startswith("Visual ID failed history-"):
                     assertion_source = (root / "TestSupport/StrictE2ETestSupport.swift").read_text()
                     message_start = assertion_source.index('"Visual ID failed \\(name): ')
-                elif (source, prefix, phase, kind) in capture_cases:
+                elif prefix == "Must be paused after the midpoint.":
+                    assertion_source = (root / source).read_text()
+                    self.assertIn('message: "' + prefix, assertion_source)
+                    self.assertRegex(assertion_source, r'XCTAssertTrue\(\s*waitForPlayPauseState\([^\n]+\), message\)')
+                    message_start = assertion_source.index('waitForPlayPauseState(app: app, expected: expected')
+                elif (source, prefix, phase, kind) in capture_cases or "AccessLifecycle" in source:
                     assertion_source = (root / source).read_text()
                     template = ('\\(name) did not stabilize within the '
                                 if prefix.startswith("rotation-") else prefix)
@@ -1424,11 +1444,16 @@ class FailureDiagnosticsTests(unittest.TestCase):
                 else:
                     assertion_source = None
                 if assertion_source is not None:
-                    emitters = list(re.finditer(r'(XCTAssert\w+|XCTFail|throw Failure)\s*\(',
+                    emitters = list(re.finditer(r'(XCTAssert\w+|XCTFail|throw Failure|throw (?:AccessLifecycleContract\.)?AssertionError\.message)\s*\(',
                                                assertion_source[:message_start]))
-                    expected_emitter = ("throw Failure" if wrappers[0].startswith("Failure(") else
-                                        "XCTFail" if wrappers[0] == "failed - " else
-                                        wrappers[0].split()[0])
+                    if wrappers[0].startswith('failed: caught error: "message('):
+                        expected_emitter = ("throw AccessLifecycleContract.AssertionError.message"
+                                            if source.startswith("immichSlidesUITests/") else
+                                            "throw AssertionError.message")
+                    else:
+                        expected_emitter = ("throw Failure" if wrappers[0].startswith("Failure(") else
+                                            "XCTFail" if wrappers[0] == "failed - " else
+                                            wrappers[0].split()[0])
                     self.assertEqual(emitters[-1].group(1), expected_emitter)
                 for wrapper in wrappers:
                     message = wrapper + prefix + " PRIVATE_SENTINEL /private/path asset-private"
@@ -1452,6 +1477,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
             'failed: caught error: "Failure(message: \\"Fixture image response control timed out\\")"',
             'failed: caught error: "Fixture image response control timed out"',
             'failed: caught error: "message(\\"' + "Can\\'t check EXIF: photo status PRIVATE_SENTINEL" + '\\")"',
+            'failed: caught error: "message(\\"' + "Do not use click return time to hide the action\\'s elapsed time" + '\\")"',
         ):
             with self.subTest(message=message):
                 self.assertEqual(classify_messages([message]), unknown_diagnostics())
