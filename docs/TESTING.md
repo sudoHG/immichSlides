@@ -250,6 +250,12 @@ snapshot frame and offset; XCTest re-resolves the window query at tap time.
 The helper checks the same deadline immediately before the tap. Next/Previous/Play-Pause receive
 one real tap and return immediately; their callers retain their scene-change,
 Play/Pause and EXIF retry budgets. The shared helper does not compare their values.
+The lifecycle midpoint/Continue helpers always wake the canvas once before their
+appearance wait, retaining the existing 8-second appearance and 2-second readiness
+windows. They reuse one fallible snapshot's identity, enabled state, contained
+frame and value for at most one coordinate tap; the 4-second state readback uses
+snapshots without another wake or live control query. Pause's T-2 bound uses the
+tap return before readback; Continue's T origin remains its press.
 Only Settings verifies an outcome: a Settings entry or the playback toggle. Its
 existing five-second product appearance wait starts when the coordinate tap returns,
 so XCTest's idle wait does not consume the outcome window. This window stays fixed

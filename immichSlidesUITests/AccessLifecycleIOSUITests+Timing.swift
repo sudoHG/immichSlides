@@ -20,84 +20,118 @@ extension AccessLifecycleIOSUITests {
         )
     }
 
-    // Tap the screen to wake the control bar before reading state; once it disappears, do not tap play/pause.
+    // Readbacks never wake or toggle controls, and a late snapshot cannot satisfy the original window.
     @MainActor
     func waitForPlayPauseState(
         app: XCUIApplication,
         expected: String,
         timeout: TimeInterval
     ) -> Bool {
-        waitUntil(timeout: timeout) {
-            let button = self.playPauseButton(app)
-            if button.exists == false || button.isHittable == false {
-                self.revealPlaybackControls(app: app)
-                return false
+        let deadline = Date().addingTimeInterval(timeout)
+        FirstFailureContext.beginWait(seconds: timeout)
+        defer { FirstFailureContext.endWait() }
+        var timing = SlideshowControlBarTiming()
+        while Date() < deadline {
+            let observation = timing.observe(app: app, identifier: "slideshow.control.playPause.button")
+            guard Date() < deadline else { return false }
+            if let observation, observation.isReady, !observation.hasSettingsNavigationEvidence,
+                (observation.button?.value as? String)?.lowercased() == expected
+            {
+                return true
             }
-            return self.playPauseState(button) == expected
+            RunLoop.current.run(until: min(deadline, Date().addingTimeInterval(TestWait.seconds(.product(0.1)))))
         }
+        return false
     }
 
-    // Tap the screen before confirming to reset auto-hide; do not skip this even if hittable, and do not tap
-    // play/pause once it disappears.
+    // One canvas wake refreshes auto-hide; one snapshot supplies identity, geometry, enabled state and value.
+    @MainActor
+    func preparePlayPause(app: XCUIApplication, isContinuing: Bool = false) throws
+        -> SlideshowControlBarButtonObservation
+    {
+        FirstFailureContext.mark("reveal-controls", element: "slideshow.control.playPause.button")
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tapForFailureEvidence()
+        try AccessLifecycleContract.assertConfirmPlayPauseWakesCanvasBeforeWait(
+            didWakeCanvas: true, didTapPlayPauseToWake: false)
+        var timing = SlideshowControlBarTiming()
+        var deadline = Date().addingTimeInterval(TestWait.seconds(.product(8)))
+        var readinessDeadline: Date?
+        FirstFailureContext.beginWait(seconds: TestWait.seconds(.product(8)))
+        defer { FirstFailureContext.endWait() }
+        while Date() < deadline {
+            let observation = timing.observe(app: app, identifier: "slideshow.control.playPause.button")
+            guard Date() < deadline else { break }
+            if let observation, observation.button != nil {
+                if readinessDeadline == nil {
+                    let end = Date().addingTimeInterval(TestWait.seconds(.product(2)))
+                    readinessDeadline = end
+                    deadline = end
+                    FirstFailureContext.beginWait(seconds: TestWait.seconds(.product(2)))
+                }
+                // Snapshot geometry is readiness evidence; the single tap's state readback proves its effect.
+                if observation.isReady, !observation.hasSettingsNavigationEvidence {
+                    guard let value = observation.button?.value as? String,
+                        ["play", "pause"].contains(value.lowercased())
+                    else {
+                        throw AccessLifecycleContract.AssertionError.message(
+                            "Play/pause value must be readable before acting.")
+                    }
+                    return observation
+                }
+            }
+            RunLoop.current.run(until: min(deadline, Date().addingTimeInterval(TestWait.seconds(.product(0.1)))))
+        }
+        if readinessDeadline == nil {
+            throw AccessLifecycleContract.AssertionError.message("The playback page must have play/pause.")
+        }
+        throw AccessLifecycleContract.AssertionError.message(
+            isContinuing ? "Play/pause must be hittable before continuing." : "Play/pause must be hittable.")
+    }
+
+    @MainActor
+    func tapPreparedPlayPause(_ observation: SlideshowControlBarButtonObservation) throws -> (
+        issued: Date, returned: Date
+    ) {
+        let button = try XCTUnwrap(observation.button)
+        let coordinate = observation.windowElement.coordinate(withNormalizedOffset: .zero).withOffset(
+            CGVector(
+                dx: button.frame.midX - observation.windowFrame.minX,
+                dy: button.frame.midY - observation.windowFrame.minY))
+        FirstFailureContext.mark("select", element: observation.identifier)
+        let issued = Date()
+        coordinate.tapForFailureEvidence()
+        return (issued, Date())
+    }
+
+    // Return the pause action time before readback, so AX latency does not move the T-2 measurement.
+    @discardableResult
     @MainActor
     func confirmPlayPauseState(
         app: XCUIApplication,
         expected: String,
         shouldTapIfNeeded: Bool,
         message: String
-    ) {
-        revealPlaybackControls(app: app)
-        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tapForFailureEvidence()
-        XCTAssertNoThrow(
-            try AccessLifecycleContract.assertConfirmPlayPauseWakesCanvasBeforeWait(
-                didWakeCanvas: true,
-                didTapPlayPauseToWake: false
-            )
-        )
-        let visible = playPauseButton(app)
-        XCTAssertTrue(
-            visible.waitForPublicElement(
-                "slideshow.control.playPause.button", timeout: TestWait.seconds(.product(8))),
-            "The playback page must have play/pause.")
-        XCTAssertTrue(
-            waitUntil(timeout: TestWait.seconds(.product(2))) { self.playPauseButton(app).isHittable },
-            "Play/pause must be hittable."
-        )
-        XCTAssertNoThrow(
-            try AccessLifecycleContract.assertPlaybackControlsRevealedByTarget(
-                isPlayPauseHittable: playPauseButton(app).isHittable,
-                isSettingsPresent: app.buttons["slideshow.control.settings.button"].exists,
-                isTreatedAsRevealed: true
-            )
-        )
-        if shouldTapIfNeeded && playPauseState(visible) != expected {
-            tapElement(visible)
-        }
-        if playPauseButton(app).exists == false {
-            revealPlaybackControls(app: app)
+    ) throws -> Date {
+        let observation = try preparePlayPause(app: app)
+        var returnedAt = Date()
+        if shouldTapIfNeeded && (observation.button?.value as? String)?.lowercased() != expected {
+            returnedAt = try tapPreparedPlayPause(observation).returned
         }
         XCTAssertTrue(
             waitForPlayPauseState(app: app, expected: expected, timeout: TestWait.seconds(.product(4))), message)
+        return returnedAt
     }
 
     // The stopwatch starts when Continue is pressed; the return time is recorded separately, never as the origin.
     @MainActor
-    func pressContinueStartingClock(app: XCUIApplication) -> (issued: Date, returned: Date) {
-        revealPlaybackControls(app: app)
-        let playPause = playPauseButton(app)
-        XCTAssertTrue(
-            playPause.waitForPublicElement(
-                "slideshow.control.playPause.button", timeout: TestWait.seconds(.product(8))),
-            "The playback page must have play/pause.")
-        XCTAssertTrue(playPause.exists, "Play/pause must be in the tree before continuing.")
-        XCTAssertTrue(
-            waitUntil(timeout: TestWait.seconds(.product(2))) { self.playPauseButton(app).isHittable },
-            "Play/pause must be hittable before continuing."
-        )
-        let issued = Date()
-        tapElement(playPause)
+    func pressContinueStartingClock(app: XCUIApplication) throws -> (issued: Date, returned: Date) {
+        let observation = try preparePlayPause(app: app, isContinuing: true)
+        guard (observation.button?.value as? String)?.lowercased() == "play" else {
+            throw AccessLifecycleContract.AssertionError.message("Play/pause must be paused before continuing.")
+        }
+        let press = try tapPreparedPlayPause(observation)
         requests.append("playback.play")
-        return (issued, Date())
+        return press
     }
 
     @MainActor
@@ -248,22 +282,45 @@ extension AccessLifecycleIOSUITests {
         intervalSeconds: Int
     ) throws -> [[String: Any]] {
         let interval = TimeInterval(intervalSeconds)
-        confirmPlayPauseState(
+        // Settings returns at an arbitrary scene age. Establish an opaque paused photo before starting T/2.
+        try confirmPlayPauseState(
             app: app,
-            expected: "pause",
+            expected: "play",
             shouldTapIfNeeded: true,
-            message: "Must be playing before the mid-interval timing."
+            message: "Pause before opening settings or identifying photos, so autoplay does not move away."
         )
-        RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(interval / 2))))
-        confirmPlayPauseState(
+        var controlBarReference = try captureControlBarReference(app: app)
+        let setupMark = classifyCurrentMark(app: app)
+        revealPlaybackControls(app: app)
+        tapElement(app.buttons["slideshow.control.next.button"])
+        requests.append("playback.next")
+        let timingStart = try captureStableNextMark(
+            app: app, continueMark: setupMark, controlBarReference: controlBarReference, name: "timing-start")
+        let midpointPlay = try pressContinueStartingClock(app: app)
+        XCTAssertTrue(
+            waitForPlayPauseState(app: app, expected: "pause", timeout: TestWait.seconds(.product(4))),
+            "Must be playing before the mid-interval timing."
+        )
+        RunLoop.current.run(until: midpointPlay.issued.addingTimeInterval(TestWait.seconds(.product(interval / 2))))
+        let midpointPauseReturnedAt = try confirmPlayPauseState(
             app: app,
             expected: "play",
             shouldTapIfNeeded: true,
             message: "Must be paused after the midpoint."
         )
         requests.append("playback.pause")
+        let midpointPauseElapsed = midpointPauseReturnedAt.timeIntervalSince(midpointPlay.issued)
+        XCTAssertLessThan(
+            midpointPauseElapsed,
+            interval - AccessLifecycleContract.continueCaptureSlackSeconds,
+            "Midpoint pause tap must return before T-2; elapsed=\(midpointPauseElapsed), T=\(interval)."
+        )
         let beforePause = try captureImmediateRequiredMark(app: app, name: "before-pause")
-        let controlBarReference = try captureControlBarReference(app: app)
+        XCTAssertEqual(
+            beforePause.mark, timingStart.mark,
+            "Automatic photo change occurred before T-2; expected=\(timingStart.mark), observed=\(beforePause.mark)."
+        )
+        controlBarReference = try captureControlBarReference(app: app)
         revealPlaybackControls(app: app)
         tapElement(app.buttons["slideshow.control.next.button"])
         requests.append("playback.next")
@@ -294,7 +351,7 @@ extension AccessLifecycleIOSUITests {
             intervalSeconds: interval
         )
 
-        let press = pressContinueStartingClock(app: app)
+        let press = try pressContinueStartingClock(app: app)
         let continueAt = press.issued
         try AccessLifecycleContract.assertClickTimesRecordedSeparately(
             pressIssuedElapsed: 0,
@@ -770,7 +827,8 @@ extension AccessLifecycleIOSUITests {
     func captureStableNextMark(
         app: XCUIApplication,
         continueMark: String,
-        controlBarReference: StrictE2EPhotoIdentity.ControlBarReference
+        controlBarReference: StrictE2EPhotoIdentity.ControlBarReference,
+        name: String = "after-next"
     ) throws -> (mark: String, png: Data) {
         try AccessLifecycleContract.assertIdentitySource("public_fixture_photo_mark")
         let nextAt = Date()
@@ -829,7 +887,7 @@ extension AccessLifecycleIOSUITests {
                         "Next-photo stable confirmation does not match the current raw screenshot"
                     )
                 }
-                try persistRequiredPNG(raw.png, name: "after-next")
+                try persistRequiredPNG(raw.png, name: name)
                 return (stable.mark, raw.png)
             }
         }
@@ -852,7 +910,7 @@ extension AccessLifecycleIOSUITests {
         let mark = contractMark(StrictE2EPhotoIdentity.captureIdentity(png: png))
         if isUsableSceneMark(mark) == false {
             throw AccessLifecycleContract.AssertionError.message(
-                "Screenshot \(name) cannot be used as identity: \(mark)"
+                "Screenshot cannot be used as identity; name=\(name), mark=\(mark)"
             )
         }
         return (mark, png)

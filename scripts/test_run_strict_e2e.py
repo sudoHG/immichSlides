@@ -1045,6 +1045,51 @@ class FailureDiagnosticsTests(unittest.TestCase):
             ("immichSlidesUITests/StrictE2EFilterIOSUITests+Navigation.swift", "Album capture preparation must observe paused playback after one Pause.", "control_action", "control_state"),
             ("immichSlidesUITests/StrictE2EFilterIOSUITests+Navigation.swift", "Album capture preparation must reach a complete paused scene within the playback capture budget.", "visible_scene_capture", "probe_readback"),
             ("immichSlidesUITests/StrictE2EFilterIOSUITests+Navigation.swift", "Album Next must advance the paused scene within the playback capture budget.", "history_navigation", "navigation"),
+            ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "Midpoint pause tap must return before T-2;", "continue_timing", "timing_window"),
+            ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "The playback page must have play/pause.", "control_action", "hidden_controls"),
+            ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "Play/pause must be hittable.", "control_action", "hidden_controls"),
+            ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "Play/pause must be hittable before continuing.", "control_action", "hidden_controls"),
+            ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "Play/pause value must be readable before acting.", "control_action", "probe_readback"),
+            ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "Play/pause must be paused before continuing.", "continue_timing", "control_state"),
+            ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "Must be playing before the mid-interval timing.", "continue_timing", "control_state"),
+            ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "Must be paused after the midpoint.", "control_action", "control_state"),
+            ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "Should be playing after Continue.", "continue_timing", "control_state"),
+            ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "This narrow entry must not enable a password.", "settings_navigation", "control_state"),
+            ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "Playback settings must provide the autoplay toggle.", "interval_setup", "hidden_controls"),
+            ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "Autoplay must be turned on through the real settings.", "interval_setup", "control_state"),
+            ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "Autoplay must be on for the pause/background cases.", "interval_setup", "control_state"),
+            ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "The pause/background cases must be able to switch to single-photo mode.", "interval_setup", "hidden_controls"),
+            ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "The display policy should offer single-photo mode.", "interval_setup", "hidden_controls"),
+            ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "Must return to the playback page after settings.", "settings_navigation", "navigation"),
+            ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "Failed to persist iPad watch sample diagnostics:", "continue_timing", "evidence_capture"),
+            ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "First-half-window evidence after Continue crossed the window;", "continue_timing", "timing_window"),
+            ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "Auto advance came before T-2;", "continue_timing", "timing_window"),
+            ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "A black screen with no new photo cannot pass automatically", "continue_timing", "scene_identity"),
+            ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "The iPad transition criterion is missing the original photo luma before Continue", "continue_timing", "evidence_capture"),
+            ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "Next-photo stable confirmation does not match the current raw screenshot", "visible_scene_capture", "evidence_capture"),
+            ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "Next photo did not form a stable new MATCH within ", "visible_scene_capture", "scene_identity"),
+            ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "Screenshot cannot be used as identity;", "visible_scene_capture", "scene_identity"),
+            ("immichSlidesUITests/AccessLifecycleIOSUITests+Navigation.swift", "Must be able to return from settings to the playback page.", "settings_navigation", "navigation"),
+            ("immichSlidesUITests/AccessLifecycleIOSUITests+Navigation.swift", "The settings list must provide the playback settings entry", "settings_navigation", "navigation"),
+            ("immichSlidesUITests/AccessLifecycleIOSUITests+Navigation.swift", "After opening playback settings, the autoplay toggle or the playback settings title must be visible.", "settings_navigation", "navigation"),
+            ("TestSupport/AccessLifecycleContract+Controls.swift", "Must not use the internal progress probe as the final criterion", "unknown", "evidence_capture"),
+            ("TestSupport/AccessLifecycleContract+Controls.swift", "launchEnvironment must not force-override the settings under test", "unknown", "evidence_capture"),
+            ("TestSupport/AccessLifecycleContract+Controls.swift", "Must not use the internal progress value instead of time and the screen", "control_action", "evidence_capture"),
+            ("TestSupport/AccessLifecycleContract+Controls.swift", "Photo changes while paused must not be judged by control value changes alone", "control_action", "evidence_capture"),
+            ("TestSupport/AccessLifecycleContract+Controls.swift", "The next photo after pause must show a different public pattern", "control_action", "scene_identity"),
+            ("TestSupport/AccessLifecycleContract+Controls.swift", "Tap the canvas to wake it before confirming play/pause", "control_action", "hidden_controls"),
+            ("TestSupport/AccessLifecycleContract+Controls.swift", "Do not tap again and toggle playback", "control_action", "control_state"),
+            ("TestSupport/AccessLifecycleContract+Controls.swift", "The confirmation wait must not happen before continueAt", "continue_timing", "timing_window"),
+            ("TestSupport/AccessLifecycleContract+Controls.swift", "A leftover settings button must not stand in for operable play/pause controls", "control_action", "hidden_controls"),
+            ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "Do not use click return time to hide the action's elapsed time", "continue_timing", "timing_window"),
+            ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "The click return time must not be earlier than the press", "continue_timing", "timing_window"),
+            ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "Evidence crossing the window must not pass automatically", "continue_timing", "timing_window"),
+            ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "Black screen without a new photo must not pass automatically", "continue_timing", "scene_identity"),
+            ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "Black screen, zoom, control bar gone or unrecognized is not a transition", "continue_timing", "scene_identity"),
+            ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "An in-window start was detected but not signed off", "continue_timing", "evidence_capture"),
+            ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "Uncertain samples must remain pending video review; do not default to PASS", "continue_timing", "evidence_capture"),
+            ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "Too early/late transition or missing start cannot pass automatically", "continue_timing", "timing_window"),
+            ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "Automatic photo change occurred before T-2;", "continue_timing", "timing_window"),
             ("immichSlidesUITests/UITestSupport.swift", "First-boot mode navigation must dismiss the exact password prompt,", "mode_selection", "navigation"),
             ("immichSlidesUITests/UITestSupport.swift", "Mode departure failed after one hittable Continue without a password prompt;", "playback_entry", "navigation"),
             ("immichSlidesUITests/StrictE2EFilterIOSUITests+Playback.swift", "Person selection preparation must provide an actionable card;", "filter_selection", "control_state"),
@@ -1228,6 +1273,10 @@ class FailureDiagnosticsTests(unittest.TestCase):
                     wrappers = ("XCTAssertEqual failed: (PRIVATE_SENTINEL) - ",)
                 elif prefix in caught_prefixes:
                     wrappers = ('failed: caught error: "message(\\"',)
+                elif prefix == "Midpoint pause confirmation must finish before T-2;":
+                    wrappers = ("XCTAssertLessThan failed: (PRIVATE_SENTINEL) - ",)
+                elif prefix == "Automatic photo change occurred before T-2;":
+                    wrappers = ("XCTAssertEqual failed: (PRIVATE_SENTINEL) - ",)
                 elif prefix == "The fixture must actually deliver a failing image response":
                     wrappers = ("XCTAssertGreaterThan failed: (PRIVATE_SENTINEL) - ",)
                 elif prefix == "After the change, a still frame taken mid-transition must not pass":
