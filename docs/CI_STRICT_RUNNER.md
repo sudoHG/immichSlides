@@ -269,6 +269,13 @@ separate key and is not enabled. Their extra accessibility/label computation is
 diagnostic overhead, not a product timing override.
 The `ios-lifecycle-settings`, `ios-lifecycle-pause` and `ios-lifecycle-background`
 selectors use an empty launch environment and forbid the scene probe.
+Before its midpoint pause, `ios-lifecycle-pause` pauses through the real controls,
+uses a real Next and the existing stable-photo capture window to establish a
+bright single-photo identity, then starts T/2 at the real Play press. Settings
+return has no known scene-clock origin and cannot start that wait. The setup
+capture is `timing-start.png`; the ordinary paused-frame identity, T+2 hold and
+Continue T±2 checks retain their existing deadlines and criteria. A legal frozen
+fade is still covered by `pause-window`, rather than admitted as a stable photo.
 `pause-window` sets the probe plus `UI_TEST_SERVER_URL`, `UI_TEST_API_KEY`,
 `UI_TEST_RESET_STATE`, `UI_TEST_FORCE_MODE_SELECTION` and
 `UI_TEST_PAUSE_AT_AUTOMATIC_FADE_MIDPOINT=1`. The last key enables a Debug-only,

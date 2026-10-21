@@ -248,13 +248,26 @@ extension AccessLifecycleIOSUITests {
         intervalSeconds: Int
     ) throws -> [[String: Any]] {
         let interval = TimeInterval(intervalSeconds)
+        // Settings return at an arbitrary scene age. Establish an opaque paused photo before starting T/2.
         confirmPlayPauseState(
             app: app,
-            expected: "pause",
+            expected: "play",
             shouldTapIfNeeded: true,
-            message: "Must be playing before the mid-interval timing."
+            message: "Pause before opening settings or identifying photos, so autoplay does not move away."
         )
-        RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(interval / 2))))
+        let controlBarReference = try captureControlBarReference(app: app)
+        let setupMark = classifyCurrentMark(app: app)
+        revealPlaybackControls(app: app)
+        tapElement(app.buttons["slideshow.control.next.button"])
+        requests.append("playback.next")
+        let timingStart = try captureStableNextMark(
+            app: app, continueMark: setupMark, controlBarReference: controlBarReference, name: "timing-start")
+        let midpointPlay = pressContinueStartingClock(app: app)
+        XCTAssertTrue(
+            waitForPlayPauseState(app: app, expected: "pause", timeout: TestWait.seconds(.product(4))),
+            "Must be playing before the mid-interval timing."
+        )
+        RunLoop.current.run(until: midpointPlay.issued.addingTimeInterval(TestWait.seconds(.product(interval / 2))))
         confirmPlayPauseState(
             app: app,
             expected: "play",
@@ -263,7 +276,11 @@ extension AccessLifecycleIOSUITests {
         )
         requests.append("playback.pause")
         let beforePause = try captureImmediateRequiredMark(app: app, name: "before-pause")
-        let controlBarReference = try captureControlBarReference(app: app)
+        try AccessLifecycleContract.assertSamplesStayOnSceneBeforeAdvanceWindow(
+            continueMark: timingStart.mark,
+            samples: [(Date().timeIntervalSince(midpointPlay.issued), beforePause.mark)],
+            intervalSeconds: interval
+        )
         revealPlaybackControls(app: app)
         tapElement(app.buttons["slideshow.control.next.button"])
         requests.append("playback.next")
@@ -770,7 +787,8 @@ extension AccessLifecycleIOSUITests {
     func captureStableNextMark(
         app: XCUIApplication,
         continueMark: String,
-        controlBarReference: StrictE2EPhotoIdentity.ControlBarReference
+        controlBarReference: StrictE2EPhotoIdentity.ControlBarReference,
+        name: String = "after-next"
     ) throws -> (mark: String, png: Data) {
         try AccessLifecycleContract.assertIdentitySource("public_fixture_photo_mark")
         let nextAt = Date()
@@ -829,7 +847,7 @@ extension AccessLifecycleIOSUITests {
                         "Next-photo stable confirmation does not match the current raw screenshot"
                     )
                 }
-                try persistRequiredPNG(raw.png, name: "after-next")
+                try persistRequiredPNG(raw.png, name: name)
                 return (stable.mark, raw.png)
             }
         }
