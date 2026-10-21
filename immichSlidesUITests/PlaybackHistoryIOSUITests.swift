@@ -5,6 +5,8 @@ enum PlaybackHistoryIOSUITestsCalibration {
     static let pauseSampleIntervalSeconds: TimeInterval = TestWait.seconds(.product(0.75))
     static let observableMotionProgress: Double = 0.001
     static let zeroProgressTolerance: Double = 0.000_1
+    // Hosted taps took about 1.9 s; reserve another 0.6 s before the diagnostic handoff deadline.
+    static let minimumPauseTapMarginSeconds: TimeInterval = TestWait.seconds(.product(2.5))
 }
 
 #if os(iOS)
@@ -373,7 +375,9 @@ extension PlaybackHistoryIOSUITests {
         app.tapSlideshowControlBarButton(
             identifier: "slideshow.control.playPause.button",
             requiringSnapshot: { snapshots in
-                mode != .smartFill || self.currentCompleteVisibleSmartFillScene(app: app, snapshots: snapshots) != nil
+                mode != .smartFill
+                    || (self.currentCompleteVisibleSmartFillScene(app: app, snapshots: snapshots) != nil
+                        && self.hasSmartFillPauseTapMargin(snapshots: snapshots))
             })
         XCTAssertTrue(waitForPlayPauseState(app: app, expected: "play", timeout: TestWait.seconds(.product(3))))
         let paused = try waitForPresentationProbe(app: app, timeout: TestWait.seconds(.product(3)))
