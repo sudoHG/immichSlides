@@ -386,7 +386,7 @@ extension SettingsResumeContractTests {
                         status = "UNRECOGNIZABLE"
                     }
                 }
-                if mutation == "dim_anchor" && abs(offset + 0.3) < 0.001 { luma = 0.49 }
+                if mutation == "dim_anchor" && offset < -0.001 { luma = 0.49 }
                 if mutation == "increasing_dim" && offset >= -0.001 && offset < 0.9 - 0.001 {
                     luma = 0.45 + offset * 0.08
                 }
