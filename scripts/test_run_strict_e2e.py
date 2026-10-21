@@ -1039,20 +1039,25 @@ class FailureDiagnosticsTests(unittest.TestCase):
         self.assertEqual(FAILURE_PHASES, {phase for _, phase, _ in PREFIX_RULES})
         self.assertEqual(FAILURE_CLASSES, {kind for _, _, kind in PREFIX_RULES})
         # Fixed expectations catch missing/misclassified rows; source checks catch stale prefixes.
-        cases = (
+        capture_cases = (
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift", "Visual ID failed history-start:", "history_start_capture", "scene_identity"),
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift", "Visual ID failed history-first-next:", "history_first_next_capture", "scene_identity"),
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift", "Visual ID failed history-second-next:", "history_second_next_capture", "scene_identity"),
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift", "Visual ID failed history-first-previous:", "history_first_previous_capture", "scene_identity"),
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift", "Visual ID failed history-second-previous:", "history_second_previous_capture", "scene_identity"),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "Visual ID failed history-start:", "history_start_capture", "scene_identity"),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "Visual ID failed history-first-next:", "history_first_next_capture", "scene_identity"),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "Visual ID failed history-second-next:", "history_second_next_capture", "scene_identity"),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "Visual ID failed history-first-previous:", "history_first_previous_capture", "scene_identity"),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "Visual ID failed history-second-previous:", "history_second_previous_capture", "scene_identity"),
             ("immichSlidesUITests/RotationUITests.swift", "rotation-start-portrait did not stabilize within the ", "rotation_start_capture", "timing_window"),
             ("immichSlidesUITests/RotationUITests.swift", "rotation-landscape-stable did not stabilize within the ", "rotation_landscape_capture", "timing_window"),
             ("immichSlidesUITests/RotationUITests.swift", "rotation-portrait-stable did not stabilize within the ", "rotation_portrait_capture", "timing_window"),
             ("immichSlidesUITests/RotationUITests.swift", "Could not recognize a public photo on screen within ", "visible_scene_capture", "scene_identity"),
             ("immichSlidesUITests/RotationUITests.swift", "The public photo on screen did not change after next;", "history_navigation", "scene_identity"),
             ("immichSlidesUITests/RotationUITests.swift", "Before rotating, the play button value must be pause (playing),", "control_action", "control_state"),
-            ("immichSlidesUITests/RotationUITests.swift", "The rotation sequence took ", "continue_timing", "timing_window"),
-            ("immichSlidesUITests/RotationUITests.swift", "Orientation API: after setting ", "display_policy", "navigation"),
+            ("immichSlidesUITests/RotationUITests.swift", "The rotation sequence took ", "unknown", "timing_window"),
+            ("immichSlidesUITests/RotationUITests.swift", "Orientation API: after setting ", "unknown", "navigation"),
             ("immichSlidesUITests/IOSDriver.swift", "Fresh install must open the normal first-boot page.", "firstboot_setup", "navigation"),
             ("immichSlidesUITests/IOSDriver.swift", "First-boot page must show the API Key field.", "firstboot_setup", "navigation"),
             ("immichSlidesUITests/IOSDriver.swift", "The API Key must be entered into the secure field.", "firstboot_setup", "control_state"),
@@ -1070,12 +1075,14 @@ class FailureDiagnosticsTests(unittest.TestCase):
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift", "Playback page after uninstall means a dirty install container;", "firstboot_setup", "navigation"),
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift", "The public test URL must be entered verbatim,", "firstboot_setup", "control_state"),
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift", "API Key must reach the secure field;", "firstboot_setup", "control_state"),
-            ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift", "iPad must rotate to landscape to record split-view evidence.", "display_policy", "navigation"),
+            ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift", "iPad must rotate to landscape to record split-view evidence.", "unknown", "navigation"),
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift", "The first-boot filter summary must offer a way back to mode selection.", "mode_selection", "navigation"),
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift", "The iOS filter summary should no longer use a bottom back button,", "mode_selection", "navigation"),
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift", "Connection test showed a failure alert:", "firstboot_setup", "navigation"),
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift", "Pause again before history actions so the 5-second timer does not interfere.", "control_action", "control_state"),
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift", "A nil mark must encode into JSON,", "visible_scene_capture", "evidence_capture"),
+        )
+        cases = capture_cases + (
             ("immichSlidesUITests/StrictE2EFilterIOSUITests+Navigation.swift", "Album capture preparation must reach a stable scene before Pause.", "control_action", "timing_window"),
             ("immichSlidesUITests/StrictE2EFilterIOSUITests+Navigation.swift", "Album capture preparation paused during a transition; Pause freezes the current layers.", "control_action", "control_state"),
             ("immichSlidesUITests/StrictE2EFilterIOSUITests+Navigation.swift", "Album capture preparation must observe paused playback after one Pause.", "control_action", "control_state"),
@@ -1305,17 +1312,28 @@ class FailureDiagnosticsTests(unittest.TestCase):
                 if prefix.startswith("Visual ID failed history-"):
                     self.assertIn('"Visual ID failed \\(name): ',
                                   (root / "TestSupport/StrictE2ETestSupport.swift").read_text())
-                    self.assertIn('step: "' + prefix.removeprefix("Visual ID failed ").removesuffix(":"),
-                                  (root / source).read_text())
+                    name = prefix.removeprefix("Visual ID failed ").removesuffix(":")
+                    if source.endswith("/StrictE2ETVOSFlowUITests.swift"):
+                        self.assertRegex((root / source).read_text(),
+                                         r'captureVisualIdentity\(\s*app: app,\s*evidenceName: "' + re.escape(name) + '"')
+                        self.assertIn('captureStrictSceneFrame(app: app, name: evidenceName, attachmentName: attachmentName)',
+                                      (root / source).read_text())
+                    else:
+                        self.assertIn('captureHistoryIdentity(app: app, step: "' + name + '")',
+                                      (root / source).read_text())
+                        self.assertIn('captureStrictSceneFrame(app: app, name: step, attachmentName: step)',
+                                      (root / "immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift").read_text())
                 elif prefix.startswith("rotation-"):
                     self.assertIn('"\\(name) did not stabilize within the ', (root / source).read_text())
-                    self.assertIn('"' + prefix.split()[0] + '",', (root / source).read_text())
+                    self.assertRegex((root / source).read_text(),
+                                     r'captureStable\(\s*"' + re.escape(prefix.split()[0]) + '",')
                 else:
                     self.assertIn('"' + prefix, (root / source).read_text())
                 expected = {"failure_phase": phase, "failure_class": kind}
                 # Match each wrapper to its public call site.
                 if source.endswith("/RotationUITests.swift"):
-                    wrappers = ('Failure(message: "', 'failed: caught error: "Failure(message: \\"')
+                    wrappers = ('Failure(message: "', 'failed: caught error: "Failure(message: \\"',
+                                'failed: caught error: "Failure(message: "', 'Failure(message: \\"')
                 elif prefix in failure_prefixes:
                     wrappers = ("failed - ",)
                 elif prefix in false_prefixes:
@@ -1336,16 +1354,35 @@ class FailureDiagnosticsTests(unittest.TestCase):
                     wrappers = ("XCTAssertTrue failed - ",)
                 if prefix == "EXIF does not match the photo: mark=":
                     wrappers += ('failed: caught error: "message(\\"',)
+                # Pin wrapper groups to the nearest emitting assertion in these reviewed flows.
+                if prefix.startswith("Visual ID failed history-"):
+                    assertion_source = (root / "TestSupport/StrictE2ETestSupport.swift").read_text()
+                    message_start = assertion_source.index('"Visual ID failed \\(name): ')
+                elif (source, prefix, phase, kind) in capture_cases:
+                    assertion_source = (root / source).read_text()
+                    template = ('\\(name) did not stabilize within the '
+                                if prefix.startswith("rotation-") else prefix)
+                    message_start = assertion_source.index('"' + template)
+                else:
+                    assertion_source = None
+                if assertion_source is not None:
+                    emitters = list(re.finditer(r'(XCTAssert\w+|XCTFail|throw Failure)\s*\(',
+                                               assertion_source[:message_start]))
+                    expected_emitter = ("throw Failure" if wrappers[0].startswith("Failure(") else
+                                        "XCTFail" if wrappers[0] == "failed - " else
+                                        wrappers[0].split()[0])
+                    self.assertEqual(emitters[-1].group(1), expected_emitter)
                 for wrapper in wrappers:
                     message = wrapper + prefix + " PRIVATE_SENTINEL /private/path asset-private"
                     if prefix in caught_prefixes or wrapper.startswith('failed: caught error:'):
                         message += '\\")"'
                     self.assertEqual(classify_messages([message]), expected)
                     self.assertEqual(classify_messages([message, message + " other-private-value"]), expected)
-                    other_phase = ("The first wake should only bring up the control bar."
-                                   if phase == "interval_setup" else
-                                   "The iOS slider must be settable to PRIVATE_SENTINEL")
-                    for conflicting in ("unreviewed PRIVATE_SENTINEL", other_phase):
+                    conflicting_classification_message = (
+                        "The first wake should only bring up the control bar."
+                        if phase == "interval_setup" else
+                        "The iOS slider must be settable to PRIVATE_SENTINEL")
+                    for conflicting in ("unreviewed PRIVATE_SENTINEL", conflicting_classification_message):
                         self.assertEqual(classify_messages([message, conflicting]), unknown_diagnostics())
                         self.assertEqual(classify_messages([conflicting, message]), unknown_diagnostics())
         self.assertEqual(
