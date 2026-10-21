@@ -1584,7 +1584,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
             self.assertNotIn("slider", exported)
             self.assertEqual(validate_case_export(evidence, "ios", "smoke"), [{"identifier": name, "result": "Failed",
                 "failure_phase": "interval_setup", "failure_class": "interval_readback", "first_failure": receipt}])
-            for ambiguity in ("matching-method", "failure-time", "missing-time", "synthesis", "read-timeout"):
+            for ambiguity in ("matching-method", "failure-time", "missing-time", "partial-time", "synthesis", "read-timeout"):
                 with self.subTest(native_failure=ambiguity), diagnostics.session() as recorder:
                     sampler.reset_mock()
                     original_rows = native_summary["failureSummaries"]["_values"]
@@ -1595,6 +1595,8 @@ class FailureDiagnosticsTests(unittest.TestCase):
                         native_summary["failureSummaries"]["_values"] = original_rows * 2
                     elif ambiguity == "missing-time":
                         native_summary["failureSummaries"]["_values"] = []
+                    elif ambiguity == "partial-time":
+                        native_summary["failureSummaries"]["_values"] = original_rows + [{"uuid": {"_value": "unknown"}}]
                     elif ambiguity == "matching-method":
                         tests["summaries"]["_values"] = original_metadata * 2
                     elif ambiguity == "synthesis":

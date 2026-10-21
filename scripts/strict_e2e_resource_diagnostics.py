@@ -411,8 +411,7 @@ def native_first_failure(summary):
     """Use the earliest recorded failure only when its timestamp identifies one failure."""
     failures = [(native_time(row, "timestamp"), legacy_value(row, "uuid"))
                 for row in legacy_rows(summary, "failureSummaries")]
-    failures = [(at, identifier) for at, identifier in failures if at is not None]
-    if not failures:
+    if not failures or any(at is None for at, _ in failures):
         return None, None
     earliest = min(at for at, _ in failures)
     matches = [row for row in failures if row[0] == earliest]
