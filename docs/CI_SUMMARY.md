@@ -643,9 +643,8 @@ All criteria are required:
 
 | Phase | Class | Eligible steps | Timing-only interpretation |
 | --- | --- | --- | --- |
-| `firstboot_setup` | `navigation` | `query-element` | Target UI availability wait |
-| `mode_selection` | `navigation` | `query-element`, `mode-card`, `mode-continue` | Mode control readiness wait |
-| `playback_entry` | `navigation` | `query-element`, `mode-departure` | Departure / playback surface availability wait |
+| `mode_selection` | `navigation` | `mode-card`, `mode-continue` | Dedicated mode control readiness wait |
+| `playback_entry` | `navigation` | `query-element` | Playback surface availability wait |
 | `settings_navigation` | `navigation` | `query-element`, `select` | Settings surface wait or bound native input idle |
 | `control_action`, `hidden_controls` | `hidden_controls` | `query-element`, `reveal-controls` | Control availability wait |
 | `interval_setup` | `hidden_controls` | `query-element` | Settings control availability wait |
@@ -660,6 +659,11 @@ combinations stay red. In particular, `history_navigation` / no-advance and
 checks and are excluded. Rotation and pause-window contracts are also excluded
 without a separately reviewed timing-only interpretation. Missing or ambiguous
 receipts, samples or case bindings stay red; an old night gains no classification.
+`firstboot_setup/navigation` also includes a confirmed connection-error alert,
+and `mode_selection/navigation` at `query-element` includes an unexpected legacy
+control assertion, so neither qualifies. `playback_entry/navigation` at
+`mode-departure` specifically reports Continue returned without a password prompt
+while the mode page was still observed; that known navigation defect stays red.
 An unrecognizable photo identity on a known non-playback surface, such as the mode
 page, does not by itself assert that the App displayed a wrong photo.
 

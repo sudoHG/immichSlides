@@ -217,6 +217,13 @@ class SummaryContractTests(unittest.TestCase):
         self.assertIsNotNone(environment_limit_evidence(yellow, mode_wait, [resources], runner_hosted=True))
         pending_review = ci_summary.observation(row["identity"], "needs-human-review", 12)
         self.assertIsNone(environment_limit_evidence(yellow, pending_review, [resources], runner_hosted=True))
+        for phase, step in (("playback_entry", "mode-departure"), ("firstboot_setup", "query-element"),
+                            ("mode_selection", "query-element")):
+            functional = copy.deepcopy(row)
+            functional.update(failure_phase=phase, failure_class="navigation")
+            functional["first_failure"]["step"] = step
+            with self.subTest(functional_navigation=(phase, step)):
+                self.assertIsNone(environment_limit_evidence(yellow, functional, [resources], runner_hosted=True))
         for elapsed, expected in ((5, True), (4.99, False)):
             changed = copy.deepcopy(row)
             changed["first_failure"]["timing"]["wait_elapsed_seconds"] = elapsed

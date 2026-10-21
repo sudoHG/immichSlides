@@ -60,9 +60,8 @@ ENVIRONMENT_IDLE_MAX_PERCENT = 5
 ENVIRONMENT_POST_EVENT_IDLE_SECONDS = 20
 # Only waits for UI availability qualify. Assertions about values, identity or advance do not.
 ENVIRONMENT_WAIT_STEPS = {
-    ("firstboot_setup", "navigation"): {"query-element"},
-    ("mode_selection", "navigation"): {"query-element", "mode-card", "mode-continue"},
-    ("playback_entry", "navigation"): {"query-element", "mode-departure"},
+    ("mode_selection", "navigation"): {"mode-card", "mode-continue"},
+    ("playback_entry", "navigation"): {"query-element"},
     ("settings_navigation", "navigation"): {"query-element", "select"},
     ("control_action", "hidden_controls"): {"query-element", "reveal-controls"},
     ("hidden_controls", "hidden_controls"): {"query-element", "reveal-controls"},
