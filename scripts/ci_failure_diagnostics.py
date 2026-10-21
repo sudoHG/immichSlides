@@ -441,9 +441,16 @@ def render_first_failure(receipt):
             f"since action={measured('since_action_issued_seconds')}; wait={measured('wait_elapsed_seconds')}; "
             f"deadline={measured('deadline_seconds')}; screenshot={receipt['screenshot']['status']}")
     if "native_activity_seconds" in receipt:
-        rendered += "; native activity: " + ", ".join(
-            key + "=" + ("unavailable" if value is None else f"{value:g}s")
-            for key, value in receipt["native_activity_seconds"].items())
+        native = receipt["native_activity_seconds"]
+        if all(value is None for value in native.values()):
+            rendered += "; native=unavailable"
+        else:
+            labels = (("pre", "pre_event_idle"), ("window", "find_window"),
+                      ("synth", "synthesize_event"), ("post", "post_event_idle"),
+                      ("ax", "ax_root_acquisition"))
+            rendered += "; native: " + ", ".join(
+                label + "=" + ("unavailable" if native[key] is None else f"{native[key]:g}s")
+                for label, key in labels)
     return rendered
 
 

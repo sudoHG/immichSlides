@@ -215,6 +215,7 @@ def export_private_result_bundle(
     enrich_failure_diagnostics: bool = False,
     first_failure_spool=None,
     first_failure_images=None,
+    resource_sampler=None,
 ) -> str:
     from ci_flaky import official_result_step
     try:
@@ -250,10 +251,12 @@ def export_private_result_bundle(
             visit(node)
         if failed:
             diagnostics = {}
+            legacy_root = {}
             try:
                 details = subprocess.run(["xcrun", "xcresulttool", "get", "object", "--legacy", "--path", str(bundle), "--format", "json"],
                                          capture_output=True, check=True, timeout=export_timeout_seconds)
-                diagnostics = legacy_diagnostics(json.loads(details.stdout))
+                legacy_root = json.loads(details.stdout)
+                diagnostics = legacy_diagnostics(legacy_root)
             except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
                 # Diagnostic availability must not change the official result or runner exit.
                 pass
@@ -265,6 +268,16 @@ def export_private_result_bundle(
                 directory, selectors = first_failure_spool
                 collect_first_failure_spool(directory, selectors, failed,
                     first_failure_images or evidence_dir / ("first-failure" + suffix))
+            if resource_sampler is not None:
+                from strict_e2e_resource_diagnostics import collect_native_activity
+                try:
+                    collect_native_activity(bundle, legacy_root, failed, resource_sampler,
+                        recorder=active(), timeout=min(2.0, export_timeout_seconds))
+                except Exception:
+                    recorder = active()
+                    if recorder is not None:
+                        recorder.unavailable.add("xcode")
+                        recorder.truncate("worker-unavailable")
             exported = (json.dumps(payload, sort_keys=True) + "\n").encode()
     (evidence_dir / f"official-tests{suffix}.json").write_bytes(exported)
     summary_path = evidence_dir / f"official-summary{suffix}.json"
@@ -763,6 +776,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
     private_bundles: list[tuple[Path, str]] = []
     private_test_runs: list[Path] = []
     first_failure_spools = {}
+    resource_samplers = {}
     official_tests_digests: dict[str, str] = {}
 
     def record_timeout(error: InfrastructureTimeout) -> None:
@@ -972,6 +986,21 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                     first_failure_spools[bundle] = (spool, selectors, number)
                 return call
             from ci_flaky import check_retry_flags
+            def measured_run(call, operation):
+                from strict_e2e_resource_diagnostics import CaseSampler
+                bundle = Path(call[call.index("-resultBundlePath") + 1])
+                sampler = CaseSampler(active(), simulator_udid).start()
+                resource_samplers[bundle] = sampler
+                try:
+                    return operation()
+                finally:
+                    try:
+                        sampler.stop()
+                    except Exception:
+                        recorder = active()
+                        if recorder is not None:
+                            recorder.unavailable.add("xcode")
+                            recorder.truncate("worker-unavailable")
             check_retry_flags(command)
             if arguments.listed_retry_device:
                 from functools import partial
@@ -1006,8 +1035,9 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                     code = None
                     products_unchanged = False
                     try:
-                        code = run_command(configured, cwd=REPO_ROOT, environment=environment, log_path=log_path,
-                                           timeout_seconds=arguments.warm_timeout_seconds)
+                        code = measured_run(configured, lambda: run_command(
+                            configured, cwd=REPO_ROOT, environment=environment, log_path=log_path,
+                            timeout_seconds=arguments.warm_timeout_seconds))
                     except CommandError as error:
                         code = 124 if isinstance(error.__cause__, subprocess.TimeoutExpired) else error.code
                         raise
@@ -1051,8 +1081,9 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                 return retry_result["exit_code"]
             command = configure_call(command, 1)
             started = time.monotonic()
-            code = run_command(command, cwd=REPO_ROOT, environment=environment, log_path=log_path,
-                               timeout_seconds=arguments.warm_timeout_seconds if warm_receipt is not None else XCODEBUILD_TIMEOUT_SECONDS)
+            code = measured_run(command, lambda: run_command(
+                command, cwd=REPO_ROOT, environment=environment, log_path=log_path,
+                timeout_seconds=arguments.warm_timeout_seconds if warm_receipt is not None else XCODEBUILD_TIMEOUT_SECONDS))
             if warm_receipt is not None:
                 validate_warm_products(derived_data_path, warm_receipt)
                 from strict_e2e_build import write_json
@@ -1281,6 +1312,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                     bundle, arguments.evidence_dir, [PUBLIC_API_KEY, WRONG_PUBLIC_API_KEY], suffix=suffix,
                     enrich_failure_diagnostics=True,
                     first_failure_spool=first_failure_spools[bundle][:2] if bundle in first_failure_spools else None,
+                    resource_sampler=resource_samplers.get(bundle),
                 )
             except InfrastructureTimeout as error:
                 record_timeout(error)
@@ -1292,6 +1324,14 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                     json.loads((arguments.evidence_dir / ("official-tests" + suffix + ".json")).read_text()),
                     first_failure_spools[bundle][2])
             if case_manifest is not None:
+                recorder = active()
+                receipt = recorder.receipt() if recorder is not None else None
+                if receipt is not None and resource_samplers:
+                    receipt["events"] = []
+                    sequences = {sampler.sequence for sampler in resource_samplers.values()}
+                    receipt["case_resources"] = [case for case in receipt.get("case_resources", [])
+                                                  if case["sequence"] in sequences]
+                    case_manifest["bounded_diagnostics"] = receipt
                 if bundle == result_bundle_path:
                     case_manifest["official_tests_sha256"] = digest
                 if suffix:

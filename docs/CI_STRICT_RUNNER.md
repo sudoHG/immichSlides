@@ -942,8 +942,10 @@ and malformed JSON containing the field are refused without echoing candidates.
 | `screenshot` | `status`, `width`, `height`, `bytes`; a retained image needs positive dimensions <=1,536 and bytes <=1 MiB; unavailable images have null measurements |
 | `native_activity_seconds` | Optional, XCTest source only; exactly `pre_event_idle`, `find_window`, `synthesize_event`, `post_event_idle`, `ax_root_acquisition`, each finite 0–86,400 seconds or null |
 
-Native activity support is reader-only until its producer PR follows the
-[reader-first merge](CI_SUMMARY.md#reader-first-evolution). Durations describe
+Native activity support follows the
+[reader-first merge](CI_SUMMARY.md#reader-first-evolution). Strict-runner failure
+exports inspect the existing private xcresult and emit the numeric projection.
+Durations describe
 native xcresult sub-activities bound to the first failing action, not estimates
 from adjacent log lines. Ambiguous or missing activities remain null; zero means
 a measured zero. Pre/post-event idle are separated around event synthesis;
@@ -951,13 +953,47 @@ AX root acquisition measures only the native application-root acquisition, not
 all accessibility work. Nested intervals must not be double-counted. No native
 titles or raw logs enter the receipt. Summary/report rendering shows only these
 fixed duration labels and numbers, preserving the original attempt and failure.
+Tap matching requires a unique duration match among preceding native taps, the
+latest native tap before the first official failure, and agreement with the
+recorder's action duration within 0.1 seconds. Only a
+recorded `select`/`tap` context permits this association. Otherwise the extractor
+requires an unambiguous native failure-summary ID. Missing/ambiguous matches
+retain nulls. Adjacent native AX root acquisitions within 0.1 seconds of the
+tap boundaries are included, using their own actual start/finish bounds.
+Pre/post-event idle refer only to the App under test; SpringBoard idle is excluded.
+Overlapping intervals are unioned within a category; different categories may
+overlap and must not be added as an action total. The earliest official failure
+timestamp binds the resource window even if no recorder receipt was available.
+Unavailable native exports leave the original receipt/result intact. Additional
+reads use the existing Xcode diagnostic collection allowance, at most two seconds
+per export; successful methods perform no additional xcresult activity reads.
+Markdown uses the compact fixed labels `pre`, `window`, `synth`, `post`, and
+`ax` for these five fields, respectively; the JSON retains the full field names
+and values. If all five values are null, Markdown emits only `native=unavailable`.
+Regression coverage checks two reports with 50 first-failure lines each, at both
+the maximum native values and all-null values, against the existing 65,000-byte
+notification guard. Oversized notification bodies still fail closed; no receipts
+are dropped and no result changes.
 
 Reader support for bounded per-case host CPU/load evidence is specified in
 [bounded infrastructure diagnostics](CI_SUMMARY.md#bounded-infrastructure-diagnostics).
-Neither new field is currently produced. The later sampler must publish its own
-measured cost, retain samples within ±5 seconds of the first failure, and leave
+The sampler publishes its measured active wall cost, retains samples within
+±5 seconds of the first failure, and shares a separate 180-second sampling
+allowance across the job ledger. It preserves the existing Xcode diagnostic
+allowance for native extraction and anomaly diagnostics, and leaves
 every test deadline, action, retry and verdict unchanged. A low idle measurement
 is contention evidence, not by itself proof of why an App action was slow.
+The case manifest and `trace.json`'s `warm[].bounded_diagnostics` bind resource
+sequences to the enclosing case. These copies retain only that case's resources,
+shared collection-cost/truncation metadata and an empty `events` list, keeping
+them small independently of the job's event ledger. The tracer validates the
+contents with the bounded-diagnostics reader's `validate_receipt` before writing.
+Trusted trace readers ignore this field; they do not validate or use it for verdicts.
+Each `ps` query is capped at 0.5 seconds within the unchanged 180-second allowance.
+If no App process is identified, per-sample App CPU and its case peak remain null;
+an identified but idle App can report zero. Diagnostic shutdown or native-projection
+errors mark Xcode diagnostics unavailable and truncated without replacing the
+execution return code or original exception.
 
 Capture offsets refer to the first failure's monotonic timestamp; they expose
 request/return lag rather than claiming an instantaneous image. `observation`
