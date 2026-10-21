@@ -1250,7 +1250,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests+PauseWindow.swift", "The segmented control must remain after selecting single photo mode.", "display_policy", "control_state"),
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests+PauseWindow.swift", "The display mode option must keep its Simplified Chinese copy.", "display_policy", "control_state"),
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests+PauseWindow.swift", "Playback settings must offer the EXIF toggle.", "settings_navigation", "navigation"),
-            ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests+PauseWindow.swift", "Show EXIF info must be on.", "exif_ownership", "control_state"),
+            ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests+PauseWindow.swift", "Show EXIF info must be on.", "interval_setup", "control_state"),
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests+PauseWindow.swift", "The playback interval must be 5 seconds.", "interval_setup", "interval_readback"),
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests+PauseWindow.swift", "After identifying A2, Next must be tappable to check its successor.", "pause_window", "hidden_controls"),
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests+PauseWindow.swift", "PRECONDITION_FAIL: order became A2→", "pause_window", "scene_identity"),
@@ -1365,6 +1365,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
             "After late completion the current public mark must stay: no flash back, all black or unreadable: ",
             "Can't check EXIF: photo status ",
             "EXIF does not match the photo: mark=",
+            "Window missed or required frames missing: ",
             "SmartFill must expose the complete manifest, stable visible render state and history cursor together",
             "After tapping next, the fully visible SmartFill scene identity did not change in ",
             "scene identity did not change",
@@ -1388,7 +1389,6 @@ class FailureDiagnosticsTests(unittest.TestCase):
             "Pausing must freeze the current transform progress",
         }
         caught_prefixes = {
-            "Window missed or required frames missing: ",
             "First-half-window evidence after Continue crossed the window;",
             "Auto advance came before T-2;",
             "A black screen with no new photo cannot pass automatically",

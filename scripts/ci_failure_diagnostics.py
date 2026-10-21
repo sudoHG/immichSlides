@@ -965,7 +965,7 @@ PREFIX_RULES = (
     ("The segmented control must remain after selecting single photo mode.", "display_policy", "control_state"),
     ("The display mode option must keep its Simplified Chinese copy.", "display_policy", "control_state"),
     ("Playback settings must offer the EXIF toggle.", "settings_navigation", "navigation"),
-    ("Show EXIF info must be on.", "exif_ownership", "control_state"),
+    ("Show EXIF info must be on.", "interval_setup", "control_state"),
     ("The playback interval must be 5 seconds.", "interval_setup", "interval_readback"),
     ("After identifying A2, Next must be tappable to check its successor.", "pause_window", "hidden_controls"),
     ("PRECONDITION_FAIL: order became A2→", "pause_window", "scene_identity"),

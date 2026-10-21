@@ -1285,6 +1285,19 @@ iPad layout and orientation self-checks, so it retains an `unknown` phase.
 The whole-rotation deadline and onboarding iPad orientation assertion also use
 `unknown`: neither Continue timing nor display-mode policy describes device rotation.
 
+The pause-window suite's four `PRECONDITION_FAIL` prefixes describe the A2 search
+before Play, although they share `pause_window/scene_identity` with post-Play checks.
+Use the first-failure receipt's completed-wait deadline to distinguish these sites:
+the A2 search retains a 4 s deadline from `waitForSettledPhoto`, while post-Play
+checks retain the 2 s Play-state readback deadline. The screenshot context and a
+short elapsed wait alone do not identify the assertion; retain the raw XCTest
+message for exact attribution. `Show EXIF info must be on.` is an
+`interval_setup/control_state` precondition, like the autoplay setup check, rather
+than part of the EXIF ownership flow. Both classifications remain red.
+The segmented-control presence and Simplified Chinese label checks use
+`control_state` as the closest existing class; they check presence/copy rather
+than enabled or selected state and do not introduce a new enum.
+
 New enum meanings and why the previous vocabulary cannot express them:
 
 | Enum | Meaning and reason |
@@ -1434,6 +1447,25 @@ New enum meanings and why the previous vocabulary cannot express them:
 | `Previous must be disabled at the history boundary when playback starts.` | `history_navigation` | `control_state` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
 | `After two Next taps, Previous must be enabled.` | `history_navigation` | `control_state` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
 | `After a pause of at least 10 seconds, autoplay must not resume on its own.` | `paused_hold` | `control_state` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
+| `After injecting the public fixture, the app must reach the mode page.` | `mode_selection` | `navigation` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
+| `After returning to the playback page, the control bar must be revealed again.` | `settings_navigation` | `hidden_controls` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
+| `The settings button must be tappable.` | `settings_navigation` | `hidden_controls` | [StrictE2EFirstBatchIOSUITests+PauseWindow.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+PauseWindow.swift) |
+| `The settings list must offer the playback settings entry` | `settings_navigation` | `navigation` | [StrictE2EFirstBatchIOSUITests+PauseWindow.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+PauseWindow.swift) |
+| `Could not return from playback settings to the playback page` | `settings_navigation` | `navigation` | [StrictE2EFirstBatchIOSUITests+PauseWindow.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+PauseWindow.swift) |
+| `Playback settings must offer the display mode segmented control.` | `display_policy` | `navigation` | [StrictE2EFirstBatchIOSUITests+PauseWindow.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+PauseWindow.swift) |
+| `Display mode must offer single photo mode.` | `display_policy` | `navigation` | [StrictE2EFirstBatchIOSUITests+PauseWindow.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+PauseWindow.swift) |
+| `The segmented control must remain after selecting single photo mode.` | `display_policy` | `control_state` | [StrictE2EFirstBatchIOSUITests+PauseWindow.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+PauseWindow.swift) |
+| `The display mode option must keep its Simplified Chinese copy.` | `display_policy` | `control_state` | [StrictE2EFirstBatchIOSUITests+PauseWindow.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+PauseWindow.swift) |
+| `Playback settings must offer the EXIF toggle.` | `settings_navigation` | `navigation` | [StrictE2EFirstBatchIOSUITests+PauseWindow.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+PauseWindow.swift) |
+| `Show EXIF info must be on.` | `interval_setup` | `control_state` | [StrictE2EFirstBatchIOSUITests+PauseWindow.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+PauseWindow.swift) |
+| `The playback interval must be 5 seconds.` | `interval_setup` | `interval_readback` | [StrictE2EFirstBatchIOSUITests+PauseWindow.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+PauseWindow.swift) |
+| `After identifying A2, Next must be tappable to check its successor.` | `pause_window` | `hidden_controls` | [StrictE2EFirstBatchIOSUITests+PauseWindow.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+PauseWindow.swift) |
+| `PRECONDITION_FAIL: order became A2→` | `pause_window` | `scene_identity` | [StrictE2EFirstBatchIOSUITests+PauseWindow.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+PauseWindow.swift) |
+| `PRECONDITION_FAIL: A2 successor is not A3 (` | `pause_window` | `scene_identity` | [StrictE2EFirstBatchIOSUITests+PauseWindow.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+PauseWindow.swift) |
+| `PRECONDITION_FAIL: not the large-text A2 after returning.` | `pause_window` | `scene_identity` | [StrictE2EFirstBatchIOSUITests+PauseWindow.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+PauseWindow.swift) |
+| `PRECONDITION_FAIL: could not identify the large-text A2 using Next.` | `pause_window` | `scene_identity` | [StrictE2EFirstBatchIOSUITests+PauseWindow.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+PauseWindow.swift) |
+| `Window missed or required frames missing: ` | `pause_window` | `evidence_capture` | [StrictE2EPhotoIdentity.swift](../TestSupport/StrictE2EPhotoIdentity.swift), emitted by [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
+| `The midpoint hook must leave the frame-synchronized probe paused.` | `pause_window` | `probe_readback` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
 | `probe_hit=MISS: frame-synchronized probe never saw outgoing translucent and incoming opacity=0 in 7 s.` | `pause_window` | `timing_window` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
 | `visual_verdict=MISSING_FRAMES: missing a window-detected, after-pause, after-pause-0_3s or play-to-pause keepAlways frame.` | `pause_window` | `evidence_capture` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
 | `visual_verdict=BLACK_OR_BLANK: synced probe missing after pause, or outgoing opacity already 0.` | `pause_window` | `probe_readback` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
@@ -1526,6 +1558,12 @@ and the turning-off-Autoplay prefix retain their previous `unknown` pair. A mixe
 an unmatched message or different phase/class pairs still yields the `unknown` pair,
 even when another message matches a new row. No hosted hit-rate improvement is claimed
 until actual official failure summaries exercise these prefixes.
+
+`Window missed or required frames missing: ` reaches XCTest through the
+pause-window caller's `XCTFail(error.localizedDescription)`, with the `failed - `
+wrapper, rather than a caught-error wrapper. It cannot be the first failure:
+`continueAfterFailure = false` stops this case at the earlier `probe_hit=MISS`
+or `visual_verdict=MISSING_FRAMES` check before `assertRequiredFrames` can report it.
 
 Still unknown on the throwing path:
 
