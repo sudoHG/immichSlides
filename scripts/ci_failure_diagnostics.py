@@ -12,7 +12,10 @@ FAILURE_PHASES = frozenset({"interval_setup", "hidden_controls", "visible_scene_
                             "continue_timing", "paused_hold", "settings_navigation", "control_action", "unknown",
                             "firstboot_setup", "cold_relaunch", "mode_selection", "playback_entry", "history_navigation",
                             "pause_window", "late_image", "image_recovery", "exif_ownership", "filter_selection",
-                            "filter_edit", "server_switch", "display_policy"})
+                            "filter_edit", "server_switch", "display_policy",
+                            "history_start_capture", "history_first_next_capture", "history_second_next_capture",
+                            "history_first_previous_capture", "history_second_previous_capture",
+                            "rotation_start_capture", "rotation_landscape_capture", "rotation_portrait_capture"})
 FAILURE_CLASSES = frozenset({"interval_readback", "hidden_controls", "scene_identity", "process_lifetime",
                              "timing_window", "navigation", "snapshot_query", "unknown", "control_state", "focus",
                              "evidence_capture", "probe_readback", "fixture_response", "exif_visibility",
@@ -683,6 +686,42 @@ def public_validator_failure_message(value):
 # Source locations and enum meanings: docs/CI_STRICT_RUNNER.md#reviewed-prefix-table.
 # No activity marker exists in these flows. Suffixes (including values) are discarded.
 PREFIX_RULES = (
+    ("Visual ID failed history-start:", "history_start_capture", "scene_identity"),
+    ("Visual ID failed history-first-next:", "history_first_next_capture", "scene_identity"),
+    ("Visual ID failed history-second-next:", "history_second_next_capture", "scene_identity"),
+    ("Visual ID failed history-first-previous:", "history_first_previous_capture", "scene_identity"),
+    ("Visual ID failed history-second-previous:", "history_second_previous_capture", "scene_identity"),
+    ("rotation-start-portrait did not stabilize within the ", "rotation_start_capture", "timing_window"),
+    ("rotation-landscape-stable did not stabilize within the ", "rotation_landscape_capture", "timing_window"),
+    ("rotation-portrait-stable did not stabilize within the ", "rotation_portrait_capture", "timing_window"),
+    ("Could not recognize a public photo on screen within ", "visible_scene_capture", "scene_identity"),
+    ("The public photo on screen did not change after next;", "history_navigation", "scene_identity"),
+    ("Before rotating, the play button value must be pause (playing),", "control_action", "control_state"),
+    ("The rotation sequence took ", "unknown", "timing_window"),
+    ("Orientation API: after setting ", "unknown", "navigation"),
+    ("Fresh install must open the normal first-boot page.", "firstboot_setup", "navigation"),
+    ("First-boot page must show the API Key field.", "firstboot_setup", "navigation"),
+    ("The API Key must be entered into the secure field.", "firstboot_setup", "control_state"),
+    ("First-boot page must show Test Connection.", "firstboot_setup", "navigation"),
+    ("First-boot page must show the Save Settings button.", "firstboot_setup", "navigation"),
+    ("A successful save must lead to mode selection.", "firstboot_setup", "navigation"),
+    ("The interval must be set to 30 seconds with the real slider.", "interval_setup", "interval_readback"),
+    ("Playback settings must have display mode segments.", "display_policy", "navigation"),
+    ("Display mode must offer the target option.", "display_policy", "navigation"),
+    ("Display mode must switch to the target option.", "display_policy", "control_state"),
+    ("Must be able to return from settings to playback.", "settings_navigation", "navigation"),
+    ("Settings list must have the playback settings entry.", "settings_navigation", "navigation"),
+    ("After opening playback settings, the auto-play toggle or the playback settings title must be visible.", "settings_navigation", "navigation"),
+    ("The mode page must also offer the filter entry.", "mode_selection", "navigation"),
+    ("Playback page after uninstall means a dirty install container;", "firstboot_setup", "navigation"),
+    ("The public test URL must be entered verbatim,", "firstboot_setup", "control_state"),
+    ("API Key must reach the secure field;", "firstboot_setup", "control_state"),
+    ("iPad must rotate to landscape to record split-view evidence.", "unknown", "navigation"),
+    ("The first-boot filter summary must offer a way back to mode selection.", "mode_selection", "navigation"),
+    ("The iOS filter summary should no longer use a bottom back button,", "mode_selection", "navigation"),
+    ("Connection test showed a failure alert:", "firstboot_setup", "navigation"),
+    ("Pause again before history actions so the 5-second timer does not interfere.", "control_action", "control_state"),
+    ("A nil mark must encode into JSON,", "visible_scene_capture", "evidence_capture"),
     ("Editor album card must show the manifest-selected album and photo counts", "server_switch", "control_state"),
     ("The iOS slider must be settable to ", "interval_setup", "interval_readback"),
     ("The control bar is not hidden yet; cannot verify the first wake.", "hidden_controls", "hidden_controls"),
@@ -895,10 +934,12 @@ def classify_messages(messages):
     for message in messages:
         if not isinstance(message, str):
             return unknown_diagnostics()
-        # XCTest assertion wrappers and Swift's caught AssertionError.message wrapper.
+        # Only unwrap the known Swift error types; arbitrary error descriptions stay private.
         text = re.sub(r"^(?:failed - |XCTAssert\w+ failed(?:\:.*?)? - )", "", message)
         for wrapper in ('failed: caught error: "message(\\"', 'failed: caught error: "message("',
-                        'message(\\"', 'message("'):
+                        'message(\\"', 'message("',
+                        'failed: caught error: "Failure(message: \\"', 'failed: caught error: "Failure(message: "',
+                        'Failure(message: \\"', 'Failure(message: "'):
             if text.startswith(wrapper):
                 text = text[len(wrapper):]
                 break

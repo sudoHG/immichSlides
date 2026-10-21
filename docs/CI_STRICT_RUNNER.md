@@ -1200,7 +1200,11 @@ Failed method nodes in `official-tests*.json` and the tracer's
   `control_action`, `firstboot_setup`, `cold_relaunch`, `mode_selection`,
   `playback_entry`, `history_navigation`, `pause_window`, `late_image`,
   `image_recovery`, `exif_ownership`, `filter_selection`, `filter_edit`,
-  `server_switch`, `display_policy`, `unknown`.
+  `server_switch`, `display_policy`, `history_start_capture`,
+  `history_first_next_capture`, `history_second_next_capture`,
+  `history_first_previous_capture`, `history_second_previous_capture`,
+  `rotation_start_capture`, `rotation_landscape_capture`,
+  `rotation_portrait_capture`, `unknown`.
 - `failure_class`: `interval_readback`, `hidden_controls`, `scene_identity`,
   `process_lifetime`, `timing_window`, `navigation`, `snapshot_query`,
   `control_state`, `focus`, `evidence_capture`, `probe_readback`,
@@ -1212,9 +1216,19 @@ and History flows have no existing phase activity marker, so the mapper reads
 private official legacy failure summaries and discards all message suffixes.
 Only `testFailureSummaries` supplies messages; a `testWarningSummaries` entry
 for the same method cannot replace or obscure its failure label.
-XCTest assertion and caught `AssertionError.message` wrappers are recognized;
+XCTest assertion and the known Swift `AssertionError.message` and
+`Failure(message:)` wrappers are recognized;
 unmatched, missing or conflicting messages yield `unknown` for both fields.
 Snapshot/hittability failures identify only the class, with an unknown phase.
+Journey-b's five history captures and tvOS's matching history captures have separate `history_*_capture` phases,
+and rotation's initial portrait, landscape and final portrait stable waits have
+separate `rotation_*_capture` phases. These map the existing interpolated names
+before the generic capture prefix; the source-check test verifies both the
+message template and each call-site name. The remaining onboarding, driver and
+rotation precondition messages map through the same reviewed prefix table.
+The five history prefixes previously mapped to `visible_scene_capture/scene_identity`;
+they now identify the capture site on both platforms, including
+`StrictE2ETVOSFlowUITests.swift:343/365/387/415/442` (`evidenceName` arguments).
 Empty screenshot data and Autoplay control-state assertions yield unknown for
 both fields because they do not establish scene identity or navigation.
 These labels locate a check; they do not establish a product or infrastructure
@@ -1250,6 +1264,10 @@ The shared slideshow "never became tappable" prefix uses `control_action`: every
 caller acts on the playback control bar during playback, including Settings opening,
 retained-history navigation, Play/Pause, EXIF advance and pause-window A2 search.
 The existing lifecycle/XCTest rows remain unchanged.
+The shared `rotate()` orientation assertion serves portrait and landscape steps,
+iPad layout and orientation self-checks, so it retains an `unknown` phase.
+The whole-rotation deadline and onboarding iPad orientation assertion also use
+`unknown`: neither Continue timing nor display-mode policy describes device rotation.
 
 New enum meanings and why the previous vocabulary cannot express them:
 
@@ -1268,9 +1286,17 @@ New enum meanings and why the previous vocabulary cannot express them:
 | `filter_edit` | Editing/clearing filters through playback settings; distinct from initial selection. |
 | `server_switch` | Clearing old selections and preserving process/scene after changing servers; distinct from cold relaunch. |
 | `display_policy` | Applying and reading back display mode and its visible scene/process contract; distinct from control actions. |
+| `history_start_capture` | Initial retained-history screenshot on iOS or tvOS; generic visible-scene capture cannot identify this history site. |
+| `history_first_next_capture` | Screenshot after the first retained-history Next; history navigation alone cannot identify the failing capture. |
+| `history_second_next_capture` | Screenshot after the second retained-history Next; distinct from the first Next capture. |
+| `history_first_previous_capture` | Screenshot after the first retained-history Previous; distinct from advancing history. |
+| `history_second_previous_capture` | Screenshot after the second retained-history Previous, returning to the start; distinct from the first Previous capture. |
+| `rotation_start_capture` | Initial stable portrait capture before rotating during playback; generic capture cannot identify this rotation site. |
+| `rotation_landscape_capture` | Stable landscape capture after the first playback rotation; distinct from the initial portrait capture. |
+| `rotation_portrait_capture` | Stable portrait capture after returning from landscape; distinct from the initial portrait capture. |
 | `control_state` | Enabled/selected/play-pause state of an existing control; navigation and hidden-controls classes do not express its value. |
 | `focus` | Remote system focus on a named UI control/receiver; presence or navigation alone does not prove focus. |
-| `evidence_capture` | Missing required captured frames; this does not establish the identity of their absent pixels. |
+| `evidence_capture` | Missing required captured frames or unserializable capture evidence; this does not establish pixel identity. |
 | `probe_readback` | Missing/inconsistent combined render/manifest/history or synchronized opacity probe evidence; this does not identify a bad photo. |
 | `fixture_response` | Controlled image-response mode or delivered-failure count; this is fixture evidence, not navigation or image identity. |
 | `exif_visibility` | Visible EXIF card remains after disabling it; photo identity alone cannot express overlay visibility. |
@@ -1323,6 +1349,42 @@ New enum meanings and why the previous vocabulary cannot express them:
 | `An in-window start was detected but not signed off` | `continue_timing` | `evidence_capture` | [AccessLifecycleContract+TransitionTiming.swift](../TestSupport/AccessLifecycleContract+TransitionTiming.swift) |
 | `Uncertain samples must remain pending video review; do not default to PASS` | `continue_timing` | `evidence_capture` | [AccessLifecycleContract+TransitionTiming.swift](../TestSupport/AccessLifecycleContract+TransitionTiming.swift) |
 | `Too early/late transition or missing start cannot pass automatically` | `continue_timing` | `timing_window` | [AccessLifecycleContract+TransitionTiming.swift](../TestSupport/AccessLifecycleContract+TransitionTiming.swift) |
+| `Visual ID failed history-start:` | `history_start_capture` | `scene_identity` | [StrictE2ETestSupport.swift](../TestSupport/StrictE2ETestSupport.swift), via [iOS history steps](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) and [tvOS history evidence names](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift); initial capture |
+| `Visual ID failed history-first-next:` | `history_first_next_capture` | `scene_identity` | [StrictE2ETestSupport.swift](../TestSupport/StrictE2ETestSupport.swift), via [iOS history steps](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) and [tvOS history evidence names](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift); first Next capture |
+| `Visual ID failed history-second-next:` | `history_second_next_capture` | `scene_identity` | [StrictE2ETestSupport.swift](../TestSupport/StrictE2ETestSupport.swift), via [iOS history steps](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) and [tvOS history evidence names](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift); second Next capture |
+| `Visual ID failed history-first-previous:` | `history_first_previous_capture` | `scene_identity` | [StrictE2ETestSupport.swift](../TestSupport/StrictE2ETestSupport.swift), via [iOS history steps](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) and [tvOS history evidence names](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift); first Previous capture |
+| `Visual ID failed history-second-previous:` | `history_second_previous_capture` | `scene_identity` | [StrictE2ETestSupport.swift](../TestSupport/StrictE2ETestSupport.swift), via [iOS history steps](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) and [tvOS history evidence names](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift); second Previous capture |
+| `rotation-start-portrait did not stabilize within the ` | `rotation_start_capture` | `timing_window` | [RotationUITests.swift](../immichSlidesUITests/RotationUITests.swift); initial portrait stable wait |
+| `rotation-landscape-stable did not stabilize within the ` | `rotation_landscape_capture` | `timing_window` | [RotationUITests.swift](../immichSlidesUITests/RotationUITests.swift); landscape stable wait |
+| `rotation-portrait-stable did not stabilize within the ` | `rotation_portrait_capture` | `timing_window` | [RotationUITests.swift](../immichSlidesUITests/RotationUITests.swift); final portrait stable wait |
+| `Could not recognize a public photo on screen within ` | `visible_scene_capture` | `scene_identity` | [RotationUITests.swift](../immichSlidesUITests/RotationUITests.swift); public photo identity before Next |
+| `The public photo on screen did not change after next;` | `history_navigation` | `scene_identity` | [RotationUITests.swift](../immichSlidesUITests/RotationUITests.swift); Next must start a new scene before rotation |
+| `Before rotating, the play button value must be pause (playing),` | `control_action` | `control_state` | [RotationUITests.swift](../immichSlidesUITests/RotationUITests.swift); playing-state precondition |
+| `The rotation sequence took ` | `unknown` | `timing_window` | [RotationUITests.swift](../immichSlidesUITests/RotationUITests.swift); whole sequence must precede the earliest natural switch |
+| `Orientation API: after setting ` | `unknown` | `navigation` | [RotationUITests.swift](../immichSlidesUITests/RotationUITests.swift); shared orientation API window readback |
+| `Fresh install must open the normal first-boot page.` | `firstboot_setup` | `navigation` | [IOSDriver.swift](../immichSlidesUITests/IOSDriver.swift); initial configuration page |
+| `First-boot page must show the API Key field.` | `firstboot_setup` | `navigation` | [IOSDriver.swift](../immichSlidesUITests/IOSDriver.swift); secure field availability |
+| `The API Key must be entered into the secure field.` | `firstboot_setup` | `control_state` | [IOSDriver.swift](../immichSlidesUITests/IOSDriver.swift); secure field value readback |
+| `First-boot page must show Test Connection.` | `firstboot_setup` | `navigation` | [IOSDriver.swift](../immichSlidesUITests/IOSDriver.swift); connection control availability |
+| `First-boot page must show the Save Settings button.` | `firstboot_setup` | `navigation` | [IOSDriver.swift](../immichSlidesUITests/IOSDriver.swift); save control availability |
+| `A successful save must lead to mode selection.` | `firstboot_setup` | `navigation` | [IOSDriver.swift](../immichSlidesUITests/IOSDriver.swift); post-save destination |
+| `The interval must be set to 30 seconds with the real slider.` | `interval_setup` | `interval_readback` | [IOSDriver.swift](../immichSlidesUITests/IOSDriver.swift); interval slider readback |
+| `Playback settings must have display mode segments.` | `display_policy` | `navigation` | [IOSDriver.swift](../immichSlidesUITests/IOSDriver.swift); display-mode picker availability |
+| `Display mode must offer the target option.` | `display_policy` | `navigation` | [IOSDriver.swift](../immichSlidesUITests/IOSDriver.swift); target option availability |
+| `Display mode must switch to the target option.` | `display_policy` | `control_state` | [IOSDriver.swift](../immichSlidesUITests/IOSDriver.swift); selected option readback |
+| `Must be able to return from settings to playback.` | `settings_navigation` | `navigation` | [IOSDriver.swift](../immichSlidesUITests/IOSDriver.swift); settings exit |
+| `Settings list must have the playback settings entry.` | `settings_navigation` | `navigation` | [IOSDriver.swift](../immichSlidesUITests/IOSDriver.swift); playback section availability |
+| `After opening playback settings, the auto-play toggle or the playback settings title must be visible.` | `settings_navigation` | `navigation` | [IOSDriver.swift](../immichSlidesUITests/IOSDriver.swift); playback section destination |
+| `The mode page must also offer the filter entry.` | `mode_selection` | `navigation` | [StrictE2EFirstBatchIOSUITests+Onboarding.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift); filter entry availability |
+| `Playback page after uninstall means a dirty install container;` | `firstboot_setup` | `navigation` | [StrictE2EFirstBatchIOSUITests+Onboarding.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift); fresh-install destination |
+| `The public test URL must be entered verbatim,` | `firstboot_setup` | `control_state` | [StrictE2EFirstBatchIOSUITests+Onboarding.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift); server field readback |
+| `API Key must reach the secure field;` | `firstboot_setup` | `control_state` | [StrictE2EFirstBatchIOSUITests+Onboarding.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift); secure field readback |
+| `iPad must rotate to landscape to record split-view evidence.` | `unknown` | `navigation` | [StrictE2EFirstBatchIOSUITests+Onboarding.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift); iPad orientation precondition |
+| `The first-boot filter summary must offer a way back to mode selection.` | `mode_selection` | `navigation` | [StrictE2EFirstBatchIOSUITests+Onboarding.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift); return entry availability |
+| `The iOS filter summary should no longer use a bottom back button,` | `mode_selection` | `navigation` | [StrictE2EFirstBatchIOSUITests+Onboarding.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift); expected return affordance |
+| `Connection test showed a failure alert:` | `firstboot_setup` | `navigation` | [StrictE2EFirstBatchIOSUITests+Onboarding.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests+Onboarding.swift); alert blocks connection/save progression; no connection-cause class is claimed |
+| `Pause again before history actions so the 5-second timer does not interfere.` | `control_action` | `control_state` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift); paused-state precondition |
+| `A nil mark must encode into JSON,` | `visible_scene_capture` | `evidence_capture` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift); capture evidence cannot be serialized; no pixel identity is claimed |
 | `tvOS pause-continue evidence is invalid;` | `continue_timing` | `evidence_capture` | [AccessLifecycleContract+TransitionTiming.swift](../TestSupport/AccessLifecycleContract+TransitionTiming.swift) |
 | `tvOS new photo must be stably identifiable within 4 s of transition start` | `continue_timing` | `scene_identity` | [AccessLifecycleContract+TransitionTiming.swift](../TestSupport/AccessLifecycleContract+TransitionTiming.swift) |
 | `All black must not count as a pass` | `unknown` | `scene_identity` | [AccessLifecycleContract.swift](../TestSupport/AccessLifecycleContract.swift) |
@@ -1452,8 +1514,9 @@ until actual official failure summaries exercise these prefixes.
 
 Still unknown on the throwing path:
 
-- `Fixture image response control timed out` throws the `Failure` struct, whose
-  `Failure(message:)` or direct caught-error wrapper is unsupported; it has no table row.
+- `Fixture image response control timed out` throws the `Failure` struct. Its
+  `Failure(message:)` wrapper is supported, but the sentence has no table row;
+  a direct caught-error description also remains unmatched.
 - `Can't check EXIF: photo status ` is recognized with the real `failed - ` wrapper
   from the pause-window's `XCTFail(error.localizedDescription)` path. Its throwing
   `AssertionError.message` form with the apostrophe escaped as `Can\'t` remains
@@ -1466,8 +1529,10 @@ therefore refuse an enriched failed/flaky-passed record until the updated reader
 trusted. Branch acceptance must run the report script (`ci_report.py --dry-run
 --diagnostic-nightly`) from the PR head, or validate on the first `main` nightly after
 merge; the installed older trusted report script rejects the new enum values and can
-discard the whole attempt as unavailable evidence. Record fields, scanner
-implementation, verdicts, populations and budgets do not
+discard the whole attempt as unavailable evidence.
+Rollback within the 90-day nightly retention window also restores a reader that
+cannot read retained records containing these new phases.
+Record fields, scanner implementation, verdicts, populations and budgets do not
 change, and every published value remains code-defined.
 
 The separate simulator creation/preparation steps also publish compact records on
