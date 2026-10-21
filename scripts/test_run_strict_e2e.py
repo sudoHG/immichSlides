@@ -99,10 +99,11 @@ class StrictE2ERunnerTests(StrictE2ERunnerTestsCasesConfiguration, StrictE2ERunn
                       "build-timeout", "late-build", "health-timeout"):
             with self.subTest(state=state), tempfile.TemporaryDirectory() as directory:
                 clock = [0.0]
-                build_seconds = 75
+                # Hosted build/health timeouts were censored at 126.6/68.3 seconds.
+                build_seconds = 127
                 startup_log = Path(directory, "startup.log")
                 started = "fixture-startup: phase=fixture-build; state=started; elapsed=0.000s; total=0.000s\n"
-                completed = "fixture-startup: phase=fixture-build; state=completed; elapsed=75.000s; total=75.000s\n"
+                completed = "fixture-startup: phase=fixture-build; state=completed; elapsed=127.000s; total=127.000s\n"
                 exit_phase = {"build-exit": "fixture-build", "import-exit": "import",
                               "bind-exit": "bind", "unknown-exit": "unknown"}.get(state)
                 initial = ("" if state == "unknown-exit" else
@@ -131,7 +132,7 @@ class StrictE2ERunnerTests(StrictE2ERunnerTestsCasesConfiguration, StrictE2ERunn
                 ready.read_text.return_value = json.dumps({"pid": 7, "host": "127.0.0.1", "port": 1234})
                 response = mock.MagicMock()
                 def request(*args, **kwargs):
-                    response.__enter__.return_value.status = 200 if state != "health-timeout" and clock[0] >= build_seconds + 55 else 503
+                    response.__enter__.return_value.status = 200 if state != "health-timeout" and clock[0] >= build_seconds + 69 else 503
                     return response
                 with mock.patch.object(support.time, "monotonic", side_effect=lambda: clock[0]), \
                         mock.patch.object(support.time, "sleep", side_effect=sleep), \
@@ -140,7 +141,7 @@ class StrictE2ERunnerTests(StrictE2ERunnerTestsCasesConfiguration, StrictE2ERunn
                         mock.patch("builtins.print") as report:
                     if state == "slow-build":
                         self.assertEqual(support.wait_for_service(ready, process, startup_log=startup_log), ("127.0.0.1", 1234))
-                        self.assertAlmostEqual(clock[0], 130, delta=.1)
+                        self.assertAlmostEqual(clock[0], 196, delta=.1)
                         self.assertTrue(any("build completed;" in call.args[0] and "budget=" in call.args[0]
                                             for call in report.call_args_list))
                     else:
@@ -149,7 +150,7 @@ class StrictE2ERunnerTests(StrictE2ERunnerTestsCasesConfiguration, StrictE2ERunn
                         with self.assertRaisesRegex(CommandError, message) as error:
                             support.wait_for_service(ready, process, startup_log=startup_log)
                         if state == "health-timeout":
-                            self.assertAlmostEqual(clock[0], 135, delta=.1)
+                            self.assertAlmostEqual(clock[0], build_seconds + support.SERVICE_STARTUP_TIMEOUT_SECONDS, delta=.1)
                         else:
                             query.assert_not_called()
                             if state == "build-timeout":
@@ -193,7 +194,7 @@ class StrictE2ERunnerTests(StrictE2ERunnerTestsCasesConfiguration, StrictE2ERunn
             with self.subTest(state=state):
                 clock = [0.0]
                 ready = mock.Mock()
-                ready.is_file.side_effect = lambda: state != "missing" and (state != "slow" or clock[0] >= 20)
+                ready.is_file.side_effect = lambda: state != "missing" and (state != "slow" or clock[0] >= 69)
                 ready.read_text.return_value = "invalid" if state == "invalid" else json.dumps({
                     "pid": 8 if state == "pid" else 7, "host": "127.0.0.1", "port": 1234,
                 })
@@ -211,8 +212,8 @@ class StrictE2ERunnerTests(StrictE2ERunnerTestsCasesConfiguration, StrictE2ERunn
                     if state == "connection":
                         raise OSError("unavailable")
                     if state == "late":
-                        clock[0] = 61
-                    response.__enter__.return_value.status = 503 if state == "health-delay" and clock[0] < 20 else 200
+                        clock[0] = support.SERVICE_STARTUP_TIMEOUT_SECONDS + 1
+                    response.__enter__.return_value.status = 503 if state == "health-delay" and clock[0] < 69 else 200
                     return response
 
                 with mock.patch.object(support.time, "monotonic", side_effect=lambda: clock[0]), \
@@ -221,8 +222,8 @@ class StrictE2ERunnerTests(StrictE2ERunnerTestsCasesConfiguration, StrictE2ERunn
                         mock.patch("builtins.print") as report:
                     if state in ("slow", "health-delay"):
                         self.assertEqual(support.wait_for_service(ready, process), ("127.0.0.1", 1234))
-                        self.assertAlmostEqual(clock[0], 20, delta=.05)
-                        self.assertIn("elapsed=20.0s", report.call_args.args[0])
+                        self.assertAlmostEqual(clock[0], 69, delta=.05)
+                        self.assertIn("elapsed=69.0s", report.call_args.args[0])
                     else:
                         with self.assertRaises(CommandError) as error:
                             support.wait_for_service(ready, process)
@@ -232,8 +233,8 @@ class StrictE2ERunnerTests(StrictE2ERunnerTestsCasesConfiguration, StrictE2ERunn
                             self.assertEqual(clock[0], 0)
                         else:
                             self.assertEqual(error.exception.code, 124)
-                            self.assertGreaterEqual(clock[0], 60)
-                            self.assertLessEqual(clock[0], 61)
+                            self.assertGreaterEqual(clock[0], support.SERVICE_STARTUP_TIMEOUT_SECONDS)
+                            self.assertLessEqual(clock[0], support.SERVICE_STARTUP_TIMEOUT_SECONDS + 1)
                             self.assertIn("last_state=", str(error.exception))
                             self.assertIn({"missing": "ready-file-missing", "invalid": "JSONDecodeError",
                                            "unhealthy": "health-http-503", "connection": "OSError",

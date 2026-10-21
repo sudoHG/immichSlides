@@ -152,7 +152,7 @@ class BuildArchiveTests(unittest.TestCase):
                "workflow_path": ui.NIGHTLY_WORKFLOW, "fork_originated": False, "ci_changing": None},
                "run": {"id": "123", "attempt": 1, "tier": "ui-infrastructure", "job": "ui-archive", "shard": None}}
         pins = json.loads((ui.ROOT / "scripts/ci-pins.json").read_text())
-        defects = {"success": None, "missing-member": "archive-member-missing", "extra-member": "archive-member-extra",
+        defects = {"success": None, "hosted-delay": None, "missing-member": "archive-member-missing", "extra-member": "archive-member-extra",
                    "truncated-tar": "archive-download-incomplete", "hash-mismatch": "archive-hash-mismatch",
                    "selection-attempt": "archive-identity-mismatch", "selection-artifact": "archive-identity-mismatch",
                    "wrong-attempt": "archive-identity-mismatch", "build-identity": "archive-identity-mismatch",
@@ -237,10 +237,20 @@ class BuildArchiveTests(unittest.TestCase):
                     if defect == "existing-publish":
                         published.mkdir()
                     gzip_open = ui.gzip.open
+                    alarm = [0]
+                    def arm_alarm(kind, seconds):
+                        alarm[0] = seconds
+                    def hosted_gzip(*arguments, **options):
+                        # Replay a completed read after the observed 30.3-second censored gate.
+                        if alarm[0] <= 31:
+                            signal.getsignal(signal.SIGALRM)(signal.SIGALRM, None)
+                        return gzip_open(*arguments, **options)
                     def delayed_gzip(*arguments, **options):
                         time.sleep(0.2)
                         return gzip_open(*arguments, **options)
                     with patch.object(ui.gzip, "open", side_effect=delayed_gzip) if defect == "timeout" else contextlib.nullcontext(), \
+                            patch.object(ui.gzip, "open", side_effect=hosted_gzip) if defect == "hosted-delay" else contextlib.nullcontext(), \
+                            patch.object(ui.signal, "setitimer", side_effect=arm_alarm) if defect == "hosted-delay" else contextlib.nullcontext(), \
                             patch.object(ui, "ARCHIVE_GATE_SECONDS", 0.02 if defect == "timeout" else ui.ARCHIVE_GATE_SECONDS), \
                             patch.object(ui, "MAX_ARCHIVE_BYTES", 1 if defect == "oversized" else ui.MAX_ARCHIVE_BYTES), \
                             patch.object(Path, "rename", side_effect=OSError("private disk detail")) if defect == "publish" else contextlib.nullcontext(), \

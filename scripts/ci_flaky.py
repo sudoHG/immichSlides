@@ -243,8 +243,10 @@ def simulator_device_class(udid, expected=None):
 
 def official_failure_outcomes(payload):
     # The typed legacy issue summaries distinguish assertions from crashes. Never
-    # infer eligibility from failure text, which can also contain private values.
+    # infer assertion eligibility from failure text. The exact lifecycle signature
+    # below only denies eligibility and emits a fixed infrastructure reason.
     keys = {}
+    lifecycle_failures = {}
     blocked = False
     def walk(value):
         nonlocal blocked
@@ -258,6 +260,10 @@ def official_failure_outcomes(payload):
                 kind = value.get("issueType", {}).get("_value")
                 key = name.removesuffix("()").replace(".", "/")
                 keys.setdefault(key, []).append(kind)
+                message = value.get("message", {}).get("_value") if isinstance(value.get("message"), dict) else None
+                lifecycle_failures.setdefault(key, []).append(kind == "Uncategorized" and isinstance(message, str) and
+                    re.fullmatch(r"Failed to terminate com\.331works\.immichSlides:[0-9]+: "
+                                 r"Failed to terminate com\.331works\.immichSlides:0", message) is not None)
             for child in value.values():
                 walk(child)
         elif isinstance(value, list):
@@ -266,6 +272,7 @@ def official_failure_outcomes(payload):
     walk(payload)
     return {key: ("crashed" if any(kind in {"Crash", "Uncaught Exception"} for kind in kinds) else
                   "assertion" if not blocked and kinds and all(kind == "Assertion Failure" for kind in kinds) else
+                  "app-lifecycle-infrastructure" if not blocked and all(lifecycle_failures[key]) else
                   "uncategorized" if not blocked and kinds and all(kind == "Uncategorized" for kind in kinds) else
                   "failed") for key, kinds in keys.items()}
 
@@ -381,6 +388,8 @@ def read_xcode_observations(bundle, identity_for_key, elapsed, invocation_exit, 
                                    reason=("Official XCTest skip" if outcome == "skipped" else
                                            "Official XCTest crash" if outcome == "crashed" else
                                            ASSERTION_FAILURE if outcome == "failed" and failure_outcomes.get(key) == "assertion" else
+                                           "Official XCTest app lifecycle infrastructure failure"
+                                           if outcome == "failed" and failure_outcomes.get(key) == "app-lifecycle-infrastructure" else
                                            "Official non-assertion or unclassified failure" if outcome == "failed" else None),
                                    exit_code=0 if outcome == "passed" else invocation_exit,
                                    failure_diagnostics=failure_diagnostics.get(key, unknown_diagnostics())
