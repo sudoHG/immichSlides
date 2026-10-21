@@ -13,6 +13,17 @@ extension SettingsResumeContractTests {
     }
 
     func testIPhonePauseRejectsEarlyAndLateSustainedFade() {
+        XCTAssertThrowsError(
+            try AccessLifecycleContract.assertIPhonePauseTimingEvidence(
+                continueMark: "A5", baselineLuma: 0.53,
+                samples: earlyFadeWithFrozenDimSamples(), intervalSeconds: 12
+            )
+        ) {
+            XCTAssertEqual(
+                $0.localizedDescription,
+                "Automatic photo change occurred before T-2; first check test timing and image recognition instead of immediately calling it a product bug"
+            )
+        }
         for (start, message) in [
             (
                 9.8,
@@ -156,6 +167,23 @@ extension SettingsResumeContractTests {
         return old + fade + trough + newPhoto
     }
 
+    private func earlyFadeWithFrozenDimSamples() -> [AccessLifecycleContract.ContinueWatchSample] {
+        let anchor = watchSample(request: 9.35, mark: "A5", luma: 0.53, returnLag: 0.14)
+        let fade = [0.49, 0.49, 0.42, 0.35, 0.25].enumerated().map { index, luma in
+            watchSample(request: 9.5 + Double(index) * 0.15, mark: "A5", luma: luma, returnLag: 0.14)
+        }
+        let trough = (0...3).map { index in
+            watchSample(
+                request: 10.25 + Double(index) * 0.15, mark: "UNRECOGNIZABLE", status: "UNRECOGNIZABLE",
+                luma: 0.03, returnLag: 0.14
+            )
+        }
+        let newPhoto = (0...8).map { index in
+            watchSample(request: 10.85 + Double(index) * 0.15, mark: "A1", luma: 0.47, returnLag: 0.14)
+        }
+        return [anchor] + fade + trough + newPhoto
+    }
+
     func testTVOSPauseJudgesSharedSustainedFadeBeforeLateNewPhoto() throws {
         for start in [10.0, 13.2, 14.0] {
             let evidence = try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
@@ -194,6 +222,17 @@ extension SettingsResumeContractTests {
     }
 
     func testTVOSPauseRejectsEarlyAndLateFadeStarts() {
+        XCTAssertThrowsError(
+            try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
+                continueMark: "A5", baselineLuma: 0.53,
+                samples: earlyFadeWithFrozenDimSamples(), intervalSeconds: 12
+            )
+        ) {
+            XCTAssertEqual(
+                $0.localizedDescription,
+                "Automatic photo change occurred before T-2; first check test timing and image recognition instead of immediately calling it a product bug"
+            )
+        }
         for (start, message) in [
             (
                 9.3,
@@ -327,7 +366,7 @@ extension SettingsResumeContractTests {
         let valid = tvosFadeSamples(start: start)
         for mutation in [
             "isolated_black", "uniform_dim", "recovered_dim", "controls", "only_one_dim_frame", "dim_anchor",
-            "anchor_gap", "increasing_dim", "controls_mid_fade"
+            "anchor_gap", "increasing_dim", "controls_mid_fade", "recovered_transition"
         ] {
             let samples = valid.map { sample in
                 let offset = sample.requestElapsed - start
@@ -348,8 +387,14 @@ extension SettingsResumeContractTests {
                     }
                 }
                 if mutation == "dim_anchor" && abs(offset + 0.3) < 0.001 { luma = 0.49 }
-                if mutation == "increasing_dim" && abs(offset - 0.3) < 0.001 { luma = 0.5 }
-                if mutation == "recovered_dim" && abs(offset - 0.9) < 0.001 {
+                if mutation == "increasing_dim" && offset >= -0.001 && offset < 0.9 - 0.001 {
+                    luma = 0.45 + offset * 0.08
+                }
+                if mutation == "recovered_transition" && abs(offset) < 0.001 {
+                    mark = "TRANSITION"
+                    status = "TRANSITION"
+                }
+                if (mutation == "recovered_dim" || mutation == "recovered_transition") && abs(offset - 0.9) < 0.001 {
                     mark = "A5"
                     status = "MATCH"
                     luma = 0.53
@@ -737,10 +782,13 @@ extension SettingsResumeContractTests {
             )
         )
 
-        for controlsChangeOffset in [0.0, 0.3] {
+        for (onset, controlsChangeOffset) in [("TRANSITION", 0.0), ("DIMMING", 0.3)] {
             let controlsOnly = tvosFadeSamples(start: 12.3).map { sample in
+                let isTransition = onset == "TRANSITION" && abs(sample.requestElapsed - 12.3) < 0.001
                 return watchSample(
-                    request: sample.requestElapsed, mark: sample.mark, status: sample.status, luma: sample.meanLuma,
+                    request: sample.requestElapsed,
+                    mark: isTransition ? "TRANSITION" : sample.mark,
+                    status: isTransition ? "TRANSITION" : sample.status, luma: sample.meanLuma,
                     isControlBarVisible: sample.requestElapsed - 12.3 < controlsChangeOffset - 0.001, returnLag: 0.28
                 )
             }

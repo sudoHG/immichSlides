@@ -567,27 +567,36 @@ continue to use actual T with the existing T±2 and four-second confirmation rul
 
 Pause/continue timing distinguishes transition onset from stable new-photo confirmation.
 iPhone, iPad and tvOS share the sustained-dimming predicate and constants in
-`AccessLifecycleContract`: three consecutive MATCH samples must identify the old photo.
-The first anchors its brightness at or above 95% of baseline; the next two must
-both fall below 95% and strictly decrease from their predecessor by more than the
-existing luminance tolerance. The first dim sample supplies the onset request time.
-The control-bar state must remain unchanged across all three frames, with both
-gaps between screenshot return and the next request no greater than the existing
-0.1-second poll cadence plus its tolerance. Pinned 4K TV capture measured
+`AccessLifecycleContract`: a bright MATCH anchor must identify the old photo at
+or above 95% of baseline, followed by a contiguous run of at least two dim MATCH
+samples identifying that photo below 95%. A strict decrease greater than the
+existing luminance tolerance must occur somewhere between adjacent dim samples;
+equal captures at the beginning of the run do not hide a later decrease. The first
+dim sample supplies the onset request time. The control-bar state must remain
+unchanged from the anchor through that decrease, with every gap between screenshot
+return and the next request no greater than the existing 0.1-second poll cadence
+plus its tolerance. Pinned 4K TV capture measured
 0.309-second median and 0.453-second maximum request cadence: requiring three
 already-dim MATCH frames can outlast the identifiable portion of the designed
-1.0-second outgoing fade. The bright anchor retains three independent observations
+1.0-second outgoing fade. The bright anchor retains at least three observations
 without counting black or unreadable frames as fade evidence. An isolated black
 frame, a constant whole-screen dim or a dimming sequence that recovers the old
-photo's brightness before stable new-photo confirmation cannot establish a dimming
-start on any platform. The shared predicate vetoes that recovery, including iPad's
-two-dim-frame flicker case. A transition identity or a different identified photo
-remains direct onset evidence. iPad still applies conservative screenshot bounds
+photo's brightness through the shared 0.8-second new-photo stable-window confirmation
+cannot establish a dimming start on any platform. This recovery-veto cutoff also
+applies to iPad, whose own stable-photo requirement is one second. The shared
+predicate vetoes that recovery, including iPad's two-dim-frame flicker case.
+A transition identity or a different identified photo remains direct onset
+evidence; tvOS also vetoes a TRANSITION marker when the old photo recovers through
+the same shared confirmation cutoff. iPad still applies conservative screenshot bounds
 and requires one second of stable new-photo identification.
 
 The iPhone and tvOS T±2 check uses the detected onset's screenshot-request offset, independently
-of when the new photo becomes readable. A different public photo must then remain
-identified and bright for the shared 0.8-second stable confirmation window; no new
+of when the new photo becomes readable.
+Unlike iPad's conservative bounds, this request time can lag the actual onset by
+a screenshot duration plus sampling delay, about 0.45 s in the measured 4K trace.
+An early fade within that distance before T−2 can therefore still be accepted.
+A different public photo must then remain identified and bright for the shared
+0.8-second stable confirmation window; no new
 photo means failure. Dense capture continues through the shared T+2+4-second
 look-ahead, before classification, so a designed fade beginning inside T±2 can pass
 when the new photo becomes stable after T+2. Like iPad, iPhone and tvOS require stable-photo

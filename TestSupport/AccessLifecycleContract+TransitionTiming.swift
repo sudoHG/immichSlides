@@ -440,28 +440,33 @@ extension AccessLifecycleContract {
         threshold: Double,
         samples: [ContinueWatchSample]
     ) -> Bool {
-        // A 4K capture can take 0.45 s: anchor the three-point fade in the preceding bright old photo.
+        // Frozen dim captures must not hide a later decrease after the fresh bright anchor.
         guard startIndex > 0 else { return false }
         let anchorIndex = startIndex - 1
-        let lastIndex = anchorIndex + requiredConsecutiveFadeSampleCount - 1
-        guard lastIndex < samples.count else { return false }
+        let minimumLastIndex = anchorIndex + requiredConsecutiveFadeSampleCount - 1
+        guard minimumLastIndex < samples.count else { return false }
         var previous = samples[anchorIndex]
         guard previous.status == "MATCH", previous.mark == continueMark,
             previous.meanLuma.isFinite, previous.meanLuma >= threshold
         else { return false }
-        for index in startIndex...lastIndex {
+        var hasStrictDecrease = false
+        for index in startIndex..<samples.count {
             let sample = samples[index]
             let gap = sample.requestElapsed - previous.returnElapsed
             guard sample.status == "MATCH", sample.mark == continueMark,
                 sample.meanLuma.isFinite, sample.meanLuma < threshold,
-                sample.meanLuma < previous.meanLuma - luminanceTolerance,
                 sample.isControlBarVisible == previous.isControlBarVisible,
                 gap >= 0, gap <= newStableMarkPollInterval + timingToleranceSeconds
             else {
                 return false
             }
+            if index > startIndex, sample.meanLuma < previous.meanLuma - luminanceTolerance {
+                hasStrictDecrease = true
+            }
             previous = sample
+            if index >= minimumLastIndex && hasStrictDecrease { break }
         }
+        guard hasStrictDecrease else { return false }
         // A flicker that recovers the old photo cannot establish fade onset on any platform.
         let stable = firstStableNewImage(continueMark: continueMark, samples: samples)
         return !samples.dropFirst(startIndex + 1).prefix {
