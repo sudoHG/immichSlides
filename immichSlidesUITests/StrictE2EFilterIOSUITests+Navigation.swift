@@ -101,11 +101,22 @@ extension StrictE2EFilterIOSUITests {
                 }
                 return false
             }
-            guard StrictE2ESceneCapture.isStableWindow(before), before["entryHintVisible"] == "false",
-                let value = controls.button?.value as? String, ["pause", "play"].contains(value.lowercased()),
-                controls.windowElement.buttons[identifier].isHittable, Date() < deadline
+            guard controls.windowElement.buttons[identifier].isHittable, Date() < deadline else { return false }
+            // The stable scene/target snapshot must be the last accessibility read before Pause.
+            let snapshotRequestedAt = Date().timeIntervalSince1970
+            guard let stableControls = try? app.slideshowControlBarButtonObservation(identifier: identifier) else {
+                return false
+            }
+            let snapshotReturnedAt = Date().timeIntervalSince1970
+            before = self.albumSceneObservation(snapshots: stableControls.snapshots)
+            before["stable_snapshot_requested_unix"] = String(snapshotRequestedAt)
+            before["stable_snapshot_returned_unix"] = String(snapshotReturnedAt)
+            guard stableControls.isReady, StrictE2ESceneCapture.isStableWindow(before),
+                before["entryHintVisible"] == "false",
+                let value = stableControls.button?.value as? String, ["pause", "play"].contains(value.lowercased()),
+                Date() < deadline
             else { return false }
-            prepared = controls
+            prepared = stableControls
             return true
         }
         FirstFailureContext.mark("wait-scene", element: identifier)
@@ -115,24 +126,38 @@ extension StrictE2EFilterIOSUITests {
             XCTFail("Album capture preparation must reach a stable scene before Pause.")
             return false
         }
+        var pauseTapIssuedAt = "notIssued"
+        var pauseTapReturnedAt = "notReturned"
         if (button.value as? String)?.lowercased() == "pause" {
             FirstFailureContext.mark("select", element: identifier)
             // Use the stable observation's target once; no re-resolution or Pause retry.
-            prepared.windowElement.coordinate(withNormalizedOffset: .zero).withOffset(
+            let target = prepared.windowElement.coordinate(withNormalizedOffset: .zero).withOffset(
                 CGVector(
                     dx: button.frame.midX - prepared.windowFrame.minX,
                     dy: button.frame.midY - prepared.windowFrame.minY)
-            ).tapForFailureEvidence()
+            )
+            pauseTapIssuedAt = String(Date().timeIntervalSince1970)
+            target.tapForFailureEvidence()
+            pauseTapReturnedAt = String(Date().timeIntervalSince1970)
         }
         var after = before
         FirstFailureContext.mark("wait-scene", element: identifier)
         let isPaused = TestWait.until(.product(4)) {
-            after = self.albumSceneObservation(app: app)
+            guard let controls = try? app.slideshowControlBarButtonObservation(identifier: identifier) else {
+                return false
+            }
+            after = self.albumSceneObservation(snapshots: controls.snapshots)
             return SharedSceneEvidenceManifest.parseKeyValueFields(after["render"] ?? "")["playbackPaused"] == "true"
+                && after["playPauseValue"] == "play"
         }
+        after["pause_tap_issued_unix"] = pauseTapIssuedAt
+        after["pause_tap_returned_unix"] = pauseTapReturnedAt
         attachStrictSceneObservation(before: before, after: after, name: "album-pause")
-        if rejectFrozenAlbumTransition(after) { return false }
         guard isPaused else {
+            if after["playPauseValue"] != "play" {
+                XCTFail("After pausing, the control value must be play.")
+                return false
+            }
             XCTFail("Album capture preparation must observe paused playback after one Pause.")
             return false
         }
@@ -151,32 +176,38 @@ extension StrictE2EFilterIOSUITests {
         // Reuse the old 0.8 s settle + 4 s control-reveal budget; pixels are sampled only once.
         let deadline = Date().addingTimeInterval(TestWait.seconds(.product(0.8)) + TestWait.seconds(.product(4)))
         var before: [String: String] = [:]
+        let previousRender = SharedSceneEvidenceManifest.parseKeyValueFields(previousScene?["render"] ?? "")
+        var didAdvanceHistory: Bool?
+        var didChangeLayers = false
         FirstFailureContext.mark("wait-scene", element: "slideshow.scenePresentation.contract.summary")
         let isReady = TestWait.until(.product(max(.zero, deadline.timeIntervalSinceNow))) {
             before = self.albumSceneObservation(app: app)
-            guard self.isPausedStableAlbumScene(before), Date() < deadline else { return false }
-            guard let previousScene else { return true }
-            let previousRender = SharedSceneEvidenceManifest.parseKeyValueFields(previousScene["render"] ?? "")
             let render = SharedSceneEvidenceManifest.parseKeyValueFields(before["render"] ?? "")
-            let didAdvanceHistory =
+            didAdvanceHistory =
                 Int(previousRender["historyCount"] ?? "").flatMap { previousCount in
                     Int(render["historyCount"] ?? "").map { $0 == previousCount + 1 }
-                } ?? false
-            let didChangeLayers =
+                }
+            didChangeLayers =
                 render["layerIDs"] != nil && previousRender["layerIDs"] != nil
                 && render["layerIDs"] != previousRender["layerIDs"]
-            return (didAdvanceHistory || didChangeLayers) && Date() < deadline
+            guard self.isPausedStableAlbumScene(before), Date() < deadline else { return false }
+            return previousScene == nil || didAdvanceHistory == true || didChangeLayers
         }
         FirstFailureContext.mark("wait-scene", element: "slideshow.scenePresentation.contract.summary")
         guard isReady else {
             attachStrictSceneObservation(before: before, after: before, name: "\(name)-scene")
-            if rejectFrozenAlbumTransition(before) { return [:] }
-            if previousScene != nil {
+            let render = SharedSceneEvidenceManifest.parseKeyValueFields(before["render"] ?? "")
+            let isManifestComplete = SharedSceneEvidenceManifest.manifestObservation(from: before["manifest"] ?? "")?
+                .isCompleteVisibleScene
+            let facts =
+                "historyAdvanced=\(didAdvanceHistory.map { String($0) } ?? "unknown"), layersChanged=\(didChangeLayers), phase=\(render["phase"] ?? "unknown"), paused=\(render["playbackPaused"] ?? "unknown"), manifestComplete=\(isManifestComplete.map { String($0) } ?? "unknown")"
+            if previousScene != nil, didAdvanceHistory != true, !didChangeLayers {
                 FirstFailureContext.mark("wait-scene", element: "slideshow.control.next.button")
-                XCTFail("Album Next must advance the paused scene within the playback capture budget.")
+                XCTFail("Album Next must advance the paused scene within the playback capture budget. (\(facts))")
             } else {
                 XCTFail(
-                    "Album capture preparation must reach a complete paused scene within the playback capture budget.")
+                    "Album capture preparation must reach a complete paused scene within the playback capture budget. (\(facts))"
+                )
             }
             return [:]
         }
@@ -241,6 +272,8 @@ extension StrictE2EFilterIOSUITests {
         return [
             "manifest": snapshots["slideshow.smartfill.currentManifest.flag"]?.label ?? "",
             "render": snapshots["slideshow.scenePresentation.contract.summary"]?.label ?? "",
+            "playPauseValue": (snapshots["slideshow.control.playPause.button"]?.value as? String)?.lowercased()
+                ?? "unknown",
             "entryHintVisible": didSnapshotFail ? "unknown" : String(snapshots["slideshow.entryHint.banner"] != nil),
             "observed_unix": String(Date().timeIntervalSince1970)
         ]
