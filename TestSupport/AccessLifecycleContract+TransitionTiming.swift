@@ -440,31 +440,40 @@ extension AccessLifecycleContract {
         threshold: Double,
         samples: [ContinueWatchSample]
     ) -> Bool {
-        // Frozen dim captures must not hide a later decrease after the fresh bright anchor.
+        // Allow one frozen capture without treating a prolonged dim plateau or a rise as a fade.
         guard startIndex > 0 else { return false }
         let anchorIndex = startIndex - 1
-        let minimumLastIndex = anchorIndex + requiredConsecutiveFadeSampleCount - 1
-        guard minimumLastIndex < samples.count else { return false }
+        guard anchorIndex + requiredConsecutiveFadeSampleCount - 1 < samples.count else { return false }
+        let maximumFrozenFrameCount = 1
+        let maximumAnchorToDecreaseSeconds = TestWait.seconds(.product(1.0))
         var previous = samples[anchorIndex]
         guard previous.status == "MATCH", previous.mark == continueMark,
             previous.meanLuma.isFinite, previous.meanLuma >= threshold
         else { return false }
         var hasStrictDecrease = false
+        var frozenFrameCount = 0
         for index in startIndex..<samples.count {
             let sample = samples[index]
             let gap = sample.requestElapsed - previous.returnElapsed
             guard sample.status == "MATCH", sample.mark == continueMark,
                 sample.meanLuma.isFinite, sample.meanLuma < threshold,
                 sample.isControlBarVisible == previous.isControlBarVisible,
-                gap >= 0, gap <= newStableMarkPollInterval + timingToleranceSeconds
+                gap >= 0, gap <= newStableMarkPollInterval + timingToleranceSeconds,
+                sample.requestElapsed - samples[anchorIndex].requestElapsed
+                    <= maximumAnchorToDecreaseSeconds + timingToleranceSeconds
             else {
                 return false
             }
-            if index > startIndex, sample.meanLuma < previous.meanLuma - luminanceTolerance {
-                hasStrictDecrease = true
+            if index > startIndex {
+                if sample.meanLuma < previous.meanLuma - luminanceTolerance {
+                    hasStrictDecrease = true
+                    break
+                }
+                guard abs(sample.meanLuma - previous.meanLuma) <= luminanceTolerance else { return false }
+                frozenFrameCount += 1
+                guard frozenFrameCount <= maximumFrozenFrameCount else { return false }
             }
             previous = sample
-            if index >= minimumLastIndex && hasStrictDecrease { break }
         }
         guard hasStrictDecrease else { return false }
         // A flicker that recovers the old photo cannot establish fade onset on any platform.

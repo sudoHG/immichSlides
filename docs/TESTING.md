@@ -570,8 +570,11 @@ iPhone, iPad and tvOS share the sustained-dimming predicate and constants in
 `AccessLifecycleContract`: a bright MATCH anchor must identify the old photo at
 or above 95% of baseline, followed by a contiguous run of at least two dim MATCH
 samples identifying that photo below 95%. A strict decrease greater than the
-existing luminance tolerance must occur somewhere between adjacent dim samples;
-equal captures at the beginning of the run do not hide a later decrease. The first
+existing luminance tolerance must occur between adjacent dim samples. Before that
+decrease, at most one frozen dim frame is allowed, equal to the preceding dim
+frame within the tolerance; a rise beyond the tolerance rejects the candidate.
+The span from the bright anchor's request to the decreasing frame's request must
+not exceed the designed 1.0-second outgoing fade, plus timing tolerance. The first
 dim sample supplies the onset request time. The control-bar state must remain
 unchanged from the anchor through that decrease, with every gap between screenshot
 return and the next request no greater than the existing 0.1-second poll cadence
@@ -592,9 +595,13 @@ and requires one second of stable new-photo identification.
 
 The iPhone and tvOS T±2 check uses the detected onset's screenshot-request offset, independently
 of when the new photo becomes readable.
-Unlike iPad's conservative bounds, this request time can lag the actual onset by
-a screenshot duration plus sampling delay, about 0.45 s in the measured 4K trace.
-An early fade within that distance before T−2 can therefore still be accepted.
+Unlike iPad's conservative bounds, this request time can differ from the actual
+onset in either direction by about one capture duration (up to roughly 0.45 s in
+the measured 4K trace), with sampling delay also contributing when it lags onset.
+A lag can accept an early fade just before T−2 or reject an in-window fade near
+T+2 as late. If fading begins after the request but before the image is read,
+the request leads onset: a late fade just after T+2 can pass, or an in-window
+fade near T−2 can be rejected as early.
 A different public photo must then remain identified and bright for the shared
 0.8-second stable confirmation window; no new
 photo means failure. Dense capture continues through the shared T+2+4-second
