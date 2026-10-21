@@ -30,6 +30,7 @@ SECTION = "\n\n<!-- ci-report-managed -->\n"
 FAILURES = {"failed", "crashed", "timed-out"}
 NIGHTLY_INFRASTRUCTURE = {"kind": "host", "key": "Nightly infrastructure", "dimensions": {}}
 EVIDENCE_DAYS = 7
+ENVIRONMENT_YELLOW_NIGHTS_BEFORE_RED = 2
 REQUEST_BUDGET = 150
 EARLY_FAILURE_REASONS = {"identity-collection-failed", "hosted-runner-disconnected"}
 # Reader-only; remove after the last pre-retirement night leaves seven-day retention (2026-10-24).
@@ -130,7 +131,7 @@ def historical_strict_population(summary):
     return {identity_key(case) for case in decode(matrix.decode("utf-8"))["cases"]}
 
 
-def method_observations(raw, trace):
+def method_observations(raw, trace, *, runner_hosted=False):
     """A suite result never substitutes for an officially exported method result."""
     from run_strict_e2e import CommandError, FILTER_PERSON_SESSIONS, resolve_suite_selector
     from strict_e2e_p2_contract import P2_CASES
@@ -141,6 +142,7 @@ def method_observations(raw, trace):
     historical_cases = None
     compiled = {identity_key(item) for item in summary["population"]["compiled"]}
     outcomes = {identity_key(item["identity"]): item["outcome"] for item in summary["population"]["observed"]}
+    case_records = {identity_key(item["identity"]): item for item in summary["population"]["observed"]}
     for case in summary["population"]["declared"]:
         dimensions = case["dimensions"]
         suite = dimensions["suite"]
@@ -199,6 +201,17 @@ def method_observations(raw, trace):
             receipt = public_first_failure(method.get(FIRST_FAILURE_FIELD)) if outcome == "failed" else None
             if receipt is not None and receipt["source"] == "xctest":
                 result[FIRST_FAILURE_FIELD] = result["attempts"][0][FIRST_FAILURE_FIELD] = copy.deepcopy(receipt)
+            from ci_failure_diagnostics import environment_limit_evidence
+            claimed = case_records.get(identity_key(case), {}).get("environment_limit")
+            if claimed is not None and outcome == "failed":
+                require(not phase.get("infrastructure") and not phase.get("official_error")
+                        and phase.get("exit_code") not in {124, 130} and phase.get("log_present") is True
+                        and phase.get("build_operations") == 0 and phase.get("products_unchanged") is True,
+                        "environment limit cannot conceal strict invocation infrastructure")
+                proof = environment_limit_evidence(summary, result,
+                    phase.get("bounded_diagnostics", {}).get("case_resources", []), runner_hosted=runner_hosted)
+                require(proof == claimed, "environment limit differs from official method or case resources")
+                result["environment_limit"] = result["attempts"][0]["environment_limit"] = copy.deepcopy(proof)
             observed.append(result)
         missing.extend({"identity": wanted[key], "reason": "official-method-not-observed"} for key in sorted(wanted.keys() - seen))
         case_outcome = outcomes.get(identity_key(case))
@@ -361,6 +374,7 @@ def issue_decision(previous, identity, entries, *, registry_referenced):
     if state["last_failure"]:
         previous_failed.add(state["last_failure"])
     new_failure = False
+    entries = environment_history(entries)
     deliveries = [attempt for report in entries if issue_eligible(report)
                   for attempt in report.get("attempt_history", [report]) if issue_eligible(attempt)]
     for entry in deliveries:
@@ -374,11 +388,13 @@ def issue_decision(previous, identity, entries, *, registry_referenced):
         old = state["nights"].get(day, {}).get(key)
         if not matches and not old:
             continue
-        outcomes = {item["outcome"] for item in matches}
+        outcomes = {"environment-limited" if "environment_limit" in item and not item.get("environment_limit_escalation")
+                    else item["outcome"] for item in matches}
         passes = {"passed"}
         if identity["kind"] == "strict" and identity["dimensions"].get("suite") in P2_CASES:
             passes.add("needs-human-review")
-        outcome = "failed" if outcomes & FAILURES else "passed" if outcomes and outcomes <= passes else "unverified"
+        outcome = ("failed" if outcomes & FAILURES else "passed" if outcomes and outcomes <= passes
+                   else "environment-limited" if outcomes == {"environment-limited"} else "unverified")
         if entry["diagnostics"]["infrastructure"] or entry["diagnostics"]["missing"]:
             if outcome == "passed":
                 outcome = "unverified"
@@ -457,10 +473,13 @@ def failure_details(item):
         details[VALIDATOR_FAILURE_FIELD] = item[VALIDATOR_FAILURE_FIELD]
     if FIRST_FAILURE_FIELD in item:
         details[FIRST_FAILURE_FIELD] = copy.deepcopy(item[FIRST_FAILURE_FIELD])
+    if "environment_limit" in item:
+        details["environment_limit"] = copy.deepcopy(item["environment_limit"])
     return details
 
 
 def render_entry(entry):
+    entry = environment_history([entry])[0]
     source, run, diagnostics = entry["source"], entry["run"], entry["diagnostics"]
     url = f"https://github.com/{source['repository']}/actions/runs/{run['id']}"
     lines = [f"## {text(source['workflow_path'])}: {entry['status']}", "",
@@ -473,7 +492,8 @@ def render_entry(entry):
     if entry.get("not_evaluated_reason"):
         lines.append("Not evaluated: " + text(entry["not_evaluated_reason"]) + ".")
     lines += ["", "| Failing identity | Outcome | Exit codes | Validator failure |", "| --- | --- | --- | --- |"]
-    lines.extend(f"| {text(identity_key(item['identity']))} | {item['outcome']} | {text(item['exit_codes'])} | "
+    lines.extend(f"| {text(identity_key(item['identity']))} | "
+                 f"{'failed (environment-limited; yellow)' if 'environment_limit' in item and not item.get('environment_limit_escalation') else item['outcome']} | {text(item['exit_codes'])} | "
                  f"{text(item['validator_failure_message']) if 'validator_failure_message' in item else '—'} |"
                  for item in diagnostics["failures"][:50])
     from ci_failure_diagnostics import FIRST_FAILURE_FIELD, render_first_failure
@@ -483,6 +503,17 @@ def render_entry(entry):
     lines.extend(f"Missing evidence: {text(identity_key(item['identity']))}: {item['reason']}."
                  for item in diagnostics["missing"][:50])
     lines.extend(f"Infrastructure: {text(item)}." for item in diagnostics["infrastructure"])
+    from ci_failure_diagnostics import render_environment_limit
+    if any("environment_limit" in item and not item.get("environment_limit_escalation") for item in diagnostics["failures"]):
+        lines.append("\n> **WARNING: hosted timing failures are environment-limited (yellow), never passes.**")
+    lines.extend("\nWARNING: " + text(identity_key(item["identity"])) + ": "
+                 + text(render_environment_limit(item["environment_limit"]))
+                 for item in diagnostics["failures"] if "environment_limit" in item and not item.get("environment_limit_escalation"))
+    lines.extend("\nRED: " + text(identity_key(item["identity"])) + ": " + item["environment_limit_rejection"]
+                 for item in diagnostics["failures"] if item.get("environment_limit_rejection"))
+    lines.extend("\nRED: repeated environment limit: " + text(identity_key(item["identity"]))
+                 + f"; {ENVIRONMENT_YELLOW_NIGHTS_BEFORE_RED} consecutive nights; normal failure tracking applies."
+                 for item in diagnostics["failures"] if item.get("environment_limit_escalation"))
     if diagnostics.get("skipped"):
         lines.append("Skipped identities (policy acceptance recorded separately): " + text(diagnostics["skipped"][:50]))
     for item in diagnostics.get("deselected", [])[:50]:
@@ -776,7 +807,7 @@ def nightly_attempt(api, run, attempt, artifacts):
             and nightly_ref_allowed(api, run, identity) and identity["commit_sha"] == run["head_sha"], "nightly identity mismatch")
     require(raw["source"]["workflow_path"] == NIGHTLY_PATH and raw["source"]["repository"] == api.repository
             and raw["source"]["event"] == run["event"] and raw["source"]["fork_originated"] is False
-            and raw["status"] in {"passed", "failed"}, "invalid nightly source or status")
+            and raw["status"] in {"passed", "failed", "environment-limited"}, "invalid nightly source or status")
     for item in raw["observed"]:
         validate_observation(item)
     entry.update(identity=identity, hashes=raw["hashes"], status=raw["status"], tiers=raw["tiers"],
@@ -787,7 +818,8 @@ def nightly_attempt(api, run, attempt, artifacts):
     case_keys = {identity_key(item["identity"]) for item in raw["observed"]}
     informational = {identity_key(item["identity"]) for item in raw["informational"]}
     shards = {item["shard"] for item in raw["capacity"]["shard_intervals"]}
-    summary_cases = set()
+    summary_cases, yellow_cases = set(), {}
+    jobs = None
     for shard in sorted(shards):
         name = f"nightly-strict-{shard}-{run['id']}-{attempt}"
         matches = [item for item in artifacts if item["name"] == name]
@@ -804,7 +836,18 @@ def nightly_attempt(api, run, attempt, artifacts):
         summary_cases.update(identity_key(item) for item in declared)
         summary["population"]["declared"] = [item for item in declared if identity_key(item) not in informational]
         trace = json_member(api, matches[0], "trace.json")
-        methods, absent = method_observations(summary, trace)
+        yellow = [item for item in summary["population"]["observed"] if "environment_limit" in item]
+        hosted = False
+        if yellow:
+            from ci_publish import complete_attempt_jobs
+            if jobs is None:
+                jobs = complete_attempt_jobs(api, {**run, "run_attempt": attempt})
+            matching = [job for job in jobs if job["name"] == "nightly-strict-" + shard]
+            hosted = (len(matching) == 1 and matching[0].get("runner_group_name") == "GitHub Actions"
+                      and "self-hosted" not in matching[0].get("labels", []))
+            require(hosted, "environment limit requires a verified GitHub-hosted strict job")
+            yellow_cases.update({identity_key(item["identity"]): item["environment_limit"] for item in yellow})
+        methods, absent = method_observations(summary, trace, runner_hosted=hosted)
         observed.extend(methods)
         missing.extend(absent)
     ui = nightly_ui_attempt(api, run, attempt, artifacts, raw) if raw["schema_version"] == 2 else None
@@ -837,6 +880,20 @@ def nightly_attempt(api, run, attempt, artifacts):
         counts.update(ui_scheduled=ui["matrix"]["scheduled"], ui_executed=ui["matrix"]["executed"],
                       ui_deselected=ui["matrix"]["deselected"])
         infrastructure.extend(ui["infrastructure"])
+    raw_yellow = {identity_key(item["identity"]): item["environment_limit"] for item in raw["observed"]
+                  if "environment_limit" in item}
+    require(raw_yellow == yellow_cases and len(raw.get("environment_limited", [])) == len(raw_yellow) and set(raw_yellow) == {
+        identity_key(item) for item in raw.get("environment_limited", [])}, "nightly environment limit bindings differ")
+    if raw["status"] == "environment-limited":
+        require(bool(yellow_cases) and not raw["errors"] and not infrastructure and not missing
+                and not any(item["outcome"] in FAILURES and "environment_limit" not in item for item in observed)
+                and all(item["outcome"] in {"passed", "flaky-passed", "needs-human-review"}
+                        or "environment_limit" in item for item in raw["observed"]),
+                "nightly environment limit cannot conceal red or incomplete evidence")
+    require(raw["status"] != "passed" or not yellow_cases, "environment-limited nightly cannot count as passed")
+    if yellow_cases:
+        require(raw["tiers"]["strict"] in {"failed", "environment-limited"}, "environment-limited strict tier cannot count as passed")
+        counts["environment-limited"] = sum("environment_limit" in item for item in observed)
     entry.update(observed=observed, diagnostics={"counts": dict(counts), "missing": missing, "infrastructure": infrastructure,
         "failures": [failure_details(item) for item in observed if item["outcome"] in FAILURES]})
     # The strict aggregate accepts explicit passes/flaky-passes only, not skips.
@@ -1191,6 +1248,64 @@ def without_first_failure_receipts(value):
     return value
 
 
+def environment_history(entries):
+    """Recheck retained proofs without losing readable red evidence; escalate by UTC night and identity."""
+    from ci_failure_diagnostics import validate_environment_limit
+    result = copy.deepcopy(entries)
+    reports = [attempt for entry in result for attempt in [entry, *entry.get("attempt_history", [])]]
+    by_case = {}
+    for report in reports:
+        rejected = set()
+        items = [*report.get("observed", []), *report.get("diagnostics", {}).get("failures", [])]
+        for item in items:
+            if "environment_limit" not in item:
+                continue
+            try:
+                validate_environment_limit(item["environment_limit"])
+            except (ValueError, TypeError, KeyError, AttributeError):
+                rejected.add(identity_token(item["identity"]))
+        for item in items:
+            if identity_token(item["identity"]) in rejected:
+                item.pop("environment_limit", None)
+                item["environment_limit_rejection"] = "RED: invalid or obsolete environment-limit proof under the current policy"
+                for attempt in item.get("attempts", []):
+                    attempt.pop("environment_limit", None)
+        if rejected:
+            report["status"] = "failed"
+            if "strict" in report.get("tiers", {}):
+                report["tiers"]["strict"] = "failed"
+        if not issue_eligible(report) or report["source"]["workflow_path"] != NIGHTLY_PATH:
+            continue
+        for item in report["observed"]:
+            token = identity_token(item["identity"])
+            by_case.setdefault(token, {}).setdefault(report["day"], []).append(item)
+    for nights in by_case.values():
+        streak, previous_day = 0, None
+        for day, items in sorted(nights.items()):
+            current = date.fromisoformat(day)
+            yellow = all("environment_limit" in item for item in items)
+            streak = (streak + 1 if previous_day == current - timedelta(days=1) else 1) if yellow else 0
+            previous_day = current
+            if streak >= ENVIRONMENT_YELLOW_NIGHTS_BEFORE_RED:
+                for item in items:
+                    item["environment_limit_escalation"] = True
+    for report in reports:
+        escalated = {identity_token(item["identity"]) for item in report.get("observed", [])
+                     if item.get("environment_limit_escalation")}
+        for item in report.get("diagnostics", {}).get("failures", []):
+            if identity_token(item["identity"]) in escalated:
+                item["environment_limit_escalation"] = True
+        if escalated:
+            report["status"] = "failed"
+            if "strict" in report.get("tiers", {}):
+                report["tiers"]["strict"] = "failed"
+        if any("environment_limit_rejection" in item or "environment_limit_escalation" in item
+               for item in report.get("observed", [])):
+            report["diagnostics"]["counts"]["environment-limited"] = sum(
+                "environment_limit" in item and not item.get("environment_limit_escalation") for item in report["observed"])
+    return result
+
+
 def compact_entry(entry, tracked):
     tracked = tracked | {identity_token(item["identity"]) for attempt in entry.get("attempt_history", [entry])
                          for item in attempt["observed"] if item["outcome"] in FAILURES}
@@ -1236,6 +1351,10 @@ def merge_snapshot(previous, entries, now):
         selected[entry["run"]["id"]] = replacement
         snapshot["days"][day] = daily_rollup(day, list(selected.values()))
     snapshot["days"].setdefault(now.isoformat(), daily_rollup(now.isoformat(), []))
+    retained = [entry for rollup in snapshot["days"].values() for entry in rollup["entries"]]
+    checked = environment_history(retained)
+    for day, rollup in snapshot["days"].items():
+        rollup["entries"] = [entry for entry in checked if entry["day"] == day]
     return snapshot
 
 
@@ -1342,6 +1461,9 @@ def read_snapshot(api):
 
 
 def write_report(output, snapshot, entries, registry, states, *, stopped, now=None, inventory=()):
+    retained = {(entry["run"]["id"], entry["run"]["attempt"]): entry
+                for rollup in snapshot["days"].values() for entry in rollup["entries"]}
+    entries = [retained.get((entry["run"]["id"], entry["run"]["attempt"]), entry) for entry in entries]
     encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")) + "\n"
     require(len(encoded.encode()) <= 16 * 1024 * 1024, "reporter snapshot exceeds readable artifact limit")
     for kind in ("daily", "runs"):
@@ -1362,6 +1484,7 @@ def write_report(output, snapshot, entries, registry, states, *, stopped, now=No
             "registry": registry, "issue_inventory": list(inventory), "issue_index": snapshot.get("issue_index", {}), "budget_stopped": stopped,
             "api_budget": snapshot.get("api_budget", {}), "post_merge_since": since}
     (output / "sync.json").write_text(json.dumps(plan) + "\n")
+    return entries
 
 
 def collect_report(api, event_name, event, now, output, *, run_ids=()):
@@ -1447,7 +1570,7 @@ def collect_report(api, event_name, event, now, output, *, run_ids=()):
         snapshot["producer"] = {"repository": api.repository, "workflow_path": REPORT_PATH,
             "run": {"id": os.environ["GITHUB_RUN_ID"], "attempt": int(os.environ["GITHUB_RUN_ATTEMPT"])},
             "commit_sha": os.environ["GITHUB_SHA"]}
-    write_report(output, snapshot, entries, registry, states, stopped=stopped, now=now, inventory=inventory)
+    entries = write_report(output, snapshot, entries, registry, states, stopped=stopped, now=now, inventory=inventory)
     rendered_health = write_health(output, snapshot, registry, month, now) if month else ""
     if month and os.environ.get("GITHUB_OUTPUT"):
         with Path(os.environ["GITHUB_OUTPUT"]).open("a") as handle:

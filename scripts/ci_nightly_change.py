@@ -102,6 +102,7 @@ def run_evidence(api, run):
     identity = raw.get("identity")
     matrix = raw.get("matrix")
     if (raw.get("run") != {"id": str(run_id), "attempt": attempt} or raw.get("status") not in {"passed", "failed"}
+            or raw.get("environment_limited")
             or not isinstance(identity, dict) or identity.get("commit_sha") != run["head_sha"]
             or raw.get("diagnostic_shard") is not None
             or not isinstance(matrix, dict) or matrix.get("equal") is not True or not isinstance(raw.get("errors"), list)

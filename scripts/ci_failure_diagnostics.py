@@ -55,6 +55,124 @@ NATIVE_ACTIVITY_FIELDS = ("pre_event_idle", "find_window", "synthesize_event", "
 _validator_input = ContextVar("first_failure_validator_input", default=None)
 _validator_enabled = ContextVar("first_failure_validator_enabled", default=False)
 
+ENVIRONMENT_LIMIT_FIELD = "environment_limit"
+ENVIRONMENT_POLICY_VERSION = 1
+ENVIRONMENT_IDLE_MAX_PERCENT = 5
+# Only waits for UI availability qualify. Assertions about values, identity or advance do not.
+ENVIRONMENT_WAIT_STEPS = {
+    **{("mode_selection", "navigation", "mode-card", element): "mode"
+       for element in ("mode.random.button", "mode.filtered.button")},
+    ("mode_selection", "navigation", "mode-continue", "mode.continue.button"): "mode",
+    ("playback_entry", "navigation", "query-element", "slideshow.control.playPause.button"): "playback",
+    **{("settings_navigation", "navigation", step, "slideshow.control.settings.button"): "playback"
+       for step in ("query-element", "select")},
+    **{(phase, "hidden_controls", step, element): "playback"
+       for phase, steps in (("control_action", ("query-element", "reveal-controls")),
+                            ("hidden_controls", ("query-element", "reveal-controls")),
+                            ("interval_setup", ("query-element",)))
+       for step in steps
+       for element in ("slideshow.control.settings.button", "slideshow.control.previous.button",
+                       "slideshow.control.playPause.button", "slideshow.control.next.button", "slideshow.hiddenWakeReceiver")},
+}
+
+
+def environment_failure_projection(receipt):
+    return {"source": receipt["source"], "step": receipt["step"], "element": receipt["element"], "action": receipt["action"],
+        "app": receipt["state"]["app"],
+        "surface": receipt["state"]["surface"],
+        "control_bar": receipt["state"]["control_bar"],
+        "scene_status": receipt["state"]["scene_status"],
+        **{key: receipt["timing"][key] for key in ("wait_elapsed_seconds", "deadline_seconds", "action_duration_seconds")},
+        "post_event_idle": receipt.get("native_activity_seconds", {}).get("post_event_idle")}
+
+
+def environment_timing(failure, phase, failure_class):
+    if (failure["source"] != "xctest" or failure["app"] != "running-foreground"
+            or failure["scene_status"] in {"BLACK", "BLANK"}
+            or failure["scene_status"] == "UNRECOGNIZABLE" and failure["surface"] in {"playback", "unknown"}
+            or failure["surface"] == "unknown"
+            or failure["surface"] != ENVIRONMENT_WAIT_STEPS.get((phase, failure_class, failure["step"], failure["element"]))
+            or failure_class == "hidden_controls" and failure["control_bar"] == "visible"):
+        return False
+    elapsed, deadline = failure["wait_elapsed_seconds"], failure["deadline_seconds"]
+    # No receipt field proves a following successful action readback; native idle alone stays red.
+    return elapsed is not None and deadline is not None and deadline > 0 and elapsed >= deadline
+
+
+def validate_environment_limit(proof):
+    from ci_summary import fields, require
+    from ci_bounded_diagnostics import validate_case_resources
+    fields(proof, {"schema_version", "policy_version", "runner_hosted", "failure_phase", "failure_class", "failure", "resources"},
+           "environment limit")
+    require(type(proof["policy_version"]) is int and proof["policy_version"] == ENVIRONMENT_POLICY_VERSION,
+            "environment limit: unsupported policy version")
+    require(type(proof["schema_version"]) is int and proof["schema_version"] == 1
+            and proof["runner_hosted"] is True, "environment limit: hosted evidence required")
+    failure = proof["failure"]
+    fields(failure, {"source", "step", "element", "action", "app", "surface", "control_bar", "scene_status", "wait_elapsed_seconds", "deadline_seconds",
+                     "action_duration_seconds", "post_event_idle"}, "environment failure")
+    receipt = unavailable_first_failure("xctest")
+    receipt.update(source=failure["source"], step=failure["step"], element=failure["element"], action=failure["action"])
+    receipt["state"]["app"] = failure["app"]
+    receipt["state"]["surface"] = failure["surface"]
+    receipt["state"]["control_bar"] = failure["control_bar"]
+    receipt["state"]["scene_status"] = failure["scene_status"]
+    for key in ("wait_elapsed_seconds", "deadline_seconds", "action_duration_seconds"):
+        receipt["timing"][key] = failure[key]
+    if failure["source"] == "xctest":
+        receipt["native_activity_seconds"] = dict.fromkeys(NATIVE_ACTIVITY_FIELDS)
+        receipt["native_activity_seconds"]["post_event_idle"] = failure["post_event_idle"]
+    validate_first_failure(receipt)
+    require(isinstance(proof["failure_phase"], str) and isinstance(proof["failure_class"], str)
+            and environment_timing(failure, proof["failure_phase"], proof["failure_class"]),
+            "environment limit: failure is not an eligible timing wait")
+    resource = proof["resources"]
+    validate_case_resources([resource])
+    samples = resource["failure_samples"]
+    require(len(samples) >= 2 and all(sample["idle_percent"] is not None
+            and sample["idle_percent"] <= ENVIRONMENT_IDLE_MAX_PERCENT for sample in samples)
+            and any(sample["elapsed_seconds"] < resource["first_failure_elapsed_seconds"] for sample in samples)
+            and any(sample["elapsed_seconds"] > resource["first_failure_elapsed_seconds"] for sample in samples),
+            "environment limit: insufficient starvation evidence")
+
+
+def environment_limit_evidence(summary, entry, resources, *, runner_hosted):
+    """Project checked case evidence; absence or ambiguity always retains the raw failure."""
+    from ci_summary import require
+    try:
+        require(runner_hosted is True and summary["source"]["workflow_path"] == ".github/workflows/ci-nightly.yml"
+                and summary["source"]["event"] in {"schedule", "workflow_dispatch"}
+                and summary["run"]["tier"] == "strict" and summary["run"]["job"] == "nightly-strict",
+                "environment limit: outside hosted nightly strict scope")
+        require(entry["outcome"] == "failed" and entry["identity"]["kind"] == "strict"
+                and VALIDATOR_FAILURE_FIELD not in entry, "environment limit: not a timing failure")
+        receipt = public_first_failure(entry.get(FIRST_FAILURE_FIELD))
+        require(receipt is not None, "environment limit: missing first failure")
+        candidates = [resource for resource in resources if resource.get("first_failure_elapsed_seconds") is not None]
+        require(len(candidates) == 1, "environment limit: ambiguous failure resources")
+        proof = {"schema_version": 1, "policy_version": ENVIRONMENT_POLICY_VERSION,
+            "runner_hosted": True, "failure_phase": entry.get("failure_phase"),
+            "failure_class": entry.get("failure_class"), "failure": environment_failure_projection(receipt),
+            "resources": candidates[0]}
+        validate_environment_limit(proof)
+        return proof
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return None
+
+
+def render_environment_limit(proof):
+    try:
+        validate_environment_limit(proof)
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return "RED: invalid or obsolete environment-limit proof under the current policy"
+    resource = proof["resources"]
+    failure = proof["failure"]
+    return (f"ENVIRONMENT-LIMITED (yellow; raw failure retained): {proof['failure_phase']}/{proof['failure_class']}; "
+        f"wait={failure['wait_elapsed_seconds']}s / deadline={failure['deadline_seconds']}s; "
+        f"post-event-idle={failure['post_event_idle']}s; failure at {resource['first_failure_elapsed_seconds']}s; "
+        + "; ".join(f"t={sample['elapsed_seconds']}s idle={sample['idle_percent']}% load1={sample['load_1m']} "
+                    f"app-cpu={sample['cpu_percent']['app']}%" for sample in resource["failure_samples"]))
+
 
 def unavailable_first_failure(source, step="unknown", element="unknown"):
     return {"schema_version": 1, "source": source, "step": step, "element": element, "action": "unknown",
@@ -1001,6 +1119,8 @@ def test_node_diagnostics(payload):
 def validate_diagnostic_fields(value):
     """Reject free text, unpaired fields and non-string values, without echoing them."""
     if isinstance(value, dict):
+        if ENVIRONMENT_LIMIT_FIELD in value:
+            validate_environment_limit(value[ENVIRONMENT_LIMIT_FIELD])
         if FIRST_FAILURE_FIELD in value:
             validate_first_failure(value[FIRST_FAILURE_FIELD])
         if BOUNDED_DIAGNOSTICS_FIELD in value:
@@ -1035,7 +1155,7 @@ def scan_diagnostic_json(data):
             duplicate_seen |= key in value
             value[key] = child
         bounded_seen |= BOUNDED_DIAGNOSTICS_FIELD in value
-        first_failure_seen |= FIRST_FAILURE_FIELD in value
+        first_failure_seen |= FIRST_FAILURE_FIELD in value or ENVIRONMENT_LIMIT_FIELD in value
         validate_diagnostic_fields(value)
         return value
     try:
@@ -1046,6 +1166,6 @@ def scan_diagnostic_json(data):
             raise ValueError("duplicate first failure JSON key")
     except (json.JSONDecodeError, UnicodeDecodeError):
         ascii_keys = re.sub(rb"\\u00([0-9a-fA-F]{2})", lambda match: bytes([int(match[1], 16)]), data)
-        if any(('"' + field + '"').encode() in ascii_keys for field in (BOUNDED_DIAGNOSTICS_FIELD, FIRST_FAILURE_FIELD)) or any(
+        if any(('"' + field + '"').encode() in ascii_keys for field in (BOUNDED_DIAGNOSTICS_FIELD, FIRST_FAILURE_FIELD, ENVIRONMENT_LIMIT_FIELD)) or any(
                 ('"' + field + '"').encode() in data for field in DIAGNOSTIC_FIELDS | {VALIDATOR_FAILURE_FIELD}):
             raise ValueError("invalid failure diagnostic JSON")

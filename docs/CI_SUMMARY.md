@@ -173,6 +173,8 @@ remaining host processes. App and test-tool membership takes precedence over
 simulator ancestry. No executable names, PIDs, paths, arguments or activity
 titles are published. Measurements with unavailable membership must remain null.
 Sampling limitations, including missing intervals, do not alter a test result.
+The separate [prepared environment-limit proof](#prepared-hosted-strict-environment-limits)
+can classify a failed hosted timing observation only when its full criteria are met.
 Summary Markdown displays per-case sample counts, idle minimum/median, maximum
 load, peak App CPU, sampler costs and truncation; nearby samples remain in JSON.
 The case manifest and each tracer warm phase retain a bounded receipt with an
@@ -655,6 +657,112 @@ PR reaches main still uses the old trusted base and is not a safe substitute.
 The same sequence applies to `bounded_diagnostics.case_resources` and
 `first_failure.native_activity_seconds`: merge reader support before opening the
 producer activation PR. Historical records without either optional field remain valid.
+
+### Prepared hosted strict environment limits
+
+Hogan approved this judgement policy on 2026-10-21. This is the reader stage:
+no tracer emits `environment_limit` yet. Merge this reader before activating the
+producer in a separate PR. Existing nights, raw outcomes, first-attempt failure
+counts, deadlines, retries and thresholds remain unchanged. The scope is strictly
+GitHub-hosted `ci-nightly` strict shards, for `schedule` and `workflow_dispatch`;
+`ci-pr-gate`, fixture UI shards, local and self-hosted runs are excluded.
+
+A failed strict observation and its sole failed attempt may carry the same optional
+`environment_limit` object. It contains exactly `schema_version: 1`, `policy_version: 1`,
+`runner_hosted: true`, paired `failure_phase` / `failure_class`, `failure`, and
+`resources`. `failure` is the closed projection of `first_failure`: `source`,
+`step`, `element`, `action`, `app`, `surface`, `control_bar`, `scene_status`, `wait_elapsed_seconds`, `deadline_seconds`,
+`action_duration_seconds`, and `post_event_idle`. Numbers retain the first-failure
+bounds and nulls. `resources` is one unchanged, validated `case_resources` entry.
+The summary reader recomputes the projection from the original receipt and checks
+the nightly strict source. The optional `strict_case_evidence` list binds each strict
+case `identity` to its original `bounded_diagnostics` receipt. Each proof must match
+that case's resource entry by sequence and full value, and have a matching xcode
+event sample whose `runner_hosted` is true; conflicting hosting samples fail closed.
+This evidence slot is reader-only until the separate producer PR fills it from the
+same case trace. No unknown field, private assertion or free text is allowed.
+
+All criteria are required:
+
+1. The producer records GitHub-hosted execution. The reporter additionally binds the
+   current-attempt strict job through the Actions API: its runner group is
+   `GitHub Actions` and its labels do not include `self-hosted`. Missing hosting
+   evidence fails closed.
+2. The first failure has `source: xctest`, `app: running-foreground` and an eligible phase/class/step from the
+   table below, with the exact target element and expected surface. Unknown surfaces
+   are rejected. Its wait elapsed time is at least its positive deadline. Native
+   post-event idle alone never qualifies: no existing receipt field proves a following
+   successful action readback. `unknown/snapshot_query`, including `Failed to get
+   matching snapshot` main-thread hangs, stays red. A hidden-controls timeout while
+   `control_bar: visible` also stays red because the target control is still absent.
+3. Exactly one resource invocation has a recorded first-failure time. It contains
+   at least two distinct, ordered `failure_samples`, each within inclusive ±5 seconds
+   of that time, with at least one strictly before and one strictly after the failure,
+   each with measured `idle_percent <= 5`. Every retained failure-window
+   sample must qualify, including the boundary values. Missing idle is red.
+   `truncated: true` and absent category CPU values do not disqualify measured idle;
+   load and App CPU are displayed, not used as classification thresholds.
+
+| Phase | Class | Step and target element | Expected surface |
+| --- | --- | --- | --- |
+| `mode_selection` | `navigation` | `mode-card`: `mode.random.button` or `mode.filtered.button`; `mode-continue`: `mode.continue.button` | `mode` |
+| `playback_entry` | `navigation` | `query-element`: `slideshow.control.playPause.button` | `playback` |
+| `settings_navigation` | `navigation` | `query-element` or `select`: `slideshow.control.settings.button` | `playback` |
+| `control_action`, `hidden_controls` | `hidden_controls` | `query-element` or `reveal-controls`: settings, previous, playPause or next under `slideshow.control.*.button`, or `slideshow.hiddenWakeReceiver` | `playback` |
+| `interval_setup` | `hidden_controls` | `query-element`: the same playback controls | `playback` |
+
+This is an explicit allowlist, not an inference from an exception name. A deadline
+left over from a completed wait cannot turn a value or scene assertion yellow.
+`scene_identity`, `control_state`, `interval_readback`, validator failures, observed
+BLACK/BLANK frames, UNRECOGNIZABLE playback frames, process failures, and all other phase/class/step
+combinations stay red. In particular, `history_navigation` / no-advance and
+`continue_timing` / `timing_window` mix observable functional outcomes with timing
+checks and are excluded. Rotation and pause-window contracts are also excluded
+without a separately reviewed timing-only interpretation. Missing or ambiguous
+receipts, samples or case bindings stay red; an old night gains no classification.
+`firstboot_setup/navigation` also includes a confirmed connection-error alert,
+and `mode_selection/navigation` at `query-element` includes an unexpected legacy
+control assertion, so neither qualifies. `playback_entry/navigation` at
+`mode-departure` specifically reports Continue returned without a password prompt
+while the mode page was still observed; that known navigation defect stays red.
+An unrecognizable photo identity on a known non-playback surface, such as the mode
+page, does not by itself assert that the App displayed a wrong photo.
+
+With complete matrix evidence, the accepting strict aggregate uses
+`status: environment-limited` and an `environment_limited` identity list when
+all nonpassing cases qualify. It exits zero with a prominent warning for every
+yellow case and all its sample numbers; raw observations remain `failed` and never
+count as passes. Any red case, missing case, infrastructure/cleanup error, failed
+matrix job or failed UI aggregate keeps the night red. Producer activation must
+make exclusively yellow strict jobs exit zero while preserving failed receipts;
+an unrelated job failure must never be ignored by the aggregate.
+
+The reporter binds every claim to the same case's trace resource entry and official
+method receipt, then checks the aggregate list against the shard claims. Existing
+log, warm-build/reuse and invocation-infrastructure requirements remain mandatory;
+an outer invocation timeout or interruption cannot become yellow. Report tables
+and compact history retain the bounded proof and every yellow warning,
+including when a red case keeps the overall night failed. They preserve raw failure
+counts and add the separate `environment-limited` count. Yellow cannot
+satisfy recovery, become a product flake or use a quarantine retry. Existing
+`ci-known-flaky.json` entries are unchanged. Timing acceptance still requires local
+runs on the pinned devices.
+
+The reporter escalates the same strict method identity (including suite and all
+case dimensions) after consecutive UTC yellow nights, using its retained history.
+`ENVIRONMENT_YELLOW_NIGHTS_BEFORE_RED = 2` is the single policy constant, pending
+owner confirmation. The second and later consecutive yellow nights become red
+in the report and use ordinary Issue/notification tracking, while raw outcomes
+and the original proof remain unchanged. A missing night or explicit pass breaks
+the yellow sequence; another case or a diagnostic run cannot contribute. Yellow
+never erases a red failure night or supplies an explicit-pass recovery night.
+Nights containing yellow are ineligible unchanged-SHA baselines so the next
+scheduled night can collect the evidence needed for escalation.
+
+Retained compact proofs are rechecked under the current policy. Missing, unknown
+or obsolete policy versions and invalid proofs degrade to red with a fixed public
+reason; rendering, history loading and issue decisions must not raise because of
+those proofs. Original first-failure receipts remain outside compact history.
 
 ## Prepared version 2: scoped official discovery
 

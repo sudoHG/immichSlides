@@ -186,6 +186,63 @@ class NightlyVerdictTests(unittest.TestCase):
 
     def test_nightly_rules_keep_unbuilt_tiers_green_and_skeletons_ineligible(self):
         from ci_nightly import aggregate_nightly
+        from ci_failure_diagnostics import environment_limit_evidence
+        from test_ci_summary import hosted_timeout_summary
+        yellow, resources = hosted_timeout_summary()
+        row = yellow["population"]["observed"][0]
+        proof = environment_limit_evidence(yellow, row, [resources], runner_hosted=True)
+        row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
+        case = row["identity"]
+        result = aggregate_nightly([case], [yellow], live_in_scope=False)
+        self.assertEqual("environment-limited", result["status"])
+        self.assertEqual("failed", result["observed"][0]["outcome"])
+        self.assertEqual([case], result["environment_limited"])
+        import contextlib
+        import io
+        import os
+        import tempfile
+        import time
+        from ci_nightly import main
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            records = root / "records" / "nightly-strict-iphone-debug-0-10-1"
+            records.mkdir(parents=True)
+            (records / "summary.json").write_text(json.dumps(yellow))
+            (records / "p2-review-bindings.json").write_text(json.dumps({"schema_version": 1, "review_packages": []}))
+            (records / "trace.json").write_text(json.dumps({"started_epoch": time.time() - 10, "finished_epoch": time.time()}))
+            planned = [{"id": "iphone-debug-0", "cases": [{"platform": "ios", **case["dimensions"]}]}]
+            hashes = {"manifests": {"nightly-matrix": "a" * 64}, "policies": {"nightly": "a" * 64}}
+            plan = {"identity": yellow["identity"], "run": {"id": "10", "attempt": 1}, "hashes": hashes,
+                "shards": planned, "started_epoch": time.time() - 20, "max_parallel": 2}
+            (root / "plan.json").write_text(json.dumps(plan))
+            stdout = io.StringIO()
+            with patch("ci_nightly.workspace_preflight"), patch("ci_nightly.run_identity", return_value=yellow["identity"]), patch(
+                    "ci_nightly.source_metadata", return_value=(yellow["source"]["workflow_path"], False)), patch(
+                    "ci_nightly.file_hash", return_value="a" * 64), patch("ci_nightly.shards", return_value=planned), patch(
+                    "ci_nightly.read_policy", return_value={"live_tier_in_scope": False, "built_tiers": ["strict"]}), patch(
+                    "ci_nightly.validate_shard", return_value=yellow), patch.dict(os.environ, GITHUB_RUN_ID="10",
+                    GITHUB_RUN_ATTEMPT="1"), contextlib.redirect_stdout(stdout):
+                code = main(["aggregate", "--output-dir", str(root / "output"), "--plan", str(root / "plan.json"),
+                    "--records-dir", str(root / "records"), "--matrix-job-result", "success"])
+            self.assertEqual(0, code)
+            self.assertIn("::warning title=Environment-limited strict timing::", stdout.getvalue())
+            warning = (root / "output" / "nightly.md").read_text()
+            self.assertIn("**WARNING: hosted timing failures are environment-limited", warning)
+            self.assertIn(ci_summary.identity_key(case), warning)
+            self.assertIn("idle=5%", warning)
+        red = copy.deepcopy(yellow)
+        red["population"]["observed"][0].pop("environment_limit")
+        red["population"]["observed"][0]["attempts"][0].pop("environment_limit")
+        red_row = red["population"]["observed"][0]
+        red_row["identity"]["dimensions"]["fixture"] = "b"
+        self.assertEqual("failed", aggregate_nightly([case, red_row["identity"]], [yellow, red], live_in_scope=False)["status"])
+        for name, changed in (("legacy failure", red), ("infrastructure", copy.deepcopy(yellow))):
+            if name == "infrastructure":
+                changed["infrastructure"].append({"code": "cleanup-failed", "message": "cleanup failed"})
+            with self.subTest(name=name):
+                scheduled = changed["population"]["declared"]
+                self.assertEqual("failed", aggregate_nightly(scheduled, [changed], live_in_scope=False)["status"])
+        self.assertEqual("failed", aggregate_nightly([case], [yellow], live_in_scope=True)["status"])
         identity = ci_summary.test_identity("strict", "smoke", device="iphone", configuration="Debug",
                                             suite="smoke", scenario="normal", fixture="a")
         summary = valid_summary()
@@ -755,6 +812,9 @@ class AdmissionVerdictTests(unittest.TestCase):
         shard, aggregate_artifact = artifact("nightly-strict-a-7-1"), artifact("nightly-aggregate-7-1")
         self.assertEqual("real", evidence(night, [aggregate_artifact, shard], aggregate))
         self.assertEqual("real", evidence(dict(night, conclusion="success"), [aggregate_artifact], {**aggregate, "status": "passed"}))
+        self.assertIsNone(evidence(dict(night, conclusion="success"), [aggregate_artifact],
+            {**aggregate, "status": "environment-limited"}))
+        self.assertIsNone(evidence(night, [aggregate_artifact], {**aggregate, "environment_limited": [{"key": "yellow"}]}))
         for label, artifacts, member, item in (
                 ("no aggregate", [shard], aggregate, night),
                 ("expired aggregate", [artifact("nightly-aggregate-7-1", True)], aggregate, night),

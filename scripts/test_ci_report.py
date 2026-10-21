@@ -1844,6 +1844,167 @@ class ReporterTests(unittest.TestCase):
         metrics = health_report(snapshot, {"entries": []}, "2026-10", date(2026, 10, 1))["metrics"]
         self.assertEqual({"value": None, "sampled_runs": 0, "missing_runs": 1}, metrics["test_duration_seconds"])
         self.assertEqual({"value": 0, "sampled_runs": 1, "missing_runs": 0}, metrics["first_attempt_failures"])
+        from ci_failure_diagnostics import environment_limit_evidence
+        from test_ci_summary import hosted_timeout_summary
+        summary, resources = hosted_timeout_summary()
+        row = summary["population"]["observed"][0]
+        proof = environment_limit_evidence(summary, row, [resources], runner_hosted=True)
+        row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
+        case = row["identity"]
+        aggregate = aggregate_nightly([case], [summary], live_in_scope=False)
+        aggregate.update(identity=summary["identity"], hashes=summary["hashes"], run={"id": "10", "attempt": 1},
+            source=summary["source"], capacity={"shard_intervals": [{"shard": "iphone-debug-0"}]})
+        phase = trace["warm"][0]
+        phase.update(identity=case, exit_code=65, bounded_diagnostics={"case_resources": [resources]})
+        phase["official_summary"].update(passedTests=0, failedTests=1)
+        phase["official_methods"][0].update(result="Failed", first_failure=row["first_failure"],
+            failure_phase="settings_navigation", failure_class="navigation")
+        artifacts[1]["name"] = "nightly-strict-iphone-debug-0-10-1"
+        jobs = [{"name": "nightly-strict-iphone-debug-0", "runner_group_name": "GitHub Actions", "labels": ["xcode-27"]}]
+        with patch("ci_publish.json_member", side_effect=[aggregate, summary, trace]), patch(
+                "ci_publish.complete_attempt_jobs", return_value=jobs):
+            report = ci_report.nightly_attempt(api, run, 1, artifacts)
+        self.assertEqual("environment-limited", report["status"])
+        self.assertEqual(1, report["diagnostics"]["counts"]["environment-limited"])
+        self.assertEqual("failed", report["observed"][0]["outcome"])
+        self.assertIn("idle=5%", render_entry(report))
+        self.assertIn("| failed (environment-limited; yellow) |", render_entry(report))
+        compact = ci_report.compact_entry(report, set())
+        self.assertEqual(proof, compact["observed"][0]["environment_limit"])
+        self.assertIn("ENVIRONMENT-LIMITED", render_entry(compact))
+        decision = issue_decision(None, report["observed"][0]["identity"], [compact], registry_referenced=False)
+        self.assertEqual("none", decision["action"])
+        self.assertIsNone(decision["state"])
+        following = copy.deepcopy(compact)
+        following.update(day="2026-10-02", run={"id": 11, "attempt": 1})
+        decision = issue_decision(None, report["observed"][0]["identity"], [following, compact], registry_referenced=False)
+        self.assertEqual("open", decision["action"])
+        self.assertEqual("failed", decision["state"]["nights"]["2026-10-02"]["11"]["outcome"])
+        self.assertEqual(1, decision["state"]["failure_nights"])
+        gap = copy.deepcopy(following)
+        gap["day"] = "2026-10-03"
+        self.assertEqual("none", issue_decision(None, report["observed"][0]["identity"],
+            [compact, gap], registry_referenced=False)["action"])
+        other = copy.deepcopy(following)
+        other["observed"][0]["identity"]["dimensions"]["suite"] = "other-suite"
+        self.assertEqual("none", issue_decision(None, report["observed"][0]["identity"],
+            [compact, other], registry_referenced=False)["action"])
+        diagnostic = copy.deepcopy(following)
+        diagnostic["diagnostic_shard"] = "strict-only"
+        self.assertEqual("none", issue_decision(None, report["observed"][0]["identity"],
+            [compact, diagnostic], registry_referenced=False)["action"])
+        passed = copy.deepcopy(following)
+        passed["observed"][0].pop("environment_limit")
+        passed["observed"][0]["outcome"] = "passed"
+        self.assertEqual("none", issue_decision(None, report["observed"][0]["identity"],
+            [compact, passed, gap], registry_referenced=False)["action"])
+        same_night = copy.deepcopy(following)
+        same_night["day"] = compact["day"]
+        self.assertEqual("none", issue_decision(None, report["observed"][0]["identity"],
+            [compact, same_night], registry_referenced=False)["action"])
+        same_day_pass = copy.deepcopy(passed)
+        same_day_pass["run"]["id"] = 12
+        self.assertEqual("none", issue_decision(None, report["observed"][0]["identity"],
+            [compact, following, same_day_pass], registry_referenced=False)["action"])
+        consecutive = ci_report.merge_snapshot(None, [compact, following], date(2026, 10, 2))
+        escalated = consecutive["days"]["2026-10-02"]["entries"][0]
+        self.assertEqual("failed", escalated["status"])
+        self.assertEqual("failed", escalated["observed"][0]["outcome"])
+        self.assertIn("RED: repeated environment limit", render_entry(escalated))
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            ci_report.write_report(output, consecutive, [following], {"entries": []}, {}, stopped=False,
+                now=date(2026, 10, 2))
+            self.assertEqual("failed", json.loads((output / "runs/11-1.json").read_text())["status"])
+            self.assertIn("RED: repeated environment limit", (output / "runs/11-1.md").read_text())
+            api = type("API", (), {"repository": "sudoHG/immichSlides", "request_count": 1, "remaining": 900,
+                                   "request": lambda *args: None, "budget_exhausted": lambda *args: False})()
+            previous = ci_report.merge_snapshot(None, [compact], date(2026, 10, 1))
+            summary_path = output / "step-summary.md"
+            with patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": str(summary_path), "GITHUB_ACTIONS": "false"}), \
+                    patch("ci_flaky.parse_registry", return_value={"entries": []}), \
+                    patch("ci_report.read_snapshot", return_value=previous), \
+                    patch("ci_report.visible_issues", return_value=[]), \
+                    patch("ci_report.discover_runs", return_value=[{**run, "id": 11,
+                          "repository": {"full_name": api.repository}}]), \
+                    patch("ci_report.read_run", return_value=following):
+                self.assertEqual(0, ci_report.collect_report(api, "workflow_run", {}, date(2026, 10, 2), output))
+            self.assertIn("RED: repeated environment limit", summary_path.read_text())
+            self.assertIn("ci-nightly.yml: failed", summary_path.read_text())
+            self.assertNotIn("WARNING: hosted timing failures", summary_path.read_text())
+        for mutation in ("missing version", "future version", "changed policy", "malformed"):
+            retained = copy.deepcopy(compact)
+            bad = retained["observed"][0]["environment_limit"]
+            if mutation == "missing version":
+                bad.pop("policy_version")
+            elif mutation == "future version":
+                bad["policy_version"] = 999
+            elif mutation == "changed policy":
+                bad["failure"]["surface"] = "unknown"
+            else:
+                bad["resources"] = None
+            with self.subTest(retained=mutation):
+                from ci_failure_diagnostics import render_environment_limit
+                self.assertIn("RED: invalid or obsolete", render_environment_limit(bad))
+                self.assertIn("RED: invalid or obsolete", render_entry(retained))
+                restored = ci_report.merge_snapshot({"schema_version": 2, "days": {
+                    "2026-10-01": {"entries": [retained]}}}, [], date(2026, 10, 1))
+                restored_entry = restored["days"]["2026-10-01"]["entries"][0]
+                self.assertEqual("failed", restored_entry["status"])
+                self.assertEqual("open", issue_decision(None, report["observed"][0]["identity"],
+                    [restored_entry], registry_referenced=False)["action"])
+                with tempfile.TemporaryDirectory() as directory:
+                    ci_report.write_report(Path(directory), restored, [retained], {"entries": []}, {}, stopped=False,
+                        now=date(2026, 10, 1))
+                    self.assertIn("RED: invalid or obsolete", (Path(directory) / "runs/10-1.md").read_text())
+        red = copy.deepcopy(compact)
+        red["day"] = "2026-09-30"
+        red["observed"][0].pop("environment_limit")
+        red["observed"][0]["attempts"][0].pop("environment_limit")
+        previous = issue_decision(None, report["observed"][0]["identity"], [red], registry_referenced=False)["state"]
+        decision = issue_decision(previous, report["observed"][0]["identity"], [compact], registry_referenced=False)
+        self.assertEqual("environment-limited", decision["state"]["nights"]["2026-10-01"]["10"]["outcome"])
+        self.assertEqual(1, decision["state"]["failure_nights"])
+        self.assertEqual([], decision["state"]["explicit_pass_nights"])
+        snapshot = ci_report.merge_snapshot(None, [red, compact], date(2026, 10, 1))
+        self.assertEqual("failed", snapshot["days"]["2026-09-30"]["entries"][0]["observed"][0]["outcome"])
+        self.assertEqual(proof, snapshot["days"]["2026-10-01"]["entries"][0]["observed"][0]["environment_limit"])
+        for mutation in ("local", "self-hosted label", "resources", "functional", "red aggregate", "missing label", "duplicate label", "passed tier",
+                         "infrastructure", "missing log"):
+            raw, shard, traces, job_rows = [copy.deepcopy(value) for value in (aggregate, summary, trace, jobs)]
+            if mutation == "local":
+                job_rows[0]["runner_group_name"] = "Default"
+            elif mutation == "self-hosted label":
+                job_rows[0]["labels"].append("self-hosted")
+            elif mutation == "resources":
+                traces["warm"][0]["bounded_diagnostics"]["case_resources"][0]["failure_samples"][0]["idle_percent"] = 6
+            elif mutation == "functional":
+                traces["warm"][0]["official_methods"][0]["failure_class"] = "scene_identity"
+            elif mutation == "red aggregate":
+                raw["errors"].append("missing shard")
+            elif mutation == "missing label":
+                raw.pop("environment_limited")
+            elif mutation == "duplicate label":
+                raw["environment_limited"].append(case)
+            elif mutation == "passed tier":
+                raw["tiers"]["strict"] = "passed"
+            elif mutation == "infrastructure":
+                traces["warm"][0]["infrastructure"] = [{"code": "cleanup-failed"}]
+            else:
+                traces["warm"][0]["log_present"] = False
+            message = {"local": "environment limit requires a verified GitHub-hosted strict job",
+                "self-hosted label": "environment limit requires a verified GitHub-hosted strict job",
+                "resources": "environment limit differs from official method or case resources",
+                "functional": "environment limit differs from official method or case resources",
+                "red aggregate": "nightly environment limit cannot conceal red or incomplete evidence",
+                "missing label": "nightly environment limit bindings differ",
+                "duplicate label": "nightly environment limit bindings differ",
+                "passed tier": "environment-limited strict tier cannot count as passed",
+                "infrastructure": "environment limit cannot conceal strict invocation infrastructure",
+                "missing log": "environment limit cannot conceal strict invocation infrastructure"}[mutation]
+            with self.subTest(mutation=mutation), patch("ci_publish.json_member", side_effect=[raw, shard, traces]), patch(
+                    "ci_publish.complete_attempt_jobs", return_value=job_rows), self.assertRaisesRegex(ContractError, "^" + message + "$"):
+                ci_report.nightly_attempt(api, run, 1, artifacts)
 
     def test_monthly_due_date_handles_year_boundary_and_explicit_partial_month(self):
         from ci_health import report_month

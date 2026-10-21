@@ -927,6 +927,16 @@ Historical traces and summaries without the field remain valid and gain no new c
 
 ### First-failure evidence
 
+The prepared [hosted strict environment-limit policy](CI_SUMMARY.md#prepared-hosted-strict-environment-limits)
+uses these receipts and the same case's resource samples. This reader-only stage
+does not activate classification in `run_strict_e2e.py` or the strict tracer. Its
+allowlist, evidence requirements, escalation and retained-proof policy are defined
+there. Functional failures and insufficient
+evidence stay red, including every UI shard without a continuous sampler.
+Local pinned-device timing contracts, all App behavior, test deadlines, visual validators,
+thresholds and retry limits remain unchanged. The reader must merge before the
+producer activation PR is opened.
+
 Public-fixture strict/UI failures can publish one first-failure receipt per
 method and existing attempt. Historical records without
 `first_failure` remain valid. No App code, workflow, assertion, deadline, retry,

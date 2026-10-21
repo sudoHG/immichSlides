@@ -127,6 +127,30 @@ def first_failure_receipt(*, native=False):
     return receipt
 
 
+def hosted_timeout_summary():
+    summary = valid_summary()
+    summary["identity"].update(event="schedule", ref="refs/heads/main")
+    summary["identity"].pop("dirty")
+    summary["source"].update(event="schedule", workflow_path=".github/workflows/ci-nightly.yml")
+    summary["run"].update(id="10", tier="strict", job="nightly-strict", shard="iphone-debug-0")
+    identity = ci_summary.test_identity("strict", "smoke", device="iphone", configuration="Debug",
+        suite="smoke", scenario="normal", fixture="a")
+    row = ci_summary.observation(identity, "failed", 12, exit_code=65,
+        failure_diagnostics={"failure_phase": "settings_navigation", "failure_class": "navigation"})
+    row["first_failure"] = row["attempts"][0]["first_failure"] = first_failure_receipt()
+    row["first_failure"]["element"] = "slideshow.control.settings.button"
+    summary["population"].update(declared=[identity], compiled=[identity], observed=[row])
+    summary["status"] = "failed"
+    resource = bounded_diagnostics_receipt(resources=True)["case_resources"][0]
+    resource["failure_samples"] = [dict(resource["failure_samples"][0], elapsed_seconds=6, idle_percent=0),
+        dict(resource["failure_samples"][0], elapsed_seconds=10, idle_percent=5)]
+    diagnostics = bounded_diagnostics_receipt()
+    diagnostics["events"][0].update(scope="xcode", phase="test-execution", sequence=4)
+    diagnostics["case_resources"] = [resource]
+    summary["strict_case_evidence"] = [{"identity": identity, "bounded_diagnostics": diagnostics}]
+    return summary, resource
+
+
 class SummaryContractTests(unittest.TestCase):
     def test_first_failure_lines_follow_all_summary_table_rows(self):
         summary = archive_download_summary()
@@ -146,6 +170,206 @@ class SummaryContractTests(unittest.TestCase):
         self.assertIn("First failure: " + first["key"], rendered)
 
     def test_first_failure_survives_summary_aggregation_and_flaky_first_attempt(self):
+        from ci_failure_diagnostics import environment_limit_evidence
+        yellow, resources = hosted_timeout_summary()
+        row = yellow["population"]["observed"][0]
+        proof = environment_limit_evidence(yellow, row, [resources], runner_hosted=True)
+        self.assertIsNotNone(proof)
+        for changed_field, value in (("failure_class", "scene_identity"), ("failure_class", "control_state")):
+            changed = copy.deepcopy(row)
+            changed[changed_field] = value
+            busy = copy.deepcopy(resources)
+            for sample in busy["failure_samples"]:
+                sample["idle_percent"] = 0
+            self.assertIsNone(environment_limit_evidence(yellow, changed, [busy], runner_hosted=True))
+        for change in ("busy", "one", "missing", "outside", "duplicate", "before only", "after only"):
+            changed = copy.deepcopy(resources)
+            if change == "busy":
+                changed["failure_samples"][1]["idle_percent"] = 5.01
+            elif change == "one":
+                changed["failure_samples"].pop()
+            elif change == "missing":
+                changed["failure_samples"][1]["idle_percent"] = None
+            elif change == "outside":
+                changed["failure_samples"][0]["elapsed_seconds"] = 2.99
+            elif change == "duplicate":
+                changed["failure_samples"][1]["elapsed_seconds"] = 6
+            elif change == "before only":
+                changed["failure_samples"][1]["elapsed_seconds"] = 7
+            else:
+                changed["failure_samples"][0]["elapsed_seconds"] = 9
+            with self.subTest(change=change):
+                self.assertIsNone(environment_limit_evidence(yellow, row, [changed], runner_hosted=True))
+        self.assertIsNone(environment_limit_evidence(yellow, row, [resources], runner_hosted=False))
+        local = copy.deepcopy(yellow)
+        local["source"]["event"] = "local"
+        self.assertIsNone(environment_limit_evidence(local, row, [resources], runner_hosted=True))
+        truncated = copy.deepcopy(resources)
+        truncated["truncated"] = True
+        for sample in truncated["failure_samples"]:
+            sample["cpu_percent"] = dict.fromkeys(sample["cpu_percent"])
+        self.assertIsNotNone(environment_limit_evidence(yellow, row, [truncated], runner_hosted=True))
+        boundary = copy.deepcopy(resources)
+        boundary["duration_seconds"] = 13
+        boundary["failure_samples"][0]["elapsed_seconds"] = 3
+        boundary["failure_samples"][1]["elapsed_seconds"] = 13
+        self.assertIsNotNone(environment_limit_evidence(yellow, row, [boundary], runner_hosted=True))
+        mode_wait = copy.deepcopy(row)
+        mode_wait.update(failure_phase="mode_selection", failure_class="navigation")
+        mode_wait["first_failure"].update(step="mode-card", element="mode.random.button", action="tap")
+        mode_wait["first_failure"]["state"].update(surface="mode", scene_status="UNRECOGNIZABLE")
+        # Main run 39591470339: a real mode-card deadline failure, with no resource samples.
+        mode_wait["first_failure"]["timing"].update(wait_elapsed_seconds=7.788485416666845, deadline_seconds=7)
+        no_samples = dict(resources, sample_count=0, first_failure_elapsed_seconds=None,
+            failure_samples=[], idle_percent_min=None, idle_percent_median=None, truncated=True)
+        self.assertIsNone(environment_limit_evidence(yellow, mode_wait, [no_samples], runner_hosted=True))
+        self.assertIsNotNone(environment_limit_evidence(yellow, mode_wait, [resources], runner_hosted=True))
+        pending_review = ci_summary.observation(row["identity"], "needs-human-review", 12)
+        self.assertIsNone(environment_limit_evidence(yellow, pending_review, [resources], runner_hosted=True))
+        for phase, step in (("playback_entry", "mode-departure"), ("firstboot_setup", "query-element"),
+                            ("mode_selection", "query-element")):
+            functional = copy.deepcopy(row)
+            functional.update(failure_phase=phase, failure_class="navigation")
+            functional["first_failure"]["step"] = step
+            with self.subTest(functional_navigation=(phase, step)):
+                self.assertIsNone(environment_limit_evidence(yellow, functional, [resources], runner_hosted=True))
+        for elapsed, expected in ((5, True), (4.99, False)):
+            changed = copy.deepcopy(row)
+            changed["first_failure"]["timing"]["wait_elapsed_seconds"] = elapsed
+            self.assertEqual(environment_limit_evidence(yellow, changed, [resources], runner_hosted=True) is not None, expected)
+        # Native idle alone has no following successful readback and must remain red.
+        for step, action, duration in (("select", "tap", 25), ("query-element", "tap", 25),
+                                       ("select", "select", 25), ("select", "tap", 19)):
+            changed = copy.deepcopy(row)
+            receipt = changed["first_failure"]
+            receipt.update(step=step, action=action)
+            receipt["timing"].update(wait_elapsed_seconds=None, deadline_seconds=None, action_duration_seconds=duration)
+            receipt["native_activity_seconds"] = dict.fromkeys(("pre_event_idle", "find_window", "synthesize_event",
+                "post_event_idle", "ax_root_acquisition"))
+            receipt["native_activity_seconds"]["post_event_idle"] = 20
+            self.assertIsNone(environment_limit_evidence(yellow, changed, [resources], runner_hosted=True))
+        for state_field, value in (("surface", "unknown"), ("surface", "mode"), ("scene_status", "BLANK"),
+                                   ("scene_status", "UNRECOGNIZABLE")):
+            changed = copy.deepcopy(row)
+            changed["first_failure"]["state"][state_field] = value
+            with self.subTest(state_field=state_field, value=value):
+                self.assertIsNone(environment_limit_evidence(yellow, changed, [resources], runner_hosted=True))
+        for step, element in (("mode-continue", "mode.continue.button"), ("mode-card", "mode.filtered.button")):
+            changed = copy.deepcopy(mode_wait)
+            changed["first_failure"].update(step=step, element=element)
+            self.assertIsNotNone(environment_limit_evidence(yellow, changed, [resources], runner_hosted=True))
+            changed["first_failure"]["state"]["surface"] = "playback"
+            self.assertIsNone(environment_limit_evidence(yellow, changed, [resources], runner_hosted=True))
+        changed = copy.deepcopy(row)
+        changed["first_failure"]["source"] = "validator"
+        changed["first_failure"]["screenshot"] = {"status": "unavailable", "width": None, "height": None, "bytes": None}
+        self.assertIsNone(environment_limit_evidence(yellow, changed, [resources], runner_hosted=True))
+        changed = copy.deepcopy(row)
+        changed.update(failure_phase="unknown", failure_class="snapshot_query")
+        self.assertIsNone(environment_limit_evidence(yellow, changed, [resources], runner_hosted=True))
+        changed.update(failure_phase="hidden_controls", failure_class="hidden_controls")
+        self.assertIsNotNone(environment_limit_evidence(yellow, changed, [resources], runner_hosted=True))
+        changed["first_failure"]["state"]["control_bar"] = "visible"
+        self.assertIsNone(environment_limit_evidence(yellow, changed, [resources], runner_hosted=True))
+        changed = copy.deepcopy(row)
+        changed["first_failure"]["element"] = "unknown"
+        self.assertIsNone(environment_limit_evidence(yellow, changed, [resources], runner_hosted=True))
+        for source_change in ("black", "process", "validator", "phase", "missing receipt", "multiple cases"):
+            changed = copy.deepcopy(row)
+            cases = [resources]
+            if source_change == "black":
+                changed["first_failure"]["state"]["scene_status"] = "BLACK"
+            elif source_change == "process":
+                changed["first_failure"]["state"]["app"] = "not-running"
+                changed["first_failure"]["screenshot"] = {"status": "unavailable", "width": None, "height": None, "bytes": None}
+            elif source_change == "validator":
+                changed["validator_failure_message"] = "All black must not count as a pass"
+            elif source_change == "phase":
+                changed["failure_phase"] = "history_navigation"
+            elif source_change == "missing receipt":
+                changed.pop("first_failure")
+            else:
+                cases = [resources, dict(resources, sequence=5)]
+            with self.subTest(source_change=source_change):
+                self.assertIsNone(environment_limit_evidence(yellow, changed, cases, runner_hosted=True))
+        row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
+        self.assertEqual("failed", ci_summary.parse_summary(json.dumps(yellow))["population"]["observed"][0]["outcome"])
+        self.assertIn("ENVIRONMENT-LIMITED", ci_summary.render_markdown(yellow))
+        self.assertIn("| failed (environment-limited; yellow) |", ci_summary.render_markdown(yellow))
+        from ci_failure_diagnostics import scan_diagnostic_json
+        scan_diagnostic_json(json.dumps(yellow).encode())
+        for mutation in ("missing", "identity", "sequence", "hosted", "resources", "missing host", "conflicting host"):
+            changed = copy.deepcopy(yellow)
+            changed["strict_case_evidence"] = copy.deepcopy(changed["strict_case_evidence"])
+            evidence = changed["strict_case_evidence"][0]
+            if mutation == "missing":
+                changed.pop("strict_case_evidence")
+            elif mutation == "identity":
+                evidence["identity"] = dict(evidence["identity"], key="other-case")
+            elif mutation == "sequence":
+                evidence["bounded_diagnostics"]["events"][0]["sequence"] = 5
+            elif mutation == "hosted":
+                evidence["bounded_diagnostics"]["events"][0]["sample"]["runner_hosted"] = False
+            elif mutation == "missing host":
+                evidence["bounded_diagnostics"]["events"][0]["sample"] = None
+            elif mutation == "conflicting host":
+                event = copy.deepcopy(evidence["bounded_diagnostics"]["events"][0])
+                event["sample"]["runner_hosted"] = False
+                evidence["bounded_diagnostics"]["events"].append(event)
+            else:
+                evidence["bounded_diagnostics"]["case_resources"][0]["failure_samples"][0]["idle_percent"] = 1
+            with self.subTest(binding=mutation), self.assertRaisesRegex(ci_summary.ContractError,
+                    "^environment limit differs from summary case evidence$"):
+                ci_summary.parse_summary(json.dumps(changed))
+        for mutation, message in (("not a list", "invalid strict case evidence"),
+                ("duplicate", "invalid or duplicate strict case evidence"),
+                ("non-strict", "invalid or duplicate strict case evidence"),
+                ("extra field", "strict case evidence: expected fields")):
+            changed = copy.deepcopy(yellow)
+            if mutation == "not a list":
+                changed["strict_case_evidence"] = None
+            elif mutation == "duplicate":
+                changed["strict_case_evidence"].append(copy.deepcopy(changed["strict_case_evidence"][0]))
+            elif mutation == "non-strict":
+                changed["strict_case_evidence"][0]["identity"] = ci_summary.test_identity("host", "other")
+            else:
+                changed["strict_case_evidence"][0]["extra"] = True
+            with self.subTest(case_evidence=mutation), self.assertRaisesRegex(ci_summary.ContractError, "^" + message):
+                ci_summary.parse_summary(json.dumps(changed))
+        private = copy.deepcopy(yellow)
+        private["population"]["observed"][0]["environment_limit"]["private"] = "forbidden"
+        with self.assertRaisesRegex(ci_summary.ContractError, "^environment limit: expected fields"):
+            scan_diagnostic_json(json.dumps(private).encode())
+        for path, value, prefix in ((('schema_version',), True, "environment limit: hosted evidence required"),
+                (('policy_version',), 999, "environment limit: unsupported policy version"),
+                (('runner_hosted',), False, "environment limit: hosted evidence required"),
+                (('failure', 'step'), 'unknown', "environment limit: failure is not an eligible timing wait"),
+                (('resources', 'failure_samples'), [], "environment limit: insufficient starvation evidence")):
+            changed = copy.deepcopy(yellow)
+            target = changed["population"]["observed"][0]["environment_limit"]
+            for key in path[:-1]:
+                target = target[key]
+            target[path[-1]] = value
+            with self.subTest(path=path), self.assertRaisesRegex(ci_summary.ContractError, "^" + prefix):
+                ci_summary.parse_summary(json.dumps(changed))
+        for mutation in ("local", "ui", "mismatched", "passed", "orphan attempt"):
+            changed = copy.deepcopy(yellow)
+            if mutation == "local":
+                changed["source"]["event"] = "local"
+            elif mutation == "ui":
+                changed["run"]["tier"] = "ui"
+            elif mutation == "mismatched":
+                changed["population"]["observed"][0]["attempts"][0].pop("environment_limit")
+            elif mutation == "orphan attempt":
+                changed["population"]["observed"][0].pop("environment_limit")
+            else:
+                changed["population"]["observed"][0]["outcome"] = "passed"
+            message = {"local": "source/identity mismatch", "ui": "environment limit differs from scoped first failure evidence",
+                "mismatched": "environment limit requires one matching failed strict attempt",
+                "passed": "environment limit requires one matching failed strict attempt",
+                "orphan attempt": "environment limit attempt requires observation evidence"}[mutation]
+            with self.subTest(mutation=mutation), self.assertRaisesRegex(ci_summary.ContractError, "^" + message + "$"):
+                ci_summary.parse_summary(json.dumps(changed))
         summary = archive_download_summary()
         summary.pop("archive_download")
         identity = summary["population"]["declared"][0]
