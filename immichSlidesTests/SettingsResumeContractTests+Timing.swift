@@ -81,7 +81,7 @@ extension SettingsResumeContractTests {
     func testIPhonePauseKeepsIsolatedBlackUniformDimAndUndecidableEvidenceUnsigned() throws {
         for signal in [
             "BLACK", "UNRECOGNIZABLE", "uniform", "one_frame", "recovered", "controls", "gap", "missing_baseline",
-            "dark_baseline", "unknown_previous"
+            "dark_baseline", "unknown_previous", "controls_mid_fade"
         ] {
             var samples = iphoneFadeSamples(start: 13.2)
             for index in 2...4 {
@@ -92,6 +92,14 @@ extension SettingsResumeContractTests {
                     request: sample.requestElapsed, mark: unusable ? signal : "A5", status: unusable ? signal : "MATCH",
                     luma: luma, isControlBarVisible: signal != "controls", returnLag: 0.14
                 )
+            }
+            if signal == "controls_mid_fade" {
+                samples = tvosFadeSamples(start: 13.2).map { sample in
+                    watchSample(
+                        request: sample.requestElapsed, mark: sample.mark, status: sample.status, luma: sample.meanLuma,
+                        isControlBarVisible: sample.requestElapsed < 13.5 - 0.001, returnLag: 0.28
+                    )
+                }
             }
             if signal == "dark_baseline" {
                 for (index, luma) in [0.09, 0.07, 0.05].enumerated() {
@@ -265,7 +273,7 @@ extension SettingsResumeContractTests {
         }
     }
 
-    func testTVOSPauseRejectsEarlyFadeWithoutThreeMatchingFrames() {
+    func testTVOSPauseRejectsUnrecognizableFrameBeforeAdvanceWindow() {
         let samples = tvosFadeSamples(start: 7).map { sample in
             if abs(sample.requestElapsed - 7.6) < 0.001 {
                 return watchSample(
@@ -319,7 +327,7 @@ extension SettingsResumeContractTests {
         let valid = tvosFadeSamples(start: start)
         for mutation in [
             "isolated_black", "uniform_dim", "recovered_dim", "controls", "only_one_dim_frame", "dim_anchor",
-            "anchor_gap", "increasing_dim"
+            "anchor_gap", "increasing_dim", "controls_mid_fade"
         ] {
             let samples = valid.map { sample in
                 let offset = sample.requestElapsed - start
@@ -353,7 +361,8 @@ extension SettingsResumeContractTests {
                 }
                 return watchSample(
                     request: sample.requestElapsed, mark: mark, status: status, luma: luma,
-                    isControlBarVisible: mutation != "controls" || offset < -0.001,
+                    isControlBarVisible: (mutation != "controls" || offset < -0.001)
+                        && (mutation != "controls_mid_fade" || offset < 0.3 - 0.001),
                     returnLag: mutation == "anchor_gap" && abs(offset + 0.3) < 0.001 ? 0.01 : 0.28
                 )
             }
@@ -676,6 +685,33 @@ extension SettingsResumeContractTests {
     }
 
     func testIPadPauseRejectsRecoveredDimFrameDimOnlyAndControlBarOnlyChange() {
+        let recoveredTwoDimFrames = (0...39).map { index in
+            let luma: Double
+            switch index {
+            case 1, 12: luma = 0.49
+            case 2: luma = 0.45
+            case 13: luma = 0.35
+            case 14..<26: luma = 0.02
+            case 26...: luma = 0.47
+            default: luma = 0.53
+            }
+            let mark = index >= 26 ? "A1" : (index >= 14 ? "UNRECOGNIZABLE" : "A5")
+            return watchSample(
+                request: 13.4 + Double(index) * 0.1, mark: mark,
+                status: mark == "UNRECOGNIZABLE" ? mark : "MATCH", luma: luma, returnLag: 0.05
+            )
+        }
+        XCTAssertThrowsError(
+            try AccessLifecycleContract.assertIPadPauseTimingEvidence(
+                continueMark: "A5", baselineLuma: 0.53, samples: recoveredTwoDimFrames, intervalSeconds: 12
+            )
+        ) { error in
+            XCTAssertEqual(
+                error.localizedDescription,
+                "iPad transition: conservative screenshot range must lie fully within T±2 s"
+            )
+        }
+
         let recoveredDim = [
             watchSample(request: 10.1, mark: "A5", luma: 0.53, returnLag: 0.05),
             watchSample(request: 10.2, mark: "A5", luma: 0.49, returnLag: 0.05),
@@ -701,35 +737,20 @@ extension SettingsResumeContractTests {
             )
         )
 
-        let controlsPrefix: [AccessLifecycleContract.ContinueWatchSample] = (0...40).map { index in
-            let luma: Double
-            switch index {
-            case ..<22: luma = 0.53
-            case 22: luma = 0.49
-            case 23: luma = 0.35
-            case 40: luma = 0.47
-            default: luma = 0.16
+        for controlsChangeOffset in [0.0, 0.3] {
+            let controlsOnly = tvosFadeSamples(start: 12.3).map { sample in
+                return watchSample(
+                    request: sample.requestElapsed, mark: sample.mark, status: sample.status, luma: sample.meanLuma,
+                    isControlBarVisible: sample.requestElapsed - 12.3 < controlsChangeOffset - 0.001, returnLag: 0.28
+                )
             }
-            return watchSample(
-                request: 10.1 + Double(index) * 0.1,
-                mark: index == 40 ? "A1" : "A5",
-                luma: luma,
-                isControlBarVisible: index < 22,
-                returnLag: 0.05
-            )
-        }
-        let latePhotoFrames: [AccessLifecycleContract.ContinueWatchSample] = (1...12).map { index in
-            watchSample(
-                request: 14.1 + Double(index) * 0.1, mark: "A1", luma: 0.47, isControlBarVisible: false, returnLag: 0.05
-            )
-        }
-        let controlsOnly = controlsPrefix + latePhotoFrames
-        XCTAssertThrowsError(
-            try AccessLifecycleContract.assertIPadPauseTimingEvidence(
-                continueMark: "A5", baselineLuma: 0.53, samples: controlsOnly, intervalSeconds: 12
-            )
-        ) { error in
-            XCTAssertTrue(error.localizedDescription.contains("reliable screenshot of the previous photo"))
+            XCTAssertThrowsError(
+                try AccessLifecycleContract.assertIPadPauseTimingEvidence(
+                    continueMark: "A5", baselineLuma: 0.53, samples: controlsOnly, intervalSeconds: 12
+                )
+            ) { error in
+                XCTAssertTrue(error.localizedDescription.contains("reliable screenshot of the previous photo"))
+            }
         }
     }
 

@@ -69,12 +69,12 @@ extension AccessLifecycleContract {
             if sample.status == "MATCH", isUsableSceneMark(sample.mark), sample.mark != continueMark {
                 return true
             }
-            // A recovered old photo invalidates a dimming/transition proxy before the actual new photo.
-            let recovered = samples.dropFirst(index + 1).prefix {
-                $0.requestElapsed <= stable.requestElapsed
-            }.contains { $0.status == "MATCH" && $0.mark == continueMark && $0.meanLuma >= threshold }
-            if recovered { return false }
-            if sample.status == "TRANSITION" || sample.mark == "TRANSITION" { return true }
+            if sample.status == "TRANSITION" || sample.mark == "TRANSITION" {
+                let recovered = samples.dropFirst(index + 1).prefix {
+                    $0.requestElapsed <= stable.requestElapsed
+                }.contains { $0.status == "MATCH" && $0.mark == continueMark && $0.meanLuma >= threshold }
+                return !recovered
+            }
             guard index > 0, sample.status == "MATCH", sample.mark == continueMark,
                 sample.meanLuma < threshold,
                 samples[index - 1].status == "MATCH", samples[index - 1].mark == continueMark,
@@ -462,7 +462,11 @@ extension AccessLifecycleContract {
             }
             previous = sample
         }
-        return true
+        // A flicker that recovers the old photo cannot establish fade onset on any platform.
+        let stable = firstStableNewImage(continueMark: continueMark, samples: samples)
+        return !samples.dropFirst(startIndex + 1).prefix {
+            $0.requestElapsed <= (stable?.requestElapsed ?? .infinity)
+        }.contains { $0.status == "MATCH" && $0.mark == continueMark && $0.meanLuma >= threshold }
     }
 
     static func assertIdentifiableNewImagePresent(
@@ -524,7 +528,6 @@ extension AccessLifecycleContract {
             return false
         }
 
-        let stable = firstStableNewImage(continueMark: continueMark, samples: ordered)
         let startIndex = ordered.indices.first { index in
             let sample = ordered[index]
             if isAutoTransitionStart(status: sample.status, mark: sample.mark, continueMark: continueMark) {
@@ -538,13 +541,9 @@ extension AccessLifecycleContract {
             else { return false }
             let threshold = baselineLuma * sustainedDimmingLuminanceRatio
             guard sample.meanLuma < threshold else { return false }
-            let recovered = ordered.dropFirst(index + 1).prefix {
-                $0.requestElapsed <= (stable?.requestElapsed ?? .infinity)
-            }.contains { $0.status == "MATCH" && $0.mark == continueMark && $0.meanLuma >= threshold }
-            return !recovered
-                && hasSustainedDimming(
-                    from: index, continueMark: continueMark, threshold: threshold, samples: ordered
-                )
+            return hasSustainedDimming(
+                from: index, continueMark: continueMark, threshold: threshold, samples: ordered
+            )
         }
         guard let startIndex
         else {
