@@ -2725,6 +2725,26 @@ raise SystemExit(65)
                          case["idle_percent_median"], case["load_1m_max"], case["app_cpu_percent_peak"]))
         self.assertEqual([2, 4, 6], [row["elapsed_seconds"] for row in case["failure_samples"]])
         self.assertEqual(0, recorder.charged["xcode"], "sampling must preserve the Xcode diagnostic allowance")
+        # An App that is absent for part of a case (before launch, relaunch, exit) is not sampler truncation.
+        absent_app = {**sample, "cpu_percent": {**sample["cpu_percent"], "app": None}}
+        clock = [0.0]
+        waits = [False, False, True]
+        event = SimpleNamespace(wait=tick, set=lambda: None, is_set=lambda: False)
+        partial = diagnostics.Recorder()
+        with mock.patch.object(resources.threading, "Event", return_value=event), \
+                mock.patch.object(resources.threading, "Thread", side_effect=lambda *, target, daemon: SimpleNamespace(start=target, join=lambda timeout: None)), \
+                mock.patch.object(resources, "HostCpu"), \
+                mock.patch.object(resources, "resource_sample", side_effect=[absent_app, sample]), \
+                mock.patch.object(resources.time, "monotonic", side_effect=lambda: clock[0]), \
+                mock.patch.object(resources.time, "time", return_value=100), \
+                mock.patch.object(resources.time, "perf_counter", return_value=0):
+            sampler = resources.CaseSampler(partial, "device").start()
+            sampler.stop()
+        case = partial.case_resources[0]
+        self.assertEqual((2, 30), (case["sample_count"], case["app_cpu_percent_peak"]))
+        self.assertFalse(case["truncated"], "a temporarily absent App must not mark the case truncated")
+        self.assertGreater(resources.STOP_TIMEOUT_SECONDS, resources.SAMPLE_COMMAND_TIMEOUT_SECONDS,
+                           "stop must outlast one in-flight sample command")
         for defect in ("bad row", rows.replace("30 immichSlides", "nan immichSlides")):
             with mock.patch.object(resources.sys, "platform", "darwin"), \
                     mock.patch.object(resources.subprocess, "run", return_value=SimpleNamespace(returncode=0, stdout=defect)):

@@ -21,7 +21,8 @@ from ci_failure_diagnostics import NATIVE_ACTIVITY_FIELDS, public_first_failure
 SAMPLE_INTERVAL_SECONDS = 2
 SAMPLER_WALL_BUDGET_SECONDS = 180
 SAMPLE_COMMAND_TIMEOUT_SECONDS = 0.5
-STOP_TIMEOUT_SECONDS = 0.2
+# Stop must outlast one in-flight sample command, or a slow `ps` leaves the sampler unfinished and voids the budget.
+STOP_TIMEOUT_SECONDS = SAMPLE_COMMAND_TIMEOUT_SECONDS + 0.1
 MAX_PROCESS_TABLE_BYTES = 2 * 1024 * 1024
 MAX_PROCESS_ROWS = 65536
 NATIVE_MATCH_TOLERANCE_SECONDS = 0.1
@@ -197,8 +198,10 @@ class CaseSampler:
                 sample = resource_sample(host, self.device, min(SAMPLE_COMMAND_TIMEOUT_SECONDS, remaining))
                 elapsed = time.monotonic() - self.origin
                 self.spent += time.perf_counter() - started
+                # The App is legitimately absent before launch, across relaunches and after exit; only a
+                # missing host or non-App category means the sample itself was limited.
                 self.truncated |= (sample["idle_percent"] is None or sample["load_1m"] is None
-                                   or any(value is None for value in sample["cpu_percent"].values()))
+                                   or any(value is None for key, value in sample["cpu_percent"].items() if key != "app"))
                 if self.stopped.is_set():
                     break
                 if elapsed > MAX_DIAGNOSTIC_SECONDS:
