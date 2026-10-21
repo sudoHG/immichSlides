@@ -45,7 +45,7 @@ class ReporterTests(unittest.TestCase):
         shard = valid_summary()
         shard["population"].update(declared=[case], compiled=[case], observed=[observation(case, "failed", 1, exit_code=65)])
         shard["status"] = "failed"
-        receipt = first_failure_receipt()
+        receipt = first_failure_receipt(native=True)
         phase = {"identity": case, "exit_code": 65, "build_operations": 0, "products_unchanged": True,
             "log_present": True, "official_methods": [{"identifier": "StrictE2ESmokeUITests/testIOSStrictE2EConnectionSmoke",
                 "result": "Failed", "first_failure": receipt}],
@@ -70,6 +70,7 @@ class ReporterTests(unittest.TestCase):
         self.assertIn("First failure: " + ci_report.text(ci_report.identity_key(case)), rendered)
         self.assertIn("query-element", rendered)
         self.assertIn("wait=5.1s", rendered)
+        self.assertIn("post_event_idle=23.05s", rendered)
         prior_report = copy.deepcopy(report)
         prior_report["run"]["id"] = 9
         previous = {"schema_version": 2, "days": {"2026-10-01": daily_rollup("2026-10-01", [prior_report])},
@@ -78,6 +79,7 @@ class ReporterTests(unittest.TestCase):
         self.assertNotIn('"first_failure": {', json.dumps(snapshot))
         self.assertEqual("2026-10-01", snapshot["issue_index"]["old"]["first_failure"])
         foreign = copy.deepcopy(receipt)
+        foreign.pop("native_activity_seconds")
         foreign["source"] = "validator"
         foreign["screenshot"]["status"] = "validated-input"
         phase["official_methods"][0]["first_failure"] = foreign

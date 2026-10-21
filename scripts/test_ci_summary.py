@@ -83,8 +83,8 @@ def archive_download_summary():
     return summary
 
 
-def bounded_diagnostics_receipt():
-    return {"schema_version": 1, "collection_seconds": {"preparation": 0.1, "xcode": 0.2, "fixture": 0.01},
+def bounded_diagnostics_receipt(*, resources=False):
+    receipt = {"schema_version": 1, "collection_seconds": {"preparation": 0.1, "xcode": 0.2, "fixture": 0.01},
         "truncated": False, "events": [
             {"scope": "preparation", "phase": "simulator-readiness", "state": "timeout", "sequence": 1,
              "elapsed_seconds": 301.5, "cpu_seconds": 0.01, "input_sha256": None, "official_exports": None,
@@ -101,10 +101,18 @@ def bounded_diagnostics_receipt():
             {"scope": "fixture", "phase": "image-generation", "state": "started", "sequence": 3,
              "elapsed_seconds": 0.1, "cpu_seconds": 0.02, "sample": None, "input_sha256": "e" * 64,
              "official_exports": None}]}
+    if resources:
+        receipt["case_resources"] = [{"sequence": 4, "duration_seconds": 12, "sample_interval_seconds": 2,
+            "sample_count": 6, "truncated": False, "idle_percent_min": 10, "idle_percent_median": 30,
+            "load_1m_max": 4, "app_cpu_percent_peak": 120, "sampler_wall_seconds": 0.06,
+            "sampler_cpu_seconds": 0.03, "first_failure_elapsed_seconds": 8,
+            "failure_samples": [{"elapsed_seconds": 6, "idle_percent": 10, "load_1m": 4,
+                "cpu_percent": {"app": 120, "simulator_daemons": 30, "test_tools": 50, "other": 80}}]}]
+    return receipt
 
 
-def first_failure_receipt():
-    return {"schema_version": 1, "source": "xctest", "step": "query-element",
+def first_failure_receipt(*, native=False):
+    receipt = {"schema_version": 1, "source": "xctest", "step": "query-element",
         "element": "slideshow.control.playPause.button", "action": "select",
         "timing": {"since_action_issued_seconds": 8.28, "since_action_returned_seconds": 8.1,
             "action_duration_seconds": 0.18, "wait_elapsed_seconds": 5.1, "deadline_seconds": 5,
@@ -113,6 +121,10 @@ def first_failure_receipt():
             "control_bar": "hidden", "focus": "slideshow.hiddenWakeReceiver", "history_count": 3,
             "autoplay": "on", "orientation": "landscape", "scene_status": "MATCH", "query_error_code": -25202},
         "validator": None, "screenshot": {"status": "captured", "width": 1536, "height": 864, "bytes": 1000}}
+    if native:
+        receipt["native_activity_seconds"] = {"pre_event_idle": 0.01, "find_window": 0.02,
+            "synthesize_event": 0.36, "post_event_idle": 23.05, "ax_root_acquisition": None}
+    return receipt
 
 
 class SummaryContractTests(unittest.TestCase):
@@ -138,7 +150,7 @@ class SummaryContractTests(unittest.TestCase):
         summary.pop("archive_download")
         identity = summary["population"]["declared"][0]
         failed = ci_summary.observation(identity, "failed", 1, exit_code=65)
-        failed["first_failure"] = failed["attempts"][0]["first_failure"] = first_failure_receipt()
+        failed["first_failure"] = failed["attempts"][0]["first_failure"] = first_failure_receipt(native=True)
         summary["population"]["observed"] = [failed]
         summary["status"] = "failed"
         with tempfile.TemporaryDirectory() as directory:
@@ -146,6 +158,8 @@ class SummaryContractTests(unittest.TestCase):
             read = ci_summary.parse_summary((Path(directory) / "summary.json").read_text())
         self.assertEqual(read["population"]["observed"], [failed])
         self.assertIn("query-element", ci_summary.render_markdown(read))
+        self.assertIn("post_event_idle=23.05s", ci_summary.render_markdown(read))
+        self.assertIn("ax_root_acquisition=unavailable", ci_summary.render_markdown(read))
         from ci_flaky import merge_retry
         second = ci_summary.observation(identity, "failed", 2, exit_code=65)
         later_receipt = first_failure_receipt()
@@ -176,7 +190,7 @@ class SummaryContractTests(unittest.TestCase):
         summary.pop("archive_download")
         identity = summary["population"]["declared"][0]
         item = ci_summary.observation(identity, "failed", 1, exit_code=65)
-        item["first_failure"] = item["attempts"][0]["first_failure"] = first_failure_receipt()
+        item["first_failure"] = item["attempts"][0]["first_failure"] = first_failure_receipt(native=True)
         summary["population"]["observed"] = [item]
         summary["status"] = "failed"
         cases = [
@@ -186,6 +200,8 @@ class SummaryContractTests(unittest.TestCase):
             (("step",), "raw assertion", "first failure: invalid step"),
             (("element",), "album.private-id", "first failure: invalid element"),
             (("action",), "https://private.invalid", "first failure: invalid action"),
+            (("native_activity_seconds",), {}, "first failure native activity: invalid fields"),
+            (("native_activity_seconds", "title"), "private", "first failure native activity: invalid fields"),
             (("timing", "deadline_seconds"), True, "first failure timing: invalid number"),
             (("timing", "wait_elapsed_seconds"), float("inf"), "first failure timing: invalid number"),
             (("timing", "deadline_seconds"), 86401, "first failure timing: invalid number"),
@@ -223,6 +239,9 @@ class SummaryContractTests(unittest.TestCase):
             (("element",), "firstboot.serverURL.field", "first failure: screenshot is not an allowed app window"),
             (("state", "focus"), "firstboot.apiKey.field", "first failure: screenshot is not an allowed app window"),
         ]
+        for key in ("pre_event_idle", "find_window", "synthesize_event", "post_event_idle", "ax_root_acquisition"):
+            for invalid in (-1, True, float("nan"), float("inf"), 86401, "private-title"):
+                cases.append((("native_activity_seconds", key), invalid, "first failure native activity: invalid number"))
         self.assertEqual(ci_summary.parse_summary(summary), summary)
         for path, value, message in cases:
             changed = copy.deepcopy(summary)
@@ -298,6 +317,10 @@ class SummaryContractTests(unittest.TestCase):
         receipt.update(source="validator", validator={"kind": "glyph", "slot": 2, "axis": "vertical"})
         receipt["screenshot"]["status"] = "validated-input"
         self.assertEqual(ci_summary.parse_summary(json.dumps(scoped)), scoped)
+        receipt["native_activity_seconds"] = first_failure_receipt(native=True)["native_activity_seconds"]
+        with self.assertRaisesRegex(ci_summary.ContractError, "^first failure: native activity requires xctest source$"):
+            ci_summary.parse_summary(scoped)
+        del receipt["native_activity_seconds"]
         receipt["state"]["observation"] = "failure-snapshot"
         with self.assertRaisesRegex(ci_summary.ContractError, "^first failure: validator cannot claim a failure snapshot$"):
             ci_summary.parse_summary(scoped)
@@ -307,7 +330,7 @@ class SummaryContractTests(unittest.TestCase):
         from PIL import Image
         from ci_ui_tests import main as ui_main
         from run_strict_e2e import CommandError, write_sensitive_scan
-        receipt = first_failure_receipt()
+        receipt = first_failure_receipt(native=True)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             picture = io.BytesIO()
@@ -382,6 +405,8 @@ class SummaryContractTests(unittest.TestCase):
             for raw in ('{"first_failure":' + json.dumps(receipt).replace('"source": "xctest"',
                         '"source": "private", "source": "xctest"') + '}',
                         '{"first_failure":', '{"first_\\u0066ailure":',
+                        '{"first_failure":' + json.dumps(receipt).replace('"post_event_idle": 23.05',
+                            '"post_event_idle": 1, "post_event_idle": 23.05') + '}',
                         json.dumps({"first_failure": {**receipt, "element": "private-id"}})):
                 path.write_text(raw)
                 with self.subTest(raw=raw[:40]), self.assertRaisesRegex(CommandError,
@@ -390,7 +415,7 @@ class SummaryContractTests(unittest.TestCase):
 
     def test_bounded_diagnostic_scanner_refuses_nested_private_duplicate_and_broken_receipts(self):
         from ci_failure_diagnostics import scan_diagnostic_json
-        receipt = bounded_diagnostics_receipt()
+        receipt = bounded_diagnostics_receipt(resources=True)
         safe = json.dumps({"nested": [{"bounded_diagnostics": receipt}]})
         scan_diagnostic_json(safe.encode())
         private = copy.deepcopy(receipt)
@@ -402,6 +427,8 @@ class SummaryContractTests(unittest.TestCase):
                              ('{"bounded_diagnostics":' + json.dumps(receipt).replace('"scope": "preparation"',
                                  '"scope": "private-scope", "scope": "preparation"', 1) + '}',
                               "duplicate bounded diagnostic JSON key"),
+                             ('{"bounded_diagnostics":' + json.dumps(receipt).replace('"app": 120',
+                                 '"app": 1, "app": 120') + '}', "duplicate bounded diagnostic JSON key"),
                              ('{"bounded_diagnostics":', "invalid failure diagnostic JSON"),
                              ('{"bounde\\u0064_diagnostics":', "invalid failure diagnostic JSON")):
             with self.subTest(message=message):
@@ -417,7 +444,7 @@ class SummaryContractTests(unittest.TestCase):
         case = summary["population"]["declared"][0]
         summary["population"].update(compiled=[], observed=[ci_summary.observation(case, "not-run", 0, exit_code=None)])
         summary["infrastructure"] = [{"code": "simulator-preparation-failed", "message": "Preparation failed"}]
-        summary["bounded_diagnostics"] = bounded_diagnostics_receipt()
+        summary["bounded_diagnostics"] = bounded_diagnostics_receipt(resources=True)
         with tempfile.TemporaryDirectory() as directory:
             ci_summary.write_summary(summary, Path(directory))
             data = Path(directory, "summary.json").read_bytes()
@@ -429,6 +456,9 @@ class SummaryContractTests(unittest.TestCase):
                            "Last retained phase", "simulator-readiness/timeout", "test-execution/before-kill", "image-generation/started"):
                 self.assertIn(detail, rendered)
             self.assertNotIn("(over budget)", rendered)
+            self.assertIn("Case resources 4 (measurements only)", rendered)
+            self.assertIn("idle min/median=10/30%", rendered)
+            self.assertIn("sampler wall/cpu=0.06/0.03s", rendered)
 
         summary["bounded_diagnostics"]["events"][0]["phase"] = "simulator-preparation"
         self.assertEqual(ci_summary.parse_summary(summary), summary)
@@ -471,15 +501,32 @@ class SummaryContractTests(unittest.TestCase):
                 diagnostics = rendered.partition("Bounded diagnostics (measurements only):")[2]
                 self.assertIn("simulator-readiness/timeout", diagnostics)
                 self.assertNotIn("None", diagnostics)
+        summary = valid_summary()
+        summary["bounded_diagnostics"] = bounded_diagnostics_receipt(resources=True)
+        case = summary["bounded_diagnostics"]["case_resources"][0]
+        for field in ("idle_percent_min", "idle_percent_median", "load_1m_max", "app_cpu_percent_peak",
+                      "sampler_wall_seconds", "sampler_cpu_seconds"):
+            case[field] = None
+        sample = case["failure_samples"][0]
+        sample.update(idle_percent=None, load_1m=None, cpu_percent=dict.fromkeys(sample["cpu_percent"]))
+        self.assertEqual(ci_summary.parse_summary(summary), summary)
+        self.assertIn("idle min/median=unavailable/unavailable%", ci_summary.render_markdown(summary))
+        case.update(sample_count=0, first_failure_elapsed_seconds=None, failure_samples=[], truncated=True)
+        self.assertEqual(ci_summary.parse_summary(summary), summary)
+        summary["bounded_diagnostics"]["case_resources"] = []
+        self.assertEqual(ci_summary.parse_summary(summary), summary)
 
     def test_bounded_diagnostics_rejects_single_private_or_unbounded_measurements(self):
         base = archive_download_summary()
         base.pop("archive_download")
-        base["bounded_diagnostics"] = bounded_diagnostics_receipt()
+        base["bounded_diagnostics"] = bounded_diagnostics_receipt(resources=True)
         receipt = ("bounded_diagnostics",)
         event = (*receipt, "events", 0)
         sample = (*event, "sample")
         process = (*sample, "processes", 0)
+        resources = (*receipt, "case_resources")
+        case = (*resources, 0)
+        near = (*case, "failure_samples", 0)
         mutations = [
             (receipt, None, "bounded diagnostics: invalid fields"),
             ((*receipt, "schema_version"), True, "bounded diagnostics: unsupported version"),
@@ -488,6 +535,27 @@ class SummaryContractTests(unittest.TestCase):
             ((*receipt, "collection_seconds", "xcode"), 86401, "bounded diagnostics xcode collection: invalid number"),
             ((*receipt, "collection_seconds", "fixture"), 86401, "bounded diagnostics fixture collection: invalid number"),
             ((*receipt, "truncated"), 0, "bounded diagnostics: truncated must be boolean"),
+            (resources, None, "case resources: invalid case count"),
+            (resources, base["bounded_diagnostics"]["case_resources"] * 65, "case resources: invalid case count"),
+            (resources, base["bounded_diagnostics"]["case_resources"] * 2, "case resources: duplicate sequence"),
+            (case, {}, "case resources: invalid fields"),
+            ((*case, "sequence"), True, "case resources sequence: invalid number"),
+            ((*case, "sample_count"), 43202, "case resources sample count: invalid number"),
+            ((*case, "sample_count"), 0, "case resources: samples exceed count"),
+            ((*case, "truncated"), 0, "case resources: truncated must be boolean"),
+            ((*case, "idle_percent_min"), 31, "case resources: idle statistics out of order"),
+            ((*case, "failure_samples"), {}, "case resources: invalid failure samples"),
+            ((*case, "failure_samples"), [base["bounded_diagnostics"]["case_resources"][0]["failure_samples"][0]] * 7,
+             "case resources: invalid failure samples"),
+            (near, {}, "case resource sample: invalid fields"),
+            ((*near, "elapsed_seconds"), 14, "case resources: sample outside failure window"),
+            ((*case, "first_failure_elapsed_seconds"), None, "case resources: sample outside failure window"),
+            ((*near, "elapsed_seconds"), 13, "case resources: sample outside case"),
+            ((*case, "sample_interval_seconds"), 0, "case resources interval: invalid number"),
+            ((*case, "first_failure_elapsed_seconds"), 13, "case resources: failure outside case"),
+            ((*near, "cpu_percent"), {"private-process": 10}, "case resource categories: invalid fields"),
+            ((*case, "failure_samples"), [base["bounded_diagnostics"]["case_resources"][0]["failure_samples"][0]] * 2,
+             "case resources: samples out of order"),
             ((*receipt, "events"), {}, "bounded diagnostics: invalid event count"),
             ((*receipt, "events"), base["bounded_diagnostics"]["events"] * 129, "bounded diagnostics: invalid event count"),
             (event, {}, "bounded diagnostic event: invalid fields"),
@@ -523,6 +591,19 @@ class SummaryContractTests(unittest.TestCase):
             ((*process, "count"), 65537, "bounded diagnostic process count: invalid number"),
             ((*process, "rss_bytes"), 0.5, "bounded diagnostic process memory: invalid number"),
         ]
+        for path, maximum, label in (
+                ((*case, "duration_seconds"), 86400, "duration"),
+                ((*case, "sample_interval_seconds"), 86400, "interval"),
+                ((*case, "idle_percent_min"), 100, "idle"), ((*case, "idle_percent_median"), 100, "idle"),
+                ((*case, "load_1m_max"), 10**6, "load"), ((*case, "app_cpu_percent_peak"), 10**6, "app cpu"),
+                ((*case, "sampler_wall_seconds"), 86400, "wall cost"), ((*case, "sampler_cpu_seconds"), 10**12, "cpu cost"),
+                ((*case, "first_failure_elapsed_seconds"), 86400, "failure time"),
+                ((*near, "elapsed_seconds"), 86400, "sample time"), ((*near, "idle_percent"), 100, "sample idle"),
+                ((*near, "load_1m"), 10**6, "sample load"),
+                *(((*near, "cpu_percent", category), 10**6, "category cpu")
+                  for category in ("app", "simulator_daemons", "test_tools", "other"))):
+            for invalid in (-1, True, float("nan"), float("inf"), "private-statistic", maximum + 1):
+                mutations.append((path, invalid, "case resources " + label + ": invalid number"))
         for field, maximum in (("elapsed_seconds", 86400), ("cpu_seconds", 10**12)):
             for invalid in (-1, True, float("nan"), float("inf"), "private-statistic", maximum + 1):
                 mutations.append(((*event, field), invalid, "bounded diagnostic " + field + ": invalid number"))
@@ -535,6 +616,14 @@ class SummaryContractTests(unittest.TestCase):
                                               truncated=True, events=boundary["bounded_diagnostics"]["events"] * 128)
         boundary["bounded_diagnostics"]["events"][0]["sample"]["processes"] *= 64
         self.assertEqual(ci_summary.parse_summary(boundary), boundary)
+        resources_boundary = copy.deepcopy(base)
+        case_boundary = resources_boundary["bounded_diagnostics"]["case_resources"][0]
+        case_boundary.update(duration_seconds=13, sample_count=43201)
+        case_boundary["failure_samples"] = [{**copy.deepcopy(case_boundary["failure_samples"][0]), "elapsed_seconds": value}
+                                            for value in (3, 5, 7, 9, 11, 13)]
+        resources_boundary["bounded_diagnostics"]["case_resources"] = [
+            {**copy.deepcopy(case_boundary), "sequence": sequence} for sequence in range(64)]
+        self.assertEqual(ci_summary.parse_summary(resources_boundary), resources_boundary)
         for path, value, message in mutations:
             changed = copy.deepcopy(base)
             target = changed
