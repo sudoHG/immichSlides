@@ -573,9 +573,16 @@ samples identifying that photo below 95%. A strict decrease greater than the
 existing luminance tolerance must occur between adjacent dim samples. Before that
 decrease, at most one frozen dim frame is allowed, equal to the preceding dim
 frame within the tolerance; a rise beyond the tolerance rejects the candidate.
-The span from the bright anchor's request to the decreasing frame's request must
-not exceed the designed 1.0-second outgoing fade, plus timing tolerance. The first
-dim sample supplies the onset request time. The control-bar state must remain
+Only when a frozen frame occurred must the span from the bright anchor's request
+to the decreasing frame's request fit the designed 1.0-second outgoing fade, plus
+timing tolerance. The plain bright-anchor-plus-two-decreasing-dims shape has no
+span cap, preserving its previous behavior at slow capture cadences. The first
+dim sample supplies the onset request time. A vetoed candidate can push onset
+later, potentially to the first identified new photo. The frozen-frame remedy
+requires three capture intervals totaling at most 1.0 s plus tolerance (about
+0.334 s on average); at 4K it often cannot apply. These bounds are not conservative
+for early fades: rejecting their dimming evidence can hide an early start behind
+a later new photo, or reject an in-window start as late. The control-bar state must remain
 unchanged from the anchor through that decrease, with every gap between screenshot
 return and the next request no greater than the existing 0.1-second poll cadence
 plus its tolerance. Pinned 4K TV capture measured

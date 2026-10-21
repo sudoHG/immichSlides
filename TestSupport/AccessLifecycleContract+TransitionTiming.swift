@@ -443,7 +443,6 @@ extension AccessLifecycleContract {
         // Allow one frozen capture without treating a prolonged dim plateau or a rise as a fade.
         guard startIndex > 0 else { return false }
         let anchorIndex = startIndex - 1
-        guard anchorIndex + requiredConsecutiveFadeSampleCount - 1 < samples.count else { return false }
         let maximumFrozenFrameCount = 1
         let maximumAnchorToDecreaseSeconds = TestWait.seconds(.product(1.0))
         var previous = samples[anchorIndex]
@@ -459,8 +458,9 @@ extension AccessLifecycleContract {
                 sample.meanLuma.isFinite, sample.meanLuma < threshold,
                 sample.isControlBarVisible == previous.isControlBarVisible,
                 gap >= 0, gap <= newStableMarkPollInterval + timingToleranceSeconds,
-                sample.requestElapsed - samples[anchorIndex].requestElapsed
-                    <= maximumAnchorToDecreaseSeconds + timingToleranceSeconds
+                frozenFrameCount == 0
+                    || sample.requestElapsed - samples[anchorIndex].requestElapsed
+                        <= maximumAnchorToDecreaseSeconds + timingToleranceSeconds
             else {
                 return false
             }

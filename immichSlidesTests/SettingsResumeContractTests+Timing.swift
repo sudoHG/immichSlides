@@ -197,6 +197,18 @@ extension SettingsResumeContractTests {
         return [anchor] + fade + trough + newPhoto
     }
 
+    private func slowEarlyFadeWithoutFrozenDimSamples() -> [AccessLifecycleContract.ContinueWatchSample] {
+        let fade = [
+            watchSample(request: 8.99, mark: "A5", luma: 0.53, returnLag: 0.49),
+            watchSample(request: 9.50, mark: "A5", luma: 0.49, returnLag: 0.49),
+            watchSample(request: 10.01, mark: "A5", luma: 0.35, returnLag: 0.49)
+        ]
+        return fade
+            + (0...6).map { index in
+                watchSample(request: 10.52 + Double(index) * 0.3, mark: "A1", luma: 0.47, returnLag: 0.28)
+            }
+    }
+
     private func nonFadeDimSamples(signal: String) -> [AccessLifecycleContract.ContinueWatchSample] {
         if signal == "excess_frozen" {
             return (0...22).map { index in
@@ -213,16 +225,17 @@ extension SettingsResumeContractTests {
             }
         }
         if signal == "long_span" || signal == "span_boundary" {
-            let cadence = signal == "long_span" ? 0.51 : 0.5
+            let cadence = signal == "long_span" ? 0.34 : 1.0 / 3.0
             let dim = [
                 watchSample(request: 13.2 - cadence, mark: "A5", luma: 0.53, returnLag: cadence - 0.02),
                 watchSample(request: 13.2, mark: "A5", luma: 0.49, returnLag: cadence - 0.02),
-                watchSample(request: 13.2 + cadence, mark: "A5", luma: 0.35, returnLag: cadence - 0.02)
+                watchSample(request: 13.2 + cadence, mark: "A5", luma: 0.49, returnLag: cadence - 0.02),
+                watchSample(request: 13.2 + 2 * cadence, mark: "A5", luma: 0.35, returnLag: cadence - 0.02)
             ]
             return dim
                 + (0...6).map { index in
                     watchSample(
-                        request: 13.2 + 2 * cadence + Double(index) * 0.3, mark: "A1", luma: 0.47, returnLag: 0.28)
+                        request: 13.2 + 3 * cadence + Double(index) * 0.3, mark: "A1", luma: 0.47, returnLag: 0.28)
                 }
         }
         return tvosFadeSamples(start: 13.2).map { sample in
@@ -294,16 +307,17 @@ extension SettingsResumeContractTests {
     }
 
     func testTVOSPauseRejectsEarlyAndLateFadeStarts() {
-        XCTAssertThrowsError(
-            try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
-                continueMark: "A5", baselineLuma: 0.53,
-                samples: earlyFadeWithFrozenDimSamples(), intervalSeconds: 12
-            )
-        ) {
-            XCTAssertEqual(
-                $0.localizedDescription,
-                "Automatic photo change occurred before T-2; first check test timing and image recognition instead of immediately calling it a product bug"
-            )
+        for samples in [earlyFadeWithFrozenDimSamples(), slowEarlyFadeWithoutFrozenDimSamples()] {
+            XCTAssertThrowsError(
+                try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
+                    continueMark: "A5", baselineLuma: 0.53, samples: samples, intervalSeconds: 12
+                )
+            ) {
+                XCTAssertEqual(
+                    $0.localizedDescription,
+                    "Automatic photo change occurred before T-2; first check test timing and image recognition instead of immediately calling it a product bug"
+                )
+            }
         }
         for (start, message) in [
             (
@@ -803,6 +817,17 @@ extension SettingsResumeContractTests {
     }
 
     func testIPadPauseRejectsRecoveredDimFrameDimOnlyAndControlBarOnlyChange() {
+        XCTAssertThrowsError(
+            try AccessLifecycleContract.assertIPadPauseTimingEvidence(
+                continueMark: "A5", baselineLuma: 0.53,
+                samples: slowEarlyFadeWithoutFrozenDimSamples(), intervalSeconds: 12
+            )
+        ) {
+            XCTAssertEqual(
+                $0.localizedDescription,
+                "iPad transition: conservative screenshot range must lie fully within T±2 s"
+            )
+        }
         for signal in ["late_decrease", "increasing_dim", "long_span", "excess_frozen"] {
             XCTAssertThrowsError(
                 try AccessLifecycleContract.assertIPadPauseTimingEvidence(
