@@ -462,7 +462,10 @@ the case stays `needs-human-review` in `observed` and `needs_human_review`, whil
 the producer stays `unverified`. Aggregate health can pass its automated checks
 without signing that case. The reporter preserves H for the official method as
 well as the case, so pending timing cannot count as an explicit pass night toward
-issue recovery. Informational Vision outcomes are listed separately and excluded from health.
+issue recovery. Informational Vision outcomes are listed separately and excluded from
+health, with one exception: an informational failure can turn an otherwise
+environment-limited night red (see
+[prepared hosted strict environment limits](CI_SUMMARY.md#prepared-hosted-strict-environment-limits)).
 
 `nightly.json` records health/equality, every outcome, exclusions, source/run/attempt,
 hashes, shard intervals, start-order waves and wall time from planning through aggregate.
