@@ -342,6 +342,12 @@ final class AccessLifecycleIOSUITests: XCTestCase {
             try AccessLifecycleContract.assertProgressProbeNotUsed(launchEnvironment: app.launchEnvironment)
 
             try completeFirstBootToPlayback(app: app, input: input)
+            confirmPlayPauseState(
+                app: app,
+                expected: "play",
+                shouldTapIfNeeded: true,
+                message: "Pause before opening settings or identifying photos, so autoplay does not move away."
+            )
             let interval = try configureTimingPlaybackSettings(app: app, isAutoPlayEnabled: true)
             let timeline = try exercisePauseNextContinueVisibleTiming(app: app, intervalSeconds: interval)
             try writeSettingsResumeJSON(

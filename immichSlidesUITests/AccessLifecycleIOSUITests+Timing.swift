@@ -275,11 +275,14 @@ extension AccessLifecycleIOSUITests {
             message: "Must be paused after the midpoint."
         )
         requests.append("playback.pause")
+        XCTAssertLessThan(
+            Date().timeIntervalSince(midpointPlay.issued),
+            interval - AccessLifecycleContract.continueCaptureSlackSeconds,
+            "Must be paused after the midpoint."
+        )
         let beforePause = try captureImmediateRequiredMark(app: app, name: "before-pause")
-        try AccessLifecycleContract.assertSamplesStayOnSceneBeforeAdvanceWindow(
-            continueMark: timingStart.mark,
-            samples: [(Date().timeIntervalSince(midpointPlay.issued), beforePause.mark)],
-            intervalSeconds: interval
+        try AccessLifecycleContract.assertHoldSampleUnchanged(
+            expectedMark: timingStart.mark, polled: beforePause.mark
         )
         revealPlaybackControls(app: app)
         tapElement(app.buttons["slideshow.control.next.button"])
