@@ -660,10 +660,10 @@ producer activation PR. Historical records without either optional field remain 
 
 ### Prepared hosted strict environment limits
 
-Hogan approved this judgement policy on 2026-10-21. This is the reader stage:
-no tracer emits `environment_limit` yet. Merge this reader before activating the
-producer in a separate PR. Existing nights, raw outcomes, first-attempt failure
-counts, deadlines, retries and thresholds remain unchanged. The scope is strictly
+Hogan approved this judgement policy on 2026-10-21. The strict tracer now emits
+`environment_limit` from each qualifying warm case's original receipts, using the
+merged proof, summary and official-method readers before publication. Existing nights,
+raw outcomes, first-attempt failure counts, deadlines, retries and thresholds remain unchanged. The scope is strictly
 GitHub-hosted `ci-nightly` strict shards, for `schedule` and `workflow_dispatch`;
 `ci-pr-gate`, fixture UI shards, local and self-hosted runs are excluded.
 
@@ -679,8 +679,10 @@ the nightly strict source. The optional `strict_case_evidence` list binds each s
 case `identity` to its original `bounded_diagnostics` receipt. Each proof must match
 that case's resource entry by sequence and full value, and have a matching xcode
 event sample whose `runner_hosted` is true; conflicting hosting samples fail closed.
-This evidence slot is reader-only until the separate producer PR fills it from the
-same case trace. No unknown field, private assertion or free text is allowed.
+The producer fills this evidence slot from the same case trace only after the
+candidate summary and official method binding validate. Invalid or ambiguous evidence
+emits no proof and retains the raw failure. No unknown field, private assertion or
+free text is allowed.
 
 All criteria are required:
 
@@ -733,9 +735,10 @@ With complete matrix evidence, the accepting strict aggregate uses
 all nonpassing cases qualify. It exits zero with a prominent warning for every
 yellow case and all its sample numbers; raw observations remain `failed` and never
 count as passes. Any red case, missing case, infrastructure/cleanup error, failed
-matrix job or failed UI aggregate keeps the night red. Producer activation must
-make exclusively yellow strict jobs exit zero while preserving failed receipts;
-an unrelated job failure must never be ignored by the aggregate.
+matrix job or failed UI aggregate keeps the night red. Exclusively yellow strict
+jobs exit zero with per-case workflow warnings while preserving failed receipts and
+the producer summary's raw `failed` status; an unrelated job failure must never be
+ignored by the aggregate.
 
 The reporter binds every claim to the same case's trace resource entry and official
 method receipt, then checks the aggregate list against the shard claims. Existing

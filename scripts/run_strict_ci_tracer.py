@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 import re
@@ -18,7 +19,7 @@ from pathlib import Path
 from ci_build_archive import file_hash, workspace_preflight
 from ci_failure_diagnostics import VALIDATOR_FAILURE_FIELD, public_validator_failure_message
 from ci_execution_diagnostics import Recorder, TRUNCATION_PREFIX, TRUNCATION_REASONS, report_truncation, session
-from ci_summary import decode, identity_key, observation, require, test_identity, write_summary
+from ci_summary import decode, identity_key, observation, parse_summary, require, test_identity, write_summary
 from run_host_checks import GROUP_TERM_GRACE_SECONDS, group_has_live_members, run_identity, source_metadata, stop_group, toolchain
 from run_strict_e2e import (CommandError, FILTER_PERSON_SESSIONS, resolve_suite_selector,
                             write_sensitive_scan, WRONG_PUBLIC_API_KEY)
@@ -138,6 +139,65 @@ def evaluate_tracer(declared, results, *, interrupted=False, informational=()):
 
 class RunnerGroupCleanupError(RuntimeError):
     """Build paths must be retained if runner descendants cannot be stopped."""
+
+
+def produce_environment_limits(summary, results):
+    """Attach only reader-validated same-case proofs; retain every raw outcome."""
+    from ci_failure_diagnostics import ENVIRONMENT_LIMIT_FIELD, environment_limit_evidence
+    from ci_bounded_diagnostics import validate_receipt
+    summary.pop("strict_case_evidence", None)
+    for index, entry in enumerate(summary["population"]["observed"]):
+        phases = [phase for phase in results if phase["identity"] == entry["identity"]]
+        if len(phases) != 1:
+            continue
+        phase = phases[0]
+        if (phase.get("infrastructure") or phase.get("official_error")
+                or phase.get("exit_code") in {None, 124, 130} or phase.get("log_present") is not True
+                or phase.get("build_operations") != 0 or phase.get("products_unchanged") is not True):
+            continue
+        try:
+            ledger = phase.get("bounded_diagnostics")
+            validate_receipt(ledger)
+            resources = ledger.get("case_resources", [])
+            failures = [resource for resource in resources if resource["first_failure_elapsed_seconds"] is not None]
+            if len(failures) != 1:
+                continue
+            samples = [event["sample"] for event in ledger["events"] if event["scope"] == "xcode"
+                and event["sequence"] == failures[0]["sequence"] and event["sample"] is not None]
+            hosted = bool(samples) and all(sample["runner_hosted"] is True for sample in samples)
+            proof = environment_limit_evidence(summary, entry, resources, runner_hosted=hosted)
+            if proof is None:
+                continue
+            # Validate hosting, attempt shape and original case binding through the merged reader.
+            candidate = copy.deepcopy(summary)
+            target = candidate["population"]["observed"][index]
+            target[ENVIRONMENT_LIMIT_FIELD] = target["attempts"][0][ENVIRONMENT_LIMIT_FIELD] = proof
+            candidate.setdefault("strict_case_evidence", []).append({"identity": entry["identity"],
+                "bounded_diagnostics": ledger})
+            parse_summary(candidate)
+            from ci_report import method_observations
+            # Other incomplete cases retain red status without hiding a qualified case's warning.
+            scoped = copy.deepcopy(candidate)
+            scoped["population"] = {"declared": [entry["identity"]],
+                "compiled": [identity for identity in scoped["population"]["compiled"] if identity == entry["identity"]],
+                "observed": [target], "deselected": [], "removed_by_pr": []}
+            methods, missing = method_observations(scoped, {"warm": [phase]}, runner_hosted=hosted)
+            claimed = [method for method in methods if method.get(ENVIRONMENT_LIMIT_FIELD) == proof]
+            if missing or len(claimed) != 1:
+                continue
+        except (ValueError, TypeError, KeyError, AttributeError, IndexError):
+            continue
+        entry[ENVIRONMENT_LIMIT_FIELD] = entry["attempts"][0][ENVIRONMENT_LIMIT_FIELD] = proof
+        summary["strict_case_evidence"] = candidate["strict_case_evidence"]
+    if summary["status"] != "failed":
+        return 0
+    population = summary["population"]
+    complete = (len(population["observed"]) == len(population["declared"])
+        and {identity_key(entry["identity"]) for entry in population["observed"]}
+        == {identity_key(identity) for identity in population["declared"]})
+    nonpassing = [entry for entry in population["observed"] if entry["outcome"] not in {"passed", "needs-human-review"}]
+    return 0 if (complete and not summary["infrastructure"] and nonpassing
+                 and all(ENVIRONMENT_LIMIT_FIELD in entry for entry in nonpassing)) else 1
 
 
 def run_runner(command, repo_root, log_path, *, timeout_seconds, truncation_seen=None):
@@ -290,10 +350,12 @@ def main(argv=None):
     completed = False
     simulator_prepared = False
     preparation_failure = None
+    exit_code = 1
     from strict_e2e_resource_diagnostics import NativeActivityBudget
     native_budget = NativeActivityBudget()
 
     def checkpoint():
+        nonlocal exit_code
         diagnostics.load(diagnostics_path)
         if child_truncated.is_set():
             diagnostics.truncate("inherited")
@@ -316,6 +378,7 @@ def main(argv=None):
             for item in summary["population"]["observed"]:
                 item["attempts"][0]["first_failure"] = preparation_failure
         diagnostics.attach(summary)
+        exit_code = produce_environment_limits(summary, results)
         write_summary(summary, records)
 
     def invoke(case, evidence, derived, warm):
@@ -504,7 +567,12 @@ def main(argv=None):
             checkpoint()
         finally:
             signal.signal(signal.SIGTERM, previous_term)
-    return 1 if summary["status"] == "failed" else 0
+    from ci_failure_diagnostics import render_environment_limit
+    for entry in summary["population"]["observed"]:
+        if "environment_limit" in entry:
+            print("::warning title=Environment-limited strict timing::" + identity_key(entry["identity"])
+                  + ": " + render_environment_limit(entry["environment_limit"]), flush=True)
+    return exit_code
 
 
 if __name__ == "__main__":
