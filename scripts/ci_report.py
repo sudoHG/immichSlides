@@ -1484,6 +1484,7 @@ def write_report(output, snapshot, entries, registry, states, *, stopped, now=No
             "registry": registry, "issue_inventory": list(inventory), "issue_index": snapshot.get("issue_index", {}), "budget_stopped": stopped,
             "api_budget": snapshot.get("api_budget", {}), "post_merge_since": since}
     (output / "sync.json").write_text(json.dumps(plan) + "\n")
+    return entries
 
 
 def collect_report(api, event_name, event, now, output, *, run_ids=()):
@@ -1569,7 +1570,7 @@ def collect_report(api, event_name, event, now, output, *, run_ids=()):
         snapshot["producer"] = {"repository": api.repository, "workflow_path": REPORT_PATH,
             "run": {"id": os.environ["GITHUB_RUN_ID"], "attempt": int(os.environ["GITHUB_RUN_ATTEMPT"])},
             "commit_sha": os.environ["GITHUB_SHA"]}
-    write_report(output, snapshot, entries, registry, states, stopped=stopped, now=now, inventory=inventory)
+    entries = write_report(output, snapshot, entries, registry, states, stopped=stopped, now=now, inventory=inventory)
     rendered_health = write_health(output, snapshot, registry, month, now) if month else ""
     if month and os.environ.get("GITHUB_OUTPUT"):
         with Path(os.environ["GITHUB_OUTPUT"]).open("a") as handle:

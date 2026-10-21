@@ -1902,11 +1902,36 @@ class ReporterTests(unittest.TestCase):
         same_night["day"] = compact["day"]
         self.assertEqual("none", issue_decision(None, report["observed"][0]["identity"],
             [compact, same_night], registry_referenced=False)["action"])
+        same_day_pass = copy.deepcopy(passed)
+        same_day_pass["run"]["id"] = 12
+        self.assertEqual("none", issue_decision(None, report["observed"][0]["identity"],
+            [compact, following, same_day_pass], registry_referenced=False)["action"])
         consecutive = ci_report.merge_snapshot(None, [compact, following], date(2026, 10, 2))
         escalated = consecutive["days"]["2026-10-02"]["entries"][0]
         self.assertEqual("failed", escalated["status"])
         self.assertEqual("failed", escalated["observed"][0]["outcome"])
         self.assertIn("RED: repeated environment limit", render_entry(escalated))
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            ci_report.write_report(output, consecutive, [following], {"entries": []}, {}, stopped=False,
+                now=date(2026, 10, 2))
+            self.assertEqual("failed", json.loads((output / "runs/11-1.json").read_text())["status"])
+            self.assertIn("RED: repeated environment limit", (output / "runs/11-1.md").read_text())
+            api = type("API", (), {"repository": "sudoHG/immichSlides", "request_count": 1, "remaining": 900,
+                                   "request": lambda *args: None, "budget_exhausted": lambda *args: False})()
+            previous = ci_report.merge_snapshot(None, [compact], date(2026, 10, 1))
+            summary_path = output / "step-summary.md"
+            with patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": str(summary_path), "GITHUB_ACTIONS": "false"}), \
+                    patch("ci_flaky.parse_registry", return_value={"entries": []}), \
+                    patch("ci_report.read_snapshot", return_value=previous), \
+                    patch("ci_report.visible_issues", return_value=[]), \
+                    patch("ci_report.discover_runs", return_value=[{**run, "id": 11,
+                          "repository": {"full_name": api.repository}}]), \
+                    patch("ci_report.read_run", return_value=following):
+                self.assertEqual(0, ci_report.collect_report(api, "workflow_run", {}, date(2026, 10, 2), output))
+            self.assertIn("RED: repeated environment limit", summary_path.read_text())
+            self.assertIn("ci-nightly.yml: failed", summary_path.read_text())
+            self.assertNotIn("WARNING: hosted timing failures", summary_path.read_text())
         for mutation in ("missing version", "future version", "changed policy", "malformed"):
             retained = copy.deepcopy(compact)
             bad = retained["observed"][0]["environment_limit"]
