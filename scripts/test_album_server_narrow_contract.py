@@ -719,7 +719,7 @@ class AlbumEmptyFixtureBTests(unittest.TestCase):
                         (directory / "album-play-1.png").write_bytes(invalid)
                         with self.assertRaisesRegex(
                             CommandError,
-                            r"^Visual assertion failed; cannot mark SUCCESS: unreadable public glyph slot; slot 2 \(vertical\)$",
+                            r"^Visual assertion failed; cannot mark SUCCESS: unreadable public glyph slot; slot 2 \(vertical\); screenshot album-play-1\.png$",
                         ):
                             require_visual_identity(directory, "album-empty", fixture_set=fixture_set)
 
