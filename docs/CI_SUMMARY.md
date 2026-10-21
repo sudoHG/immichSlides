@@ -215,7 +215,7 @@ a fresh allowance, while idle/load ticks continue. Hosted preparation ledger IO
 has a 0.1-second cap; an IO timeout can make inherited Xcode accounting unavailable
 even on a Release lifecycle shard that has not sampled yet. No
 fresh allowance is granted per case. This preserves the existing 10-second
-Xcode diagnostic pool for native extraction and anomaly diagnostics, and keeps
+Xcode diagnostic pool for anomaly diagnostics, and keeps
 host sampler running through a 20–30 minute shard. At a ten-second process cadence,
 180 snapshots costing 1.1 seconds each would exhaust the pool near the end of a
 30-minute shard; only process snapshots stop, preserving late idle/load evidence.
@@ -230,6 +230,26 @@ returns; no extra wait is added to obtain future failure-window samples.
 The failure timestamp is bound after XCTest returns, so historical category CPU
 cannot be freshly sampled at the failure time; only actual periodic snapshots
 within the existing five-second window are published, with no backfilled values.
+
+Native activity and failure-time extraction has an independent two-second
+allowance per case and twenty seconds per strict job. The tracer owns the job
+counter in its parent process and precharges up to two seconds before each warm
+child via `--native-diagnostics-allowance-seconds` (0–2); it does not reclaim
+unverified child costs. Successful cases also hold their prepaid reservation.
+The child's counter is shared across that case's fixture sessions and listed
+attempts; standalone strict runs default to two seconds. These allowances remain
+usable when diagnostic-ledger IO fails and never borrow the Xcode or process
+sampling pools. Capped daemon workers precharge before reading; completed work
+refunds unused time locally, while timed-out work does not. Late results cannot
+bind a failure epoch. No new collection-cost field is published.
+
+Extraction requires one tests reference, one matching selected method and a
+unique earliest failure timestamp. Missing/oversized objects, timeouts and
+ambiguous method, failure, tap or synthesis bindings leave the failure window
+empty. If the failure timestamp is unique but native action details are simply
+absent, the timestamp can still bind host samples while native durations remain
+null. Existing numeric-only native duration and failure-sample fields are used;
+timestamps, activity titles, paths and identifiers remain private.
 
 Current producers collect preparation and Xcode diagnostics only. Fixture-scope
 events remain reader-compatible, but no fixture diagnostics are emitted or
@@ -266,6 +286,10 @@ Each write uses a distinct temporary file, including overlapping timed-out worke
 The refund deadline check precedes atomic replacement: a scheduling pause between
 them can commit after the caller times out. That window can undercount up to
 about 0.09 s per late commit; the caller still waits at most its 0.1 s IO cap.
+Hosted load has exhausted this cap before strict cases started. Raising it to
+0.5 s would also widen that late-refund undercount window to about 0.49 s per
+commit, so the cap stays unchanged pending a ledger commit-protocol change.
+Host ticks and the separately prepaid native allowance do not depend on this IO.
 Exhausting preparation sampling never gates persistence of Xcode
 events. Start samples leave 0.5 s for anomaly sampling; the IO pool has its own
 exhaustion/truncation boundary rather than borrowing another scope's budget.
@@ -300,7 +324,11 @@ recognized public phase, and official-export existence booleans. Existing bundle
 export, retention and privacy rules still apply. Ready is written at the existing
 point after generation and bind; health and the 60 s deadline remain authoritative.
 
-The approved per-job ceilings apply across repeated preparations and Xcode invocations.
+The following preparation/anomaly estimates exclude periodic resource sampling,
+its separately bounded host reads and the additional native allowance above.
+Native extraction adds at most twenty seconds per strict job; actual elapsed
+cost is not published separately. The approved preparation/anomaly ceilings apply
+across repeated preparations and Xcode invocations.
 Both the 25 strict jobs and 18 fixture UI jobs use the shared producers: at most
 43 × 5 s = 3.59 machine minutes/night for preparation. Xcode diagnostics add at
 most 10 s (0.167 machine minutes) per failed strict job. With one such failed

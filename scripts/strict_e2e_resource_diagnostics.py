@@ -13,10 +13,10 @@ import time
 from datetime import datetime
 from threading import Event, Thread
 
-from ci_bounded_diagnostics import (COLLECTION_BUDGET_SECONDS, MAX_DIAGNOSTIC_SECONDS,
+from ci_bounded_diagnostics import (MAX_DIAGNOSTIC_SECONDS,
     MAX_LOAD_AVERAGE, MAX_PROCESS_CPU_PERCENT, MAX_RESOURCE_CASES, MAX_RESOURCE_SAMPLES,
     RESOURCE_CATEGORIES, validate_case_resources)
-from ci_execution_diagnostics import BOOKKEEPING_RESERVE_SECONDS, finite
+from ci_execution_diagnostics import finite
 from ci_failure_diagnostics import NATIVE_ACTIVITY_FIELDS, public_first_failure
 
 SAMPLE_INTERVAL_SECONDS = 2
@@ -30,6 +30,49 @@ STOP_TIMEOUT_SECONDS = HOST_SAMPLE_TIMEOUT_SECONDS + SAMPLE_COMMAND_TIMEOUT_SECO
 MAX_PROCESS_TABLE_BYTES = 2 * 1024 * 1024
 MAX_PROCESS_ROWS = 65536
 NATIVE_MATCH_TOLERANCE_SECONDS = 0.1
+NATIVE_CASE_BUDGET_SECONDS = 2
+NATIVE_JOB_BUDGET_SECONDS = 20
+
+
+class NativeActivityBudget:
+    """Precharge child loans and bound native reads without trusting the diagnostic ledger."""
+
+    def __init__(self, seconds=NATIVE_JOB_BUDGET_SECONDS):
+        self.remaining_seconds = finite(seconds, NATIVE_JOB_BUDGET_SECONDS, default=0)
+        self.case_remaining = {}
+
+    def reserve_case(self):
+        allowance = min(NATIVE_CASE_BUDGET_SECONDS, self.remaining_seconds)
+        self.remaining_seconds -= allowance
+        return allowance
+
+    def collect(self, sequence, operation, *, cap):
+        case_remaining = self.case_remaining.setdefault(sequence, NATIVE_CASE_BUDGET_SECONDS)
+        limit = min(cap, case_remaining, self.remaining_seconds)
+        if limit <= 0:
+            return None
+        self.remaining_seconds -= limit
+        self.case_remaining[sequence] -= limit
+        started = time.perf_counter()
+        done, values = threading.Event(), []
+        def read():
+            try:
+                values.append(operation(max(0, limit - (time.perf_counter() - started))))
+            except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
+                pass
+            finally:
+                done.set()
+        try:
+            threading.Thread(target=read, daemon=True).start()
+            finished = done.wait(max(0, limit - (time.perf_counter() - started)))
+        except (OSError, RuntimeError):
+            finished = False
+        elapsed = time.perf_counter() - started
+        if finished:
+            refund = max(0, limit - elapsed)
+            self.remaining_seconds += refund
+            self.case_remaining[sequence] += refund
+        return values[0] if finished and elapsed <= limit and values else None
 
 
 class HostCpu:
@@ -364,15 +407,24 @@ def native_time(node, field):
         return None
 
 
-def native_breakdown(summary, receipt):
-    """Match native bounds, refusing ambiguity rather than estimating durations."""
-    empty = dict.fromkeys(NATIVE_ACTIVITY_FIELDS)
+def native_first_failure(summary):
+    """Use the earliest recorded failure only when its timestamp identifies one failure."""
     failures = [(native_time(row, "timestamp"), legacy_value(row, "uuid"))
                 for row in legacy_rows(summary, "failureSummaries")]
     failures = [(at, identifier) for at, identifier in failures if at is not None]
     if not failures:
+        return None, None
+    earliest = min(at for at, _ in failures)
+    matches = [row for row in failures if row[0] == earliest]
+    return matches[0] if len(matches) == 1 else (None, None)
+
+
+def native_breakdown(summary, receipt):
+    """Match native bounds, refusing ambiguity rather than estimating durations."""
+    empty = dict.fromkeys(NATIVE_ACTIVITY_FIELDS)
+    failed_at, failure_id = native_first_failure(summary)
+    if failed_at is None:
         return empty, None
-    failed_at, failure_id = min(failures, key=lambda row: row[0])
     flattened = []
     def visit(nodes, ancestors=()):
         for node in nodes:
@@ -385,12 +437,14 @@ def native_breakdown(summary, receipt):
             return None
         return start, end
     action = None
+    ambiguous_action = False
     duration = receipt["timing"]["action_duration_seconds"]
     if receipt["step"] == "select" and receipt["action"] == "tap" and duration is not None:
         candidates = [(node, bounds(node)) for node, _ in flattened
                       if str(legacy_value(node, "title") or "").startswith("Tap ")]
         candidates = [(node, interval) for node, interval in candidates if interval is not None
                       and interval[1] <= failed_at and abs(interval[1] - interval[0] - duration) <= NATIVE_MATCH_TOLERANCE_SECONDS]
+        ambiguous_action = len(candidates) > 1
         # The current tap is the latest preceding tap, and its duration must uniquely bind it.
         latest = max((bounds(node)[1] for node, _ in flattened if bounds(node) is not None
                       and str(legacy_value(node, "title") or "").startswith("Tap ") and bounds(node)[1] <= failed_at), default=None)
@@ -402,8 +456,10 @@ def native_breakdown(summary, receipt):
                       and any(row.get("_value") == failure_id for row in legacy_rows(node, "failureSummaryIDs"))]
         if len(associated) == 1:
             action = associated[0]
+        elif len(associated) > 1:
+            ambiguous_action = True
     if action is None or bounds(action) is None:
-        return empty, failed_at
+        return empty, None if ambiguous_action else failed_at
     descendants = []
     def gather(node):
         for child in legacy_rows(node, "subactivities"):
@@ -422,7 +478,7 @@ def native_breakdown(summary, receipt):
                 descendants.append(node)
     syntheses = [bounds(node) for node in descendants if legacy_value(node, "title") == "Synthesize event" and bounds(node) is not None]
     if len(syntheses) > 1:
-        return empty, failed_at
+        return empty, None
     synthesis = syntheses[0] if syntheses else None
     intervals = {key: [] for key in NATIVE_ACTIVITY_FIELDS}
     for node in descendants:
@@ -462,10 +518,9 @@ def collect_native_activity(bundle, root, failed_nodes, sampler, *, recorder, ti
     """Inspect retained private xcresult objects; publish only checked numeric projections."""
     if sampler is None or recorder is None or not failed_nodes:
         return
-    timeout = min(timeout, COLLECTION_BUDGET_SECONDS["xcode"] - recorder.charged["xcode"] - BOOKKEEPING_RESERVE_SECONDS)
-    if timeout <= 0:
-        recorder.truncate("collection-budget-exhausted")
-        return
+    budget = getattr(recorder, "native_activity_budget", None)
+    if budget is None:
+        budget = recorder.native_activity_budget = NativeActivityBudget()
     def read(reference, deadline):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -475,8 +530,8 @@ def collect_native_activity(bundle, root, failed_nodes, sampler, *, recorder, ti
         if len(result.stdout) > 16 * 1024 * 1024:
             return {}
         return json.loads(result.stdout)
-    def operation():
-        deadline = time.monotonic() + timeout
+    def operation(limit):
+        deadline = time.monotonic() + limit
         references = []
         for action in legacy_rows(root, "actions"):
             action_result = action.get("actionResult", {})
@@ -512,17 +567,17 @@ def collect_native_activity(bundle, root, failed_nodes, sampler, *, recorder, ti
                 continue
             summary = read(reference, deadline)
             if receipt is None or receipt["source"] != "xctest":
-                dates = [native_time(row, "timestamp") for row in legacy_rows(summary, "failureSummaries")]
-                dates = [value for value in dates if value is not None]
-                projected.append((node, None, min(dates) if dates else None))
+                failed_at, _ = native_first_failure(summary)
+                projected.append((node, None, failed_at))
             else:
                 numeric, failed_at = native_breakdown(summary, receipt)
                 enriched = {**receipt, "native_activity_seconds": numeric}
                 if public_first_failure(enriched) is not None:
                     projected.append((node, enriched, failed_at))
         return projected
-    projected = recorder.collect("xcode", operation, cap=timeout)
+    projected = budget.collect(sampler.sequence, operation, cap=min(timeout, NATIVE_CASE_BUDGET_SECONDS))
     for node, receipt, failed_at in projected or []:
         if receipt is not None:
             node["first_failure"] = receipt
-        sampler.bind_failure(failed_at)
+        if failed_at is not None:
+            sampler.bind_failure(failed_at)
