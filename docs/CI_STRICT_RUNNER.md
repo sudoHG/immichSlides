@@ -1330,6 +1330,40 @@ The shared `rotate()` orientation assertion serves portrait and landscape steps,
 iPad layout and orientation self-checks, so it retains an `unknown` phase.
 The whole-rotation deadline and onboarding iPad orientation assertion also use
 `unknown`: neither Continue timing nor display-mode policy describes device rotation.
+The tvOS lifecycle hidden-wake helper serves both Settings opening and generic
+control-bar recovery in the pause suite. Its focus, transition, screenshot and
+single-press checks retain an `unknown` phase, including the shared returned-layer
+check used on background return. Shared keyboard helpers also serve first boot and
+server switching, and generic focus/selected-option helpers serve several settings
+operations; their ambiguous phases remain `unknown`. The selected-option prefix is
+restricted to `After choosing settings.playback.` so mode-selection sentences do
+not match it. Identity screenshot prefixes include the four reviewed capture names
+and `cannot serve as identity:`; unrelated screenshot evidence remains unmatched.
+The two simulator-only preconditions retain `unknown/unknown`: they do not report
+missing captured frames.
+
+Recognizing previously unknown tvOS assertions also makes the following combinations
+newly eligible for yellow under the existing device-agnostic environment-limit policy.
+This is a classification effect, even though the allowlist and verdict logic are
+unchanged. Eligibility still requires the same hosted method/resource binding,
+foreground playback surface, exhausted recorded wait and qualifying starvation
+samples; no actual product failure becomes a pass. Repeated yellow cases escalate
+after two nights under the [existing policy](CI_SUMMARY.md#prepared-hosted-strict-environment-limits).
+
+| Newly yellow-eligible phase / class | Recorded step / element | Source and exposure |
+|---|---|---|
+| `hidden_controls/hidden_controls` | `reveal-controls` / `slideshow.control.playPause.button` | [Flow wake](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L828) and [lifecycle wake](../immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift#L666): `control_bar` must be **other than `visible`**, so both `hidden` and `unknown` pass this guard. The control-bar probe is DEBUG-only ([probe gate](../immichSlides/tvOS/Core/SlideShowViewTV.swift#L243), [probe attachment](../immichSlides/tvOS/Core/SlideShowViewTV.swift#L369)); in the Release pause suite `control_bar` is always `unknown` and this guard never rejects a wake failure. |
+| `control_action/hidden_controls` | `query-element` / `slideshow.control.previous.button` | [Flow entry](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L277): a missing Previous button, including a regression that hides it instead of disabling it, can be yellow on a qualifying starved runner. |
+| `settings_navigation/navigation` | `query-element` / `slideshow.control.settings.button` | [Settings return](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L631): after reaching playback, failure to show Settings within the existing 8 s wait can be yellow. |
+
+Other newly mapped assertions do not supply additional eligible combinations:
+the post-Select Settings assertion has no completed wait timing; wake receiver/hint
+queries record an unknown element; mode-selection queries use `query-element`
+rather than the allowlisted mode steps; history phases and
+`playback_entry/hidden_controls` are absent from the allowlist. The inferred saved
+pause failure (`visible_scene_capture/scene_identity`, `capture-frame`,
+UNRECOGNIZABLE) and flow failure (`history_navigation/control_state`, or
+`history_navigation/hidden_controls` for the entry query) remain red.
 
 The pause-window suite's four `PRECONDITION_FAIL` prefixes describe the A2 search
 before Play, although they share `pause_window/scene_identity` with post-Play checks.
@@ -1595,6 +1629,118 @@ New enum meanings and why the previous vocabulary cannot express them:
 | `The control bar may have auto-hidden while waiting for the sampling overlay; it should wake up again before tapping next` | `visible_scene_capture` | `hidden_controls` | [FilterSummaryIOSVisualUITests+Exif.swift](../immichSlidesUITests/FilterSummaryIOSVisualUITests+Exif.swift) |
 | `Before retrying next, the playback control bar should wake up again` | `control_action` | `hidden_controls` | [FilterSummaryIOSVisualUITests+Exif.swift](../immichSlidesUITests/FilterSummaryIOSVisualUITests+Exif.swift) |
 | `Could not return from the playback settings page to the slideshow` | `settings_navigation` | `navigation` | [PlaybackHistoryIOSUITests+Support.swift](../immichSlidesUITests/PlaybackHistoryIOSUITests+Support.swift) |
+| `The playback index probe is empty, so autoplay and retained-history cannot be proven.` | `history_navigation` | `probe_readback` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L835) |
+| `Settings subpage must show target option ` | `settings_navigation` | `navigation` | [AccessLifecycleTVOSUITests+Navigation.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift#L247) |
+| `Must be able to focus ` | `unknown` | `focus` | [AccessLifecycleTVOSUITests+Navigation.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift#L249), [AccessLifecycleTVOSUITests+Settings.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Settings.swift#L135), [TVDriver.swift](../immichSlidesUITests/TVDriver.swift#L237) |
+| `After choosing settings.playback.` | `unknown` | `control_state` | [AccessLifecycleTVOSUITests+Navigation.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift#L252), [TVDriver.swift](../immichSlidesUITests/TVDriver.swift#L226) |
+| `Playback page must show the settings button.` | `settings_navigation` | `hidden_controls` | [AccessLifecycleTVOSUITests+Navigation.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift#L410) |
+| `Settings button must have focus before opening.` | `settings_navigation` | `focus` | [AccessLifecycleTVOSUITests+Navigation.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift#L419) |
+| `After Select on settings, must enter settings or the PIN gate.` | `settings_navigation` | `navigation` | [AccessLifecycleTVOSUITests+Navigation.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift#L427) |
+| `After returning from settings, must wait for the playback transition to finish.` | `settings_navigation` | `timing_window` | [AccessLifecycleTVOSUITests+Navigation.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift#L458) |
+| `After returning from settings with the bar hidden, the hidden receiver must have stable focus.` | `settings_navigation` | `focus` | [AccessLifecycleTVOSUITests+Navigation.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift#L467) |
+| `After returning from settings, the playback transition must finish before a directional press.` | `unknown` | `timing_window` | [AccessLifecycleTVOSUITests+Navigation.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift#L480) |
+| `After returning from settings, confirm stable hidden receiver focus before one directional press.` | `unknown` | `focus` | [AccessLifecycleTVOSUITests+Navigation.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift#L486) |
+| `First directional press must only wake controls.` | `unknown` | `hidden_controls` | [AccessLifecycleTVOSUITests+Navigation.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift#L129) |
+| `Settings page must have ` | `settings_navigation` | `navigation` | [AccessLifecycleTVOSUITests+Navigation.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift#L642) |
+| `Directional key must wake the playback controls.` | `hidden_controls` | `hidden_controls` | [AccessLifecycleTVOSUITests+Navigation.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift#L666) |
+| `The field must be focused before input.` | `firstboot_setup` | `focus` | [AccessLifecycleTVOSUITests+Navigation.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift#L673), [TVDriver.swift](../immichSlidesUITests/TVDriver.swift#L259) |
+| `System keyboard must show Next or Done.` | `firstboot_setup` | `navigation` | [AccessLifecycleTVOSUITests+Navigation.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift#L682) |
+| `Must focus the system keyboard submit button before submitting text.` | `firstboot_setup` | `focus` | [AccessLifecycleTVOSUITests+Navigation.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift#L686) |
+| `After submitting text, focus must return to the field.` | `firstboot_setup` | `focus` | [AccessLifecycleTVOSUITests+Navigation.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift#L691) |
+| `A clean install must open the first-boot form.` | `firstboot_setup` | `navigation` | [AccessLifecycleTVOSUITests+Settings.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Settings.swift#L11), [TVDriver.swift](../immichSlidesUITests/TVDriver.swift#L15) |
+| `First-boot form must show the API Key field.` | `firstboot_setup` | `navigation` | [AccessLifecycleTVOSUITests+Settings.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Settings.swift#L18), [TVDriver.swift](../immichSlidesUITests/TVDriver.swift#L21) |
+| `URL submitted; focus must move down to API Key.` | `firstboot_setup` | `focus` | [AccessLifecycleTVOSUITests+Settings.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Settings.swift#L19) |
+| `First-boot form must show Test Connection.` | `firstboot_setup` | `navigation` | [AccessLifecycleTVOSUITests+Settings.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Settings.swift#L29) |
+| `With the real controlled service reachable, the connection test must show as passed.` | `firstboot_setup` | `navigation` | [AccessLifecycleTVOSUITests+Settings.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Settings.swift#L37) |
+| `After connecting, the Save Settings button must show.` | `firstboot_setup` | `navigation` | [AccessLifecycleTVOSUITests+Settings.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Settings.swift#L47) |
+| `After a successful connection, Save Settings must be enabled.` | `firstboot_setup` | `control_state` | [AccessLifecycleTVOSUITests+Settings.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Settings.swift#L48), [StrictE2ELateImageTVOSUITests.swift](../immichSlidesUITests/StrictE2ELateImageTVOSUITests.swift#L224), [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L690), [TVDriver.swift](../immichSlidesUITests/TVDriver.swift#L44) |
+| `After saving settings, mode selection must open.` | `mode_selection` | `navigation` | [AccessLifecycleTVOSUITests+Settings.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Settings.swift#L57) |
+| `Mode selection focus must start on random playback.` | `mode_selection` | `focus` | [AccessLifecycleTVOSUITests+Settings.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Settings.swift#L61) |
+| `After choosing random play, Continue must show.` | `mode_selection` | `navigation` | [AccessLifecycleTVOSUITests+Settings.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Settings.swift#L68) |
+| `After choosing random play, Continue must be enabled.` | `mode_selection` | `control_state` | [AccessLifecycleTVOSUITests+Settings.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Settings.swift#L69) |
+| `After choosing random play, focus must move down to Continue.` | `mode_selection` | `focus` | [AccessLifecycleTVOSUITests+Settings.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Settings.swift#L74) |
+| `Settings home must show playback settings.` | `settings_navigation` | `navigation` | [AccessLifecycleTVOSUITests+Settings.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Settings.swift#L89), [AccessLifecycleTVOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift#L24) |
+| `Must return to playback settings.` | `settings_navigation` | `focus` | [AccessLifecycleTVOSUITests+Navigation.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift#L183), [AccessLifecycleTVOSUITests+Settings.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Settings.swift#L537), [AccessLifecycleTVOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift#L26) |
+| `Focus must reach play/pause.` | `control_action` | `focus` | [AccessLifecycleTVOSUITests+Navigation.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift#L12), [AccessLifecycleTVOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift#L314) |
+| `At midpoint, focus must reach play/pause.` | `control_action` | `focus` | [AccessLifecycleTVOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift#L329) |
+| `After pause, focus must reach next.` | `control_action` | `focus` | [AccessLifecycleTVOSUITests+Navigation.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift#L27), [AccessLifecycleTVOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift#L334) |
+| `Focus must return to play/pause after next.` | `control_action` | `focus` | [AccessLifecycleTVOSUITests+Navigation.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift#L36), [AccessLifecycleTVOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift#L368) |
+| `Screenshot before-pause cannot serve as identity:` | `visible_scene_capture` | `scene_identity` | [AccessLifecycleTVOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift#L573) |
+| `Screenshot after-next cannot serve as identity:` | `visible_scene_capture` | `scene_identity` | [AccessLifecycleTVOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift#L573) |
+| `Screenshot before-background cannot serve as identity:` | `visible_scene_capture` | `scene_identity` | [AccessLifecycleTVOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift#L573) |
+| `Screenshot after-background cannot serve as identity:` | `visible_scene_capture` | `scene_identity` | [AccessLifecycleTVOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift#L573) |
+| `Pause/continue tvOS must run on a tvOS Simulator.` | `unknown` | `unknown` | [AccessLifecycleTVOSUITests.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests.swift#L219) |
+| `Control bar must show after random playback.` | `playback_entry` | `hidden_controls` | [AccessLifecycleTVOSUITests.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests.swift#L80) |
+| `The full tvOS flow must run on a tvOS Simulator.` | `unknown` | `unknown` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L30) |
+| `After saving settings, the app must reach the mode selection page.` | `mode_selection` | `navigation` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L43) |
+| `After choosing filtered playback, the Continue button must appear.` | `mode_selection` | `navigation` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L211) |
+| `After choosing filtered playback, the Continue button must be enabled.` | `mode_selection` | `control_state` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L215) |
+| `Focus on the filter summary page must be able to move to Back to Mode Selection.` | `mode_selection` | `focus` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L235) |
+| `Going back from the filter summary must return to the mode selection page.` | `mode_selection` | `navigation` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L242) |
+| `After choosing random playback, the Continue button must be enabled.` | `mode_selection` | `control_state` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L249) |
+| `After choosing random playback, focus must be able to move down to the Continue button.` | `mode_selection` | `focus` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L254) |
+| `The first playback round must show the one-time remote hint.` | `playback_entry` | `navigation` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L271) |
+| `While the one-time hint is shown, default focus must land on the settings button.` | `playback_entry` | `focus` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L275) |
+| `The playback control bar must show the previous button.` | `control_action` | `hidden_controls` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L280) |
+| `At the initial history boundary, previous must be disabled.` | `history_navigation` | `control_state` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L282) |
+| `Before the history chain starts, focus must be able to move to Play/Pause.` | `history_navigation` | `focus` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L290) |
+| `Autoplay must be paused before the history chain starts.` | `history_navigation` | `control_state` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L298) |
+| `After the control bar hides, the wake focus receiver layer must appear.` | `hidden_controls` | `hidden_controls` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L309) |
+| `The playback page must expose the read-only index probe.` | `history_navigation` | `probe_readback` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L332) |
+| `The start of the history chain must show the previous button.` | `history_navigation` | `hidden_controls` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L338) |
+| `A must be at the history start of the current playback session.` | `history_navigation` | `control_state` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L340) |
+| `Focus must be able to move from Play/Pause to Next.` | `history_navigation` | `focus` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L352) |
+| `The first next must advance the playback cursor.` | `history_navigation` | `navigation` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L359) |
+| `After the first next settles, focus must be able to move to Next again.` | `history_navigation` | `focus` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L374) |
+| `The second next must advance the playback cursor further.` | `history_navigation` | `navigation` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L381) |
+| `Focus must be able to move from Next back to Play/Pause.` | `history_navigation` | `focus` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L396) |
+| `Once history exists, focus must be able to move to Previous.` | `history_navigation` | `focus` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L403) |
+| `After the first previous, one earlier history entry remains, so the button must stay enabled.` | `history_navigation` | `control_state` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L411) |
+| `After going back once, focus must be able to move to Previous again.` | `history_navigation` | `focus` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L425) |
+| `The end of the history chain must show the previous button.` | `history_navigation` | `hidden_controls` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L434) |
+| `After the second previous returns to the history start, the button must be disabled again.` | `history_navigation` | `control_state` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L438) |
+| `Before checking autoplay, focus must be able to move to Next.` | `control_action` | `focus` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L451) |
+| `After consuming one step of forward history, focus must be able to move to Next again.` | `history_navigation` | `focus` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L461) |
+| `At the history frontier, focus must be able to move to Play/Pause.` | `history_navigation` | `focus` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L472) |
+| `Pressing Select again after pausing must resume autoplay.` | `control_action` | `control_state` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L480) |
+| `After auto-advance, focus on wake must return to Play/Pause.` | `control_action` | `focus` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L487) |
+| `The index probe must change after a playback action.` | `history_navigation` | `probe_readback` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L492) |
+| `Pressing Select after auto-advance must pause playback.` | `control_action` | `control_state` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L509) |
+| `Pausing must not advance an extra photo.` | `paused_hold` | `scene_identity` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L516) |
+| `The paused-frame comparison must span at least 10 seconds.` | `paused_hold` | `timing_window` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L530) |
+| `During a pause of at least 10 seconds, autoplay must not catch up.` | `paused_hold` | `scene_identity` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L535) |
+| `After the pause wait, focus on wake must return to Play/Pause.` | `control_action` | `focus` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L539) |
+| `After the pause wait, autoplay must be resumable.` | `control_action` | `control_state` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L570) |
+| `After autoplay resumes, focus on wake must return to Play/Pause.` | `control_action` | `focus` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L576) |
+| `After resuming, playback must advance to another photo.` | `history_navigation` | `probe_readback` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L585) |
+| `Autoplay must be pausable again before entering settings.` | `control_action` | `control_state` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L616) |
+| `Focus in the playback control bar must be able to move to Settings.` | `settings_navigation` | `focus` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L622) |
+| `The settings button must open the settings page.` | `settings_navigation` | `navigation` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L628) |
+| `Pressing Back/Menu on the settings page must return to the playback page.` | `settings_navigation` | `navigation` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L634) |
+| `A clean install must reach the first-boot form.` | `firstboot_setup` | `navigation` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L89) |
+| `The first-boot form must show the API Key field.` | `firstboot_setup` | `navigation` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L94) |
+| `After submitting the URL, focus must be able to move down to API Key.` | `firstboot_setup` | `focus` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L99) |
+| `The first-boot form must show the Test Connection button.` | `firstboot_setup` | `navigation` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L109) |
+| `Once the real controlled service is reachable, the connection-test-passed status must show.` | `firstboot_setup` | `navigation` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L675) |
+| `Select must not accidentally hit the API Key help sheet.` | `firstboot_setup` | `navigation` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L679) |
+| `After a successful connection, the Save Settings button must appear.` | `firstboot_setup` | `navigation` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L688) |
+| `The field must be focused before typing.` | `unknown` | `focus` | [StrictE2EFilterTVOSUITests+Support.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests+Support.swift#L381), [StrictE2ELateImageTVOSUITests.swift](../immichSlidesUITests/StrictE2ELateImageTVOSUITests.swift#L231), [StrictE2ESmokeUITests.swift](../immichSlidesUITests/StrictE2ESmokeUITests.swift#L124), [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L699) |
+| `The system keyboard must show Next or Done.` | `unknown` | `navigation` | [StrictE2EFilterTVOSUITests+Support.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests+Support.swift#L394), [StrictE2ELateImageTVOSUITests.swift](../immichSlidesUITests/StrictE2ELateImageTVOSUITests.swift#L241), [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L709), [TVDriver.swift](../immichSlidesUITests/TVDriver.swift#L266) |
+| `Focus the system keyboard submit button before submitting text.` | `firstboot_setup` | `focus` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L713) |
+| `The server address must be submitted verbatim.` | `firstboot_setup` | `control_state` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L718) |
+| `After submitting text, focus must return to the original field.` | `unknown` | `focus` | [StrictE2EFilterTVOSUITests+Support.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests+Support.swift#L403), [StrictE2ELateImageTVOSUITests.swift](../immichSlidesUITests/StrictE2ELateImageTVOSUITests.swift#L254), [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L722) |
+| `An arrow key must wake the playback control bar.` | `hidden_controls` | `hidden_controls` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L828) |
+| `The index probe must change after a playback action. advanceObserved=` | `history_navigation` | `probe_readback` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L903) |
+| `Interval options are missing` | `interval_setup` | `interval_readback` | [AccessLifecycleContract+Controls.swift](../TestSupport/AccessLifecycleContract+Controls.swift#L53) |
+| `Identity comes only from public fixture photos, never from logs or index` | `visible_scene_capture` | `evidence_capture` | [AccessLifecycleContract.swift](../TestSupport/AccessLifecycleContract.swift#L122) |
+| `A forced display mode must not replace the real settings path` | `visible_scene_capture` | `evidence_capture` | [AccessLifecycleContract.swift](../TestSupport/AccessLifecycleContract.swift#L160) |
+| `Returning to playback must not require the control bar to be visible` | `settings_navigation` | `evidence_capture` | [AccessLifecycleContract.swift](../TestSupport/AccessLifecycleContract.swift#L326) |
+| `Returning to playback must confirm the playback layer` | `unknown` | `navigation` | [AccessLifecycleContract.swift](../TestSupport/AccessLifecycleContract.swift#L329) |
+| `After settings return, no direction key until the transition completes` | `unknown` | `timing_window` | [AccessLifecycleContract.swift](../TestSupport/AccessLifecycleContract.swift#L359) |
+| `After settings return, must confirm the hidden receiver holds focus stably` | `unknown` | `focus` | [AccessLifecycleContract.swift](../TestSupport/AccessLifecycleContract.swift#L365) |
+| `Must not press twice to mask the first wake` | `unknown` | `hidden_controls` | [AccessLifecycleContract.swift](../TestSupport/AccessLifecycleContract.swift#L368) |
+| `Wake after settings return is missing before/after screenshots` | `unknown` | `evidence_capture` | [AccessLifecycleContract.swift](../TestSupport/AccessLifecycleContract.swift#L371) |
+| `A missing image must not count as a pass` | `visible_scene_capture` | `scene_identity` | [AccessLifecycleContract.swift](../TestSupport/AccessLifecycleContract.swift#L437) |
 
 Dynamic leading step names, interpolated album/scene identifiers, bare assertions and
 generic messages whose phase is ambiguous remain `unknown`. In particular, the recovery
@@ -1611,6 +1757,10 @@ pause-window caller's `XCTFail(error.localizedDescription)`, with the `failed - 
 wrapper, rather than a caught-error wrapper. It cannot be the first failure:
 `continueAfterFailure = false` stops this case at the earlier `probe_hit=MISS`
 or `visual_verdict=MISSING_FRAMES` check before `assertRequiredFrames` can report it.
+Likewise, the flow's outer first/second-Next assertions cannot be first failures:
+`waitForScenePublicationAdvance` emits the index-probe `XCTFail` before returning
+false, and `continueAfterFailure = false` stops the test there. Their rows describe
+the assertions without claiming those outer messages are observed first failures.
 
 Still unknown on the throwing path:
 
