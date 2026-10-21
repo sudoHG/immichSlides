@@ -930,8 +930,8 @@ Historical traces and summaries without the field remain valid and gain no new c
 The prepared [hosted strict environment-limit policy](CI_SUMMARY.md#prepared-hosted-strict-environment-limits)
 uses these receipts and the same case's resource samples. This reader-only stage
 does not activate classification in `run_strict_e2e.py` or the strict tracer. Its
-allowlist, 20-second native idle alternative, at least two ±5-second samples and
-5% maximum host idle are defined there. Functional failures and insufficient
+allowlist, evidence requirements, escalation and retained-proof policy are defined
+there. Functional failures and insufficient
 evidence stay red, including every UI shard without a continuous sampler.
 Local pinned-device timing contracts, all App behavior, test deadlines, visual validators,
 thresholds and retry limits remain unchanged. The reader must merge before the

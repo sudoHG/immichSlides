@@ -266,7 +266,7 @@ def validate_archive_download(receipt, summary):
 
 
 def validate_summary_v1(payload):
-    optional = {"archive_download", BOUNDED_DIAGNOSTICS_FIELD} & payload.keys()
+    optional = {"archive_download", BOUNDED_DIAGNOSTICS_FIELD, "strict_case_evidence"} & payload.keys()
     fields(payload, {"schema_version", "identity", "source", "run", "hashes", "toolchain", "population",
                      "infrastructure", "status"} | optional, "summary")
     require(type(payload["schema_version"]) is int and payload["schema_version"] == 1, "invalid summary version")
@@ -329,11 +329,30 @@ def validate_summary_v1(payload):
         string(entry["message"], "infrastructure message")
     require(payload["status"] in {"passed", "failed", "unverified"}, "invalid producer status")
     from ci_failure_diagnostics import ENVIRONMENT_LIMIT_FIELD, environment_limit_evidence
+    case_evidence = payload.get("strict_case_evidence", [])
+    require(isinstance(case_evidence, list), "invalid strict case evidence")
+    evidence_by_case = {}
+    for case in case_evidence:
+        from ci_bounded_diagnostics import validate_receipt
+        fields(case, {"identity", BOUNDED_DIAGNOSTICS_FIELD}, "strict case evidence")
+        validate_test_identity(case["identity"])
+        token = identity_key(case["identity"])
+        require(case["identity"]["kind"] == "strict" and token not in evidence_by_case,
+                "invalid or duplicate strict case evidence")
+        validate_receipt(case[BOUNDED_DIAGNOSTICS_FIELD])
+        evidence_by_case[token] = case[BOUNDED_DIAGNOSTICS_FIELD]
     for entry in population["observed"]:
         if ENVIRONMENT_LIMIT_FIELD in entry:
             proof = entry[ENVIRONMENT_LIMIT_FIELD]
             require(environment_limit_evidence(payload, entry, [proof["resources"]], runner_hosted=proof["runner_hosted"]) == proof,
                     "environment limit differs from scoped first failure evidence")
+            evidence = evidence_by_case.get(identity_key(entry["identity"]), {})
+            sequence = proof["resources"]["sequence"]
+            samples = [event["sample"] for event in evidence.get("events", [])
+                       if event["scope"] == "xcode" and event["sequence"] == sequence and event["sample"] is not None]
+            require([resource for resource in evidence.get("case_resources", []) if resource["sequence"] == sequence]
+                    == [proof["resources"]] and bool(samples) and all(sample["runner_hosted"] is True for sample in samples),
+                    "environment limit differs from summary case evidence")
     if "archive_download" in payload:
         validate_archive_download(payload["archive_download"], payload)
     if BOUNDED_DIAGNOSTICS_FIELD in payload:

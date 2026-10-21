@@ -30,6 +30,7 @@ SECTION = "\n\n<!-- ci-report-managed -->\n"
 FAILURES = {"failed", "crashed", "timed-out"}
 NIGHTLY_INFRASTRUCTURE = {"kind": "host", "key": "Nightly infrastructure", "dimensions": {}}
 EVIDENCE_DAYS = 7
+ENVIRONMENT_YELLOW_NIGHTS_BEFORE_RED = 2
 REQUEST_BUDGET = 150
 EARLY_FAILURE_REASONS = {"identity-collection-failed", "hosted-runner-disconnected"}
 # Reader-only; remove after the last pre-retirement night leaves seven-day retention (2026-10-24).
@@ -373,6 +374,7 @@ def issue_decision(previous, identity, entries, *, registry_referenced):
     if state["last_failure"]:
         previous_failed.add(state["last_failure"])
     new_failure = False
+    entries = environment_history(entries)
     deliveries = [attempt for report in entries if issue_eligible(report)
                   for attempt in report.get("attempt_history", [report]) if issue_eligible(attempt)]
     for entry in deliveries:
@@ -386,11 +388,13 @@ def issue_decision(previous, identity, entries, *, registry_referenced):
         old = state["nights"].get(day, {}).get(key)
         if not matches and not old:
             continue
-        outcomes = {"environment-limited" if "environment_limit" in item else item["outcome"] for item in matches}
+        outcomes = {"environment-limited" if "environment_limit" in item and not item.get("environment_limit_escalation")
+                    else item["outcome"] for item in matches}
         passes = {"passed"}
         if identity["kind"] == "strict" and identity["dimensions"].get("suite") in P2_CASES:
             passes.add("needs-human-review")
-        outcome = "failed" if outcomes & FAILURES else "passed" if outcomes and outcomes <= passes else "unverified"
+        outcome = ("failed" if outcomes & FAILURES else "passed" if outcomes and outcomes <= passes
+                   else "environment-limited" if outcomes == {"environment-limited"} else "unverified")
         if entry["diagnostics"]["infrastructure"] or entry["diagnostics"]["missing"]:
             if outcome == "passed":
                 outcome = "unverified"
@@ -475,6 +479,7 @@ def failure_details(item):
 
 
 def render_entry(entry):
+    entry = environment_history([entry])[0]
     source, run, diagnostics = entry["source"], entry["run"], entry["diagnostics"]
     url = f"https://github.com/{source['repository']}/actions/runs/{run['id']}"
     lines = [f"## {text(source['workflow_path'])}: {entry['status']}", "",
@@ -488,7 +493,7 @@ def render_entry(entry):
         lines.append("Not evaluated: " + text(entry["not_evaluated_reason"]) + ".")
     lines += ["", "| Failing identity | Outcome | Exit codes | Validator failure |", "| --- | --- | --- | --- |"]
     lines.extend(f"| {text(identity_key(item['identity']))} | "
-                 f"{'failed (environment-limited; yellow)' if 'environment_limit' in item else item['outcome']} | {text(item['exit_codes'])} | "
+                 f"{'failed (environment-limited; yellow)' if 'environment_limit' in item and not item.get('environment_limit_escalation') else item['outcome']} | {text(item['exit_codes'])} | "
                  f"{text(item['validator_failure_message']) if 'validator_failure_message' in item else '—'} |"
                  for item in diagnostics["failures"][:50])
     from ci_failure_diagnostics import FIRST_FAILURE_FIELD, render_first_failure
@@ -499,11 +504,16 @@ def render_entry(entry):
                  for item in diagnostics["missing"][:50])
     lines.extend(f"Infrastructure: {text(item)}." for item in diagnostics["infrastructure"])
     from ci_failure_diagnostics import render_environment_limit
-    if any("environment_limit" in item for item in diagnostics["failures"]):
+    if any("environment_limit" in item and not item.get("environment_limit_escalation") for item in diagnostics["failures"]):
         lines.append("\n> **WARNING: hosted timing failures are environment-limited (yellow), never passes.**")
     lines.extend("\nWARNING: " + text(identity_key(item["identity"])) + ": "
                  + text(render_environment_limit(item["environment_limit"]))
-                 for item in diagnostics["failures"] if "environment_limit" in item)
+                 for item in diagnostics["failures"] if "environment_limit" in item and not item.get("environment_limit_escalation"))
+    lines.extend("\nRED: " + text(identity_key(item["identity"])) + ": " + item["environment_limit_rejection"]
+                 for item in diagnostics["failures"] if item.get("environment_limit_rejection"))
+    lines.extend("\nRED: repeated environment limit: " + text(identity_key(item["identity"]))
+                 + f"; {ENVIRONMENT_YELLOW_NIGHTS_BEFORE_RED} consecutive nights; normal failure tracking applies."
+                 for item in diagnostics["failures"] if item.get("environment_limit_escalation"))
     if diagnostics.get("skipped"):
         lines.append("Skipped identities (policy acceptance recorded separately): " + text(diagnostics["skipped"][:50]))
     for item in diagnostics.get("deselected", [])[:50]:
@@ -1238,6 +1248,64 @@ def without_first_failure_receipts(value):
     return value
 
 
+def environment_history(entries):
+    """Recheck retained proofs without losing readable red evidence; escalate by UTC night and identity."""
+    from ci_failure_diagnostics import validate_environment_limit
+    result = copy.deepcopy(entries)
+    reports = [attempt for entry in result for attempt in [entry, *entry.get("attempt_history", [])]]
+    by_case = {}
+    for report in reports:
+        rejected = set()
+        items = [*report.get("observed", []), *report.get("diagnostics", {}).get("failures", [])]
+        for item in items:
+            if "environment_limit" not in item:
+                continue
+            try:
+                validate_environment_limit(item["environment_limit"])
+            except (ValueError, TypeError, KeyError, AttributeError):
+                rejected.add(identity_token(item["identity"]))
+        for item in items:
+            if identity_token(item["identity"]) in rejected:
+                item.pop("environment_limit", None)
+                item["environment_limit_rejection"] = "RED: invalid or obsolete environment-limit proof under the current policy"
+                for attempt in item.get("attempts", []):
+                    attempt.pop("environment_limit", None)
+        if rejected:
+            report["status"] = "failed"
+            if "strict" in report.get("tiers", {}):
+                report["tiers"]["strict"] = "failed"
+        if not issue_eligible(report) or report["source"]["workflow_path"] != NIGHTLY_PATH:
+            continue
+        for item in report["observed"]:
+            token = identity_token(item["identity"])
+            by_case.setdefault(token, {}).setdefault(report["day"], []).append(item)
+    for nights in by_case.values():
+        streak, previous_day = 0, None
+        for day, items in sorted(nights.items()):
+            current = date.fromisoformat(day)
+            yellow = all("environment_limit" in item for item in items)
+            streak = (streak + 1 if previous_day == current - timedelta(days=1) else 1) if yellow else 0
+            previous_day = current
+            if streak >= ENVIRONMENT_YELLOW_NIGHTS_BEFORE_RED:
+                for item in items:
+                    item["environment_limit_escalation"] = True
+    for report in reports:
+        escalated = {identity_token(item["identity"]) for item in report.get("observed", [])
+                     if item.get("environment_limit_escalation")}
+        for item in report.get("diagnostics", {}).get("failures", []):
+            if identity_token(item["identity"]) in escalated:
+                item["environment_limit_escalation"] = True
+        if escalated:
+            report["status"] = "failed"
+            if "strict" in report.get("tiers", {}):
+                report["tiers"]["strict"] = "failed"
+        if any("environment_limit_rejection" in item or "environment_limit_escalation" in item
+               for item in report.get("observed", [])):
+            report["diagnostics"]["counts"]["environment-limited"] = sum(
+                "environment_limit" in item and not item.get("environment_limit_escalation") for item in report["observed"])
+    return result
+
+
 def compact_entry(entry, tracked):
     tracked = tracked | {identity_token(item["identity"]) for attempt in entry.get("attempt_history", [entry])
                          for item in attempt["observed"] if item["outcome"] in FAILURES}
@@ -1283,6 +1351,10 @@ def merge_snapshot(previous, entries, now):
         selected[entry["run"]["id"]] = replacement
         snapshot["days"][day] = daily_rollup(day, list(selected.values()))
     snapshot["days"].setdefault(now.isoformat(), daily_rollup(now.isoformat(), []))
+    retained = [entry for rollup in snapshot["days"].values() for entry in rollup["entries"]]
+    checked = environment_history(retained)
+    for day, rollup in snapshot["days"].items():
+        rollup["entries"] = [entry for entry in checked if entry["day"] == day]
     return snapshot
 
 
@@ -1389,6 +1461,9 @@ def read_snapshot(api):
 
 
 def write_report(output, snapshot, entries, registry, states, *, stopped, now=None, inventory=()):
+    retained = {(entry["run"]["id"], entry["run"]["attempt"]): entry
+                for rollup in snapshot["days"].values() for entry in rollup["entries"]}
+    entries = [retained.get((entry["run"]["id"], entry["run"]["attempt"]), entry) for entry in entries]
     encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")) + "\n"
     require(len(encoded.encode()) <= 16 * 1024 * 1024, "reporter snapshot exceeds readable artifact limit")
     for kind in ("daily", "runs"):

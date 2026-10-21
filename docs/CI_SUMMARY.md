@@ -614,14 +614,19 @@ GitHub-hosted `ci-nightly` strict shards, for `schedule` and `workflow_dispatch`
 `ci-pr-gate`, fixture UI shards, local and self-hosted runs are excluded.
 
 A failed strict observation and its sole failed attempt may carry the same optional
-`environment_limit` object. It contains exactly `schema_version: 1`,
+`environment_limit` object. It contains exactly `schema_version: 1`, `policy_version: 1`,
 `runner_hosted: true`, paired `failure_phase` / `failure_class`, `failure`, and
 `resources`. `failure` is the closed projection of `first_failure`: `source`,
-`step`, `action`, `app`, `surface`, `scene_status`, `wait_elapsed_seconds`, `deadline_seconds`,
+`step`, `element`, `action`, `app`, `surface`, `control_bar`, `scene_status`, `wait_elapsed_seconds`, `deadline_seconds`,
 `action_duration_seconds`, and `post_event_idle`. Numbers retain the first-failure
 bounds and nulls. `resources` is one unchanged, validated `case_resources` entry.
 The summary reader recomputes the projection from the original receipt and checks
-the nightly strict source. No unknown field, private assertion or free text is allowed.
+the nightly strict source. The optional `strict_case_evidence` list binds each strict
+case `identity` to its original `bounded_diagnostics` receipt. Each proof must match
+that case's resource entry by sequence and full value, and have a matching xcode
+event sample whose `runner_hosted` is true; conflicting hosting samples fail closed.
+This evidence slot is reader-only until the separate producer PR fills it from the
+same case trace. No unknown field, private assertion or free text is allowed.
 
 All criteria are required:
 
@@ -630,25 +635,27 @@ All criteria are required:
    `GitHub Actions` and its labels do not include `self-hosted`. Missing hosting
    evidence fails closed.
 2. The first failure has `source: xctest`, `app: running-foreground` and an eligible phase/class/step from the
-   table below. Its wait elapsed time is at least its positive deadline; alternatively
-   a `select` / `tap` has native `post_event_idle >= 20` seconds, with action duration
-   at least that idle duration. The existing native collector uniquely binds that
-   interval to the failing action. A slow unrelated action cannot qualify.
+   table below, with the exact target element and expected surface. Unknown surfaces
+   are rejected. Its wait elapsed time is at least its positive deadline. Native
+   post-event idle alone never qualifies: no existing receipt field proves a following
+   successful action readback. `unknown/snapshot_query`, including `Failed to get
+   matching snapshot` main-thread hangs, stays red. A hidden-controls timeout while
+   `control_bar: visible` also stays red because the target control is still absent.
 3. Exactly one resource invocation has a recorded first-failure time. It contains
    at least two distinct, ordered `failure_samples`, each within inclusive ±5 seconds
-   of that time, each with measured `idle_percent <= 5`. Every retained failure-window
+   of that time, with at least one strictly before and one strictly after the failure,
+   each with measured `idle_percent <= 5`. Every retained failure-window
    sample must qualify, including the boundary values. Missing idle is red.
    `truncated: true` and absent category CPU values do not disqualify measured idle;
    load and App CPU are displayed, not used as classification thresholds.
 
-| Phase | Class | Eligible steps | Timing-only interpretation |
+| Phase | Class | Step and target element | Expected surface |
 | --- | --- | --- | --- |
-| `mode_selection` | `navigation` | `mode-card`, `mode-continue` | Dedicated mode control readiness wait |
-| `playback_entry` | `navigation` | `query-element` | Playback surface availability wait |
-| `settings_navigation` | `navigation` | `query-element`, `select` | Settings surface wait or bound native input idle |
-| `control_action`, `hidden_controls` | `hidden_controls` | `query-element`, `reveal-controls` | Control availability wait |
-| `interval_setup` | `hidden_controls` | `query-element` | Settings control availability wait |
-| `unknown` | `snapshot_query` | `query-element`, `select` | XCTest snapshot wait or bound native input idle |
+| `mode_selection` | `navigation` | `mode-card`: `mode.random.button` or `mode.filtered.button`; `mode-continue`: `mode.continue.button` | `mode` |
+| `playback_entry` | `navigation` | `query-element`: `slideshow.control.playPause.button` | `playback` |
+| `settings_navigation` | `navigation` | `query-element` or `select`: `slideshow.control.settings.button` | `playback` |
+| `control_action`, `hidden_controls` | `hidden_controls` | `query-element` or `reveal-controls`: settings, previous, playPause or next under `slideshow.control.*.button`, or `slideshow.hiddenWakeReceiver` | `playback` |
+| `interval_setup` | `hidden_controls` | `query-element`: the same playback controls | `playback` |
 
 This is an explicit allowlist, not an inference from an exception name. A deadline
 left over from a completed wait cannot turn a value or scene assertion yellow.
@@ -682,13 +689,26 @@ log, warm-build/reuse and invocation-infrastructure requirements remain mandator
 an outer invocation timeout or interruption cannot become yellow. Report tables
 and compact history retain the bounded proof and every yellow warning,
 including when a red case keeps the overall night failed. They preserve raw failure
-counts and add the separate `environment-limited` count. Yellow cannot trigger a
-product failure issue, satisfy recovery, become a product flake or use a quarantine
-retry. Existing `ci-known-flaky.json` entries are unchanged. Timing acceptance still
-requires local runs on the pinned devices.
-The unchanged-night reader accepts this status as executed coverage, as it already
-does for complete red nights; this grants no pass or recovery evidence. Diagnostic
-or incomplete nights remain ineligible baselines.
+counts and add the separate `environment-limited` count. Yellow cannot
+satisfy recovery, become a product flake or use a quarantine retry. Existing
+`ci-known-flaky.json` entries are unchanged. Timing acceptance still requires local
+runs on the pinned devices.
+
+The reporter escalates the same strict method identity (including suite and all
+case dimensions) after consecutive UTC yellow nights, using its retained history.
+`ENVIRONMENT_YELLOW_NIGHTS_BEFORE_RED = 2` is the single policy constant, pending
+owner confirmation. The second and later consecutive yellow nights become red
+in the report and use ordinary Issue/notification tracking, while raw outcomes
+and the original proof remain unchanged. A missing night or explicit pass breaks
+the yellow sequence; another case or a diagnostic run cannot contribute. Yellow
+never erases a red failure night or supplies an explicit-pass recovery night.
+Nights containing yellow are ineligible unchanged-SHA baselines so the next
+scheduled night can collect the evidence needed for escalation.
+
+Retained compact proofs are rechecked under the current policy. Missing, unknown
+or obsolete policy versions and invalid proofs degrade to red with a fixed public
+reason; rendering, history loading and issue decisions must not raise because of
+those proofs. Original first-failure receipts remain outside compact history.
 
 ## Prepared version 2: scoped official discovery
 

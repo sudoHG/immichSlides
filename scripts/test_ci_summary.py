@@ -138,11 +138,16 @@ def hosted_timeout_summary():
     row = ci_summary.observation(identity, "failed", 12, exit_code=65,
         failure_diagnostics={"failure_phase": "settings_navigation", "failure_class": "navigation"})
     row["first_failure"] = row["attempts"][0]["first_failure"] = first_failure_receipt()
+    row["first_failure"]["element"] = "slideshow.control.settings.button"
     summary["population"].update(declared=[identity], compiled=[identity], observed=[row])
     summary["status"] = "failed"
     resource = bounded_diagnostics_receipt(resources=True)["case_resources"][0]
     resource["failure_samples"] = [dict(resource["failure_samples"][0], elapsed_seconds=6, idle_percent=0),
-        dict(resource["failure_samples"][0], elapsed_seconds=8, idle_percent=5)]
+        dict(resource["failure_samples"][0], elapsed_seconds=10, idle_percent=5)]
+    diagnostics = bounded_diagnostics_receipt()
+    diagnostics["events"][0].update(scope="xcode", phase="test-execution", sequence=4)
+    diagnostics["case_resources"] = [resource]
+    summary["strict_case_evidence"] = [{"identity": identity, "bounded_diagnostics": diagnostics}]
     return summary, resource
 
 
@@ -177,7 +182,7 @@ class SummaryContractTests(unittest.TestCase):
             for sample in busy["failure_samples"]:
                 sample["idle_percent"] = 0
             self.assertIsNone(environment_limit_evidence(yellow, changed, [busy], runner_hosted=True))
-        for change in ("busy", "one", "missing", "outside", "duplicate"):
+        for change in ("busy", "one", "missing", "outside", "duplicate", "before only", "after only"):
             changed = copy.deepcopy(resources)
             if change == "busy":
                 changed["failure_samples"][1]["idle_percent"] = 5.01
@@ -187,8 +192,12 @@ class SummaryContractTests(unittest.TestCase):
                 changed["failure_samples"][1]["idle_percent"] = None
             elif change == "outside":
                 changed["failure_samples"][0]["elapsed_seconds"] = 2.99
-            else:
+            elif change == "duplicate":
                 changed["failure_samples"][1]["elapsed_seconds"] = 6
+            elif change == "before only":
+                changed["failure_samples"][1]["elapsed_seconds"] = 7
+            else:
+                changed["failure_samples"][0]["elapsed_seconds"] = 9
             with self.subTest(change=change):
                 self.assertIsNone(environment_limit_evidence(yellow, row, [changed], runner_hosted=True))
         self.assertIsNone(environment_limit_evidence(yellow, row, [resources], runner_hosted=False))
@@ -228,15 +237,43 @@ class SummaryContractTests(unittest.TestCase):
             changed = copy.deepcopy(row)
             changed["first_failure"]["timing"]["wait_elapsed_seconds"] = elapsed
             self.assertEqual(environment_limit_evidence(yellow, changed, [resources], runner_hosted=True) is not None, expected)
-        for post, expected in ((20, True), (19.99, False)):
+        # Native idle alone has no following successful readback and must remain red.
+        for step, action, duration in (("select", "tap", 25), ("query-element", "tap", 25),
+                                       ("select", "select", 25), ("select", "tap", 19)):
             changed = copy.deepcopy(row)
             receipt = changed["first_failure"]
-            receipt.update(step="select", action="tap")
-            receipt["timing"].update(wait_elapsed_seconds=None, deadline_seconds=None, action_duration_seconds=25)
+            receipt.update(step=step, action=action)
+            receipt["timing"].update(wait_elapsed_seconds=None, deadline_seconds=None, action_duration_seconds=duration)
             receipt["native_activity_seconds"] = dict.fromkeys(("pre_event_idle", "find_window", "synthesize_event",
                 "post_event_idle", "ax_root_acquisition"))
-            receipt["native_activity_seconds"]["post_event_idle"] = post
-            self.assertEqual(environment_limit_evidence(yellow, changed, [resources], runner_hosted=True) is not None, expected)
+            receipt["native_activity_seconds"]["post_event_idle"] = 20
+            self.assertIsNone(environment_limit_evidence(yellow, changed, [resources], runner_hosted=True))
+        for state_field, value in (("surface", "unknown"), ("surface", "mode"), ("scene_status", "BLANK"),
+                                   ("scene_status", "UNRECOGNIZABLE")):
+            changed = copy.deepcopy(row)
+            changed["first_failure"]["state"][state_field] = value
+            with self.subTest(state_field=state_field, value=value):
+                self.assertIsNone(environment_limit_evidence(yellow, changed, [resources], runner_hosted=True))
+        for step, element in (("mode-continue", "mode.continue.button"), ("mode-card", "mode.filtered.button")):
+            changed = copy.deepcopy(mode_wait)
+            changed["first_failure"].update(step=step, element=element)
+            self.assertIsNotNone(environment_limit_evidence(yellow, changed, [resources], runner_hosted=True))
+            changed["first_failure"]["state"]["surface"] = "playback"
+            self.assertIsNone(environment_limit_evidence(yellow, changed, [resources], runner_hosted=True))
+        changed = copy.deepcopy(row)
+        changed["first_failure"]["source"] = "validator"
+        changed["first_failure"]["screenshot"] = {"status": "unavailable", "width": None, "height": None, "bytes": None}
+        self.assertIsNone(environment_limit_evidence(yellow, changed, [resources], runner_hosted=True))
+        changed = copy.deepcopy(row)
+        changed.update(failure_phase="unknown", failure_class="snapshot_query")
+        self.assertIsNone(environment_limit_evidence(yellow, changed, [resources], runner_hosted=True))
+        changed.update(failure_phase="hidden_controls", failure_class="hidden_controls")
+        self.assertIsNotNone(environment_limit_evidence(yellow, changed, [resources], runner_hosted=True))
+        changed["first_failure"]["state"]["control_bar"] = "visible"
+        self.assertIsNone(environment_limit_evidence(yellow, changed, [resources], runner_hosted=True))
+        changed = copy.deepcopy(row)
+        changed["first_failure"]["element"] = "unknown"
+        self.assertIsNone(environment_limit_evidence(yellow, changed, [resources], runner_hosted=True))
         for source_change in ("black", "process", "validator", "phase", "missing receipt", "multiple cases"):
             changed = copy.deepcopy(row)
             cases = [resources]
@@ -261,11 +298,50 @@ class SummaryContractTests(unittest.TestCase):
         self.assertIn("| failed (environment-limited; yellow) |", ci_summary.render_markdown(yellow))
         from ci_failure_diagnostics import scan_diagnostic_json
         scan_diagnostic_json(json.dumps(yellow).encode())
+        for mutation in ("missing", "identity", "sequence", "hosted", "resources", "missing host", "conflicting host"):
+            changed = copy.deepcopy(yellow)
+            changed["strict_case_evidence"] = copy.deepcopy(changed["strict_case_evidence"])
+            evidence = changed["strict_case_evidence"][0]
+            if mutation == "missing":
+                changed.pop("strict_case_evidence")
+            elif mutation == "identity":
+                evidence["identity"] = dict(evidence["identity"], key="other-case")
+            elif mutation == "sequence":
+                evidence["bounded_diagnostics"]["events"][0]["sequence"] = 5
+            elif mutation == "hosted":
+                evidence["bounded_diagnostics"]["events"][0]["sample"]["runner_hosted"] = False
+            elif mutation == "missing host":
+                evidence["bounded_diagnostics"]["events"][0]["sample"] = None
+            elif mutation == "conflicting host":
+                event = copy.deepcopy(evidence["bounded_diagnostics"]["events"][0])
+                event["sample"]["runner_hosted"] = False
+                evidence["bounded_diagnostics"]["events"].append(event)
+            else:
+                evidence["bounded_diagnostics"]["case_resources"][0]["failure_samples"][0]["idle_percent"] = 1
+            with self.subTest(binding=mutation), self.assertRaisesRegex(ci_summary.ContractError,
+                    "^environment limit differs from summary case evidence$"):
+                ci_summary.parse_summary(json.dumps(changed))
+        for mutation, message in (("not a list", "invalid strict case evidence"),
+                ("duplicate", "invalid or duplicate strict case evidence"),
+                ("non-strict", "invalid or duplicate strict case evidence"),
+                ("extra field", "strict case evidence: expected fields")):
+            changed = copy.deepcopy(yellow)
+            if mutation == "not a list":
+                changed["strict_case_evidence"] = None
+            elif mutation == "duplicate":
+                changed["strict_case_evidence"].append(copy.deepcopy(changed["strict_case_evidence"][0]))
+            elif mutation == "non-strict":
+                changed["strict_case_evidence"][0]["identity"] = ci_summary.test_identity("host", "other")
+            else:
+                changed["strict_case_evidence"][0]["extra"] = True
+            with self.subTest(case_evidence=mutation), self.assertRaisesRegex(ci_summary.ContractError, "^" + message):
+                ci_summary.parse_summary(json.dumps(changed))
         private = copy.deepcopy(yellow)
         private["population"]["observed"][0]["environment_limit"]["private"] = "forbidden"
         with self.assertRaisesRegex(ci_summary.ContractError, "^environment limit: expected fields"):
             scan_diagnostic_json(json.dumps(private).encode())
         for path, value, prefix in ((('schema_version',), True, "environment limit: hosted evidence required"),
+                (('policy_version',), 999, "environment limit: unsupported policy version"),
                 (('runner_hosted',), False, "environment limit: hosted evidence required"),
                 (('failure', 'step'), 'unknown', "environment limit: failure is not an eligible timing wait"),
                 (('resources', 'failure_samples'), [], "environment limit: insufficient starvation evidence")):

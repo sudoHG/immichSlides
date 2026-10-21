@@ -1875,22 +1875,82 @@ class ReporterTests(unittest.TestCase):
         decision = issue_decision(None, report["observed"][0]["identity"], [compact], registry_referenced=False)
         self.assertEqual("none", decision["action"])
         self.assertIsNone(decision["state"])
+        following = copy.deepcopy(compact)
+        following.update(day="2026-10-02", run={"id": 11, "attempt": 1})
+        decision = issue_decision(None, report["observed"][0]["identity"], [following, compact], registry_referenced=False)
+        self.assertEqual("open", decision["action"])
+        self.assertEqual("failed", decision["state"]["nights"]["2026-10-02"]["11"]["outcome"])
+        self.assertEqual(1, decision["state"]["failure_nights"])
+        gap = copy.deepcopy(following)
+        gap["day"] = "2026-10-03"
+        self.assertEqual("none", issue_decision(None, report["observed"][0]["identity"],
+            [compact, gap], registry_referenced=False)["action"])
+        other = copy.deepcopy(following)
+        other["observed"][0]["identity"]["dimensions"]["suite"] = "other-suite"
+        self.assertEqual("none", issue_decision(None, report["observed"][0]["identity"],
+            [compact, other], registry_referenced=False)["action"])
+        diagnostic = copy.deepcopy(following)
+        diagnostic["diagnostic_shard"] = "strict-only"
+        self.assertEqual("none", issue_decision(None, report["observed"][0]["identity"],
+            [compact, diagnostic], registry_referenced=False)["action"])
+        passed = copy.deepcopy(following)
+        passed["observed"][0].pop("environment_limit")
+        passed["observed"][0]["outcome"] = "passed"
+        self.assertEqual("none", issue_decision(None, report["observed"][0]["identity"],
+            [compact, passed, gap], registry_referenced=False)["action"])
+        same_night = copy.deepcopy(following)
+        same_night["day"] = compact["day"]
+        self.assertEqual("none", issue_decision(None, report["observed"][0]["identity"],
+            [compact, same_night], registry_referenced=False)["action"])
+        consecutive = ci_report.merge_snapshot(None, [compact, following], date(2026, 10, 2))
+        escalated = consecutive["days"]["2026-10-02"]["entries"][0]
+        self.assertEqual("failed", escalated["status"])
+        self.assertEqual("failed", escalated["observed"][0]["outcome"])
+        self.assertIn("RED: repeated environment limit", render_entry(escalated))
+        for mutation in ("missing version", "future version", "changed policy", "malformed"):
+            retained = copy.deepcopy(compact)
+            bad = retained["observed"][0]["environment_limit"]
+            if mutation == "missing version":
+                bad.pop("policy_version")
+            elif mutation == "future version":
+                bad["policy_version"] = 999
+            elif mutation == "changed policy":
+                bad["failure"]["surface"] = "unknown"
+            else:
+                bad["resources"] = None
+            with self.subTest(retained=mutation):
+                from ci_failure_diagnostics import render_environment_limit
+                self.assertIn("RED: invalid or obsolete", render_environment_limit(bad))
+                self.assertIn("RED: invalid or obsolete", render_entry(retained))
+                restored = ci_report.merge_snapshot({"schema_version": 2, "days": {
+                    "2026-10-01": {"entries": [retained]}}}, [], date(2026, 10, 1))
+                restored_entry = restored["days"]["2026-10-01"]["entries"][0]
+                self.assertEqual("failed", restored_entry["status"])
+                self.assertEqual("open", issue_decision(None, report["observed"][0]["identity"],
+                    [restored_entry], registry_referenced=False)["action"])
+                with tempfile.TemporaryDirectory() as directory:
+                    ci_report.write_report(Path(directory), restored, [retained], {"entries": []}, {}, stopped=False,
+                        now=date(2026, 10, 1))
+                    self.assertIn("RED: invalid or obsolete", (Path(directory) / "runs/10-1.md").read_text())
         red = copy.deepcopy(compact)
         red["day"] = "2026-09-30"
         red["observed"][0].pop("environment_limit")
         red["observed"][0]["attempts"][0].pop("environment_limit")
         previous = issue_decision(None, report["observed"][0]["identity"], [red], registry_referenced=False)["state"]
         decision = issue_decision(previous, report["observed"][0]["identity"], [compact], registry_referenced=False)
-        self.assertEqual("unverified", decision["state"]["nights"]["2026-10-01"]["10"]["outcome"])
+        self.assertEqual("environment-limited", decision["state"]["nights"]["2026-10-01"]["10"]["outcome"])
+        self.assertEqual(1, decision["state"]["failure_nights"])
         self.assertEqual([], decision["state"]["explicit_pass_nights"])
         snapshot = ci_report.merge_snapshot(None, [red, compact], date(2026, 10, 1))
         self.assertEqual("failed", snapshot["days"]["2026-09-30"]["entries"][0]["observed"][0]["outcome"])
         self.assertEqual(proof, snapshot["days"]["2026-10-01"]["entries"][0]["observed"][0]["environment_limit"])
-        for mutation in ("local", "resources", "functional", "red aggregate", "missing label", "duplicate label", "passed tier",
+        for mutation in ("local", "self-hosted label", "resources", "functional", "red aggregate", "missing label", "duplicate label", "passed tier",
                          "infrastructure", "missing log"):
             raw, shard, traces, job_rows = [copy.deepcopy(value) for value in (aggregate, summary, trace, jobs)]
             if mutation == "local":
                 job_rows[0]["runner_group_name"] = "Default"
+            elif mutation == "self-hosted label":
+                job_rows[0]["labels"].append("self-hosted")
             elif mutation == "resources":
                 traces["warm"][0]["bounded_diagnostics"]["case_resources"][0]["failure_samples"][0]["idle_percent"] = 6
             elif mutation == "functional":
@@ -1908,6 +1968,7 @@ class ReporterTests(unittest.TestCase):
             else:
                 traces["warm"][0]["log_present"] = False
             message = {"local": "environment limit requires a verified GitHub-hosted strict job",
+                "self-hosted label": "environment limit requires a verified GitHub-hosted strict job",
                 "resources": "environment limit differs from official method or case resources",
                 "functional": "environment limit differs from official method or case resources",
                 "red aggregate": "nightly environment limit cannot conceal red or incomplete evidence",

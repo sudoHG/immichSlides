@@ -197,6 +197,39 @@ class NightlyVerdictTests(unittest.TestCase):
         self.assertEqual("environment-limited", result["status"])
         self.assertEqual("failed", result["observed"][0]["outcome"])
         self.assertEqual([case], result["environment_limited"])
+        import contextlib
+        import io
+        import os
+        import tempfile
+        import time
+        from ci_nightly import main
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            records = root / "records" / "nightly-strict-iphone-debug-0-10-1"
+            records.mkdir(parents=True)
+            (records / "summary.json").write_text(json.dumps(yellow))
+            (records / "p2-review-bindings.json").write_text(json.dumps({"schema_version": 1, "review_packages": []}))
+            (records / "trace.json").write_text(json.dumps({"started_epoch": time.time() - 10, "finished_epoch": time.time()}))
+            planned = [{"id": "iphone-debug-0", "cases": [{"platform": "ios", **case["dimensions"]}]}]
+            hashes = {"manifests": {"nightly-matrix": "a" * 64}, "policies": {"nightly": "a" * 64}}
+            plan = {"identity": yellow["identity"], "run": {"id": "10", "attempt": 1}, "hashes": hashes,
+                "shards": planned, "started_epoch": time.time() - 20, "max_parallel": 2}
+            (root / "plan.json").write_text(json.dumps(plan))
+            stdout = io.StringIO()
+            with patch("ci_nightly.workspace_preflight"), patch("ci_nightly.run_identity", return_value=yellow["identity"]), patch(
+                    "ci_nightly.source_metadata", return_value=(yellow["source"]["workflow_path"], False)), patch(
+                    "ci_nightly.file_hash", return_value="a" * 64), patch("ci_nightly.shards", return_value=planned), patch(
+                    "ci_nightly.read_policy", return_value={"live_tier_in_scope": False, "built_tiers": ["strict"]}), patch(
+                    "ci_nightly.validate_shard", return_value=yellow), patch.dict(os.environ, GITHUB_RUN_ID="10",
+                    GITHUB_RUN_ATTEMPT="1"), contextlib.redirect_stdout(stdout):
+                code = main(["aggregate", "--output-dir", str(root / "output"), "--plan", str(root / "plan.json"),
+                    "--records-dir", str(root / "records"), "--matrix-job-result", "success"])
+            self.assertEqual(0, code)
+            self.assertIn("::warning title=Environment-limited strict timing::", stdout.getvalue())
+            warning = (root / "output" / "nightly.md").read_text()
+            self.assertIn("**WARNING: hosted timing failures are environment-limited", warning)
+            self.assertIn(ci_summary.identity_key(case), warning)
+            self.assertIn("idle=5%", warning)
         red = copy.deepcopy(yellow)
         red["population"]["observed"][0].pop("environment_limit")
         red["population"]["observed"][0]["attempts"][0].pop("environment_limit")
@@ -779,8 +812,9 @@ class AdmissionVerdictTests(unittest.TestCase):
         shard, aggregate_artifact = artifact("nightly-strict-a-7-1"), artifact("nightly-aggregate-7-1")
         self.assertEqual("real", evidence(night, [aggregate_artifact, shard], aggregate))
         self.assertEqual("real", evidence(dict(night, conclusion="success"), [aggregate_artifact], {**aggregate, "status": "passed"}))
-        self.assertEqual("real", evidence(dict(night, conclusion="success"), [aggregate_artifact],
+        self.assertIsNone(evidence(dict(night, conclusion="success"), [aggregate_artifact],
             {**aggregate, "status": "environment-limited"}))
+        self.assertIsNone(evidence(night, [aggregate_artifact], {**aggregate, "environment_limited": [{"key": "yellow"}]}))
         for label, artifacts, member, item in (
                 ("no aggregate", [shard], aggregate, night),
                 ("expired aggregate", [artifact("nightly-aggregate-7-1", True)], aggregate, night),

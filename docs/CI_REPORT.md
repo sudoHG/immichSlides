@@ -237,7 +237,10 @@ runner metadata. A wholly yellow night has `status: environment-limited`, never
 failure-window sample numbers appear in warnings without the ordinary 50-row
 table cap. Compact history retains the bounded projection, while continuing to
 discard the original `first_failure` receipt. Yellow is neither an opening product
-failure nor an explicit-pass recovery night, and cannot trigger quarantine retries.
+failure on its first night, never an explicit-pass recovery night, and cannot trigger
+quarantine retries. Repeated yellow cases escalate through the ordinary failure
+path under the linked policy. Invalid retained proofs render as red with a reason
+instead of breaking report generation; raw failed outcomes remain unchanged.
 Old snapshots without the optional proof remain readable and unchanged.
 
 The outcome path is: `run_strict_e2e` official exports and first-failure/resource
