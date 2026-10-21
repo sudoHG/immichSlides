@@ -13,6 +13,17 @@ extension SettingsResumeContractTests {
     }
 
     func testIPhonePauseRejectsEarlyAndLateSustainedFade() {
+        XCTAssertThrowsError(
+            try AccessLifecycleContract.assertIPhonePauseTimingEvidence(
+                continueMark: "A5", baselineLuma: 0.53,
+                samples: earlyFadeWithFrozenDimSamples(), intervalSeconds: 12
+            )
+        ) {
+            XCTAssertEqual(
+                $0.localizedDescription,
+                "Automatic photo change occurred before T-2; first check test timing and image recognition instead of immediately calling it a product bug"
+            )
+        }
         for (start, message) in [
             (
                 9.8,
@@ -81,7 +92,8 @@ extension SettingsResumeContractTests {
     func testIPhonePauseKeepsIsolatedBlackUniformDimAndUndecidableEvidenceUnsigned() throws {
         for signal in [
             "BLACK", "UNRECOGNIZABLE", "uniform", "one_frame", "recovered", "controls", "gap", "missing_baseline",
-            "dark_baseline", "unknown_previous", "controls_mid_fade"
+            "dark_baseline", "unknown_previous", "controls_mid_fade", "late_decrease", "increasing_dim", "long_span",
+            "excess_frozen"
         ] {
             var samples = iphoneFadeSamples(start: 13.2)
             for index in 2...4 {
@@ -120,10 +132,22 @@ extension SettingsResumeContractTests {
                 samples[1] = watchSample(
                     request: 13.05, mark: "UNRECOGNIZABLE", status: "UNRECOGNIZABLE", returnLag: 0.14)
             }
+            if ["late_decrease", "increasing_dim", "long_span", "excess_frozen"].contains(signal) {
+                samples = nonFadeDimSamples(signal: signal)
+            }
             let baseline: Double? = signal == "missing_baseline" ? nil : signal == "dark_baseline" ? 0.1 : 0.53
             let evidence = try AccessLifecycleContract.assertIPhonePauseTimingEvidence(
                 continueMark: "A5", baselineLuma: baseline, samples: samples, intervalSeconds: 12
             )
+            if ["late_decrease", "increasing_dim", "long_span", "excess_frozen"].contains(signal) {
+                XCTAssertEqual(
+                    evidence.verdict,
+                    .pendingVideoReview(reason: "No usable start in window; post-window new photo does not count"),
+                    signal
+                )
+                XCTAssertFalse(evidence.isOfficialStartSigned, signal)
+                continue
+            }
             guard case .pendingVideoReview = evidence.verdict else { return XCTFail("\(signal) must await review") }
             XCTAssertFalse(evidence.isOfficialStartSigned, signal)
         }
@@ -156,6 +180,79 @@ extension SettingsResumeContractTests {
         return old + fade + trough + newPhoto
     }
 
+    private func earlyFadeWithFrozenDimSamples() -> [AccessLifecycleContract.ContinueWatchSample] {
+        let anchor = watchSample(request: 9.35, mark: "A5", luma: 0.53, returnLag: 0.14)
+        let fade = [0.49, 0.49, 0.42, 0.35, 0.25].enumerated().map { index, luma in
+            watchSample(request: 9.5 + Double(index) * 0.15, mark: "A5", luma: luma, returnLag: 0.14)
+        }
+        let trough = (0...3).map { index in
+            watchSample(
+                request: 10.25 + Double(index) * 0.15, mark: "UNRECOGNIZABLE", status: "UNRECOGNIZABLE",
+                luma: 0.03, returnLag: 0.14
+            )
+        }
+        let newPhoto = (0...8).map { index in
+            watchSample(request: 10.85 + Double(index) * 0.15, mark: "A1", luma: 0.47, returnLag: 0.14)
+        }
+        return [anchor] + fade + trough + newPhoto
+    }
+
+    private func slowEarlyFadeWithoutFrozenDimSamples() -> [AccessLifecycleContract.ContinueWatchSample] {
+        let fade = [
+            watchSample(request: 8.99, mark: "A5", luma: 0.53, returnLag: 0.49),
+            watchSample(request: 9.50, mark: "A5", luma: 0.49, returnLag: 0.49),
+            watchSample(request: 10.01, mark: "A5", luma: 0.35, returnLag: 0.49)
+        ]
+        return fade
+            + (0...6).map { index in
+                watchSample(request: 10.52 + Double(index) * 0.3, mark: "A1", luma: 0.47, returnLag: 0.28)
+            }
+    }
+
+    private func nonFadeDimSamples(signal: String) -> [AccessLifecycleContract.ContinueWatchSample] {
+        if signal == "excess_frozen" {
+            return (0...22).map { index in
+                let luma: Double
+                switch index {
+                case 0: luma = 0.53
+                case 1..<4: luma = 0.35
+                case 4..<7: luma = 0.3489
+                default: luma = 0.47
+                }
+                return watchSample(
+                    request: 13.0 + Double(index) * 0.2, mark: index < 7 ? "A5" : "A1", luma: luma, returnLag: 0.18
+                )
+            }
+        }
+        if signal == "long_span" || signal == "span_boundary" {
+            let cadence = signal == "long_span" ? 0.34 : 1.0 / 3.0
+            let dim = [
+                watchSample(request: 13.2 - cadence, mark: "A5", luma: 0.53, returnLag: cadence - 0.02),
+                watchSample(request: 13.2, mark: "A5", luma: 0.49, returnLag: cadence - 0.02),
+                watchSample(request: 13.2 + cadence, mark: "A5", luma: 0.49, returnLag: cadence - 0.02),
+                watchSample(request: 13.2 + 2 * cadence, mark: "A5", luma: 0.35, returnLag: cadence - 0.02)
+            ]
+            return dim
+                + (0...6).map { index in
+                    watchSample(
+                        request: 13.2 + 3 * cadence + Double(index) * 0.3, mark: "A1", luma: 0.47, returnLag: 0.28)
+                }
+        }
+        return tvosFadeSamples(start: 13.2).map { sample in
+            let offset = sample.requestElapsed - 13.2
+            if offset >= -0.001 && offset < 0.9 - 0.001 {
+                let luma =
+                    signal == "late_decrease"
+                    ? 0.35 : (offset < 0.3 - 0.001 ? 0.49 : offset < 0.6 - 0.001 ? 0.50 : 0.16)
+                return watchSample(request: sample.requestElapsed, mark: "A5", luma: luma, returnLag: 0.28)
+            }
+            if signal == "late_decrease" && abs(offset - 0.9) < 0.001 {
+                return watchSample(request: sample.requestElapsed, mark: "A5", luma: 0.3489, returnLag: 0.28)
+            }
+            return sample
+        }
+    }
+
     func testTVOSPauseJudgesSharedSustainedFadeBeforeLateNewPhoto() throws {
         for start in [10.0, 13.2, 14.0] {
             let evidence = try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
@@ -169,6 +266,22 @@ extension SettingsResumeContractTests {
                 XCTAssertGreaterThan(evidence.stable.requestElapsed, 14)
             }
         }
+        for frozenLuma in [0.4895, 0.49, 0.4905] {
+            let frozen = tvosFadeSamples(start: 13.2).map { sample in
+                abs(sample.requestElapsed - 13.5) < 0.001
+                    ? watchSample(request: sample.requestElapsed, mark: "A5", luma: frozenLuma, returnLag: 0.28)
+                    : sample
+            }
+            let evidence = try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
+                continueMark: "A5", baselineLuma: 0.53, samples: frozen, intervalSeconds: 12
+            )
+            XCTAssertEqual(evidence.start.requestElapsed, 13.2, accuracy: 0.001)
+        }
+        let boundary = try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
+            continueMark: "A5", baselineLuma: 0.53,
+            samples: nonFadeDimSamples(signal: "span_boundary"), intervalSeconds: 12
+        )
+        XCTAssertEqual(boundary.start.requestElapsed, 13.2, accuracy: 0.001)
         // Pinned 4K capture: the 1 s outgoing fade retained only two dim MATCH frames.
         let captured =
             [
@@ -194,6 +307,18 @@ extension SettingsResumeContractTests {
     }
 
     func testTVOSPauseRejectsEarlyAndLateFadeStarts() {
+        for samples in [earlyFadeWithFrozenDimSamples(), slowEarlyFadeWithoutFrozenDimSamples()] {
+            XCTAssertThrowsError(
+                try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
+                    continueMark: "A5", baselineLuma: 0.53, samples: samples, intervalSeconds: 12
+                )
+            ) {
+                XCTAssertEqual(
+                    $0.localizedDescription,
+                    "Automatic photo change occurred before T-2; first check test timing and image recognition instead of immediately calling it a product bug"
+                )
+            }
+        }
         for (start, message) in [
             (
                 9.3,
@@ -327,9 +452,10 @@ extension SettingsResumeContractTests {
         let valid = tvosFadeSamples(start: start)
         for mutation in [
             "isolated_black", "uniform_dim", "recovered_dim", "controls", "only_one_dim_frame", "dim_anchor",
-            "anchor_gap", "increasing_dim", "controls_mid_fade"
+            "anchor_gap", "increasing_dim", "controls_mid_fade", "recovered_transition", "late_decrease", "long_span",
+            "excess_frozen"
         ] {
-            let samples = valid.map { sample in
+            var samples = valid.map { sample in
                 let offset = sample.requestElapsed - start
                 var mark = sample.mark
                 var status = sample.status
@@ -347,9 +473,12 @@ extension SettingsResumeContractTests {
                         status = "UNRECOGNIZABLE"
                     }
                 }
-                if mutation == "dim_anchor" && abs(offset + 0.3) < 0.001 { luma = 0.49 }
-                if mutation == "increasing_dim" && abs(offset - 0.3) < 0.001 { luma = 0.5 }
-                if mutation == "recovered_dim" && abs(offset - 0.9) < 0.001 {
+                if mutation == "dim_anchor" && offset < -0.001 { luma = 0.49 }
+                if mutation == "recovered_transition" && abs(offset) < 0.001 {
+                    mark = "TRANSITION"
+                    status = "TRANSITION"
+                }
+                if (mutation == "recovered_dim" || mutation == "recovered_transition") && abs(offset - 0.9) < 0.001 {
                     mark = "A5"
                     status = "MATCH"
                     luma = 0.53
@@ -365,6 +494,9 @@ extension SettingsResumeContractTests {
                         && (mutation != "controls_mid_fade" || offset < 0.3 - 0.001),
                     returnLag: mutation == "anchor_gap" && abs(offset + 0.3) < 0.001 ? 0.01 : 0.28
                 )
+            }
+            if ["late_decrease", "increasing_dim", "long_span", "excess_frozen"].contains(mutation) {
+                samples = nonFadeDimSamples(signal: mutation)
             }
             XCTAssertThrowsError(
                 try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
@@ -685,6 +817,38 @@ extension SettingsResumeContractTests {
     }
 
     func testIPadPauseRejectsRecoveredDimFrameDimOnlyAndControlBarOnlyChange() {
+        XCTAssertThrowsError(
+            try AccessLifecycleContract.assertIPadPauseTimingEvidence(
+                continueMark: "A5", baselineLuma: 0.53,
+                samples: slowEarlyFadeWithoutFrozenDimSamples(), intervalSeconds: 12
+            )
+        ) {
+            XCTAssertEqual(
+                $0.localizedDescription,
+                "iPad transition: conservative screenshot range must lie fully within T±2 s"
+            )
+        }
+        for signal in ["late_decrease", "increasing_dim", "long_span", "excess_frozen"] {
+            XCTAssertThrowsError(
+                try AccessLifecycleContract.assertIPadPauseTimingEvidence(
+                    continueMark: "A5", baselineLuma: 0.53,
+                    samples: nonFadeDimSamples(signal: signal), intervalSeconds: 12
+                ), signal
+            ) { error in
+                if signal == "increasing_dim" {
+                    XCTAssertTrue(
+                        error.localizedDescription.hasPrefix(
+                            "A continuous, reliable screenshot of the previous photo must precede the iPad transition start;"
+                        ), signal
+                    )
+                    return
+                }
+                XCTAssertEqual(
+                    error.localizedDescription,
+                    "iPad transition: conservative screenshot range must lie fully within T±2 s", signal
+                )
+            }
+        }
         let recoveredTwoDimFrames = (0...39).map { index in
             let luma: Double
             switch index {
@@ -737,10 +901,13 @@ extension SettingsResumeContractTests {
             )
         )
 
-        for controlsChangeOffset in [0.0, 0.3] {
+        for (onset, controlsChangeOffset) in [("TRANSITION", 0.0), ("DIMMING", 0.3)] {
             let controlsOnly = tvosFadeSamples(start: 12.3).map { sample in
+                let isTransition = onset == "TRANSITION" && abs(sample.requestElapsed - 12.3) < 0.001
                 return watchSample(
-                    request: sample.requestElapsed, mark: sample.mark, status: sample.status, luma: sample.meanLuma,
+                    request: sample.requestElapsed,
+                    mark: isTransition ? "TRANSITION" : sample.mark,
+                    status: isTransition ? "TRANSITION" : sample.status, luma: sample.meanLuma,
                     isControlBarVisible: sample.requestElapsed - 12.3 < controlsChangeOffset - 0.001, returnLag: 0.28
                 )
             }

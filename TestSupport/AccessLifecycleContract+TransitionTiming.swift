@@ -440,28 +440,42 @@ extension AccessLifecycleContract {
         threshold: Double,
         samples: [ContinueWatchSample]
     ) -> Bool {
-        // A 4K capture can take 0.45 s: anchor the three-point fade in the preceding bright old photo.
+        // Allow one frozen capture without treating a prolonged dim plateau or a rise as a fade.
         guard startIndex > 0 else { return false }
         let anchorIndex = startIndex - 1
-        let lastIndex = anchorIndex + requiredConsecutiveFadeSampleCount - 1
-        guard lastIndex < samples.count else { return false }
+        let maximumFrozenFrameCount = 1
+        let maximumAnchorToDecreaseSeconds = TestWait.seconds(.product(1.0))
         var previous = samples[anchorIndex]
         guard previous.status == "MATCH", previous.mark == continueMark,
             previous.meanLuma.isFinite, previous.meanLuma >= threshold
         else { return false }
-        for index in startIndex...lastIndex {
+        var hasStrictDecrease = false
+        var frozenFrameCount = 0
+        for index in startIndex..<samples.count {
             let sample = samples[index]
             let gap = sample.requestElapsed - previous.returnElapsed
             guard sample.status == "MATCH", sample.mark == continueMark,
                 sample.meanLuma.isFinite, sample.meanLuma < threshold,
-                sample.meanLuma < previous.meanLuma - luminanceTolerance,
                 sample.isControlBarVisible == previous.isControlBarVisible,
-                gap >= 0, gap <= newStableMarkPollInterval + timingToleranceSeconds
+                gap >= 0, gap <= newStableMarkPollInterval + timingToleranceSeconds,
+                frozenFrameCount == 0
+                    || sample.requestElapsed - samples[anchorIndex].requestElapsed
+                        <= maximumAnchorToDecreaseSeconds + timingToleranceSeconds
             else {
                 return false
             }
+            if index > startIndex {
+                if sample.meanLuma < previous.meanLuma - luminanceTolerance {
+                    hasStrictDecrease = true
+                    break
+                }
+                guard abs(sample.meanLuma - previous.meanLuma) <= luminanceTolerance else { return false }
+                frozenFrameCount += 1
+                guard frozenFrameCount <= maximumFrozenFrameCount else { return false }
+            }
             previous = sample
         }
+        guard hasStrictDecrease else { return false }
         // A flicker that recovers the old photo cannot establish fade onset on any platform.
         let stable = firstStableNewImage(continueMark: continueMark, samples: samples)
         return !samples.dropFirst(startIndex + 1).prefix {

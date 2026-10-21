@@ -10,7 +10,6 @@ enum AccessLifecycleContract {
     static let minimumBaselineLuminance: Double = 0.1
     static let maximumPressReturnDelaySeconds: TimeInterval = TestWait.seconds(.product(2))
     static let sustainedDimmingLuminanceRatio: Double = 0.95
-    static let requiredConsecutiveFadeSampleCount: Int = 3
 
     enum AssertionError: LocalizedError {
         case message(String)
