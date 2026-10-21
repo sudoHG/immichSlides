@@ -79,7 +79,7 @@ SIMULATOR_PREPARATION_TIMEOUT_SECONDS = 600
 SIMULATOR_READINESS_TIMEOUT_SECONDS = 300
 SIMULATOR_READINESS_INITIAL_QUERY_TIMEOUT_SECONDS = 10
 SERVICE_STARTUP_TIMEOUT_SECONDS = 60
-# Hosted PNG generation can outlast health startup; keep its cap independent.
+# Preserve strict/tracer preparation limits under their existing outer budgets.
 SERVICE_FIXTURE_BUILD_TIMEOUT_SECONDS = 120
 # simctl writes Recording started only after processing the first frame; after SIGINT, wait for in-flight frames to write the moov atom.
 RECORDING_START_TIMEOUT_SECONDS = 15
@@ -724,11 +724,13 @@ def destination_udid(destination: str) -> str:
 
 
 def wait_for_service(ready_path: Path, process: subprocess.Popen[bytes], *,
-                     startup_log: Path | None = None) -> tuple[str, int]:
+                     startup_log: Path | None = None,
+                     fixture_build_timeout_seconds: float = SERVICE_FIXTURE_BUILD_TIMEOUT_SECONDS,
+                     startup_timeout_seconds: float = SERVICE_STARTUP_TIMEOUT_SECONDS) -> tuple[str, int]:
     try:
         if startup_log is not None:
-            _wait_for_fixture_build(process, startup_log)
-        return _wait_for_service(ready_path, process)
+            _wait_for_fixture_build(process, startup_log, fixture_build_timeout_seconds)
+        return _wait_for_service(ready_path, process, startup_timeout_seconds)
     except CommandError as error:
         lines = _service_startup_diagnostics(startup_log)
         if lines:
@@ -753,10 +755,10 @@ def _service_startup_diagnostics(path: Path | None) -> list[str]:
     return [line for line in text.splitlines() if re.fullmatch(pattern, line)][:8]
 
 
-def _wait_for_fixture_build(process: subprocess.Popen[bytes], startup_log: Path) -> None:
+def _wait_for_fixture_build(process: subprocess.Popen[bytes], startup_log: Path, timeout_seconds: float) -> None:
     started = time.monotonic()
-    deadline = started + SERVICE_FIXTURE_BUILD_TIMEOUT_SECONDS
-    print(f"fixture-service: build started; budget={SERVICE_FIXTURE_BUILD_TIMEOUT_SECONDS}s", flush=True)
+    deadline = started + timeout_seconds
+    print(f"fixture-service: build started; budget={timeout_seconds}s", flush=True)
     while time.monotonic() < deadline:
         exit_code = process.poll()
         lines = _service_startup_diagnostics(startup_log)
@@ -765,16 +767,16 @@ def _wait_for_fixture_build(process: subprocess.Popen[bytes], startup_log: Path)
             raise CommandError(f"Test service exited early during {phase} with exit {exit_code}.")
         if any("phase=fixture-build; state=completed;" in line for line in lines) and time.monotonic() < deadline:
             print(f"fixture-service: build completed; elapsed={time.monotonic() - started:.1f}s; "
-                  f"budget={SERVICE_FIXTURE_BUILD_TIMEOUT_SECONDS}s", flush=True)
+                  f"budget={timeout_seconds}s", flush=True)
             return
         time.sleep(min(0.05, max(0, deadline - time.monotonic())))
     raise CommandError(f"Test service fixture build timed out after {time.monotonic() - started:.1f}s "
-                       f"(budget={SERVICE_FIXTURE_BUILD_TIMEOUT_SECONDS}s).", code=124)
+                       f"(budget={timeout_seconds}s).", code=124)
 
 
-def _wait_for_service(ready_path: Path, process: subprocess.Popen[bytes]) -> tuple[str, int]:
+def _wait_for_service(ready_path: Path, process: subprocess.Popen[bytes], timeout_seconds: float) -> tuple[str, int]:
     started = time.monotonic()
-    deadline = started + SERVICE_STARTUP_TIMEOUT_SECONDS
+    deadline = started + timeout_seconds
     last_state = "ready-file-missing"
     while time.monotonic() < deadline:
         exit_code = process.poll()
@@ -797,7 +799,7 @@ def _wait_for_service(ready_path: Path, process: subprocess.Popen[bytes]) -> tup
                     last_state = f"health-http-{response.status}"
                     if response.status == 200 and time.monotonic() < deadline:
                         print(f"fixture-service: healthy; elapsed={time.monotonic() - started:.1f}s; "
-                              f"total budget={SERVICE_STARTUP_TIMEOUT_SECONDS}s", flush=True)
+                              f"total budget={timeout_seconds}s", flush=True)
                         return str(host), port
             except urllib.error.HTTPError as error:
                 last_state = f"health-http-{error.code}"
@@ -805,7 +807,7 @@ def _wait_for_service(ready_path: Path, process: subprocess.Popen[bytes]) -> tup
                 last_state += f":{type(error).__name__}"
         time.sleep(min(0.05, max(0, deadline - time.monotonic())))
     raise CommandError(f"Test service health check timed out after {time.monotonic() - started:.1f}s "
-                       f"(budget={SERVICE_STARTUP_TIMEOUT_SECONDS}s; last_state={last_state}).", code=124)
+                       f"(budget={timeout_seconds}s; last_state={last_state}).", code=124)
 
 
 def stop_exact_process(process: subprocess.Popen[bytes]) -> int:

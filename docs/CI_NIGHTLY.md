@@ -323,7 +323,7 @@ This branch evidence remains self-reported and diagnostic. Live admission and
 credential-bearing jobs retain their independent main-only boundary.
 
 Each nightly UI consumer downloads to a fresh directory owned by its run/attempt.
-After the download and before the UI run step, a 30-second integrity gate verifies
+After the download and before the UI run step, a 120-second integrity gate verifies
 the selected ID/run/attempt and identity, requires exactly `manifest.json` and
 `build.tar.gz`, and reuses the manifest and tar inventory
 validators. The selection already validated the immutable artifact ID in this run;
@@ -333,6 +333,23 @@ while corrupt deflate data or a bad gzip CRC continues to the digest check and r
 `archive-hash-mismatch`. It then checks every declared member size and atomically
 renames the verified directory to the run step's archive path. No manifest or
 selection schema changes are needed.
+
+Run [39618104921](https://github.com/sudoHG/immichSlides/actions/runs/39618104921)
+retained 13 successful gate receipts (0.98–4.62 seconds) and one iPad visual-d
+timeout at 30.30 seconds. The latter is censored: completion after 30 seconds
+was not observed. The 120-second cap provides approximately four times that
+observed cutoff while keeping every integrity check and the fail-closed timeout.
+The additional 90 seconds fits within the unchanged 110-minute UI job cap:
+the 85-minute fixture runner plus this two-minute gate leaves 23 minutes for
+downloads, initial preparation, exports and cleanup. Preparation inside the
+fixture runner spends that existing 85-minute allowance, as described in the
+[service budget contract](CI_STRICT_RUNNER.md). No workflow timeout changes.
+The host budget check includes the two-minute gate, ten-minute simulator
+preparation and 13-minute surrounding-step margin: `85 + 2 + 10 + 13 = 110`.
+There is no additional slack in that accounting. Existing official-result exports
+each have a 180-second cap outside the runner's 85-minute total deadline; they
+spend the surrounding-step margin, which does not prove a worst-case bound for
+all exports and other overhead.
 
 The [download receipt](CI_SUMMARY.md#prepared-archive-download-receipt) records the
 action outcome, bounded member sizes, digest/size matches, combined transfer/extract

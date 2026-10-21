@@ -206,13 +206,24 @@ class RetryTests(unittest.TestCase):
         tests = {"devices": [device], "testNodes": [{"nodeType": "UI test bundle", "name": "immichSlidesUITests",
             "children": [{"nodeType": "Test Case", "nodeIdentifier": identity["key"] + "()",
                           "result": "Failed", "durationInSeconds": 1}]}]}
-        for issue_types in (["Assertion Failure"], ["Crash"], ["Infrastructure Failure"], [],
-                            ["Unknown"], ["Assertion Failure", "Crash"], ["Uncategorized"]):
-            with self.subTest(issue_types=issue_types):
+        assertion_message = "XCTAssertTrue failed - The iOS slider must be settable to 30 seconds. PRIVATE_SENTINEL"
+        lifecycle_message = "Failed to terminate com.331works.immichSlides:18525: Failed to terminate com.331works.immichSlides:0"
+        cases = [(kinds, assertion_message, False) for kinds in (
+            ["Assertion Failure"], ["Crash"], ["Infrastructure Failure"], [],
+            ["Unknown"], ["Assertion Failure", "Crash"], ["Uncategorized"])] + [
+                (["Uncategorized"], lifecycle_message, True),
+                (["Uncategorized"], lifecycle_message.replace("com.331works.immichSlides", "another.app"), False),
+                (["Uncategorized"], lifecycle_message + " additional detail", False),
+                (["Assertion Failure"], lifecycle_message, False),
+                (["Unknown"], lifecycle_message, False),
+                (["Infrastructure Failure"], lifecycle_message, False),
+                (["Uncategorized", "Assertion Failure"], lifecycle_message, False)]
+        for issue_types, message, lifecycle_failure in cases:
+            with self.subTest(issue_types=issue_types, message=message):
                 issues = {"issues": {"testFailureSummaries": {"_values": [
                     {"testCaseName": {"_value": "ExampleTests.testNavigation()"},
                      "issueType": {"_value": kind},
-                     "message": {"_value": "XCTAssertTrue failed - The iOS slider must be settable to 30 seconds. PRIVATE_SENTINEL"}}
+                     "message": {"_value": message}}
                     for kind in issue_types]}}}
                 def run(command, **kwargs):
                     details = {"testIdentifier": identity["key"] + "()", "testResult": "Failed", "testRuns": [
@@ -227,10 +238,15 @@ class RetryTests(unittest.TestCase):
                     actual = retry_observations(rows, registry(), tier="ui", environment="hermetic",
                         today=date(2026, 10, 8), reset=lambda: resets.append(True),
                         execute=lambda key: observation(identity, "passed", 1))
-                    self.assertEqual(bool(resets), issue_types in (["Assertion Failure"], ["Uncategorized"]))
+                    self.assertEqual(bool(resets), issue_types in (["Assertion Failure"], ["Uncategorized"]) and not lifecycle_failure)
+                    if lifecycle_failure:
+                        self.assertEqual(rows[0]["attempts"][0]["reason"], "Official XCTest app lifecycle failure")
+                        self.assertEqual(actual[0]["attempts"][0]["exit_code"], 65)
+                    elif message == lifecycle_message and issue_types in (["Unknown"], ["Infrastructure Failure"]):
+                        self.assertEqual(rows[0]["attempts"][0]["reason"], "Official non-assertion or unclassified failure")
                     self.assertEqual(actual[0]["outcome"], "flaky-passed" if resets else
                                      "crashed" if "Crash" in issue_types else "failed")
-                    expected_phase = "interval_setup" if issue_types else "unknown"
+                    expected_phase = "interval_setup" if issue_types and message.startswith("XCTAssert") else "unknown"
                     self.assertEqual(actual[0]["failure_phase"], expected_phase)
                     self.assertEqual(actual[0]["attempts"][0]["failure_phase"], expected_phase)
                     self.assertNotIn("PRIVATE_SENTINEL", json.dumps(actual))

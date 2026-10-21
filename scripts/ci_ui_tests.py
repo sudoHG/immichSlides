@@ -43,7 +43,7 @@ GATE_WORKFLOW = ".github/workflows/ci-gate.yml"
 NIGHTLY_WORKFLOW = ".github/workflows/ci-nightly.yml"
 GATE_PENDING_PAUSE_SECONDS = 50 * 60  # 120 + 50 = 170-minute cap leaves 15 minutes of the 185-minute job for final reads and downloads
 MAX_ARCHIVE_BYTES = 128 * 1024 * 1024
-ARCHIVE_GATE_SECONDS = 30
+ARCHIVE_GATE_SECONDS = 120
 
 
 def write_json(path, value):

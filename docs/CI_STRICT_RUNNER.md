@@ -618,33 +618,74 @@ signing stays **Sign to Run Locally**, verified as `adhoc` by `codesign` after w
 
 ## Fixture service startup
 
-Fixture service health uses a separate 60-second infrastructure budget, shared
-by the strict, fixture UI, access-lifecycle and iPad pause host runners. It
+Fixture service health uses a separate 60-second infrastructure budget by default
+for strict, access-lifecycle and iPad pause host runners. Fixture UI explicitly
+selects 120 seconds for its hosted contention allowance. The waiter
 requires the ready file to identify the spawned child and `/healthz` to return
 HTTP 200; child exit or a mismatched PID fails immediately. Health requests are
 capped at one second and the remaining startup budget. Success logs seconds to
 healthy; timeout reports elapsed time and the last ready-file/HTTP/error state,
 without logging response bodies or addresses. This replaces the ten-second wait
 that failed on [the hosted iPhone probe](https://github.com/sudoHG/immichSlides/actions/runs/38122386215/job/114420489109)
-after simulator preparation succeeded. Sixty seconds provides bounded startup
-headroom; the actual delayed recovery time was not recorded. Test and product
+after simulator preparation succeeded. The hosted measurements below raise
+only the fixture UI cap. Test and product
 deadlines are unchanged, and an unhealthy service still fails the run.
 
 For strict and fixture UI callers that capture the startup log, fixture PNG
-generation first gets its own 120-second cap, including child import. Only the
+generation first gets its own cap, including child import: 120 seconds for strict,
+300 seconds for fixture UI. Only the
 child's allowlisted `fixture-build` completion starts the health budget; a ready
 file alone cannot bypass this step. Build exit and build timeout fail separately
 before health requests or tests, and neither can produce a passing result. Job logs record
 the build cap and elapsed time, followed by the existing service phase records;
-the summary format is unchanged. Callers without a startup log retain their
-existing startup budget.
+the summary format is unchanged. Callers without a startup log use only the
+default health budget.
+
+The October 21 UI samples from runs
+[39618104921](https://github.com/sudoHG/immichSlides/actions/runs/39618104921) and
+[39541878393](https://github.com/sudoHG/immichSlides/actions/runs/39541878393)
+contain 17 completed build waits: median 10.1 seconds, maximum 64.0 seconds.
+Two additional builds timed out at 120.5 and 126.6 seconds; those are censored
+observations, not completed build durations. Sixteen successful health waits
+have a median of 0.1 seconds and maximum of 2.0 seconds, while the second iPad
+scoped-a attempt timed out at 68.3 seconds after a completed ready-write phase.
+The artifact summaries retain those failures; the job logs retain the bounded
+startup records and completed waits. A 300-second build cap gives 2.37 times the
+largest censored build wait; 120 seconds gives 1.76 times the censored health
+wait. These are bounded contention allowances, not measured recovery guarantees
+or estimates of an uncensored tail percentile.
+
+Fixture UI now has 420 seconds of service preparation allowances (previously 180).
+The raised caps are explicit in `run_fixture_ui_tests.py`, which `ci_ui_tests.py`
+uses for UI shards; strict/tracer and other waiter callers retain their previous
+limits. Strict has 180 seconds per service and 360 seconds for two sequential
+services, rather than the 420/840 seconds a shared increase would impose.
+Existing outer runner and job timeouts still apply and can expire earlier.
+Fixture UI's 85-minute total execution
+deadline starts before service preparation, so this spends its existing allowance;
+it does not extend the 65-minute invocation cap or the 110-minute job cap.
+See the separate [archive integrity gate](CI_NIGHTLY.md#complete-fixture-ui) allowance.
+
+The official XCTest reader recognizes the exact `Uncategorized` message shape
+`Failed to terminate com.331works.immichSlides:<pid>: Failed to terminate com.331works.immichSlides:0`
+as `Official XCTest app lifecycle failure`. This label identifies the observed
+lifecycle symptom without assigning an infrastructure or App cause. In the iPad visual-a
+sample above, the first-failure receipt records `launch-app`, action `launch`,
+App `not-running`, and 61.19 seconds since launch was issued; the official method
+failed after 102.50 seconds with exit 65. This classification only denies the
+uncategorized-to-assertion detail fallback for that signature. It retains the
+failed method, counts, exit code and red verdict; it neither retries launch nor
+turns the failure into a skip or environment-limited pass. Assertion-typed issues,
+mixed issues, foreign bundle IDs and other messages keep their existing handling.
+No reporter schema or verdict rule changes are needed; historical unknown
+diagnostics remain failed.
 
 Build and health timeouts both carry exit code 124 from the shared waiter;
 fixture UI retains its existing nonzero infrastructure-failure accounting.
 An early child exit observed by the build waiter names the last allowlisted
 startup phase in the main message, or `unknown` when no phase record is available.
 
-Each logged service has at most 120 seconds for build and 60 seconds for health.
+Each logged strict service retains at most 120 seconds for build and 60 seconds for health.
 The two services in `filter-switch` / `tvos-switch` can therefore consume up to
 360 seconds sequentially. The tracer still caps a warm segment at
 `(warm timeout + 300-second simulator readiness) * invocations + 240 seconds`
@@ -653,9 +694,14 @@ startup and all other preparation; the 240-second margin is shared, not a
 guarantee that both service caps fit alongside fully consumed execution and
 readiness budgets. Dual startup alone can exceed that margin by 120 seconds.
 The outer deadline can stop the segment before all inner caps are consumed,
-which remains a timeout failure. This change does not increase tracer deadlines.
+which remains a timeout failure and can abort the remaining cases in the shard.
+Keeping strict's smaller limits preserves this existing trade-off: one service's
+180 seconds fits the shared margin, while two services' 360 seconds do not.
+It avoids adding a new single-service overflow or increasing dual startup to
+840 seconds, at the cost of retaining strict's earlier preparation failures under
+contention. This change does not increase tracer deadlines.
 
-The cap rounds three times the measured 36.480-second successful hosted maximum
+The strict build cap rounds three times the measured 36.480-second successful hosted maximum
 up to two minutes. A sample of 56 completed UI shard jobs from nightly runs
 [39431510164](https://github.com/sudoHG/immichSlides/actions/runs/39431510164),
 [39337939502](https://github.com/sudoHG/immichSlides/actions/runs/39337939502),
@@ -758,7 +804,7 @@ per attempt, clamped to the remaining budget. Nonzero exits, malformed JSON,
 missing/unavailable destinations and mismatched device types fail without a
 retry; even a valid response after the deadline fails. Logs name
 `simulator-inventory`, attempt counts, elapsed time and deadline overrun without
-command arguments or output. This does not change the service's 60-second budget.
+command arguments or output. The inventory and service health budgets are separate.
 
 Boot and readiness finish before the existing 120-second reset deadline starts;
 termination, uninstall, the post-uninstall container check and state resets share
