@@ -1181,7 +1181,9 @@ extension XCUIApplication {
     }
 
     func tapSlideshowControlBarButton(
-        identifier: String, file: StaticString = #filePath, line: UInt = #line
+        identifier: String,
+        requiringSnapshot: (([String: XCUIElementSnapshot]) -> Bool)? = nil,
+        file: StaticString = #filePath, line: UInt = #line
     ) {
         var timing = SlideshowControlBarTiming()
         timing.shouldVerifySettingsOutcome = identifier == "slideshow.control.settings.button"
@@ -1203,7 +1205,8 @@ extension XCUIApplication {
                     continue
                 }
                 if didReveal, observation.isInsideWindow,
-                    let button = observation.button
+                    let button = observation.button,
+                    requiringSnapshot?(observation.snapshots) ?? true
                 {
                     let frame = button.frame
                     let startedAt = Date()
