@@ -242,9 +242,13 @@ final class ScenePresentationContractUITests: XCTestCase {
             !app.buttons["slideshow.control.settings.button"].exists
         }
         driver.pause()
-        activateNext(prepareNextButton(app: app))
+        let nextPreparationTimeout = TestWait.seconds(.infrastructure(6))
+        let nextDeadline = Date().addingTimeInterval(nextPreparationTimeout + timeout)
+        app.tapSlideshowControlBarButton(identifier: "slideshow.control.next.button", timeout: nextPreparationTimeout)
         let next = try recordRecoveryStep(
-            "singlePhoto-next", settledOn: driver.stableMark(excluding: recovered, timeout: timeout), app: app,
+            "singlePhoto-next",
+            settledOn: driver.stableMark(
+                excluding: recovered, timeout: min(timeout, max(.zero, nextDeadline.timeIntervalSinceNow))), app: app,
             evidence: evidence
         ) { $0 != recovered }
         activatePlaybackControl(app: app, identifier: "slideshow.control.previous.button")
@@ -252,9 +256,12 @@ final class ScenePresentationContractUITests: XCTestCase {
             "singlePhoto-previous", settledOn: driver.stableMark(excluding: next, timeout: timeout), app: app,
             evidence: evidence
         ) { $0 == recovered }
-        activateNext(prepareNextButton(app: app))
+        let redoDeadline = Date().addingTimeInterval(nextPreparationTimeout + timeout)
+        app.tapSlideshowControlBarButton(identifier: "slideshow.control.next.button", timeout: nextPreparationTimeout)
         let redo = try recordRecoveryStep(
-            "singlePhoto-redo", settledOn: driver.stableMark(excluding: previous, timeout: timeout), app: app,
+            "singlePhoto-redo",
+            settledOn: driver.stableMark(
+                excluding: previous, timeout: min(timeout, max(.zero, redoDeadline.timeIntervalSinceNow))), app: app,
             evidence: evidence
         ) { $0 == next }
         // Playback is already paused; pause() only reveals the control bar before Play.
