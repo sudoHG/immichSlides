@@ -342,7 +342,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
             try AccessLifecycleContract.assertProgressProbeNotUsed(launchEnvironment: app.launchEnvironment)
 
             try completeFirstBootToPlayback(app: app, input: input)
-            confirmPlayPauseState(
+            try confirmPlayPauseState(
                 app: app,
                 expected: "play",
                 shouldTapIfNeeded: true,
