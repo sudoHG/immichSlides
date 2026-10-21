@@ -80,7 +80,7 @@ extension SettingsResumeContractTests {
 
     func testIPhonePauseKeepsIsolatedBlackUniformDimAndUndecidableEvidenceUnsigned() throws {
         for signal in [
-            "BLACK", "UNRECOGNIZABLE", "uniform", "two_frames", "recovered", "controls", "gap", "missing_baseline",
+            "BLACK", "UNRECOGNIZABLE", "uniform", "one_frame", "recovered", "controls", "gap", "missing_baseline",
             "dark_baseline", "unknown_previous"
         ] {
             var samples = iphoneFadeSamples(start: 13.2)
@@ -99,7 +99,9 @@ extension SettingsResumeContractTests {
                         request: samples[index + 2].requestElapsed, mark: "A5", luma: luma, returnLag: 0.14)
                 }
             }
-            if signal == "two_frames" { samples.removeAll { abs($0.requestElapsed - 13.5) < 0.001 } }
+            if signal == "one_frame" {
+                samples.removeAll { abs($0.requestElapsed - 13.35) < 0.001 || abs($0.requestElapsed - 13.5) < 0.001 }
+            }
             if signal == "gap" {
                 samples[2] = watchSample(request: 13.2, mark: "A5", luma: 0.49, returnLag: 0.01)
             }
@@ -159,6 +161,28 @@ extension SettingsResumeContractTests {
                 XCTAssertGreaterThan(evidence.stable.requestElapsed, 14)
             }
         }
+        // Pinned 4K capture: the 1 s outgoing fade retained only two dim MATCH frames.
+        let captured =
+            [
+                watchSample(request: 9.962391, mark: "A5", luma: 0.551154, returnLag: 0.302778),
+                watchSample(request: 10.265197, mark: "A5", luma: 0.530846, returnLag: 0.324398),
+                watchSample(request: 10.589622, mark: "A5", luma: 0.449442, returnLag: 0.397890),
+                watchSample(request: 10.987536, mark: "A5", luma: 0.287456, returnLag: 0.453210),
+                watchSample(
+                    request: 11.440773, mark: "UNRECOGNIZABLE", status: "UNRECOGNIZABLE", luma: 0.330429,
+                    returnLag: 0.416386),
+                watchSample(
+                    request: 11.857182, mark: "UNRECOGNIZABLE", status: "UNRECOGNIZABLE", luma: 0.453709,
+                    returnLag: 0.304881)
+            ]
+            + (0...5).map { index in
+                watchSample(request: 12.162089 + Double(index) * 0.24, mark: "A1", luma: 0.49, returnLag: 0.238)
+            }
+        let replay = try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
+            continueMark: "A5", baselineLuma: 0.557, samples: captured, intervalSeconds: 10
+        )
+        XCTAssertEqual(replay.start.requestElapsed, 10.589622, accuracy: 0.001)
+        XCTAssertEqual(replay.start.mark, "A5")
     }
 
     func testTVOSPauseRejectsEarlyAndLateFadeStarts() {
@@ -241,7 +265,7 @@ extension SettingsResumeContractTests {
         }
     }
 
-    func testTVOSPauseRejectsEarlyFadeWithoutThreeDimmingFrames() {
+    func testTVOSPauseRejectsEarlyFadeWithoutThreeMatchingFrames() {
         let samples = tvosFadeSamples(start: 7).map { sample in
             if abs(sample.requestElapsed - 7.6) < 0.001 {
                 return watchSample(
@@ -293,7 +317,10 @@ extension SettingsResumeContractTests {
     func testTVOSPauseRejectsBlackUniformDimRecoveredDimAndControlBarAsStart() {
         let start = 13.2
         let valid = tvosFadeSamples(start: start)
-        for mutation in ["isolated_black", "uniform_dim", "recovered_dim", "controls", "only_two_dim_frames"] {
+        for mutation in [
+            "isolated_black", "uniform_dim", "recovered_dim", "controls", "only_one_dim_frame", "dim_anchor",
+            "anchor_gap", "increasing_dim"
+        ] {
             let samples = valid.map { sample in
                 let offset = sample.requestElapsed - start
                 var mark = sample.mark
@@ -307,11 +334,13 @@ extension SettingsResumeContractTests {
                         luma = 0.01
                     }
                     if mutation == "uniform_dim" { luma = 0.35 }
-                    if mutation == "only_two_dim_frames" && offset > 0.5 {
+                    if mutation == "only_one_dim_frame" && offset > 0.2 {
                         mark = "UNRECOGNIZABLE"
                         status = "UNRECOGNIZABLE"
                     }
                 }
+                if mutation == "dim_anchor" && abs(offset + 0.3) < 0.001 { luma = 0.49 }
+                if mutation == "increasing_dim" && abs(offset - 0.3) < 0.001 { luma = 0.5 }
                 if mutation == "recovered_dim" && abs(offset - 0.9) < 0.001 {
                     mark = "A5"
                     status = "MATCH"
@@ -325,7 +354,7 @@ extension SettingsResumeContractTests {
                 return watchSample(
                     request: sample.requestElapsed, mark: mark, status: status, luma: luma,
                     isControlBarVisible: mutation != "controls" || offset < -0.001,
-                    returnLag: 0.28
+                    returnLag: mutation == "anchor_gap" && abs(offset + 0.3) < 0.001 ? 0.01 : 0.28
                 )
             }
             XCTAssertThrowsError(

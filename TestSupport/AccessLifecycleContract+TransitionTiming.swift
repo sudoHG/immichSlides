@@ -440,9 +440,16 @@ extension AccessLifecycleContract {
         threshold: Double,
         samples: [ContinueWatchSample]
     ) -> Bool {
-        guard startIndex + (requiredConsecutiveDimmingSampleCount - 1) < samples.count else { return false }
-        var previous = samples[startIndex]
-        for index in (startIndex + 1)...(startIndex + (requiredConsecutiveDimmingSampleCount - 1)) {
+        // A 4K capture can take 0.45 s: anchor the three-point fade in the preceding bright old photo.
+        guard startIndex > 0 else { return false }
+        let anchorIndex = startIndex - 1
+        let lastIndex = anchorIndex + requiredConsecutiveFadeSampleCount - 1
+        guard lastIndex < samples.count else { return false }
+        var previous = samples[anchorIndex]
+        guard previous.status == "MATCH", previous.mark == continueMark,
+            previous.meanLuma.isFinite, previous.meanLuma >= threshold
+        else { return false }
+        for index in startIndex...lastIndex {
             let sample = samples[index]
             let gap = sample.requestElapsed - previous.returnElapsed
             guard sample.status == "MATCH", sample.mark == continueMark,
