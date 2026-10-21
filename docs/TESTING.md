@@ -177,7 +177,7 @@ already handled the prompt before the shared observer was introduced.
 Each poll first reads actual App windows. Only an unobstructed mode page with no
 password-title/decline clues and both the target card and Continue live-hittable
 can omit the SpringBoard and alert search before Continue is issued. After Continue,
-always perform the complete search. Other surfaces, modal clues or either
+always search for the prompt. Other surfaces, modal clues or either
 blocked control still use the complete search. Each prompt's exact English/Chinese
 Save Password title and unique Not Now action come from the same fallible window snapshot.
 Enumerate real window elements rather than an application snapshot's children:
@@ -187,8 +187,16 @@ later SpringBoard window and absent from the app's accessibility tree. Mode sele
 and Continue attributes share one app window subtree. Retain the actual window
 elements from that enumeration for live checks and taps within the observation;
 do not enumerate them again. Multiple matching prompt windows are ambiguous and never authorize a tap.
-Only when both hosts' window snapshots lack the prompt, inspect one fallible
-`app.alerts` snapshot: iPad can expose the remote credential modal only there.
+When App windows lack the prompt, the UI-test runner's iPad idiom enables an early
+fallible `app.alerts` query before SpringBoard windows: iPad can expose the remote
+credential modal only there. Only an exact App prompt with a unique Not Now action
+ends this observation's search early. Otherwise inspect every SpringBoard window;
+keep any unrelated App alert as a modal obstacle. iPhone retains the original order:
+App windows, then SpringBoard windows, then the final App alert query if no window
+contains the prompt. On both idioms retain that final query for a late remote alert
+that becomes queryable after the system-window observations. Each observation uses
+at most two App alert queries on iPad and one on iPhone. Printed diagnostics count
+`earlyAlertHits` and `terminalAlertHits` separately without changing receipt sources.
 Require exactly one alert, the exact password title and one decline button in
 that same snapshot. Multiple alerts or a failed snapshot are unknown and cannot
 authorize a tap or prove disappearance. Receipts distinguish `window-index-N`
