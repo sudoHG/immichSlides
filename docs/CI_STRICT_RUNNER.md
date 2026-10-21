@@ -1200,7 +1200,11 @@ Failed method nodes in `official-tests*.json` and the tracer's
   `control_action`, `firstboot_setup`, `cold_relaunch`, `mode_selection`,
   `playback_entry`, `history_navigation`, `pause_window`, `late_image`,
   `image_recovery`, `exif_ownership`, `filter_selection`, `filter_edit`,
-  `server_switch`, `display_policy`, `unknown`.
+  `server_switch`, `display_policy`, `history_start_capture`,
+  `history_first_next_capture`, `history_second_next_capture`,
+  `history_first_previous_capture`, `history_second_previous_capture`,
+  `rotation_start_capture`, `rotation_landscape_capture`,
+  `rotation_portrait_capture`, `unknown`.
 - `failure_class`: `interval_readback`, `hidden_controls`, `scene_identity`,
   `process_lifetime`, `timing_window`, `navigation`, `snapshot_query`,
   `control_state`, `focus`, `evidence_capture`, `probe_readback`,
@@ -1212,9 +1216,16 @@ and History flows have no existing phase activity marker, so the mapper reads
 private official legacy failure summaries and discards all message suffixes.
 Only `testFailureSummaries` supplies messages; a `testWarningSummaries` entry
 for the same method cannot replace or obscure its failure label.
-XCTest assertion and caught `AssertionError.message` wrappers are recognized;
+XCTest assertion and the known Swift `AssertionError.message` and
+`Failure(message:)` wrappers are recognized;
 unmatched, missing or conflicting messages yield `unknown` for both fields.
 Snapshot/hittability failures identify only the class, with an unknown phase.
+Journey-b's five history captures have separate `history_*_capture` phases,
+and rotation's initial portrait, landscape and final portrait stable waits have
+separate `rotation_*_capture` phases. These map the existing interpolated names
+before the generic capture prefix; the source-check test verifies both the
+message template and each call-site name. The remaining onboarding, driver and
+rotation precondition messages map through the same reviewed prefix table.
 Empty screenshot data and Autoplay control-state assertions yield unknown for
 both fields because they do not establish scene identity or navigation.
 These labels locate a check; they do not establish a product or infrastructure
