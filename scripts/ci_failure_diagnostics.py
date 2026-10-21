@@ -804,6 +804,15 @@ def public_validator_failure_message(value):
 # Source locations and enum meanings: docs/CI_STRICT_RUNNER.md#reviewed-prefix-table.
 # No activity marker exists in these flows. Suffixes (including values) are discarded.
 PREFIX_RULES = (
+    # tvOS timing-precondition fixes: keep separate from the broader diagnostics-only expansion.
+    ("tvOS flow entry precondition failed:", "history_navigation", "control_state"),
+    ("tvOS flow entry anchor must remain paused before checking the history boundary.", "history_navigation", "control_state"),
+    ("tvOS midpoint setup exhausted the original step budget before the half-cycle pause.", "continue_timing", "timing_window"),
+    ("tvOS midpoint pause requires Play/Pause focus after at most one wake within the original step budget.", "control_action", "focus"),
+    ("tvOS midpoint pause must return in the anchored stable window within the original step budget.", "continue_timing", "timing_window"),
+    ("tvOS midpoint pause must preserve the anchored public photo before manual Next.", "control_action", "scene_identity"),
+    ("tvOS midpoint setup requires a new stable public photo within the original step budget.", "continue_timing", "scene_identity"),
+    # Existing reviewed prefixes.
     ("Visual ID failed history-start:", "history_start_capture", "scene_identity"),
     ("Visual ID failed history-first-next:", "history_first_next_capture", "scene_identity"),
     ("Visual ID failed history-second-next:", "history_second_next_capture", "scene_identity"),

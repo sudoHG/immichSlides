@@ -1417,6 +1417,13 @@ New enum meanings and why the previous vocabulary cannot express them:
 
 | Fixed source prefix | Phase | Class | Public source |
 |---|---|---|---|
+| `tvOS flow entry precondition failed:` | `history_navigation` | `control_state` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift); red when autoplay advanced before the entry pause |
+| `tvOS flow entry anchor must remain paused before checking the history boundary.` | `history_navigation` | `control_state` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift) |
+| `tvOS midpoint setup exhausted the original step budget before the half-cycle pause.` | `continue_timing` | `timing_window` | [AccessLifecycleTVOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift) |
+| `tvOS midpoint pause requires Play/Pause focus after at most one wake within the original step budget.` | `control_action` | `focus` | [AccessLifecycleTVOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift) |
+| `tvOS midpoint pause must return in the anchored stable window within the original step budget.` | `continue_timing` | `timing_window` | [AccessLifecycleTVOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift) |
+| `tvOS midpoint pause must preserve the anchored public photo before manual Next.` | `control_action` | `scene_identity` | [AccessLifecycleTVOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift) |
+| `tvOS midpoint setup requires a new stable public photo within the original step budget.` | `continue_timing` | `scene_identity` | [AccessLifecycleTVOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift) |
 | `Midpoint pause confirmation must finish before T-2;` | `continue_timing` | `timing_window` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift) |
 | `Midpoint pause tap must return before T-2;` | `continue_timing` | `timing_window` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift) |
 | `The playback page must have play/pause.` | `control_action` | `hidden_controls` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift) |

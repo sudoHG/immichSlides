@@ -982,6 +982,28 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
 
 
 class FailureDiagnosticsTests(unittest.TestCase):
+    def test_tvos_timing_preconditions_are_classified_and_stay_red(self):
+        from ci_failure_diagnostics import classify_messages, environment_timing, unknown_diagnostics
+        cases = (
+            ("tvOS flow entry precondition failed:", "history_navigation", "control_state", "XCTAssertEqual failed: (value) - "),
+            ("tvOS flow entry anchor must remain paused before checking the history boundary.", "history_navigation", "control_state", "XCTAssertEqual failed: (value) - "),
+            ("tvOS midpoint setup exhausted the original step budget before the half-cycle pause.", "continue_timing", "timing_window", 'failed: caught error: "message(\\"'),
+            ("tvOS midpoint pause requires Play/Pause focus after at most one wake within the original step budget.", "control_action", "focus", "XCTAssertTrue failed - "),
+            ("tvOS midpoint pause must return in the anchored stable window within the original step budget.", "continue_timing", "timing_window", "XCTAssertTrue failed - "),
+            ("tvOS midpoint pause must preserve the anchored public photo before manual Next.", "control_action", "scene_identity", "XCTAssertEqual failed: (value) - "),
+            ("tvOS midpoint setup requires a new stable public photo within the original step budget.", "continue_timing", "scene_identity", 'failed: caught error: "message(\\"'),
+        )
+        # Even a saturated, fully elapsed availability wait must not yellow a failed timing precondition.
+        failure = dict(source="xctest", app="running-foreground", scene_status="MATCH", surface="playback",
+                       control_bar="hidden", step="query-element", element="slideshow.control.playPause.button",
+                       wait_elapsed_seconds=30, deadline_seconds=5)
+        for prefix, phase, kind, wrapper in cases:
+            with self.subTest(prefix=prefix):
+                message = wrapper + prefix + " PRIVATE_SENTINEL"
+                self.assertEqual({"failure_phase": phase, "failure_class": kind}, classify_messages([message]))
+                self.assertFalse(environment_timing(failure, phase, kind))
+                self.assertEqual(unknown_diagnostics(), classify_messages([message, "unreviewed failure"]))
+
     def test_reader_adds_only_fixed_display_after_and_person_screenshot_contexts(self):
         from ci_failure_diagnostics import public_validator_failure_message, validate_validator_failure_message
         # Existing person names and historical prefixes remain valid alongside display-after.
