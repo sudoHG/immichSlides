@@ -1329,6 +1329,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
             ("immichSlidesUITests/PlaybackHistoryIOSUITests+Support.swift", "After tapping next, the fully visible SmartFill scene identity did not change in ", "history_navigation", "scene_identity"),
             ("immichSlidesUITests/PlaybackHistoryIOSUITests+Support.swift", "scene identity did not change", "history_navigation", "scene_identity"),
             ("immichSlidesUITests/PlaybackHistoryIOSUITests.swift", "Pausing must freeze the current transform progress", "paused_hold", "scene_identity"),
+            ("immichSlidesUITests/PlaybackHistoryIOSUITests.swift", "SmartFill Pause preparation was rejected before the deadline.", "control_action", "timing_window"),
             ("immichSlidesUITests/PlaybackHistoryIOSUITests.swift", "The new scene from a manual next while paused must stay still at p=0", "paused_hold", "scene_identity"),
             ("immichSlidesUITests/PlaybackHistoryIOSUITests.swift", "The scene from a manual previous while paused must stay still at p=0", "paused_hold", "scene_identity"),
             ("immichSlidesUITests/PlaybackHistoryIOSUITests.swift", "Play must make the current still scene start moving from p=0 immediately", "control_action", "scene_identity"),
@@ -1345,6 +1346,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
             ("immichSlidesUITests/PlaybackHistoryIOSUITests+Support.swift", "Could not return from the playback settings page to the slideshow", "settings_navigation", "navigation"),
         )
         failure_prefixes = {
+            "SmartFill Pause preparation was rejected before the deadline.",
             "PRECONDITION_FAIL: order became A2→",
             "PRECONDITION_FAIL: A2 successor is not A3 (",
             "PRECONDITION_FAIL: not the large-text A2 after returning.",
