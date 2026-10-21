@@ -1043,6 +1043,7 @@ PREFIX_RULES = (
     ("After tapping next, the fully visible SmartFill scene identity did not change in ", "history_navigation", "scene_identity"),
     ("scene identity did not change", "history_navigation", "scene_identity"),
     ("Pausing must freeze the current transform progress", "paused_hold", "scene_identity"),
+    ("SmartFill Pause preparation was rejected before the deadline.", "control_action", "timing_window"),
     ("The new scene from a manual next while paused must stay still at p=0", "paused_hold", "scene_identity"),
     ("The scene from a manual previous while paused must stay still at p=0", "paused_hold", "scene_identity"),
     ("Play must make the current still scene start moving from p=0 immediately", "control_action", "scene_identity"),

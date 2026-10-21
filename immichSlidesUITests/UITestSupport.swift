@@ -1182,7 +1182,8 @@ extension XCUIApplication {
 
     func tapSlideshowControlBarButton(
         identifier: String,
-        requiringSnapshot: (([String: XCUIElementSnapshot]) -> Bool)? = nil,
+        requiringSnapshot: ((SlideshowControlBarButtonObservation?) -> Bool)? = nil,
+        onReadinessTimeout: ((String) -> Void)? = nil,
         file: StaticString = #filePath, line: UInt = #line
     ) {
         var timing = SlideshowControlBarTiming()
@@ -1195,6 +1196,7 @@ extension XCUIApplication {
             timing.didObserveSettingsNavigation =
                 timing.didObserveSettingsNavigation || observation?.hasSettingsNavigationEvidence == true
             guard Date() < deadline else { break }
+            let satisfiesSnapshot = requiringSnapshot?(observation) ?? true
             if let observation {
                 // Never reveal or tap an incoming Settings page.
                 guard !timing.didObserveSettingsNavigation else { break }
@@ -1206,7 +1208,7 @@ extension XCUIApplication {
                 }
                 if didReveal, observation.isInsideWindow,
                     let button = observation.button,
-                    requiringSnapshot?(observation.snapshots) ?? true
+                    satisfiesSnapshot
                 {
                     let frame = button.frame
                     let startedAt = Date()
@@ -1246,6 +1248,10 @@ extension XCUIApplication {
                 until: min(deadline, Date().addingTimeInterval(UITestSupportWaitTiming.identityPollSeconds)))
         }
         if timing.tapCount == 0 {
+            if let onReadinessTimeout {
+                onReadinessTimeout(timing.diagnostic)
+                return
+            }
             XCTFail(
                 "The slideshow control never became tappable before the deadline. (\(timing.diagnostic))",
                 file: file, line: line)

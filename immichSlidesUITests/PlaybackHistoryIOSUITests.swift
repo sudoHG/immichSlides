@@ -5,6 +5,8 @@ enum PlaybackHistoryIOSUITestsCalibration {
     static let pauseSampleIntervalSeconds: TimeInterval = TestWait.seconds(.product(0.75))
     static let observableMotionProgress: Double = 0.001
     static let zeroProgressTolerance: Double = 0.000_1
+    // Hosted taps took about 1.9 s; reserve another 0.6 s before the diagnostic handoff deadline.
+    static let minimumPauseTapMarginSeconds: TimeInterval = TestWait.seconds(.product(2.5))
 }
 
 #if os(iOS)
@@ -370,11 +372,44 @@ extension PlaybackHistoryIOSUITests {
         announceManualLifecycleCaptureWindowIfRequested(mode: mode, kind: "pause-next-previous-resume")
 
         // A legal pause freezes transitions too; the later complete-scene read needs a stable scene at the tap.
+        var lastPauseRejectionReason = "button not ready"
+        var lastPauseMarginSeconds: TimeInterval?
+        let pausePreparationStartedAt = Date()
         app.tapSlideshowControlBarButton(
             identifier: "slideshow.control.playPause.button",
-            requiringSnapshot: { snapshots in
-                mode != .smartFill || self.currentCompleteVisibleSmartFillScene(app: app, snapshots: snapshots) != nil
-            })
+            requiringSnapshot: mode == .smartFill
+                ? { observation in
+                    lastPauseMarginSeconds = observation.flatMap {
+                        self.smartFillPauseTapMarginSeconds(snapshots: $0.snapshots)
+                    }
+                    guard let observation, observation.isInsideWindow else {
+                        lastPauseRejectionReason = "button not ready"
+                        return false
+                    }
+                    guard self.currentCompleteVisibleSmartFillScene(app: app, snapshots: observation.snapshots) != nil
+                    else {
+                        lastPauseRejectionReason = "scene incomplete"
+                        return false
+                    }
+                    guard let margin = lastPauseMarginSeconds,
+                        margin >= PlaybackHistoryIOSUITestsCalibration.minimumPauseTapMarginSeconds
+                    else {
+                        lastPauseRejectionReason =
+                            lastPauseMarginSeconds == nil
+                            ? "margin insufficient (timing unavailable)" : "margin insufficient"
+                        return false
+                    }
+                    return true
+                } : nil,
+            onReadinessTimeout: mode == .smartFill
+                ? { diagnostic in
+                    let margin = lastPauseMarginSeconds.map { String(format: "%.3f", $0) } ?? "unavailable"
+                    let elapsed = Date().timeIntervalSince(pausePreparationStartedAt)
+                    let detail =
+                        "reason=\(lastPauseRejectionReason), remainingMarginSeconds=\(margin), requiredMarginSeconds=\(PlaybackHistoryIOSUITestsCalibration.minimumPauseTapMarginSeconds), preparationSeconds=\(String(format: "%.3f", elapsed)), \(diagnostic)"
+                    self.attachSmartFillProbeLabels(app: app, name: "manual-lifecycle-pause-preparation-rejected-probe")
+                    XCTFail("SmartFill Pause preparation was rejected before the deadline. (\(detail))")
+                } : nil)
         XCTAssertTrue(waitForPlayPauseState(app: app, expected: "play", timeout: TestWait.seconds(.product(3))))
         let paused = try waitForPresentationProbe(app: app, timeout: TestWait.seconds(.product(3)))
         appendManualLifecycleRuntimeEvidence(app: app, mode: mode, event: "paused", probe: paused)

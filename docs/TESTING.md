@@ -282,9 +282,21 @@ Playback History Settings entry and sampling-overlay pre-Next retain their
 explicit refresh assertions so their mapped failure prefixes stay available.
 The SmartFill manual-lifecycle Pause also requires a complete stable scene and
 history cursor in the control's own tap snapshot, within the same appearance
-deadline. A legal pause can freeze a transition indefinitely; the later stable
-identity check cannot wait for that paused transition to finish. The tap gate
-adds no snapshot, reveal or control-tap retry, and all post-Pause checks remain.
+deadline. Every settled slot in the existing motion-frame summary must also expose
+at least 2.5 seconds until its diagnostic handoff deadline: the measured hosted tap
+latency of about 1.9 seconds plus 0.6 seconds of reserve. The diagnostic motion clock
+starts 1.0 second before stable presentation, so the effective required margin
+before the product's stable deadline is about 3.5 seconds. Subtract the
+test process's current system uptime, rather than the render sample's time, to
+account for stale snapshots. Missing or non-finite timing fields fail readiness.
+A legal pause can freeze a transition indefinitely; the later stable identity
+check cannot wait for that paused transition to finish. The tap gate adds no
+snapshot, reveal or control-tap retry, and all post-Pause checks remain.
+On rejection, this SmartFill call reports the last reason (button not ready,
+scene incomplete or margin insufficient), minimum remaining margin in seconds
+(or unavailable), required margin, elapsed preparation time and control timing,
+and attaches the SmartFill probe labels. Its mapped `control_action/timing_window`
+failure remains red and is not eligible for environment-limited classification.
 
 If a snapshot shows playback with the control outside the window, the waiter
 may reveal once within its original deadline, then only observe; a failed

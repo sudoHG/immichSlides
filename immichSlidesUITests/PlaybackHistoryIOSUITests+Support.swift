@@ -706,6 +706,31 @@ extension PlaybackHistoryIOSUITests {
         return CompleteVisibleSmartFillScene(sceneIdentity: sceneIdentity, historyCursor: cursor)
     }
 
+    func smartFillPauseTapMarginSeconds(snapshots: [String: XCUIElementSnapshot]) -> TimeInterval? {
+        let manifest = SharedSceneEvidenceManifest.parseKeyValueFields(
+            snapshots["slideshow.smartfill.currentManifest.flag"]?.label ?? "")
+        let slots = (snapshots["slideshow.smartfill.motionFrame.summary"]?.label ?? "")
+            .split(separator: "\n")
+            .map { SharedSceneEvidenceManifest.parseKeyValueFields(String($0)) }
+            .filter { $0["renderRole"] == "settled" }
+        guard let slotCount = Int(manifest["slotCount"] ?? ""), slotCount > 0, slots.count == slotCount else {
+            return nil
+        }
+        let observedAt = ProcessInfo.processInfo.systemUptime
+        let margins = slots.compactMap { fields -> TimeInterval? in
+            guard fields["progressFrameStatus"] == "available",
+                let sampledAt = Double(fields["presentationSampleTime"] ?? ""), sampledAt.isFinite,
+                let handoffDeadline = Double(fields["handoffStartDeadlineTime"] ?? ""), handoffDeadline.isFinite,
+                sampledAt <= observedAt
+            else { return nil }
+            // The diagnostic motion clock starts before stable presentation, making this deadline conservative.
+            // Use current uptime so an old render sample cannot manufacture time remaining for the tap.
+            return handoffDeadline - observedAt
+        }
+        guard margins.count == slots.count else { return nil }
+        return margins.min()
+    }
+
     func attachSmartFillProbeLabels(app: XCUIApplication, name: String) {
         let identifiers = [
             "slideshow.currentAssetId.flag",
