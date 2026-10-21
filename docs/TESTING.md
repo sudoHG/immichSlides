@@ -293,8 +293,10 @@ A legal pause can freeze a transition indefinitely; the later stable identity
 check cannot wait for that paused transition to finish. The tap gate adds no
 snapshot, reveal or control-tap retry, and all post-Pause checks remain.
 On rejection, this SmartFill call reports the last reason (button not ready,
-scene incomplete or margin insufficient), minimum remaining margin in seconds
-(or unavailable), required margin, elapsed preparation time and control timing,
+scene incomplete or margin insufficient, or `none (snapshot gate passed)` when the
+final observation passed the gate but no tap was issued before the deadline, for
+example because the reveal used the remaining time or Settings navigation was seen),
+the last observed remaining margin in seconds (or unavailable), required margin, elapsed preparation time and control timing,
 and attaches the SmartFill probe labels. Its mapped `control_action/timing_window`
 failure remains red and is not eligible for environment-limited classification.
 
