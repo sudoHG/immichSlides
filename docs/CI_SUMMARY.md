@@ -160,7 +160,7 @@ and unknown measurements remain null.
 | `sample_count`, `truncated` | Integer 0–43,201 retained samples and boolean indicating incomplete collection or retention |
 | `idle_percent_min`, `idle_percent_median` | Host idle CPU percentages 0–100 or null; minimum cannot exceed median |
 | `load_1m_max`, `app_cpu_percent_peak` | Maximum 1-minute load and peak App CPU percentage, 0–10^6 or null; process CPU uses one core = 100% and may exceed 100% |
-| `sampler_wall_seconds`, `sampler_cpu_seconds` | Active collection wall time 0–86,400 and collector plus child-process CPU time 0–10^12 seconds, or null; sleeping time is excluded; periodic sampling has the separate bounded allowance described below |
+| `sampler_wall_seconds`, `sampler_cpu_seconds` | Process-snapshot collection wall time 0–86,400 and collector plus child-process CPU time 0–10^12 seconds, or null; sleeping and separately bounded host reads are excluded; periodic sampling has the separate bounded allowance described below |
 | `first_failure_elapsed_seconds` | Offset from this case's sampling origin, 0–case duration, or null if no failure is bound; absence never proves a passing case |
 | `failure_samples` | At most six samples, no more than `sample_count`, strictly increasing by `elapsed_seconds`, within both the case duration and ±5 seconds of the first failure; empty when the failure time is unavailable |
 
@@ -199,25 +199,37 @@ only PID, parent PID, CPU and short executable names in private memory, inspects
 candidate App executable paths to distinguish the selected simulator, then
 discards every PID/name/path. It never requests argv or process environments.
 Unknown App ownership or a failed process snapshot makes category CPU unavailable.
-The first interval primes the host counters. Collection pauses for the nominal
-interval plus the preceding sample's work; stop never waits for another interval.
-Periodic sampling has a separate 180-second active-wall allowance shared across
+The first host read primes the counters. Host idle/load ticks follow two-second
+deadlines, skipping missed deadlines rather than issuing bursts. Each native host
+read runs in a daemon worker with a 0.2-second wait cap; observed host-read wall
+time has a separate five-second allowance per case, including thread startup.
+A timed-out host read disables further reads for that case; stop never waits for
+another interval. These cheap reads do not consume the process-snapshot pool and
+are excluded from `sampler_wall_seconds`.
+Process snapshots run at most once per ten seconds and have a separate
+180-second active-wall allowance shared across
 the job ledger. Each successor subtracts all persisted `sampler_wall_seconds`
 costs; an unknown predecessor cost exhausts the allowance conservatively. An
-unavailable inherited diagnostic ledger prevents sampling instead of granting
-a fresh allowance. No
+unavailable inherited diagnostic ledger disables process snapshots instead of granting
+a fresh allowance, while idle/load ticks continue. Hosted preparation ledger IO
+has a 0.1-second cap; an IO timeout can make inherited Xcode accounting unavailable
+even on a Release lifecycle shard that has not sampled yet. No
 fresh allowance is granted per case. This preserves the existing 10-second
 Xcode diagnostic pool for native extraction and anomaly diagnostics, and keeps
-the sampler running through a 20–30 minute shard. At a two-second interval,
-900 samples cost about 28 seconds at the measured 31 ms/sample or 92 seconds
-at the measured busy-host 102 ms/sample. The 180-second allowance is bounded,
-not a guarantee under arbitrarily slow host scheduling. Caps and unavailable
-measurements set per-case truncation. An unfinished collector marks cost
+host sampler running through a 20–30 minute shard. At a ten-second process cadence,
+180 snapshots costing 1.1 seconds each would exhaust the pool near the end of a
+30-minute shard; only process snapshots stop, preserving late idle/load evidence.
+Ticks without a scheduled process snapshot have null categories and do not mark
+the case truncated. Pool exhaustion, unavailable accounting, failed scheduled
+snapshots and missing host measurements do mark truncation. An unfinished collector marks cost
 unavailable and prevents successor sampling from reclaiming its allowance.
 `sampler_cpu_seconds` is currently null because per-case child CPU cannot be
 isolated from other runner children; isolated cost measurements include the
 collector and `ps` child via process resource usage. Collection ends when Xcode
 returns; no extra wait is added to obtain future failure-window samples.
+The failure timestamp is bound after XCTest returns, so historical category CPU
+cannot be freshly sampled at the failure time; only actual periodic snapshots
+within the existing five-second window are published, with no backfilled values.
 
 Current producers collect preparation and Xcode diagnostics only. Fixture-scope
 events remain reader-compatible, but no fixture diagnostics are emitted or

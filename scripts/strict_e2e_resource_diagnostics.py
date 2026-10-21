@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 from datetime import datetime
+from threading import Event, Thread
 
 from ci_bounded_diagnostics import (COLLECTION_BUDGET_SECONDS, MAX_DIAGNOSTIC_SECONDS,
     MAX_LOAD_AVERAGE, MAX_PROCESS_CPU_PERCENT, MAX_RESOURCE_CASES, MAX_RESOURCE_SAMPLES,
@@ -19,10 +20,13 @@ from ci_execution_diagnostics import BOOKKEEPING_RESERVE_SECONDS, finite
 from ci_failure_diagnostics import NATIVE_ACTIVITY_FIELDS, public_first_failure
 
 SAMPLE_INTERVAL_SECONDS = 2
+PROCESS_SAMPLE_INTERVAL_SECONDS = 10
 SAMPLER_WALL_BUDGET_SECONDS = 180
+HOST_SAMPLE_TIMEOUT_SECONDS = 0.2
+HOST_WALL_BUDGET_SECONDS = 5
 SAMPLE_COMMAND_TIMEOUT_SECONDS = 0.5
 # Stop must outlast one in-flight sample command, or a slow `ps` leaves the sampler unfinished and voids the budget.
-STOP_TIMEOUT_SECONDS = SAMPLE_COMMAND_TIMEOUT_SECONDS + 0.1
+STOP_TIMEOUT_SECONDS = HOST_SAMPLE_TIMEOUT_SECONDS + SAMPLE_COMMAND_TIMEOUT_SECONDS + 0.1
 MAX_PROCESS_TABLE_BYTES = 2 * 1024 * 1024
 MAX_PROCESS_ROWS = 65536
 NATIVE_MATCH_TOLERANCE_SECONDS = 0.1
@@ -130,6 +134,11 @@ def resource_sample(host_cpu, device, timeout):
         load = finite(os.getloadavg()[0], MAX_LOAD_AVERAGE)
     except OSError:
         load = None
+    categories = process_sample(device, timeout) if timeout is not None else dict.fromkeys(RESOURCE_CATEGORIES)
+    return {"idle_percent": idle, "load_1m": load, "cpu_percent": categories}
+
+
+def process_sample(device, timeout):
     categories = dict.fromkeys(RESOURCE_CATEGORIES)
     if sys.platform == "darwin":
         try:
@@ -139,7 +148,53 @@ def resource_sample(host_cpu, device, timeout):
                 categories = process_categories(completed.stdout, device)
         except (OSError, ValueError, subprocess.SubprocessError):
             pass
-    return {"idle_percent": idle, "load_1m": load, "cpu_percent": categories}
+    return categories
+
+
+class HostProbe:
+    """Bound native host reads independently of the inherited process-snapshot pool."""
+
+    def __init__(self, device):
+        self.device = device
+        self.host = None
+        self.spent = 0.0
+        self.unavailable = False
+        self.done = None
+
+    def sample(self):
+        remaining = HOST_WALL_BUDGET_SECONDS - self.spent
+        if self.unavailable or remaining <= 0:
+            self.unavailable = True
+            return None
+        done, values = Event(), []
+        self.done = done
+        def read():
+            try:
+                if self.host is None:
+                    self.host = HostCpu()
+                    self.host.idle()
+                values.append(resource_sample(self.host, self.device, None))
+            except (OSError, ValueError, TypeError, AttributeError):
+                pass
+            finally:
+                if self.unavailable and self.host is not None:
+                    self.host.close()
+                done.set()
+        started = time.perf_counter()
+        try:
+            Thread(target=read, daemon=True).start()
+            finished = done.wait(max(0, min(HOST_SAMPLE_TIMEOUT_SECONDS, remaining)
+                                        - (time.perf_counter() - started)))
+        except (OSError, RuntimeError):
+            finished = False
+        self.spent += time.perf_counter() - started
+        self.unavailable = not finished or not values
+        return values[0] if not self.unavailable else None
+
+    def close(self):
+        self.unavailable = True
+        if self.host is not None and (self.done is None or self.done.is_set()):
+            self.host.close()
 
 
 class CaseSampler:
@@ -163,17 +218,18 @@ class CaseSampler:
         self.closed = False
 
     def start(self):
-        if (self.recorder is None or "xcode" in self.recorder.unavailable
-                or len(self.recorder.case_resources) >= MAX_RESOURCE_CASES):
+        if self.recorder is None or len(self.recorder.case_resources) >= MAX_RESOURCE_CASES:
             self.truncated = True
             return self
         # Persisted numeric costs carry this allowance across serial case processes.
         spent = sum(case["sampler_wall_seconds"] if case["sampler_wall_seconds"] is not None
                     else SAMPLER_WALL_BUDGET_SECONDS for case in self.recorder.case_resources)
         self.reserved = max(0, SAMPLER_WALL_BUDGET_SECONDS - spent)
+        if "xcode" in self.recorder.unavailable:
+            self.reserved = 0.0
         if self.reserved <= SAMPLE_COMMAND_TIMEOUT_SECONDS:
             self.truncated = True
-            return self
+            self.reserved = 0.0
         try:
             self.thread = threading.Thread(target=self._run, daemon=True)
             self.thread.start()
@@ -185,29 +241,48 @@ class CaseSampler:
     def _run(self):
         host = None
         try:
-            started = time.perf_counter()
-            host = HostCpu()
-            host.idle()
-            self.spent += time.perf_counter() - started
-            while not self.stopped.wait(SAMPLE_INTERVAL_SECONDS):
-                remaining = self.reserved - self.spent
-                if len(self.samples) >= MAX_RESOURCE_SAMPLES or remaining <= SAMPLE_COMMAND_TIMEOUT_SECONDS:
+            host = HostProbe(self.device)
+            if host.sample() is None:
+                self.truncated = True
+                return
+            next_tick = time.monotonic() + SAMPLE_INTERVAL_SECONDS
+            next_process = next_tick
+            while not self.stopped.wait(max(0, next_tick - time.monotonic())):
+                if len(self.samples) >= MAX_RESOURCE_SAMPLES:
                     self.truncated = True
                     break
-                started = time.perf_counter()
-                sample = resource_sample(host, self.device, min(SAMPLE_COMMAND_TIMEOUT_SECONDS, remaining))
+                sample = host.sample()
                 elapsed = time.monotonic() - self.origin
-                self.spent += time.perf_counter() - started
+                if sample is None:
+                    self.truncated = True
+                    break
+                sample = dict(sample)
+                sample["cpu_percent"] = dict.fromkeys(RESOURCE_CATEGORIES)
+                if time.monotonic() >= next_process:
+                    remaining = self.reserved - self.spent
+                    if remaining > SAMPLE_COMMAND_TIMEOUT_SECONDS:
+                        started = time.perf_counter()
+                        sample["cpu_percent"] = process_sample(self.device, min(SAMPLE_COMMAND_TIMEOUT_SECONDS, remaining))
+                        self.spent += time.perf_counter() - started
+                        self.truncated |= any(value is None for key, value in sample["cpu_percent"].items() if key != "app")
+                    else:
+                        self.truncated = True
+                    next_process += PROCESS_SAMPLE_INTERVAL_SECONDS
+                    if next_process <= time.monotonic():
+                        next_process = time.monotonic() + PROCESS_SAMPLE_INTERVAL_SECONDS
                 # The App is legitimately absent before launch, across relaunches and after exit; only a
                 # missing host or non-App category means the sample itself was limited.
-                self.truncated |= (sample["idle_percent"] is None or sample["load_1m"] is None
-                                   or any(value is None for key, value in sample["cpu_percent"].items() if key != "app"))
+                self.truncated |= sample["idle_percent"] is None or sample["load_1m"] is None
                 if self.stopped.is_set():
                     break
                 if elapsed > MAX_DIAGNOSTIC_SECONDS:
                     self.truncated = True
                     break
                 self.samples.append({"elapsed_seconds": elapsed, **sample})
+                next_tick += SAMPLE_INTERVAL_SECONDS
+                # Skip missed deadlines instead of issuing a burst after host descheduling.
+                if next_tick <= time.monotonic():
+                    next_tick = time.monotonic() + SAMPLE_INTERVAL_SECONDS
         except (OSError, ValueError, TypeError, AttributeError):
             self.truncated = True
         finally:
