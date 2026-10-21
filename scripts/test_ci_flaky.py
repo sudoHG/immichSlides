@@ -450,6 +450,20 @@ class RetryTests(unittest.TestCase):
                 self.assertEqual(actual["infrastructure"], [{"code": "retry-reset-failed", "message": "App reset failed before listed retry"}])
 
     def test_skip_crash_timeout_missing_mismatch_and_failed_retry_stay_failed(self):
+        from ci_failure_diagnostics import environment_limit_evidence
+        from test_ci_summary import hosted_timeout_summary
+        summary, resources = hosted_timeout_summary()
+        yellow = summary["population"]["observed"][0]
+        yellow["attempts"][0]["reason"] = "Official XCTest assertion failure"
+        proof = environment_limit_evidence(summary, yellow, [resources], runner_hosted=True)
+        yellow["environment_limit"] = yellow["attempts"][0]["environment_limit"] = proof
+        with mock.patch("ci_flaky.eligible_entry", return_value=True), mock.patch("ci_flaky.merge_retry") as merge:
+            self.assertEqual([yellow], retry_observations([yellow], {"entries": []}, tier="strict", environment="hermetic",
+                today=date(2026, 10, 21), reset=lambda: self.fail("yellow must not reset"),
+                execute=lambda _: self.fail("yellow must not retry")))
+            merge.assert_not_called()
+        with self.assertRaisesRegex(ContractError, "^environment-limited failure is not a product flake$"):
+            merge_retry(yellow, observation(yellow["identity"], "passed", 1))
         identity = registry()["entries"][0]["identity"]
         first = observation(identity, "failed", 1, exit_code=65)
         for outcome in ("passed", "failed", "skipped", "crashed", "timed-out", "not-run"):

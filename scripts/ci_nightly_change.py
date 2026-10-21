@@ -101,7 +101,7 @@ def run_evidence(api, run):
     raw = json_member(api, aggregates[0], "nightly.json")
     identity = raw.get("identity")
     matrix = raw.get("matrix")
-    if (raw.get("run") != {"id": str(run_id), "attempt": attempt} or raw.get("status") not in {"passed", "failed"}
+    if (raw.get("run") != {"id": str(run_id), "attempt": attempt} or raw.get("status") not in {"passed", "failed", "environment-limited"}
             or not isinstance(identity, dict) or identity.get("commit_sha") != run["head_sha"]
             or raw.get("diagnostic_shard") is not None
             or not isinstance(matrix, dict) or matrix.get("equal") is not True or not isinstance(raw.get("errors"), list)

@@ -1844,6 +1844,81 @@ class ReporterTests(unittest.TestCase):
         metrics = health_report(snapshot, {"entries": []}, "2026-10", date(2026, 10, 1))["metrics"]
         self.assertEqual({"value": None, "sampled_runs": 0, "missing_runs": 1}, metrics["test_duration_seconds"])
         self.assertEqual({"value": 0, "sampled_runs": 1, "missing_runs": 0}, metrics["first_attempt_failures"])
+        from ci_failure_diagnostics import environment_limit_evidence
+        from test_ci_summary import hosted_timeout_summary
+        summary, resources = hosted_timeout_summary()
+        row = summary["population"]["observed"][0]
+        proof = environment_limit_evidence(summary, row, [resources], runner_hosted=True)
+        row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
+        case = row["identity"]
+        aggregate = aggregate_nightly([case], [summary], live_in_scope=False)
+        aggregate.update(identity=summary["identity"], hashes=summary["hashes"], run={"id": "10", "attempt": 1},
+            source=summary["source"], capacity={"shard_intervals": [{"shard": "iphone-debug-0"}]})
+        phase = trace["warm"][0]
+        phase.update(identity=case, exit_code=65, bounded_diagnostics={"case_resources": [resources]})
+        phase["official_summary"].update(passedTests=0, failedTests=1)
+        phase["official_methods"][0].update(result="Failed", first_failure=row["first_failure"],
+            failure_phase="settings_navigation", failure_class="navigation")
+        artifacts[1]["name"] = "nightly-strict-iphone-debug-0-10-1"
+        jobs = [{"name": "nightly-strict-iphone-debug-0", "runner_group_name": "GitHub Actions", "labels": ["xcode-27"]}]
+        with patch("ci_publish.json_member", side_effect=[aggregate, summary, trace]), patch(
+                "ci_publish.complete_attempt_jobs", return_value=jobs):
+            report = ci_report.nightly_attempt(api, run, 1, artifacts)
+        self.assertEqual("environment-limited", report["status"])
+        self.assertEqual(1, report["diagnostics"]["counts"]["environment-limited"])
+        self.assertEqual("failed", report["observed"][0]["outcome"])
+        self.assertIn("idle=5%", render_entry(report))
+        self.assertIn("| failed (environment-limited; yellow) |", render_entry(report))
+        compact = ci_report.compact_entry(report, set())
+        self.assertEqual(proof, compact["observed"][0]["environment_limit"])
+        self.assertIn("ENVIRONMENT-LIMITED", render_entry(compact))
+        decision = issue_decision(None, report["observed"][0]["identity"], [compact], registry_referenced=False)
+        self.assertEqual("none", decision["action"])
+        self.assertIsNone(decision["state"])
+        red = copy.deepcopy(compact)
+        red["day"] = "2026-09-30"
+        red["observed"][0].pop("environment_limit")
+        red["observed"][0]["attempts"][0].pop("environment_limit")
+        previous = issue_decision(None, report["observed"][0]["identity"], [red], registry_referenced=False)["state"]
+        decision = issue_decision(previous, report["observed"][0]["identity"], [compact], registry_referenced=False)
+        self.assertEqual("unverified", decision["state"]["nights"]["2026-10-01"]["10"]["outcome"])
+        self.assertEqual([], decision["state"]["explicit_pass_nights"])
+        snapshot = ci_report.merge_snapshot(None, [red, compact], date(2026, 10, 1))
+        self.assertEqual("failed", snapshot["days"]["2026-09-30"]["entries"][0]["observed"][0]["outcome"])
+        self.assertEqual(proof, snapshot["days"]["2026-10-01"]["entries"][0]["observed"][0]["environment_limit"])
+        for mutation in ("local", "resources", "functional", "red aggregate", "missing label", "duplicate label", "passed tier",
+                         "infrastructure", "missing log"):
+            raw, shard, traces, job_rows = [copy.deepcopy(value) for value in (aggregate, summary, trace, jobs)]
+            if mutation == "local":
+                job_rows[0]["runner_group_name"] = "Default"
+            elif mutation == "resources":
+                traces["warm"][0]["bounded_diagnostics"]["case_resources"][0]["failure_samples"][0]["idle_percent"] = 6
+            elif mutation == "functional":
+                traces["warm"][0]["official_methods"][0]["failure_class"] = "scene_identity"
+            elif mutation == "red aggregate":
+                raw["errors"].append("missing shard")
+            elif mutation == "missing label":
+                raw.pop("environment_limited")
+            elif mutation == "duplicate label":
+                raw["environment_limited"].append(case)
+            elif mutation == "passed tier":
+                raw["tiers"]["strict"] = "passed"
+            elif mutation == "infrastructure":
+                traces["warm"][0]["infrastructure"] = [{"code": "cleanup-failed"}]
+            else:
+                traces["warm"][0]["log_present"] = False
+            message = {"local": "environment limit requires a verified GitHub-hosted strict job",
+                "resources": "environment limit differs from official method or case resources",
+                "functional": "environment limit differs from official method or case resources",
+                "red aggregate": "nightly environment limit cannot conceal red or incomplete evidence",
+                "missing label": "nightly environment limit bindings differ",
+                "duplicate label": "nightly environment limit bindings differ",
+                "passed tier": "environment-limited strict tier cannot count as passed",
+                "infrastructure": "environment limit cannot conceal strict invocation infrastructure",
+                "missing log": "environment limit cannot conceal strict invocation infrastructure"}[mutation]
+            with self.subTest(mutation=mutation), patch("ci_publish.json_member", side_effect=[raw, shard, traces]), patch(
+                    "ci_publish.complete_attempt_jobs", return_value=job_rows), self.assertRaisesRegex(ContractError, "^" + message + "$"):
+                ci_report.nightly_attempt(api, run, 1, artifacts)
 
     def test_monthly_due_date_handles_year_boundary_and_explicit_partial_month(self):
         from ci_health import report_month

@@ -173,6 +173,8 @@ remaining host processes. App and test-tool membership takes precedence over
 simulator ancestry. No executable names, PIDs, paths, arguments or activity
 titles are published. Measurements with unavailable membership must remain null.
 Sampling limitations, including missing intervals, do not alter a test result.
+The separate [prepared environment-limit proof](#prepared-hosted-strict-environment-limits)
+can classify a failed hosted timing observation only when its full criteria are met.
 Summary Markdown displays per-case sample counts, idle minimum/median, maximum
 load, peak App CPU, sampler costs and truncation; nearby samples remain in JSON.
 The case manifest and each tracer warm phase retain a bounded receipt with an
@@ -601,6 +603,88 @@ PR reaches main still uses the old trusted base and is not a safe substitute.
 The same sequence applies to `bounded_diagnostics.case_resources` and
 `first_failure.native_activity_seconds`: merge reader support before opening the
 producer activation PR. Historical records without either optional field remain valid.
+
+### Prepared hosted strict environment limits
+
+Hogan approved this judgement policy on 2026-10-21. This is the reader stage:
+no tracer emits `environment_limit` yet. Merge this reader before activating the
+producer in a separate PR. Existing nights, raw outcomes, first-attempt failure
+counts, deadlines, retries and thresholds remain unchanged. The scope is strictly
+GitHub-hosted `ci-nightly` strict shards, for `schedule` and `workflow_dispatch`;
+`ci-pr-gate`, fixture UI shards, local and self-hosted runs are excluded.
+
+A failed strict observation and its sole failed attempt may carry the same optional
+`environment_limit` object. It contains exactly `schema_version: 1`,
+`runner_hosted: true`, paired `failure_phase` / `failure_class`, `failure`, and
+`resources`. `failure` is the closed projection of `first_failure`: `source`,
+`step`, `action`, `app`, `surface`, `scene_status`, `wait_elapsed_seconds`, `deadline_seconds`,
+`action_duration_seconds`, and `post_event_idle`. Numbers retain the first-failure
+bounds and nulls. `resources` is one unchanged, validated `case_resources` entry.
+The summary reader recomputes the projection from the original receipt and checks
+the nightly strict source. No unknown field, private assertion or free text is allowed.
+
+All criteria are required:
+
+1. The producer records GitHub-hosted execution. The reporter additionally binds the
+   current-attempt strict job through the Actions API: its runner group is
+   `GitHub Actions` and its labels do not include `self-hosted`. Missing hosting
+   evidence fails closed.
+2. The first failure has `source: xctest`, `app: running-foreground` and an eligible phase/class/step from the
+   table below. Its wait elapsed time is at least its positive deadline; alternatively
+   a `select` / `tap` has native `post_event_idle >= 20` seconds, with action duration
+   at least that idle duration. The existing native collector uniquely binds that
+   interval to the failing action. A slow unrelated action cannot qualify.
+3. Exactly one resource invocation has a recorded first-failure time. It contains
+   at least two distinct, ordered `failure_samples`, each within inclusive ±5 seconds
+   of that time, each with measured `idle_percent <= 5`. Every retained failure-window
+   sample must qualify, including the boundary values. Missing idle is red.
+   `truncated: true` and absent category CPU values do not disqualify measured idle;
+   load and App CPU are displayed, not used as classification thresholds.
+
+| Phase | Class | Eligible steps | Timing-only interpretation |
+| --- | --- | --- | --- |
+| `firstboot_setup` | `navigation` | `query-element` | Target UI availability wait |
+| `mode_selection` | `navigation` | `query-element`, `mode-card`, `mode-continue` | Mode control readiness wait |
+| `playback_entry` | `navigation` | `query-element`, `mode-departure` | Departure / playback surface availability wait |
+| `settings_navigation` | `navigation` | `query-element`, `select` | Settings surface wait or bound native input idle |
+| `control_action`, `hidden_controls` | `hidden_controls` | `query-element`, `reveal-controls` | Control availability wait |
+| `interval_setup` | `hidden_controls` | `query-element` | Settings control availability wait |
+| `unknown` | `snapshot_query` | `query-element`, `select` | XCTest snapshot wait or bound native input idle |
+
+This is an explicit allowlist, not an inference from an exception name. A deadline
+left over from a completed wait cannot turn a value or scene assertion yellow.
+`scene_identity`, `control_state`, `interval_readback`, validator failures, observed
+BLACK/BLANK frames, UNRECOGNIZABLE playback frames, process failures, and all other phase/class/step
+combinations stay red. In particular, `history_navigation` / no-advance and
+`continue_timing` / `timing_window` mix observable functional outcomes with timing
+checks and are excluded. Rotation and pause-window contracts are also excluded
+without a separately reviewed timing-only interpretation. Missing or ambiguous
+receipts, samples or case bindings stay red; an old night gains no classification.
+An unrecognizable photo identity on a known non-playback surface, such as the mode
+page, does not by itself assert that the App displayed a wrong photo.
+
+With complete matrix evidence, the accepting strict aggregate uses
+`status: environment-limited` and an `environment_limited` identity list when
+all nonpassing cases qualify. It exits zero with a prominent warning for every
+yellow case and all its sample numbers; raw observations remain `failed` and never
+count as passes. Any red case, missing case, infrastructure/cleanup error, failed
+matrix job or failed UI aggregate keeps the night red. Producer activation must
+make exclusively yellow strict jobs exit zero while preserving failed receipts;
+an unrelated job failure must never be ignored by the aggregate.
+
+The reporter binds every claim to the same case's trace resource entry and official
+method receipt, then checks the aggregate list against the shard claims. Existing
+log, warm-build/reuse and invocation-infrastructure requirements remain mandatory;
+an outer invocation timeout or interruption cannot become yellow. Report tables
+and compact history retain the bounded proof and every yellow warning,
+including when a red case keeps the overall night failed. They preserve raw failure
+counts and add the separate `environment-limited` count. Yellow cannot trigger a
+product failure issue, satisfy recovery, become a product flake or use a quarantine
+retry. Existing `ci-known-flaky.json` entries are unchanged. Timing acceptance still
+requires local runs on the pinned devices.
+The unchanged-night reader accepts this status as executed coverage, as it already
+does for complete red nights; this grants no pass or recovery evidence. Diagnostic
+or incomplete nights remain ineligible baselines.
 
 ## Prepared version 2: scoped official discovery
 

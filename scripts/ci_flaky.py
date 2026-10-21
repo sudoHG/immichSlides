@@ -131,6 +131,7 @@ def eligible_entry(registry, identity, *, tier, environment, today):
 
 def merge_retry(first, second):
     validate_observation(first)
+    require("environment_limit" not in first, "environment-limited failure is not a product flake")
     require(first["outcome"] == "failed" and len(first["attempts"]) == 1, "retry requires one failed first attempt")
     if second is None:
         second = observation(first["identity"], "not-run", 0, reason="Retry result missing or invalid", exit_code=None)
@@ -153,7 +154,7 @@ def retry_observations(first, registry, *, tier, environment, today, reset, exec
         token = identity_key(record["identity"])
         require(token not in seen, "duplicate first-attempt identity")
         seen.add(token)
-        if (record["outcome"] == "failed" and len(record["attempts"]) == 1
+        if (record["outcome"] == "failed" and "environment_limit" not in record and len(record["attempts"]) == 1
                 and record["attempts"][0]["reason"] == ASSERTION_FAILURE
                 and eligible_entry(registry, record["identity"], tier=tier, environment=environment, today=today)):
             try:

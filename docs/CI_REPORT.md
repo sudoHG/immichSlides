@@ -228,6 +228,32 @@ start locally without a previous snapshot; it cannot publish that history.
 
 ## Method identities and reruns
 
+The reader also accepts the optional
+[hosted strict environment-limit proof](CI_SUMMARY.md#prepared-hosted-strict-environment-limits).
+It keeps the raw failed observation, validates the official method and same-case
+resource binding, and independently checks the current-attempt job's GitHub-hosted
+runner metadata. A wholly yellow night has `status: environment-limited`, never
+`passed`; red cases and infrastructure retain `failed`. Every yellow case and all
+failure-window sample numbers appear in warnings without the ordinary 50-row
+table cap. Compact history retains the bounded projection, while continuing to
+discard the original `first_failure` receipt. Yellow is neither an opening product
+failure nor an explicit-pass recovery night, and cannot trigger quarantine retries.
+Old snapshots without the optional proof remain readable and unchanged.
+
+The outcome path is: `run_strict_e2e` official exports and first-failure/resource
+receipts → `run_strict_ci_tracer` case observation → `ci_summary` schema and
+`ci_failure_diagnostics` proof validation → `ci_nightly` strict union → this
+reporter's independently bound method observations → compact 90-day history and
+issue decisions. `ci_flaky` retains the original assertion-failure retry policy
+for other cases; yellow is excluded, without editing the registry.
+
+No repository workflow sends Bark notifications. This reporter synchronizes method
+and infrastructure issues; its separate post-merge notification is limited to
+failed main-push gate/UI runs. The workstation's 22:40 Beijing watchdog is outside
+this repository: it checks that a full nightly started or covered main, dispatches
+one if absent, and uses Bark only if lookup or dispatch fails. It does not interpret
+test outcomes and needs no yellow-policy change.
+
 Nightly aggregates describe suite cases, while the flaky registry describes test
 methods. A suite result cannot close or open a method issue. The existing strict tracer
 therefore includes `official_methods` in each compact warm trace, taken from officially

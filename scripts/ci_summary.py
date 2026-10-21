@@ -153,10 +153,18 @@ def validate_observation(entry):
         validate_diagnostic_fields(entry)
     except ValueError as error:
         raise ContractError(str(error)) from error
-    optional = DIAGNOSTIC_FIELDS | {VALIDATOR_FAILURE_FIELD, FIRST_FAILURE_FIELD}
+    from ci_failure_diagnostics import ENVIRONMENT_LIMIT_FIELD, validate_environment_limit
+    optional = DIAGNOSTIC_FIELDS | {VALIDATOR_FAILURE_FIELD, FIRST_FAILURE_FIELD, ENVIRONMENT_LIMIT_FIELD}
     fields(entry, {"identity", "outcome", "duration_seconds", "attempts"} | (optional & entry.keys()), "observation")
     validate_test_identity(entry["identity"])
     require(entry["outcome"] in OUTCOMES, "invalid outcome")
+    if ENVIRONMENT_LIMIT_FIELD in entry:
+        validate_environment_limit(entry[ENVIRONMENT_LIMIT_FIELD])
+        require(entry["identity"]["kind"] == "strict" and entry["outcome"] == "failed"
+                and len(entry["attempts"]) == 1
+                and entry["attempts"][0]["outcome"] == "failed"
+                and entry["attempts"][0].get(ENVIRONMENT_LIMIT_FIELD) == entry[ENVIRONMENT_LIMIT_FIELD],
+                "environment limit requires one matching failed strict attempt")
     if FIRST_FAILURE_FIELD in entry:
         require(entry["identity"]["kind"] in {"strict", "ui"}
                 and entry["outcome"] in {"failed", "flaky-passed", "crashed", "timed-out", "not-run"},
@@ -176,6 +184,8 @@ def validate_observation(entry):
                     "first failure requires a failing strict or UI attempt")
             require((attempt["outcome"] == "not-run") == (attempt[FIRST_FAILURE_FIELD]["source"] == "preparation"),
                     "first failure source must match execution state")
+        if ENVIRONMENT_LIMIT_FIELD in attempt:
+            require(ENVIRONMENT_LIMIT_FIELD in entry, "environment limit attempt requires observation evidence")
         if VALIDATOR_FAILURE_FIELD in attempt:
             require(entry["identity"]["kind"] == "strict" and attempt["outcome"] == "failed",
                     "validator failure message requires a failed strict attempt")
@@ -318,6 +328,12 @@ def validate_summary_v1(payload):
         string(entry["code"], "infrastructure code")
         string(entry["message"], "infrastructure message")
     require(payload["status"] in {"passed", "failed", "unverified"}, "invalid producer status")
+    from ci_failure_diagnostics import ENVIRONMENT_LIMIT_FIELD, environment_limit_evidence
+    for entry in population["observed"]:
+        if ENVIRONMENT_LIMIT_FIELD in entry:
+            proof = entry[ENVIRONMENT_LIMIT_FIELD]
+            require(environment_limit_evidence(payload, entry, [proof["resources"]], runner_hosted=proof["runner_hosted"]) == proof,
+                    "environment limit differs from scoped first failure evidence")
     if "archive_download" in payload:
         validate_archive_download(payload["archive_download"], payload)
     if BOUNDED_DIAGNOSTICS_FIELD in payload:
@@ -384,14 +400,21 @@ def render_markdown(payload):
             continue
         message = "; ".join(detail for attempt in entry["attempts"]
                             for detail in (attempt["reason"], attempt["message"]) if detail)
-        lines.append(f"| {markdown_text(entry['identity']['key'])} | {entry['outcome']} | {entry['duration_seconds']:.3f} | {markdown_text(message)} |")
+        outcome = "failed (environment-limited; yellow)" if "environment_limit" in entry else entry["outcome"]
+        lines.append(f"| {markdown_text(entry['identity']['key'])} | {outcome} | {entry['duration_seconds']:.3f} | {markdown_text(message)} |")
     for entry in population["deselected"]:
         lines.append(f"| {markdown_text(entry['identity']['key'])} | deselected | — | {markdown_text(entry['reason'])}; owned by {markdown_text(entry['owning_tier'])} |")
+    if any("environment_limit" in entry for entry in population["observed"]):
+        lines.append("\n> **WARNING: hosted timing failures are environment-limited (yellow), never passes.**")
     for entry in population["observed"]:
         if "first_failure" in entry:
             from ci_failure_diagnostics import render_first_failure
             lines.append("\nFirst failure: " + markdown_text(entry["identity"]["key"]) + ": "
                          + markdown_text(render_first_failure(entry["first_failure"])) + "\n")
+        if "environment_limit" in entry:
+            from ci_failure_diagnostics import render_environment_limit
+            lines.append("\n" + markdown_text(entry["identity"]["key"]) + ": "
+                         + markdown_text(render_environment_limit(entry["environment_limit"])) + "\n")
     for entry in payload["infrastructure"]:
         category = NON_INFRASTRUCTURE_DIAGNOSTICS.get(entry["code"], "Infrastructure")
         lines.append(f"\n{category}: {markdown_text(entry['code'])}: {markdown_text(entry['message'])}")

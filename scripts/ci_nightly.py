@@ -194,7 +194,10 @@ def aggregate_nightly(scheduled, summaries, *, live_in_scope, informational=(), 
             result["observed"].extend(observed)
             if summary["infrastructure"]:
                 result["errors"].append("producer infrastructure failure: " + str(summary["infrastructure"]))
-            if summary["status"] == "failed":
+            yellow = [entry for entry in observed if "environment_limit" in entry]
+            if summary["status"] == "failed" and not (yellow and all(
+                    entry["outcome"] in {"passed", "flaky-passed", "needs-human-review"}
+                    or "environment_limit" in entry for entry in observed)):
                 result["errors"].append("producer failed: " + str(summary["run"]["shard"]))
             if summary["status"] == "unverified" and not any(
                     entry["outcome"] == "needs-human-review" and entry["identity"]["dimensions"]["suite"] in review_suites
@@ -209,12 +212,17 @@ def aggregate_nightly(scheduled, summaries, *, live_in_scope, informational=(), 
                 result["informational"].append(entry)
             elif entry["outcome"] == "needs-human-review" and suite in review_suites:
                 result["needs_human_review"].append(entry["identity"])
-            elif entry["outcome"] not in {"passed", "flaky-passed"}:
+            elif entry["outcome"] not in {"passed", "flaky-passed"} and "environment_limit" not in entry:
                 result["errors"].append(entry["outcome"] + ": " + identity_key(entry["identity"]))
         if live_in_scope:
             result["tiers"]["live"] = "failed"
             result["errors"].append("live tier is in scope but no live runner/results are built")
         result["status"] = "failed" if result["errors"] else "passed"
+        yellow = [entry["identity"] for entry in result["observed"] if "environment_limit" in entry]
+        if yellow:
+            result["environment_limited"] = yellow
+            if not result["errors"]:
+                result["status"] = "environment-limited"
         result["tiers"]["strict"] = result["status"]
     except (ContractError, TypeError, KeyError, ValueError) as error:
         result["errors"].append("invalid nightly evidence: " + str(error))
@@ -410,7 +418,15 @@ def main(argv=None):
                       f"UI shards {ui['capacity']['shards']}; max-parallel {ui['capacity']['max_parallel']}; minimum waves {ui['capacity']['minimum_shard_waves']}; observed waves {len(ui['capacity']['start_order_waves'])}; wall {ui['capacity']['wall_seconds']:.1f}s."])
     lines.extend(["", f"Contracts needing human review (P2 and pause timing): {len(result['needs_human_review'])}.",
                   f"Informational Vision outcomes: {len(result['informational'])}.", "", "| Case | Outcome |", "|---|---|"])
-    lines.extend(f"| {identity_key(item['identity'])} | {item['outcome']} |" for item in result["observed"])
+    lines.extend(f"| {identity_key(item['identity'])} | "
+                 f"{'failed (environment-limited; yellow)' if 'environment_limit' in item else item['outcome']} |" for item in result["observed"])
+    from ci_failure_diagnostics import render_environment_limit
+    if result.get("environment_limited"):
+        lines.append("\n> **WARNING: hosted timing failures are environment-limited (yellow), never passes.**")
+        print("::warning title=Environment-limited strict timing::"
+              f"{len(result['environment_limited'])} case(s); see the nightly summary for every case and resource sample.")
+    lines.extend("\nWARNING: " + identity_key(item["identity"]) + ": " + render_environment_limit(item["environment_limit"])
+                 for item in result["observed"] if "environment_limit" in item)
     lines.extend(["", *result["errors"]])
     (output / "nightly.md").write_text("\n".join(lines) + "\n")
     print("\n".join(lines[:14]))

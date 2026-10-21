@@ -186,6 +186,30 @@ class NightlyVerdictTests(unittest.TestCase):
 
     def test_nightly_rules_keep_unbuilt_tiers_green_and_skeletons_ineligible(self):
         from ci_nightly import aggregate_nightly
+        from ci_failure_diagnostics import environment_limit_evidence
+        from test_ci_summary import hosted_timeout_summary
+        yellow, resources = hosted_timeout_summary()
+        row = yellow["population"]["observed"][0]
+        proof = environment_limit_evidence(yellow, row, [resources], runner_hosted=True)
+        row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
+        case = row["identity"]
+        result = aggregate_nightly([case], [yellow], live_in_scope=False)
+        self.assertEqual("environment-limited", result["status"])
+        self.assertEqual("failed", result["observed"][0]["outcome"])
+        self.assertEqual([case], result["environment_limited"])
+        red = copy.deepcopy(yellow)
+        red["population"]["observed"][0].pop("environment_limit")
+        red["population"]["observed"][0]["attempts"][0].pop("environment_limit")
+        red_row = red["population"]["observed"][0]
+        red_row["identity"]["dimensions"]["fixture"] = "b"
+        self.assertEqual("failed", aggregate_nightly([case, red_row["identity"]], [yellow, red], live_in_scope=False)["status"])
+        for name, changed in (("legacy failure", red), ("infrastructure", copy.deepcopy(yellow))):
+            if name == "infrastructure":
+                changed["infrastructure"].append({"code": "cleanup-failed", "message": "cleanup failed"})
+            with self.subTest(name=name):
+                scheduled = changed["population"]["declared"]
+                self.assertEqual("failed", aggregate_nightly(scheduled, [changed], live_in_scope=False)["status"])
+        self.assertEqual("failed", aggregate_nightly([case], [yellow], live_in_scope=True)["status"])
         identity = ci_summary.test_identity("strict", "smoke", device="iphone", configuration="Debug",
                                             suite="smoke", scenario="normal", fixture="a")
         summary = valid_summary()
@@ -755,6 +779,8 @@ class AdmissionVerdictTests(unittest.TestCase):
         shard, aggregate_artifact = artifact("nightly-strict-a-7-1"), artifact("nightly-aggregate-7-1")
         self.assertEqual("real", evidence(night, [aggregate_artifact, shard], aggregate))
         self.assertEqual("real", evidence(dict(night, conclusion="success"), [aggregate_artifact], {**aggregate, "status": "passed"}))
+        self.assertEqual("real", evidence(dict(night, conclusion="success"), [aggregate_artifact],
+            {**aggregate, "status": "environment-limited"}))
         for label, artifacts, member, item in (
                 ("no aggregate", [shard], aggregate, night),
                 ("expired aggregate", [artifact("nightly-aggregate-7-1", True)], aggregate, night),
