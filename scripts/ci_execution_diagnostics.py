@@ -132,6 +132,7 @@ class Recorder:
         self.ledger_remaining = LEDGER_ALLOWANCE_SECONDS
         self.unavailable = set()
         self.events = []
+        self.case_resources = []
         self.truncated = False
         self.sequence = 0
         self.xcode_timed_out = False
@@ -247,6 +248,8 @@ class Recorder:
             scope: None if scope == "fixture" or scope in self.unavailable else finite(value, MAX_DIAGNOSTIC_SECONDS)
             for scope, value in self.cost.items()},
             "truncated": self.truncated, "events": copy.deepcopy(self.events)}
+        if self.case_resources:
+            receipt["case_resources"] = copy.deepcopy(self.case_resources)
         try:
             validate_receipt(receipt)
             return receipt
@@ -256,7 +259,7 @@ class Recorder:
     def attach(self, summary):
         summary.pop(BOUNDED_DIAGNOSTICS_FIELD, None)
         receipt = self.receipt()
-        if receipt is not None and (receipt["events"] or receipt["truncated"]):
+        if receipt is not None and (receipt["events"] or receipt["truncated"] or receipt.get("case_resources")):
             summary[BOUNDED_DIAGNOSTICS_FIELD] = receipt
 
     def load(self, path):
@@ -294,9 +297,10 @@ class Recorder:
         # The read consumed part of the inherited IO pool, not a fresh loan.
         self.ledger_remaining = min(self.ledger_remaining, max(0, ledger["ledger_remaining_seconds"] - io_charge))
         self.events, self.truncated = receipt["events"], receipt["truncated"]
+        self.case_resources = receipt.get("case_resources", [])
         if self.truncated:
             self.truncate("inherited")
-        self.sequence = max((event["sequence"] for event in self.events), default=0)
+        self.sequence = max((event["sequence"] for event in [*self.events, *self.case_resources]), default=0)
         return ledger
 
     def save(self, path):

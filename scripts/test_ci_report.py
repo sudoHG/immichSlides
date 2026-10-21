@@ -70,7 +70,7 @@ class ReporterTests(unittest.TestCase):
         self.assertIn("First failure: " + ci_report.text(ci_report.identity_key(case)), rendered)
         self.assertIn("query-element", rendered)
         self.assertIn("wait=5.1s", rendered)
-        self.assertIn("post_event_idle=23.05s", rendered)
+        self.assertIn("post=23.05s", rendered)
         prior_report = copy.deepcopy(report)
         prior_report["run"]["id"] = 9
         previous = {"schema_version": 2, "days": {"2026-10-01": daily_rollup("2026-10-01", [prior_report])},
@@ -93,6 +93,21 @@ class ReporterTests(unittest.TestCase):
         self.assertEqual("failed", observed[0]["outcome"])
         self.assertNotIn("first_failure", observed[0])
         self.assertNotIn("private-id", json.dumps(observed))
+        for native_value in (None, 86400):
+            worst = copy.deepcopy(report)
+            failure = copy.deepcopy(report["diagnostics"]["failures"][0])
+            failure["first_failure"]["native_activity_seconds"] = dict.fromkeys(
+                receipt["native_activity_seconds"], native_value)
+            worst["diagnostics"]["failures"] = [copy.deepcopy(failure) for _ in range(50)]
+            body = ("A post-merge CI aggregate on main failed.\n\n<!-- ci-report-post-merge:" + "a" * 40
+                    + " -->\n\n" + "\n".join(render_entry(worst) for _ in range(2)))
+            with self.subTest(native_value=native_value):
+                self.assertEqual(100, body.count("First failure:"), "size bounds must not discard failing receipts")
+                self.assertLess(len(body.encode()), 65000, "two full reports must fit the notification cap")
+                if native_value is None:
+                    self.assertEqual(100, body.count("native=unavailable"))
+                else:
+                    self.assertEqual(100, body.count("post=86400s"))
 
     def test_current_suite_semantics_take_precedence_over_historical_selectors(self):
         from run_strict_e2e import CommandError

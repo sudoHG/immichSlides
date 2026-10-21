@@ -350,6 +350,13 @@ def main(argv=None):
     def collect_result(case, evidence, phase):
         manifest_path = evidence / "case-manifest.json"
         details = decode(manifest_path.read_text()) if manifest_path.is_file() else {}
+        if "bounded_diagnostics" in details:
+            from ci_bounded_diagnostics import validate_receipt
+            try:
+                validate_receipt(details["bounded_diagnostics"])
+                phase["bounded_diagnostics"] = details["bounded_diagnostics"]
+            except (ValueError, TypeError, KeyError):
+                pass
         infrastructure = details.get("infrastructure", [])
         require(isinstance(infrastructure, list) and all(isinstance(entry, dict)
                 and set(entry) == {"code", "message"} and all(isinstance(value, str) for value in entry.values())

@@ -158,8 +158,8 @@ class SummaryContractTests(unittest.TestCase):
             read = ci_summary.parse_summary((Path(directory) / "summary.json").read_text())
         self.assertEqual(read["population"]["observed"], [failed])
         self.assertIn("query-element", ci_summary.render_markdown(read))
-        self.assertIn("post_event_idle=23.05s", ci_summary.render_markdown(read))
-        self.assertIn("ax_root_acquisition=unavailable", ci_summary.render_markdown(read))
+        self.assertIn("post=23.05s", ci_summary.render_markdown(read))
+        self.assertIn("ax=unavailable", ci_summary.render_markdown(read))
         from ci_flaky import merge_retry
         second = ci_summary.observation(identity, "failed", 2, exit_code=65)
         later_receipt = first_failure_receipt()
@@ -288,6 +288,10 @@ class SummaryContractTests(unittest.TestCase):
         summary["population"].update(observed=[failed], compiled=[])
         summary["status"] = "failed"
         self.assertEqual(ci_summary.parse_summary(json.dumps(summary)), summary)
+        receipt["native_activity_seconds"] = first_failure_receipt(native=True)["native_activity_seconds"]
+        with self.assertRaisesRegex(ci_summary.ContractError, "^first failure: native activity requires xctest source$"):
+            ci_summary.parse_summary(summary)
+        del receipt["native_activity_seconds"]
         changed = copy.deepcopy(summary)
         changed["population"]["observed"][0]["attempts"][0]["outcome"] = "failed"
         with self.assertRaisesRegex(ci_summary.ContractError, "^first failure source must match execution state$"):
@@ -540,6 +544,10 @@ class SummaryContractTests(unittest.TestCase):
             (resources, base["bounded_diagnostics"]["case_resources"] * 2, "case resources: duplicate sequence"),
             (case, {}, "case resources: invalid fields"),
             ((*case, "sequence"), True, "case resources sequence: invalid number"),
+            ((*case, "sequence"), -1, "case resources sequence: invalid number"),
+            ((*case, "sequence"), 0.5, "case resources sequence: invalid number"),
+            ((*case, "sequence"), 2**31, "case resources sequence: invalid number"),
+            ((*case, "sample_count"), 0.5, "case resources sample count: invalid number"),
             ((*case, "sample_count"), 43202, "case resources sample count: invalid number"),
             ((*case, "sample_count"), 0, "case resources: samples exceed count"),
             ((*case, "truncated"), 0, "case resources: truncated must be boolean"),
@@ -549,6 +557,7 @@ class SummaryContractTests(unittest.TestCase):
              "case resources: invalid failure samples"),
             (near, {}, "case resource sample: invalid fields"),
             ((*near, "elapsed_seconds"), 14, "case resources: sample outside failure window"),
+            ((*near, "elapsed_seconds"), 2, "case resources: sample outside failure window"),
             ((*case, "first_failure_elapsed_seconds"), None, "case resources: sample outside failure window"),
             ((*near, "elapsed_seconds"), 13, "case resources: sample outside case"),
             ((*case, "sample_interval_seconds"), 0, "case resources interval: invalid number"),
@@ -623,6 +632,10 @@ class SummaryContractTests(unittest.TestCase):
                                             for value in (3, 5, 7, 9, 11, 13)]
         resources_boundary["bounded_diagnostics"]["case_resources"] = [
             {**copy.deepcopy(case_boundary), "sequence": sequence} for sequence in range(64)]
+        self.assertEqual(ci_summary.parse_summary(resources_boundary), resources_boundary)
+        case_boundary.update(sequence=2**31 - 1, first_failure_elapsed_seconds=case_boundary["duration_seconds"])
+        case_boundary["failure_samples"] = [{**copy.deepcopy(case_boundary["failure_samples"][0]), "elapsed_seconds": 13}]
+        resources_boundary["bounded_diagnostics"]["case_resources"] = [case_boundary]
         self.assertEqual(ci_summary.parse_summary(resources_boundary), resources_boundary)
         for path, value, message in mutations:
             changed = copy.deepcopy(base)

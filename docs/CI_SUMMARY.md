@@ -148,18 +148,19 @@ measurements stay in the summary JSON. Trusted report failure/missing counts and
 issue decisions do not consume the measurements.
 
 The reader also accepts `case_resources`, an array of at most 64 case measurements.
-This is reader-only support; current producers do not emit it. Each entry has
+Strict producers emit it for each actual Xcode case invocation, including an
+existing listed retry. Fixture UI producers do not sample continuously. Each entry has
 exactly the following fields. All numbers are finite, booleans are not numbers,
 and unknown measurements remain null.
 
 | Fields | Bounds and meaning |
 | --- | --- |
 | `sequence` | Unique integer 0–2^31 - 1 identifying a case invocation in this receipt; never a case title or process identifier |
-| `duration_seconds`, `sample_interval_seconds` | Case duration 0–86,400 and nominal interval 0.001–86,400 seconds; the planned producer samples about every 2 seconds without waiting in the test thread |
+| `duration_seconds`, `sample_interval_seconds` | Case duration 0–86,400 and nominal interval 0.001–86,400 seconds; the producer samples about every 2 seconds without waiting in the test thread |
 | `sample_count`, `truncated` | Integer 0–43,201 retained samples and boolean indicating incomplete collection or retention |
 | `idle_percent_min`, `idle_percent_median` | Host idle CPU percentages 0–100 or null; minimum cannot exceed median |
 | `load_1m_max`, `app_cpu_percent_peak` | Maximum 1-minute load and peak App CPU percentage, 0–10^6 or null; process CPU uses one core = 100% and may exceed 100% |
-| `sampler_wall_seconds`, `sampler_cpu_seconds` | Active collection wall time 0–86,400 and collector plus child-process CPU time 0–10^12 seconds, or null; sleeping time is excluded; wall collection is charged to the existing Xcode diagnostic budget |
+| `sampler_wall_seconds`, `sampler_cpu_seconds` | Active collection wall time 0–86,400 and collector plus child-process CPU time 0–10^12 seconds, or null; sleeping time is excluded; periodic sampling has the separate bounded allowance described below |
 | `first_failure_elapsed_seconds` | Offset from this case's sampling origin, 0–case duration, or null if no failure is bound; absence never proves a passing case |
 | `failure_samples` | At most six samples, no more than `sample_count`, strictly increasing by `elapsed_seconds`, within both the case duration and ±5 seconds of the first failure; empty when the failure time is unavailable |
 
@@ -174,6 +175,45 @@ titles are published. Measurements with unavailable membership must remain null.
 Sampling limitations, including missing intervals, do not alter a test result.
 Summary Markdown displays per-case sample counts, idle minimum/median, maximum
 load, peak App CPU, sampler costs and truncation; nearby samples remain in JSON.
+The case manifest and each tracer warm phase retain a bounded receipt containing
+only that case's resource sequences; the job summary retains the shared ledger.
+This binds numbers to the existing case identity without publishing process names.
+`sequence` comes from the same monotonically increasing ledger counter as events;
+it is not an identity or an attempt number. The sampler claims its sequence
+immediately before the corresponding `xcodebuild` event. The enclosing case
+manifest or tracer warm phase supplies the case identity and its dimensions.
+Within that case, sorting resource entries by sequence follows actual Xcode
+invocation order, including fixture sessions and the existing listed retry's
+attempt order recorded in `*-attempts.json`. Do not infer a test name from the
+sequence or assume every number represents a separate test method. In the job
+ledger, use those same sequence values to join back to the enclosing case.
+
+Host idle is a delta of Mach CPU ticks; category CPU is the macOS `ps` short-term
+percentage estimate, with one core = 100%. These have different averaging windows
+and need not sum to the same instantaneous host utilization. The collector reads
+only PID, parent PID, CPU and short executable names in private memory, inspects
+candidate App executable paths to distinguish the selected simulator, then
+discards every PID/name/path. It never requests argv or process environments.
+Unknown App ownership or a failed process snapshot makes category CPU unavailable.
+The first interval primes the host counters. Collection pauses for the nominal
+interval plus the preceding sample's work; stop never waits for another interval.
+Periodic sampling has a separate 180-second active-wall allowance shared across
+the job ledger. Each successor subtracts all persisted `sampler_wall_seconds`
+costs; an unknown predecessor cost exhausts the allowance conservatively. An
+unavailable inherited diagnostic ledger prevents sampling instead of granting
+a fresh allowance. No
+fresh allowance is granted per case. This preserves the existing 10-second
+Xcode diagnostic pool for native extraction and anomaly diagnostics, and keeps
+the sampler running through a 20–30 minute shard. At a two-second interval,
+900 samples cost about 28 seconds at the measured 31 ms/sample or 92 seconds
+at the measured busy-host 102 ms/sample. The 180-second allowance is bounded,
+not a guarantee under arbitrarily slow host scheduling. Caps and unavailable
+measurements set per-case truncation. An unfinished collector marks cost
+unavailable and prevents successor sampling from reclaiming its allowance.
+`sampler_cpu_seconds` is currently null because per-case child CPU cannot be
+isolated from other runner children; isolated cost measurements include the
+collector and `ps` child via process resource usage. Collection ends when Xcode
+returns; no extra wait is added to obtain future failure-window samples.
 
 Current producers collect preparation and Xcode diagnostics only. Fixture-scope
 events remain reader-compatible, but no fixture diagnostics are emitted or
