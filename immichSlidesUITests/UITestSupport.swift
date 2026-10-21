@@ -485,6 +485,7 @@ struct IOSFirstBootNavigation {
         var fastPathObservations = 0
         var lastObsSeconds: TimeInterval = .zero
         var maxObsSeconds: TimeInterval = .zero
+        var observationSeconds: [TimeInterval] = []
         var targetMatches: Int?
         var targetSelected: Bool?
         var descendantSelected: Bool?
@@ -519,6 +520,7 @@ struct IOSFirstBootNavigation {
         func finishModeDiagnosticObservation(since start: TimeInterval) {
             lastObsSeconds = min(86_400, max(.zero, ProcessInfo.processInfo.systemUptime - start))
             maxObsSeconds = max(maxObsSeconds, lastObsSeconds)
+            if observationSeconds.count < 4096 { observationSeconds.append(lastObsSeconds) }
         }
 
         func captureModeDiagnosticSnapshot(_ observation: Observation) {
@@ -553,7 +555,9 @@ struct IOSFirstBootNavigation {
             func modeDiagnosticCount(_ value: Int?) -> String { value.map(String.init) ?? "unknown" }
             let last = String(format: "%.3f", lastObsSeconds)
             let maximum = String(format: "%.3f", maxObsSeconds)
+            let durations = observationSeconds.map { String(format: "%.3f", $0) }.joined(separator: ",")
             return "observations=\(observations), fastPathObservations=\(fastPathObservations), "
+                + "observationSeconds=[\(durations)], "
                 + "lastObsSeconds=\(last), maxObsSeconds=\(maximum), targetMatches=\(modeDiagnosticCount(targetMatches)), "
                 + "targetSelected=\(modeDiagnosticBoolean(targetSelected)), descendantSelected=\(modeDiagnosticBoolean(descendantSelected)), "
                 + "continueMatches=\(modeDiagnosticCount(continueMatches)), continueEnabled=\(modeDiagnosticBoolean(continueEnabled)), "
@@ -614,21 +618,35 @@ struct IOSFirstBootNavigation {
             diagnostics?.fastPathObservations = min(4096, (diagnostics?.fastPathObservations ?? 0) + 1)
             return combine(own, prompts: [], windows: ownWindows)
         }
+        // iPad can expose the remote credential alert only here. Avoid scanning unrelated system windows first.
+        diagnostics?.stage = .alertsQuery
+        var windows = ownWindows
+        if let modal = try appAlertObservation() {
+            windows.append(modal)
+            if modal.hasPasswordPrompt { return combine(own, prompts: [modal], windows: windows) }
+        }
         let system = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         diagnostics?.stage = .springboardWindows
         let systemWindows = try windowObservations(host: system, isSpringboard: true)
+        windows.append(contentsOf: systemWindows)
         let systemPrompts = systemWindows.filter(\.hasPasswordPrompt)
-        let windows = ownWindows + systemWindows
         diagnostics?.captureModeDiagnosticSnapshot(combine(own, prompts: [], windows: windows))
         if !systemPrompts.isEmpty { return combine(own, prompts: systemPrompts, windows: windows) }
-        // A remote credential alert can be absent from every window snapshot on iPad.
+        // A late remote alert can become queryable only after the system-window observations.
         diagnostics?.stage = .alertsQuery
+        if let modal = try appAlertObservation() {
+            windows.append(modal)
+            return combine(own, prompts: modal.hasPasswordPrompt ? [modal] : [], windows: windows)
+        }
+        return combine(own, prompts: [], windows: windows)
+    }
+
+    private func appAlertObservation() throws -> Observation? {
         let alerts = app.alerts.allElementsBoundByIndex
         guard alerts.count <= 1 else { throw NSError(domain: "IOSFirstBootNavigation", code: 2) }
-        guard let alert = alerts.first else { return combine(own, prompts: [], windows: windows) }
-        let modal = observation(
+        guard let alert = alerts.first else { return nil }
+        return observation(
             window: try alert.snapshot(), element: alert, host: app, windowIndex: .zero, isPromptAlert: true)
-        return combine(own, prompts: modal.hasPasswordPrompt ? [modal] : [], windows: windows + [modal])
     }
 
     private func combine(_ own: Observation, prompts: [Observation], windows: [Observation]) -> Observation {
@@ -876,6 +894,7 @@ struct IOSFirstBootNavigation {
         var departureDeadline: Date?
         var step = "mode-card"
         let diagnostics = ModeNavigationDiagnostics(targetIdentifier: identifier)
+        defer { print("First-boot mode observations: \(diagnostics.modeDiagnosticMessage)") }
         FirstFailureContext.beginWait(seconds: selectionTimeout)
         defer { FirstFailureContext.endWait() }
         while Date() < (departureDeadline ?? selectionDeadline) {
