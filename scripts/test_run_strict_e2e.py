@@ -382,6 +382,8 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
         timeout_phase: str | None = None,
         late_image_attempt=None,
         boot_submitted: bool = False,
+        configuration: str = "Debug",
+        native_failure_epoch=None,
     ) -> tuple[int, str, str, dict[str, mock.Mock]]:
         destination = f"platform={'tvOS' if platform == 'tvos' else 'iOS'} Simulator,id={P2_UDID}"
         selector = (
@@ -432,6 +434,20 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
             if command[:2] == ["xcrun", "xcresulttool"]:
                 if timeout_phase == "official-tests-export":
                     raise subprocess.TimeoutExpired(["private-test-input"], 60, output=b"private-test-input")
+                if native_failure_epoch is not None:
+                    from datetime import datetime, timezone
+                    identifier = selector.split("/", 1)[1] + "()"
+                    if "--legacy" not in command:
+                        payload = {"testNodes": [{"nodeType": "Test Case", "nodeIdentifier": identifier, "result": "Failed"}]}
+                    elif "--id" not in command:
+                        payload = {"actions": {"_values": [{"actionResult": {"testsRef": {"id": {"_value": "tests"}}}}]}}
+                    elif command[command.index("--id") + 1] == "tests":
+                        payload = {"summaries": {"_values": [{"identifier": {"_value": identifier},
+                            "summaryRef": {"id": {"_value": "method"}}}]}}
+                    else:
+                        payload = {"failureSummaries": {"_values": [{"uuid": {"_value": "failure"},
+                            "timestamp": {"_value": datetime.fromtimestamp(native_failure_epoch(), timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f%z")}}]}}
+                    return subprocess.CompletedProcess(command, export_exit, json.dumps(payload).encode(), b"")
                 return subprocess.CompletedProcess(command, export_exit, b'{"testNodes":[]}', b"")
             return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -479,7 +495,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
         ) as facts, mock.patch("run_strict_e2e.require_visual_identity", return_value={}), mock.patch(
             "run_strict_e2e.start_screen_recording", return_value=(recording_process, 900.0)
         ) as start, mock.patch("run_strict_e2e.stop_screen_recording", return_value=0) as stop, mock.patch(
-            "strict_e2e_build.load_warm_build", return_value=({"identity": {"configuration": "Debug"}}, Path("warm.xctestrun"))
+            "strict_e2e_build.load_warm_build", return_value=({"identity": {"configuration": configuration}}, Path("warm.xctestrun"))
         ), mock.patch("strict_e2e_build.validate_warm_products"), mock.patch(
             "strict_e2e_build.prepare_test_run", side_effect=fake_test_run
         ), ExitStack() as stack:
@@ -494,6 +510,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                 [
                     "--platform",
                     platform,
+                    *(["--configuration", configuration] if warm else []),
                     "--destination",
                     destination,
                     "--evidence-dir",
@@ -642,6 +659,47 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                 self.assertEqual(receipt["timeout_seconds"], 300)
                 self.assertGreaterEqual(receipt["duration_seconds"], 0)
             self.assertEqual([json.loads(path.read_text())["exit_code"] for path in receipts], [0, 0, 0, 65])
+
+    def test_debug_and_release_keep_failure_window_samples_when_diagnostic_ledger_is_unavailable(self):
+        import ci_execution_diagnostics as diagnostics
+        import strict_e2e_resource_diagnostics as resources
+        import threading
+        from types import SimpleNamespace
+        original_start = resources.CaseSampler.start
+        for platform, model, configuration in ((platform, model, configuration) for platform, model in
+                (("ios", "iPhone"), ("tvos", "Apple TV")) for configuration in ("Debug", "Release")):
+            with self.subTest(platform=platform, configuration=configuration), tempfile.TemporaryDirectory() as raw, diagnostics.session() as recorder:
+                # The hosted preparation IO timeout leaves inherited Xcode accounting unavailable.
+                recorder.unavailable.add("xcode")
+                recorder.charged["xcode"] = diagnostics.COLLECTION_BUDGET_SECONDS["xcode"]
+                ready, samplers = threading.Event(), []
+                def start(sampler):
+                    samplers.append(sampler)
+                    return original_start(sampler)
+                def read_host():
+                    if samplers[0].samples:
+                        ready.set()
+                    return {"idle_percent": 40, "load_1m": 3, "cpu_percent": dict.fromkeys(resources.RESOURCE_CATEGORIES)}
+                def xcode(*args):
+                    self.assertTrue(ready.wait(2), "Release lifecycle execution must receive host samples")
+                with mock.patch.object(resources, "SAMPLE_INTERVAL_SECONDS", 0.001), \
+                        mock.patch.object(resources.CaseSampler, "start", start), \
+                        mock.patch.object(resources, "HostProbe", return_value=SimpleNamespace(sample=read_host, close=lambda: None, unavailable=False)), \
+                        mock.patch.object(resources, "process_sample") as ps:
+                    code, _, stderr, _ = self._run_p2_main(Path(raw) / "evidence",
+                        suite="smoke" if configuration == "Debug" else f"{platform}-lifecycle-settings",
+                        platform=platform, model=model, configuration=configuration, warm=True, xcodebuild_exit=65,
+                        late_image_attempt=xcode, native_failure_epoch=lambda: samplers[0].epoch + samplers[0].duration / 2)
+                self.assertEqual(65, code, stderr)
+                self.assertEqual(1, len(samplers))
+                sampler = samplers[0]
+                case = recorder.receipt()["case_resources"][0]
+                self.assertGreater(case["sample_count"], 0)
+                self.assertTrue(case["failure_samples"])
+                self.assertEqual(40, case["idle_percent_min"])
+                self.assertTrue(all(value is None for row in case["failure_samples"] for value in row["cpu_percent"].values()))
+                self.assertEqual(0, case["sampler_wall_seconds"])
+                ps.assert_not_called()
 
     def test_warm_test_inputs_do_not_prevent_private_bundle_disposal(self):
         import ci_execution_diagnostics as diagnostics
@@ -1466,6 +1524,18 @@ class FailureDiagnosticsTests(unittest.TestCase):
             {"failure_phase": "background_return", "failure_class": "process_lifetime"},
         )
 
+    def test_native_dates_accept_legacy_offsets_colon_offsets_and_utc(self):
+        from strict_e2e_resource_diagnostics import native_time
+        for value in ("2021-03-03T14:43:24.000+0100", "2021-03-03T14:43:24.000+01:00",
+                      "2021-03-03T12:43:24.000-0100", "2021-03-03T12:43:24.000-01:00",
+                      "2021-03-03T13:43:24.000Z", "2021-03-03T13:43:24Z"):
+            with self.subTest(value=value):
+                self.assertEqual(1614779004, native_time({"timestamp": {"_value": value}}, "timestamp"))
+        for value in ("2021-03-03T13:43:24.000", "2021-03-03", "2021-03-03T13:43:24.000+0099",
+                      "2021-03-03T13:43:24.000+0000Z", "2021-03-03T13:43:24.000Z\n"):
+            with self.subTest(value=value):
+                self.assertIsNone(native_time({"timestamp": {"_value": value}}, "timestamp"))
+
     def test_private_export_and_tracer_publish_only_enums_without_changing_failure(self):
         import subprocess
         from datetime import datetime, timezone
@@ -1483,14 +1553,14 @@ class FailureDiagnosticsTests(unittest.TestCase):
             epoch = 1792530000
             def native(title, start, finish, children=()):
                 return {"title": {"_value": title},
-                    "start": {"_value": datetime.fromtimestamp(epoch + start, timezone.utc).isoformat()},
-                    "finish": {"_value": datetime.fromtimestamp(epoch + finish, timezone.utc).isoformat()},
+                    "start": {"_value": datetime.fromtimestamp(epoch + start, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f%z")},
+                    "finish": {"_value": datetime.fromtimestamp(epoch + finish, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f%z")},
                     "subactivities": {"_values": list(children)}}
             legacy["actions"] = {"_values": [{"actionResult": {"testsRef": {"id": {"_value": "tests"}}}}]}
             tests = {"summaries": {"_values": [{"identifier": {"_value": name + "()"},
                                                "summaryRef": {"id": {"_value": "method"}}}]}}
             native_summary = {"failureSummaries": {"_values": [{"uuid": {"_value": "first"},
-                "timestamp": {"_value": datetime.fromtimestamp(epoch + 24.55, timezone.utc).isoformat()}}]},
+                "timestamp": {"_value": datetime.fromtimestamp(epoch + 24.55, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f%z")}}]},
                 "activitySummaries": {"_values": [native("Find the Target Application PRIVATE_SENTINEL", 0.94, 0.99),
                     native("Tap PRIVATE_SENTINEL", 1, 24.47, [native("Wait for com.331works.immichSlides to idle", 1, 1.01),
                         native("Find the Window PRIVATE_SENTINEL", 1.01, 1.03, [native("Find the Window nested", 1.015, 1.025)]),
@@ -1510,12 +1580,15 @@ class FailureDiagnosticsTests(unittest.TestCase):
                 return subprocess.CompletedProcess(command, 0, json.dumps(body).encode(), b"")
             summary = TestResultsSummary(1, 0, 1, 0, "Failed")
             sampler = mock.Mock()
-            with diagnostics.session(), mock.patch("run_strict_e2e.subprocess.run", side_effect=export), \
+            with diagnostics.session() as recorder, mock.patch("run_strict_e2e.subprocess.run", side_effect=export), \
                     mock.patch("run_strict_e2e.read_official_test_results_summary", return_value=summary):
+                recorder.unavailable.add("xcode")
+                recorder.charged["xcode"] = diagnostics.COLLECTION_BUDGET_SECONDS["xcode"]
                 strict_runner.export_private_result_bundle(evidence / "private.xcresult", evidence, ["PRIVATE_SENTINEL"],
                     enrich_failure_diagnostics=True, first_failure_spool=(spool, ["immichSlidesUITests/" + name]),
                     resource_sampler=sampler)
             sampler.bind_failure.assert_called_once_with(epoch + 24.55)
+            self.assertEqual(0, recorder.cost["xcode"], "native extraction has its own bounded allowance")
             receipt["native_activity_seconds"] = {"pre_event_idle": 0.01, "find_window": 0.02,
                 "synthesize_event": 0.36, "post_event_idle": 23.05, "ax_root_acquisition": 0.1}
             exported = (evidence / "official-tests.json").read_text()
@@ -1523,12 +1596,43 @@ class FailureDiagnosticsTests(unittest.TestCase):
             self.assertNotIn("slider", exported)
             self.assertEqual(validate_case_export(evidence, "ios", "smoke"), [{"identifier": name, "result": "Failed",
                 "failure_phase": "interval_setup", "failure_class": "interval_readback", "first_failure": receipt}])
+            for ambiguity in ("matching-method", "failure-time", "missing-time", "partial-time", "synthesis", "read-timeout"):
+                with self.subTest(native_failure=ambiguity), diagnostics.session() as recorder:
+                    sampler.reset_mock()
+                    original_rows = native_summary["failureSummaries"]["_values"]
+                    original_metadata = tests["summaries"]["_values"]
+                    tap = native_summary["activitySummaries"]["_values"][1]
+                    original_children = tap["subactivities"]["_values"]
+                    if ambiguity == "failure-time":
+                        native_summary["failureSummaries"]["_values"] = original_rows * 2
+                    elif ambiguity == "missing-time":
+                        native_summary["failureSummaries"]["_values"] = []
+                    elif ambiguity == "partial-time":
+                        native_summary["failureSummaries"]["_values"] = original_rows + [{"uuid": {"_value": "unknown"}}]
+                    elif ambiguity == "matching-method":
+                        tests["summaries"]["_values"] = original_metadata * 2
+                    elif ambiguity == "synthesis":
+                        tap["subactivities"]["_values"] = original_children + [native("Synthesize event", 1.1, 1.2)]
+                    def ambiguous_export(command, **kwargs):
+                        if ambiguity == "read-timeout" and "--id" in command:
+                            raise subprocess.TimeoutExpired(["private-command"], 2)
+                        return export(command, **kwargs)
+                    with mock.patch("run_strict_e2e.subprocess.run", side_effect=ambiguous_export):
+                        strict_runner.export_private_result_bundle(evidence / "private.xcresult", evidence, ["PRIVATE_SENTINEL"],
+                            enrich_failure_diagnostics=True, first_failure_spool=(spool, ["immichSlidesUITests/" + name]),
+                            resource_sampler=sampler)
+                    sampler.bind_failure.assert_not_called()
+                    native_summary["failureSummaries"]["_values"] = original_rows
+                    tests["summaries"]["_values"] = original_metadata
+                    tap["subactivities"]["_values"] = original_children
             native_summary["activitySummaries"]["_values"].insert(0, native("Tap earlier PRIVATE_SENTINEL", -24, -0.53))
+            sampler.reset_mock()
             with diagnostics.session(), mock.patch("run_strict_e2e.subprocess.run", side_effect=export):
                 strict_runner.export_private_result_bundle(evidence / "private.xcresult", evidence, ["PRIVATE_SENTINEL"],
                     enrich_failure_diagnostics=True, first_failure_spool=(spool, ["immichSlidesUITests/" + name]),
                     resource_sampler=sampler)
             ambiguous = json.loads((evidence / "official-tests.json").read_text())["testNodes"][0]["children"][0]
+            sampler.bind_failure.assert_not_called()
             self.assertEqual("Failed", ambiguous["result"])
             self.assertTrue(all(value is None for value in ambiguous["first_failure"]["native_activity_seconds"].values()))
             with diagnostics.session() as recorder, mock.patch("run_strict_e2e.subprocess.run", side_effect=export), \
@@ -1806,6 +1910,7 @@ class StrictCITracerTests(unittest.TestCase):
                         (derived / "strict-warm-build.json").write_text(json.dumps({"signing_mode": "adhoc"}))
                         return 1 if failure == "cold" else 0
                     order.append("warm")
+                    self.assertEqual("2", command[command.index("--native-diagnostics-allowance-seconds") + 1])
                     self.assertIn("--simulator-boot-submitted", command)
                     evidence = Path(command[command.index("--evidence-dir") + 1])
                     evidence.mkdir(parents=True)
@@ -2820,6 +2925,10 @@ raise SystemExit(65)
         self.assertEqual(0, recorder.ledger_remaining)
         self.assertTrue(recorder.truncated)
 
+    def test_case_sampler_preserves_numeric_categories_and_failure_windows(self):
+        import ci_execution_diagnostics as diagnostics
+        from ci_summary import parse_summary
+        from test_ci_summary import valid_summary
         import strict_e2e_resource_diagnostics as resources
         from types import SimpleNamespace
         rows = "10 1 1 launchd_sim    \n11 10 30 immichSlides   \n12 10 5 daemon         \n13 10 7 testmanagerd_sim\n14 1 11 xcodebuild      \n15 1 13 PRIVATE_SENTINEL process\n"
@@ -2842,10 +2951,12 @@ raise SystemExit(65)
                     mock.patch.object(resources.subprocess, "run", return_value=SimpleNamespace(returncode=0, stdout=process_rows)):
                 observation = resources.resource_sample(SimpleNamespace(idle=lambda: 25), "device", 0.1)
                 self.assertEqual(expected, observation["cpu_percent"]["app"])
-                sampler = resources.CaseSampler(diagnostics.Recorder(), "device")
-                sampler.duration = 2
-                sampler.samples = [{"elapsed_seconds": 2, **observation}]
-                sampler.bind_failure(sampler.epoch + 2)
+                with mock.patch.object(resources.time, "monotonic", side_effect=[0, 2]), \
+                        mock.patch.object(resources.time, "time", side_effect=[100, 102]):
+                    sampler = resources.CaseSampler(diagnostics.Recorder(), "device")
+                    sampler.samples = [{"elapsed_seconds": 2, **observation}]
+                    sampler.stop()
+                    sampler.bind_failure(sampler.epoch + 2)
                 case = sampler.recorder.receipt()["case_resources"][0]
                 self.assertEqual(expected, case["app_cpu_percent_peak"])
                 self.assertEqual(expected, case["failure_samples"][0]["cpu_percent"]["app"])
@@ -2858,10 +2969,11 @@ raise SystemExit(65)
         recorder = diagnostics.Recorder()
         with mock.patch.object(resources.threading, "Event", return_value=event), \
                 mock.patch.object(resources.threading, "Thread", side_effect=lambda *, target, daemon: SimpleNamespace(start=target, join=lambda timeout: None)), \
-                mock.patch.object(resources, "HostCpu"), \
+                mock.patch.object(resources, "HostProbe", return_value=SimpleNamespace(sample=lambda: sample, close=lambda: None, unavailable=False)), \
                 mock.patch.object(resources, "resource_sample", return_value=sample), \
+                mock.patch.object(resources, "process_sample", return_value=sample["cpu_percent"]), \
                 mock.patch.object(resources.time, "monotonic", side_effect=lambda: clock[0]), \
-                mock.patch.object(resources.time, "time", return_value=100), \
+                mock.patch.object(resources.time, "time", side_effect=lambda: 100 + clock[0]), \
                 mock.patch.object(resources.time, "perf_counter", return_value=0):
             sampler = resources.CaseSampler(recorder, "device").start()
             sampler.stop()
@@ -2877,72 +2989,208 @@ raise SystemExit(65)
         # An App that is absent for part of a case (before launch, relaunch, exit) is not sampler truncation.
         absent_app = {**sample, "cpu_percent": {**sample["cpu_percent"], "app": None}}
         clock = [0.0]
-        waits = [False, False, True]
+        waits = [False] * 6 + [True]
         event = SimpleNamespace(wait=tick, set=lambda: None, is_set=lambda: False)
         partial = diagnostics.Recorder()
         with mock.patch.object(resources.threading, "Event", return_value=event), \
                 mock.patch.object(resources.threading, "Thread", side_effect=lambda *, target, daemon: SimpleNamespace(start=target, join=lambda timeout: None)), \
-                mock.patch.object(resources, "HostCpu"), \
-                mock.patch.object(resources, "resource_sample", side_effect=[absent_app, sample]), \
+                mock.patch.object(resources, "HostProbe", return_value=SimpleNamespace(sample=lambda: absent_app, close=lambda: None, unavailable=False)), \
+                mock.patch.object(resources, "resource_sample", return_value=absent_app), \
+                mock.patch.object(resources, "process_sample", side_effect=[absent_app["cpu_percent"], sample["cpu_percent"]]), \
                 mock.patch.object(resources.time, "monotonic", side_effect=lambda: clock[0]), \
-                mock.patch.object(resources.time, "time", return_value=100), \
+                mock.patch.object(resources.time, "time", side_effect=lambda: 100 + clock[0]), \
                 mock.patch.object(resources.time, "perf_counter", return_value=0):
             sampler = resources.CaseSampler(partial, "device").start()
             sampler.stop()
         case = partial.case_resources[0]
-        self.assertEqual((2, 30), (case["sample_count"], case["app_cpu_percent_peak"]))
+        self.assertEqual((6, 30), (case["sample_count"], case["app_cpu_percent_peak"]))
         self.assertFalse(case["truncated"], "a temporarily absent App must not mark the case truncated")
-        self.assertGreater(resources.STOP_TIMEOUT_SECONDS, resources.SAMPLE_COMMAND_TIMEOUT_SECONDS,
-                           "stop must outlast one in-flight sample command")
+        self.assertGreater(resources.STOP_TIMEOUT_SECONDS, resources.HOST_SAMPLE_TIMEOUT_SECONDS + resources.SAMPLE_COMMAND_TIMEOUT_SECONDS,
+                           "stop must outlast the bounded host read and one in-flight process snapshot")
         for defect in ("bad row", rows.replace("30 immichSlides", "nan immichSlides")):
             with mock.patch.object(resources.sys, "platform", "darwin"), \
                     mock.patch.object(resources.subprocess, "run", return_value=SimpleNamespace(returncode=0, stdout=defect)):
                 unavailable = resources.resource_sample(SimpleNamespace(idle=lambda: None), "device", 0.1)
             self.assertTrue(all(value is None for value in unavailable["cpu_percent"].values()))
 
-        # A late failure in a 30-minute shard must survive the small Xcode pool.
+    def test_slow_process_snapshots_preserve_late_samples_across_a_long_shard(self):
+        import ci_execution_diagnostics as diagnostics
+        import strict_e2e_resource_diagnostics as resources
+        from types import SimpleNamespace
+        sample = {"idle_percent": 25, "load_1m": 4, "cpu_percent": dict.fromkeys(resources.RESOURCE_CATEGORIES)}
         clock = [0.0]
+        end = [360.0]
         def long_wait(seconds):
-            clock[0] = min(1800, clock[0] + seconds)
-            return clock[0] >= 1800
-        def costly_sample(*args):
-            clock[0] += 0.1
+            clock[0] = min(end[0], clock[0] + seconds)
+            return clock[0] >= end[0]
+        def slow_ps(*args, **kwargs):
+            clock[0] += 1.1
+            return SimpleNamespace(returncode=0, stdout="10 1 4 xcodebuild\n")
+        def host_sample():
+            clock[0] += 0.02
             return sample
         event = SimpleNamespace(wait=long_wait, set=lambda: None, is_set=lambda: False)
         recorder = diagnostics.Recorder()
         recorder.charged["xcode"] = diagnostics.COLLECTION_BUDGET_SECONDS["xcode"]
         with mock.patch.object(resources.threading, "Event", return_value=event), \
                 mock.patch.object(resources.threading, "Thread", side_effect=lambda *, target, daemon: SimpleNamespace(start=target, join=lambda timeout: None)), \
-                mock.patch.object(resources, "HostCpu"), \
-                mock.patch.object(resources, "resource_sample", side_effect=costly_sample), \
+                mock.patch.object(resources, "HostProbe", return_value=SimpleNamespace(sample=host_sample, close=lambda: None, unavailable=False)), \
+                mock.patch.object(resources, "resource_sample", return_value=sample), \
+                mock.patch.object(resources.sys, "platform", "darwin"), \
+                mock.patch.object(resources.subprocess, "run", side_effect=slow_ps) as ps, \
                 mock.patch.object(resources.time, "monotonic", side_effect=lambda: clock[0]), \
-                mock.patch.object(resources.time, "time", return_value=100), \
+                mock.patch.object(resources.time, "time", side_effect=lambda: 100 + clock[0]), \
                 mock.patch.object(resources.time, "perf_counter", side_effect=lambda: clock[0]):
-            sampler = resources.CaseSampler(recorder, "device").start()
-            sampler.stop()
-            sampler.bind_failure(1898)
-        case = recorder.case_resources[0]
-        self.assertGreater(case["sample_count"], 850)
+            for index in range(5):
+                sampler = resources.CaseSampler(recorder, "device").start()
+                sampler.stop()
+                sampler.bind_failure(sampler.epoch + 358)
+                end[0] += 360
+        case = recorder.case_resources[-1]
+        self.assertTrue(all(case["sample_count"] >= 170 for case in recorder.case_resources))
         self.assertTrue(case["failure_samples"], "late failure must retain nearby resource evidence")
-        self.assertGreater(case["failure_samples"][-1]["elapsed_seconds"], 1795)
-        self.assertFalse(case["truncated"])
+        self.assertGreater(case["failure_samples"][-1]["elapsed_seconds"], 355)
+        self.assertTrue(all(case["sampler_wall_seconds"] < 45 for case in recorder.case_resources))
+        self.assertLess(sum(case["sampler_wall_seconds"] for case in recorder.case_resources), 181.1)
+        self.assertLessEqual(ps.call_count, 164)
+        self.assertGreater(ps.call_count, 100)
+        self.assertFalse(recorder.case_resources[0]["truncated"], "ticks between process snapshots are intentionally partial")
+        self.assertAlmostEqual(ps.call_count * 1.1, sum(case["sampler_wall_seconds"] for case in recorder.case_resources))
         self.assertAlmostEqual(10, recorder.charged["xcode"])
         self.assertEqual(0, recorder.cost["xcode"], "periodic sampling must not consume native diagnostic allowance")
         for previous_cost in (179.6, 180, None):
-            recorder.case_resources[0]["sampler_wall_seconds"] = previous_cost
-            with mock.patch.object(resources.threading.Thread, "start") as start:
+            recorder = diagnostics.Recorder()
+            recorder.case_resources = [{**case, "sequence": 0, "sampler_wall_seconds": previous_cost}]
+            with mock.patch.object(resources.threading, "Thread") as thread:
                 successor = resources.CaseSampler(recorder, "device").start()
                 successor.stop()
-            start.assert_not_called()
+            thread.return_value.start.assert_called_once()
+            self.assertEqual(0, successor.reserved)
             self.assertTrue(recorder.case_resources[-1]["truncated"])
         missing = diagnostics.Recorder()
         with tempfile.TemporaryDirectory() as raw:
             missing.load(Path(raw) / "absent-ledger.json")
-        with mock.patch.object(resources.threading.Thread, "start") as start:
+        with mock.patch.object(resources.threading, "Thread") as thread:
             sampler = resources.CaseSampler(missing, "device").start()
-            start.assert_not_called()
+            thread.return_value.start.assert_called_once()
+            self.assertEqual(0, sampler.reserved)
             sampler.stop()
         self.assertTrue(missing.case_resources[0]["truncated"])
+
+    def test_host_probe_caps_hung_reads_and_total_wait_without_starting_more_workers(self):
+        import strict_e2e_resource_diagnostics as resources
+        for spent, expected_limit in ((0, 0.2), (4.95, 0.05), (5, None)):
+            with self.subTest(spent=spent), mock.patch.object(resources, "Event") as event, \
+                    mock.patch.object(resources, "Thread") as worker, \
+                    mock.patch.object(resources.time, "perf_counter", return_value=0):
+                event.return_value.wait.return_value = False
+                event.return_value.is_set.return_value = False
+                probe = resources.HostProbe("device")
+                probe.spent = spent
+                self.assertIsNone(probe.sample())
+                self.assertIsNone(probe.sample())
+                if expected_limit is None:
+                    worker.assert_not_called()
+                else:
+                    worker.return_value.start.assert_called_once()
+                    self.assertAlmostEqual(expected_limit, event.return_value.wait.call_args.args[0])
+
+    def test_host_probe_returns_real_thread_values_and_resumes_after_a_slow_read(self):
+        import strict_e2e_resource_diagnostics as resources
+        import threading
+        from types import SimpleNamespace
+        entered, release, closed = threading.Event(), threading.Event(), threading.Event()
+        calls = []
+        def host_statistics(host, flavor, ticks, count):
+            calls.append(True)
+            if len(calls) == 1:
+                entered.set()
+                if not release.wait(3):
+                    raise OSError("test release deadline")
+            ticks[:] = (65, 0, 37, 0) if len(calls) == 4 else (len(calls) - 1, 0, 0, 0)
+            return 0
+        with mock.patch.object(resources.sys, "platform", "linux"):
+            host = resources.HostCpu()
+        host.library = SimpleNamespace(host_statistics=host_statistics)
+        host.close = closed.set
+        with mock.patch.object(resources, "HostCpu", return_value=host) as constructor, \
+                mock.patch.object(resources.time, "monotonic", side_effect=[10, 10.005, 10.010, 11.010]), \
+                mock.patch.object(resources.os, "getloadavg", return_value=(6, 5, 4)):
+            probe = resources.HostProbe("device")
+            try:
+                self.assertIsNone(probe.sample())
+                self.assertTrue(entered.wait(3))
+                self.assertIsNone(probe.sample(), "an in-flight read must not start another worker")
+                self.assertEqual(1, len(calls))
+                release.set()
+                self.assertTrue(probe.done.wait(3))
+                before = probe.spent
+                observation = probe.sample()
+                self.assertIsNotNone(observation, "sampling must resume after the slow worker finishes")
+                self.assertEqual((None, 6), (observation["idle_percent"], observation["load_1m"]),
+                                 "a quick read after the late worker must not report zero idle")
+                self.assertGreater(probe.spent, before)
+                recovered = probe.sample()
+                self.assertIsNotNone(recovered)
+                self.assertEqual(37, recovered["idle_percent"], "a full interval must restore idle evidence")
+                constructor.assert_called_once()
+            finally:
+                release.set()
+                probe.close()
+                self.assertTrue(closed.wait(3))
+
+    def test_case_sampler_skips_busy_ticks_and_does_not_start_process_reads_after_stop(self):
+        import ci_execution_diagnostics as diagnostics
+        import strict_e2e_resource_diagnostics as resources
+        from types import SimpleNamespace
+        sample = {"idle_percent": 25, "load_1m": 4, "cpu_percent": dict.fromkeys(resources.RESOURCE_CATEGORIES)}
+        for stop_during_read in (False, True):
+            with self.subTest(stop_during_read=stop_during_read):
+                clock = [0.0]
+                stopped = [False]
+                reads = []
+                def wait(seconds):
+                    clock[0] += seconds
+                    return stopped[0] or clock[0] >= 8
+                def read():
+                    reads.append(True)
+                    if len(reads) <= 2:
+                        return None
+                    stopped[0] = stop_during_read
+                    return sample
+                event = SimpleNamespace(wait=wait, set=lambda: None, is_set=lambda: stopped[0])
+                with mock.patch.object(resources.threading, "Event", return_value=event), \
+                        mock.patch.object(resources.threading, "Thread", side_effect=lambda *, target, daemon: SimpleNamespace(start=target, join=lambda timeout: None)), \
+                        mock.patch.object(resources, "HostProbe", return_value=SimpleNamespace(sample=read, close=lambda: None, unavailable=False)), \
+                        mock.patch.object(resources, "process_sample", return_value=sample["cpu_percent"]) as ps, \
+                        mock.patch.object(resources.time, "monotonic", side_effect=lambda: clock[0]), \
+                        mock.patch.object(resources.time, "time", side_effect=lambda: 100 + clock[0]):
+                    recorder = diagnostics.Recorder()
+                    sampler = resources.CaseSampler(recorder, "device").start()
+                    sampler.stop()
+                if stop_during_read:
+                    ps.assert_not_called()
+                    self.assertEqual(0, recorder.case_resources[0]["sample_count"])
+                else:
+                    self.assertEqual(2, recorder.case_resources[0]["sample_count"])
+                    self.assertTrue(recorder.case_resources[0]["truncated"])
+
+    def test_case_sampler_refuses_failure_binding_when_wall_clock_jumps(self):
+        import ci_execution_diagnostics as diagnostics
+        import strict_e2e_resource_diagnostics as resources
+        for drift in (-0.51, -0.49, 0, 0.49, 0.51):
+            with self.subTest(drift=drift), \
+                    mock.patch.object(resources.time, "monotonic", side_effect=[10, 20]), \
+                    mock.patch.object(resources.time, "time", side_effect=[100, 110 + drift]):
+                recorder = diagnostics.Recorder()
+                sampler = resources.CaseSampler(recorder, "device")
+                sampler.samples = [{"elapsed_seconds": 5, "idle_percent": 25, "load_1m": 4,
+                                    "cpu_percent": dict.fromkeys(resources.RESOURCE_CATEGORIES)}]
+                sampler.stop()
+                sampler.bind_failure(105)
+                case = recorder.case_resources[0]
+                self.assertEqual(5 if abs(drift) < 0.5 else None, case["first_failure_elapsed_seconds"])
+                self.assertEqual(abs(drift) < 0.5, bool(case["failure_samples"]))
 
     def test_completed_ledger_io_refunds_unused_precharge(self):
         import ci_execution_diagnostics as diagnostics
@@ -2958,6 +3206,63 @@ raise SystemExit(65)
         self.assertAlmostEqual(diagnostics.LEDGER_ALLOWANCE_SECONDS - 0.005, recorder.ledger_remaining)
         self.assertAlmostEqual(0.005, recorder.cost["preparation"])
         self.assertFalse(recorder.truncated)
+
+    def test_native_allowance_precharges_timeouts_and_stops_after_twenty_seconds(self):
+        import strict_e2e_resource_diagnostics as resources
+        from types import SimpleNamespace
+        clock = [0.0]
+        def wait(seconds):
+            clock[0] += seconds
+            return False
+        with mock.patch.object(resources.threading, "Event", return_value=SimpleNamespace(wait=wait, set=lambda: None)), \
+                mock.patch.object(resources.threading, "Thread") as worker, \
+                mock.patch.object(resources.time, "perf_counter", side_effect=lambda: clock[0]):
+            budget = resources.NativeActivityBudget()
+            operation = mock.Mock()
+            for sequence in range(10):
+                self.assertIsNone(budget.collect(sequence, operation, cap=2))
+                self.assertIsNone(budget.collect(sequence, operation, cap=2), "one failed case cannot obtain a second loan")
+            self.assertAlmostEqual(20, clock[0])
+            self.assertEqual(0, budget.remaining_seconds)
+            self.assertEqual(10, worker.return_value.start.call_count)
+            self.assertIsNone(budget.collect(10, operation, cap=2))
+            self.assertEqual(10, worker.return_value.start.call_count)
+            operation.assert_not_called()
+        parent = resources.NativeActivityBudget()
+        self.assertEqual([2] * 10 + [0], [parent.reserve_case() for _ in range(11)])
+
+    def test_ledger_io_rejects_delayed_results_and_precharges_the_total_pool(self):
+        import ci_execution_diagnostics as diagnostics
+        from types import SimpleNamespace
+        clock = [0.0]
+        def delayed(seconds):
+            self.assertAlmostEqual(0.1, seconds)
+            clock[0] += seconds
+            return False
+        def start(*, target, daemon):
+            target()
+            return SimpleNamespace(start=lambda: None)
+        recorder = diagnostics.Recorder()
+        with mock.patch.object(diagnostics.threading, "Thread", side_effect=start), \
+                mock.patch.object(diagnostics.threading, "Event", return_value=SimpleNamespace(wait=delayed, set=lambda: None)), \
+                mock.patch.object(diagnostics.time, "perf_counter", side_effect=lambda: clock[0]):
+            self.assertIsNone(recorder.ledger_io(lambda: True), "a result outside the wait deadline must not refund its loan")
+        self.assertAlmostEqual(1.4, recorder.ledger_remaining)
+        self.assertAlmostEqual(0.1, recorder.cost["preparation"])
+        clock = [0.0]
+        def timeout(seconds):
+            clock[0] += seconds
+            return False
+        recorder = diagnostics.Recorder()
+        with mock.patch.object(diagnostics.threading, "Thread") as worker, \
+                mock.patch.object(diagnostics.threading, "Event", return_value=SimpleNamespace(wait=timeout)), \
+                mock.patch.object(diagnostics, "report_truncation"), \
+                mock.patch.object(diagnostics.time, "perf_counter", side_effect=lambda: clock[0]):
+            for _ in range(17):
+                self.assertIsNone(recorder.ledger_io(lambda: True))
+            self.assertLessEqual(worker.return_value.start.call_count, 16)
+        self.assertAlmostEqual(1.5, clock[0])
+        self.assertEqual(0, recorder.ledger_remaining)
 
     def test_truncation_logs_one_closed_reason_per_process_without_private_values(self):
         import ci_execution_diagnostics as diagnostics

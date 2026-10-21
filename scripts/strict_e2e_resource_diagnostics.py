@@ -5,27 +5,77 @@ from __future__ import annotations
 import ctypes
 import json
 import os
+import re
 import statistics
 import subprocess
 import sys
 import threading
 import time
 from datetime import datetime
+from threading import Event, Thread
 
-from ci_bounded_diagnostics import (COLLECTION_BUDGET_SECONDS, MAX_DIAGNOSTIC_SECONDS,
+from ci_bounded_diagnostics import (MAX_DIAGNOSTIC_SECONDS,
     MAX_LOAD_AVERAGE, MAX_PROCESS_CPU_PERCENT, MAX_RESOURCE_CASES, MAX_RESOURCE_SAMPLES,
     RESOURCE_CATEGORIES, validate_case_resources)
-from ci_execution_diagnostics import BOOKKEEPING_RESERVE_SECONDS, finite
+from ci_execution_diagnostics import finite
 from ci_failure_diagnostics import NATIVE_ACTIVITY_FIELDS, public_first_failure
 
 SAMPLE_INTERVAL_SECONDS = 2
+PROCESS_SAMPLE_INTERVAL_SECONDS = 10
 SAMPLER_WALL_BUDGET_SECONDS = 180
+HOST_SAMPLE_TIMEOUT_SECONDS = 0.2
+HOST_IDLE_MIN_INTERVAL_SECONDS = 1
+HOST_WALL_BUDGET_SECONDS = 5
 SAMPLE_COMMAND_TIMEOUT_SECONDS = 0.5
 # Stop must outlast one in-flight sample command, or a slow `ps` leaves the sampler unfinished and voids the budget.
-STOP_TIMEOUT_SECONDS = SAMPLE_COMMAND_TIMEOUT_SECONDS + 0.1
+STOP_TIMEOUT_SECONDS = HOST_SAMPLE_TIMEOUT_SECONDS + SAMPLE_COMMAND_TIMEOUT_SECONDS + 0.1
 MAX_PROCESS_TABLE_BYTES = 2 * 1024 * 1024
 MAX_PROCESS_ROWS = 65536
 NATIVE_MATCH_TOLERANCE_SECONDS = 0.1
+NATIVE_CASE_BUDGET_SECONDS = 2
+NATIVE_JOB_BUDGET_SECONDS = 20
+CLOCK_DRIFT_TOLERANCE_SECONDS = 0.5
+
+
+class NativeActivityBudget:
+    """Precharge child loans and bound native reads without trusting the diagnostic ledger."""
+
+    def __init__(self, seconds=NATIVE_JOB_BUDGET_SECONDS):
+        self.remaining_seconds = finite(seconds, NATIVE_JOB_BUDGET_SECONDS, default=0)
+        self.case_remaining = {}
+
+    def reserve_case(self):
+        allowance = min(NATIVE_CASE_BUDGET_SECONDS, self.remaining_seconds)
+        self.remaining_seconds -= allowance
+        return allowance
+
+    def collect(self, sequence, operation, *, cap):
+        case_remaining = self.case_remaining.setdefault(sequence, NATIVE_CASE_BUDGET_SECONDS)
+        limit = min(cap, case_remaining, self.remaining_seconds)
+        if limit <= 0:
+            return None
+        self.remaining_seconds -= limit
+        self.case_remaining[sequence] -= limit
+        started = time.perf_counter()
+        done, values = threading.Event(), []
+        def read():
+            try:
+                values.append(operation(max(0, limit - (time.perf_counter() - started))))
+            except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
+                pass
+            finally:
+                done.set()
+        try:
+            threading.Thread(target=read, daemon=True).start()
+            finished = done.wait(max(0, limit - (time.perf_counter() - started)))
+        except (OSError, RuntimeError):
+            finished = False
+        elapsed = time.perf_counter() - started
+        if finished:
+            refund = max(0, limit - elapsed)
+            self.remaining_seconds += refund
+            self.case_remaining[sequence] += refund
+        return values[0] if finished and elapsed <= limit and values else None
 
 
 class HostCpu:
@@ -35,6 +85,7 @@ class HostCpu:
         self.library = None
         self.host = None
         self.previous = None
+        self.previous_read_at = None
         if sys.platform == "darwin":
             self.library = ctypes.CDLL("/usr/lib/libSystem.B.dylib")
             self.library.mach_host_self.restype = ctypes.c_uint32
@@ -49,9 +100,13 @@ class HostCpu:
         count = ctypes.c_uint32(4)
         if self.library.host_statistics(self.host, 3, ticks, ctypes.byref(count)) != 0 or count.value != 4:
             self.previous = None
+            self.previous_read_at = None
             return None
+        read_at = time.monotonic()
         previous, self.previous = self.previous, tuple(ticks)
-        if previous is None:
+        previous_read_at, self.previous_read_at = self.previous_read_at, read_at
+        # A late worker can leave only a few milliseconds of ticks before the next read.
+        if previous is None or previous_read_at is None or read_at - previous_read_at < HOST_IDLE_MIN_INTERVAL_SECONDS:
             return None
         delta = [(current - old) & 0xffffffff for old, current in zip(previous, ticks)]
         return 100 * delta[2] / sum(delta) if sum(delta) else None
@@ -130,6 +185,11 @@ def resource_sample(host_cpu, device, timeout):
         load = finite(os.getloadavg()[0], MAX_LOAD_AVERAGE)
     except OSError:
         load = None
+    categories = process_sample(device, timeout) if timeout is not None else dict.fromkeys(RESOURCE_CATEGORIES)
+    return {"idle_percent": idle, "load_1m": load, "cpu_percent": categories}
+
+
+def process_sample(device, timeout):
     categories = dict.fromkeys(RESOURCE_CATEGORIES)
     if sys.platform == "darwin":
         try:
@@ -139,7 +199,56 @@ def resource_sample(host_cpu, device, timeout):
                 categories = process_categories(completed.stdout, device)
         except (OSError, ValueError, subprocess.SubprocessError):
             pass
-    return {"idle_percent": idle, "load_1m": load, "cpu_percent": categories}
+    return categories
+
+
+class HostProbe:
+    """Bound native host reads independently of the inherited process-snapshot pool."""
+
+    def __init__(self, device):
+        self.device = device
+        self.host = None
+        self.spent = 0.0
+        self.unavailable = False
+        self.done = None
+
+    def sample(self):
+        remaining = HOST_WALL_BUDGET_SECONDS - self.spent
+        if self.unavailable or remaining <= 0:
+            self.unavailable = True
+            return None
+        # A slow native read may finish between ticks; never overlap it with a new worker.
+        if self.done is not None and not self.done.is_set():
+            return None
+        done, values = Event(), []
+        self.done = done
+        def read():
+            try:
+                if self.host is None:
+                    self.host = HostCpu()
+                    self.host.idle()
+                values.append(resource_sample(self.host, self.device, None))
+            except (OSError, ValueError, TypeError, AttributeError):
+                pass
+            finally:
+                if self.unavailable and self.host is not None:
+                    self.host.close()
+                done.set()
+        started = time.perf_counter()
+        try:
+            Thread(target=read, daemon=True).start()
+            finished = done.wait(max(0, min(HOST_SAMPLE_TIMEOUT_SECONDS, remaining)
+                                        - (time.perf_counter() - started)))
+        except (OSError, RuntimeError):
+            finished = False
+        self.spent += time.perf_counter() - started
+        self.unavailable = finished and not values
+        return values[0] if finished and values else None
+
+    def close(self):
+        self.unavailable = True
+        if self.host is not None and (self.done is None or self.done.is_set()):
+            self.host.close()
 
 
 class CaseSampler:
@@ -161,19 +270,21 @@ class CaseSampler:
         self.reserved = 0.0
         self.finished = False
         self.closed = False
+        self.clock_stable = False
 
     def start(self):
-        if (self.recorder is None or "xcode" in self.recorder.unavailable
-                or len(self.recorder.case_resources) >= MAX_RESOURCE_CASES):
+        if self.recorder is None or len(self.recorder.case_resources) >= MAX_RESOURCE_CASES:
             self.truncated = True
             return self
         # Persisted numeric costs carry this allowance across serial case processes.
         spent = sum(case["sampler_wall_seconds"] if case["sampler_wall_seconds"] is not None
                     else SAMPLER_WALL_BUDGET_SECONDS for case in self.recorder.case_resources)
         self.reserved = max(0, SAMPLER_WALL_BUDGET_SECONDS - spent)
+        if "xcode" in self.recorder.unavailable:
+            self.reserved = 0.0
         if self.reserved <= SAMPLE_COMMAND_TIMEOUT_SECONDS:
             self.truncated = True
-            return self
+            self.reserved = 0.0
         try:
             self.thread = threading.Thread(target=self._run, daemon=True)
             self.thread.start()
@@ -185,29 +296,50 @@ class CaseSampler:
     def _run(self):
         host = None
         try:
-            started = time.perf_counter()
-            host = HostCpu()
-            host.idle()
-            self.spent += time.perf_counter() - started
-            while not self.stopped.wait(SAMPLE_INTERVAL_SECONDS):
-                remaining = self.reserved - self.spent
-                if len(self.samples) >= MAX_RESOURCE_SAMPLES or remaining <= SAMPLE_COMMAND_TIMEOUT_SECONDS:
+            host = HostProbe(self.device)
+            if host.sample() is None:
+                self.truncated = True
+            next_tick = time.monotonic() + SAMPLE_INTERVAL_SECONDS
+            next_process = next_tick
+            while not self.stopped.wait(max(0, next_tick - time.monotonic())):
+                if len(self.samples) >= MAX_RESOURCE_SAMPLES:
                     self.truncated = True
                     break
-                started = time.perf_counter()
-                sample = resource_sample(host, self.device, min(SAMPLE_COMMAND_TIMEOUT_SECONDS, remaining))
+                sample = host.sample()
                 elapsed = time.monotonic() - self.origin
-                self.spent += time.perf_counter() - started
+                if sample is None:
+                    self.truncated = True
+                    if host.unavailable:
+                        break
+                    next_tick = time.monotonic() + SAMPLE_INTERVAL_SECONDS
+                    continue
+                sample = dict(sample)
+                sample["cpu_percent"] = dict.fromkeys(RESOURCE_CATEGORIES)
+                if not self.stopped.is_set() and time.monotonic() >= next_process:
+                    remaining = self.reserved - self.spent
+                    if remaining > SAMPLE_COMMAND_TIMEOUT_SECONDS:
+                        started = time.perf_counter()
+                        sample["cpu_percent"] = process_sample(self.device, min(SAMPLE_COMMAND_TIMEOUT_SECONDS, remaining))
+                        self.spent += time.perf_counter() - started
+                        self.truncated |= any(value is None for key, value in sample["cpu_percent"].items() if key != "app")
+                    else:
+                        self.truncated = True
+                    next_process += PROCESS_SAMPLE_INTERVAL_SECONDS
+                    if next_process <= time.monotonic():
+                        next_process = time.monotonic() + PROCESS_SAMPLE_INTERVAL_SECONDS
                 # The App is legitimately absent before launch, across relaunches and after exit; only a
                 # missing host or non-App category means the sample itself was limited.
-                self.truncated |= (sample["idle_percent"] is None or sample["load_1m"] is None
-                                   or any(value is None for key, value in sample["cpu_percent"].items() if key != "app"))
+                self.truncated |= sample["idle_percent"] is None or sample["load_1m"] is None
                 if self.stopped.is_set():
                     break
                 if elapsed > MAX_DIAGNOSTIC_SECONDS:
                     self.truncated = True
                     break
                 self.samples.append({"elapsed_seconds": elapsed, **sample})
+                next_tick += SAMPLE_INTERVAL_SECONDS
+                # Skip missed deadlines instead of issuing a burst after host descheduling.
+                if next_tick <= time.monotonic():
+                    next_tick = time.monotonic() + SAMPLE_INTERVAL_SECONDS
         except (OSError, ValueError, TypeError, AttributeError):
             self.truncated = True
         finally:
@@ -219,7 +351,9 @@ class CaseSampler:
         if self.closed:
             return
         self.closed = True
-        self.duration = min(MAX_DIAGNOSTIC_SECONDS, max(0, time.monotonic() - self.origin))
+        elapsed = time.monotonic() - self.origin
+        self.clock_stable = abs((time.time() - self.epoch) - elapsed) <= CLOCK_DRIFT_TOLERANCE_SECONDS
+        self.duration = min(MAX_DIAGNOSTIC_SECONDS, max(0, elapsed))
         self.stopped.set()
         if self.thread is not None:
             self.thread.join(STOP_TIMEOUT_SECONDS)
@@ -229,7 +363,7 @@ class CaseSampler:
             self.publish()
 
     def bind_failure(self, epoch):
-        elapsed = finite(epoch - self.epoch, self.duration) if type(epoch) in (int, float) else None
+        elapsed = finite(epoch - self.epoch, self.duration) if self.clock_stable and type(epoch) in (int, float) else None
         if elapsed is not None and (self.first_failure is None or elapsed < self.first_failure):
             self.first_failure = elapsed
         self.publish()
@@ -283,21 +417,37 @@ def native_time(node, field):
     value = legacy_value(node, field)
     if not isinstance(value, str):
         return None
+    match = re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?"
+                         r"(?:Z|[+-][0-9]{2}:?(?P<offset_minutes>[0-9]{2}))", value)
+    if match is None or (match["offset_minutes"] is not None and int(match["offset_minutes"]) >= 60):
+        return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+        value = re.sub(r"([+-]\d{2})(\d{2})$", r"\1:\2", value)
+        if value.endswith("Z"):
+            value = value[:-1] + "+00:00"
+        parsed = datetime.fromisoformat(value)
+        return parsed.timestamp() if parsed.tzinfo is not None and parsed.utcoffset() is not None else None
     except (ValueError, OverflowError):
         return None
+
+
+def native_first_failure(summary):
+    """Use the earliest recorded failure only when its timestamp identifies one failure."""
+    failures = [(native_time(row, "timestamp"), legacy_value(row, "uuid"))
+                for row in legacy_rows(summary, "failureSummaries")]
+    if not failures or any(at is None for at, _ in failures):
+        return None, None
+    earliest = min(at for at, _ in failures)
+    matches = [row for row in failures if row[0] == earliest]
+    return matches[0] if len(matches) == 1 else (None, None)
 
 
 def native_breakdown(summary, receipt):
     """Match native bounds, refusing ambiguity rather than estimating durations."""
     empty = dict.fromkeys(NATIVE_ACTIVITY_FIELDS)
-    failures = [(native_time(row, "timestamp"), legacy_value(row, "uuid"))
-                for row in legacy_rows(summary, "failureSummaries")]
-    failures = [(at, identifier) for at, identifier in failures if at is not None]
-    if not failures:
+    failed_at, failure_id = native_first_failure(summary)
+    if failed_at is None:
         return empty, None
-    failed_at, failure_id = min(failures, key=lambda row: row[0])
     flattened = []
     def visit(nodes, ancestors=()):
         for node in nodes:
@@ -310,12 +460,14 @@ def native_breakdown(summary, receipt):
             return None
         return start, end
     action = None
+    ambiguous_action = False
     duration = receipt["timing"]["action_duration_seconds"]
     if receipt["step"] == "select" and receipt["action"] == "tap" and duration is not None:
         candidates = [(node, bounds(node)) for node, _ in flattened
                       if str(legacy_value(node, "title") or "").startswith("Tap ")]
         candidates = [(node, interval) for node, interval in candidates if interval is not None
                       and interval[1] <= failed_at and abs(interval[1] - interval[0] - duration) <= NATIVE_MATCH_TOLERANCE_SECONDS]
+        ambiguous_action = len(candidates) > 1
         # The current tap is the latest preceding tap, and its duration must uniquely bind it.
         latest = max((bounds(node)[1] for node, _ in flattened if bounds(node) is not None
                       and str(legacy_value(node, "title") or "").startswith("Tap ") and bounds(node)[1] <= failed_at), default=None)
@@ -327,8 +479,10 @@ def native_breakdown(summary, receipt):
                       and any(row.get("_value") == failure_id for row in legacy_rows(node, "failureSummaryIDs"))]
         if len(associated) == 1:
             action = associated[0]
+        elif len(associated) > 1:
+            ambiguous_action = True
     if action is None or bounds(action) is None:
-        return empty, failed_at
+        return empty, None if ambiguous_action else failed_at
     descendants = []
     def gather(node):
         for child in legacy_rows(node, "subactivities"):
@@ -347,7 +501,7 @@ def native_breakdown(summary, receipt):
                 descendants.append(node)
     syntheses = [bounds(node) for node in descendants if legacy_value(node, "title") == "Synthesize event" and bounds(node) is not None]
     if len(syntheses) > 1:
-        return empty, failed_at
+        return empty, None
     synthesis = syntheses[0] if syntheses else None
     intervals = {key: [] for key in NATIVE_ACTIVITY_FIELDS}
     for node in descendants:
@@ -387,10 +541,9 @@ def collect_native_activity(bundle, root, failed_nodes, sampler, *, recorder, ti
     """Inspect retained private xcresult objects; publish only checked numeric projections."""
     if sampler is None or recorder is None or not failed_nodes:
         return
-    timeout = min(timeout, COLLECTION_BUDGET_SECONDS["xcode"] - recorder.charged["xcode"] - BOOKKEEPING_RESERVE_SECONDS)
-    if timeout <= 0:
-        recorder.truncate("collection-budget-exhausted")
-        return
+    budget = getattr(recorder, "native_activity_budget", None)
+    if budget is None:
+        budget = recorder.native_activity_budget = NativeActivityBudget(NATIVE_CASE_BUDGET_SECONDS)
     def read(reference, deadline):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -400,8 +553,8 @@ def collect_native_activity(bundle, root, failed_nodes, sampler, *, recorder, ti
         if len(result.stdout) > 16 * 1024 * 1024:
             return {}
         return json.loads(result.stdout)
-    def operation():
-        deadline = time.monotonic() + timeout
+    def operation(limit):
+        deadline = time.monotonic() + limit
         references = []
         for action in legacy_rows(root, "actions"):
             action_result = action.get("actionResult", {})
@@ -437,17 +590,17 @@ def collect_native_activity(bundle, root, failed_nodes, sampler, *, recorder, ti
                 continue
             summary = read(reference, deadline)
             if receipt is None or receipt["source"] != "xctest":
-                dates = [native_time(row, "timestamp") for row in legacy_rows(summary, "failureSummaries")]
-                dates = [value for value in dates if value is not None]
-                projected.append((node, None, min(dates) if dates else None))
+                failed_at, _ = native_first_failure(summary)
+                projected.append((node, None, failed_at))
             else:
                 numeric, failed_at = native_breakdown(summary, receipt)
                 enriched = {**receipt, "native_activity_seconds": numeric}
                 if public_first_failure(enriched) is not None:
                     projected.append((node, enriched, failed_at))
         return projected
-    projected = recorder.collect("xcode", operation, cap=timeout)
+    projected = budget.collect(sampler.sequence, operation, cap=min(timeout, NATIVE_CASE_BUDGET_SECONDS))
     for node, receipt, failed_at in projected or []:
         if receipt is not None:
             node["first_failure"] = receipt
-        sampler.bind_failure(failed_at)
+        if failed_at is not None:
+            sampler.bind_failure(failed_at)

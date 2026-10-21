@@ -160,7 +160,7 @@ and unknown measurements remain null.
 | `sample_count`, `truncated` | Integer 0–43,201 retained samples and boolean indicating incomplete collection or retention |
 | `idle_percent_min`, `idle_percent_median` | Host idle CPU percentages 0–100 or null; minimum cannot exceed median |
 | `load_1m_max`, `app_cpu_percent_peak` | Maximum 1-minute load and peak App CPU percentage, 0–10^6 or null; process CPU uses one core = 100% and may exceed 100% |
-| `sampler_wall_seconds`, `sampler_cpu_seconds` | Active collection wall time 0–86,400 and collector plus child-process CPU time 0–10^12 seconds, or null; sleeping time is excluded; periodic sampling has the separate bounded allowance described below |
+| `sampler_wall_seconds`, `sampler_cpu_seconds` | Process-snapshot collection wall time 0–86,400 and collector plus child-process CPU time 0–10^12 seconds, or null; sleeping and separately bounded host reads are excluded; periodic sampling has the separate bounded allowance described below |
 | `first_failure_elapsed_seconds` | Offset from this case's sampling origin, 0–case duration, or null if no failure is bound; absence never proves a passing case |
 | `failure_samples` | At most six samples, no more than `sample_count`, strictly increasing by `elapsed_seconds`, within both the case duration and ±5 seconds of the first failure; empty when the failure time is unavailable |
 
@@ -199,25 +199,71 @@ only PID, parent PID, CPU and short executable names in private memory, inspects
 candidate App executable paths to distinguish the selected simulator, then
 discards every PID/name/path. It never requests argv or process environments.
 Unknown App ownership or a failed process snapshot makes category CPU unavailable.
-The first interval primes the host counters. Collection pauses for the nominal
-interval plus the preceding sample's work; stop never waits for another interval.
-Periodic sampling has a separate 180-second active-wall allowance shared across
+The first host read primes the counters. Idle is null when successive successful
+reads are less than one second apart, including a quick read after a late worker;
+each successful read still refreshes the tick and monotonic-time baseline.
+Host idle/load ticks follow two-second
+deadlines, skipping missed deadlines rather than issuing bursts. Each native host
+read runs in a daemon worker with a 0.2-second wait cap; observed host-read wall
+time has a separate five-second allowance per case, including thread startup.
+A timed-out host read skips ticks while its worker is still running, then fresh
+reads resume within the remaining allowance; late values are discarded. Stop
+never waits for another interval or starts a new process snapshot. These cheap
+reads do not consume the process-snapshot pool and are excluded from
+`sampler_wall_seconds`.
+Process snapshots run at most once per ten seconds and have a separate
+180-second active-wall allowance shared across
 the job ledger. Each successor subtracts all persisted `sampler_wall_seconds`
 costs; an unknown predecessor cost exhausts the allowance conservatively. An
-unavailable inherited diagnostic ledger prevents sampling instead of granting
-a fresh allowance. No
+unavailable inherited diagnostic ledger disables process snapshots instead of granting
+a fresh allowance, while idle/load ticks continue. Hosted preparation ledger IO
+has a 0.1-second cap; an IO timeout can make inherited Xcode accounting unavailable
+even on a Release lifecycle shard that has not sampled yet. No
 fresh allowance is granted per case. This preserves the existing 10-second
-Xcode diagnostic pool for native extraction and anomaly diagnostics, and keeps
-the sampler running through a 20–30 minute shard. At a two-second interval,
-900 samples cost about 28 seconds at the measured 31 ms/sample or 92 seconds
-at the measured busy-host 102 ms/sample. The 180-second allowance is bounded,
-not a guarantee under arbitrarily slow host scheduling. Caps and unavailable
-measurements set per-case truncation. An unfinished collector marks cost
+Xcode diagnostic pool for anomaly diagnostics, and keeps
+host sampler running through a 20–30 minute shard. At a ten-second process cadence,
+180 snapshots costing 1.1 seconds each would exhaust the pool near the end of a
+30-minute shard; only process snapshots stop, preserving late idle/load evidence.
+Ticks without a scheduled process snapshot have null categories and do not mark
+the case truncated. Pool exhaustion, unavailable accounting, failed scheduled
+snapshots and missing host measurements do mark truncation. An unfinished collector marks cost
 unavailable and prevents successor sampling from reclaiming its allowance.
 `sampler_cpu_seconds` is currently null because per-case child CPU cannot be
 isolated from other runner children; isolated cost measurements include the
 collector and `ps` child via process resource usage. Collection ends when Xcode
 returns; no extra wait is added to obtain future failure-window samples.
+The failure timestamp is bound after XCTest returns, so historical category CPU
+cannot be freshly sampled at the failure time; only actual periodic snapshots
+within the existing five-second window are published, with no backfilled values.
+
+Native activity and failure-time extraction has an independent two-second
+allowance per case and twenty seconds per strict job. The tracer owns the job
+counter in its parent process and precharges up to two seconds before each warm
+child via `--native-diagnostics-allowance-seconds` (0–2); it does not reclaim
+unverified child costs. Successful cases also hold their prepaid reservation.
+The child's counter is shared across that case's fixture sessions and listed
+attempts; standalone strict runs default to two seconds. These allowances remain
+usable when diagnostic-ledger IO fails and never borrow the Xcode or process
+sampling pools. Capped daemon workers precharge before reading; completed work
+refunds unused time locally, while timed-out work does not. Late results cannot
+bind a failure epoch. No new collection-cost field is published.
+
+Extraction requires one tests reference, one matching selected method and a
+unique earliest failure timestamp. Native timestamps require a full date and
+time with optional fractional seconds and an explicit `Z`, `+HHMM`/`-HHMM`, or
+`+HH:MM`/`-HH:MM` offset; invalid offset minutes and trailing data are rejected.
+Missing/oversized objects, timeouts and
+ambiguous method, failure or synthesis bindings leave the failure window
+empty. Ambiguous tap durations also leave it empty unless a unique XCTest
+failure association identifies the native action. If the failure timestamp is
+unique but native action details are simply absent, the timestamp can still bind
+host samples while native durations remain
+null. Existing numeric-only native duration and failure-sample fields are used;
+timestamps, activity titles, paths and identifiers remain private.
+
+Native dates accept compact and colon-separated timezone offsets and `Z` on
+Python 3.9. At stop, the case compares wall-clock and monotonic elapsed time;
+a difference greater than 0.5 seconds prevents failure-window binding.
 
 Current producers collect preparation and Xcode diagnostics only. Fixture-scope
 events remain reader-compatible, but no fixture diagnostics are emitted or
@@ -254,6 +300,10 @@ Each write uses a distinct temporary file, including overlapping timed-out worke
 The refund deadline check precedes atomic replacement: a scheduling pause between
 them can commit after the caller times out. That window can undercount up to
 about 0.09 s per late commit; the caller still waits at most its 0.1 s IO cap.
+Hosted load has exhausted this cap before strict cases started. Raising it to
+0.5 s would also widen that late-refund undercount window to about 0.49 s per
+commit, so the cap stays unchanged pending a ledger commit-protocol change.
+Host ticks and the separately prepaid native allowance do not depend on this IO.
 Exhausting preparation sampling never gates persistence of Xcode
 events. Start samples leave 0.5 s for anomaly sampling; the IO pool has its own
 exhaustion/truncation boundary rather than borrowing another scope's budget.
@@ -288,7 +338,11 @@ recognized public phase, and official-export existence booleans. Existing bundle
 export, retention and privacy rules still apply. Ready is written at the existing
 point after generation and bind; health and the 60 s deadline remain authoritative.
 
-The approved per-job ceilings apply across repeated preparations and Xcode invocations.
+The following preparation/anomaly estimates exclude periodic resource sampling,
+its separately bounded host reads and the additional native allowance above.
+Native extraction adds at most twenty seconds per strict job; actual elapsed
+cost is not published separately. The approved preparation/anomaly ceilings apply
+across repeated preparations and Xcode invocations.
 Both the 25 strict jobs and 18 fixture UI jobs use the shared producers: at most
 43 × 5 s = 3.59 machine minutes/night for preparation. Xcode diagnostics add at
 most 10 s (0.167 machine minutes) per failed strict job. With one such failed

@@ -982,11 +982,12 @@ retain nulls. Adjacent native AX root acquisitions within 0.1 seconds of the
 tap boundaries are included, using their own actual start/finish bounds.
 Pre/post-event idle refer only to the App under test; SpringBoard idle is excluded.
 Overlapping intervals are unioned within a category; different categories may
-overlap and must not be added as an action total. The earliest official failure
+overlap and must not be added as an action total. The unique earliest official failure
 timestamp binds the resource window even if no recorder receipt was available.
 Unavailable native exports leave the original receipt/result intact. Additional
-reads use the existing Xcode diagnostic collection allowance, at most two seconds
-per export; successful methods perform no additional xcresult activity reads.
+reads use the independent native allowance specified in
+[bounded infrastructure diagnostics](CI_SUMMARY.md#bounded-infrastructure-diagnostics);
+successful methods perform no additional xcresult activity reads.
 Markdown uses the compact fixed labels `pre`, `window`, `synth`, `post`, and
 `ax` for these five fields, respectively; the JSON retains the full field names
 and values. If all five values are null, Markdown emits only `native=unavailable`.
@@ -997,11 +998,9 @@ are dropped and no result changes.
 
 Reader support for bounded per-case host CPU/load evidence is specified in
 [bounded infrastructure diagnostics](CI_SUMMARY.md#bounded-infrastructure-diagnostics).
-The sampler publishes its measured active wall cost, retains samples within
-±5 seconds of the first failure, and shares a separate 180-second sampling
-allowance across the job ledger. It preserves the existing Xcode diagnostic
-allowance for native extraction and anomaly diagnostics, and leaves
-every test deadline, action, retry and verdict unchanged. A low idle measurement
+The sampler's cadence, process-snapshot costs, retention and independent
+allowances are defined in that contract. It leaves every test deadline, action,
+retry and verdict unchanged. A low idle measurement
 is contention evidence, not by itself proof of why an App action was slow.
 The case manifest and `trace.json`'s `warm[].bounded_diagnostics` bind resource
 sequences to the enclosing case. These copies retain only that case's resources,

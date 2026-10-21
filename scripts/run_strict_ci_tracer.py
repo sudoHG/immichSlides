@@ -290,6 +290,8 @@ def main(argv=None):
     completed = False
     simulator_prepared = False
     preparation_failure = None
+    from strict_e2e_resource_diagnostics import NativeActivityBudget
+    native_budget = NativeActivityBudget()
 
     def checkpoint():
         diagnostics.load(diagnostics_path)
@@ -317,11 +319,13 @@ def main(argv=None):
         write_summary(summary, records)
 
     def invoke(case, evidence, derived, warm):
+        native_allowance = native_budget.reserve_case() if warm else 0
         command = [sys.executable, "-B", str(ROOT / "scripts/run_strict_e2e.py"),
                    "--platform", args.platform, "--destination", args.destination, "--suite", case["suite"],
                    "--configuration", case["configuration"], "--scenario", case["scenario"], "--fixture-set", case["fixture"],
                    "--evidence-dir", str(evidence), "--derived-data-path", str(derived),
                    "--diagnostics-receipt", str(diagnostics_path),
+                   "--native-diagnostics-allowance-seconds", str(native_allowance),
                    "--cloned-source-packages-path", str(output / "SourcePackages"),
                    "--cold-timeout-seconds", str(args.cold_timeout_seconds), "--warm-timeout-seconds", str(args.warm_timeout_seconds),
                    "--min-free-gib", str(args.min_free_gib), "--test-without-building" if warm else "--warm-up-only"]

@@ -680,6 +680,8 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
     parser.add_argument("--destination", required=True)
     parser.add_argument("--evidence-dir", type=Path, required=True)
     parser.add_argument("--diagnostics-receipt", type=Path, help="shared job measurement ledger")
+    parser.add_argument("--native-diagnostics-allowance-seconds", type=int, choices=range(3), default=2,
+                        help="prepaid native failure-extraction allowance supplied by the job coordinator")
     parser.add_argument("--simulator-boot-submitted", action="store_true",
                         help="Reuse a dedicated device's submitted boot; still require bootstatus, readiness and resets")
     parser.add_argument("--fixture-set", choices=("a", "b"), default="a")
@@ -703,6 +705,9 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         help=f"minimum free GiB required before xcodebuild (default: {MIN_DATA_GIB})",
     )
     arguments = parser.parse_args(argv)
+    from strict_e2e_resource_diagnostics import NativeActivityBudget
+    if active() is not None:
+        active().native_activity_budget = NativeActivityBudget(arguments.native_diagnostics_allowance_seconds)
     if arguments.listed_retry_device and not arguments.test_without_building:
         parser.error("listed-only retry requires --test-without-building")
     if arguments.listed_retry_device and (arguments.platform == "tvos") != (arguments.listed_retry_device == "tv"):
