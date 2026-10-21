@@ -280,6 +280,11 @@ after its back-navigation loop, including the early-ready path, before returning
 No refresh restarts a deadline or sends a second reveal.
 Playback History Settings entry and sampling-overlay pre-Next retain their
 explicit refresh assertions so their mapped failure prefixes stay available.
+The SmartFill manual-lifecycle Pause also requires a complete stable scene and
+history cursor in the control's own tap snapshot, within the same appearance
+deadline. A legal pause can freeze a transition indefinitely; the later stable
+identity check cannot wait for that paused transition to finish. The tap gate
+adds no snapshot, reveal or control-tap retry, and all post-Pause checks remain.
 
 If a snapshot shows playback with the control outside the window, the waiter
 may reveal once within its original deadline, then only observe; a failed

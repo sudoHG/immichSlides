@@ -8,7 +8,7 @@ extension immichSlidesUITests {
         let app = try launchConfiguredAppAtModeSelection(shouldResetState: true)
         startRandomPlaybackFromModeSelection(app: app)
 
-        openSettingsFromSlideshow(app: app)
+        app.tapSlideshowControlBarButton(identifier: "slideshow.control.settings.button")
         openSettingsSection(app: app, sectionID: "settings.item.playback")
 
         let playbackModePicker = app.segmentedControls["settings.playback.mode.picker"]

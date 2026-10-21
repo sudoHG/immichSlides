@@ -369,7 +369,12 @@ extension PlaybackHistoryIOSUITests {
 
         announceManualLifecycleCaptureWindowIfRequested(mode: mode, kind: "pause-next-previous-resume")
 
-        app.tapSlideshowControlBarButton(identifier: "slideshow.control.playPause.button")
+        // A legal pause freezes transitions too; the later complete-scene read needs a stable scene at the tap.
+        app.tapSlideshowControlBarButton(
+            identifier: "slideshow.control.playPause.button",
+            requiringSnapshot: { snapshots in
+                mode != .smartFill || self.currentCompleteVisibleSmartFillScene(app: app, snapshots: snapshots) != nil
+            })
         XCTAssertTrue(waitForPlayPauseState(app: app, expected: "play", timeout: TestWait.seconds(.product(3))))
         let paused = try waitForPresentationProbe(app: app, timeout: TestWait.seconds(.product(3)))
         appendManualLifecycleRuntimeEvidence(app: app, mode: mode, event: "paused", probe: paused)
