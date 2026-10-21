@@ -2143,8 +2143,147 @@ class StrictCITracerTests(unittest.TestCase):
             self.assertIs(timeout, raised.exception)
             self.assertEqual([], list(output.iterdir()))
 
+    def test_hosted_timing_producer_round_trips_only_qualified_failures(self):
+        import copy
+        import contextlib
+        import io
+        from ci_summary import parse_summary
+        from ci_nightly import aggregate_nightly
+        from ci_report import method_observations
+        from test_ci_summary import hosted_timeout_summary
+
+        mutations = (None, "informational", "local", "self-hosted", "missing host", "conflicting host", "missing samples",
+            "unbound epoch", "one-sided", "idle above limit", "null idle", "outside window", "ambiguous invocation",
+            "unknown surface", "wrong surface", "wrong element", "wrong step", "snapshot hang", "visible controls",
+            "BLACK", "BLANK", "UNRECOGNIZABLE", "process", "validator", "scene_identity", "control_state",
+            "interval_readback", "history_navigation", "continue_timing", "firstboot_setup", "mode-departure",
+            "not timed out", "missing deadline", "post-event idle only", "outer timeout", "interrupted",
+            "missing log", "rebuild", "changed products", "official error", "case infrastructure", "missing method")
+        for mutation in mutations:
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as raw:
+                seed, _ = hosted_timeout_summary()
+                row = seed["population"]["observed"][0]
+                ledger = seed["strict_case_evidence"][0]["bounded_diagnostics"]
+                receipt = row["first_failure"]
+                resource = ledger["case_resources"][0]
+                if mutation in {"self-hosted", "missing host"}:
+                    ledger["events"][0]["sample"]["runner_hosted"] = False if mutation == "self-hosted" else None
+                elif mutation == "conflicting host":
+                    event = copy.deepcopy(ledger["events"][0])
+                    event["sample"]["runner_hosted"] = False
+                    ledger["events"].append(event)
+                elif mutation in {"missing samples", "unbound epoch"}:
+                    resource["failure_samples"] = []
+                    if mutation == "unbound epoch":
+                        resource["first_failure_elapsed_seconds"] = None
+                elif mutation == "one-sided":
+                    resource["failure_samples"][1]["elapsed_seconds"] = 7
+                elif mutation in {"idle above limit", "null idle"}:
+                    resource["failure_samples"][1]["idle_percent"] = 5.01 if mutation == "idle above limit" else None
+                elif mutation == "outside window":
+                    resource["failure_samples"][0]["elapsed_seconds"] = 2.99
+                elif mutation == "ambiguous invocation":
+                    ledger["case_resources"].append(dict(resource, sequence=5))
+                elif mutation in {"unknown surface", "wrong surface"}:
+                    receipt["state"]["surface"] = "unknown" if mutation == "unknown surface" else "mode"
+                elif mutation == "wrong element":
+                    receipt["element"] = "settings.item.playback"
+                elif mutation == "wrong step":
+                    receipt["step"] = "capture-frame"
+                elif mutation == "snapshot hang":
+                    row.update(failure_phase="unknown", failure_class="snapshot_query")
+                elif mutation == "visible controls":
+                    row.update(failure_phase="hidden_controls", failure_class="hidden_controls")
+                    receipt["state"]["control_bar"] = "visible"
+                elif mutation in {"BLACK", "BLANK", "UNRECOGNIZABLE"}:
+                    receipt["state"]["scene_status"] = mutation
+                elif mutation == "process":
+                    receipt["state"]["app"] = "not-running"
+                elif mutation == "validator":
+                    row["validator_failure_message"] = "All black must not count as a pass"
+                elif mutation in {"scene_identity", "control_state", "interval_readback"}:
+                    row["failure_class"] = mutation
+                elif mutation in {"history_navigation", "continue_timing", "firstboot_setup"}:
+                    row["failure_phase"] = mutation
+                elif mutation == "mode-departure":
+                    row.update(failure_phase="playback_entry")
+                    receipt.update(step="mode-departure")
+                elif mutation == "not timed out":
+                    receipt["timing"]["wait_elapsed_seconds"] = 4.99
+                elif mutation == "missing deadline":
+                    receipt["timing"]["deadline_seconds"] = None
+                elif mutation == "post-event idle only":
+                    receipt["timing"]["wait_elapsed_seconds"] = None
+                    receipt["native_activity_seconds"] = {key: None for key in (
+                        "pre_event_idle", "find_window", "synthesize_event", "post_event_idle", "ax_root_acquisition")}
+                    receipt["native_activity_seconds"]["post_event_idle"] = 30
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    code, records, trace, summary = self._produce_validator_records(Path(raw), "unused",
+                        receipt_suite=None, runner_exit=124 if mutation == "outer timeout" else 130 if mutation == "interrupted" else 65,
+                        nightly=mutation != "local", invocation_fault=mutation,
+                        timing_failure=(row, ledger), case=dict(platform="ios", device="iphone", configuration="Debug",
+                            suite="filter-vision" if mutation == "informational" else "smoke", scenario="normal", fixture="a"))
+                observed = parse_summary((records / "summary.json").read_text())["population"]["observed"][0]
+                self.assertEqual("failed", observed["outcome"])
+                self.assertEqual(124 if mutation == "outer timeout" else 130 if mutation == "interrupted" else 65,
+                    observed["attempts"][0]["exit_code"])
+                self.assertEqual(0 if mutation in {None, "informational"} else 1, code)
+                self.assertEqual(mutation is None, "environment_limit" in observed)
+                self.assertEqual(mutation is None, "::warning title=Environment-limited strict timing::" in output.getvalue())
+                informational = [item["suite"] for item in json.loads((Path(raw) / "manifest.json").read_text()).get("informational", [])]
+                aggregate = aggregate_nightly(summary["population"]["declared"], [summary], live_in_scope=False,
+                    informational=informational)
+                self.assertEqual("environment-limited" if mutation is None else "passed" if mutation == "informational" else "failed",
+                    aggregate["status"])
+                if mutation == "informational":
+                    self.assertEqual("passed", summary["status"])
+                    self.assertEqual([observed], aggregate["informational"])
+                if mutation is None:
+                    methods, missing = method_observations(summary, trace, runner_hosted=True)
+                    self.assertEqual([], missing)
+                    self.assertEqual(observed["environment_limit"], methods[0]["environment_limit"])
+                    self.assertEqual(observed["environment_limit"], observed["attempts"][0]["environment_limit"])
+                    self.assertIn("ENVIRONMENT-LIMITED", (records / "summary.md").read_text())
+                else:
+                    self.assertNotIn("environment_limit", observed["attempts"][0])
+
+    def test_environment_producer_keeps_mixed_and_incomplete_shards_red_and_rejects_bad_projection(self):
+        import copy
+        from ci_summary import observation, parse_summary
+        from run_strict_ci_tracer import evaluate_tracer, produce_environment_limits
+        with tempfile.TemporaryDirectory() as raw:
+            from test_ci_summary import hosted_timeout_summary
+            seed, _ = hosted_timeout_summary()
+            row = seed["population"]["observed"][0]
+            _, _, trace, summary = self._produce_validator_records(Path(raw), "unused", receipt_suite=None,
+                runner_exit=65, nightly=True, timing_failure=(row, seed["strict_case_evidence"][0]["bounded_diagnostics"]),
+                case=dict(platform="ios", device="iphone", configuration="Debug", suite="smoke", scenario="normal", fixture="a"))
+        for mutation in ("mixed", "missing", "missing observation", "infrastructure", "bad projection"):
+            with self.subTest(mutation=mutation):
+                candidate = copy.deepcopy(summary)
+                candidate.pop("strict_case_evidence")
+                candidate["population"]["observed"], candidate["status"] = evaluate_tracer(
+                    candidate["population"]["declared"], trace["warm"])
+                if mutation in {"mixed", "missing", "missing observation"}:
+                    extra = copy.deepcopy(candidate["population"]["declared"][0])
+                    extra["dimensions"]["fixture"] = "b"
+                    candidate["population"]["declared"].append(extra)
+                    if mutation != "missing observation":
+                        candidate["population"]["observed"].append(observation(extra,
+                            "failed" if mutation == "mixed" else "not-run", 0, exit_code=65 if mutation == "mixed" else None))
+                elif mutation == "infrastructure":
+                    candidate["infrastructure"].append({"code": "cleanup-failed", "message": "Synthetic cleanup failure"})
+                proof = dict(summary["population"]["observed"][0]["environment_limit"], unexpected="refused")
+                with mock.patch("ci_failure_diagnostics.environment_limit_evidence", return_value=proof) if mutation == "bad projection" else ExitStack():
+                    self.assertEqual(1, produce_environment_limits(candidate, trace["warm"]))
+                observed = parse_summary(candidate)["population"]["observed"][0]
+                self.assertEqual(mutation != "bad projection", "environment_limit" in observed)
+                self.assertEqual("failed", observed["outcome"])
+
     def _produce_validator_records(self, directory, error, *, verdict="FAIL", runner_exit=2,
-                                   receipt_suite="tvos-switch", nightly=False, child_load_timeout=False, case=None):
+                                   receipt_suite="tvos-switch", nightly=False, child_load_timeout=False, case=None,
+                                   timing_failure=None, invocation_fault=None):
         import run_strict_ci_tracer as tracer
         case = case or {"platform": "tvos", "device": "tv", "configuration": "Release",
                 "suite": "tvos-switch", "scenario": "normal", "fixture": "a"}
@@ -2193,26 +2332,43 @@ raise SystemExit(65)
                 self.assertEqual(65, real_runner([sys.executable, "-B", "-c", child, receipt],
                     SCRIPT_DIR, directory / "child.log", **_kwargs))
             evidence.mkdir(parents=True)
-            (evidence / "case-manifest.json").write_text(json.dumps({"infrastructure": [],
+            details = {"infrastructure": [],
                 "source_sha": identity["commit_sha"], "platform": case["platform"], "suite": case["suite"],
                 "scenario": case["scenario"], "fixture_set": case["fixture"],
-                "fixture_sha256": FROZEN_FIXTURE_SHA256[case["fixture"]]}))
+                "fixture_sha256": FROZEN_FIXTURE_SHA256[case["fixture"]]}
+            if timing_failure is not None:
+                details["bounded_diagnostics"] = timing_failure[1]
+            if invocation_fault == "case infrastructure":
+                details["infrastructure"] = [{"code": "cleanup-failed", "message": "Synthetic cleanup failure"}]
+            (evidence / "case-manifest.json").write_text(json.dumps(details))
             if receipt_suite is not None:
                 message = error(evidence) if callable(error) else error
                 (evidence / "visual-identity-runner.json").write_text(json.dumps({
                     "suite": receipt_suite, "verdict": verdict, "error": message}))
-            (evidence / "xcodebuild.log").write_text("test-without-building\n")
+            if invocation_fault != "missing log":
+                (evidence / "xcodebuild.log").write_text("SwiftCompile synthetic\n" if invocation_fault == "rebuild" else "test-without-building\n")
             (evidence / "xcodebuild-reuse.json").write_text(json.dumps({"products_unchanged": True}))
             sessions = [("-" + entry["name"], entry["selector"]) for entry in FILTER_PERSON_SESSIONS] if case["suite"] == "filter-person" else [
                 ("", tracer.resolve_suite_selector(case["platform"], case["suite"]))]
-            (evidence / "official-summary.json").write_text(json.dumps({"totalTestCount": len(sessions), "passedTests": len(sessions),
-                "failedTests": 0, "skippedTests": 0, "result": "Passed"}))
+            (evidence / "official-summary.json").write_text(json.dumps({"totalTestCount": len(sessions),
+                "passedTests": 0 if timing_failure else len(sessions), "failedTests": len(sessions) if timing_failure else 0,
+                "skippedTests": 0, "result": "Failed" if timing_failure else "Passed"}))
             for suffix, selector in sessions:
-                (evidence / ("xcodebuild" + suffix + "-reuse.json")).write_text(json.dumps({"products_unchanged": True}))
+                (evidence / ("xcodebuild" + suffix + "-reuse.json")).write_text(json.dumps({"products_unchanged": invocation_fault != "changed products"}))
                 bundle, method = selector.split("/", 1)
+                failure = ({key: timing_failure[0][key] for key in ("failure_phase", "failure_class", "first_failure")}
+                           if timing_failure else {})
                 (evidence / ("official-tests" + suffix + ".json")).write_text(json.dumps({"testNodes": [{
                     "nodeType": "Unit test bundle", "name": bundle, "children": [{
-                        "nodeType": "Test Case", "nodeIdentifier": method + "()", "result": "Passed"}]}]}))
+                        "nodeType": "Test Case", "nodeIdentifier": method + "()",
+                        "result": "Failed" if timing_failure else "Passed", **failure}]}]}))
+            if timing_failure and "validator_failure_message" in timing_failure[0]:
+                (evidence / "visual-identity-runner.json").write_text(json.dumps({"suite": case["suite"],
+                    "verdict": "FAIL", "error": timing_failure[0]["validator_failure_message"]}))
+            if invocation_fault == "official error":
+                (evidence / "official-summary.json").write_text("{}")
+            if invocation_fault == "missing method":
+                (evidence / "official-tests.json").unlink()
             return runner_exit
 
         with mock.patch.object(tracer, "run_runner", side_effect=runner), \

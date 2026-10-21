@@ -244,8 +244,8 @@ instead of breaking report generation; raw failed outcomes remain unchanged.
 Old snapshots without the optional proof remain readable and unchanged.
 
 The outcome path is: `run_strict_e2e` official exports and first-failure/resource
-receipts → `run_strict_ci_tracer` case observation → `ci_summary` schema and
-`ci_failure_diagnostics` proof validation → `ci_nightly` strict union → this
+receipts → `run_strict_ci_tracer` case observation and validated environment-limit proof
+→ `ci_summary` schema and `ci_failure_diagnostics` proof validation → `ci_nightly` strict union → this
 reporter's independently bound method observations → compact 90-day history and
 issue decisions. `ci_flaky` retains the original assertion-failure retry policy
 for other cases; yellow is excluded, without editing the registry.
