@@ -78,6 +78,73 @@ extension StrictE2EFilterIOSUITests {
     }
 
     @MainActor
+    func captureStableAlbumPlaybackPNG(app: XCUIApplication, name: String) throws -> Data {
+        #if DEBUG
+        // Reuse the old 0.8 s settle + 4 s control-reveal budget; pixels are sampled only once.
+        let deadline = Date().addingTimeInterval(TestWait.seconds(.product(0.8)) + TestWait.seconds(.product(4)))
+        var before: [String: String] = [:]
+        let isReady = waitUntil(timeout: max(.zero, deadline.timeIntervalSinceNow)) {
+            before = self.albumSceneObservation(app: app)
+            return self.isPausedStableAlbumScene(before) && Date() < deadline
+        }
+        FirstFailureContext.mark("wait-scene", element: "slideshow.scenePresentation.contract.summary")
+        guard isReady else {
+            attachStrictSceneObservation(before: before, after: before, name: "\(name)-scene")
+            XCTFail("Visual ID failed \(name): no complete paused scene within the playback capture budget")
+            return Data()
+        }
+        let captureRequestedAt = Date().timeIntervalSince1970
+        let png = app.screenshotForFailureEvidence().pngRepresentation
+        let captureReturnedAt = Date().timeIntervalSince1970
+        let after = albumSceneObservation(app: app)
+        let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        try StrictE2EVisualEvidence.writeRequiredPNG(png, name: name)
+        attachStrictSceneObservation(before: before, after: after, name: "\(name)-scene")
+        try StrictE2EVisualEvidence.writeRequiredJSON(
+            [
+                "before": before, "after": after, "deadline_unix": deadline.timeIntervalSince1970,
+                "capture_requested_unix": captureRequestedAt, "capture_returned_unix": captureReturnedAt
+            ], name: "\(name)-window.json")
+        let beforeRender = SharedSceneEvidenceManifest.parseKeyValueFields(before["render"] ?? "")
+        let afterRender = SharedSceneEvidenceManifest.parseKeyValueFields(after["render"] ?? "")
+        let beforeManifest = SharedSceneEvidenceManifest.parseKeyValueFields(before["manifest"] ?? "")
+        let afterManifest = SharedSceneEvidenceManifest.parseKeyValueFields(after["manifest"] ?? "")
+        FirstFailureContext.mark("capture-frame", element: "app-window")
+        XCTAssertTrue(
+            !png.isEmpty && isPausedStableAlbumScene(after)
+                && beforeRender["layerIDs"] == afterRender["layerIDs"]
+                && beforeRender["historyCount"] == afterRender["historyCount"]
+                && beforeManifest["ledgerSceneAssets"] == afterManifest["ledgerSceneAssets"]
+                && beforeManifest["scenePublishTimestamp"] == afterManifest["scenePublishTimestamp"],
+            "Visual ID failed \(name): the single capture must retain the complete paused scene")
+        return png
+        #else
+        return capturePlaybackPNG(app: app, name: name)
+        #endif
+    }
+
+    private func isPausedStableAlbumScene(_ observation: [String: String]) -> Bool {
+        StrictE2ESceneCapture.isStableWindow(observation)
+            && SharedSceneEvidenceManifest.parseKeyValueFields(observation["render"] ?? "")["playbackPaused"] == "true"
+            && observation["entryHintVisible"] == "false"
+    }
+
+    @MainActor
+    private func albumSceneObservation(app: XCUIApplication) -> [String: String] {
+        var didSnapshotFail = false
+        let snapshots = app.evidenceSnapshotsByIdentifier { _ in didSnapshotFail = true }
+        return [
+            "manifest": snapshots["slideshow.smartfill.currentManifest.flag"]?.label ?? "",
+            "render": snapshots["slideshow.scenePresentation.contract.summary"]?.label ?? "",
+            "entryHintVisible": didSnapshotFail ? "unknown" : String(snapshots["slideshow.entryHint.banner"] != nil),
+            "observed_unix": String(Date().timeIntervalSince1970)
+        ]
+    }
+
+    @MainActor
     func tapNext(app: XCUIApplication) {
         revealPlaybackControls(app: app)
         let next = app.buttons["slideshow.control.next.button"]

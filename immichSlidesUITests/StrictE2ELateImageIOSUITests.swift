@@ -165,6 +165,7 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
                 "prompt_declined": didDeclinePrompt, "prompt_observed": didObservePrompt,
                 "prompt_checks": promptChecks, "pause_ready": isPauseReady, "play_pause_tap": playPauseTap
             ], name: "late-image-playback-entry.json")
+        FirstFailureContext.mark("wait-scene", element: "slideshow.control.playPause.button")
         guard isPauseReady else {
             if hasPromptObstacle {
                 XCTFail(
@@ -309,6 +310,7 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
                 "before": before, "after": after,
                 "capture_requested_unix": captureRequestedAt, "capture_returned_unix": captureReturnedAt
             ], name: "\(name)-window.json")
+        FirstFailureContext.mark("capture-frame", element: "app-window")
         XCTAssertTrue(
             [before, after].allSatisfy {
                 StrictE2ESceneCapture.isStableWindow($0) && $0["entryHintVisible"] == "false"
