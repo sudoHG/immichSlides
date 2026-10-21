@@ -310,18 +310,20 @@ extension AccessLifecycleTVOSUITests {
         intervalSeconds: Int
     ) throws -> [[String: Any]] {
         let interval = TimeInterval(intervalSeconds)
+        let midpointSetupAt = Date()
         ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
         moveFocus(.right, to: playPauseButton, maximumPresses: 3, message: "Focus must reach play/pause.")
-        // Reuse main's state-readback, half-cycle and midpoint focus budgets as one absolute deadline.
-        let midpointSetupAt = Date()
+        // Reuse main's two control/focus allocations, conditional readback and half-cycle as one deadline.
         let value = String(describing: playPauseButton.value ?? "")
         let isPlaying = value.contains("暂停") || value.lowercased().contains("pause")
         let midpointDeadline = midpointSetupAt.addingTimeInterval(
             TestWait.seconds(
                 .product(
                     (isPlaying ? 0 : AccessLifecycleTVOSUITestsWaitTiming.stateChangeTimeoutSeconds)
-                        + interval / 2 + AccessLifecycleTVOSUITestsWaitTiming.settingsChangeTimeoutSeconds
-                        + AccessLifecycleTVOSUITestsWaitTiming.stateChangeTimeoutSeconds + 3 * Timing.focusSettle))
+                        + interval / 2
+                        + 2
+                        * (AccessLifecycleTVOSUITestsWaitTiming.settingsChangeTimeoutSeconds
+                            + AccessLifecycleTVOSUITestsWaitTiming.stateChangeTimeoutSeconds + 3 * Timing.focusSettle)))
         )
         if isPlaying == false {
             FirstFailureRemote.press(.select)
