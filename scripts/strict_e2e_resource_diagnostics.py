@@ -24,6 +24,7 @@ SAMPLE_INTERVAL_SECONDS = 2
 PROCESS_SAMPLE_INTERVAL_SECONDS = 10
 SAMPLER_WALL_BUDGET_SECONDS = 180
 HOST_SAMPLE_TIMEOUT_SECONDS = 0.2
+HOST_IDLE_MIN_INTERVAL_SECONDS = 1
 HOST_WALL_BUDGET_SECONDS = 5
 SAMPLE_COMMAND_TIMEOUT_SECONDS = 0.5
 # Stop must outlast one in-flight sample command, or a slow `ps` leaves the sampler unfinished and voids the budget.
@@ -84,6 +85,7 @@ class HostCpu:
         self.library = None
         self.host = None
         self.previous = None
+        self.previous_read_at = None
         if sys.platform == "darwin":
             self.library = ctypes.CDLL("/usr/lib/libSystem.B.dylib")
             self.library.mach_host_self.restype = ctypes.c_uint32
@@ -98,9 +100,13 @@ class HostCpu:
         count = ctypes.c_uint32(4)
         if self.library.host_statistics(self.host, 3, ticks, ctypes.byref(count)) != 0 or count.value != 4:
             self.previous = None
+            self.previous_read_at = None
             return None
+        read_at = time.monotonic()
         previous, self.previous = self.previous, tuple(ticks)
-        if previous is None:
+        previous_read_at, self.previous_read_at = self.previous_read_at, read_at
+        # A late worker can leave only a few milliseconds of ticks before the next read.
+        if previous is None or previous_read_at is None or read_at - previous_read_at < HOST_IDLE_MIN_INTERVAL_SECONDS:
             return None
         delta = [(current - old) & 0xffffffff for old, current in zip(previous, ticks)]
         return 100 * delta[2] / sum(delta) if sum(delta) else None
@@ -303,7 +309,7 @@ class CaseSampler:
                 elapsed = time.monotonic() - self.origin
                 if sample is None:
                     self.truncated = True
-                    if getattr(host, "unavailable", False):
+                    if host.unavailable:
                         break
                     next_tick = time.monotonic() + SAMPLE_INTERVAL_SECONDS
                     continue
@@ -411,11 +417,16 @@ def native_time(node, field):
     value = legacy_value(node, field)
     if not isinstance(value, str):
         return None
+    match = re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?"
+                         r"(?:Z|[+-][0-9]{2}:?(?P<offset_minutes>[0-9]{2}))", value)
+    if match is None or (match["offset_minutes"] is not None and int(match["offset_minutes"]) >= 60):
+        return None
     try:
         value = re.sub(r"([+-]\d{2})(\d{2})$", r"\1:\2", value)
         if value.endswith("Z"):
             value = value[:-1] + "+00:00"
-        return datetime.fromisoformat(value).timestamp()
+        parsed = datetime.fromisoformat(value)
+        return parsed.timestamp() if parsed.tzinfo is not None and parsed.utcoffset() is not None else None
     except (ValueError, OverflowError):
         return None
 

@@ -199,7 +199,10 @@ only PID, parent PID, CPU and short executable names in private memory, inspects
 candidate App executable paths to distinguish the selected simulator, then
 discards every PID/name/path. It never requests argv or process environments.
 Unknown App ownership or a failed process snapshot makes category CPU unavailable.
-The first host read primes the counters. Host idle/load ticks follow two-second
+The first host read primes the counters. Idle is null when successive successful
+reads are less than one second apart, including a quick read after a late worker;
+each successful read still refreshes the tick and monotonic-time baseline.
+Host idle/load ticks follow two-second
 deadlines, skipping missed deadlines rather than issuing bursts. Each native host
 read runs in a daemon worker with a 0.2-second wait cap; observed host-read wall
 time has a separate five-second allowance per case, including thread startup.
@@ -246,7 +249,10 @@ refunds unused time locally, while timed-out work does not. Late results cannot
 bind a failure epoch. No new collection-cost field is published.
 
 Extraction requires one tests reference, one matching selected method and a
-unique earliest failure timestamp. Missing/oversized objects, timeouts and
+unique earliest failure timestamp. Native timestamps require a full date and
+time with optional fractional seconds and an explicit `Z`, `+HHMM`/`-HHMM`, or
+`+HH:MM`/`-HH:MM` offset; invalid offset minutes and trailing data are rejected.
+Missing/oversized objects, timeouts and
 ambiguous method, failure or synthesis bindings leave the failure window
 empty. Ambiguous tap durations also leave it empty unless a unique XCTest
 failure association identifies the native action. If the failure timestamp is

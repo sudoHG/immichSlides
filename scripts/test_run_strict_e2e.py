@@ -684,7 +684,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                     self.assertTrue(ready.wait(2), "Release lifecycle execution must receive host samples")
                 with mock.patch.object(resources, "SAMPLE_INTERVAL_SECONDS", 0.001), \
                         mock.patch.object(resources.CaseSampler, "start", start), \
-                        mock.patch.object(resources, "HostProbe", return_value=SimpleNamespace(sample=read_host, close=lambda: None)), \
+                        mock.patch.object(resources, "HostProbe", return_value=SimpleNamespace(sample=read_host, close=lambda: None, unavailable=False)), \
                         mock.patch.object(resources, "process_sample") as ps:
                     code, _, stderr, _ = self._run_p2_main(Path(raw) / "evidence",
                         suite="smoke" if configuration == "Debug" else f"{platform}-lifecycle-settings",
@@ -1528,9 +1528,13 @@ class FailureDiagnosticsTests(unittest.TestCase):
         from strict_e2e_resource_diagnostics import native_time
         for value in ("2021-03-03T14:43:24.000+0100", "2021-03-03T14:43:24.000+01:00",
                       "2021-03-03T12:43:24.000-0100", "2021-03-03T12:43:24.000-01:00",
-                      "2021-03-03T13:43:24.000Z"):
+                      "2021-03-03T13:43:24.000Z", "2021-03-03T13:43:24Z"):
             with self.subTest(value=value):
                 self.assertEqual(1614779004, native_time({"timestamp": {"_value": value}}, "timestamp"))
+        for value in ("2021-03-03T13:43:24.000", "2021-03-03", "2021-03-03T13:43:24.000+0099",
+                      "2021-03-03T13:43:24.000+0000Z", "2021-03-03T13:43:24.000Z\n"):
+            with self.subTest(value=value):
+                self.assertIsNone(native_time({"timestamp": {"_value": value}}, "timestamp"))
 
     def test_private_export_and_tracer_publish_only_enums_without_changing_failure(self):
         import subprocess
@@ -2965,7 +2969,7 @@ raise SystemExit(65)
         recorder = diagnostics.Recorder()
         with mock.patch.object(resources.threading, "Event", return_value=event), \
                 mock.patch.object(resources.threading, "Thread", side_effect=lambda *, target, daemon: SimpleNamespace(start=target, join=lambda timeout: None)), \
-                mock.patch.object(resources, "HostProbe", return_value=SimpleNamespace(sample=lambda: sample, close=lambda: None)), \
+                mock.patch.object(resources, "HostProbe", return_value=SimpleNamespace(sample=lambda: sample, close=lambda: None, unavailable=False)), \
                 mock.patch.object(resources, "resource_sample", return_value=sample), \
                 mock.patch.object(resources, "process_sample", return_value=sample["cpu_percent"]), \
                 mock.patch.object(resources.time, "monotonic", side_effect=lambda: clock[0]), \
@@ -2990,7 +2994,7 @@ raise SystemExit(65)
         partial = diagnostics.Recorder()
         with mock.patch.object(resources.threading, "Event", return_value=event), \
                 mock.patch.object(resources.threading, "Thread", side_effect=lambda *, target, daemon: SimpleNamespace(start=target, join=lambda timeout: None)), \
-                mock.patch.object(resources, "HostProbe", return_value=SimpleNamespace(sample=lambda: absent_app, close=lambda: None)), \
+                mock.patch.object(resources, "HostProbe", return_value=SimpleNamespace(sample=lambda: absent_app, close=lambda: None, unavailable=False)), \
                 mock.patch.object(resources, "resource_sample", return_value=absent_app), \
                 mock.patch.object(resources, "process_sample", side_effect=[absent_app["cpu_percent"], sample["cpu_percent"]]), \
                 mock.patch.object(resources.time, "monotonic", side_effect=lambda: clock[0]), \
@@ -3030,7 +3034,7 @@ raise SystemExit(65)
         recorder.charged["xcode"] = diagnostics.COLLECTION_BUDGET_SECONDS["xcode"]
         with mock.patch.object(resources.threading, "Event", return_value=event), \
                 mock.patch.object(resources.threading, "Thread", side_effect=lambda *, target, daemon: SimpleNamespace(start=target, join=lambda timeout: None)), \
-                mock.patch.object(resources, "HostProbe", return_value=SimpleNamespace(sample=host_sample, close=lambda: None)), \
+                mock.patch.object(resources, "HostProbe", return_value=SimpleNamespace(sample=host_sample, close=lambda: None, unavailable=False)), \
                 mock.patch.object(resources, "resource_sample", return_value=sample), \
                 mock.patch.object(resources.sys, "platform", "darwin"), \
                 mock.patch.object(resources.subprocess, "run", side_effect=slow_ps) as ps, \
@@ -3097,20 +3101,25 @@ raise SystemExit(65)
         from types import SimpleNamespace
         entered, release, closed = threading.Event(), threading.Event(), threading.Event()
         calls = []
-        def idle():
+        def host_statistics(host, flavor, ticks, count):
             calls.append(True)
             if len(calls) == 1:
                 entered.set()
                 if not release.wait(3):
                     raise OSError("test release deadline")
-            return 37
-        host = SimpleNamespace(idle=idle, close=closed.set)
+            ticks[:] = (65, 0, 37, 0) if len(calls) == 4 else (len(calls) - 1, 0, 0, 0)
+            return 0
+        with mock.patch.object(resources.sys, "platform", "linux"):
+            host = resources.HostCpu()
+        host.library = SimpleNamespace(host_statistics=host_statistics)
+        host.close = closed.set
         with mock.patch.object(resources, "HostCpu", return_value=host) as constructor, \
+                mock.patch.object(resources.time, "monotonic", side_effect=[10, 10.005, 10.010, 11.010]), \
                 mock.patch.object(resources.os, "getloadavg", return_value=(6, 5, 4)):
             probe = resources.HostProbe("device")
             try:
                 self.assertIsNone(probe.sample())
-                self.assertTrue(entered.is_set())
+                self.assertTrue(entered.wait(3))
                 self.assertIsNone(probe.sample(), "an in-flight read must not start another worker")
                 self.assertEqual(1, len(calls))
                 release.set()
@@ -3118,8 +3127,12 @@ raise SystemExit(65)
                 before = probe.spent
                 observation = probe.sample()
                 self.assertIsNotNone(observation, "sampling must resume after the slow worker finishes")
-                self.assertEqual((37, 6), (observation["idle_percent"], observation["load_1m"]))
+                self.assertEqual((None, 6), (observation["idle_percent"], observation["load_1m"]),
+                                 "a quick read after the late worker must not report zero idle")
                 self.assertGreater(probe.spent, before)
+                recovered = probe.sample()
+                self.assertIsNotNone(recovered)
+                self.assertEqual(37, recovered["idle_percent"], "a full interval must restore idle evidence")
                 constructor.assert_called_once()
             finally:
                 release.set()
