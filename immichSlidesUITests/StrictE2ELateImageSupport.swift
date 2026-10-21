@@ -67,6 +67,11 @@ extension XCTestCase {
 
     @MainActor
     func waitForLateImageScene(app: XCUIApplication, historyCount: Int, deadline: TimeInterval) -> Bool {
+        FirstFailureContext.beginWait(seconds: max(.zero, deadline - ProcessInfo.processInfo.systemUptime))
+        defer {
+            FirstFailureContext.endWait()
+            FirstFailureContext.mark("wait-scene", element: "slideshow.control.next.button")
+        }
         while ProcessInfo.processInfo.systemUptime < deadline {
             let observation = strictSceneFrameObservation(app: app)
             let render = SharedSceneEvidenceManifest.parseKeyValueFields(observation["render"] ?? "")

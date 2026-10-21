@@ -434,6 +434,16 @@ class StrictE2ERunnerTestsCasesConfiguration:
         self.assertEqual(set(environment), {
             "PATH", "STRICT_E2E_INPUT_SERVER_URL", "STRICT_E2E_INPUT_PUBLIC_KEY", "STRICT_E2E_INPUT_SCENARIO",
         })
+        from strict_e2e_runner_support import write_app_launch_environment_audit
+        for suite in ("album-empty", "journey-b", "tvos-flow", "tvos-person", "late-image",
+                      "ios-lifecycle-first-wake", "ios-lifecycle-settings"):
+            with self.subTest(suite=suite), tempfile.TemporaryDirectory() as directory:
+                evidence = Path(directory)
+                write_app_launch_environment_audit(evidence, suite)
+                audit = json.loads((evidence / "app-launch-environment-audit.json").read_text())
+                self.assertEqual(audit["declaration_kind"], "static_swift_launch_keys")
+                self.assertEqual(audit["launch_environment_keys"], [] if suite == "ios-lifecycle-settings"
+                                 else ["UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE"])
 
 
     def test_xcodebuild_command_targets_one_platform_smoke_and_independent_outputs(self) -> None:

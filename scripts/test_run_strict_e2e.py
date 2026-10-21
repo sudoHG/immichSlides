@@ -1019,6 +1019,11 @@ class FailureDiagnosticsTests(unittest.TestCase):
         self.assertEqual(FAILURE_CLASSES, {kind for _, _, kind in PREFIX_RULES})
         # Fixed expectations catch missing/misclassified rows; source checks catch stale prefixes.
         cases = (
+            ("immichSlidesUITests/StrictE2EFilterIOSUITests+Navigation.swift", "Album capture preparation must reach a stable scene before Pause.", "control_action", "timing_window"),
+            ("immichSlidesUITests/StrictE2EFilterIOSUITests+Navigation.swift", "Album capture preparation paused during a transition; Pause freezes the current layers.", "control_action", "control_state"),
+            ("immichSlidesUITests/StrictE2EFilterIOSUITests+Navigation.swift", "Album capture preparation must observe paused playback after one Pause.", "control_action", "control_state"),
+            ("immichSlidesUITests/StrictE2EFilterIOSUITests+Navigation.swift", "Album capture preparation must reach a complete paused scene within the playback capture budget.", "visible_scene_capture", "probe_readback"),
+            ("immichSlidesUITests/StrictE2EFilterIOSUITests+Navigation.swift", "Album Next must advance the paused scene within the playback capture budget.", "history_navigation", "navigation"),
             ("immichSlidesUITests/UITestSupport.swift", "First-boot mode navigation must dismiss the exact password prompt,", "mode_selection", "navigation"),
             ("immichSlidesUITests/UITestSupport.swift", "Mode departure failed after one hittable Continue without a password prompt;", "playback_entry", "navigation"),
             ("immichSlidesUITests/StrictE2EFilterIOSUITests+Playback.swift", "Person selection preparation must provide an actionable card;", "filter_selection", "control_state"),
@@ -1144,6 +1149,11 @@ class FailureDiagnosticsTests(unittest.TestCase):
             ("immichSlidesUITests/PlaybackHistoryIOSUITests+Support.swift", "Could not return from the playback settings page to the slideshow", "settings_navigation", "navigation"),
         )
         failure_prefixes = {
+            "Album capture preparation must reach a stable scene before Pause.",
+            "Album capture preparation paused during a transition; Pause freezes the current layers.",
+            "Album capture preparation must observe paused playback after one Pause.",
+            "Album capture preparation must reach a complete paused scene within the playback capture budget.",
+            "Album Next must advance the paused scene within the playback capture budget.",
             "First-boot mode navigation must dismiss the exact password prompt,",
             "Mode departure failed after one hittable Continue without a password prompt;",
             "Person selection preparation must provide an actionable card;",

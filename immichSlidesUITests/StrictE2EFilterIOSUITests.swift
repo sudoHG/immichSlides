@@ -166,7 +166,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         let albumID = try stringValue(manifest, keyPath: ["target_album", "id"])
         let emptyAlbumID = try stringValue(manifest, keyPath: ["empty_album", "id"])
         let emptyCopy = "当前筛选条件没有找到可播放照片，请换一组相册或人物再试。"
-        let app = try launchStrictE2EApp()
+        let app = try launchStrictE2EApp(recordSceneSequence: true)
         defer { app.terminateForFailureEvidence() }
 
         try completeFirstBootToModeSelection(app: app, input: input, evidencePrefix: "album-empty")
@@ -193,10 +193,10 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         setAlbumSelection(app: app, albumID: albumID, isSelectionRequested: true)
         returnFromAlbumFilter(app: app)
         startFilteredPlayback(app: app)
-        pausePlaybackIfNeeded(app: app)
-        _ = capturePlaybackPNG(app: app, name: "album-play-1")
+        guard pauseStableAlbumPlaybackIfNeeded(app: app) else { return }
+        let firstScene = try captureStableAlbumPlaybackPNG(app: app, name: "album-play-1")
         tapNext(app: app)
-        _ = capturePlaybackPNG(app: app, name: "album-play-2")
+        _ = try captureStableAlbumPlaybackPNG(app: app, name: "album-play-2", previousScene: firstScene)
 
         openSettingsHomeFromPlayback(app: app)
         openFilterEditorFromSettings(app: app)

@@ -225,9 +225,22 @@ Probes cannot supply a
 missing pixel identity. A5 and A1+A5 have different signatures.
 
 `UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE=1` enables the Debug manifest probes.
-Probe-only launches are `journey-b`, `tvos-flow`, `tvos-person`, `late-image`, `ios-lifecycle-first-wake`,
+Probe-only launches are `album-empty`, `journey-b`, `tvos-flow`, `tvos-person`, `late-image`, `ios-lifecycle-first-wake`,
 and `AccessLifecycleIOSUITests.prepareLaunch`, including its cold relaunches and
 `run_access_lifecycle_ios.py`'s `testAccessProtectionSettingsAndLifecycle`.
+For Debug `album-empty`, the existing 8 s Pause-preparation window must prove a
+stable complete scene and an actionable Play/Pause target together before the
+single Pause. Live hittability is checked before the final stable window snapshot;
+`album-pause` evidence records that snapshot's request/return and the Pause tap's
+issue/return times. Its existing 4 s readback requires the paused probe and button
+value `play` in the same window snapshot. Each playback
+capture uses the original 0.8 + 4 s preparation budget and takes one PNG. The
+second capture also requires history to advance by one or different layer IDs.
+Post-Pause transitions get that capture budget to recover, including the designed
+fill-in fade. On timeout, a Next that did not advance fails as navigation; an
+advanced but incomplete scene fails as probe readback. Both append the last
+history-advance, layer-change, phase, paused and manifest-completeness observations
+after their reviewed prefixes. The pixel validator still decides photo identity.
 For `tvos-person`, the scene key also exposes the existing read-only SmartFill
 manifest, motion-frame summary and EXIF tone accessibility anchors. These clear
 anchors read existing state; they do not change photo rendering, transition clocks,
@@ -1214,6 +1227,11 @@ New enum meanings and why the previous vocabulary cannot express them:
 | `The playback page must show Play/Pause.` | `control_action` | `hidden_controls` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
 | `After pausing, the playback controls must still be revealable.` | `control_action` | `hidden_controls` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
 | `After pausing, the control value must be play.` | `control_action` | `control_state` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
+| `Album capture preparation must reach a stable scene before Pause.` | `control_action` | `timing_window` | [StrictE2EFilterIOSUITests+Navigation.swift](../immichSlidesUITests/StrictE2EFilterIOSUITests+Navigation.swift) |
+| `Album capture preparation paused during a transition; Pause freezes the current layers.` | `control_action` | `control_state` | [StrictE2EFilterIOSUITests+Navigation.swift](../immichSlidesUITests/StrictE2EFilterIOSUITests+Navigation.swift) |
+| `Album capture preparation must observe paused playback after one Pause.` | `control_action` | `control_state` | [StrictE2EFilterIOSUITests+Navigation.swift](../immichSlidesUITests/StrictE2EFilterIOSUITests+Navigation.swift) |
+| `Album capture preparation must reach a complete paused scene within the playback capture budget.` | `visible_scene_capture` | `probe_readback` | [StrictE2EFilterIOSUITests+Navigation.swift](../immichSlidesUITests/StrictE2EFilterIOSUITests+Navigation.swift) |
+| `Album Next must advance the paused scene within the playback capture budget.` | `history_navigation` | `navigation` | [StrictE2EFilterIOSUITests+Navigation.swift](../immichSlidesUITests/StrictE2EFilterIOSUITests+Navigation.swift) |
 | `Resuming must continue from the current photo, with the control value back to pause.` | `control_action` | `control_state` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
 | `Previous must be disabled at the history boundary when playback starts.` | `history_navigation` | `control_state` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
 | `After two Next taps, Previous must be enabled.` | `history_navigation` | `control_state` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
