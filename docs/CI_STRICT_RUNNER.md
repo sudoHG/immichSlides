@@ -452,6 +452,8 @@ no consumer reads either field. They do not affect verdicts or runner exit codes
 Unreadable target-album playback screenshots (album-play-*) and empty-result
 screenshots (empty-album-result.png, for both iOS and tvOS album-empty suites)
 produce a FAIL contract report.
+Playback reader failures retain the rejected `album-play-1.png` or `album-play-2.png`
+name in their public message, including when bounded diagnostic image collection is unavailable.
 File-read failures remain I/O errors. tvOS reports retain their existing fields.
 
 ## Deterministic late-image response ordering

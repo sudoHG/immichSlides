@@ -448,6 +448,24 @@ class EmptyAlbumFixtureTests(unittest.TestCase):
 
 
 class AlbumEmptyNegativeTests(unittest.TestCase):
+    def test_unreadable_playback_identifies_the_rejected_input(self) -> None:
+        from ci_failure_diagnostics import public_validator_failure_message
+
+        for name in ("album-play-1", "album-play-2"):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as raw:
+                directory = Path(raw)
+                _write_album_empty_pass(directory)
+                (directory / f"{name}.png").write_bytes(_png(Image.new("RGB", IPAD_SCREEN, (40, 40, 40))))
+                with self.assertRaisesRegex(
+                    CommandError,
+                    rf"public photo colors are missing or mixed; .*; screenshot {name}\.png$",
+                ) as raised:
+                    require_visual_identity(directory, "album-empty")
+                self.assertRegex(
+                    public_validator_failure_message(str(raised.exception.__cause__)),
+                    rf"; screenshot {name}\.png$",
+                )
+
     def test_wrong_member_fails(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             directory = Path(raw)
@@ -701,7 +719,7 @@ class AlbumEmptyFixtureBTests(unittest.TestCase):
                         (directory / "album-play-1.png").write_bytes(invalid)
                         with self.assertRaisesRegex(
                             CommandError,
-                            r"^Visual assertion failed; cannot mark SUCCESS: unreadable public glyph slot; slot 2 \(vertical\)$",
+                            r"^Visual assertion failed; cannot mark SUCCESS: unreadable public glyph slot; slot 2 \(vertical\); screenshot album-play-1\.png$",
                         ):
                             require_visual_identity(directory, "album-empty", fixture_set=fixture_set)
 
