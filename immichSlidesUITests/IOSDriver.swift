@@ -168,15 +168,9 @@ struct IOSDriver: PlaybackDriver {
     func next() {
         let identifier = "slideshow.control.next.button"
         let deadline = Date().addingTimeInterval(UITestSupportWaitTiming.stateChangeTimeoutSeconds)
+        let totalDeadline = deadline.addingTimeInterval(UITestSupportWaitTiming.stateChangeTimeoutSeconds)
         var action = ControlAction()
-        guard
-            prepareControl(
-                identifier, until: deadline, action: &action, shouldRequireHittability: false) != nil
-        else {
-            XCTFail("Next control must be actionable before tapping. (\(action.diagnostic))")
-            return
-        }
-        // Classifying the baseline can outlast auto-hide; revalidate the target before the single tap.
+        // Classifying the baseline can outlast auto-hide; only prepare the control afterward.
         var sceneBefore: String?
         _ = Wait.until(timeout: max(.zero, deadline.timeIntervalSinceNow)) {
             guard Date() < deadline else { return false }
@@ -203,13 +197,17 @@ struct IOSDriver: PlaybackDriver {
             action.timing.revealSeconds += duration
             action.timing.revealDurationsSeconds.append(duration)
         }
-        guard let before = prepareControl(identifier, until: deadline, action: &action) else {
+        guard
+            let before = prepareControl(
+                identifier, until: deadline, action: &action, shouldRequireHittability: false)
+        else {
             XCTFail("Final Next preparation must provide an actionable control. (\(action.diagnostic))")
             return
         }
         activateControl(before, action: &action)
-        // Use the existing post-tap state-change window, independently of control preparation.
-        let stateDeadline = Date().addingTimeInterval(UITestSupportWaitTiming.stateChangeTimeoutSeconds)
+        // Start at tap return while retaining main's preparation plus outcome ceiling.
+        let stateDeadline = min(
+            totalDeadline, Date().addingTimeInterval(UITestSupportWaitTiming.stateChangeTimeoutSeconds))
         var lastVisiblePhoto: String?
         var lastCaptureRemainingSeconds: TimeInterval?
         let changed = Wait.until(timeout: max(.zero, stateDeadline.timeIntervalSinceNow)) {
@@ -463,8 +461,12 @@ struct IOSDriver: PlaybackDriver {
                 if observation.isReady, action.isBarVisible,
                     shouldRequireHittability || !observation.hasSettingsNavigationEvidence
                 {
-                    // Next verifies live hittability after its sole wake, avoiding a hidden receiver's query retries.
-                    if !shouldRequireHittability { return observation }
+                    // Next uses the enabled, visible snapshot frame after its sole wake, without live re-resolution.
+                    if !shouldRequireHittability {
+                        action.preparedTarget = observation.diagnostic
+                        action.preparedAt = ProcessInfo.processInfo.systemUptime
+                        return observation
+                    }
                     // Snapshot attributes are fallible; XCTest exposes hittability only on the live button.
                     action.isHittable = ([identifier] + additionalIdentifiers).allSatisfy { requiredIdentifier in
                         guard Date() < deadline, let button = observation.snapshots[requiredIdentifier],

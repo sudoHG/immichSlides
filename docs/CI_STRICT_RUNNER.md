@@ -146,6 +146,26 @@ iPhone landscape has no measured entry, and the portrait phone's glyph-only
 box grants no palette exclusion. EXIF uses the same reader without waiting for
 controls to hide; the six-Next limit and existing deadlines remain unchanged.
 
+The iOS Next driver captures the baseline photo, then issues at most one proactive
+wake before preparing the control from a fallible snapshot.
+The final snapshot must identify an enabled button with a nonempty frame inside
+the window, a visible control bar, and no Settings navigation evidence. It does not
+require the optional playback-marker probe. Its frame supplies the sole coordinate tap;
+there is no live hittability query or element tap that re-resolves the button.
+Snapshot geometry establishes readiness; an observed photo change is required to
+pass. This existing check does not establish forward direction. Preparation retains
+its 4-second deadline. The outcome window starts at tap return, lasts at most
+4 seconds, and ends within the original 8-second total.
+Image-failure recovery locally prepares Next and redo without the playback probe:
+one preparatory snapshot must exclude Settings navigation, then at most one wake
+precedes a fresh snapshot of an enabled Next button with a nonempty frame inside
+the window. That frame supplies exactly one coordinate tap, with no live button
+query. The original 6-second preparation budget includes the wake. Its stable-photo
+outcome starts at tap return, retains the 45-second limit, and is capped by the original 51-second
+preparation-plus-outcome total. Recovery still requires an observed advance and the
+exact redo photo identity. The shared control-bar tap helper is unchanged.
+Neither path retries a tap or a whole flow.
+
 The Swift `captureIdentity` and Python `capture_identity` readers locate each
 photo's palette rectangle, rather than assuming equal quadrants or full-span strips. They use
 the public fixture RGB pairs, the same tolerance 12 and minimum 18 matching pixels
