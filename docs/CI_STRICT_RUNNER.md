@@ -225,9 +225,16 @@ Probes cannot supply a
 missing pixel identity. A5 and A1+A5 have different signatures.
 
 `UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE=1` enables the Debug manifest probes.
-Probe-only launches are `journey-b`, `tvos-flow`, `tvos-person`, `late-image`, `ios-lifecycle-first-wake`,
+Probe-only launches are `album-empty`, `journey-b`, `tvos-flow`, `tvos-person`, `late-image`, `ios-lifecycle-first-wake`,
 and `AccessLifecycleIOSUITests.prepareLaunch`, including its cold relaunches and
 `run_access_lifecycle_ios.py`'s `testAccessProtectionSettingsAndLifecycle`.
+For Debug `album-empty`, the existing 8 s Pause-preparation window must prove a
+stable complete scene and an actionable Play/Pause target together before the
+single Pause; its paused readback retains the existing 4 s window. Each playback
+capture uses the original 0.8 + 4 s preparation budget and takes one PNG. The
+second capture also requires history to advance by one or different layer IDs.
+A paused transition fails as a control-state observation, and a Next that does
+not advance fails as navigation; the pixel validator still decides photo identity.
 For `tvos-person`, the scene key also exposes the existing read-only SmartFill
 manifest, motion-frame summary and EXIF tone accessibility anchors. These clear
 anchors read existing state; they do not change photo rendering, transition clocks,

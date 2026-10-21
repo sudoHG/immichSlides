@@ -165,8 +165,8 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
                 "prompt_declined": didDeclinePrompt, "prompt_observed": didObservePrompt,
                 "prompt_checks": promptChecks, "pause_ready": isPauseReady, "play_pause_tap": playPauseTap
             ], name: "late-image-playback-entry.json")
-        FirstFailureContext.mark("wait-scene", element: "slideshow.control.playPause.button")
         guard isPauseReady else {
+            FirstFailureContext.mark("wait-scene", element: "slideshow.control.playPause.button")
             if hasPromptObstacle {
                 XCTFail(
                     "Environment precondition: the system password prompt must be absent before late-image pause readiness."
@@ -179,6 +179,7 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
         }
         let initialHistory = try XCTUnwrap(pausedHistoryCount)
         let deadline = ProcessInfo.processInfo.systemUptime + TestWait.seconds(.product(8))
+        FirstFailureContext.mark("select", element: "slideshow.control.next.button")
         tapElement(next)
         XCTAssertTrue(
             waitForLateImageScene(app: app, historyCount: initialHistory + 1, deadline: deadline),
