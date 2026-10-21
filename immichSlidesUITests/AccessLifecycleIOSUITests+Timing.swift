@@ -248,7 +248,7 @@ extension AccessLifecycleIOSUITests {
         intervalSeconds: Int
     ) throws -> [[String: Any]] {
         let interval = TimeInterval(intervalSeconds)
-        // Settings return at an arbitrary scene age. Establish an opaque paused photo before starting T/2.
+        // Settings returns at an arbitrary scene age. Establish an opaque paused photo before starting T/2.
         confirmPlayPauseState(
             app: app,
             expected: "play",

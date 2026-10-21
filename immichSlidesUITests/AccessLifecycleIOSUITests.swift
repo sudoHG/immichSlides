@@ -359,6 +359,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
                     "desktop_closeout_required": false,
                     "timeline": timeline,
                     "screenshots": [
+                        "timing_start": "timing-start.png",
                         "before_pause": "before-pause.png",
                         "after_next": "after-next.png",
                         "continue_early": "continue-early.png",

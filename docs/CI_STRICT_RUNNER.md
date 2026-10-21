@@ -274,8 +274,8 @@ before opening Settings; configuration still turns autoplay on through the real
 toggle and selects single-photo mode. Before its midpoint pause, it pauses again,
 uses a real Next and the existing stable-photo capture window to establish a
 bright single-photo identity, then starts T/2 at the real Play press. Pause
-confirmation must finish before the existing T-2 boundary and retain that identity. Settings
-return has no known scene-clock origin and cannot start that wait. The setup
+confirmation must finish before the existing T-2 boundary and retain that identity.
+Settings return has no known scene-clock origin and cannot start that wait. The setup
 capture is `timing-start.png`; the ordinary paused-frame identity, T+2 hold and
 Continue T±2 checks retain their existing deadlines and criteria. A legal frozen
 fade is still covered by `pause-window`, rather than admitted as a stable photo.
