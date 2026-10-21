@@ -270,8 +270,14 @@ def export_private_result_bundle(
                     first_failure_images or evidence_dir / ("first-failure" + suffix))
             if resource_sampler is not None:
                 from strict_e2e_resource_diagnostics import collect_native_activity
-                collect_native_activity(bundle, legacy_root, failed, resource_sampler,
-                    recorder=active(), timeout=min(2.0, export_timeout_seconds))
+                try:
+                    collect_native_activity(bundle, legacy_root, failed, resource_sampler,
+                        recorder=active(), timeout=min(2.0, export_timeout_seconds))
+                except Exception:
+                    recorder = active()
+                    if recorder is not None:
+                        recorder.unavailable.add("xcode")
+                        recorder.truncate("worker-unavailable")
             exported = (json.dumps(payload, sort_keys=True) + "\n").encode()
     (evidence_dir / f"official-tests{suffix}.json").write_bytes(exported)
     summary_path = evidence_dir / f"official-summary{suffix}.json"
@@ -988,7 +994,13 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                 try:
                     return operation()
                 finally:
-                    sampler.stop()
+                    try:
+                        sampler.stop()
+                    except Exception:
+                        recorder = active()
+                        if recorder is not None:
+                            recorder.unavailable.add("xcode")
+                            recorder.truncate("worker-unavailable")
             check_retry_flags(command)
             if arguments.listed_retry_device:
                 from functools import partial
@@ -1315,6 +1327,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                 recorder = active()
                 receipt = recorder.receipt() if recorder is not None else None
                 if receipt is not None and resource_samplers:
+                    receipt["events"] = []
                     sequences = {sampler.sequence for sampler in resource_samplers.values()}
                     receipt["case_resources"] = [case for case in receipt.get("case_resources", [])
                                                   if case["sequence"] in sequences]

@@ -175,9 +175,13 @@ titles are published. Measurements with unavailable membership must remain null.
 Sampling limitations, including missing intervals, do not alter a test result.
 Summary Markdown displays per-case sample counts, idle minimum/median, maximum
 load, peak App CPU, sampler costs and truncation; nearby samples remain in JSON.
-The case manifest and each tracer warm phase retain a bounded receipt containing
-only that case's resource sequences; the job summary retains the shared ledger.
+The case manifest and each tracer warm phase retain a bounded receipt with an
+empty `events` list and only that case's resource sequences, plus the shared
+collection-cost and truncation metadata; the job summary retains the full ledger.
 This binds numbers to the existing case identity without publishing process names.
+The tracer validates `warm[].bounded_diagnostics` with the bounded-diagnostics
+reader's `validate_receipt` before writing this public sequence-to-case binding.
+Trusted trace readers ignore this field; they do not validate or use it for verdicts.
 `sequence` comes from the same monotonically increasing ledger counter as events;
 it is not an identity or an attempt number. The sampler claims its sequence
 immediately before the corresponding `xcodebuild` event. The enclosing case

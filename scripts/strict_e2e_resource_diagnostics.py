@@ -20,7 +20,7 @@ from ci_failure_diagnostics import NATIVE_ACTIVITY_FIELDS, public_first_failure
 
 SAMPLE_INTERVAL_SECONDS = 2
 SAMPLER_WALL_BUDGET_SECONDS = 180
-SAMPLE_COMMAND_TIMEOUT_SECONDS = 0.15
+SAMPLE_COMMAND_TIMEOUT_SECONDS = 0.5
 STOP_TIMEOUT_SECONDS = 0.2
 MAX_PROCESS_TABLE_BYTES = 2 * 1024 * 1024
 MAX_PROCESS_ROWS = 65536
@@ -92,12 +92,14 @@ def process_categories(raw, device, *, identify_app=None):
         rows[pid] = (parent, cpu, parts[3].strip())
     totals = dict.fromkeys(RESOURCE_CATEGORIES, 0.0)
     unknown_app = False
+    found_app = False
     for pid, (parent, cpu, name) in rows.items():
         category = "other"
         if name == "immichSlides":
             belongs = identify_app(pid, device)
             unknown_app |= belongs is None
             if belongs:
+                found_app = True
                 category = "app"
         elif name == "xcodebuild" or name.startswith(("xctest", "testmanagerd", "immichSlidesUIT")):
             category = "test_tools"
@@ -116,6 +118,8 @@ def process_categories(raw, device, *, identify_app=None):
     if unknown_app:
         # An inaccessible candidate cannot be counted as definitely absent or as another category.
         return dict.fromkeys(RESOURCE_CATEGORIES)
+    if not found_app:
+        totals["app"] = None
     return {key: finite(value, MAX_PROCESS_CPU_PERCENT) for key, value in totals.items()}
 
 

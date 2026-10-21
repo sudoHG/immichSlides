@@ -950,6 +950,17 @@ allowance across the job ledger. It preserves the existing Xcode diagnostic
 allowance for native extraction and anomaly diagnostics, and leaves
 every test deadline, action, retry and verdict unchanged. A low idle measurement
 is contention evidence, not by itself proof of why an App action was slow.
+The case manifest and `trace.json`'s `warm[].bounded_diagnostics` bind resource
+sequences to the enclosing case. These copies retain only that case's resources,
+shared collection-cost/truncation metadata and an empty `events` list, keeping
+them small independently of the job's event ledger. The tracer validates the
+contents with the bounded-diagnostics reader's `validate_receipt` before writing.
+Trusted trace readers ignore this field; they do not validate or use it for verdicts.
+Each `ps` query is capped at 0.5 seconds within the unchanged 180-second allowance.
+If no App process is identified, per-sample App CPU and its case peak remain null;
+an identified but idle App can report zero. Diagnostic shutdown or native-projection
+errors mark Xcode diagnostics unavailable and truncated without replacing the
+execution return code or original exception.
 
 Capture offsets refer to the first failure's monotonic timestamp; they expose
 request/return lag rather than claiming an instantaneous image. `observation`
