@@ -312,8 +312,17 @@ extension AccessLifecycleTVOSUITests {
         let interval = TimeInterval(intervalSeconds)
         ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
         moveFocus(.right, to: playPauseButton, maximumPresses: 3, message: "Focus must reach play/pause.")
+        // Reuse main's state-readback, half-cycle and midpoint focus budgets as one absolute deadline.
+        let midpointSetupAt = Date()
         let value = String(describing: playPauseButton.value ?? "")
         let isPlaying = value.contains("暂停") || value.lowercased().contains("pause")
+        let midpointDeadline = midpointSetupAt.addingTimeInterval(
+            TestWait.seconds(
+                .product(
+                    (isPlaying ? 0 : AccessLifecycleTVOSUITestsWaitTiming.stateChangeTimeoutSeconds)
+                        + interval / 2 + AccessLifecycleTVOSUITestsWaitTiming.settingsChangeTimeoutSeconds
+                        + AccessLifecycleTVOSUITestsWaitTiming.stateChangeTimeoutSeconds + 3 * Timing.focusSettle))
+        )
         if isPlaying == false {
             FirstFailureRemote.press(.select)
             XCTAssertTrue(
@@ -324,12 +333,45 @@ extension AccessLifecycleTVOSUITests {
                 "Must be playing before the mid-interval timing."
             )
         }
-        RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(interval / 2))))
-        ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
-        moveFocus(.right, to: playPauseButton, maximumPresses: 3, message: "At midpoint, focus must reach play/pause.")
+        // Settings returns at an arbitrary scene age. A newly observed stable photo anchors the half-cycle.
+        let anchor = try captureTVOSMidpointAnchor(app: app, deadline: midpointDeadline)
+        let midpointAt = anchor.requestedAt.addingTimeInterval(TestWait.seconds(.product(interval / 2)))
+        guard midpointAt < midpointDeadline else {
+            throw AccessLifecycleContract.AssertionError.message(
+                "tvOS midpoint setup exhausted the original step budget before the half-cycle pause."
+            )
+        }
+        RunLoop.current.run(until: midpointAt)
+        let focusDeadline = min(
+            midpointDeadline,
+            anchor.requestedAt.addingTimeInterval(interval - AccessLifecycleContract.continueCaptureSlackSeconds)
+        )
+        var snapshots = app.evidenceSnapshotsByIdentifier()
+        if snapshots[AccessLifecycleContract.hiddenControlBarPlaybackIdentifier]?.hasFocus == true {
+            FirstFailureRemote.press(.up)
+            while Date() < focusDeadline && snapshots["slideshow.control.playPause.button"]?.hasFocus != true {
+                snapshots = app.evidenceSnapshotsByIdentifier()
+                if snapshots["slideshow.control.playPause.button"]?.hasFocus == true { break }
+                RunLoop.current.run(
+                    until: min(focusDeadline, Date().addingTimeInterval(Timing.focusPoll)))
+            }
+        }
+        XCTAssertTrue(
+            Date() < focusDeadline && snapshots["slideshow.control.playPause.button"]?.hasFocus == true,
+            "tvOS midpoint pause requires Play/Pause focus after at most one wake within the original step budget."
+        )
         FirstFailureRemote.press(.select)
+        let midpointPauseReturnedAt = Date()
+        XCTAssertTrue(
+            midpointPauseReturnedAt < midpointDeadline && midpointPauseReturnedAt < focusDeadline,
+            "tvOS midpoint pause must return in the anchored stable window within the original step budget."
+        )
         record("playback.pause")
         let beforePause = try captureTVOSImmediateMark(app: app, name: "before-pause")
+        XCTAssertEqual(
+            beforePause.mark, anchor.mark,
+            "tvOS midpoint pause must preserve the anchored public photo before manual Next."
+        )
         ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
         moveFocus(.right, to: nextButton, maximumPresses: 3, message: "After pause, focus must reach next.")
         FirstFailureRemote.press(.select)
@@ -382,6 +424,13 @@ extension AccessLifecycleTVOSUITests {
             controlBarReference: controlBarReference
         )
         return [
+            [
+                "name": "midpoint_anchor", "mark": anchor.mark,
+                "request_elapsed": anchor.requestedAt.timeIntervalSince(midpointSetupAt),
+                "pause_return_elapsed": midpointPauseReturnedAt.timeIntervalSince(anchor.requestedAt),
+                "step_elapsed": midpointPauseReturnedAt.timeIntervalSince(midpointSetupAt),
+                "step_budget": midpointDeadline.timeIntervalSince(midpointSetupAt)
+            ],
             ["name": "before_pause", "mark": beforePause.mark],
             ["name": "after_next", "mark": afterNext.mark],
             ["name": "pause_hold_end", "elapsed": holdSeconds, "mark": holdMark],
@@ -415,6 +464,44 @@ extension AccessLifecycleTVOSUITests {
                 }
             ]
         ]
+    }
+
+    @MainActor
+    private func captureTVOSMidpointAnchor(app: XCUIApplication, deadline: Date) throws
+        -> (mark: String, requestedAt: Date)
+    {
+        var initialMark: String?
+        var candidate: (mark: String, requestedAt: Date)?
+        while Date() < deadline {
+            let requestedAt = Date()
+            let png = app.screenshotForFailureEvidence().pngRepresentation
+            let identity = StrictE2EPhotoIdentity.captureIdentity(png: png)
+            let mark = contractTVOSMark(identity)
+            guard Date() < deadline else { break }
+            if isUsableTVOSMark(mark) {
+                if initialMark == nil { initialMark = mark }
+                if mark != initialMark && identity.meanLuma >= AccessLifecycleContract.newStableMarkMinimumLuma {
+                    if let candidate, candidate.mark == mark,
+                        requestedAt.timeIntervalSince(candidate.requestedAt)
+                            >= AccessLifecycleContract.newStableMarkConfirmWindow
+                    {
+                        try persistTVOSCapturedPNG(png, name: "midpoint-anchor")
+                        return candidate
+                    }
+                    if candidate?.mark != mark { candidate = (mark, requestedAt) }
+                } else {
+                    candidate = nil
+                }
+            } else {
+                candidate = nil
+            }
+            RunLoop.current.run(
+                until: min(
+                    deadline, Date().addingTimeInterval(AccessLifecycleContract.newStableMarkPollInterval)))
+        }
+        throw AccessLifecycleContract.AssertionError.message(
+            "tvOS midpoint setup requires a new stable public photo within the original step budget."
+        )
     }
 
     struct TVOSContinueWatchResult {

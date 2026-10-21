@@ -266,6 +266,30 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
                 "slideshow.control.settings.button", timeout: TestWait.seconds(.product(30))),
             "After Continue, the app must reach the playback page and show the control bar."
         )
+        // Pause before screenshots or focus travel can consume the first autoplay interval.
+        let playingValue = String(describing: playPauseButton.value ?? "")
+        FirstFailureRemote.press(.playPause)
+        XCTAssertTrue(
+            waitUntil(timeout: TestWait.seconds(.product(4))) {
+                String(describing: playPauseButton.value ?? "") != playingValue
+            },
+            "Autoplay must be paused before the history chain starts."
+        )
+        let historyStart = captureVisualIdentity(
+            app: app,
+            evidenceName: "history-start",
+            attachmentName: "tvos-playback-05-history-a-paused"
+        )
+        let startObservation = historyStart["after"] as? [String: String] ?? [:]
+        let startRender = SharedSceneEvidenceManifest.parseKeyValueFields(startObservation["render"] ?? "")
+        XCTAssertEqual(
+            startRender["historyCount"], "1",
+            "tvOS flow entry precondition failed: autoplay advanced before the initial scene was paused."
+        )
+        XCTAssertEqual(
+            startRender["playbackPaused"], "true",
+            "tvOS flow entry anchor must remain paused before checking the history boundary."
+        )
         XCTAssertTrue(
             entryHint.waitForFailureEvidence(timeout: TestWait.seconds(.product(10))),
             "The first playback round must show the one-time remote hint."
@@ -288,14 +312,6 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             to: playPauseButton,
             maximumPresses: 3,
             message: "Before the history chain starts, focus must be able to move to Play/Pause."
-        )
-        let playingValue = String(describing: playPauseButton.value ?? "")
-        FirstFailureRemote.press(.select)
-        XCTAssertTrue(
-            waitUntil(timeout: TestWait.seconds(.product(4))) {
-                String(describing: playPauseButton.value ?? "") != playingValue
-            },
-            "Autoplay must be paused before the history chain starts."
         )
 
         FirstFailureRemote.press(.down)
@@ -338,11 +354,6 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             "The start of the history chain must show the previous button."
         )
         XCTAssertFalse(previousButton.isEnabled, "A must be at the history start of the current playback session.")
-        let historyStart = captureVisualIdentity(
-            app: app,
-            evidenceName: "history-start",
-            attachmentName: "tvos-playback-05-history-a-paused"
-        )
 
         ensureControlBarVisible(app: app)
         moveFocus(
