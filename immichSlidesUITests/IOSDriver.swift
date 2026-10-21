@@ -170,14 +170,7 @@ struct IOSDriver: PlaybackDriver {
         let deadline = Date().addingTimeInterval(UITestSupportWaitTiming.stateChangeTimeoutSeconds)
         let totalDeadline = deadline.addingTimeInterval(UITestSupportWaitTiming.stateChangeTimeoutSeconds)
         var action = ControlAction()
-        // Observe the surface once; waiting for controls here spends the same budget twice.
-        guard let initial = action.observe(app: app, identifier: identifier),
-            initial.hasPlaybackMarker, !initial.hasSettingsNavigationEvidence, Date() < deadline
-        else {
-            XCTFail("Next control must be actionable before tapping. (\(action.diagnostic))")
-            return
-        }
-        // Classifying the baseline can outlast auto-hide; revalidate the target before the single tap.
+        // Classifying the baseline can outlast auto-hide; only prepare the control afterward.
         var sceneBefore: String?
         _ = Wait.until(timeout: max(.zero, deadline.timeIntervalSinceNow)) {
             guard Date() < deadline else { return false }
@@ -209,6 +202,10 @@ struct IOSDriver: PlaybackDriver {
                 identifier, until: deadline, action: &action, shouldRequireHittability: false)
         else {
             XCTFail("Final Next preparation must provide an actionable control. (\(action.diagnostic))")
+            return
+        }
+        guard before.hasPlaybackMarker, !before.hasSettingsNavigationEvidence, Date() < deadline else {
+            XCTFail("Next control must be actionable before tapping. (\(action.diagnostic))")
             return
         }
         activateControl(before, action: &action)

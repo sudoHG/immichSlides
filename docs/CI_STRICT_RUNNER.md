@@ -146,8 +146,8 @@ iPhone landscape has no measured entry, and the portrait phone's glyph-only
 box grants no palette exclusion. EXIF uses the same reader without waiting for
 controls to hide; the six-Next limit and existing deadlines remain unchanged.
 
-The iOS Next driver reads the playback surface from one fallible snapshot, captures
-the baseline photo, then issues at most one proactive wake before final preparation.
+The iOS Next driver captures the baseline photo, then issues at most one proactive
+wake before preparing the control from a fallible snapshot.
 The final snapshot must identify an enabled button with a nonempty frame inside
 the window and a visible control bar. Its frame supplies the sole coordinate tap;
 there is no live hittability query or element tap that re-resolves the button.
