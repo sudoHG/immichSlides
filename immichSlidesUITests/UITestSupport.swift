@@ -644,7 +644,7 @@ struct IOSFirstBootNavigation {
         diagnostics?.stage = .alertsQuery
         if let modal = try appAlertObservation() {
             windows.append(modal)
-            if modal.hasPasswordPrompt {
+            if modal.hasPasswordPrompt, modal.decline != nil {
                 diagnostics?.terminalAlertHits = min(4096, (diagnostics?.terminalAlertHits ?? 0) + 1)
             }
             return combine(own, prompts: modal.hasPasswordPrompt ? [modal] : [], windows: windows)
