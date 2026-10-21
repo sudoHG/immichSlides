@@ -393,6 +393,7 @@ class NightlyVerdictTests(unittest.TestCase):
                                      [event["state"] for event in ledger["events"]])
 
     def test_workflow_budgets_cover_preparation_execution_and_diagnostic_margin(self):
+        from ci_ui_tests import ARCHIVE_GATE_SECONDS
         import yaml
         import shlex
         from ci_nightly import shards
@@ -464,7 +465,8 @@ class NightlyVerdictTests(unittest.TestCase):
                     shard_minutes = int(re.search(r"--total-timeout-minutes\s+(\d+)", command)[1])
                     with self.subTest(workflow=filename, job=name):
                         self.assertGreaterEqual(job["timeout-minutes"] * 60,
-                                                shard_minutes * 60 + SIMULATOR_PREPARATION_TIMEOUT_SECONDS + 13 * 60)
+                                                shard_minutes * 60 + SIMULATOR_PREPARATION_TIMEOUT_SECONDS + 13 * 60
+                                                + (ARCHIVE_GATE_SECONDS if filename == "ci-nightly.yml" else 0))
 
 
 def policy():

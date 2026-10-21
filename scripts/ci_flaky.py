@@ -244,7 +244,7 @@ def simulator_device_class(udid, expected=None):
 def official_failure_outcomes(payload):
     # The typed legacy issue summaries distinguish assertions from crashes. Never
     # infer assertion eligibility from failure text. The exact lifecycle signature
-    # below only denies eligibility and emits a fixed infrastructure reason.
+    # below only denies eligibility and emits a fixed lifecycle reason.
     keys = {}
     lifecycle_failures = {}
     blocked = False
@@ -388,7 +388,7 @@ def read_xcode_observations(bundle, identity_for_key, elapsed, invocation_exit, 
                                    reason=("Official XCTest skip" if outcome == "skipped" else
                                            "Official XCTest crash" if outcome == "crashed" else
                                            ASSERTION_FAILURE if outcome == "failed" and failure_outcomes.get(key) == "assertion" else
-                                           "Official XCTest app lifecycle infrastructure failure"
+                                           "Official XCTest app lifecycle failure"
                                            if outcome == "failed" and failure_outcomes.get(key) == "app-lifecycle-infrastructure" else
                                            "Official non-assertion or unclassified failure" if outcome == "failed" else None),
                                    exit_code=0 if outcome == "passed" else invocation_exit,

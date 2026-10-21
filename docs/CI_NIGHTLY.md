@@ -344,6 +344,12 @@ the 85-minute fixture runner plus this two-minute gate leaves 23 minutes for
 downloads, initial preparation, exports and cleanup. Preparation inside the
 fixture runner spends that existing 85-minute allowance, as described in the
 [service budget contract](CI_STRICT_RUNNER.md). No workflow timeout changes.
+The host budget check includes the two-minute gate, ten-minute simulator
+preparation and 13-minute surrounding-step margin: `85 + 2 + 10 + 13 = 110`.
+There is no additional slack in that accounting. Existing official-result exports
+each have a 180-second cap outside the runner's 85-minute total deadline; they
+spend the surrounding-step margin, which does not prove a worst-case bound for
+all exports and other overhead.
 
 The [download receipt](CI_SUMMARY.md#prepared-archive-download-receipt) records the
 action outcome, bounded member sizes, digest/size matches, combined transfer/extract

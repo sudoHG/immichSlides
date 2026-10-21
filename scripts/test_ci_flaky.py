@@ -215,6 +215,8 @@ class RetryTests(unittest.TestCase):
                 (["Uncategorized"], lifecycle_message.replace("com.331works.immichSlides", "another.app"), False),
                 (["Uncategorized"], lifecycle_message + " additional detail", False),
                 (["Assertion Failure"], lifecycle_message, False),
+                (["Unknown"], lifecycle_message, False),
+                (["Infrastructure Failure"], lifecycle_message, False),
                 (["Uncategorized", "Assertion Failure"], lifecycle_message, False)]
         for issue_types, message, lifecycle_failure in cases:
             with self.subTest(issue_types=issue_types, message=message):
@@ -238,8 +240,10 @@ class RetryTests(unittest.TestCase):
                         execute=lambda key: observation(identity, "passed", 1))
                     self.assertEqual(bool(resets), issue_types in (["Assertion Failure"], ["Uncategorized"]) and not lifecycle_failure)
                     if lifecycle_failure:
-                        self.assertEqual(rows[0]["attempts"][0]["reason"], "Official XCTest app lifecycle infrastructure failure")
+                        self.assertEqual(rows[0]["attempts"][0]["reason"], "Official XCTest app lifecycle failure")
                         self.assertEqual(actual[0]["attempts"][0]["exit_code"], 65)
+                    elif message == lifecycle_message and issue_types in (["Unknown"], ["Infrastructure Failure"]):
+                        self.assertEqual(rows[0]["attempts"][0]["reason"], "Official non-assertion or unclassified failure")
                     self.assertEqual(actual[0]["outcome"], "flaky-passed" if resets else
                                      "crashed" if "Crash" in issue_types else "failed")
                     expected_phase = "interval_setup" if issue_types and message.startswith("XCTAssert") else "unknown"

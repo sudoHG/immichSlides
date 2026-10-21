@@ -615,7 +615,9 @@ class FixtureCoverageTests(unittest.TestCase):
                     code = runner.main(argv, simulator_prepared=shape == "complete")
                     runner.reset_simulator_app.assert_called_once_with("target", boot_submitted=True)
                     runner.wait_for_service.assert_called_once_with(work / "ready.json", unittest.mock.ANY,
-                                                                    startup_log=work / "service.log")
+                                                                    startup_log=work / "service.log",
+                                                                    fixture_build_timeout_seconds=runner.SERVICE_FIXTURE_BUILD_TIMEOUT_SECONDS,
+                                                                    startup_timeout_seconds=runner.SERVICE_STARTUP_TIMEOUT_SECONDS)
                 self.assertEqual(len(inventory_calls), 2)
                 tests = [command for command in commands if command[0] == "xcodebuild"]
                 self.assertEqual(len(tests), 1)

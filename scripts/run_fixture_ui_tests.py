@@ -37,6 +37,9 @@ from access_lifecycle_contract import logical_bytes_contain
 from ci_wait_policy import FACTOR_ENVIRONMENT_KEY, wait_configuration
 
 ROOT = Path(__file__).resolve().parent.parent
+# Hosted UI contention spends the existing shard total, outside strict/tracer budgets.
+SERVICE_FIXTURE_BUILD_TIMEOUT_SECONDS = 300
+SERVICE_STARTUP_TIMEOUT_SECONDS = 120
 DEVICE_MODELS = {"iphone": "iPhone", "ipad": "iPad", "appletv": "Apple TV"}
 # Simulator processes are crash-reported by the host, so their reports land in the host's diagnostic directories.
 CRASH_REPORT_DIRECTORIES = ("Library/Logs/DiagnosticReports", "Library/Logs/DiagnosticReports/Retired")
@@ -543,7 +546,9 @@ def main(argv=None, *, simulator_prepared=False):
                                         "--host", "127.0.0.1", "--port", "0", "--ready-file", str(work / "ready.json"),
                                         "--log-file", str(work / "service-requests.log")],
                                        env=env, stdout=log, stderr=subprocess.STDOUT)
-        host, port = wait_for_service(work / "ready.json", service, startup_log=work / "service.log")
+        host, port = wait_for_service(work / "ready.json", service, startup_log=work / "service.log",
+                                      fixture_build_timeout_seconds=SERVICE_FIXTURE_BUILD_TIMEOUT_SECONDS,
+                                      startup_timeout_seconds=SERVICE_STARTUP_TIMEOUT_SECONDS)
         print(f"Fixture preflight ready: http://{host}:{port}/api (public set C)", flush=True)
         timeout = args.timeout_minutes * 60
         def execute(command, name):
