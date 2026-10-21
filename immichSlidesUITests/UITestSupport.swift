@@ -483,6 +483,8 @@ struct IOSFirstBootNavigation {
         let targetIdentifier: String
         var observations = 0
         var fastPathObservations = 0
+        var earlyAlertHits = 0
+        var terminalAlertHits = 0
         var lastObsSeconds: TimeInterval = .zero
         var maxObsSeconds: TimeInterval = .zero
         var observationSeconds: [TimeInterval] = []
@@ -557,6 +559,7 @@ struct IOSFirstBootNavigation {
             let maximum = String(format: "%.3f", maxObsSeconds)
             let durations = observationSeconds.map { String(format: "%.3f", $0) }.joined(separator: ",")
             return "observations=\(observations), fastPathObservations=\(fastPathObservations), "
+                + "earlyAlertHits=\(earlyAlertHits), terminalAlertHits=\(terminalAlertHits), "
                 + "observationSeconds=[\(durations)], "
                 + "lastObsSeconds=\(last), maxObsSeconds=\(maximum), targetMatches=\(modeDiagnosticCount(targetMatches)), "
                 + "targetSelected=\(modeDiagnosticBoolean(targetSelected)), descendantSelected=\(modeDiagnosticBoolean(descendantSelected)), "
@@ -618,12 +621,17 @@ struct IOSFirstBootNavigation {
             diagnostics?.fastPathObservations = min(4096, (diagnostics?.fastPathObservations ?? 0) + 1)
             return combine(own, prompts: [], windows: ownWindows)
         }
-        // iPad can expose the remote credential alert only here. Avoid scanning unrelated system windows first.
-        diagnostics?.stage = .alertsQuery
         var windows = ownWindows
-        if let modal = try appAlertObservation() {
-            windows.append(modal)
-            if modal.hasPasswordPrompt { return combine(own, prompts: [modal], windows: windows) }
+        // Runner idiom limits this shortcut to the proven iPad alert host; iPhone keeps SpringBoard first.
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            diagnostics?.stage = .alertsQuery
+            if let modal = try appAlertObservation() {
+                windows.append(modal)
+                if modal.hasPasswordPrompt, modal.decline != nil {
+                    diagnostics?.earlyAlertHits = min(4096, (diagnostics?.earlyAlertHits ?? 0) + 1)
+                    return combine(own, prompts: [modal], windows: windows)
+                }
+            }
         }
         let system = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         diagnostics?.stage = .springboardWindows
@@ -636,6 +644,9 @@ struct IOSFirstBootNavigation {
         diagnostics?.stage = .alertsQuery
         if let modal = try appAlertObservation() {
             windows.append(modal)
+            if modal.hasPasswordPrompt {
+                diagnostics?.terminalAlertHits = min(4096, (diagnostics?.terminalAlertHits ?? 0) + 1)
+            }
             return combine(own, prompts: modal.hasPasswordPrompt ? [modal] : [], windows: windows)
         }
         return combine(own, prompts: [], windows: windows)

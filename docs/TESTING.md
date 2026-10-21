@@ -187,13 +187,16 @@ later SpringBoard window and absent from the app's accessibility tree. Mode sele
 and Continue attributes share one app window subtree. Retain the actual window
 elements from that enumeration for live checks and taps within the observation;
 do not enumerate them again. Multiple matching prompt windows are ambiguous and never authorize a tap.
-When App windows lack the prompt, inspect one fallible `app.alerts` snapshot
-before SpringBoard windows: iPad can expose the remote credential modal only there.
-An exact App alert ends this observation's search without scanning unrelated system
-windows. Without an exact App prompt, inspect every SpringBoard window before
-concluding absence; keep any unrelated App alert as a modal obstacle. If those
-windows lack the prompt, retain the final App alert query: a late remote alert
-can become queryable after the system-window observations.
+When App windows lack the prompt, the UI-test runner's iPad idiom enables an early
+fallible `app.alerts` query before SpringBoard windows: iPad can expose the remote
+credential modal only there. Only an exact App prompt with a unique Not Now action
+ends this observation's search early. Otherwise inspect every SpringBoard window;
+keep any unrelated App alert as a modal obstacle. iPhone retains the original order:
+App windows, then SpringBoard windows, then the final App alert query if no window
+contains the prompt. On both idioms retain that final query for a late remote alert
+that becomes queryable after the system-window observations. Each observation uses
+at most two App alert queries on iPad and one on iPhone. Printed diagnostics count
+`earlyAlertHits` and `terminalAlertHits` separately without changing receipt sources.
 Require exactly one alert, the exact password title and one decline button in
 that same snapshot. Multiple alerts or a failed snapshot are unknown and cannot
 authorize a tap or prove disappearance. Receipts distinguish `window-index-N`
