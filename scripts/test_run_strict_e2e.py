@@ -731,12 +731,18 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                 self.assertEqual([sampler.sequence], [event["sequence"] for event in exported["events"]])
                 self.assertIs(True, exported["events"][0]["sample"]["runner_hosted"])
                 self.assertIsNone(exported["collection_seconds"]["xcode"])
+                from ci_bounded_diagnostics import render_receipt
+                self.assertIn("Last retained phase: none", render_receipt(exported))
 
     def test_warm_test_inputs_do_not_prevent_private_bundle_disposal(self):
         import ci_execution_diagnostics as diagnostics
         with tempfile.TemporaryDirectory() as raw, diagnostics.session() as recorder:
             for sequence in range(diagnostics.MAX_EVENTS):
                 recorder.event("xcode", "test-execution", "timeout", sequence)
+            foreign_sequence = recorder.next_sequence()
+            foreign_event = recorder.event("xcode", "test-execution", "started", foreign_sequence,
+                sample={"runner_hosted": True, "cpu_percent": None, "memory_free_bytes": None,
+                        "load_average": None, "image_version": None, "processes": []})
             root = Path(raw)
             evidence = root / "evidence"
             code, _, stderr, _ = self._run_p2_main(evidence, suite="smoke", platform="ios", model="iPhone", warm=True)
@@ -744,10 +750,19 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
             manifest = evidence / "case-manifest.json"
             self.assertLessEqual(manifest.stat().st_size, 65536, "case evidence must fit the first-failure exporter cap")
             retained = json.loads(manifest.read_text())["bounded_diagnostics"]
-            self.assertEqual([case["sequence"] for case in retained["case_resources"]],
-                             [event["sequence"] for event in retained["events"]])
+            (root / "tracer").mkdir()
+            _, _, trace, _ = StrictCITracerTests()._produce_validator_records(root / "tracer", None,
+                receipt_suite=None, runner_exit=0, bounded_diagnostics=retained,
+                case=dict(platform="ios", device="iphone", configuration="Debug", suite="smoke",
+                          scenario="normal", fixture="a"))
+            for source, receipt in (("case manifest", retained), ("warm entry", trace["warm"][0]["bounded_diagnostics"])):
+                with self.subTest(source=source):
+                    self.assertNotIn(foreign_sequence, [event["sequence"] for event in receipt["events"]])
+                    self.assertEqual([case["sequence"] for case in receipt["case_resources"]],
+                                     [event["sequence"] for event in receipt["events"]])
             self.assertTrue(all(event["sample"]["processes"] == [] for event in retained["events"]))
             self.assertEqual(diagnostics.MAX_EVENTS, len(recorder.receipt()["events"]))
+            self.assertIn(foreign_event, recorder.receipt()["events"])
             self.assertEqual((evidence / "simulator-preparation.log").read_text(), "ready\n")
             self.assertEqual(list((root / "private").iterdir()), [])
 
@@ -2972,7 +2987,7 @@ class StrictCITracerTests(unittest.TestCase):
 
     def _produce_validator_records(self, directory, error, *, verdict="FAIL", runner_exit=2,
                                    receipt_suite="tvos-switch", nightly=False, child_load_timeout=False, case=None,
-                                   timing_failure=None, invocation_fault=None):
+                                   timing_failure=None, invocation_fault=None, bounded_diagnostics=None):
         import run_strict_ci_tracer as tracer
         case = case or {"platform": "tvos", "device": "tv", "configuration": "Release",
                 "suite": "tvos-switch", "scenario": "normal", "fixture": "a"}
@@ -3027,6 +3042,8 @@ raise SystemExit(65)
                 "fixture_sha256": FROZEN_FIXTURE_SHA256[case["fixture"]]}
             if timing_failure is not None:
                 details["bounded_diagnostics"] = timing_failure[1]
+            elif bounded_diagnostics is not None:
+                details["bounded_diagnostics"] = bounded_diagnostics
             if invocation_fault == "case infrastructure":
                 details["infrastructure"] = [{"code": "cleanup-failed", "message": "Synthetic cleanup failure"}]
             (evidence / "case-manifest.json").write_text(json.dumps(details))

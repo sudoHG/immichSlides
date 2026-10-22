@@ -177,6 +177,8 @@ The separate [prepared environment-limit proof](#prepared-hosted-strict-environm
 can classify a failed hosted timing observation only when its full criteria are met.
 Summary Markdown displays per-case sample counts, idle minimum/median, maximum
 load, peak App CPU, sampler costs and truncation; nearby samples remain in JSON.
+The last retained phase excludes metadata-only hosting markers, which do not
+establish that Xcode reached test execution; other events render as before.
 The case manifest and each tracer warm phase retain only that case's resource
 sequences and one minimal hosting event per sampled invocation, plus the shared
 collection-cost and truncation metadata; the job summary retains the full ledger.
@@ -185,7 +187,9 @@ with its own sequence. Its sample contains only the Boolean/null hosting flag
 derived from `RUNNER_ENVIRONMENT`; all measurements and image version are null,
 and `processes` is empty. Recording this metadata consumes no diagnostic allowance
 and remains available when Xcode diagnostic accounting is unavailable. The event
-still obeys the existing 512-event retention cap; a lost event cannot prove hosting.
+counts toward the existing 512-event retention cap and is retained as an anomaly,
+so it can evict a success and make `event-cap` truncation and its log notice appear
+earlier, bounded by about 64 markers per ledger. A lost event cannot prove hosting.
 Every other event is cleared from the case copy to avoid duplicating the growing
 job ledger and exceeding the first-failure exporter's 65,536-byte manifest cap.
 This binds numbers to the existing case identity without publishing process names.

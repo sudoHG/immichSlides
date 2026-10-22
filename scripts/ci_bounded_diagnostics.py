@@ -164,7 +164,17 @@ def render_receipt(receipt):
         if value is not None and value > COLLECTION_BUDGET_SECONDS[scope]:
             measurement += " (over budget)"
         costs.append(f"{scope}={measurement}")
-    latest = {event["scope"]: event for event in receipt["events"]}
+    latest = {}
+    for event in receipt["events"]:
+        sample = event["sample"]
+        # A sampler's hosting marker does not establish that Xcode reached test execution.
+        if (event["scope"] == "xcode" and event["phase"] == "test-execution" and event["state"] == "started"
+                and event["elapsed_seconds"] == 0 and event["cpu_seconds"] is None
+                and event["input_sha256"] is None and event["official_exports"] is None and sample is not None
+                and all(sample[field] is None for field in ("cpu_percent", "memory_free_bytes", "load_average", "image_version"))
+                and not sample["processes"]):
+            continue
+        latest[event["scope"]] = event
     phases = "; ".join(f"{scope}: {event['phase']}/{event['state']} at {event['elapsed_seconds']:g} s"
                        for scope, event in latest.items()) or "none"
     rendered = (f"\nBounded diagnostics (measurements only): {'; '.join(costs)}; events={len(receipt['events'])}; "

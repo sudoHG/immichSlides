@@ -325,7 +325,7 @@ class CaseSampler:
                     os.environ.get("RUNNER_ENVIRONMENT")), "cpu_percent": None, "memory_free_bytes": None,
                     "load_average": None, "image_version": None, "processes": []}})
         except (OSError, RuntimeError, TypeError, ValueError):
-            self.truncated = True
+            pass
         # Older ledgers lack process-only accounting; retain their conservative combined charge.
         self.previous_process_spent = self.recorder.process_sampler_wall_seconds
         if self.previous_process_spent is None:
