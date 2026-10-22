@@ -804,6 +804,15 @@ def public_validator_failure_message(value):
 # Source locations and enum meanings: docs/CI_STRICT_RUNNER.md#reviewed-prefix-table.
 # No activity marker exists in these flows. Suffixes (including values) are discarded.
 PREFIX_RULES = (
+    # tvOS timing-precondition fixes: keep separate from the broader diagnostics-only expansion.
+    ("tvOS flow entry precondition failed:", "history_navigation", "control_state"),
+    ("tvOS flow entry anchor must remain paused before checking the history boundary.", "history_navigation", "control_state"),
+    ("tvOS midpoint setup exhausted the original step budget before the half-cycle pause.", "continue_timing", "timing_window"),
+    ("tvOS midpoint pause requires Play/Pause focus after at most one wake within the original step budget.", "control_action", "focus"),
+    ("tvOS midpoint pause must return in the anchored stable window within the original step budget.", "continue_timing", "timing_window"),
+    ("tvOS midpoint pause must preserve the anchored public photo before manual Next.", "control_action", "scene_identity"),
+    ("tvOS midpoint setup requires a new stable public photo within the original step budget.", "continue_timing", "scene_identity"),
+    # Existing reviewed prefixes.
     ("Visual ID failed history-start:", "history_start_capture", "scene_identity"),
     ("Visual ID failed history-first-next:", "history_first_next_capture", "scene_identity"),
     ("Visual ID failed history-second-next:", "history_second_next_capture", "scene_identity"),
@@ -1109,7 +1118,7 @@ PREFIX_RULES = (
     ("The end of the history chain must show the previous button.", "history_navigation", "hidden_controls"),
     ("The paused-frame comparison must span at least 10 seconds.", "paused_hold", "timing_window"),
     ("The second next must advance the playback cursor further.", "history_navigation", "navigation"),
-    ("Pressing Select again after pausing must resume autoplay.", "control_action", "control_state"),
+    ("Pressing Select after pausing must resume autoplay.", "control_action", "control_state"),
     ("Autoplay must be pausable again before entering settings.", "control_action", "control_state"),
     ("The first-boot form must show the Test Connection button.", "firstboot_setup", "navigation"),
     ("Autoplay must be paused before the history chain starts.", "history_navigation", "control_state"),
@@ -1151,7 +1160,6 @@ PREFIX_RULES = (
     ("First-boot form must show Test Connection.", "firstboot_setup", "navigation"),
     ("Settings home must show playback settings.", "settings_navigation", "navigation"),
     ("Settings subpage must show target option ", "settings_navigation", "navigation"),
-    ("At midpoint, focus must reach play/pause.", "control_action", "focus"),
     ("Pausing must not advance an extra photo.", "paused_hold", "scene_identity"),
     ("The field must be focused before typing.", "unknown", "focus"),
     ("A missing image must not count as a pass", "visible_scene_capture", "scene_identity"),

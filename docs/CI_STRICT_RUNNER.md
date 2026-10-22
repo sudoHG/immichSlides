@@ -294,6 +294,13 @@ Settings return has no known scene-clock origin and cannot start that wait. The 
 capture is `timing-start.png`; the ordinary paused-frame identity, T+2 hold and
 Continue T±2 checks retain their existing deadlines and criteria. A legal frozen
 fade is still covered by `pause-window`, rather than admitted as a stable photo.
+`tvos-lifecycle-pause` anchors T/2 to a newly confirmed stable public photo. Its
+midpoint setup pools the existing two control/focus allocations, conditional
+playing-state readback and half-cycle under one absolute deadline. Both visible
+and hidden-bar paths poll Play/Pause focus until the anchored T-2 boundary; only
+the hidden receiver gets one wake. One Select must return and change the button
+state within that same deadline before the before-pause capture. It never retries
+Select. The photo-identity, paused hold and Continue T±2 checks remain unchanged.
 `pause-window` sets the probe plus `UI_TEST_SERVER_URL`, `UI_TEST_API_KEY`,
 `UI_TEST_RESET_STATE`, `UI_TEST_FORCE_MODE_SELECTION` and
 `UI_TEST_PAUSE_AT_AUTOMATIC_FADE_MIDPOINT=1`. The last key enables a Debug-only,
@@ -1417,6 +1424,13 @@ New enum meanings and why the previous vocabulary cannot express them:
 
 | Fixed source prefix | Phase | Class | Public source |
 |---|---|---|---|
+| `tvOS flow entry precondition failed:` | `history_navigation` | `control_state` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L287); red when autoplay advanced before the entry pause |
+| `tvOS flow entry anchor must remain paused before checking the history boundary.` | `history_navigation` | `control_state` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L291) |
+| `tvOS midpoint setup exhausted the original step budget before the half-cycle pause.` | `continue_timing` | `timing_window` | [AccessLifecycleTVOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift#L343) |
+| `tvOS midpoint pause requires Play/Pause focus after at most one wake within the original step budget.` | `control_action` | `focus` | [AccessLifecycleTVOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift#L364) |
+| `tvOS midpoint pause must return in the anchored stable window within the original step budget.` | `continue_timing` | `timing_window` | [AccessLifecycleTVOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift#L385) |
+| `tvOS midpoint pause must preserve the anchored public photo before manual Next.` | `control_action` | `scene_identity` | [AccessLifecycleTVOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift#L391) |
+| `tvOS midpoint setup requires a new stable public photo within the original step budget.` | `continue_timing` | `scene_identity` | [AccessLifecycleTVOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift#L521) |
 | `Midpoint pause confirmation must finish before T-2;` | `continue_timing` | `timing_window` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift) |
 | `Midpoint pause tap must return before T-2;` | `continue_timing` | `timing_window` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift) |
 | `The playback page must have play/pause.` | `control_action` | `hidden_controls` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift) |
@@ -1665,8 +1679,7 @@ New enum meanings and why the previous vocabulary cannot express them:
 | `After choosing random play, focus must move down to Continue.` | `mode_selection` | `focus` | [AccessLifecycleTVOSUITests+Settings.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Settings.swift#L74) |
 | `Settings home must show playback settings.` | `settings_navigation` | `navigation` | [AccessLifecycleTVOSUITests+Settings.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Settings.swift#L89), [AccessLifecycleTVOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift#L24) |
 | `Must return to playback settings.` | `settings_navigation` | `focus` | [AccessLifecycleTVOSUITests+Navigation.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift#L183), [AccessLifecycleTVOSUITests+Settings.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Settings.swift#L537), [AccessLifecycleTVOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift#L26) |
-| `Focus must reach play/pause.` | `control_action` | `focus` | [AccessLifecycleTVOSUITests+Navigation.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift#L12), [AccessLifecycleTVOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift#L314) |
-| `At midpoint, focus must reach play/pause.` | `control_action` | `focus` | [AccessLifecycleTVOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift#L329) |
+| `Focus must reach play/pause.` | `control_action` | `focus` | [AccessLifecycleTVOSUITests+Navigation.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift#L12), [AccessLifecycleTVOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift#L315) |
 | `After pause, focus must reach next.` | `control_action` | `focus` | [AccessLifecycleTVOSUITests+Navigation.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift#L27), [AccessLifecycleTVOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift#L334) |
 | `Focus must return to play/pause after next.` | `control_action` | `focus` | [AccessLifecycleTVOSUITests+Navigation.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift#L36), [AccessLifecycleTVOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift#L368) |
 | `Screenshot before-pause cannot serve as identity:` | `visible_scene_capture` | `scene_identity` | [AccessLifecycleTVOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift#L573) |
@@ -1706,7 +1719,7 @@ New enum meanings and why the previous vocabulary cannot express them:
 | `Before checking autoplay, focus must be able to move to Next.` | `control_action` | `focus` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L451) |
 | `After consuming one step of forward history, focus must be able to move to Next again.` | `history_navigation` | `focus` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L461) |
 | `At the history frontier, focus must be able to move to Play/Pause.` | `history_navigation` | `focus` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L472) |
-| `Pressing Select again after pausing must resume autoplay.` | `control_action` | `control_state` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L480) |
+| `Pressing Select after pausing must resume autoplay.` | `control_action` | `control_state` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L491) |
 | `After auto-advance, focus on wake must return to Play/Pause.` | `control_action` | `focus` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L487) |
 | `The index probe must change after a playback action.` | `history_navigation` | `probe_readback` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L492) |
 | `Pressing Select after auto-advance must pause playback.` | `control_action` | `control_state` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L509) |

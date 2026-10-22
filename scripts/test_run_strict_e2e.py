@@ -982,6 +982,28 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
 
 
 class FailureDiagnosticsTests(unittest.TestCase):
+    def test_tvos_timing_preconditions_are_classified_and_stay_red(self):
+        from ci_failure_diagnostics import classify_messages, environment_timing, unknown_diagnostics
+        cases = (
+            ("tvOS flow entry precondition failed:", "history_navigation", "control_state", "XCTAssertEqual failed: (value) - "),
+            ("tvOS flow entry anchor must remain paused before checking the history boundary.", "history_navigation", "control_state", "XCTAssertEqual failed: (value) - "),
+            ("tvOS midpoint setup exhausted the original step budget before the half-cycle pause.", "continue_timing", "timing_window", 'failed: caught error: "message(\\"'),
+            ("tvOS midpoint pause requires Play/Pause focus after at most one wake within the original step budget.", "control_action", "focus", "XCTAssertTrue failed - "),
+            ("tvOS midpoint pause must return in the anchored stable window within the original step budget.", "continue_timing", "timing_window", "XCTAssertTrue failed - "),
+            ("tvOS midpoint pause must preserve the anchored public photo before manual Next.", "control_action", "scene_identity", "XCTAssertEqual failed: (value) - "),
+            ("tvOS midpoint setup requires a new stable public photo within the original step budget.", "continue_timing", "scene_identity", 'failed: caught error: "message(\\"'),
+        )
+        # Even a saturated, fully elapsed availability wait must not yellow a failed timing precondition.
+        failure = dict(source="xctest", app="running-foreground", scene_status="MATCH", surface="playback",
+                       control_bar="hidden", step="query-element", element="slideshow.control.playPause.button",
+                       wait_elapsed_seconds=30, deadline_seconds=5)
+        for prefix, phase, kind, wrapper in cases:
+            with self.subTest(prefix=prefix):
+                message = wrapper + prefix + " PRIVATE_SENTINEL"
+                self.assertEqual({"failure_phase": phase, "failure_class": kind}, classify_messages([message]))
+                self.assertFalse(environment_timing(failure, phase, kind))
+                self.assertEqual(unknown_diagnostics(), classify_messages([message, "unreviewed failure"]))
+
     def test_reader_adds_only_fixed_display_after_and_person_screenshot_contexts(self):
         from ci_failure_diagnostics import public_validator_failure_message, validate_validator_failure_message
         # Existing person names and historical prefixes remain valid alongside display-after.
@@ -1523,6 +1545,13 @@ class FailureDiagnosticsTests(unittest.TestCase):
         import subprocess
         # Missing reader rows must stay red even when XCTest retains only a bounded receipt.
         cases = (
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "tvOS flow entry precondition failed:", "history_navigation", "control_state", "XCTAssertEqual failed: (value) - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "tvOS flow entry anchor must remain paused before checking the history boundary.", "history_navigation", "control_state", "XCTAssertEqual failed: (value) - "),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift", "tvOS midpoint setup exhausted the original step budget before the half-cycle pause.", "continue_timing", "timing_window", 'failed: caught error: "message(\\"'),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift", "tvOS midpoint pause requires Play/Pause focus after at most one wake within the original step budget.", "control_action", "focus", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift", "tvOS midpoint pause must return in the anchored stable window within the original step budget.", "continue_timing", "timing_window", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift", "tvOS midpoint pause must preserve the anchored public photo before manual Next.", "control_action", "scene_identity", "XCTAssertEqual failed: (value) - "),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift", "tvOS midpoint setup requires a new stable public photo within the original step budget.", "continue_timing", "scene_identity", 'failed: caught error: "message(\\"'),
             ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "The playback index probe is empty, so autoplay and retained-history cannot be proven.", "history_navigation", "probe_readback", 'XCTUnwrap failed: expected non-nil value of type "String" - '),
             ("immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift", "Settings subpage must show target option ", "settings_navigation", "navigation", "XCTAssertTrue failed - "),
             ("immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift", "Must be able to focus ", "unknown", "focus", "XCTAssertTrue failed - "),
@@ -1556,7 +1585,6 @@ class FailureDiagnosticsTests(unittest.TestCase):
             ("immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift", "Settings home must show playback settings.", "settings_navigation", "navigation", "XCTAssertTrue failed - "),
             ("immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift", "Must return to playback settings.", "settings_navigation", "focus", "XCTAssertTrue failed - "),
             ("immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift", "Focus must reach play/pause.", "control_action", "focus", "XCTAssertTrue failed - "),
-            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift", "At midpoint, focus must reach play/pause.", "control_action", "focus", "XCTAssertTrue failed - "),
             ("immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift", "After pause, focus must reach next.", "control_action", "focus", "XCTAssertTrue failed - "),
             ("immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift", "Focus must return to play/pause after next.", "control_action", "focus", "XCTAssertTrue failed - "),
             ("immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift", "Screenshot before-pause cannot serve as identity:", "visible_scene_capture", "scene_identity", "failed: caught error: \"message(\\\""),
@@ -1596,7 +1624,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
             ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "Before checking autoplay, focus must be able to move to Next.", "control_action", "focus", "XCTAssertTrue failed - "),
             ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "After consuming one step of forward history, focus must be able to move to Next again.", "history_navigation", "focus", "XCTAssertTrue failed - "),
             ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "At the history frontier, focus must be able to move to Play/Pause.", "history_navigation", "focus", "XCTAssertTrue failed - "),
-            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "Pressing Select again after pausing must resume autoplay.", "control_action", "control_state", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "Pressing Select after pausing must resume autoplay.", "control_action", "control_state", "XCTAssertTrue failed - "),
             ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "After auto-advance, focus on wake must return to Play/Pause.", "control_action", "focus", "XCTAssertTrue failed - "),
             ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "The index probe must change after a playback action.", "history_navigation", "probe_readback", "XCTAssertNotNil failed - "),
             ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "Pressing Select after auto-advance must pause playback.", "control_action", "control_state", "XCTAssertTrue failed - "),
