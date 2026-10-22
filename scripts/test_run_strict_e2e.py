@@ -92,6 +92,19 @@ from run_strict_e2e_test_fixtures import (
 from run_strict_e2e_test_configuration_cases import StrictE2ERunnerTestsCasesConfiguration
 from run_strict_e2e_test_evidence_cases import StrictE2ERunnerTestsCasesEvidence
 
+def setUpModule():
+    global _gate_environment_patch
+    # Hosted host-check jobs must not leak gate inputs into mocked preparations.
+    environment = {key: value for key, value in os.environ.items()
+                   if not key.startswith(("GITHUB_", "RUNNER_"))}
+    _gate_environment_patch = mock.patch.dict(os.environ, environment, clear=True)
+    _gate_environment_patch.start()
+
+
+def tearDownModule():
+    _gate_environment_patch.stop()
+
+
 class StrictE2ERunnerTests(StrictE2ERunnerTestsCasesConfiguration, StrictE2ERunnerTestsCasesEvidence, unittest.TestCase):
     def test_fixture_build_has_its_own_deadline_before_health_and_cannot_hide_failures(self):
         import strict_e2e_runner_support as support
@@ -884,14 +897,21 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
         import strict_e2e_runner_support as support
         import strict_e2e_resource_diagnostics as resources
         for event, defect, cores, expected in (("schedule", "idle", 3, 100), ("workflow_dispatch", "device", 3, 120),
-                                              ("schedule", "steady", 3, 360), ("schedule", "steady", 4, 70)):
+                                              ("schedule", "steady", 3, 360), ("schedule", "steady", 4, 70),
+                                              ("schedule", "missing-host", 4, 100),
+                                              ("schedule", "missing-device", 4, 100),
+                                              ("schedule", "separated-misses", 4, 200)):
             with self.subTest(event=event, defect=defect, cores=cores), tempfile.TemporaryDirectory() as raw:
                 clock, reports, order = [0.0], [], []
                 def idle():
                     # A bad point must restart the window, and 50 seconds must not pass.
+                    if defect == "missing-host" and clock[0] == 30 or defect == "separated-misses" and clock[0] in (20, 40, 60, 80, 100, 130):
+                        return None
                     return {"idle_percent": None if clock[0] == 0 else 32 if defect == "steady" or defect == "idle" and clock[0] == 30 else 40}
                 def device(*args, **kwargs):
                     order.append("sample")
+                    if defect == "missing-device" and clock[0] == 30:
+                        raise subprocess.TimeoutExpired(["private-input"], 5)
                     return 130 if defect == "device" and clock[0] == 50 else 100
                 with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted",
                         "GITHUB_EVENT_NAME": event, "RUNNER_TEMP": raw}, clear=True), \
@@ -899,25 +919,29 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                         mock.patch.object(support.time, "sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)), \
                         mock.patch.object(support.os, "cpu_count", return_value=cores), \
                         mock.patch.object(resources.HostProbe, "sample", side_effect=idle), \
+                        mock.patch.object(support, "_boot_manager_pid", return_value=10) as manager, \
                         mock.patch.object(support, "_boot_device_cpu", side_effect=device), \
                         mock.patch.object(support, "boot_simulator", return_value=""), \
                         mock.patch.object(support, "wait_for_simulator_service_response", side_effect=lambda *a, **kw: (order.append("ready"), "")), \
                         mock.patch.object(support, "_BOOT_SETTLE_ATTEMPTED", False):
-                    support.prepare_simulator("device", report=reports.append, should_check_app=False)
+                    support.prepare_simulator("device", report=reports.append, should_check_app=False, boot_submitted=True)
                     self.assertEqual(clock[0], expected)
                     self.assertEqual(order[0], "ready")
                     self.assertIn("outcome=" + ("timed-out" if expected == 360 else "settled"), "\n".join(reports))
                     self.assertIn("idle_threshold_percent=" + ("33.333" if cores == 3 else "30.000"), "\n".join(reports))
+                    self.assertIn(f"logical_cores={cores};", "\n".join(reports))
+                    self.assertIn("missed_points=" + ("6" if defect == "separated-misses" else "1" if defect.startswith("missing-") else "0"), "\n".join(reports))
+                    manager.assert_called_once()
                     # Model the next runner process: the disk marker must still prevent a repeat.
                     support._BOOT_SETTLE_ATTEMPTED = False
-                    support.prepare_simulator("device", report=reports.append, should_check_app=False)
+                    support.prepare_simulator("device", report=reports.append, should_check_app=False, boot_submitted=True)
                     self.assertEqual(clock[0], expected)
                     self.assertIn("outcome=skipped-repeat", "\n".join(reports))
 
     def test_boot_settle_gate_caps_wait_and_fails_open_on_sampling_or_marker_errors(self):
         import strict_e2e_runner_support as support
         import strict_e2e_resource_diagnostics as resources
-        for failure in ("busy", "remaining-budget", "device-at-cap", "host", "malformed-host", "device", "marker", "cores"):
+        for failure in ("busy", "remaining-budget", "device-at-cap", "host", "malformed-host", "device", "manager", "import", "marker", "cores"):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as raw:
                 clock, reports = [0.0], []
                 def sample():
@@ -939,15 +963,20 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                         mock.patch.object(support.time, "sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)), \
                         mock.patch.object(support.os, "cpu_count", return_value=None if failure == "cores" else 3), \
                         mock.patch.object(resources.HostProbe, "sample", side_effect=sample), \
+                        mock.patch.dict(sys.modules, {"strict_e2e_resource_diagnostics": None} if failure == "import" else {}), \
+                        mock.patch.object(support, "_boot_process_output", side_effect=OSError("private-input") if failure == "manager" else None,
+                                          return_value="10\n"), \
                         mock.patch.object(support, "_boot_device_cpu", side_effect=device), \
                         mock.patch.object(support, "boot_simulator", return_value=""), \
                         mock.patch.object(support, "wait_for_simulator_app_response", side_effect=lambda *a, **kw: (
                             clock.__setitem__(0, 590) if failure == "remaining-budget" else None, "")), \
                         mock.patch.object(support, "_BOOT_SETTLE_ATTEMPTED", False):
-                    support.prepare_simulator("device", report=reports.append)
+                    support.prepare_simulator("device", report=reports.append, boot_submitted=True)
                 log = "\n".join(reports)
-                self.assertIn("outcome=" + ("timed-out" if failure in ("busy", "remaining-budget", "device-at-cap") else "unavailable"), log)
-                self.assertEqual(clock[0], 360 if failure in ("busy", "device-at-cap") else 600 if failure == "remaining-budget" else 10 if failure in ("host", "malformed-host", "device") else 0)
+                self.assertIn("outcome=" + ("timed-out" if failure in ("busy", "remaining-budget", "device-at-cap") else
+                                           "sampling-failed" if failure in ("host", "malformed-host", "device") else "unavailable"), log)
+                self.assertEqual(clock[0], 360 if failure in ("busy", "device-at-cap") else 600 if failure == "remaining-budget" else 60 if failure in ("host", "malformed-host", "device") else 0)
+                self.assertIn("missed_points=" + ("6" if failure in ("host", "malformed-host", "device") else "1" if failure == "device-at-cap" else "0"), log)
                 self.assertIn("simulator-preparation: passed", log)
                 self.assertNotIn("private-input", log)
 
@@ -959,9 +988,16 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                     mock.patch.object(support, "boot_simulator", return_value=""), \
                     mock.patch.object(support, "wait_for_simulator_app_response", return_value=(None, "")), \
                     mock.patch.object(support, "_boot_device_cpu") as device:
-                _, log = support.prepare_simulator("device", report=lambda line: None)
+                _, log = support.prepare_simulator("device", report=lambda line: None, boot_submitted=True)
                 self.assertIn("outcome=skipped-environment", log)
                 device.assert_not_called()
+        with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted",
+                "GITHUB_EVENT_NAME": "workflow_dispatch"}, clear=True), \
+                mock.patch.object(support, "boot_simulator", return_value=""), \
+                mock.patch.object(support, "wait_for_simulator_service_response", return_value=(None, "")), \
+                mock.patch.object(support, "_settle_simulator_boot", return_value="simulator-boot-settle: outcome=settled") as gate:
+            support.prepare_simulator("device", should_check_app=False, report=lambda line: None)
+            gate.assert_not_called()
 
     def test_boot_device_cpu_counts_only_the_requested_subtree_and_rejects_missing_samples(self):
         import strict_e2e_runner_support as support
@@ -972,7 +1008,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                     self.assertLessEqual(kwargs["timeout"], 5)
                     return subprocess.CompletedProcess(command, 0, "10\n" if command[0] == "xcrun" else rows, "")
                 with mock.patch.object(support.subprocess, "run", side_effect=run):
-                    self.assertEqual(support._boot_device_cpu("device", support.time.monotonic() + 10), expected)
+                    self.assertEqual(support._boot_device_cpu(10, support.time.monotonic() + 10), expected)
 
     def test_prebuild_preparation_checks_launch_services_without_a_container_lookup(self):
         import ci_execution_diagnostics as diagnostics
@@ -2372,7 +2408,11 @@ class StrictCITracerTests(unittest.TestCase):
                         if failure == "hard-timeout":
                             order.append("child-timeout")
                             raise subprocess.TimeoutExpired(command, _kwargs["timeout_seconds"])
-                        return tracer.main(command[3:])
+                        code = tracer.main(command[3:])
+                        if failure is None:
+                            # A real child writes its console to this file, then the parent relays it.
+                            _args[1].write_text("simulator-boot-settle: outcome=settled; missed_points=0\n")
+                        return code
                     if "--warm-up-only" in command:
                         order.append("cold")
                         self.assertNotIn("--simulator-boot-submitted", command)
@@ -2415,7 +2455,7 @@ class StrictCITracerTests(unittest.TestCase):
                         mock.patch.object(support.subprocess, "run", side_effect=simctl), \
                         mock.patch("ci_execution_diagnostics.system_sample", return_value=None), \
                         mock.patch.object(support.time, "monotonic", side_effect=lambda: clock[0]), \
-                        mock.patch("builtins.print"):
+                        mock.patch("builtins.print") as printed:
                     code = tracer.main(["--platform", "ios", "--destination", "platform=iOS Simulator,id=TEST",
                         "--manifest", str(manifest), "--output-dir", str(output), "--simulator-boot-submitted"])
                 summary = parse_summary((output / "records/summary.json").read_text())
@@ -2423,6 +2463,7 @@ class StrictCITracerTests(unittest.TestCase):
                     self.assertEqual(0, code)
                     self.assertEqual("passed", summary["status"])
                     self.assertEqual(["cold", "bootstatus", "spawn", "warm", "warm"], order)
+                    printed.assert_any_call("simulator-boot-settle: outcome=settled; missed_points=0", flush=True)
                 else:
                     self.assertEqual(1, code)
                     self.assertNotIn("warm", order)
