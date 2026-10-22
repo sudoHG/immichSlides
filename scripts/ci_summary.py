@@ -344,7 +344,8 @@ def validate_summary_v1(payload):
     for entry in population["observed"]:
         if ENVIRONMENT_LIMIT_FIELD in entry:
             proof = entry[ENVIRONMENT_LIMIT_FIELD]
-            require(environment_limit_evidence(payload, entry, [proof["resources"]], runner_hosted=proof["runner_hosted"]) == proof,
+            require(environment_limit_evidence(payload, entry, [proof["resources"]], runner_hosted=proof["runner_hosted"],
+                    policy_version=proof["policy_version"]) == proof,
                     "environment limit differs from scoped first failure evidence")
             evidence = evidence_by_case.get(identity_key(entry["identity"]), {})
             sequence = proof["resources"]["sequence"]

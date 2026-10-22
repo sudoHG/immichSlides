@@ -2626,6 +2626,50 @@ class StrictCITracerTests(unittest.TestCase):
                 else:
                     self.assertNotIn("environment_limit", observed["attempts"][0])
 
+    def test_album_environment_producer_requires_every_gate_fact(self):
+        import copy
+        from ci_summary import parse_summary
+        from run_strict_ci_tracer import produce_environment_limits
+        from ci_report import method_observations
+        from ci_nightly import aggregate_nightly
+        from test_ci_summary import hosted_album_timeout_summary, album_capture_gate_rejections
+        seed, _ = hosted_album_timeout_summary()
+        row = seed["population"]["observed"][0]
+        with tempfile.TemporaryDirectory() as raw:
+            _, _, trace, summary = self._produce_validator_records(Path(raw), "unused", receipt_suite=None,
+                runner_exit=65, nightly=True, timing_failure=(row, seed["strict_case_evidence"][0]["bounded_diagnostics"]),
+                case=dict(platform="ios", device="iphone", configuration="Debug", suite="smoke", scenario="normal", fixture="a"))
+        # Rebuild from original failures so the public producer always evaluates the actual facts.
+        for observed in summary["population"]["observed"]:
+            observed.pop("environment_limit", None)
+            observed["attempts"][0].pop("environment_limit", None)
+        for label, receipt, _ in [("eligible", row["first_failure"], None),
+                *album_capture_gate_rejections(row["first_failure"])]:
+            candidate, phases = copy.deepcopy(summary), copy.deepcopy(trace["warm"])
+            observed = candidate["population"]["observed"][0]
+            observed["first_failure"] = observed["attempts"][0]["first_failure"] = receipt
+            phases[0]["official_methods"][0]["first_failure"] = receipt
+            with self.subTest(gate=label):
+                self.assertEqual(0 if label == "eligible" else 1,
+                    produce_environment_limits(candidate, phases, policy_version=2))
+                self.assertEqual(label == "eligible", "environment_limit" in observed)
+                if label == "eligible":
+                    parsed = parse_summary(candidate)
+                    methods, missing = method_observations(parsed, {"warm": phases}, runner_hosted=True)
+                    self.assertEqual([], missing)
+                    self.assertEqual(receipt["gate"], methods[0]["environment_limit"]["failure"]["gate"])
+                    aggregate = aggregate_nightly(parsed["population"]["declared"], [parsed], live_in_scope=False)
+                    self.assertEqual("environment-limited", aggregate["status"])
+        for mutation in ("informational", "before only", "after only"):
+            candidate, phases = copy.deepcopy(summary), copy.deepcopy(trace["warm"])
+            informational = ("smoke",) if mutation == "informational" else ()
+            if not informational:
+                samples = phases[0]["bounded_diagnostics"]["case_resources"][0]["failure_samples"]
+                samples[1 if mutation == "before only" else 0]["elapsed_seconds"] = 7 if mutation == "before only" else 9
+            with self.subTest(mutation=mutation):
+                self.assertEqual(1, produce_environment_limits(candidate, phases, policy_version=2, informational=informational))
+                self.assertNotIn("environment_limit", candidate["population"]["observed"][0])
+
     def test_environment_producer_keeps_mixed_and_incomplete_shards_red_and_rejects_bad_projection(self):
         import copy
         from ci_summary import observation, parse_summary

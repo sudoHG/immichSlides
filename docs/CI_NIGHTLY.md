@@ -484,6 +484,24 @@ health, with one exception: an informational failure can turn an otherwise
 environment-limited night red (see
 [prepared hosted strict environment limits](CI_SUMMARY.md#prepared-hosted-strict-environment-limits)).
 
+Yellow means a retained failure with proven hosted CPU starvation, never a pass.
+The [versioned proof contract and exact allowlist](CI_SUMMARY.md#prepared-hosted-strict-environment-limits)
+are authoritative; the plain-English boundary is:
+
+| Failure | Can be yellow? |
+| --- | --- |
+| Reviewed UI availability wait with a full deadline and low-idle samples strictly before and after failure | Yes, in hosted nightly strict scope only. |
+| Album capture settling after Next took effect, paused playback, hidden entry hint and a complete loaded photo | Policy v2 only, with every published gate fact revalidated and an allowed settling phase. |
+| Next did not advance, changed layers without visible history advance, first capture with null progress, missing/incomplete gate or manifest, `grace`/`loading` or any other unreviewed phase | No. |
+| Black, blank or unrecognizable playback, validator/functional failure, process loss or invocation infrastructure failure | No. |
+| Missing/one-sided/high-idle samples, unknown hosting, local/self-hosted/UI/informational suite | No. |
+| The same case's second consecutive yellow UTC night | No; the reporter escalates it to red. |
+
+The policy v2 reader lands before a separate producer-default activation. Old v1
+proofs without gate facts retain their old interpretation. Aggregation rechecks
+the original receipts; the reporter rechecks even compact proofs without those
+receipts and turns invalid claims red.
+
 `nightly.json` records health/equality, every outcome, exclusions, source/run/attempt,
 hashes, shard intervals, start-order waves and wall time from planning through aggregate.
 Actions job timestamps show queue delay and teardown separately. Start-order waves batch

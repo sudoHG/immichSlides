@@ -622,9 +622,9 @@ probe text or identities. Exact fields, phase vocabulary and context restriction
 are specified in [first-failure evidence](CI_STRICT_RUNNER.md#first-failure-evidence).
 Both summary versions and the recursive bounded diagnostic/publication readers
 accept the object and reject unknown keys or values. Historical receipts may omit
-it. This reader addition does not change environment timing, the environment-failure
-projection or yellow eligibility; producer activation follows the same reader-first
-merge requirement.
+it. Receipt acceptance alone does not grant yellow eligibility; the separately
+versioned environment-limit policy below rechecks the projected gate facts.
+Producer activation follows the same reader-first merge requirement.
 
 The strict tracer emits the optional `validator_failure_message` field for failed
 cases with an explicit failing validator receipt, on both the observation and attempt.
@@ -715,11 +715,13 @@ An informational failure without a proof can therefore keep the producer failed
 and turn an otherwise environment-limited (yellow) night red.
 
 A failed strict observation and its sole failed attempt may carry the same optional
-`environment_limit` object. It contains exactly `schema_version: 1`, `policy_version: 1`,
+`environment_limit` object. It contains exactly `schema_version: 1`, `policy_version: 1` or `2`,
 `runner_hosted: true`, paired `failure_phase` / `failure_class`, `failure`, and
 `resources`. `failure` is the closed projection of `first_failure`: `source`,
 `step`, `element`, `action`, `app`, `surface`, `control_bar`, `scene_status`, `wait_elapsed_seconds`, `deadline_seconds`,
-`action_duration_seconds`, and `post_event_idle`. Numbers retain the first-failure
+`action_duration_seconds`, and `post_event_idle`. Policy v2 additionally accepts the
+optional, unchanged `gate` object from that receipt; policy v1 keeps its original
+closed projection without a gate. Numbers retain the first-failure
 bounds and nulls. `resources` is one unchanged, validated `case_resources` entry.
 The summary reader recomputes the projection from the original receipt and checks
 the nightly strict source. The optional `strict_case_evidence` list binds each strict
@@ -751,6 +753,10 @@ All criteria are required:
    sample must qualify, including the boundary values. Missing idle is red.
    `truncated: true` and absent category CPU values do not disqualify measured idle;
    load and App CPU are displayed, not used as classification thresholds.
+4. For the policy v2 album capture entry, every gate condition below must hold.
+   The projected proof retains the gate, and the proof validator rechecks its
+   closed shape, kind, Boolean types and eligibility. Summary, official-method,
+   nightly aggregation and compact-history readers do not trust a producer's claim.
 
 | Phase | Class | Step and target element | Expected surface |
 | --- | --- | --- | --- |
@@ -759,6 +765,47 @@ All criteria are required:
 | `settings_navigation` | `navigation` | `query-element` or `select`: `slideshow.control.settings.button` | `playback` |
 | `control_action`, `hidden_controls` | `hidden_controls` | `query-element` or `reveal-controls`: settings, previous, playPause or next under `slideshow.control.*.button`, or `slideshow.hiddenWakeReceiver` | `playback` |
 | `interval_setup` | `hidden_controls` | `query-element`: the same playback controls | `playback` |
+| `visible_scene_capture` | `probe_readback` | `wait-scene`: `slideshow.scenePresentation.contract.summary`; policy v2 album gate only | `playback` |
+
+Hogan approved the album exception on 2026-10-22. Its `gate.kind` must be
+`album-capture`; `paused`, `entry_hint_hidden` and `manifest_complete` must be
+true; `stable` must be false. `advanced` must be true, and `layers_changed` must be
+a known Boolean. Every null, missing or other value is red. The phase/progress
+audit deliberately narrows the proposed either-signal rule: hidden incoming
+layers can change before any new photo is visible, so `layers_changed` alone is
+insufficient. `installHiddenLayerIfNeeded` appends a zero-opacity, not-ready layer;
+even `promoteHiddenLayer` starts at zero opacity. History advances only after
+`incomingBecameVisible` passes its visibility guard.
+The exact phase set is derived from the App's underlying `ScenePresentationPhase`
+(the probe reports `underlyingPhase`, not the `.paused` suspension wrapper):
+
+| Gate phase | Eligibility and source semantics |
+| --- | --- |
+| `transition` | Eligible with all other gate facts: a ready manual Next photo crossfades before `completeTransition` settles it. |
+| `incomingFromLoading` | Eligible with all other gate facts: `beginIncomingFromLoading` marks the target ready and promotes its incoming layer before settling. |
+| `grace` | Red: `holdPresentationForManualTarget` keeps the old photo while the hidden manual target decodes; a complete old manifest and changed layers do not prove the new photo loaded. |
+| `loading` | Red: the target may still be pending; a complete retained photo does not prove the new target loaded. |
+| `empty`, `sourceError`, `unknown`, `stablePhoto`, `paused` | Red: absent/error/unknown evidence or a phase outside the reviewed settling states. |
+
+The source semantics live in `PlaybackSessionEngine+ScenePresentationState.swift`;
+`StrictE2ESceneCapture.isStableWindow` also requires `stablePhoto`, a sole stable
+layer, full opacity and a complete manifest. `manifest_complete` proves positive
+slot count, no pending/failed slots, no gaps/overlaps and complete canvas coverage.
+The `slideshow.control.next.button` timeout is a confirmed no-advance branch and
+always stays red. First-capture timeouts have no previous scene, so #572 emits
+null for both progress facts; this also excludes the first-capture
+`rejectFrozenAlbumTransition` failure even when its phase is `transition` and
+Pause is true. Post-capture scene assertions and other capture steps stay red.
+
+Policy v2 requires a new version because its proof projection carries a new field
+and its eligibility differs from v1. Reader-first rollout installs both validators
+while the producer default stays v1; a separate activation commit switches the
+producer default to v2 only after that reader is on main. There is no CLI override.
+Library tests explicitly request v2 to exercise the real tracer producer before
+activation. Retained v1 proofs without a gate continue to validate under exactly
+the old table entries; they do not gain the album exception. Unknown versions
+remain red. A producer PR based on a pre-reader trusted base must be rebased after
+the reader merges; stacking alone does not activate trusted acceptance.
 
 This is an explicit allowlist, not an inference from an exception name. A deadline
 left over from a completed wait cannot turn a value or scene assertion yellow.
@@ -800,8 +847,8 @@ runs on the pinned devices.
 
 The reporter escalates the same strict method identity (including suite and all
 case dimensions) after consecutive UTC yellow nights, using its retained history.
-`ENVIRONMENT_YELLOW_NIGHTS_BEFORE_RED = 2` is the single policy constant, pending
-owner confirmation. The second and later consecutive yellow nights become red
+`ENVIRONMENT_YELLOW_NIGHTS_BEFORE_RED = 2` is the single policy constant.
+The second and later consecutive yellow nights become red
 in the report and use ordinary Issue/notification tracking, while raw outcomes
 and the original proof remain unchanged. A missing night or explicit pass breaks
 the yellow sequence; another case or a diagnostic run cannot contribute. Yellow
@@ -809,8 +856,8 @@ never erases a red failure night or supplies an explicit-pass recovery night.
 Nights containing yellow are ineligible unchanged-SHA baselines so the next
 scheduled night can collect the evidence needed for escalation.
 
-Retained compact proofs are rechecked under the current policy. Missing, unknown
-or obsolete policy versions and invalid proofs degrade to red with a fixed public
+Retained compact proofs are rechecked under their supported policy version (v1 or
+v2). Missing, unknown or obsolete policy versions and invalid proofs degrade to red with a fixed public
 reason; rendering, history loading and issue decisions must not raise because of
 those proofs. Original first-failure receipts remain outside compact history.
 

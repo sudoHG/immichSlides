@@ -61,7 +61,8 @@ _validator_enabled = ContextVar("first_failure_validator_enabled", default=False
 ENVIRONMENT_LIMIT_FIELD = "environment_limit"
 ENVIRONMENT_POLICY_VERSION = 1
 ENVIRONMENT_IDLE_MAX_PERCENT = 5
-# Only waits for UI availability qualify. Assertions about values, identity or advance do not.
+ENVIRONMENT_ALBUM_SETTLING_PHASES = frozenset({"transition", "incomingFromLoading"})
+# Legacy UI availability waits; policy v2 handles the album settling gate separately.
 ENVIRONMENT_WAIT_STEPS = {
     **{("mode_selection", "navigation", "mode-card", element): "mode"
        for element in ("mode.random.button", "mode.filtered.button")},
@@ -86,15 +87,28 @@ def environment_failure_projection(receipt):
         "control_bar": receipt["state"]["control_bar"],
         "scene_status": receipt["state"]["scene_status"],
         **{key: receipt["timing"][key] for key in ("wait_elapsed_seconds", "deadline_seconds", "action_duration_seconds")},
-        "post_event_idle": receipt.get("native_activity_seconds", {}).get("post_event_idle")}
+        "post_event_idle": receipt.get("native_activity_seconds", {}).get("post_event_idle"),
+        **({"gate": dict(receipt["gate"])} if "gate" in receipt else {})}
 
 
-def environment_timing(failure, phase, failure_class):
+def environment_timing(failure, phase, failure_class, *, policy_version=1):
+    album_capture = (policy_version == 2 and phase == "visible_scene_capture" and failure_class == "probe_readback"
+        and failure["step"] == "wait-scene" and failure["element"] == "slideshow.scenePresentation.contract.summary")
+    if album_capture:
+        gate = failure.get("gate", {})
+        if not (gate.get("kind") == "album-capture" and gate.get("stable") is False
+                and gate.get("paused") is True and gate.get("entry_hint_hidden") is True
+                and gate.get("manifest_complete") is True
+                and gate.get("advanced") is True and type(gate.get("layers_changed")) is bool
+                and gate.get("phase") in ENVIRONMENT_ALBUM_SETTLING_PHASES):
+            return False
+    expected_surface = "playback" if album_capture else ENVIRONMENT_WAIT_STEPS.get(
+        (phase, failure_class, failure["step"], failure["element"]))
     if (failure["source"] != "xctest" or failure["app"] != "running-foreground"
             or failure["scene_status"] in {"BLACK", "BLANK"}
             or failure["scene_status"] == "UNRECOGNIZABLE" and failure["surface"] in {"playback", "unknown"}
             or failure["surface"] == "unknown"
-            or failure["surface"] != ENVIRONMENT_WAIT_STEPS.get((phase, failure_class, failure["step"], failure["element"]))
+            or failure["surface"] != expected_surface
             or failure_class == "hidden_controls" and failure["control_bar"] == "visible"):
         return False
     elapsed, deadline = failure["wait_elapsed_seconds"], failure["deadline_seconds"]
@@ -107,19 +121,24 @@ def validate_environment_limit(proof):
     from ci_bounded_diagnostics import validate_case_resources
     fields(proof, {"schema_version", "policy_version", "runner_hosted", "failure_phase", "failure_class", "failure", "resources"},
            "environment limit")
-    require(type(proof["policy_version"]) is int and proof["policy_version"] == ENVIRONMENT_POLICY_VERSION,
+    require(type(proof["policy_version"]) is int and proof["policy_version"] in {1, 2},
             "environment limit: unsupported policy version")
     require(type(proof["schema_version"]) is int and proof["schema_version"] == 1
             and proof["runner_hosted"] is True, "environment limit: hosted evidence required")
     failure = proof["failure"]
-    fields(failure, {"source", "step", "element", "action", "app", "surface", "control_bar", "scene_status", "wait_elapsed_seconds", "deadline_seconds",
-                     "action_duration_seconds", "post_event_idle"}, "environment failure")
+    failure_fields = {"source", "step", "element", "action", "app", "surface", "control_bar", "scene_status", "wait_elapsed_seconds", "deadline_seconds",
+                      "action_duration_seconds", "post_event_idle"}
+    if proof["policy_version"] == 2 and isinstance(failure, dict) and "gate" in failure:
+        failure_fields.add("gate")
+    fields(failure, failure_fields, "environment failure")
     receipt = unavailable_first_failure("xctest")
     receipt.update(source=failure["source"], step=failure["step"], element=failure["element"], action=failure["action"])
     receipt["state"]["app"] = failure["app"]
     receipt["state"]["surface"] = failure["surface"]
     receipt["state"]["control_bar"] = failure["control_bar"]
     receipt["state"]["scene_status"] = failure["scene_status"]
+    if "gate" in failure:
+        receipt["gate"] = failure["gate"]
     for key in ("wait_elapsed_seconds", "deadline_seconds", "action_duration_seconds"):
         receipt["timing"][key] = failure[key]
     if failure["source"] == "xctest":
@@ -127,7 +146,7 @@ def validate_environment_limit(proof):
         receipt["native_activity_seconds"]["post_event_idle"] = failure["post_event_idle"]
     validate_first_failure(receipt)
     require(isinstance(proof["failure_phase"], str) and isinstance(proof["failure_class"], str)
-            and environment_timing(failure, proof["failure_phase"], proof["failure_class"]),
+            and environment_timing(failure, proof["failure_phase"], proof["failure_class"], policy_version=proof["policy_version"]),
             "environment limit: failure is not an eligible timing wait")
     resource = proof["resources"]
     validate_case_resources([resource])
@@ -139,7 +158,7 @@ def validate_environment_limit(proof):
             "environment limit: insufficient starvation evidence")
 
 
-def environment_limit_evidence(summary, entry, resources, *, runner_hosted):
+def environment_limit_evidence(summary, entry, resources, *, runner_hosted, policy_version=None):
     """Project checked case evidence; absence or ambiguity always retains the raw failure."""
     from ci_summary import require
     try:
@@ -153,7 +172,7 @@ def environment_limit_evidence(summary, entry, resources, *, runner_hosted):
         require(receipt is not None, "environment limit: missing first failure")
         candidates = [resource for resource in resources if resource.get("first_failure_elapsed_seconds") is not None]
         require(len(candidates) == 1, "environment limit: ambiguous failure resources")
-        proof = {"schema_version": 1, "policy_version": ENVIRONMENT_POLICY_VERSION,
+        proof = {"schema_version": 1, "policy_version": ENVIRONMENT_POLICY_VERSION if policy_version is None else policy_version,
             "runner_hosted": True, "failure_phase": entry.get("failure_phase"),
             "failure_class": entry.get("failure_class"), "failure": environment_failure_projection(receipt),
             "resources": candidates[0]}
