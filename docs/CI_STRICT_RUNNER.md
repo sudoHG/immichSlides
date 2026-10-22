@@ -267,13 +267,18 @@ least 1 s apart, retaining the same layer identity and history count. The expect
 rates are 1/5 and 1/30 per second. The accepted range, 1/60 through 1/15, allows half
 to twice the 30 s rate while excluding a frozen probe and the 5 s rate. The scene
 probe has no timestamp, so the slope uses monotonic snapshot request/return midpoints
-and the actual elapsed time, including delayed probe cadence under starvation.
+and the actual elapsed time. This absorbs a longer sampling interval under starvation,
+but not an accessibility label that lags the rendered timeline; a lagging label can only
+fail closed (an unchanged-short-target timeout, or a later Pause-window rejection).
 The root contract label can cache progress between state changes; the frame-synchronized
 leaf follows the rendering timeline. Both labels and the manifest come from one snapshot.
 If the baseline is already a 30 s target, no advance is required. A measured short
 target must give way passively before its replacement is sampled again. Baseline
 reads, target changes and slope confirmation share the original 12 s setup ceiling:
-5 s old target + 2.025 s transition + 1 s sample pair + 3.975 s scheduling margin.
+5 s old target + 2.025 s transition + 1 s sample pair + 3.975 s scheduling margin. If the
+old target committed just before the slider was saved, its own 2.025 s transition also
+precedes the stable period, so the worst-case margin is about 1.95 s plus the return
+navigation time.
 Timeout sentences distinguish unreadable probes, an unchanged short target and
 an unconfirmed slope. No preparatory Next is issued.
 `filter-album` retains its original interval, launch environment and probe-free
@@ -292,7 +297,8 @@ one PNG, two full-resolution decoded color frames must match exactly, with the
 second screenshot requested at least 0.6 s after the first returns. A mismatch
 replaces the comparison baseline and samples again only within that same deadline;
 timeout fails instead of publishing an unsettled frame. The identical probe-free
-pixel check also runs for Release `album-empty` and all `filter-album` captures,
+pixel check also runs for Release `album-empty` (not in the nightly matrix; NOT_RUN)
+and all `filter-album` captures,
 with the same 0.8 s minimum settle and 4.8 s total budget. The public photo-identity
 validator remains mandatory: identical pixels alone cannot prove a valid scene.
 For `filter-album`, widening its former 0.8 s fixed wait to at most 4.8 s is an

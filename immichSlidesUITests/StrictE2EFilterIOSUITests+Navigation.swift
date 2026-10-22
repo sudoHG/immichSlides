@@ -2,7 +2,8 @@ import XCTest
 
 #if os(iOS)
 private enum AlbumCaptureTiming {
-    // 5 s old target + 2.025 s transition + 1 s slope pair + 3.975 s scheduling margin.
+    // 5 s old target + 2.025 s transition + 1 s slope pair + 3.975 s scheduling margin; worst case
+    // (old target committed just before the save) leaves about 1.95 s plus return navigation.
     static let intervalConfirmationSeconds = TestWait.seconds(.product(12))
     // One second separates the 1/5 and 1/30 progress-per-second rates well above probe rounding.
     static let progressSampleSeconds = TestWait.seconds(.product(1))
