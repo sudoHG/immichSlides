@@ -1872,6 +1872,12 @@ class ReporterTests(unittest.TestCase):
         from ci_failure_diagnostics import environment_limit_evidence
         from test_ci_summary import hosted_timeout_summary
         summary, resources = hosted_timeout_summary()
+        ledger = summary["strict_case_evidence"][0]["bounded_diagnostics"]
+        ledger["collection_seconds"]["xcode"] = None
+        hosting_event = ledger["events"][0]
+        hosting_event["state"] = "started"
+        hosting_event["sample"].update(cpu_percent=None, memory_free_bytes=None, load_average=None,
+                                      image_version=None, processes=[])
         row = summary["population"]["observed"][0]
         proof = environment_limit_evidence(summary, row, [resources], runner_hosted=True, policy_version=1)
         row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
@@ -1887,8 +1893,9 @@ class ReporterTests(unittest.TestCase):
         artifacts[1]["name"] = "nightly-strict-iphone-debug-0-10-1"
         jobs = [{"name": "nightly-strict-iphone-debug-0", "runner_group_name": "GitHub Actions", "labels": ["xcode-27"]}]
         with patch("ci_publish.json_member", side_effect=[aggregate, summary, trace]), patch(
-                "ci_publish.complete_attempt_jobs", return_value=jobs):
+                "ci_publish.complete_attempt_jobs", return_value=jobs) as hosted_jobs:
             report = ci_report.nightly_attempt(api, run, 1, artifacts)
+        hosted_jobs.assert_called_once_with(api, {**run, "run_attempt": 1})
         self.assertEqual("environment-limited", report["status"])
         self.assertEqual(1, report["diagnostics"]["counts"]["environment-limited"])
         self.assertEqual("failed", report["observed"][0]["outcome"])
@@ -2027,7 +2034,8 @@ class ReporterTests(unittest.TestCase):
                 "passed tier": "environment-limited strict tier cannot count as passed",
                 "infrastructure": "environment limit cannot conceal strict invocation infrastructure",
                 "missing log": "environment limit cannot conceal strict invocation infrastructure"}[mutation]
-            with self.subTest(mutation=mutation), patch("ci_publish.json_member", side_effect=[raw, shard, traces]), patch(
+            with self.subTest(mutation=mutation), patch.dict(os.environ, {"RUNNER_ENVIRONMENT": "github-hosted"}), \
+                    patch("ci_publish.json_member", side_effect=[raw, shard, traces]), patch(
                     "ci_publish.complete_attempt_jobs", return_value=job_rows), self.assertRaisesRegex(ContractError, "^" + message + "$"):
                 ci_report.nightly_attempt(api, run, 1, artifacts)
 

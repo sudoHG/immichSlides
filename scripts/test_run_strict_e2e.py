@@ -707,6 +707,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                 def xcode(*args):
                     self.assertTrue(ready.wait(2), "Release lifecycle execution must receive host samples")
                 with mock.patch.object(resources, "SAMPLE_INTERVAL_SECONDS", 0.001), \
+                        mock.patch.dict(os.environ, {"RUNNER_ENVIRONMENT": "github-hosted"}), \
                         mock.patch.object(resources.CaseSampler, "start", start), \
                         mock.patch.object(resources, "HostProbe", return_value=SimpleNamespace(sample=read_host, close=lambda: None, unavailable=False, spent=0, request_count=1)), \
                         mock.patch.object(resources, "process_sample") as ps:
@@ -726,20 +727,42 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                 self.assertTrue(all(value is None for row in case["failure_samples"] for value in row["cpu_percent"].values()))
                 self.assertEqual(0, case["sampler_wall_seconds"])
                 ps.assert_not_called()
+                exported = json.loads((Path(raw) / "evidence/case-manifest.json").read_text())["bounded_diagnostics"]
+                self.assertEqual([sampler.sequence], [event["sequence"] for event in exported["events"]])
+                self.assertIs(True, exported["events"][0]["sample"]["runner_hosted"])
+                self.assertIsNone(exported["collection_seconds"]["xcode"])
+                from ci_bounded_diagnostics import render_receipt
+                self.assertIn("Last retained phase: none", render_receipt(exported))
 
     def test_warm_test_inputs_do_not_prevent_private_bundle_disposal(self):
         import ci_execution_diagnostics as diagnostics
         with tempfile.TemporaryDirectory() as raw, diagnostics.session() as recorder:
             for sequence in range(diagnostics.MAX_EVENTS):
                 recorder.event("xcode", "test-execution", "timeout", sequence)
+            foreign_sequence = recorder.next_sequence()
+            foreign_event = recorder.event("xcode", "test-execution", "started", foreign_sequence,
+                sample={"runner_hosted": True, "cpu_percent": None, "memory_free_bytes": None,
+                        "load_average": None, "image_version": None, "processes": []})
             root = Path(raw)
             evidence = root / "evidence"
             code, _, stderr, _ = self._run_p2_main(evidence, suite="smoke", platform="ios", model="iPhone", warm=True)
             self.assertEqual(code, 0, stderr)
             manifest = evidence / "case-manifest.json"
             self.assertLessEqual(manifest.stat().st_size, 65536, "case evidence must fit the first-failure exporter cap")
-            self.assertEqual([], json.loads(manifest.read_text())["bounded_diagnostics"]["events"])
+            retained = json.loads(manifest.read_text())["bounded_diagnostics"]
+            (root / "tracer").mkdir()
+            _, _, trace, _ = StrictCITracerTests()._produce_validator_records(root / "tracer", None,
+                receipt_suite=None, runner_exit=0, bounded_diagnostics=retained,
+                case=dict(platform="ios", device="iphone", configuration="Debug", suite="smoke",
+                          scenario="normal", fixture="a"))
+            for source, receipt in (("case manifest", retained), ("warm entry", trace["warm"][0]["bounded_diagnostics"])):
+                with self.subTest(source=source):
+                    self.assertNotIn(foreign_sequence, [event["sequence"] for event in receipt["events"]])
+                    self.assertEqual([case["sequence"] for case in receipt["case_resources"]],
+                                     [event["sequence"] for event in receipt["events"]])
+            self.assertTrue(all(event["sample"]["processes"] == [] for event in retained["events"]))
             self.assertEqual(diagnostics.MAX_EVENTS, len(recorder.receipt()["events"]))
+            self.assertIn(foreign_event, recorder.receipt()["events"])
             self.assertEqual((evidence / "simulator-preparation.log").read_text(), "ready\n")
             self.assertEqual(list((root / "private").iterdir()), [])
 
@@ -2683,12 +2706,13 @@ class StrictCITracerTests(unittest.TestCase):
         import copy
         import contextlib
         import io
-        from ci_summary import parse_summary
+        from ci_summary import identity_key, parse_summary
         from ci_nightly import aggregate_nightly
         from ci_report import method_observations
         from test_ci_summary import hosted_timeout_summary
 
-        mutations = (None, "informational", "local", "self-hosted", "missing host", "conflicting host", "missing samples",
+        mutations = (None, "informational", "local", "self-hosted", "missing host", "conflicting host", "no events",
+            "null host sample", "wrong host sequence", "wrong host scope", "invalid ledger", "missing samples",
             "unbound epoch", "one-sided", "idle above limit", "null idle", "outside window", "ambiguous invocation",
             "unknown surface", "wrong surface", "wrong element", "wrong step", "snapshot hang", "visible controls",
             "BLACK", "BLANK", "UNRECOGNIZABLE", "process", "validator", "scene_identity", "control_state",
@@ -2704,6 +2728,16 @@ class StrictCITracerTests(unittest.TestCase):
                 resource = ledger["case_resources"][0]
                 if mutation in {"self-hosted", "missing host"}:
                     ledger["events"][0]["sample"]["runner_hosted"] = False if mutation == "self-hosted" else None
+                elif mutation == "no events":
+                    ledger["events"] = []
+                elif mutation == "null host sample":
+                    ledger["events"][0]["sample"] = None
+                elif mutation == "wrong host sequence":
+                    ledger["events"][0]["sequence"] = resource["sequence"] + 1
+                elif mutation == "wrong host scope":
+                    ledger["events"][0].update(scope="preparation", phase="simulator-readiness")
+                elif mutation == "invalid ledger":
+                    ledger["schema_version"] = 99
                 elif mutation == "conflicting host":
                     event = copy.deepcopy(ledger["events"][0])
                     event["sample"]["runner_hosted"] = False
@@ -2767,6 +2801,24 @@ class StrictCITracerTests(unittest.TestCase):
                 self.assertEqual(0 if mutation in {None, "informational"} else 1, code)
                 self.assertEqual(mutation is None, "environment_limit" in observed)
                 self.assertEqual(mutation is None, "::warning title=Environment-limited strict timing::" in output.getvalue())
+                rejection_lines = [line for line in output.getvalue().splitlines()
+                    if "environment-limit: not eligible (" in line]
+                if mutation in {None, "local"}:
+                    self.assertEqual([], rejection_lines)
+                else:
+                    reason = {"informational": "informational-suite", "self-hosted": "hosting-not-proven",
+                        "missing host": "hosting-not-proven", "conflicting host": "hosting-not-proven",
+                        "no events": "missing-xcode-host-samples", "null host sample": "missing-xcode-host-samples",
+                        "wrong host sequence": "missing-xcode-host-samples", "wrong host scope": "missing-xcode-host-samples",
+                        "invalid ledger": "invalid-bounded-receipt", "outside window": "invalid-bounded-receipt",
+                        "ambiguous invocation": "failure-resource-count",
+                        "unbound epoch": "failure-resource-count", "outer timeout": "invocation-not-verified",
+                        "interrupted": "invocation-not-verified", "missing log": "invocation-not-verified",
+                        "rebuild": "invocation-not-verified", "changed products": "invocation-not-verified",
+                        "official error": "invocation-not-verified", "case infrastructure": "invocation-not-verified",
+                        "missing method": "invocation-not-verified"}.get(mutation, "proof-not-eligible")
+                    self.assertEqual([identity_key(observed["identity"]) + ": environment-limit: not eligible (" + reason + ")"],
+                        rejection_lines)
                 informational = [item["suite"] for item in json.loads((Path(raw) / "manifest.json").read_text()).get("informational", [])]
                 aggregate = aggregate_nightly(summary["population"]["declared"], [summary], live_in_scope=False,
                     informational=informational)
@@ -2784,6 +2836,71 @@ class StrictCITracerTests(unittest.TestCase):
                     self.assertIn("ENVIRONMENT-LIMITED", (records / "summary.md").read_text())
                 else:
                     self.assertNotIn("environment_limit", observed["attempts"][0])
+
+    def test_case_start_hosting_proves_rotation_only_with_one_bound_hosted_event(self):
+        import copy
+        import ci_execution_diagnostics as diagnostics
+        import strict_e2e_resource_diagnostics as resources
+        from test_ci_summary import hosted_timeout_summary
+        from ci_report import method_observations
+        for mutation in (None, "no event", "self-hosted", "local", "unknown environment", "wrong sequence",
+                         "duplicate", "conflicting", "recording unavailable", "recording error"):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as raw:
+                seed, resource = hosted_timeout_summary()
+                row = seed["population"]["observed"][0]
+                row.update(failure_phase="mode_selection", failure_class="navigation")
+                receipt = row["first_failure"]
+                receipt.update(step="mode-card", element="mode.random.button")
+                receipt["state"].update(surface="mode", scene_status="UNRECOGNIZABLE")
+                receipt["timing"].update(wait_elapsed_seconds=10.07, deadline_seconds=7)
+                resource.update(duration_seconds=92.22, first_failure_elapsed_seconds=81.4, sample_count=31,
+                    failure_samples=[dict(resource["failure_samples"][0], elapsed_seconds=elapsed, idle_percent=0)
+                                     for elapsed in (76.8, 80.3, 84.0)])
+                recorder = diagnostics.Recorder()
+                recorder.sequence = resource["sequence"] - 1
+                recorder.unavailable.add("xcode")
+                recorder.charged["xcode"] = diagnostics.COLLECTION_BUDGET_SECONDS["xcode"]
+                accounting = copy.deepcopy((recorder.cost, recorder.charged, recorder.ledger_remaining))
+                environment = {"RUNNER_ENVIRONMENT": {"self-hosted": "self-hosted", "local": "",
+                    "unknown environment": "PRIVATE_SENTINEL"}.get(mutation, "github-hosted")}
+                with mock.patch.dict(os.environ, environment), mock.patch.object(resources.threading, "Thread"), ExitStack() as guards:
+                    if mutation in {"recording unavailable", "recording error"}:
+                        guards.enter_context(mock.patch.object(recorder, "retain", side_effect=
+                            RuntimeError("PRIVATE_SENTINEL") if mutation == "recording error" else None))
+                    sampler = resources.CaseSampler(recorder, "device").start()
+                self.assertEqual(accounting, (recorder.cost, recorder.charged, recorder.ledger_remaining),
+                                 "hosting metadata must not consume any diagnostic allowance")
+                ledger = recorder.receipt()
+                ledger["case_resources"] = [resource]
+                if mutation == "no event":
+                    ledger["events"] = []
+                elif mutation == "wrong sequence":
+                    ledger["events"][0]["sequence"] = sampler.sequence + 1
+                elif mutation in {"duplicate", "conflicting"}:
+                    event = copy.deepcopy(ledger["events"][0])
+                    if mutation == "conflicting":
+                        event["sample"]["runner_hosted"] = False
+                    ledger["events"].append(event)
+                import contextlib
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    code, records, trace, summary = self._produce_validator_records(Path(raw), None,
+                        receipt_suite=None, runner_exit=65, nightly=True, timing_failure=(row, ledger),
+                        case=dict(platform="ios", device="ipad", configuration="Debug", suite="p2-rotation",
+                                  scenario="normal", fixture="b"))
+                observed = summary["population"]["observed"][0]
+                self.assertEqual(0 if mutation is None else 1, code)
+                self.assertEqual(mutation is None, "environment_limit" in observed)
+                self.assertEqual(("failed", 65), (observed["outcome"], observed["attempts"][0]["exit_code"]))
+                self.assertNotIn("PRIVATE_SENTINEL", (records / "summary.json").read_text())
+                if mutation is not None:
+                    reason = ("missing-xcode-host-samples" if mutation in {
+                        "no event", "wrong sequence", "recording unavailable", "recording error"} else "hosting-not-proven")
+                    self.assertIn(f"environment-limit: not eligible ({reason})", output.getvalue())
+                if mutation is None:
+                    methods, missing = method_observations(summary, trace, runner_hosted=True)
+                    self.assertEqual([], missing)
+                    self.assertEqual(observed["environment_limit"], methods[0]["environment_limit"])
 
     def test_album_environment_producer_requires_every_gate_fact(self):
         import copy
@@ -2856,15 +2973,21 @@ class StrictCITracerTests(unittest.TestCase):
                 elif mutation == "infrastructure":
                     candidate["infrastructure"].append({"code": "cleanup-failed", "message": "Synthetic cleanup failure"})
                 proof = dict(summary["population"]["observed"][0]["environment_limit"], unexpected="refused")
+                rejections = {"stale-case": "stale-reason"}
                 with mock.patch("ci_failure_diagnostics.environment_limit_evidence", return_value=proof) if mutation == "bad projection" else ExitStack():
-                    self.assertEqual(1, produce_environment_limits(candidate, trace["warm"]))
+                    self.assertEqual(1, produce_environment_limits(candidate, trace["warm"], rejections=rejections))
+                from ci_summary import identity_key
+                expected = ({identity_key(candidate["population"]["observed"][0]["identity"]): "summary-reader-rejected"}
+                            if mutation == "bad projection" else
+                            {identity_key(extra): "phase-count"} if mutation == "mixed" else {})
+                self.assertEqual(expected, rejections)
                 observed = parse_summary(candidate)["population"]["observed"][0]
                 self.assertEqual(mutation != "bad projection", "environment_limit" in observed)
                 self.assertEqual("failed", observed["outcome"])
 
     def _produce_validator_records(self, directory, error, *, verdict="FAIL", runner_exit=2,
                                    receipt_suite="tvos-switch", nightly=False, child_load_timeout=False, case=None,
-                                   timing_failure=None, invocation_fault=None):
+                                   timing_failure=None, invocation_fault=None, bounded_diagnostics=None):
         import run_strict_ci_tracer as tracer
         case = case or {"platform": "tvos", "device": "tv", "configuration": "Release",
                 "suite": "tvos-switch", "scenario": "normal", "fixture": "a"}
@@ -2919,6 +3042,8 @@ raise SystemExit(65)
                 "fixture_sha256": FROZEN_FIXTURE_SHA256[case["fixture"]]}
             if timing_failure is not None:
                 details["bounded_diagnostics"] = timing_failure[1]
+            elif bounded_diagnostics is not None:
+                details["bounded_diagnostics"] = bounded_diagnostics
             if invocation_fault == "case infrastructure":
                 details["infrastructure"] = [{"code": "cleanup-failed", "message": "Synthetic cleanup failure"}]
             (evidence / "case-manifest.json").write_text(json.dumps(details))

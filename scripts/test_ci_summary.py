@@ -858,6 +858,14 @@ class SummaryContractTests(unittest.TestCase):
             self.assertIn("idle min/median=10/30%", rendered)
             self.assertIn("sampler wall/cpu=0.06/0.03s", rendered)
 
+            marker = {"scope": "xcode", "phase": "test-execution", "state": "started", "sequence": 5,
+                "elapsed_seconds": 0, "cpu_seconds": None, "input_sha256": None, "official_exports": None,
+                "sample": {"runner_hosted": True, "cpu_percent": None, "memory_free_bytes": None,
+                           "load_average": None, "image_version": None, "processes": []}}
+            summary["bounded_diagnostics"]["events"].append(marker)
+            self.assertEqual(rendered.replace("events=4", "events=5"), ci_summary.render_markdown(summary))
+            summary["bounded_diagnostics"]["events"].pop()
+
         summary["bounded_diagnostics"]["events"][0]["phase"] = "simulator-preparation"
         self.assertEqual(ci_summary.parse_summary(summary), summary)
         self.assertIn("simulator-preparation/timeout", ci_summary.render_markdown(summary))
