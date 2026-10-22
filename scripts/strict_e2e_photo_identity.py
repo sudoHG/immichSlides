@@ -674,6 +674,24 @@ def public_frame_edge_band(original_size: tuple[int, int], sample_size: tuple[in
                  for original, sample in zip(original_size, sample_size))
 
 
+def _public_boundary_line(rgb: object, line: int, preceding: str, following: str,
+                          color_exclusion_box: tuple[int, int, int, int] | None, *, horizontal: bool) -> bool:
+    """A clipped checker edge must belong uniquely to one of the adjacent photos."""
+    pixels = rgb.load()
+    observed = 0
+    boundary_mark = None
+    for offset in range(rgb.height if horizontal else rgb.width):
+        x, y = (line, offset) if horizontal else (offset, line)
+        if _inside_box(x, y, color_exclusion_box):
+            continue
+        mark = public_palette_edge_assignment(pixels[x, y])
+        if mark not in (preceding, following) or (boundary_mark is not None and mark != boundary_mark):
+            return False
+        boundary_mark = mark
+        observed += 1
+    return observed >= IDENTITY_MINIMUM_CHROMATIC_PIXEL_COUNT
+
+
 def _public_axis_slots(rgb: object, color_exclusion_box: tuple[int, int, int, int] | None,
                        *, horizontal: bool, edge_band_pixels: int = 0) -> list[tuple[str, tuple[int, int, int, int]]]:
     """A clean axis must identify one palette along every full-span line."""
@@ -716,6 +734,15 @@ def _public_axis_slots(rgb: object, color_exclusion_box: tuple[int, int, int, in
         row_marks.append(mark)
     for y, mark in enumerate(row_marks):
         if mark is None:
+            # NEAREST sampling never widens an input line: accept only one missing
+            # line, immediately bracketed by two different independently read photos.
+            if (0 < y < extent - 1 and exact_row_marks[y - 1] is not None
+                    and exact_row_marks[y + 1] is not None
+                    and exact_row_marks[y - 1] != exact_row_marks[y + 1]
+                    and _public_boundary_line(rgb, y, exact_row_marks[y - 1], exact_row_marks[y + 1],
+                                              color_exclusion_box, horizontal=horizontal)):
+                # A geometric boundary supplies neither identity nor texture/glyph pixels.
+                continue
             following = next((item for item in exact_row_marks[y + 1:] if item is not None), None)
             preceding = next((item for item in reversed(exact_row_marks[:y]) if item is not None), None)
             # Bilinear texture edges and overlay ink can obscure a row. Keep it in the

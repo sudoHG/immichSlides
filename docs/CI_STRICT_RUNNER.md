@@ -416,6 +416,29 @@ sample lines. Nearest-neighbour sampling also misses features narrower than
 one sample step anywhere: TV 8 pixels, iPad about 3.4, iPhone about 2.4.
 The measured A1 edge sample (77,74,72) motivates this bounded rule.
 
+At a boundary between different photos, segmentation may omit exactly one
+unassigned sampled line when its immediate neighbors independently identify
+different palettes. Every unmasked pixel on that line must uniquely resolve
+through the existing same-photo interpolation reader to the **same one** of
+those adjacent palettes, with at least 18 observed pixels. This is a clipped
+checker edge, not interpolation between two photos; it supplies no slot,
+texture or glyph evidence. Unknown colors, a third palette, mixed adjacent
+palettes within the line, and two or more unassigned lines remain unreadable.
+The allowance is one sample line at every size: the reader uses NEAREST,
+which cannot spread one input line over multiple samples during downscaling.
+The motivating 1170x2532 capture has exact A3 through raw y=907, an A3 checker
+interpolation at y=908–911, and A2 from y=912. At 480x1039 only sampled y=373
+hits the interpolated band. The synthetic regression recreates these positions
+on both sides of the existing palette and glyph checks.
+
+This boundary rule does not tighten existing limits. A3/A2 crossfade bands with
+alpha 0.2–0.8 remain outside the 12-level palette tolerance and fail; near-endpoint
+mixtures can already fall within that tolerance (including alpha 0.1 and 0.9).
+The existing same-photo unknown-line fill also remains unchanged. An overlay
+whose pixels equal a permitted single-line checker interpolation is
+indistinguishable from that edge in a static PNG; other overlay colors cannot
+use this exception. NEAREST can miss a raw band entirely, as noted above.
+
 The pinned Apple TV 4K (3rd generation), tvOS 27.0, produces **3840x2160** PNGs.
 Scanner-approved frames measured the A2/A3 seam at x=1382 and the A5/A3 seam at
 x=1536. The entry hint and playback controls fit inside (1256,1436)-(2580,1925),
