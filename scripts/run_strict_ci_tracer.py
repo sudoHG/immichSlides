@@ -141,7 +141,7 @@ class RunnerGroupCleanupError(RuntimeError):
     """Build paths must be retained if runner descendants cannot be stopped."""
 
 
-def produce_environment_limits(summary, results, *, informational=()):
+def produce_environment_limits(summary, results, *, informational=(), policy_version=None):
     """Attach only reader-validated same-case proofs; retain every raw outcome."""
     from ci_failure_diagnostics import ENVIRONMENT_LIMIT_FIELD, environment_limit_evidence
     from ci_bounded_diagnostics import validate_receipt
@@ -167,7 +167,7 @@ def produce_environment_limits(summary, results, *, informational=()):
             samples = [event["sample"] for event in ledger["events"] if event["scope"] == "xcode"
                 and event["sequence"] == failures[0]["sequence"] and event["sample"] is not None]
             hosted = bool(samples) and all(sample["runner_hosted"] is True for sample in samples)
-            proof = environment_limit_evidence(summary, entry, resources, runner_hosted=hosted)
+            proof = environment_limit_evidence(summary, entry, resources, runner_hosted=hosted, policy_version=policy_version)
             if proof is None:
                 continue
             # Validate hosting, attempt shape and original case binding through the merged reader.

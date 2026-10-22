@@ -209,7 +209,8 @@ def method_observations(raw, trace, *, runner_hosted=False):
                         and phase.get("build_operations") == 0 and phase.get("products_unchanged") is True,
                         "environment limit cannot conceal strict invocation infrastructure")
                 proof = environment_limit_evidence(summary, result,
-                    phase.get("bounded_diagnostics", {}).get("case_resources", []), runner_hosted=runner_hosted)
+                    phase.get("bounded_diagnostics", {}).get("case_resources", []), runner_hosted=runner_hosted,
+                    policy_version=claimed["policy_version"])
                 require(proof == claimed, "environment limit differs from official method or case resources")
                 result["environment_limit"] = result["attempts"][0]["environment_limit"] = copy.deepcopy(proof)
             observed.append(result)

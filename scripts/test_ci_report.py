@@ -39,6 +39,33 @@ def entry(day="2026-10-01", outcome="failed", run=10, attempt=1):
 
 
 class ReporterTests(unittest.TestCase):
+    def test_retained_album_proof_rechecks_gate_without_original_receipts(self):
+        from ci_failure_diagnostics import environment_limit_evidence
+        from test_ci_summary import hosted_album_timeout_summary, album_capture_gate_rejections
+        summary, resource = hosted_album_timeout_summary()
+        row = summary["population"]["observed"][0]
+        proof = environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=2)
+        row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
+        report = entry()
+        report.update(status="environment-limited", observed=[row])
+        compact = ci_report.compact_entry(report, set())
+        self.assertNotIn('"first_failure": {', json.dumps(compact))
+        restored = ci_report.merge_snapshot(None, [compact], date(2026, 10, 1))["days"]["2026-10-01"]["entries"][0]
+        self.assertEqual("environment-limited", restored["status"])
+        self.assertEqual(row["first_failure"]["gate"], restored["observed"][0]["environment_limit"]["failure"]["gate"])
+        for label, receipt, _ in album_capture_gate_rejections(row["first_failure"]):
+            changed = copy.deepcopy(compact)
+            failure = changed["observed"][0]["environment_limit"]["failure"]
+            failure.pop("gate")
+            if "gate" in receipt:
+                failure["gate"] = receipt["gate"]
+            failure["element"] = receipt["element"]
+            with self.subTest(gate=label):
+                restored = ci_report.merge_snapshot(None, [changed], date(2026, 10, 1))["days"]["2026-10-01"]["entries"][0]
+                self.assertEqual("failed", restored["status"])
+                self.assertEqual("RED: invalid or obsolete environment-limit proof under the current policy",
+                    restored["observed"][0]["environment_limit_rejection"])
+
     def test_first_failure_reaches_nightly_artifacts_and_report_without_growing_compact_history(self):
         from ci_nightly import aggregate_nightly
         case = test_identity("strict", "smoke", **IDENTITY["dimensions"])

@@ -155,7 +155,119 @@ def hosted_timeout_summary():
     return summary, resource
 
 
+def hosted_album_timeout_summary():
+    summary, resource = hosted_timeout_summary()
+    row = summary["population"]["observed"][0]
+    row.update(failure_phase="visible_scene_capture", failure_class="probe_readback")
+    row["attempts"][0].update(failure_phase="visible_scene_capture", failure_class="probe_readback")
+    receipt = row["first_failure"]
+    receipt.update(step="wait-scene", element="slideshow.scenePresentation.contract.summary",
+        gate={"kind": "album-capture", "stable": False, "paused": True, "entry_hint_hidden": True,
+              "advanced": True, "layers_changed": True, "manifest_complete": True, "phase": "transition"})
+    receipt["timing"].update(wait_elapsed_seconds=5.23, deadline_seconds=4.8)
+    return summary, resource
+
+
+def album_capture_gate_rejections(receipt):
+    """Single-fact violations shared by proof-reader and producer boundary tests."""
+    from ci_failure_diagnostics import ALBUM_CAPTURE_GATE_PHASES
+    ineligible = "environment limit: failure is not an eligible timing wait"
+    cases = [("missing gate", None, None, "delete", ineligible)]
+    for field in receipt["gate"]:
+        cases.append(("missing " + field, field, None, "delete", "first failure gate: invalid fields"))
+    cases += [(field + "=" + repr(value), field, value, "set", message)
+        for field, values, message in (
+            ("kind", (None, "other"), "first failure: invalid gate kind"),
+            ("stable", (True, None), ineligible),
+            ("paused", (False, None), ineligible),
+            ("entry_hint_hidden", (False, None), ineligible),
+            ("advanced", (False, None), ineligible),
+            ("layers_changed", (False, None), ineligible),
+            ("manifest_complete", (False, None), ineligible),
+            ("phase", (None, "other"), "first failure: invalid gate phase"),
+            ("phase", tuple(phase for phase in ALBUM_CAPTURE_GATE_PHASES
+                            if phase not in {"transition", "incomingFromLoading"}), ineligible))
+        for value in values]
+    for field in ("stable", "paused", "entry_hint_hidden", "advanced", "layers_changed", "manifest_complete"):
+        for value in (0, 1, "true"):
+            cases.append((field + "=" + repr(value), field, value, "set", "first failure gate: invalid boolean"))
+    for label, field, value, operation, message in cases:
+        changed = copy.deepcopy(receipt)
+        if field is None:
+            changed.pop("gate")
+        elif operation == "delete":
+            changed["gate"].pop(field)
+        else:
+            changed["gate"][field] = value
+        yield label, changed, message
+    changed = copy.deepcopy(receipt)
+    changed["gate"] = None
+    yield "null gate", changed, "first failure gate: invalid fields"
+    changed = copy.deepcopy(receipt)
+    changed["element"] = "slideshow.control.next.button"
+    yield "Next did not advance", changed, ineligible
+    changed = copy.deepcopy(receipt)
+    changed["gate"].update(advanced=None, layers_changed=None)
+    yield "first capture frozen transition", changed, ineligible
+
+
 class SummaryContractTests(unittest.TestCase):
+    def test_album_environment_policy_rechecks_gate_and_preserves_legacy_proofs(self):
+        from ci_failure_diagnostics import environment_limit_evidence, validate_environment_limit
+        summary, resource = hosted_album_timeout_summary()
+        row = summary["population"]["observed"][0]
+        proof = environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=2)
+        self.assertIsNotNone(proof)
+        self.assertEqual(row["first_failure"]["gate"], proof["failure"]["gate"])
+        row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
+        self.assertEqual(proof, ci_summary.parse_summary(summary)["population"]["observed"][0]["environment_limit"])
+        for phase in ("transition", "incomingFromLoading"):
+            changed = copy.deepcopy(row)
+            changed["first_failure"]["gate"]["phase"] = phase
+            with self.subTest(phase=phase):
+                self.assertIsNotNone(environment_limit_evidence(summary, changed, [resource],
+                    runner_hosted=True, policy_version=2))
+        for label, receipt, message in album_capture_gate_rejections(row["first_failure"]):
+            changed = copy.deepcopy(row)
+            changed["first_failure"] = receipt
+            tampered = copy.deepcopy(proof)
+            tampered["failure"].pop("gate")
+            if "gate" in receipt:
+                tampered["failure"]["gate"] = receipt["gate"]
+            tampered["failure"]["element"] = receipt["element"]
+            with self.subTest(violation=label):
+                self.assertIsNone(environment_limit_evidence(summary, changed, [resource],
+                    runner_hosted=True, policy_version=2))
+                with self.assertRaisesRegex(ci_summary.ContractError, "^" + message + "$"):
+                    validate_environment_limit(tampered)
+        for elapsed in (7, 9):
+            changed = copy.deepcopy(proof)
+            changed["resources"]["failure_samples"][1 if elapsed == 7 else 0]["elapsed_seconds"] = elapsed
+            with self.subTest(one_sided=elapsed), self.assertRaisesRegex(ci_summary.ContractError,
+                    "^environment limit: insufficient starvation evidence$"):
+                validate_environment_limit(changed)
+        for path, value in (
+                (("failure_phase",), "history_navigation"), (("failure_class",), "scene_identity"),
+                (("failure", "surface"), "mode"), (("failure", "app"), "not-running"),
+                *((("failure", "scene_status"), status) for status in ("BLACK", "BLANK", "UNRECOGNIZABLE")),
+                (("failure", "wait_elapsed_seconds"), 4.79), (("failure", "wait_elapsed_seconds"), None),
+                (("failure", "deadline_seconds"), 0), (("failure", "deadline_seconds"), None)):
+            changed = copy.deepcopy(proof)
+            target = changed
+            for key in path[:-1]:
+                target = target[key]
+            target[path[-1]] = value
+            with self.subTest(common_rule=path, value=value), self.assertRaisesRegex(ci_summary.ContractError,
+                    "^environment limit: failure is not an eligible timing wait$"):
+                validate_environment_limit(changed)
+        old, old_resource = hosted_timeout_summary()
+        old_row = old["population"]["observed"][0]
+        legacy = environment_limit_evidence(old, old_row, [old_resource], runner_hosted=True, policy_version=1)
+        old_row["environment_limit"] = old_row["attempts"][0]["environment_limit"] = legacy
+        self.assertEqual(legacy, ci_summary.parse_summary(old)["population"]["observed"][0]["environment_limit"])
+        with self.assertRaisesRegex(ci_summary.ContractError, "^environment failure: expected fields"):
+            validate_environment_limit(dict(proof, policy_version=1))
+
     def test_album_gate_survives_public_summary_and_rejects_unbounded_facts(self):
         from ci_failure_diagnostics import public_first_failure, scan_diagnostic_json
         for summary in (archive_download_summary(), discovery_summary()):
