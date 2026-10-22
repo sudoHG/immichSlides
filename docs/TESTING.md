@@ -632,19 +632,35 @@ the original absolute deadline and classifies photo identity afterwards. A seria
 background probe reads the calibrated Settings pixels, with at most one pending
 decode; the capture loop only submits PNG data and reads a locked observation.
 It never waits for decoding between captures, including across T−2. After observing
-visible controls followed by auto-hide before T, it sends at most one Up to restore
-the original visible control state. Up does not toggle playback or reset the
-Continue origin, but it is not entirely passive: control visibility triggers
+visible controls followed by auto-hide, it sends at most one Up, only when its
+request falls in [T−2, T−0.8], to restore the original visible control state. A
+request before T−2 fails a test-timing precondition and stays red; after T−0.8,
+the wake is skipped and capture continues unchanged, which can cause a false
+failure. This depends on the App's `PlaybackViewMetrics.controlBarAutoHideDelaySeconds`
+being 8 seconds: Continue resets that timer, and 8 seconds equals T−2 for this
+flow's T=10 seconds. The explicit lower guard prevents a changed auto-hide delay
+or interval from silently moving the press gap into the early-evidence window.
+Up does not toggle playback or reset the Continue origin: control visibility triggers
 `updateFutureProtectionSnapshot`, which can discard the prepared next scene,
 invalidate a pending transition and re-plan it. This can delay a switch and cause
-a false failure; it cannot hide a late resume. There is also a race near the
-earliest fade: a measured wake returned at 9.203 s, leaving about 0.27 s after the
-0.3-second bar animation before the 9.773 s fade. A later wake can change control
-state during dimming and prevent signing that onset. A fresh same-state bright
-anchor remains mandatory after the wake; all luminance comparisons retain the
-original baseline. Per-frame request/capture/return times, identities, luminance,
-control states and the one wake
-are saved in `continue-watch-diagnostic.json`, including on assertion failure.
+a false failure. Before the wake deadline was added, the final asynchronous-probe
+commit's three Up returns were 9.216327, 9.478780 and 9.086156 seconds. Adding the
+0.3-second bar animation to the latest return ends at 9.778780 seconds, about
+6 ms after the measured 9.773-second earliest fade. The 0.8-second lead now leaves
+26 ms before the earliest legitimate T−0.25 fade after the measured maximum
+0.224-second press gap plus 0.3-second animation (0.8−0.224−0.3−0.25).
+This is a measured allowance, not a bound on future press latency.
+Up itself blocks capture for 0.218–0.224 seconds, exceeding the unchanged
+0.101-second gap guard. A dimming chain spanning that gap or a control-state
+change cannot sign onset. Missing an early onset can defer it to a TRANSITION or
+new-photo frame, shortening the measured onset-to-stable delay: this is a
+loosening direction for the four-second rule, and can also hide an early fade.
+Re-planning delays the physical switch; the gap can delay its detection. A fresh
+same-state bright anchor remains mandatory after the wake; all luminance comparisons
+retain the original baseline. `continue-watch-diagnostic.json` saves every frame's
+request/capture/return times and the wake times or skipped flag, including on
+assertion failure. Identity, luminance and control-state `samples` stop at the
+first stable new photo; later captured frames retain timestamps only.
 A transition identity or a different identified photo remains direct onset
 evidence; tvOS also vetoes a TRANSITION marker when the old photo recovers through
 the same shared confirmation cutoff. iPad still applies conservative screenshot bounds
@@ -666,9 +682,12 @@ look-ahead, before classification, so a designed fade beginning inside T±2 can 
 when the new photo becomes stable after T+2. Like iPad, iPhone and tvOS require stable-photo
 confirmation to return within four seconds of the onset request, using the same
 deadline check and constant. This deadline has a known false-failure risk at 4K:
-five Release runs left only 86–451 ms of stability margin, with about 0.36 s of
-variation (roughly one capture cadence). An accurately detected onset, capture
-jitter or wake-triggered re-planning can exhaust the remaining 86 ms. The bound
+the final asynchronous-probe commit's three Release runs left only
+84.561–462.077 ms of stability margin, a 377.516 ms range (roughly one capture
+cadence). An earlier, more accurate onset or a later stable-photo return from
+capture jitter can exhaust the remaining 84.561 ms; a missed early onset instead
+shortens the measured delay. Wake-triggered re-planning can delay the switch and
+violate T±2, without necessarily increasing its onset-to-stable delay. The bound
 and verdict stay unchanged; a later sampling failure is not a pass.
 Every screenshot requested before T−2 (including the
 existing timing tolerance) must still identify the old photo: black, blank,

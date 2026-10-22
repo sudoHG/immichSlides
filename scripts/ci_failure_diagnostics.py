@@ -805,6 +805,7 @@ def public_validator_failure_message(value):
 # No activity marker exists in these flows. Suffixes (including values) are discarded.
 PREFIX_RULES = (
     # tvOS timing-precondition fixes: keep separate from the broader diagnostics-only expansion.
+    ("tvOS Continue wake timing precondition failed: Up must not be requested before T-2.", "continue_timing", "timing_window"),
     ("tvOS flow entry precondition failed:", "history_navigation", "control_state"),
     ("tvOS flow entry anchor must remain paused before checking the history boundary.", "history_navigation", "control_state"),
     ("tvOS midpoint setup exhausted the original step budget before the half-cycle pause.", "continue_timing", "timing_window"),
