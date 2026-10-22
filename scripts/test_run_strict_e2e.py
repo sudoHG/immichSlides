@@ -3623,6 +3623,19 @@ raise SystemExit(65)
             thread.return_value.start.assert_called_once()
             self.assertEqual(0, successor.reserved)
             self.assertTrue(recorder.case_resources[-1]["truncated"])
+        # A sampler that never finished cannot return its process allowance to later cases.
+        unfinished = diagnostics.Recorder()
+        with mock.patch.object(resources.threading, "Thread"):
+            resources.CaseSampler(unfinished, "device").start().stop()
+        self.assertIsNone(unfinished.process_sampler_wall_seconds)
+        with tempfile.TemporaryDirectory() as raw:
+            unfinished.save(Path(raw) / "unfinished-job.json")
+            unfinished = diagnostics.Recorder()
+            unfinished.load(Path(raw) / "unfinished-job.json")
+        with mock.patch.object(resources.threading, "Thread"):
+            successor = resources.CaseSampler(unfinished, "device").start()
+            successor.stop()
+        self.assertEqual(0, successor.reserved)
         missing = diagnostics.Recorder()
         with tempfile.TemporaryDirectory() as raw:
             missing.load(Path(raw) / "absent-ledger.json")

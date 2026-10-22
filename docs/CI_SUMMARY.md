@@ -258,9 +258,11 @@ ten seconds per invocation and at most 64 invocations per receipt; CPU work is
 bounded by these active-wall allowances. The current nightly matrix's longest
 strict shards (`iphone`/`ipad` Debug shard 1) expand six suite entries into ten
 sampled invocations: each of the two `filter-person` entries has three sessions.
-Combined charging could spend 100 seconds on host reads and leave only 80 of
-180 seconds for process snapshots (versus 130 with the old host allowance).
-Separate accounting preserves the full process allowance without raising it.
+Combined charging could spend 100 seconds on host reads and leave only about 80–90 of
+180 seconds for process snapshots (versus about 130 with the old host allowance).
+Separate accounting preserves the full process allowance without raising it; the
+per-job sampling bound is 180 + 10 × N seconds for N ≤ 64 sampled invocations
+(280 seconds for the current longest shard).
 The receipt schema, historical receipt acceptance and verdict rules are unchanged.
 The per-case host cap can independently stop idle/load collection earlier; neither
 allowance guarantees failure-window coverage through a 600-second invocation.
