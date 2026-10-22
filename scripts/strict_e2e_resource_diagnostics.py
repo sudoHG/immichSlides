@@ -38,6 +38,8 @@ NATIVE_MATCH_TOLERANCE_SECONDS = 0.1
 NATIVE_CASE_BUDGET_SECONDS = 2
 NATIVE_JOB_BUDGET_SECONDS = 20
 CLOCK_DRIFT_TOLERANCE_SECONDS = 0.5
+# Matches the runner's default xcodebuild deadline; callers pass the invocation's actual deadline.
+DEFAULT_DURATION_LIMIT_SECONDS = 300
 
 
 class NativeActivityBudget:
@@ -289,7 +291,7 @@ class HostProbe:
 class CaseSampler:
     """Share a bounded sampling allowance across cases, independently of test waits."""
 
-    def __init__(self, recorder, device, *, duration_limit_seconds=300):
+    def __init__(self, recorder, device, *, duration_limit_seconds=DEFAULT_DURATION_LIMIT_SECONDS):
         self.recorder = recorder
         self.device = device
         self.sequence = recorder.next_sequence() if recorder is not None else 0

@@ -393,6 +393,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
         boot_submitted: bool = False,
         configuration: str = "Debug",
         native_failure_epoch=None,
+        warm_timeout_seconds: int | None = None,
     ) -> tuple[int, str, str, dict[str, mock.Mock]]:
         destination = f"platform={'tvOS' if platform == 'tvos' else 'iOS'} Simulator,id={P2_UDID}"
         selector = (
@@ -530,7 +531,8 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                     *(["--test-without-building", "--derived-data-path", str(evidence.parent / "derived")] if warm else []),
                     *(["--listed-retry-device", "iphone"] if retry else []),
                     *(["--simulator-boot-submitted"] if boot_submitted else []),
-                    *(["--warm-timeout-seconds", "600"] if warm else []),
+                    *(["--warm-timeout-seconds", "600"] if timeout_phase == "xcodebuild" else []),
+                    *(["--warm-timeout-seconds", str(warm_timeout_seconds)] if warm_timeout_seconds is not None else []),
                 ],
                 stdout=stdout,
                 stderr=stderr,
@@ -665,7 +667,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
             for path in receipts:
                 receipt = json.loads(path.read_text())
                 self.assertTrue(receipt["products_unchanged"])
-                self.assertEqual(receipt["timeout_seconds"], 600)
+                self.assertEqual(receipt["timeout_seconds"], 300)
                 self.assertGreaterEqual(receipt["duration_seconds"], 0)
             self.assertEqual([json.loads(path.read_text())["exit_code"] for path in receipts], [0, 0, 0, 65])
 
@@ -698,7 +700,8 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                     code, _, stderr, _ = self._run_p2_main(Path(raw) / "evidence",
                         suite="smoke" if configuration == "Debug" else f"{platform}-lifecycle-settings",
                         platform=platform, model=model, configuration=configuration, warm=True, xcodebuild_exit=65,
-                        late_image_attempt=xcode, native_failure_epoch=lambda: samplers[0].epoch + samplers[0].duration / 2)
+                        late_image_attempt=xcode, native_failure_epoch=lambda: samplers[0].epoch + samplers[0].duration / 2,
+                        warm_timeout_seconds=600)
                 self.assertEqual(65, code, stderr)
                 self.assertEqual(1, len(samplers))
                 self.assertEqual(600, samplers[0].duration_limit)

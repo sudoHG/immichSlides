@@ -204,7 +204,7 @@ Unknown App ownership or a failed process snapshot makes category CPU unavailabl
 The first host read primes the counters. Idle is null when successive successful
 reads are less than one second apart, including a quick read after a late worker;
 each successful read still refreshes the tick and monotonic-time baseline.
-Host idle/load ticks follow two-second
+Host idle/load ticks follow nominal two-second
 deadlines, skipping missed deadlines rather than issuing bursts. Each native host
 read runs in one reused daemon worker per case with a 0.2-second wait cap;
 observed host-read wall time has a separate five-second allowance per case,
@@ -232,7 +232,9 @@ No bound or test deadline is extended. Reaching the retained-sample cap evicts t
 oldest sample instead of ending collection, preserving recent actual samples.
 `sample_interval_seconds` remains the nominal two-second interval. Idle is the
 mean since the preceding native read: a pre-failure sample can average a longer
-interval after throttling, a timeout or host descheduling. No value is interpolated
+interval after throttling, a timeout or host descheduling; a late read that completes
+after the failure refreshes the baseline, so the post-failure sample's interval can
+start after the failure. No value is interpolated
 or relabelled as a two-second measurement. A failed worker start permits another
 start on the next planned request. Host costs now
 contribute to `sampler_wall_seconds`; older receipts reporting zero when process
