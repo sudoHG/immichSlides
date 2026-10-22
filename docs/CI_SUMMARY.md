@@ -207,7 +207,7 @@ each successful read still refreshes the tick and monotonic-time baseline.
 Host idle/load ticks follow nominal two-second
 deadlines, skipping missed deadlines rather than issuing bursts. Each native host
 read runs in one reused daemon worker per case with a 0.2-second wait cap;
-observed host-read wall time has a separate five-second allowance per case,
+observed host-read wall time has a separate ten-second allowance per case,
 including the one-time thread startup and each request's response wait. Native
 Mach statistics and `getloadavg` launch no subprocess. Reusing the worker avoids
 charging thread creation and its scheduling handoff on every two-second tick.
@@ -226,7 +226,7 @@ allowance is exhausted, sampling stops and marks truncation instead of stretchin
 the gap; subsequent failures can have no nearby evidence and remain red.
 Four-second ticks still support a strictly before/after pair within ±5 seconds
 when the host responds and Xcode remains running. Arbitrarily slow reads cannot
-guarantee that window within five seconds of total collection cost: longer gaps,
+guarantee that window within ten seconds of total collection cost: longer gaps,
 timed-out reads and exhausted budgets retain missing evidence and fail closed.
 No bound or test deadline is extended. Reaching the retained-sample cap evicts the
 oldest sample instead of ending collection, preserving recent actual samples.
@@ -241,9 +241,12 @@ contribute to `sampler_wall_seconds`; older receipts reporting zero when process
 snapshots were disabled did not measure host cost.
 Process snapshots run at most once per ten seconds and have a separate
 180-second active-wall allowance shared across
-the job ledger. Each successor subtracts all persisted `sampler_wall_seconds`
-costs, now conservatively including predecessor host reads;
-an unknown predecessor cost exhausts the allowance conservatively. An
+the job ledger. A private `process_sampler_wall_seconds` balance carries only
+completed process-snapshot cost across serial case processes; host reads remain
+included in the public `sampler_wall_seconds` total without reducing this pool.
+Old ledgers without this balance conservatively charge all persisted
+`sampler_wall_seconds` costs; an unknown predecessor cost exhausts the allowance.
+An invalid private balance makes the inherited ledger unavailable. An
 unavailable inherited diagnostic ledger disables process snapshots instead of granting
 a fresh allowance, while idle/load ticks continue. Hosted preparation ledger IO
 has a 0.1-second cap; an IO timeout can make inherited Xcode accounting unavailable
@@ -251,10 +254,14 @@ even on a Release lifecycle shard that has not sampled yet. No
 fresh allowance is granted per case. This preserves the existing 10-second
 Xcode diagnostic pool for anomaly diagnostics, and keeps
 host sampler independent of process-pool exhaustion. The independent host cap remains
-five seconds per invocation and at most 64 invocations per receipt; CPU work is
-bounded by these active-wall allowances. There is no guaranteed shard exhaustion
-time: predecessor host costs also reduce the pool. For example, after 30 seconds
-of host costs, only 150 seconds remain for process snapshots, rather than 180.
+ten seconds per invocation and at most 64 invocations per receipt; CPU work is
+bounded by these active-wall allowances. The current nightly matrix's longest
+strict shards (`iphone`/`ipad` Debug shard 1) expand six suite entries into ten
+sampled invocations: each of the two `filter-person` entries has three sessions.
+Combined charging could spend 100 seconds on host reads and leave only 80 of
+180 seconds for process snapshots (versus 130 with the old host allowance).
+Separate accounting preserves the full process allowance without raising it.
+The receipt schema, historical receipt acceptance and verdict rules are unchanged.
 The per-case host cap can independently stop idle/load collection earlier; neither
 allowance guarantees failure-window coverage through a 600-second invocation.
 Ticks without a scheduled process snapshot have null categories and do not mark

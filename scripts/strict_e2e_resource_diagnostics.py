@@ -27,7 +27,7 @@ PROCESS_SAMPLE_INTERVAL_SECONDS = 10
 SAMPLER_WALL_BUDGET_SECONDS = 180
 HOST_SAMPLE_TIMEOUT_SECONDS = 0.2
 HOST_IDLE_MIN_INTERVAL_SECONDS = 1
-HOST_WALL_BUDGET_SECONDS = 5
+HOST_WALL_BUDGET_SECONDS = 10
 MAX_HOST_SAMPLE_INTERVAL_SECONDS = 4
 SAMPLE_COMMAND_TIMEOUT_SECONDS = 0.5
 # Stop must outlast one in-flight sample command, or a slow `ps` leaves the sampler unfinished and voids the budget.
@@ -301,6 +301,7 @@ class CaseSampler:
         self.samples = []
         self.spent = 0.0
         self.host_spent = 0.0
+        self.previous_process_spent = 0.0
         self.truncated = False
         self.first_failure = None
         self.stopped = threading.Event()
@@ -315,10 +316,12 @@ class CaseSampler:
         if self.recorder is None or len(self.recorder.case_resources) >= MAX_RESOURCE_CASES:
             self.truncated = True
             return self
-        # Persisted numeric costs carry this allowance across serial case processes.
-        spent = sum(case["sampler_wall_seconds"] if case["sampler_wall_seconds"] is not None
-                    else SAMPLER_WALL_BUDGET_SECONDS for case in self.recorder.case_resources)
-        self.reserved = max(0, SAMPLER_WALL_BUDGET_SECONDS - spent)
+        # Older ledgers lack process-only accounting; retain their conservative combined charge.
+        self.previous_process_spent = self.recorder.process_sampler_wall_seconds
+        if self.previous_process_spent is None:
+            self.previous_process_spent = sum(case["sampler_wall_seconds"] if case["sampler_wall_seconds"] is not None
+                else SAMPLER_WALL_BUDGET_SECONDS for case in self.recorder.case_resources)
+        self.reserved = max(0, SAMPLER_WALL_BUDGET_SECONDS - self.previous_process_spent)
         if "xcode" in self.recorder.unavailable:
             self.reserved = 0.0
         if self.reserved <= SAMPLE_COMMAND_TIMEOUT_SECONDS:
@@ -417,6 +420,7 @@ class CaseSampler:
         if self.recorder is not None:
             if self.thread is not None and not self.finished:
                 self.truncated = True
+            self.recorder.process_sampler_wall_seconds = self.previous_process_spent + self.spent if self.finished else None
             self.publish()
 
     def bind_failure(self, epoch):
