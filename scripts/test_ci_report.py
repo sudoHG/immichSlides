@@ -1875,7 +1875,7 @@ class ReporterTests(unittest.TestCase):
         from test_ci_summary import hosted_timeout_summary
         summary, resources = hosted_timeout_summary()
         row = summary["population"]["observed"][0]
-        proof = environment_limit_evidence(summary, row, [resources], runner_hosted=True)
+        proof = environment_limit_evidence(summary, row, [resources], runner_hosted=True, policy_version=1)
         row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
         case = row["identity"]
         aggregate = aggregate_nightly([case], [summary], live_in_scope=False)
