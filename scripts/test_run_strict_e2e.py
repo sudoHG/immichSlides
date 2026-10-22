@@ -1518,6 +1518,287 @@ class FailureDiagnosticsTests(unittest.TestCase):
             with self.subTest(message=message):
                 self.assertEqual(classify_messages([message]), unknown_diagnostics())
 
+    def test_tvos_flow_and_pause_assertion_prefixes_match_their_sources(self):
+        from ci_failure_diagnostics import PREFIX_RULES, classify_messages, unknown_diagnostics
+        import subprocess
+        # Missing reader rows must stay red even when XCTest retains only a bounded receipt.
+        cases = (
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "The playback index probe is empty, so autoplay and retained-history cannot be proven.", "history_navigation", "probe_readback", 'XCTUnwrap failed: expected non-nil value of type "String" - '),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift", "Settings subpage must show target option ", "settings_navigation", "navigation", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift", "Must be able to focus ", "unknown", "focus", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift", "After choosing settings.playback.", "unknown", "control_state", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift", "Playback page must show the settings button.", "settings_navigation", "hidden_controls", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift", "Settings button must have focus before opening.", "settings_navigation", "focus", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift", "After Select on settings, must enter settings or the PIN gate.", "settings_navigation", "navigation", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift", "After returning from settings, must wait for the playback transition to finish.", "settings_navigation", "timing_window", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift", "After returning from settings with the bar hidden, the hidden receiver must have stable focus.", "settings_navigation", "focus", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift", "After returning from settings, the playback transition must finish before a directional press.", "unknown", "timing_window", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift", "After returning from settings, confirm stable hidden receiver focus before one directional press.", "unknown", "focus", "failed - "),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift", "First directional press must only wake controls.", "unknown", "hidden_controls", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift", "Settings page must have ", "settings_navigation", "navigation", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift", "Directional key must wake the playback controls.", "hidden_controls", "hidden_controls", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift", "The field must be focused before input.", "firstboot_setup", "focus", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift", "System keyboard must show Next or Done.", "firstboot_setup", "navigation", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift", "Must focus the system keyboard submit button before submitting text.", "firstboot_setup", "focus", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift", "After submitting text, focus must return to the field.", "firstboot_setup", "focus", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Settings.swift", "A clean install must open the first-boot form.", "firstboot_setup", "navigation", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Settings.swift", "First-boot form must show the API Key field.", "firstboot_setup", "navigation", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Settings.swift", "URL submitted; focus must move down to API Key.", "firstboot_setup", "focus", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Settings.swift", "First-boot form must show Test Connection.", "firstboot_setup", "navigation", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Settings.swift", "With the real controlled service reachable, the connection test must show as passed.", "firstboot_setup", "navigation", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Settings.swift", "After connecting, the Save Settings button must show.", "firstboot_setup", "navigation", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Settings.swift", "After a successful connection, Save Settings must be enabled.", "firstboot_setup", "control_state", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Settings.swift", "After saving settings, mode selection must open.", "mode_selection", "navigation", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Settings.swift", "Mode selection focus must start on random playback.", "mode_selection", "focus", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Settings.swift", "After choosing random play, Continue must show.", "mode_selection", "navigation", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Settings.swift", "After choosing random play, Continue must be enabled.", "mode_selection", "control_state", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Settings.swift", "After choosing random play, focus must move down to Continue.", "mode_selection", "focus", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift", "Settings home must show playback settings.", "settings_navigation", "navigation", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift", "Must return to playback settings.", "settings_navigation", "focus", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift", "Focus must reach play/pause.", "control_action", "focus", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift", "At midpoint, focus must reach play/pause.", "control_action", "focus", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift", "After pause, focus must reach next.", "control_action", "focus", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift", "Focus must return to play/pause after next.", "control_action", "focus", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift", "Screenshot before-pause cannot serve as identity:", "visible_scene_capture", "scene_identity", "failed: caught error: \"message(\\\""),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift", "Screenshot after-next cannot serve as identity:", "visible_scene_capture", "scene_identity", "failed: caught error: \"message(\\\""),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift", "Screenshot before-background cannot serve as identity:", "visible_scene_capture", "scene_identity", "failed: caught error: \"message(\\\""),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift", "Screenshot after-background cannot serve as identity:", "visible_scene_capture", "scene_identity", "failed: caught error: \"message(\\\""),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests.swift", "Pause/continue tvOS must run on a tvOS Simulator.", "unknown", "unknown", "failed - "),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests.swift", "Control bar must show after random playback.", "playback_entry", "hidden_controls", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "The full tvOS flow must run on a tvOS Simulator.", "unknown", "unknown", "failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "After saving settings, the app must reach the mode selection page.", "mode_selection", "navigation", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "After choosing filtered playback, the Continue button must appear.", "mode_selection", "navigation", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "After choosing filtered playback, the Continue button must be enabled.", "mode_selection", "control_state", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "Focus on the filter summary page must be able to move to Back to Mode Selection.", "mode_selection", "focus", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "Going back from the filter summary must return to the mode selection page.", "mode_selection", "navigation", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "After choosing random playback, the Continue button must be enabled.", "mode_selection", "control_state", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "After choosing random playback, focus must be able to move down to the Continue button.", "mode_selection", "focus", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "The first playback round must show the one-time remote hint.", "playback_entry", "navigation", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "While the one-time hint is shown, default focus must land on the settings button.", "playback_entry", "focus", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "The playback control bar must show the previous button.", "control_action", "hidden_controls", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "At the initial history boundary, previous must be disabled.", "history_navigation", "control_state", "XCTAssertFalse failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "Before the history chain starts, focus must be able to move to Play/Pause.", "history_navigation", "focus", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "Autoplay must be paused before the history chain starts.", "history_navigation", "control_state", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "After the control bar hides, the wake focus receiver layer must appear.", "hidden_controls", "hidden_controls", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "The playback page must expose the read-only index probe.", "history_navigation", "probe_readback", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "The start of the history chain must show the previous button.", "history_navigation", "hidden_controls", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "A must be at the history start of the current playback session.", "history_navigation", "control_state", "XCTAssertFalse failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "Focus must be able to move from Play/Pause to Next.", "history_navigation", "focus", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "The first next must advance the playback cursor.", "history_navigation", "navigation", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "After the first next settles, focus must be able to move to Next again.", "history_navigation", "focus", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "The second next must advance the playback cursor further.", "history_navigation", "navigation", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "Focus must be able to move from Next back to Play/Pause.", "history_navigation", "focus", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "Once history exists, focus must be able to move to Previous.", "history_navigation", "focus", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "After the first previous, one earlier history entry remains, so the button must stay enabled.", "history_navigation", "control_state", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "After going back once, focus must be able to move to Previous again.", "history_navigation", "focus", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "The end of the history chain must show the previous button.", "history_navigation", "hidden_controls", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "After the second previous returns to the history start, the button must be disabled again.", "history_navigation", "control_state", "XCTAssertFalse failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "Before checking autoplay, focus must be able to move to Next.", "control_action", "focus", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "After consuming one step of forward history, focus must be able to move to Next again.", "history_navigation", "focus", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "At the history frontier, focus must be able to move to Play/Pause.", "history_navigation", "focus", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "Pressing Select again after pausing must resume autoplay.", "control_action", "control_state", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "After auto-advance, focus on wake must return to Play/Pause.", "control_action", "focus", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "The index probe must change after a playback action.", "history_navigation", "probe_readback", "XCTAssertNotNil failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "Pressing Select after auto-advance must pause playback.", "control_action", "control_state", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "Pausing must not advance an extra photo.", "paused_hold", "scene_identity", "XCTAssertEqual failed: (PRIVATE_SENTINEL) - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "The paused-frame comparison must span at least 10 seconds.", "paused_hold", "timing_window", "XCTAssertGreaterThanOrEqual failed: (PRIVATE_SENTINEL) - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "During a pause of at least 10 seconds, autoplay must not catch up.", "paused_hold", "scene_identity", "XCTAssertEqual failed: (PRIVATE_SENTINEL) - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "After the pause wait, focus on wake must return to Play/Pause.", "control_action", "focus", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "After the pause wait, autoplay must be resumable.", "control_action", "control_state", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "After autoplay resumes, focus on wake must return to Play/Pause.", "control_action", "focus", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "After resuming, playback must advance to another photo.", "history_navigation", "probe_readback", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "Autoplay must be pausable again before entering settings.", "control_action", "control_state", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "Focus in the playback control bar must be able to move to Settings.", "settings_navigation", "focus", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "The settings button must open the settings page.", "settings_navigation", "navigation", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "Pressing Back/Menu on the settings page must return to the playback page.", "settings_navigation", "navigation", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "A clean install must reach the first-boot form.", "firstboot_setup", "navigation", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "The first-boot form must show the API Key field.", "firstboot_setup", "navigation", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "After submitting the URL, focus must be able to move down to API Key.", "firstboot_setup", "focus", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "The first-boot form must show the Test Connection button.", "firstboot_setup", "navigation", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "Once the real controlled service is reachable, the connection-test-passed status must show.", "firstboot_setup", "navigation", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "Select must not accidentally hit the API Key help sheet.", "firstboot_setup", "navigation", "XCTAssertFalse failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "After a successful connection, the Save Settings button must appear.", "firstboot_setup", "navigation", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "After a successful connection, Save Settings must be enabled.", "firstboot_setup", "control_state", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "The field must be focused before typing.", "unknown", "focus", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "The system keyboard must show Next or Done.", "unknown", "navigation", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "Focus the system keyboard submit button before submitting text.", "firstboot_setup", "focus", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "The server address must be submitted verbatim.", "firstboot_setup", "control_state", "XCTAssertEqual failed: (PRIVATE_SENTINEL) - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "After submitting text, focus must return to the original field.", "unknown", "focus", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "An arrow key must wake the playback control bar.", "hidden_controls", "hidden_controls", "XCTAssertTrue failed - "),
+            ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "The index probe must change after a playback action. advanceObserved=", "history_navigation", "probe_readback", "failed - "),
+            ("TestSupport/AccessLifecycleContract+Controls.swift", "Interval options are missing", "interval_setup", "interval_readback", "failed: caught error: \"message(\\\""),
+            ("TestSupport/AccessLifecycleContract.swift", "Identity comes only from public fixture photos, never from logs or index", "visible_scene_capture", "evidence_capture", "failed: caught error: \"message(\\\""),
+            ("TestSupport/AccessLifecycleContract.swift", "A forced display mode must not replace the real settings path", "visible_scene_capture", "evidence_capture", "failed: caught error: \"message(\\\""),
+            ("TestSupport/AccessLifecycleContract.swift", "Returning to playback must not require the control bar to be visible", "settings_navigation", "evidence_capture", "failed: caught error: \"message(\\\""),
+            ("TestSupport/AccessLifecycleContract.swift", "Returning to playback must confirm the playback layer", "unknown", "navigation", "failed: caught error: \"message(\\\""),
+            ("TestSupport/AccessLifecycleContract.swift", "After settings return, no direction key until the transition completes", "unknown", "timing_window", "failed: caught error: \"message(\\\""),
+            ("TestSupport/AccessLifecycleContract.swift", "After settings return, must confirm the hidden receiver holds focus stably", "unknown", "focus", "failed: caught error: \"message(\\\""),
+            ("TestSupport/AccessLifecycleContract.swift", "Must not press twice to mask the first wake", "unknown", "hidden_controls", "failed: caught error: \"message(\\\""),
+            ("TestSupport/AccessLifecycleContract.swift", "Wake after settings return is missing before/after screenshots", "unknown", "evidence_capture", "failed: caught error: \"message(\\\""),
+            ("TestSupport/AccessLifecycleContract.swift", "A missing image must not count as a pass", "visible_scene_capture", "scene_identity", "failed: caught error: \"message(\\\""),
+        )
+        root = Path(__file__).resolve().parents[1]
+        documentation = (root / "docs/CI_STRICT_RUNNER.md").read_text()
+        for _, prefix, phase, kind, _ in cases:
+            self.assertIn(f"| `{prefix}` | `{phase}` | `{kind}` |", documentation)
+        # Scan every tracked Swift source, including App, unit and non-strict UI suites.
+        # A new emitter must be reviewed even if its text is in a different test file.
+        sources = {path: (root / path).read_text() for path in subprocess.check_output(
+            ["git", "ls-files", "--", "*.swift"], cwd=root, text=True).splitlines()}
+        tokens = re.compile(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\])*"|[A-Za-z_][\w.]*\s*\(|[()]', re.S)
+        literals = []
+        for path, text in sources.items():
+            calls = []
+            for token in tokens.finditer(text):
+                value = token.group()
+                if value.startswith(('//', '/*')):
+                    continue
+                if value.startswith('"'):
+                    functions = list(re.finditer(r'\bfunc\s+(\w+)\s*\(', text[:token.start()]))
+                    owner = functions[-1].group(1) if functions else None
+                    literals.append((path, owner, value[1:-1], tuple(calls)))
+                elif value.endswith('('):
+                    calls.append(value[:-1].strip())
+                elif value == ')' and calls:
+                    calls.pop()
+
+        dynamic_templates = {
+            "After choosing settings.playback.": r"After choosing \(option), it must be selected.",
+            **{f"Screenshot {name} cannot serve as identity:": r"Screenshot \(name) cannot serve as identity: \(mark)"
+               for name in ("before-pause", "after-next", "before-background", "after-background")},
+        }
+        shared_owners = {
+            "First directional press must only wake controls.": {"exerciseDirectionalWake", "wakeHiddenControlBarOnce"},
+            "Must be able to focus ": {"selectPlaybackToggle", "moveFocusToSettingsControl", "focusSettingsControl",
+                "changePlaybackSettingsThroughRealUI", "enablePinThroughRealUI", "enablePasswordFromSettingsUI"},
+            "After choosing settings.playback.": {"selectPlaybackToggle", "choose"},
+            "The field must be focused before input.": {"replaceFocusedText"},
+            "A clean install must open the first-boot form.": {"configureServerThroughFirstBoot", "launchToPlayback"},
+            "First-boot form must show the API Key field.": {"configureServerThroughFirstBoot", "launchToPlayback"},
+            "After a successful connection, Save Settings must be enabled.": {"configureServerThroughFirstBoot", "launchToPlayback"},
+            "Settings home must show playback settings.": {"changePlaybackSettingsThroughRealUI", "enterPlaybackSettings", "ensureInsidePlaybackSettingsPage"},
+            "Must return to playback settings.": {"exerciseDisplayModeImmediate", "turnAutoplayOnThroughRealUI", "enterPlaybackSettings"},
+            **{prefix: {"exercisePauseNextPlay", "exerciseTVOSPauseNextContinueVisibleTiming"} for prefix in (
+                "Focus must reach play/pause.", "After pause, focus must reach next.", "Focus must return to play/pause after next.")},
+            "Control bar must show after random playback.": {"testTVOSAccessProtectionSettingsAndLifecycle",
+                "testTVOSPasswordProtectionNormalUI", "testTVOSSettingsPersistAfterTerminateLaunch",
+                "testTVOSPauseNextContinueVisibleTiming", "testTVOSBackgroundReturnPreservesScene"},
+            "The full tvOS flow must run on a tvOS Simulator.": {"testTVOSFirstBootSaveAndConfiguredColdLaunch",
+                "testTVOSAlbumServerFirstBootFailureHTML200", "testTVOSFirstBootModeSelectionAndCorePlayback"},
+            "After saving settings, the app must reach the mode selection page.": {
+                "testTVOSFirstBootSaveAndConfiguredColdLaunch", "testTVOSFirstBootModeSelectionAndCorePlayback"},
+            **{prefix: {"testTVOSAlbumServerFirstBootFailureHTML200", "configureServerThroughFirstBoot"} for prefix in (
+                "A clean install must reach the first-boot form.", "The first-boot form must show the API Key field.",
+                "After submitting the URL, focus must be able to move down to API Key.", "The first-boot form must show the Test Connection button.")},
+            "The field must be focused before typing.": {"replaceFocusedText", "replaceFocusedTVOSText"},
+            "The system keyboard must show Next or Done.": {"replaceFocusedText"},
+            "After submitting text, focus must return to the original field.": {"replaceFocusedText"},
+        }
+        # Independently reviewed additional emitters: values are their call-site phases.
+        shared_sources = {
+            "Must be able to focus ": {"AccessLifecycleTVOSUITests+Settings.swift": "settings_navigation",
+                                      "TVDriver.swift": "unknown"},
+            "After choosing settings.playback.": {"TVDriver.swift": "unknown"},
+            "The field must be focused before input.": {"TVDriver.swift": "firstboot_setup"},
+            "A clean install must open the first-boot form.": {"TVDriver.swift": "firstboot_setup"},
+            "First-boot form must show the API Key field.": {"TVDriver.swift": "firstboot_setup"},
+            "After a successful connection, Save Settings must be enabled.": {
+                "AccessLifecycleTVOSUITests+Settings.swift": "firstboot_setup",
+                "StrictE2ELateImageTVOSUITests.swift": "firstboot_setup",
+                "StrictE2ETVOSFlowUITests.swift": "firstboot_setup", "TVDriver.swift": "firstboot_setup"},
+            "Settings home must show playback settings.": {"AccessLifecycleTVOSUITests+Settings.swift": "settings_navigation"},
+            "Must return to playback settings.": {"AccessLifecycleTVOSUITests+Navigation.swift": "settings_navigation",
+                                                 "AccessLifecycleTVOSUITests+Settings.swift": "settings_navigation"},
+            **{prefix: {"AccessLifecycleTVOSUITests+Navigation.swift": "control_action"} for prefix in (
+                "Focus must reach play/pause.", "After pause, focus must reach next.",
+                "Focus must return to play/pause after next.")},
+            "The field must be focused before typing.": {"StrictE2ELateImageTVOSUITests.swift": "firstboot_setup",
+                "StrictE2EFilterTVOSUITests+Support.swift": "server_switch", "StrictE2ESmokeUITests.swift": "firstboot_setup"},
+            "The system keyboard must show Next or Done.": {"StrictE2ELateImageTVOSUITests.swift": "firstboot_setup",
+                "StrictE2EFilterTVOSUITests+Support.swift": "server_switch", "TVDriver.swift": "firstboot_setup"},
+            "After submitting text, focus must return to the original field.": {
+                "StrictE2ELateImageTVOSUITests.swift": "firstboot_setup", "StrictE2EFilterTVOSUITests+Support.swift": "server_switch"},
+        }
+        reviewed = {}
+        for source, prefix, phase, kind, wrapper in cases:
+            reviewed.setdefault(prefix, set()).add(source)
+        for prefix, extra in shared_sources.items():
+            reviewed[prefix].update("immichSlidesUITests/" + path for path in extra)
+        for source, prefix, phase, kind, wrapper in cases:
+            with self.subTest(source=source, prefix=prefix):
+                active_prefix = next((row[0] for row in PREFIX_RULES if prefix.startswith(row[0])), None)
+                self.assertIsNotNone(active_prefix, "missing classification for reviewed assertion")
+                template = dynamic_templates.get(active_prefix, active_prefix)
+                emitters = [(path, owner, literal, calls) for path, owner, literal, calls in literals
+                            if literal.startswith(template)]
+                self.assertTrue(emitters, prefix)
+                self.assertEqual({path for path, _, _, _ in emitters}, reviewed[prefix],
+                                 "prefix matches unreviewed Swift emitters in another phase")
+                phases = {phase, *shared_sources.get(prefix, {}).values()}
+                if len(phases) > 1:
+                    self.assertEqual(phase, "unknown", "shared emitters disagree on phase")
+                if prefix in shared_owners:
+                    self.assertEqual({owner for _, owner, _, _ in emitters}, shared_owners[prefix])
+                if prefix == "The index probe must change after a playback action.":
+                    self.assertCountEqual([calls[-1] for _, _, _, calls in emitters],
+                                          ["XCTAssertTrue", "XCTAssertNotNil", "XCTFail"])
+                for emitter_source, owner, literal, calls in emitters:
+                    if wrapper.startswith('failed: caught error:'):
+                        self.assertTrue(calls[-1].endswith("AssertionError.message"), (literal, calls))
+                        # Swift's thrown error description escapes apostrophes.
+                        self.assertNotIn("'", literal)
+                    elif calls[-1] in {"moveFocus", "focus"}:
+                        self.assertEqual(wrapper, "XCTAssertTrue failed - ")
+                        driver_source = (sources["immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift"]
+                                         if "AccessLifecycleTVOSUITests" in emitter_source else sources[emitter_source])
+                        declaration = re.search(r'\bfunc\s+' + calls[-1] + r'\s*\(', driver_source)
+                        self.assertIsNotNone(declaration)
+                        body = re.split(r'\bfunc\s+', driver_source[declaration.end():], maxsplit=1)[0]
+                        self.assertRegex(body, r'XCTAssertTrue\(\s*waitForFocus\([^;]+?\), message\)')
+                    else:
+                        emitter = "XCTFail" if wrapper == "failed - " else wrapper.split()[0]
+                        if prefix == "The index probe must change after a playback action.":
+                            emitter = calls[-1]
+                            actual_wrapper = "failed - " if emitter == "XCTFail" else emitter + " failed - "
+                            self.assertEqual(classify_messages([actual_wrapper + literal]),
+                                             {"failure_phase": phase, "failure_class": kind})
+                        self.assertEqual(calls[-1], emitter, (literal, calls))
+                        if emitter == "XCTFail":
+                            self.assertEqual(classify_messages(["failed - " + literal]),
+                                             {"failure_phase": phase, "failure_class": kind})
+                message = wrapper + prefix + ' PRIVATE_SENTINEL /private/path'
+                self.assertEqual(classify_messages([message]),
+                                 {"failure_phase": phase, "failure_class": kind})
+                self.assertEqual(classify_messages([message, "unreviewed PRIVATE_SENTINEL"]),
+                                 unknown_diagnostics())
+
+        # Bind interpolated screenshot names to all actual callers, including forwarding.
+        capture_calls = []
+        for path, text in sources.items():
+            for call in re.finditer(r'(?<!func )\bcaptureTVOS(?:Immediate|NewStable)Mark\(\s*app: app,\s*name: ([^,\n)]+)', text):
+                capture_calls.append((path, call.group(1)))
+        self.assertCountEqual(capture_calls, [
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift", '"before-pause"'),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift", '"after-next"'),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift", 'name'),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests.swift", '"before-background"'),
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests.swift", '"after-background"'),
+        ])
+        navigation = sources["immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift"]
+        wake_callers = []
+        for call in re.finditer(r'(?<!func )\bwakeHiddenControlBarOnce\(\s*app:', navigation):
+            wake_callers.append(list(re.finditer(r'\bfunc\s+(\w+)\(', navigation[:call.start()]))[-1].group(1))
+        self.assertCountEqual(wake_callers, ["openSettingsFromSlideShow", "ensureControlBarVisible"])
+        timing = sources["immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift"]
+        self.assertIn("ensureControlBarVisible(app: app, playPauseButton: playPauseButton)", timing)
+        self.assertIn("try AccessLifecycleContract.assertSettingsReturnWake(", navigation)
+        self.assertIn("XCTFail(String(describing: error))", navigation)
+        # The first/second-next outer assertions follow an earlier failing XCTFail.
+        flow = sources["immichSlidesUITests/StrictE2ETVOSFlowUITests.swift"]
+        self.assertIn("continueAfterFailure = false", flow)
+        advance = flow[flow.index("private func waitForScenePublicationAdvance"):]
+        self.assertIn("XCTFail(", advance)
+
     def test_shared_export_without_opt_in_preserves_failed_bytes_and_two_export_budget(self):
         import subprocess
         with tempfile.TemporaryDirectory() as raw:
