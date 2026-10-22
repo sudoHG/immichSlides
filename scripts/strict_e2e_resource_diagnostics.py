@@ -28,6 +28,7 @@ SAMPLER_WALL_BUDGET_SECONDS = 180
 HOST_SAMPLE_TIMEOUT_SECONDS = 0.2
 HOST_IDLE_MIN_INTERVAL_SECONDS = 1
 HOST_WALL_BUDGET_SECONDS = 5
+MAX_HOST_SAMPLE_INTERVAL_SECONDS = 4
 SAMPLE_COMMAND_TIMEOUT_SECONDS = 0.5
 # Stop must outlast one in-flight sample command, or a slow `ps` leaves the sampler unfinished and voids the budget.
 STOP_TIMEOUT_SECONDS = HOST_SAMPLE_TIMEOUT_SECONDS + SAMPLE_COMMAND_TIMEOUT_SECONDS + 0.1
@@ -215,7 +216,7 @@ class HostProbe:
         self.done = None
         self.worker = None
         self.requests = queue.Queue(maxsize=1)
-        self.last_cost = 0.0
+        self.request_count = 0
 
     def _run(self):
         try:
@@ -248,18 +249,21 @@ class HostProbe:
         done, values = Event(), []
         self.done = done
         started = time.perf_counter()
+        self.request_count += 1
         try:
             # Pay thread startup once; per-tick startup can exhaust the cap on a loaded host.
             if self.worker is None:
-                self.worker = Thread(target=self._run, daemon=True)
-                self.worker.start()
+                worker = Thread(target=self._run, daemon=True)
+                worker.start()
+                self.worker = worker
             self.requests.put_nowait((done, values))
             finished = done.wait(max(0, min(HOST_SAMPLE_TIMEOUT_SECONDS, remaining)
                                         - (time.perf_counter() - started)))
         except (OSError, RuntimeError, queue.Full):
             finished = False
-        self.last_cost = time.perf_counter() - started
-        self.spent += self.last_cost
+            if self.worker is None:
+                done.set()
+        self.spent += time.perf_counter() - started
         self.unavailable = finished and not values
         return values[0] if finished and values else None
 
@@ -269,13 +273,23 @@ class HostProbe:
         try:
             self.requests.put_nowait(None)
         except queue.Full:
-            pass
+            # Replace queued work with shutdown so a late worker cannot block on get().
+            try:
+                pending = self.requests.get_nowait()
+                if pending is not None:
+                    pending[0].set()
+            except queue.Empty:
+                pass
+            try:
+                self.requests.put_nowait(None)
+            except queue.Full:
+                pass
 
 
 class CaseSampler:
     """Share a bounded sampling allowance across cases, independently of test waits."""
 
-    def __init__(self, recorder, device, *, duration_limit_seconds=MAX_DIAGNOSTIC_SECONDS):
+    def __init__(self, recorder, device, *, duration_limit_seconds=300):
         self.recorder = recorder
         self.device = device
         self.sequence = recorder.next_sequence() if recorder is not None else 0
@@ -329,7 +343,10 @@ class CaseSampler:
                 elapsed = time.monotonic() - self.origin
                 if sample is None:
                     self.truncated = True
-                    next_tick = time.monotonic() + SAMPLE_INTERVAL_SECONDS
+                    interval = self._host_interval(host, elapsed)
+                    if interval is None:
+                        break
+                    next_tick = time.monotonic() + interval
                     continue
                 sample = dict(sample)
                 sample["cpu_percent"] = dict.fromkeys(RESOURCE_CATEGORIES)
@@ -357,19 +374,13 @@ class CaseSampler:
                 if len(self.samples) > MAX_RESOURCE_SAMPLES:
                     self.truncated = True
                     del self.samples[0]
-                interval = SAMPLE_INTERVAL_SECONDS
-                remaining = HOST_WALL_BUDGET_SECONDS - host.spent - HOST_SAMPLE_TIMEOUT_SECONDS
-                # Hold one call in reserve and spread the rest through the invocation's existing deadline.
-                if remaining > 0:
-                    needed = max(0, self.duration_limit - elapsed) * host.last_cost / remaining
-                    interval *= max(1, math.ceil(needed / interval))
-                else:
-                    interval = max(interval, self.duration_limit - elapsed)
-                self.truncated |= interval > SAMPLE_INTERVAL_SECONDS
+                interval = self._host_interval(host, elapsed)
+                if interval is None:
+                    break
                 next_tick += interval
                 # Skip missed deadlines instead of issuing a burst after host descheduling.
                 if next_tick <= time.monotonic():
-                    next_tick = time.monotonic() + SAMPLE_INTERVAL_SECONDS
+                    next_tick = time.monotonic() + interval
         except (OSError, ValueError, TypeError, AttributeError):
             self.truncated = True
         finally:
@@ -377,6 +388,19 @@ class CaseSampler:
                 host.close()
                 self.host_spent = host.spent
             self.finished = True
+
+    def _host_interval(self, host, elapsed):
+        remaining = HOST_WALL_BUDGET_SECONDS - host.spent - HOST_SAMPLE_TIMEOUT_SECONDS
+        if remaining <= 0:
+            self.truncated = True
+            return None
+        average_cost = host.spent / host.request_count if host.request_count else 0
+        needed = max(0, self.duration_limit - elapsed) * average_cost / remaining
+        # Prefer recent evidence to stretching gaps across the entire timeout horizon.
+        interval = min(MAX_HOST_SAMPLE_INTERVAL_SECONDS,
+            SAMPLE_INTERVAL_SECONDS * max(1, math.ceil(needed / SAMPLE_INTERVAL_SECONDS)))
+        self.truncated |= interval > SAMPLE_INTERVAL_SECONDS
+        return interval
 
     def stop(self):
         if self.closed:

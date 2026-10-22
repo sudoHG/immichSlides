@@ -215,17 +215,26 @@ A timed-out host read skips ticks while its worker is still running, then fresh
 reads resume within the remaining allowance; late values are discarded. Stop
 never waits for another interval or starts a new process snapshot. The worker is
 signalled to exit on every case exit, including when idle between requests.
-After each successful tick, the collector reserves one 0.2-second call and spreads
-the remaining allowance over the invocation's existing Xcode timeout using the
-latest measured read cost. If two-second ticks would exhaust that allowance,
-it increases the interval to a multiple of two seconds, marking truncation.
+After each request, including a timeout, the collector reserves one 0.2-second
+call and prices the remaining invocation deadline using mean request cost
+(total host wait, including timeouts and startup, divided by attempted requests).
+If two-second ticks would exhaust that allowance, it increases the planned
+interval to a multiple of two seconds, capped at four seconds, marking truncation.
+Timeouts use that planned interval too. The cap prioritizes recent evidence over
+spreading a few samples across a long timeout horizon. Once the unreserved
+allowance is exhausted, sampling stops and marks truncation instead of stretching
+the gap; subsequent failures can have no nearby evidence and remain red.
 Four-second ticks still support a strictly before/after pair within ±5 seconds
 when the host responds and Xcode remains running. Arbitrarily slow reads cannot
 guarantee that window within five seconds of total collection cost: longer gaps,
 timed-out reads and exhausted budgets retain missing evidence and fail closed.
 No bound or test deadline is extended. Reaching the retained-sample cap evicts the
 oldest sample instead of ending collection, preserving recent actual samples.
-`sample_interval_seconds` remains the nominal two-second interval. Host costs now
+`sample_interval_seconds` remains the nominal two-second interval. Idle is the
+mean since the preceding native read: a pre-failure sample can average a longer
+interval after throttling, a timeout or host descheduling. No value is interpolated
+or relabelled as a two-second measurement. A failed worker start permits another
+start on the next planned request. Host costs now
 contribute to `sampler_wall_seconds`; older receipts reporting zero when process
 snapshots were disabled did not measure host cost.
 Process snapshots run at most once per ten seconds and have a separate
@@ -239,11 +248,13 @@ has a 0.1-second cap; an IO timeout can make inherited Xcode accounting unavaila
 even on a Release lifecycle shard that has not sampled yet. No
 fresh allowance is granted per case. This preserves the existing 10-second
 Xcode diagnostic pool for anomaly diagnostics, and keeps
-host sampler running through a 20–30 minute shard. The independent host cap remains
+host sampler independent of process-pool exhaustion. The independent host cap remains
 five seconds per invocation and at most 64 invocations per receipt; CPU work is
-bounded by these active-wall allowances. At a ten-second process cadence,
-180 snapshots costing 1.1 seconds each would exhaust the pool near the end of a
-30-minute shard; only process snapshots stop, preserving late idle/load evidence.
+bounded by these active-wall allowances. There is no guaranteed shard exhaustion
+time: predecessor host costs also reduce the pool. For example, after 30 seconds
+of host costs, only 150 seconds remain for process snapshots, rather than 180.
+The per-case host cap can independently stop idle/load collection earlier; neither
+allowance guarantees failure-window coverage through a 600-second invocation.
 Ticks without a scheduled process snapshot have null categories and do not mark
 the case truncated. Pool exhaustion, unavailable accounting, failed scheduled
 snapshots and missing host measurements do mark truncation. An unfinished collector marks cost

@@ -530,7 +530,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                     *(["--test-without-building", "--derived-data-path", str(evidence.parent / "derived")] if warm else []),
                     *(["--listed-retry-device", "iphone"] if retry else []),
                     *(["--simulator-boot-submitted"] if boot_submitted else []),
-                    *(["--warm-timeout-seconds", "600"] if timeout_phase == "xcodebuild" else []),
+                    *(["--warm-timeout-seconds", "600"] if warm else []),
                 ],
                 stdout=stdout,
                 stderr=stderr,
@@ -665,7 +665,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
             for path in receipts:
                 receipt = json.loads(path.read_text())
                 self.assertTrue(receipt["products_unchanged"])
-                self.assertEqual(receipt["timeout_seconds"], 300)
+                self.assertEqual(receipt["timeout_seconds"], 600)
                 self.assertGreaterEqual(receipt["duration_seconds"], 0)
             self.assertEqual([json.loads(path.read_text())["exit_code"] for path in receipts], [0, 0, 0, 65])
 
@@ -693,7 +693,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                     self.assertTrue(ready.wait(2), "Release lifecycle execution must receive host samples")
                 with mock.patch.object(resources, "SAMPLE_INTERVAL_SECONDS", 0.001), \
                         mock.patch.object(resources.CaseSampler, "start", start), \
-                        mock.patch.object(resources, "HostProbe", return_value=SimpleNamespace(sample=read_host, close=lambda: None, unavailable=False, spent=0, last_cost=0)), \
+                        mock.patch.object(resources, "HostProbe", return_value=SimpleNamespace(sample=read_host, close=lambda: None, unavailable=False, spent=0, request_count=1)), \
                         mock.patch.object(resources, "process_sample") as ps:
                     code, _, stderr, _ = self._run_p2_main(Path(raw) / "evidence",
                         suite="smoke" if configuration == "Debug" else f"{platform}-lifecycle-settings",
@@ -701,6 +701,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                         late_image_attempt=xcode, native_failure_epoch=lambda: samplers[0].epoch + samplers[0].duration / 2)
                 self.assertEqual(65, code, stderr)
                 self.assertEqual(1, len(samplers))
+                self.assertEqual(600, samplers[0].duration_limit)
                 sampler = samplers[0]
                 case = recorder.receipt()["case_resources"][0]
                 self.assertGreater(case["sample_count"], 0)
@@ -3498,7 +3499,7 @@ raise SystemExit(65)
         recorder = diagnostics.Recorder()
         with mock.patch.object(resources.threading, "Event", return_value=event), \
                 mock.patch.object(resources.threading, "Thread", side_effect=lambda *, target, daemon: SimpleNamespace(start=target, join=lambda timeout: None)), \
-                mock.patch.object(resources, "HostProbe", return_value=SimpleNamespace(sample=lambda: sample, close=lambda: None, unavailable=False, spent=0, last_cost=0)), \
+                mock.patch.object(resources, "HostProbe", return_value=SimpleNamespace(sample=lambda: sample, close=lambda: None, unavailable=False, spent=0, request_count=1)), \
                 mock.patch.object(resources, "resource_sample", return_value=sample), \
                 mock.patch.object(resources, "process_sample", return_value=sample["cpu_percent"]), \
                 mock.patch.object(resources.time, "monotonic", side_effect=lambda: clock[0]), \
@@ -3523,7 +3524,7 @@ raise SystemExit(65)
         partial = diagnostics.Recorder()
         with mock.patch.object(resources.threading, "Event", return_value=event), \
                 mock.patch.object(resources.threading, "Thread", side_effect=lambda *, target, daemon: SimpleNamespace(start=target, join=lambda timeout: None)), \
-                mock.patch.object(resources, "HostProbe", return_value=SimpleNamespace(sample=lambda: absent_app, close=lambda: None, unavailable=False, spent=0, last_cost=0)), \
+                mock.patch.object(resources, "HostProbe", return_value=SimpleNamespace(sample=lambda: absent_app, close=lambda: None, unavailable=False, spent=0, request_count=1)), \
                 mock.patch.object(resources, "resource_sample", return_value=absent_app), \
                 mock.patch.object(resources, "process_sample", side_effect=[absent_app["cpu_percent"], sample["cpu_percent"]]), \
                 mock.patch.object(resources.time, "monotonic", side_effect=lambda: clock[0]), \
@@ -3563,7 +3564,7 @@ raise SystemExit(65)
         recorder.charged["xcode"] = diagnostics.COLLECTION_BUDGET_SECONDS["xcode"]
         with mock.patch.object(resources.threading, "Event", return_value=event), \
                 mock.patch.object(resources.threading, "Thread", side_effect=lambda *, target, daemon: SimpleNamespace(start=target, join=lambda timeout: None)), \
-                mock.patch.object(resources, "HostProbe", return_value=SimpleNamespace(sample=host_sample, close=lambda: None, unavailable=False, spent=0, last_cost=0)), \
+                mock.patch.object(resources, "HostProbe", return_value=SimpleNamespace(sample=host_sample, close=lambda: None, unavailable=False, spent=0, request_count=1)), \
                 mock.patch.object(resources, "resource_sample", return_value=sample), \
                 mock.patch.object(resources.sys, "platform", "darwin"), \
                 mock.patch.object(resources.subprocess, "run", side_effect=slow_ps) as ps, \
@@ -3653,6 +3654,7 @@ raise SystemExit(65)
                 self.assertTrue(entered.wait(3))
                 self.assertIsNone(probe.sample(), "an in-flight read must not start another worker")
                 self.assertEqual(1, len(calls))
+                self.assertEqual(1, probe.request_count, "busy ticks must not dilute the timeout cost")
                 release.set()
                 self.assertTrue(probe.done.wait(3))
                 before = probe.spent
@@ -3666,10 +3668,121 @@ raise SystemExit(65)
                 self.assertEqual(37, recovered["idle_percent"], "a full interval must restore idle evidence")
                 constructor.assert_called_once()
                 self.assertEqual(1, worker.call_count, "ticks must reuse the native worker after a timeout")
+                self.assertEqual(3, probe.request_count, "the average must include the timed-out request")
             finally:
                 release.set()
                 probe.close()
                 self.assertTrue(closed.wait(3))
+
+    def test_host_probe_stops_with_queued_work_and_retries_failed_worker_start(self):
+        import strict_e2e_resource_diagnostics as resources
+        import threading
+        from types import SimpleNamespace
+        for shutdown in ("close", "exhausted"):
+            with self.subTest(shutdown=shutdown):
+                targets = []
+                def deferred_worker(*, target, daemon):
+                    targets.append(target)
+                    return SimpleNamespace(start=lambda: None)
+                with mock.patch.object(resources, "Thread", side_effect=deferred_worker), \
+                        mock.patch.object(resources, "resource_sample") as read:
+                    probe = resources.HostProbe("device")
+                    self.assertIsNone(probe.sample())
+                    self.assertTrue(probe.requests.full())
+                    if shutdown == "close":
+                        probe.close()
+                        self.assertTrue(probe.done.is_set(), "shutdown must release the pending request")
+                    else:
+                        probe.spent = 5
+                        self.assertIsNone(probe.sample())
+                    worker = threading.Thread(target=targets[0], daemon=True)
+                    worker.start()
+                    try:
+                        worker.join(1)
+                        self.assertFalse(worker.is_alive(), "a full queue must not swallow shutdown")
+                        read.assert_not_called()
+                    finally:
+                        probe.close()
+                        worker.join(1)
+        real_thread = resources.Thread
+        starts = [RuntimeError("worker unavailable"), None]
+        def worker(*, target, daemon):
+            error = starts.pop(0)
+            if error is not None:
+                return SimpleNamespace(start=mock.Mock(side_effect=error))
+            return real_thread(target=target, daemon=daemon)
+        sample = {"idle_percent": 4, "load_1m": 6, "cpu_percent": dict.fromkeys(resources.RESOURCE_CATEGORIES)}
+        with mock.patch.object(resources, "Thread", side_effect=worker), \
+                mock.patch.object(resources, "HostCpu", return_value=SimpleNamespace(idle=lambda: None, close=lambda: None)), \
+                mock.patch.object(resources, "resource_sample", return_value=sample):
+            probe = resources.HostProbe("device")
+            try:
+                self.assertIsNone(probe.sample())
+                self.assertEqual(sample, probe.sample(), "a failed start must allow a fresh worker")
+            finally:
+                probe.close()
+                probe.worker.join(1)
+
+    def test_case_sampler_prices_timeouts_marks_throttling_and_preserves_a_call_reserve(self):
+        import ci_execution_diagnostics as diagnostics
+        import strict_e2e_resource_diagnostics as resources
+        from types import SimpleNamespace
+        sample = {"idle_percent": 4, "load_1m": 6, "cpu_percent": dict.fromkeys(resources.RESOURCE_CATEGORIES, 0)}
+        for scenario, horizon, end in (("mixed", 300, 18), ("throttled", 600, 12),
+                                       ("reserve", 600, 600), ("mixed-window", 600, 230), ("expensive-window", 600, 230)):
+            with self.subTest(scenario=scenario):
+                clock, reads = [0.0], []
+                probe = SimpleNamespace(spent=0, request_count=0, last_cost=0, close=lambda: None)
+                def read():
+                    reads.append(clock[0])
+                    probe.request_count += 1
+                    timeout = (scenario == "mixed" and len(reads) == 3) or (scenario == "mixed-window" and len(reads) % 10 == 0)
+                    cost = 0.2 if timeout else (0.06 if scenario in {"reserve", "mixed-window"} else 0.02)
+                    if scenario == "expensive-window":
+                        # Run 39753082747 p95 total wall/sample, used only as a conservative stress proxy.
+                        cost = 0.18457019993333338
+                    clock[0] += cost
+                    probe.spent += cost
+                    if not timeout:
+                        probe.last_cost = cost
+                    return None if timeout else sample
+                probe.sample = read
+                def wait(seconds):
+                    clock[0] = min(end, clock[0] + seconds)
+                    return clock[0] >= end
+                event = SimpleNamespace(wait=wait, set=lambda: None, is_set=lambda: False)
+                recorder = diagnostics.Recorder()
+                with mock.patch.object(resources.threading, "Thread", side_effect=lambda *, target, daemon: SimpleNamespace(start=target, join=lambda timeout: None)), \
+                        mock.patch.object(resources, "HostProbe", return_value=probe), \
+                        mock.patch.object(resources, "process_sample", return_value=sample["cpu_percent"]), \
+                        mock.patch.object(resources.time, "monotonic", side_effect=lambda: clock[0]), \
+                        mock.patch.object(resources.time, "time", side_effect=lambda: 100 + clock[0]), \
+                        mock.patch.object(resources.time, "perf_counter", side_effect=lambda: clock[0]):
+                    sampler = resources.CaseSampler(recorder, "device", duration_limit_seconds=horizon)
+                    sampler.stopped = event
+                    sampler.start()
+                    clock[0] = end
+                    sampler.stop()
+                case = recorder.receipt()["case_resources"][0]
+                self.assertTrue(case["truncated"], "throttling with available process evidence must mark truncation")
+                if scenario == "mixed":
+                    self.assertAlmostEqual(4, reads[3] - reads[2] - 0.2, msg="a timeout must use the planned interval")
+                    self.assertAlmostEqual(4, reads[4] - reads[3], msg="a cheap success must not erase average timeout cost")
+                elif scenario == "reserve":
+                    self.assertLess(case["sampler_wall_seconds"], 4.8 + 0.06,
+                                    "leave a worst-case call reserved instead of spending through the five-second cap")
+                    self.assertGreater(sampler.samples[-1]["elapsed_seconds"], 187)
+                    self.assertLess(max(b - a for a, b in zip(reads, reads[1:])), 4.01)
+                    self.assertLess(reads[-1], 400, "exhaustion must stop sampling rather than stretch toward H")
+                elif scenario in {"mixed-window", "expensive-window"}:
+                    self.assertLess(case["sampler_wall_seconds"], 5)
+                    for failure in (143, 187):
+                        sampler.bind_failure(sampler.epoch + failure)
+                        offsets = [row["elapsed_seconds"] - failure for row in recorder.case_resources[0]["failure_samples"]]
+                        self.assertEqual(failure, recorder.case_resources[0]["first_failure_elapsed_seconds"])
+                        covered = any(-5 <= offset < 0 for offset in offsets) and any(0 < offset <= 5 for offset in offsets)
+                        self.assertEqual(scenario == "mixed-window", covered, (failure, offsets))
+                        sampler.first_failure = None
 
     def test_slow_host_ticks_cover_a_late_failure_without_spending_the_case_budget_on_thread_startup(self):
         import ci_execution_diagnostics as diagnostics
@@ -3692,8 +3805,13 @@ raise SystemExit(65)
             clock[0] = min(230, clock[0] + seconds)
             return clock[0] >= 230
         event = SimpleNamespace(wait=wait, set=lambda: None, is_set=lambda: False)
-        for read_cost, cap, failure in ((0.02, resources.MAX_RESOURCE_SAMPLES, 180),
-                                       (0.06, resources.MAX_RESOURCE_SAMPLES, 180), (0.02, 8, 226)):
+        # Per-run and combined medians from 39753071103/39753082747; total-wall proxies, not host-only telemetry.
+        hosted_costs = (0.05150402174175854, 0.07951224378186181, 0.0726196259821431)
+        for read_cost, cap, failure in ((0.02, resources.MAX_RESOURCE_SAMPLES, 143),
+                                       (0.02, resources.MAX_RESOURCE_SAMPLES, 187),
+                                       *((cost, resources.MAX_RESOURCE_SAMPLES, failure) for cost in hosted_costs for failure in (143, 187)),
+                                       (0.06, resources.MAX_RESOURCE_SAMPLES, 143),
+                                       (0.06, resources.MAX_RESOURCE_SAMPLES, 187), (0.02, 8, 226)):
             clock[:] = [0.0]
             starts.clear()
             reads.clear()
@@ -3709,14 +3827,14 @@ raise SystemExit(65)
                 mock.patch.object(resources.time, "monotonic", side_effect=lambda: clock[0]), \
                 mock.patch.object(resources.time, "time", side_effect=lambda: 100 + clock[0]), \
                 mock.patch.object(resources.time, "perf_counter", side_effect=lambda: clock[0]):
-                sampler = resources.CaseSampler(recorder, "device", duration_limit_seconds=230)
+                sampler = resources.CaseSampler(recorder, "device", duration_limit_seconds=600)
                 sampler.stopped = event
                 sampler.start()
                 sampler.stop()
                 sampler.bind_failure(sampler.epoch + failure)
             case = recorder.receipt()["case_resources"][0]
             self.assertEqual(1, len(starts))
-            self.assertGreaterEqual(case["sample_count"], min(cap, 56 if read_cost == 0.06 else 113))
+            self.assertGreaterEqual(case["sample_count"], min(cap, 56))
             if cap > 8:
                 self.assertLessEqual(sampler.samples[0]["elapsed_seconds"], 3)
             else:
@@ -3752,7 +3870,7 @@ raise SystemExit(65)
                 event = SimpleNamespace(wait=wait, set=lambda: None, is_set=lambda: stopped[0])
                 with mock.patch.object(resources.threading, "Event", return_value=event), \
                         mock.patch.object(resources.threading, "Thread", side_effect=lambda *, target, daemon: SimpleNamespace(start=target, join=lambda timeout: None)), \
-                        mock.patch.object(resources, "HostProbe", return_value=SimpleNamespace(sample=read, close=lambda: None, unavailable=False, spent=0, last_cost=0)), \
+                        mock.patch.object(resources, "HostProbe", return_value=SimpleNamespace(sample=read, close=lambda: None, unavailable=False, spent=0, request_count=1)), \
                         mock.patch.object(resources, "process_sample", return_value=sample["cpu_percent"]) as ps, \
                         mock.patch.object(resources.time, "monotonic", side_effect=lambda: clock[0]), \
                         mock.patch.object(resources.time, "time", side_effect=lambda: 100 + clock[0]):
