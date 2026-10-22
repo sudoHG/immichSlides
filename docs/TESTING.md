@@ -626,6 +626,53 @@ photo's brightness through the shared 0.8-second new-photo stable-window confirm
 cannot establish a dimming start on any platform. This recovery-veto cutoff also
 applies to iPad, whose own stable-photo requirement is one second. The shared
 predicate vetoes that recovery, including iPad's two-dim-frame flicker case.
+The tvOS Continue collector captures full-resolution screenshots from
+`XCUIScreen.main` without an application lookup. It retains dense capture through
+the original absolute deadline and classifies photo identity afterwards. A serial
+background probe reads the calibrated Settings pixels, with at most one pending
+decode; the capture loop only submits PNG data and reads a locked observation.
+It never waits for decoding between captures, including across T−2. After observing
+visible controls followed by auto-hide, it sends at most one Up, only when its
+request falls in [T−2, T−0.8], to restore the original visible control state. A
+request before T−2 fails a test-timing precondition and stays red; after T−0.8,
+the wake is skipped and capture continues unchanged. A skipped wake returns to
+main's hidden-state comparison: hidden-state frames are compared with the
+visible-state baseline, so the effect direction depends on the unmeasured
+luminance difference between those states. It can delay or lose the onset
+(a loosening direction for the four-second rule) or reject a bright anchor (a
+false failure). Skips are not rare: Up requests have landed 135–325 ms before
+T−0.8. Only the lower bound is guarded; if the App's auto-hide moved later, the
+hide could fall inside the fade and every run would skip the wake silently.
+The `skipped` flag is also set when the deadline passes without any observed
+auto-hide, so it does not distinguish "too late" from "not needed". This depends on the App's `PlaybackViewMetrics.controlBarAutoHideDelaySeconds`
+being 8 seconds: Continue resets that timer, and 8 seconds equals T−2 for this
+flow's T=10 seconds. The explicit lower guard prevents a changed auto-hide delay
+or interval from silently moving the press gap into the early-evidence window.
+Up does not toggle playback or reset the Continue origin: control visibility triggers
+`updateFutureProtectionSnapshot`, which can discard the prepared next scene,
+invalidate a pending transition and re-plan it. This can delay a switch and cause
+a false failure. Before the wake deadline was added, the final asynchronous-probe
+commit's three Up returns were 9.216327, 9.478780 and 9.086156 seconds. Adding the
+0.3-second bar animation to the latest return ends at 9.778780 seconds, about
+6 ms after the measured 9.773-second earliest fade. The 0.8-second lead now leaves
+26 ms before T−0.25, the earliest fade measured in one trace (9.773 seconds,
+rounded), after the measured maximum 0.224-second press gap plus 0.3-second
+animation (0.8−0.224−0.3−0.25). T−0.25 is a single observed value, not a
+contractual lower bound: the contract accepts fades from T−2, and this allowance
+does not guarantee that a contract-valid fade is never interrupted by the wake,
+nor that a same-state bright anchor is captured before luminance falls below 95%.
+It is a measured allowance, not a bound on future press latency.
+Up itself blocks capture for 0.218–0.224 seconds, exceeding the unchanged
+0.101-second gap guard. A dimming chain spanning that gap or a control-state
+change cannot sign onset. Missing an early onset can defer it to a TRANSITION or
+new-photo frame, shortening the measured onset-to-stable delay: this is a
+loosening direction for the four-second rule, and can also hide an early fade.
+Re-planning delays the physical switch; the gap can delay its detection. A fresh
+same-state bright anchor remains mandatory after the wake; all luminance comparisons
+retain the original baseline. `continue-watch-diagnostic.json` saves every frame's
+request/capture/return times and the wake times or skipped flag, including on
+assertion failure. Identity, luminance and control-state `samples` stop at the
+first stable new photo; later captured frames retain timestamps only.
 A transition identity or a different identified photo remains direct onset
 evidence; tvOS also vetoes a TRANSITION marker when the old photo recovers through
 the same shared confirmation cutoff. iPad still applies conservative screenshot bounds
@@ -646,7 +693,16 @@ photo means failure. Dense capture continues through the shared T+2+4-second
 look-ahead, before classification, so a designed fade beginning inside T±2 can pass
 when the new photo becomes stable after T+2. Like iPad, iPhone and tvOS require stable-photo
 confirmation to return within four seconds of the onset request, using the same
-deadline check and constant. Every screenshot requested before T−2 (including the
+deadline check and constant. This deadline has a known false-failure risk at 4K:
+the three Release runs before the wake deadline was added left only
+84.561–462.077 ms of stability margin, and the three runs with the deadline left
+167.933–433.008 ms. The 377.516 ms spread is about 1.5 median capture cadences.
+An earlier, more accurate onset or a later stable-photo return from capture
+jitter can exhaust that margin; a missed early onset instead
+shortens the measured delay. Wake-triggered re-planning can delay the switch and
+violate T±2, without necessarily increasing its onset-to-stable delay. The bound
+and verdict stay unchanged; a later sampling failure is not a pass.
+Every screenshot requested before T−2 (including the
 existing timing tolerance) must still identify the old photo: black, blank,
 unrecognizable, transition and different-photo frames fail, even if they recover.
 Detected starts before T−2 or after T+2 also fail. Evidence records the onset,

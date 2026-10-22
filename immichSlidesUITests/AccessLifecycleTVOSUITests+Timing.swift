@@ -1,6 +1,44 @@
 import XCTest
 
 #if os(tvOS)
+// Pixel decoding stays off the capture cadence; only the bounded observation state shares this lock.
+private final class TVOSControlBarProbe: @unchecked Sendable {
+    private let queue = DispatchQueue(label: "immichSlides.tests.controlBarProbe")
+    private let lock = NSLock()
+    private let reference: StrictE2EPhotoIdentity.ControlBarReference
+    private var hasPendingProbe = false
+    private var hasObservedVisible = false
+    private var hasObservedAutoHide = false
+
+    init(reference: StrictE2EPhotoIdentity.ControlBarReference) {
+        self.reference = reference
+    }
+
+    var didObserveAutoHide: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return hasObservedAutoHide
+    }
+
+    func submit(png: Data) {
+        lock.lock()
+        guard hasPendingProbe == false, hasObservedAutoHide == false else {
+            lock.unlock()
+            return
+        }
+        hasPendingProbe = true
+        lock.unlock()
+        queue.async { [self] in
+            let isVisible = reference.isVisible(png: png)
+            lock.lock()
+            defer { lock.unlock() }
+            hasPendingProbe = false
+            if isVisible == true { hasObservedVisible = true }
+            if isVisible == false, hasObservedVisible { hasObservedAutoHide = true }
+        }
+    }
+}
+
 extension AccessLifecycleTVOSUITests {
     @MainActor
     func assertTVOSNarrowEntryHasNoPin(app: XCUIApplication) throws {
@@ -540,18 +578,72 @@ extension AccessLifecycleTVOSUITests {
         controlBarReference: StrictE2EPhotoIdentity.ControlBarReference
     ) throws -> TVOSContinueWatchResult {
         let captureUntil = AccessLifecycleContract.continueWatchDenseCaptureDeadline(intervalSeconds: interval)
-        var capturedFrames: [(request: TimeInterval, returned: TimeInterval, png: Data)] = []
-        while Date().timeIntervalSince(continueAt) <= captureUntil {
-            let request = Date().timeIntervalSince(continueAt)
-            let png = app.screenshotForFailureEvidence().pngRepresentation
-            let returned = Date().timeIntervalSince(continueAt)
-            capturedFrames.append((request, returned, png))
-        }
+        // 0.224 s measured press gap + 0.3 s animation must finish before T-0.25, the earliest fade
+        // observed in one trace; this is a measured allowance, not a contractual lower bound.
+        let wakeLeadTimeSeconds = TestWait.seconds(.product(0.8))
+        let wakeDeadline = interval - wakeLeadTimeSeconds
+        var capturedFrames: [(request: TimeInterval, captured: TimeInterval, returned: TimeInterval, png: Data)] = []
+        var controlBarWake: (issued: TimeInterval, returned: TimeInterval)?
+        var isControlBarWakeSkipped = false
+        let controlBarProbe = TVOSControlBarProbe(reference: controlBarReference)
         var samples: [AccessLifecycleContract.ContinueWatchSample] = []
         var earlyMark = ""
         var earlyElapsed: TimeInterval = TestWait.seconds(.product(0))
         var baselineLuma: Double?
+        defer {
+            do {
+                try StrictE2EVisualEvidence.writeRequiredJSON(
+                    [
+                        "baseline_luma": baselineLuma.map { $0 as Any } ?? NSNull(),
+                        "control_bar_wake": controlBarWake.map {
+                            ["issued": $0.issued, "returned": $0.returned] as Any
+                        } ?? NSNull(),
+                        "control_bar_wake_skipped": isControlBarWakeSkipped,
+                        "control_bar_wake_deadline": wakeDeadline,
+                        "frames": capturedFrames.map { frame in
+                            ["request": frame.request, "captured": frame.captured, "returned": frame.returned]
+                        },
+                        "samples": samples.map { sample in
+                            [
+                                "request": sample.requestElapsed, "returned": sample.returnElapsed,
+                                "status": sample.status, "mark": sample.mark, "luma": sample.meanLuma,
+                                "controls": sample.isControlBarVisible
+                            ] as [String: Any]
+                        }
+                    ], name: "continue-watch-diagnostic.json")
+            } catch {
+                print("Continue watch diagnostic could not be written: \(error.localizedDescription)")
+            }
+        }
         do {
+            while Date().timeIntervalSince(continueAt) <= captureUntil {
+                let request = Date().timeIntervalSince(continueAt)
+                let screenshot = XCUIScreen.main.screenshotForFailureEvidence()
+                let captured = Date().timeIntervalSince(continueAt)
+                let png = screenshot.pngRepresentation
+                let returned = Date().timeIntervalSince(continueAt)
+                capturedFrames.append((request, captured, returned, png))
+                if controlBarWake == nil, isControlBarWakeSkipped == false {
+                    // Never wait for PNG decoding between captures, including across T-2.
+                    controlBarProbe.submit(png: png)
+                    let didObserveAutoHide = controlBarProbe.didObserveAutoHide
+                    let issued = Date().timeIntervalSince(continueAt)
+                    if issued > wakeDeadline {
+                        // Skipping returns to main's hidden-state comparison; its direction is unmeasured.
+                        isControlBarWakeSkipped = true
+                    } else if didObserveAutoHide {
+                        // The App's 8 s auto-hide equals T-2 only while this flow requests T=10 s.
+                        guard issued >= interval - AccessLifecycleContract.continueCaptureSlackSeconds else {
+                            throw AccessLifecycleContract.AssertionError.message(
+                                "tvOS Continue wake timing precondition failed: Up must not be requested before T-2."
+                            )
+                        }
+                        FirstFailureRemote.press(.up)
+                        controlBarWake = (issued, Date().timeIntervalSince(continueAt))
+                        record("playback.wake_controls")
+                    }
+                }
+            }
             for frame in capturedFrames {
                 let identity = StrictE2EPhotoIdentity.captureIdentity(png: frame.png)
                 let mark = contractTVOSMark(identity)

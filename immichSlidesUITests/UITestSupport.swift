@@ -224,7 +224,8 @@ enum FirstFailureEvidence {
 
 extension XCUIScreenshotProviding {
     func screenshotForFailureEvidence() -> XCUIScreenshot {
-        FirstFailureContext.mark("capture-frame", element: self is XCUIApplication ? "app-window" : "unknown")
+        FirstFailureContext.mark(
+            "capture-frame", element: self is XCUIApplication || self is XCUIScreen ? "app-window" : "unknown")
         return screenshot()
     }
 }

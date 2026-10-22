@@ -985,6 +985,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
     def test_tvos_timing_preconditions_are_classified_and_stay_red(self):
         from ci_failure_diagnostics import classify_messages, environment_timing, unknown_diagnostics
         cases = (
+            ("tvOS Continue wake timing precondition failed: Up must not be requested before T-2.", "continue_timing", "timing_window", 'failed: caught error: "message(\\"'),
             ("tvOS flow entry precondition failed:", "history_navigation", "control_state", "XCTAssertEqual failed: (value) - "),
             ("tvOS flow entry anchor must remain paused before checking the history boundary.", "history_navigation", "control_state", "XCTAssertEqual failed: (value) - "),
             ("tvOS midpoint setup exhausted the original step budget before the half-cycle pause.", "continue_timing", "timing_window", 'failed: caught error: "message(\\"'),
@@ -1545,6 +1546,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
         import subprocess
         # Missing reader rows must stay red even when XCTest retains only a bounded receipt.
         cases = (
+            ("immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift", "tvOS Continue wake timing precondition failed: Up must not be requested before T-2.", "continue_timing", "timing_window", 'failed: caught error: "message(\\"'),
             ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "tvOS flow entry precondition failed:", "history_navigation", "control_state", "XCTAssertEqual failed: (value) - "),
             ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "tvOS flow entry anchor must remain paused before checking the history boundary.", "history_navigation", "control_state", "XCTAssertEqual failed: (value) - "),
             ("immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift", "tvOS midpoint setup exhausted the original step budget before the half-cycle pause.", "continue_timing", "timing_window", 'failed: caught error: "message(\\"'),
