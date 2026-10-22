@@ -296,9 +296,9 @@ pixel check also runs for Release `album-empty` and all `filter-album` captures,
 with the same 0.8 s minimum settle and 4.8 s total budget. The public photo-identity
 validator remains mandatory: identical pixels alone cannot prove a valid scene.
 For `filter-album`, widening its former 0.8 s fixed wait to at most 4.8 s is an
-approved relaxation of a test-only wait, not a product contract. Revealing controls
-still consumes that total budget; hosted canaries decide whether the remaining
-pixel window suffices.
+approved relaxation of a test-only wait, not a product contract. Controls are
+revealed once before starting the 0.8 s settle floor and the following 4 s pixel
+window; revealing controls remains outside that capture budget, as on main.
 The scene probe can settle before the retained EXIF card finishes its separate
 fade; logical EXIF visibility does not prove that the old card's pixels are gone.
 The second capture also requires history to advance by one or different layer IDs.

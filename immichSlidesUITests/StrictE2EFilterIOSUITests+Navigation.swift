@@ -90,10 +90,10 @@ extension StrictE2EFilterIOSUITests {
 
     @MainActor
     func captureAlbumPlaybackPNG(app: XCUIApplication, name: String) throws -> Data {
+        revealPlaybackControls(app: app)
         let settleDeadline = Date().addingTimeInterval(TestWait.seconds(.product(0.8)))
         let deadline = settleDeadline.addingTimeInterval(TestWait.seconds(.product(4)))
         RunLoop.current.run(until: settleDeadline)
-        revealPlaybackControls(app: app)
         guard let capture = captureStableAlbumPixels(app: app, deadline: deadline) else { return Data() }
         XCTAssertFalse(capture.png.isEmpty, "Playback screenshot must not be empty: \(name)")
         let attachment = XCTAttachment(data: capture.png, uniformTypeIdentifier: "public.png")
