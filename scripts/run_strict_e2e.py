@@ -994,7 +994,9 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             def measured_run(call, operation):
                 from strict_e2e_resource_diagnostics import CaseSampler
                 bundle = Path(call[call.index("-resultBundlePath") + 1])
-                sampler = CaseSampler(active(), simulator_udid).start()
+                sampler = CaseSampler(active(), simulator_udid,
+                    duration_limit_seconds=arguments.warm_timeout_seconds if warm_receipt is not None
+                    else XCODEBUILD_TIMEOUT_SECONDS).start()
                 resource_samplers[bundle] = sampler
                 try:
                     return operation()

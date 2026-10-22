@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import ctypes
 import json
+import math
 import os
+import queue
 import re
 import statistics
 import subprocess
@@ -26,6 +28,7 @@ SAMPLER_WALL_BUDGET_SECONDS = 180
 HOST_SAMPLE_TIMEOUT_SECONDS = 0.2
 HOST_IDLE_MIN_INTERVAL_SECONDS = 1
 HOST_WALL_BUDGET_SECONDS = 5
+MAX_HOST_SAMPLE_INTERVAL_SECONDS = 4
 SAMPLE_COMMAND_TIMEOUT_SECONDS = 0.5
 # Stop must outlast one in-flight sample command, or a slow `ps` leaves the sampler unfinished and voids the budget.
 STOP_TIMEOUT_SECONDS = HOST_SAMPLE_TIMEOUT_SECONDS + SAMPLE_COMMAND_TIMEOUT_SECONDS + 0.1
@@ -35,6 +38,8 @@ NATIVE_MATCH_TOLERANCE_SECONDS = 0.1
 NATIVE_CASE_BUDGET_SECONDS = 2
 NATIVE_JOB_BUDGET_SECONDS = 20
 CLOCK_DRIFT_TOLERANCE_SECONDS = 0.5
+# Matches the runner's default xcodebuild deadline; callers pass the invocation's actual deadline.
+DEFAULT_DURATION_LIMIT_SECONDS = 300
 
 
 class NativeActivityBudget:
@@ -211,6 +216,29 @@ class HostProbe:
         self.spent = 0.0
         self.unavailable = False
         self.done = None
+        self.worker = None
+        self.requests = queue.Queue(maxsize=1)
+        self.request_count = 0
+
+    def _run(self):
+        try:
+            while True:
+                request = self.requests.get()
+                if request is None or self.unavailable:
+                    break
+                done, values = request
+                try:
+                    if self.host is None:
+                        self.host = HostCpu()
+                        self.host.idle()
+                    values.append(resource_sample(self.host, self.device, None))
+                except (OSError, ValueError, TypeError, AttributeError):
+                    pass
+                finally:
+                    done.set()
+        finally:
+            if self.host is not None:
+                self.host.close()
 
     def sample(self):
         remaining = HOST_WALL_BUDGET_SECONDS - self.spent
@@ -222,39 +250,48 @@ class HostProbe:
             return None
         done, values = Event(), []
         self.done = done
-        def read():
-            try:
-                if self.host is None:
-                    self.host = HostCpu()
-                    self.host.idle()
-                values.append(resource_sample(self.host, self.device, None))
-            except (OSError, ValueError, TypeError, AttributeError):
-                pass
-            finally:
-                if self.unavailable and self.host is not None:
-                    self.host.close()
-                done.set()
         started = time.perf_counter()
+        self.request_count += 1
         try:
-            Thread(target=read, daemon=True).start()
+            # Pay thread startup once; per-tick startup can exhaust the cap on a loaded host.
+            if self.worker is None:
+                worker = Thread(target=self._run, daemon=True)
+                worker.start()
+                self.worker = worker
+            self.requests.put_nowait((done, values))
             finished = done.wait(max(0, min(HOST_SAMPLE_TIMEOUT_SECONDS, remaining)
                                         - (time.perf_counter() - started)))
-        except (OSError, RuntimeError):
+        except (OSError, RuntimeError, queue.Full):
             finished = False
+            if self.worker is None:
+                done.set()
         self.spent += time.perf_counter() - started
         self.unavailable = finished and not values
         return values[0] if finished and values else None
 
     def close(self):
         self.unavailable = True
-        if self.host is not None and (self.done is None or self.done.is_set()):
-            self.host.close()
+        # Wake an idle worker; an in-flight read observes shutdown before taking more work.
+        try:
+            self.requests.put_nowait(None)
+        except queue.Full:
+            # Replace queued work with shutdown so a late worker cannot block on get().
+            try:
+                pending = self.requests.get_nowait()
+                if pending is not None:
+                    pending[0].set()
+            except queue.Empty:
+                pass
+            try:
+                self.requests.put_nowait(None)
+            except queue.Full:
+                pass
 
 
 class CaseSampler:
     """Share a bounded sampling allowance across cases, independently of test waits."""
 
-    def __init__(self, recorder, device):
+    def __init__(self, recorder, device, *, duration_limit_seconds=DEFAULT_DURATION_LIMIT_SECONDS):
         self.recorder = recorder
         self.device = device
         self.sequence = recorder.next_sequence() if recorder is not None else 0
@@ -263,6 +300,7 @@ class CaseSampler:
         self.duration = 0.0
         self.samples = []
         self.spent = 0.0
+        self.host_spent = 0.0
         self.truncated = False
         self.first_failure = None
         self.stopped = threading.Event()
@@ -271,6 +309,7 @@ class CaseSampler:
         self.finished = False
         self.closed = False
         self.clock_stable = False
+        self.duration_limit = min(MAX_DIAGNOSTIC_SECONDS, duration_limit_seconds)
 
     def start(self):
         if self.recorder is None or len(self.recorder.case_resources) >= MAX_RESOURCE_CASES:
@@ -302,16 +341,14 @@ class CaseSampler:
             next_tick = time.monotonic() + SAMPLE_INTERVAL_SECONDS
             next_process = next_tick
             while not self.stopped.wait(max(0, next_tick - time.monotonic())):
-                if len(self.samples) >= MAX_RESOURCE_SAMPLES:
-                    self.truncated = True
-                    break
                 sample = host.sample()
                 elapsed = time.monotonic() - self.origin
                 if sample is None:
                     self.truncated = True
-                    if host.unavailable:
+                    interval = self._host_interval(host, elapsed)
+                    if interval is None:
                         break
-                    next_tick = time.monotonic() + SAMPLE_INTERVAL_SECONDS
+                    next_tick = time.monotonic() + interval
                     continue
                 sample = dict(sample)
                 sample["cpu_percent"] = dict.fromkeys(RESOURCE_CATEGORIES)
@@ -336,16 +373,36 @@ class CaseSampler:
                     self.truncated = True
                     break
                 self.samples.append({"elapsed_seconds": elapsed, **sample})
-                next_tick += SAMPLE_INTERVAL_SECONDS
+                if len(self.samples) > MAX_RESOURCE_SAMPLES:
+                    self.truncated = True
+                    del self.samples[0]
+                interval = self._host_interval(host, elapsed)
+                if interval is None:
+                    break
+                next_tick += interval
                 # Skip missed deadlines instead of issuing a burst after host descheduling.
                 if next_tick <= time.monotonic():
-                    next_tick = time.monotonic() + SAMPLE_INTERVAL_SECONDS
+                    next_tick = time.monotonic() + interval
         except (OSError, ValueError, TypeError, AttributeError):
             self.truncated = True
         finally:
             if host is not None:
                 host.close()
+                self.host_spent = host.spent
             self.finished = True
+
+    def _host_interval(self, host, elapsed):
+        remaining = HOST_WALL_BUDGET_SECONDS - host.spent - HOST_SAMPLE_TIMEOUT_SECONDS
+        if remaining <= 0:
+            self.truncated = True
+            return None
+        average_cost = host.spent / host.request_count if host.request_count else 0
+        needed = max(0, self.duration_limit - elapsed) * average_cost / remaining
+        # Prefer recent evidence to stretching gaps across the entire timeout horizon.
+        interval = min(MAX_HOST_SAMPLE_INTERVAL_SECONDS,
+            SAMPLE_INTERVAL_SECONDS * max(1, math.ceil(needed / SAMPLE_INTERVAL_SECONDS)))
+        self.truncated |= interval > SAMPLE_INTERVAL_SECONDS
+        return interval
 
     def stop(self):
         if self.closed:
@@ -381,7 +438,7 @@ class CaseSampler:
         case = {"sequence": self.sequence, "duration_seconds": self.duration, "sample_interval_seconds": SAMPLE_INTERVAL_SECONDS,
             "sample_count": len(samples), "truncated": self.truncated, "idle_percent_min": min(idle) if idle else None,
             "idle_percent_median": statistics.median(idle) if idle else None, "load_1m_max": max(load) if load else None,
-            "app_cpu_percent_peak": max(app) if app else None, "sampler_wall_seconds": self.spent if self.finished else None,
+            "app_cpu_percent_peak": max(app) if app else None, "sampler_wall_seconds": self.spent + self.host_spent if self.finished else None,
             "sampler_cpu_seconds": None, "first_failure_elapsed_seconds": self.first_failure, "failure_samples": near[:6]}
         try:
             validate_case_resources([case])
