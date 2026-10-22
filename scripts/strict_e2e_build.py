@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import plistlib
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -113,6 +114,13 @@ def warm_up(*, root, platform, suite, configuration, destination, derived, packa
                "duration_seconds": time.monotonic() - started, "timeout_seconds": timeout}
     write_json(derived / RECEIPT, receipt)
     write_json(evidence / "warm-up.json", {key: value for key, value in receipt.items() if key != "products"})
+    # Reuse reads only signed Products and the receipt; keep case headroom free of build caches.
+    # Wait until all build/signing/configuration checks and records finish, retaining failed builds.
+    for relative in ("Build/Intermediates.noindex", "ModuleCache.noindex", "Index.noindex",
+                     "SDKExplicitPrecompiledModules", "SDKStatCaches.noindex", "CompilationCache.noindex"):
+        path = derived / relative
+        if path.is_dir():
+            shutil.rmtree(path)
     return receipt
 
 

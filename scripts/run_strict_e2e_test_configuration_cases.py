@@ -769,6 +769,52 @@ class StrictE2ERunnerTestsCasesConfiguration:
             with self.assertRaises(CommandError):
                 validate_warm_products(root, receipt)
 
+    def test_warm_up_removes_build_caches_only_after_validating_reusable_products(self):
+        from strict_e2e_build import load_warm_build, warm_up
+        from ci_build_archive import inventory
+        for signing_fails in (False, True):
+            with self.subTest(signing_fails=signing_fails), tempfile.TemporaryDirectory() as raw:
+                root = Path(raw)
+                derived, evidence = root / "derived", root / "evidence"
+                evidence.mkdir()
+                products = derived / "Build/Products"
+                cache = derived / "Build/Intermediates.noindex"
+                identity = {"scheme": "immichSlides-iOS", "test_plan": "StrictE2E-iOS", "configuration": "Debug"}
+
+                def execute(*_args, **_kwargs):
+                    (products / "Debug-iphonesimulator/immichSlides.app").mkdir(parents=True)
+                    (products / "strict.xctestrun").write_bytes(b"test inputs")
+                    for path in (cache, derived / "ModuleCache.noindex", derived / "Index.noindex"):
+                        path.mkdir(parents=True)
+                        (path / "build-only").write_bytes(b"cache")
+                    return 0
+
+                def signing(_app):
+                    self.assertTrue((cache / "build-only").is_file(), "retain build inputs until validation finishes")
+                    if signing_fails:
+                        raise CommandError("signing inspection failed")
+                    return "adhoc"
+
+                with mock.patch("strict_e2e_build.workspace_preflight"), mock.patch(
+                    "strict_e2e_build.shard_identity", return_value=identity
+                ), mock.patch("strict_e2e_build.measure_signing", side_effect=signing):
+                    arguments = dict(root=root / "source", platform="ios", suite="smoke", configuration="Debug",
+                                     destination="destination", derived=derived, packages=root / "packages",
+                                     evidence=evidence, timeout=300, execute=execute)
+                    if signing_fails:
+                        with self.assertRaisesRegex(CommandError, "signing inspection failed"):
+                            warm_up(**arguments)
+                        self.assertTrue((cache / "build-only").is_file())
+                        continue
+                    receipt = warm_up(**arguments)
+                    self.assertEqual(inventory(products), receipt["products"])
+                    for path in (cache, derived / "ModuleCache.noindex", derived / "Index.noindex"):
+                        self.assertFalse(path.exists(), "build-only caches must not consume warm-case headroom")
+                    loaded, run = load_warm_build(root / "source", "ios", "smoke", "Debug", "destination", derived)
+                    self.assertEqual(loaded, receipt)
+                    self.assertEqual(run.read_bytes(), b"test inputs")
+                    self.assertTrue((evidence / "warm-up.json").is_file())
+
     def test_warm_build_rejects_a_different_source_or_shard(self):
         from strict_e2e_build import load_warm_build, RECEIPT
         with tempfile.TemporaryDirectory() as raw:
