@@ -201,19 +201,30 @@ extension StrictE2EFilterIOSUITests {
         FirstFailureContext.mark("wait-scene", element: "slideshow.scenePresentation.contract.summary")
         guard isReady else {
             attachStrictSceneObservation(before: before, after: before, name: "\(name)-scene")
-            if previousScene == nil, rejectFrozenAlbumTransition(before) { return [:] }
             let render = SharedSceneEvidenceManifest.parseKeyValueFields(before["render"] ?? "")
             let isManifestComplete = SharedSceneEvidenceManifest.manifestObservation(from: before["manifest"] ?? "")?
                 .isCompleteVisibleScene
             let facts =
                 "historyAdvanced=\(hasObservedHistoryAdvance ? "true" : didAdvanceHistory.map { String($0) } ?? "unknown"), layersChanged=\(didChangeLayers), phase=\(render["phase"] ?? "unknown"), paused=\(render["playbackPaused"] ?? "unknown"), manifestComplete=\(isManifestComplete.map { String($0) } ?? "unknown")"
-            if previousScene != nil, !hasObservedHistoryAdvance, !didChangeLayers {
-                FirstFailureContext.mark("wait-scene", element: "slideshow.control.next.button")
-                XCTFail("Album Next must advance the paused scene within the playback capture budget. (\(facts))")
-            } else {
-                XCTFail(
-                    "Album capture preparation must reach a complete paused scene within the playback capture budget. (\(facts))"
-                )
+            let gate = FirstFailureContext.AlbumCaptureGate(
+                stable: render.isEmpty ? nil : StrictE2ESceneCapture.isStableWindow(before),
+                paused: render["playbackPaused"].flatMap(Bool.init),
+                entryHintHidden: before["entryHintVisible"].flatMap(Bool.init).map { !$0 },
+                advanced: previousScene == nil ? nil : (hasObservedHistoryAdvance ? true : didAdvanceHistory),
+                layersChanged: previousScene == nil || render["layerIDs"] == nil || previousRender["layerIDs"] == nil
+                    ? nil : didChangeLayers,
+                manifestComplete: isManifestComplete,
+                phase: .init(rawValue: render["phase"] ?? "") ?? .unknown)
+            FirstFailureContext.withAlbumCaptureGate(gate) {
+                if previousScene == nil, rejectFrozenAlbumTransition(before) { return }
+                if previousScene != nil, !hasObservedHistoryAdvance, !didChangeLayers {
+                    FirstFailureContext.mark("wait-scene", element: "slideshow.control.next.button")
+                    XCTFail("Album Next must advance the paused scene within the playback capture budget. (\(facts))")
+                } else {
+                    XCTFail(
+                        "Album capture preparation must reach a complete paused scene within the playback capture budget. (\(facts))"
+                    )
+                }
             }
             return [:]
         }

@@ -64,6 +64,7 @@ enum FirstFailureEvidence {
             ],
             "validator": NSNull(), "screenshot": imageStatus("unavailable")
         ]
+        if let gate = context.gate { receipt["gate"] = gate.projection }
         let directory = URL(fileURLWithPath: root, isDirectory: true)
         // Persist the safe core before another XCTest query can fail or the runner can be stopped.
         do {

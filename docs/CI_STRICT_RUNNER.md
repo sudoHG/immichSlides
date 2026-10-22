@@ -1051,6 +1051,14 @@ the environment-failure projection, yellow eligibility and all verdicts are unch
 Reader support must merge before a producer starts emitting this optional object;
 old receipts, including retained nights, remain valid without it.
 
+The test-only producer attaches this projection before each album capture timeout
+assertion, including frozen-transition and Album Next failures, using the last poll's
+observation without another snapshot. The first-failure recorder writes it into the
+initial safe receipt before optional failure capture, and the strict runner retains
+it through validated spool export. Context reset before each test and scoped cleanup
+after the assertion prevent facts from leaking into another failure. Successful
+captures and post-capture assertions omit the field.
+
 Native activity support follows the
 [reader-first merge](CI_SUMMARY.md#reader-first-evolution). Strict-runner failure
 exports inspect the existing private xcresult and emit the numeric projection.
