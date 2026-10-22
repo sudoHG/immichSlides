@@ -578,7 +578,8 @@ extension AccessLifecycleTVOSUITests {
         controlBarReference: StrictE2EPhotoIdentity.ControlBarReference
     ) throws -> TVOSContinueWatchResult {
         let captureUntil = AccessLifecycleContract.continueWatchDenseCaptureDeadline(intervalSeconds: interval)
-        // 0.224 s measured press gap + 0.3 s animation must finish before the earliest T-0.25 fade.
+        // 0.224 s measured press gap + 0.3 s animation must finish before T-0.25, the earliest fade
+        // observed in one trace; this is a measured allowance, not a contractual lower bound.
         let wakeLeadTimeSeconds = TestWait.seconds(.product(0.8))
         let wakeDeadline = interval - wakeLeadTimeSeconds
         var capturedFrames: [(request: TimeInterval, captured: TimeInterval, returned: TimeInterval, png: Data)] = []
@@ -628,6 +629,7 @@ extension AccessLifecycleTVOSUITests {
                     let didObserveAutoHide = controlBarProbe.didObserveAutoHide
                     let issued = Date().timeIntervalSince(continueAt)
                     if issued > wakeDeadline {
+                        // Skipping returns to main's hidden-state comparison; its direction is unmeasured.
                         isControlBarWakeSkipped = true
                     } else if didObserveAutoHide {
                         // The App's 8 s auto-hide equals T-2 only while this flow requests T=10 s.
