@@ -517,7 +517,8 @@ def main(argv=None):
                     finally:
                         if preparation_log.is_file():
                             for line in preparation_log.read_text().splitlines():
-                                if line.startswith(("simulator-bootstatus:", "simulator-readiness:", "simulator-preparation:")):
+                                if line.startswith(("simulator-bootstatus:", "simulator-readiness:", "simulator-preparation:",
+                                                    "simulator-boot-settle:")):
                                     print(line, flush=True)
                     if preparation_exit:
                         raise CommandError(f"Simulator preparation child failed (exit {preparation_exit}).", code=preparation_exit)

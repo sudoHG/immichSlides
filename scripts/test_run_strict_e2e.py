@@ -880,6 +880,92 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                 strict_runner.read_official_test_results_summary(bundle)
             self.assertEqual(raised.exception.entry["code"], "official-summary-export-timeout")
 
+    def test_boot_settle_gate_requires_a_continuous_full_window_and_runs_once_per_job(self):
+        import strict_e2e_runner_support as support
+        import strict_e2e_resource_diagnostics as resources
+        for event, defect, cores, expected in (("schedule", "idle", 3, 100), ("workflow_dispatch", "device", 3, 120),
+                                              ("schedule", "steady", 3, 360), ("schedule", "steady", 4, 70)):
+            with self.subTest(event=event, defect=defect, cores=cores), tempfile.TemporaryDirectory() as raw:
+                clock, reports, order = [0.0], [], []
+                def idle():
+                    # A bad point must restart the window, and 50 seconds must not pass.
+                    return {"idle_percent": None if clock[0] == 0 else 32 if defect == "steady" or defect == "idle" and clock[0] == 30 else 40}
+                def device(*args, **kwargs):
+                    order.append("sample")
+                    return 130 if defect == "device" and clock[0] == 50 else 100
+                with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted",
+                        "GITHUB_EVENT_NAME": event, "RUNNER_TEMP": raw}, clear=True), \
+                        mock.patch.object(support.time, "monotonic", side_effect=lambda: clock[0]), \
+                        mock.patch.object(support.time, "sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)), \
+                        mock.patch.object(support.os, "cpu_count", return_value=cores), \
+                        mock.patch.object(resources.HostProbe, "sample", side_effect=idle), \
+                        mock.patch.object(support, "_boot_device_cpu", side_effect=device), \
+                        mock.patch.object(support, "boot_simulator", return_value=""), \
+                        mock.patch.object(support, "wait_for_simulator_service_response", side_effect=lambda *a, **kw: (order.append("ready"), "")), \
+                        mock.patch.object(support, "_BOOT_SETTLE_ATTEMPTED", False):
+                    support.prepare_simulator("device", report=reports.append, should_check_app=False)
+                    self.assertEqual(clock[0], expected)
+                    self.assertEqual(order[0], "ready")
+                    self.assertIn("outcome=" + ("timed-out" if expected == 360 else "settled"), "\n".join(reports))
+                    self.assertIn("idle_threshold_percent=" + ("33.333" if cores == 3 else "30.000"), "\n".join(reports))
+                    # Model the next runner process: the disk marker must still prevent a repeat.
+                    support._BOOT_SETTLE_ATTEMPTED = False
+                    support.prepare_simulator("device", report=reports.append, should_check_app=False)
+                    self.assertEqual(clock[0], expected)
+                    self.assertIn("outcome=skipped-repeat", "\n".join(reports))
+
+    def test_boot_settle_gate_caps_wait_and_fails_open_on_sampling_or_marker_errors(self):
+        import strict_e2e_runner_support as support
+        import strict_e2e_resource_diagnostics as resources
+        for failure in ("busy", "remaining-budget", "host", "device", "marker", "cores"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as raw:
+                clock, reports = [0.0], []
+                def sample():
+                    if failure == "host" and clock[0]:
+                        return None
+                    return {"idle_percent": None if clock[0] == 0 else 0}
+                with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted",
+                        "GITHUB_EVENT_NAME": "schedule", "RUNNER_TEMP": raw + "/missing" if failure == "marker" else raw}, clear=True), \
+                        mock.patch.object(support.time, "monotonic", side_effect=lambda: clock[0]), \
+                        mock.patch.object(support.time, "sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)), \
+                        mock.patch.object(support.os, "cpu_count", return_value=None if failure == "cores" else 3), \
+                        mock.patch.object(resources.HostProbe, "sample", side_effect=sample), \
+                        mock.patch.object(support, "_boot_device_cpu", side_effect=OSError("private-input") if failure == "device" else None,
+                                          return_value=100), \
+                        mock.patch.object(support, "boot_simulator", return_value=""), \
+                        mock.patch.object(support, "wait_for_simulator_app_response", side_effect=lambda *a, **kw: (
+                            clock.__setitem__(0, 590) if failure == "remaining-budget" else None, "")), \
+                        mock.patch.object(support, "_BOOT_SETTLE_ATTEMPTED", False):
+                    support.prepare_simulator("device", report=reports.append)
+                log = "\n".join(reports)
+                self.assertIn("outcome=" + ("timed-out" if failure in ("busy", "remaining-budget") else "unavailable"), log)
+                self.assertEqual(clock[0], 360 if failure == "busy" else 600 if failure == "remaining-budget" else 10 if failure in ("host", "device") else 0)
+                self.assertIn("simulator-preparation: passed", log)
+                self.assertNotIn("private-input", log)
+
+    def test_boot_settle_gate_skips_local_pr_and_self_hosted_preparations(self):
+        import strict_e2e_runner_support as support
+        for environment in ({}, {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted", "GITHUB_EVENT_NAME": "pull_request"},
+                            {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "self-hosted", "GITHUB_EVENT_NAME": "schedule"}):
+            with self.subTest(environment=environment), mock.patch.dict(os.environ, environment, clear=True), \
+                    mock.patch.object(support, "boot_simulator", return_value=""), \
+                    mock.patch.object(support, "wait_for_simulator_app_response", return_value=(None, "")), \
+                    mock.patch.object(support, "_boot_device_cpu") as device:
+                _, log = support.prepare_simulator("device", report=lambda line: None)
+                self.assertIn("outcome=skipped-environment", log)
+                device.assert_not_called()
+
+    def test_boot_device_cpu_counts_only_the_requested_subtree_and_rejects_missing_samples(self):
+        import strict_e2e_runner_support as support
+        for rows, expected in (("10 1 1\n11 10 40\n12 11 50\n20 1 900\n", 91),
+                               ("20 1 900\n", None), ("10 1 nan\n", None), ("bad", None)):
+            with self.subTest(rows=rows):
+                def run(command, **kwargs):
+                    self.assertLessEqual(kwargs["timeout"], 5)
+                    return subprocess.CompletedProcess(command, 0, "10\n" if command[0] == "xcrun" else rows, "")
+                with mock.patch.object(support.subprocess, "run", side_effect=run):
+                    self.assertEqual(support._boot_device_cpu("device", support.time.monotonic() + 10), expected)
+
     def test_prebuild_preparation_checks_launch_services_without_a_container_lookup(self):
         import ci_execution_diagnostics as diagnostics
         import strict_e2e_runner_support as support
