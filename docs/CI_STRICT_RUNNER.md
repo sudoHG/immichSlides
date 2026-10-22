@@ -257,22 +257,29 @@ missing pixel identity. A5 and A1+A5 have different signatures.
 Probe-only launches are `album-empty`, `journey-b`, `tvos-flow`, `tvos-person`, `late-image`, `ios-lifecycle-first-wake`,
 and `AccessLifecycleIOSUITests.prepareLaunch`, including its cold relaunches and
 `run_access_lifecycle_ios.py`'s `testAccessProtectionSettingsAndLifecycle`.
-Both iOS album capture flows (`album-empty` and `filter-album`) set the real playback
-interval to 30 seconds through `IOSDriver` immediately after filtered playback starts,
-before preparing Pause. Settings are not reachable from the first-boot filter summary.
-This keeps auto-advance away from the single Pause in Debug and Release; it does not
-change product timing or the rule that Pause freezes the current layers.
-The already-created target retains its old frozen interval. Debug `album-empty`
-therefore passively waits for a history increment from a stable baseline or a new layer identity after
-returning from settings, before its unchanged Pause preparation. This setup wait
-has a separate 12 s ceiling: the previous default 5 s interval, the 2.025 s designed
-transition, and 4.975 s of scheduling margin. A timeout fails with the reviewed
-interval-setup prefix. `filter-album` and Release have no generation/history probes;
-they use one verified `IOSDriver.next()` after settings to create a target with the
-saved interval. Public photo identity cannot reliably distinguish scene generations,
-so it cannot prove that an unobserved natural advance installed the new interval.
-This preparatory action is separate from every existing captured Next, with no tap retry.
-Removing an outgoing layer alone does not establish a new generation.
+Only iOS `album-empty` sets the real playback interval to 30 seconds through `IOSDriver`
+immediately after filtered playback starts, before preparing Pause. Settings are not
+reachable from the first-boot filter summary. An already-created target retains its
+frozen interval. Debug `album-empty` polls for valid non-empty progress probes and
+confirms the current stable target's `motionRawProgress` slope from the existing
+`slideshow.scenePresentation.frameSynchronized.summary` leaf with two samples at
+least 1 s apart, retaining the same layer identity and history count. The expected
+rates are 1/5 and 1/30 per second. The accepted range, 1/60 through 1/15, allows half
+to twice the 30 s rate while excluding a frozen probe and the 5 s rate. The scene
+probe has no timestamp, so the slope uses monotonic snapshot request/return midpoints
+and the actual elapsed time, including delayed probe cadence under starvation.
+The root contract label can cache progress between state changes; the frame-synchronized
+leaf follows the rendering timeline. Both labels and the manifest come from one snapshot.
+If the baseline is already a 30 s target, no advance is required. A measured short
+target must give way passively before its replacement is sampled again. Baseline
+reads, target changes and slope confirmation share the original 12 s setup ceiling:
+5 s old target + 2.025 s transition + 1 s sample pair + 3.975 s scheduling margin.
+Timeout sentences distinguish unreadable probes, an unchanged short target and
+an unconfirmed slope. No preparatory Next is issued.
+`filter-album` retains its original interval, launch environment and probe-free
+Pause preparation. Its first-capture race remains a follow-up blocked on the Swift
+multi-photo identity false negative; it does not gain a Swift identity-reader dependency.
+Product timing and film-like Pause semantics remain unchanged.
 For Debug `album-empty`, the existing 8 s Pause-preparation window must prove a
 stable complete scene and an actionable Play/Pause target together before the
 single Pause. Live hittability is checked before the final stable window snapshot;
@@ -288,6 +295,10 @@ timeout fails instead of publishing an unsettled frame. The identical probe-free
 pixel check also runs for Release `album-empty` and all `filter-album` captures,
 with the same 0.8 s minimum settle and 4.8 s total budget. The public photo-identity
 validator remains mandatory: identical pixels alone cannot prove a valid scene.
+For `filter-album`, widening its former 0.8 s fixed wait to at most 4.8 s is an
+approved relaxation of a test-only wait, not a product contract. Revealing controls
+still consumes that total budget; hosted canaries decide whether the remaining
+pixel window suffices.
 The scene probe can settle before the retained EXIF card finishes its separate
 fade; logical EXIF visibility does not prove that the old card's pixels are gone.
 The second capture also requires history to advance by one or different layer IDs.
@@ -1646,7 +1657,9 @@ New enum meanings and why the previous vocabulary cannot express them:
 | `Album capture preparation must observe paused playback after one Pause.` | `control_action` | `control_state` | [StrictE2EFilterIOSUITests+Navigation.swift](../immichSlidesUITests/StrictE2EFilterIOSUITests+Navigation.swift) |
 | `Album capture preparation must reach a complete paused scene within the playback capture budget.` | `visible_scene_capture` | `probe_readback` | [StrictE2EFilterIOSUITests+Navigation.swift](../immichSlidesUITests/StrictE2EFilterIOSUITests+Navigation.swift) |
 | `Album capture pixels must match at least 0.6 seconds apart within the playback capture budget.` | `visible_scene_capture` | `scene_identity` | [StrictE2EFilterIOSUITests+Navigation.swift](../immichSlidesUITests/StrictE2EFilterIOSUITests+Navigation.swift) |
-| `Album playback must naturally advance after applying the 30-second interval before Pause.` | `interval_setup` | `timing_window` | [StrictE2EFilterIOSUITests+Navigation.swift](../immichSlidesUITests/StrictE2EFilterIOSUITests+Navigation.swift) |
+| `Album interval confirmation must read a valid non-empty scene progress probe before Pause.` | `interval_setup` | `probe_readback` | [StrictE2EFilterIOSUITests+Navigation.swift](../immichSlidesUITests/StrictE2EFilterIOSUITests+Navigation.swift) |
+| `Album interval confirmation must observe a new scene after measuring a short interval before Pause.` | `interval_setup` | `timing_window` | [StrictE2EFilterIOSUITests+Navigation.swift](../immichSlidesUITests/StrictE2EFilterIOSUITests+Navigation.swift) |
+| `Album interval confirmation must measure the current scene's 30-second progress slope before Pause.` | `interval_setup` | `interval_readback` | [StrictE2EFilterIOSUITests+Navigation.swift](../immichSlidesUITests/StrictE2EFilterIOSUITests+Navigation.swift) |
 | `Album Next must advance the paused scene within the playback capture budget.` | `history_navigation` | `navigation` | [StrictE2EFilterIOSUITests+Navigation.swift](../immichSlidesUITests/StrictE2EFilterIOSUITests+Navigation.swift) |
 | `Resuming must continue from the current photo, with the control value back to pause.` | `control_action` | `control_state` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
 | `Previous must be disabled at the history boundary when playback starts.` | `history_navigation` | `control_state` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |

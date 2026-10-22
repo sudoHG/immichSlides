@@ -33,7 +33,6 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         selectAlbum(app: app, albumID: albumID)
         returnFromAlbumFilter(app: app)
         startFilteredPlayback(app: app)
-        guard prepareAlbumCapturePlayback(app: app) else { return }
         pausePlaybackIfNeeded(app: app)
 
         _ = try captureAlbumPlaybackPNG(app: app, name: "album-play-1")
@@ -194,7 +193,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         setAlbumSelection(app: app, albumID: albumID, isSelectionRequested: true)
         returnFromAlbumFilter(app: app)
         startFilteredPlayback(app: app)
-        guard prepareAlbumCapturePlayback(app: app, shouldUseSceneProbes: true) else { return }
+        guard prepareAlbumCapturePlayback(app: app) else { return }
         guard pauseStableAlbumPlaybackIfNeeded(app: app) else { return }
         let firstScene = try captureStableAlbumPlaybackPNG(app: app, name: "album-play-1")
         tapNext(app: app)

@@ -1,6 +1,17 @@
 import XCTest
 
 #if os(iOS)
+private enum AlbumCaptureTiming {
+    // 5 s old target + 2.025 s transition + 1 s slope pair + 3.975 s scheduling margin.
+    static let intervalConfirmationSeconds = TestWait.seconds(.product(12))
+    // One second separates the 1/5 and 1/30 progress-per-second rates well above probe rounding.
+    static let progressSampleSeconds = TestWait.seconds(.product(1))
+    // Half to twice 1/30 allows cadence jitter, rejecting frozen probes and the old 1/5 rate.
+    static let longIntervalSlopeRange = (1.0 / 60)...(1.0 / 15)
+    // Twice the 0.3 s toolbar fade separates pixel readbacks within the existing 4.8 s cap.
+    static let minimumPixelPairSeconds = TestWait.seconds(.product(0.6))
+}
+
 extension StrictE2EFilterIOSUITests {
     @MainActor
     func snapshotPersonReturnSurface(
@@ -98,7 +109,7 @@ extension StrictE2EFilterIOSUITests {
         app: XCUIApplication, deadline: Date
     ) -> (png: Data, requestedAt: TimeInterval, returnedAt: TimeInterval)? {
         // Compare decoded, full-resolution color pixels; a logical stable probe can precede presentation.
-        let minimumPairSeconds = TestWait.seconds(.product(0.6))
+        let minimumPairSeconds = AlbumCaptureTiming.minimumPixelPairSeconds
         var previousPixels: Data?
         var previousFormat: [Int] = []
         var previousReturnedAt: Date?
@@ -144,41 +155,94 @@ extension StrictE2EFilterIOSUITests {
     }
 
     @MainActor
-    func prepareAlbumCapturePlayback(app: XCUIApplication, shouldUseSceneProbes: Bool = false) -> Bool {
+    func prepareAlbumCapturePlayback(app: XCUIApplication) -> Bool {
         let driver = IOSDriver(app: app)
         driver.applyPlaybackSettings([.interval30Seconds])
         #if DEBUG
-        if shouldUseSceneProbes {
-            // Existing targets keep their frozen interval; observe a new target before preparing Pause.
-            let deadline = Date().addingTimeInterval(TestWait.seconds(.product(12)))
-            FirstFailureContext.mark("wait-scene", element: "slideshow.scenePresentation.contract.summary")
-            let before = albumSceneObservation(app: app)
-            let previousRender = SharedSceneEvidenceManifest.parseKeyValueFields(before["render"] ?? "")
-            let previousLayers = Set((previousRender["layerIDs"] ?? "").split(separator: "|").filter { $0 != "none" })
-            var after = before
-            let didAdvance = TestWait.until(.product(max(.zero, deadline.timeIntervalSinceNow))) {
-                after = self.albumSceneObservation(app: app)
-                let render = SharedSceneEvidenceManifest.parseKeyValueFields(after["render"] ?? "")
-                let didAdvanceHistory =
-                    previousRender["phase"] == "stablePhoto"
-                    && Int(previousRender["historyCount"] ?? "").flatMap { previousCount in
-                        Int(render["historyCount"] ?? "").map { $0 > previousCount }
-                    } == true
-                let layers = Set((render["layerIDs"] ?? "").split(separator: "|").filter { $0 != "none" })
-                // Removing an outgoing layer is not a new generation.
-                let didObserveNewLayer = !previousLayers.isEmpty && !layers.subtracting(previousLayers).isEmpty
-                return Date() < deadline && (didAdvanceHistory || didObserveNewLayer)
-            }
-            attachStrictSceneObservation(before: before, after: after, name: "album-interval-advance")
-            guard didAdvance else {
-                XCTFail("Album playback must naturally advance after applying the 30-second interval before Pause.")
+        let timeout = AlbumCaptureTiming.intervalConfirmationSeconds
+        let deadline = ProcessInfo.processInfo.systemUptime + timeout
+        var baseline: (layers: String, history: Int, progress: Double, sampledAt: TimeInterval)?
+        var shortIntervalTarget: (layers: String, history: Int)?
+        var before: [String: String] = [:]
+        var after: [String: String] = [:]
+        var hasValidProbe = false
+        var isLastProbeValid = false
+        var measuredSlope: Double?
+        FirstFailureContext.mark("wait-scene", element: "slideshow.scenePresentation.contract.summary")
+        let isConfirmed = TestWait.until(.product(timeout)) {
+            guard ProcessInfo.processInfo.systemUptime < deadline else { return false }
+            let requestedAt = ProcessInfo.processInfo.systemUptime
+            var didSnapshotFail = false
+            let snapshots = app.evidenceSnapshotsByIdentifier { _ in didSnapshotFail = true }
+            after = self.albumSceneObservation(snapshots: snapshots, didSnapshotFail: didSnapshotFail)
+            // Root progress can remain cached between state changes; this existing leaf follows TimelineView.
+            after["motionRender"] = snapshots["slideshow.scenePresentation.frameSynchronized.summary"]?.label ?? ""
+            let returnedAt = ProcessInfo.processInfo.systemUptime
+            let render = SharedSceneEvidenceManifest.parseKeyValueFields(after["motionRender"] ?? "")
+            let progressFields = (render["motionRawProgress"] ?? "").split(separator: "|")
+            let progressValues = progressFields.compactMap { Double($0) }
+            isLastProbeValid =
+                after["entryHintVisible"] != "unknown" && !render.isEmpty
+                && render["layerIDs"].map { !$0.isEmpty && $0 != "none" } == true
+                && Int(render["historyCount"] ?? "") != nil
+                && !progressValues.isEmpty && progressValues.count == progressFields.count
+                && progressValues.allSatisfy { $0.isFinite }
+            hasValidProbe = hasValidProbe || isLastProbeValid
+            guard isLastProbeValid, returnedAt < deadline,
+                let layers = render["layerIDs"], !layers.isEmpty, layers != "none",
+                let history = Int(render["historyCount"] ?? ""),
+                let progress = Double(render["motionRawProgress"] ?? ""),
+                render["playbackPaused"] == "false",
+                StrictE2ESceneCapture.isStableWindow(
+                    after.merging(["render": after["motionRender"] ?? ""]) { _, new in new })
+            else {
+                baseline = nil
                 return false
             }
-            return true
+            if let shortIntervalTarget, shortIntervalTarget.layers == layers, shortIntervalTarget.history == history {
+                return false
+            }
+            shortIntervalTarget = nil
+            // This probe has no timestamp; monotonic snapshot midpoints include delayed read cadence.
+            let sampledAt = (requestedAt + returnedAt) / 2
+            guard let first = baseline, first.layers == layers, first.history == history else {
+                before = after
+                baseline = (layers, history, progress, sampledAt)
+                return false
+            }
+            let elapsedSeconds = sampledAt - first.sampledAt
+            guard elapsedSeconds >= AlbumCaptureTiming.progressSampleSeconds else { return false }
+            let slope = (progress - first.progress) / elapsedSeconds
+            measuredSlope = slope
+            if AlbumCaptureTiming.longIntervalSlopeRange.contains(slope) { return true }
+            if slope > AlbumCaptureTiming.longIntervalSlopeRange.upperBound {
+                // A short target must naturally give way; never tap Next to force the interval.
+                shortIntervalTarget = (layers, history)
+            }
+            before = after
+            baseline = (layers, history, progress, sampledAt)
+            return false
         }
+        after["interval_progress_slope"] = measuredSlope.map { String($0) } ?? "unknown"
+        attachStrictSceneObservation(before: before, after: after, name: "album-interval-confirmation")
+        guard isConfirmed else {
+            if !hasValidProbe || !isLastProbeValid {
+                XCTFail("Album interval confirmation must read a valid non-empty scene progress probe before Pause.")
+            } else if shortIntervalTarget != nil {
+                XCTFail(
+                    "Album interval confirmation must observe a new scene after measuring a short interval before Pause."
+                )
+            } else {
+                XCTFail(
+                    "Album interval confirmation must measure the current scene's 30-second progress slope before Pause."
+                )
+            }
+            return false
+        }
+        print(
+            "Album interval confirmation: slope=\(measuredSlope ?? .nan), remainingSeconds=\(deadline - ProcessInfo.processInfo.systemUptime)"
+        )
         #endif
-        // Without generation probes, one verified Next installs a target with the saved interval.
-        driver.next()
         return true
     }
 
