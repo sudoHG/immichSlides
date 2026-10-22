@@ -82,6 +82,8 @@ SIMULATOR_READINESS_INITIAL_QUERY_TIMEOUT_SECONDS = 10
 BOOT_SETTLE_TIMEOUT_SECONDS = 360
 BOOT_SETTLE_WINDOW_SECONDS = 60
 BOOT_SETTLE_INTERVAL_SECONDS = 10
+# About one minute of missing ticks tolerates transient boot contention, but not a dead probe.
+BOOT_SETTLE_MAX_CONSECUTIVE_MISSES = 6
 _BOOT_SETTLE_ATTEMPTED = False
 SERVICE_STARTUP_TIMEOUT_SECONDS = 60
 # Preserve strict/tracer preparation limits under their existing outer budgets.
@@ -604,19 +606,27 @@ def _wait_for_simulator_response(query, phase: str, *, report: Callable[[str], N
     return response, "\n".join(lines) + "\n"
 
 
-def _boot_device_cpu(device: str, deadline: float) -> float | None:
+def _boot_process_output(command: Sequence[str], deadline: float) -> str:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError
+    completed = subprocess.run(command, capture_output=True, text=True, check=False, timeout=min(5, remaining))
+    if completed.returncode:
+        raise ValueError
+    return completed.stdout
+
+
+def _boot_manager_pid(device: str, deadline: float) -> int:
+    root = int(_boot_process_output(["xcrun", "simctl", "spawn", device, "launchctl", "managerpid"], deadline).strip())
+    if root <= 0:
+        raise ValueError
+    return root
+
+
+def _boot_device_cpu(root: int, deadline: float) -> float | None:
     """Read numeric process ancestry for this device without collecting names or argv."""
-    def run(command):
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise TimeoutError
-        completed = subprocess.run(command, capture_output=True, text=True, check=False, timeout=min(5, remaining))
-        if completed.returncode:
-            raise ValueError
-        return completed.stdout
-    root = int(run(["xcrun", "simctl", "spawn", device, "launchctl", "managerpid"]).strip())
     rows = {}
-    raw = run(["/bin/ps", "-A", "-o", "pid=,ppid=,%cpu="])
+    raw = _boot_process_output(["/bin/ps", "-A", "-o", "pid=,ppid=,%cpu="], deadline)
     if len(raw) > 2 * 1024 * 1024:
         return None
     for line in raw.splitlines():
@@ -647,6 +657,7 @@ def _settle_simulator_boot(device: str, deadline: float) -> str:
     global _BOOT_SETTLE_ATTEMPTED
     started = time.monotonic()
     outcome, idle, cpu, cores, threshold = "unavailable", None, None, None, None
+    missed_points = consecutive_misses = 0
     probe = None
     try:
         if not (os.environ.get("GITHUB_ACTIONS") == "true"
@@ -670,11 +681,12 @@ def _settle_simulator_boot(device: str, deadline: float) -> str:
                     raise ValueError
                 threshold = max(30.0, 100.0 / cores)
                 deadline = min(deadline, started + BOOT_SETTLE_TIMEOUT_SECONDS)
+                # The device's manager PID is stable throughout this boot.
+                root = _boot_manager_pid(device, deadline)
                 from strict_e2e_resource_diagnostics import HostProbe
                 # HostProbe bounds each Mach read to 0.2 seconds and abandons stalled workers.
                 probe = HostProbe(device)
-                if probe.sample() is None:
-                    raise ValueError
+                probe.sample()
                 qualifying_since = None
                 while True:
                     remaining = deadline - time.monotonic()
@@ -685,12 +697,26 @@ def _settle_simulator_boot(device: str, deadline: float) -> str:
                     if time.monotonic() >= deadline:
                         outcome = "timed-out"
                         break
-                    sample = probe.sample()
-                    idle = sample.get("idle_percent") if sample else None
-                    cpu = _boot_device_cpu(device, deadline)
-                    if (idle is None or cpu is None or not math.isfinite(idle) or not 0 <= idle <= 100
-                            or not math.isfinite(cpu) or cpu < 0):
-                        raise ValueError
+                    idle = cpu = None
+                    try:
+                        sample = probe.sample()
+                        idle = sample.get("idle_percent") if sample else None
+                        cpu = _boot_device_cpu(root, deadline)
+                        if (idle is None or cpu is None or not math.isfinite(idle) or not 0 <= idle <= 100
+                                or not math.isfinite(cpu) or cpu < 0):
+                            raise ValueError
+                    except (OSError, ValueError, TypeError, AttributeError, KeyError, RuntimeError, subprocess.SubprocessError):
+                        missed_points += 1
+                        consecutive_misses += 1
+                        qualifying_since = None
+                        if time.monotonic() >= deadline:
+                            outcome = "timed-out"
+                            break
+                        if consecutive_misses >= BOOT_SETTLE_MAX_CONSECUTIVE_MISSES:
+                            outcome = "sampling-failed"
+                            break
+                        continue
+                    consecutive_misses = 0
                     now = time.monotonic()
                     if now >= deadline:
                         outcome = "timed-out"
@@ -703,7 +729,7 @@ def _settle_simulator_boot(device: str, deadline: float) -> str:
                             break
                     else:
                         qualifying_since = None
-    except (OSError, ValueError, TypeError, AttributeError, KeyError, RuntimeError, subprocess.SubprocessError):
+    except (ImportError, OSError, ValueError, TypeError, AttributeError, KeyError, RuntimeError, subprocess.SubprocessError):
         # Never publish exception text, commands, process identities or a new verdict.
         outcome = "timed-out" if time.monotonic() >= deadline else "unavailable"
     finally:
@@ -713,7 +739,8 @@ def _settle_simulator_boot(device: str, deadline: float) -> str:
         return f"{value:.3f}" if isinstance(value, (int, float)) and math.isfinite(value) else "null"
     return (f"simulator-boot-settle: outcome={outcome}; duration_seconds={time.monotonic() - started:.3f}; "
             f"idle_percent={number(idle)}; device_cpu_percent={number(cpu)}; "
-            f"logical_cores={number(cores)}; idle_threshold_percent={number(threshold)}")
+            f"logical_cores={cores if isinstance(cores, int) else 'null'}; idle_threshold_percent={number(threshold)}; "
+            f"missed_points={missed_points}")
 
 
 def prepare_simulator(simulator_udid: str, bundle_id: str = "com.331works.immichSlides", *,
@@ -740,9 +767,10 @@ def prepare_simulator(simulator_udid: str, bundle_id: str = "com.331works.immich
             report(line)
             container, readiness_log = wait_for_simulator_service_response(simulator_udid, report=report, deadline=deadline)
         lines.extend(readiness_log.splitlines())
-        line = _settle_simulator_boot(simulator_udid, deadline)
-        lines.append(line)
-        report(line)
+        if boot_submitted:
+            line = _settle_simulator_boot(simulator_udid, deadline)
+            lines.append(line)
+            report(line)
         outcome = "passed"
     finally:
         elapsed = time.monotonic() - started

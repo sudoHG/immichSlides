@@ -22,9 +22,12 @@ most 300 seconds within that gate. The [shared reset](#shared-simulator-reset)
 then starts the separate 120-second app/keychain/privacy reset clock;
 individual reset commands have at most 60 seconds. Local strict,
 fixture UI, listed retry and access-lifecycle runs use these preparation bounds too.
-On GitHub-hosted `schedule` and `workflow_dispatch` runs, the first successful
-readiness check in a job also attempts a boot-settling resource gate before app
-reset or test execution. It samples Mach host idle and the selected device's
+On GitHub-hosted `schedule` and `workflow_dispatch` runs with an early boot
+already submitted (`boot_submitted=True`), the first successful readiness check
+in a job also attempts a boot-settling resource gate before app reset or test
+execution. Nightly tracer preparation children and UI shards meet this condition;
+a manual `ci-strict-tracer` cold build has no early boot and skips the gate.
+It samples Mach host idle and the selected device's
 numeric process subtree CPU about every 10 seconds. A continuous window spanning
 at least 60 seconds requires idle at least `max(30, 100 / logical_cpu_count)`
 percent and device CPU at most 120 percent (100 percent is one logical CPU).
@@ -35,15 +38,32 @@ budget remaining after readiness. The cap covers most of the observed local
 2.55–6.42 minute first-boot windows without extending preparation deadlines;
 early boot overlaps downloads and builds. These local observations do not predict
 hosted recovery time. Even an already quiet device needs about 70 seconds for
-priming and a full observed window; unavailable samples proceed immediately.
-Timeout and sampling/marker errors proceed with a diagnostic and never change a
-test verdict. A private `RUNNER_TEMP` marker prevents another attempt across
+priming and a full observed window. The selected device's manager PID is read
+once at gate start; failure to acquire it logs `unavailable` and proceeds.
+A missing, invalid or timed-out tick resets the qualifying window and keeps
+waiting. Six consecutive failed ticks log `sampling-failed` and proceed: at a
+10-second cadence this tolerates about one minute of transient contention while
+bounding time spent on a persistently broken probe. A successful tick clears
+that consecutive failure streak, even if resource thresholds are not met.
+Timeout and setup/marker errors also proceed with a diagnostic and never change
+a test verdict. A private `RUNNER_TEMP` marker prevents another attempt across
 runner children in the same job. Local, PR and self-hosted runs skip the gate.
 `simulator-boot-settle` log lines contain only an enum outcome and numeric/null
-duration, final idle/device CPU, core count and idle threshold. Public receipt
+duration, final idle/device CPU, integer core count, idle threshold and total
+missed-point count. Public receipt
 schemas, readers and resource-sampler budgets are unchanged. The
 [UI shard preparation](CI_UI.md#fixture-execution-retry-and-public-output) uses
 the same entry point and gate.
+
+The observed nightly matrix has 43 simulator-preparation jobs: 25 strict and
+18 UI. Both groups use `max-parallel: 2`; strict is the critical path at about
+13 jobs per slot. For added gate time G, nightly wall time grows by about 13×G:
+roughly 15 minutes at G=70 seconds, up to 78 minutes at the 360-second cap.
+Total added job time is about 50–258 minutes. Hosted cost and benefit need canary
+evidence: accept if most iOS jobs settle before the cap and early-case idle
+improves. If over half of iOS jobs time out on two consecutive nights without
+improving early-case idle median, the coordinator lowers the cap or reverts.
+
 Official tests and summary exports each have 60 seconds. Unit callers retain
 `unit-results-timed-out` with export phase and elapsed time; strict callers retain
 their preparation/export phase codes. Test-execution budgets are separate.
