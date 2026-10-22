@@ -917,7 +917,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
     def test_boot_settle_gate_caps_wait_and_fails_open_on_sampling_or_marker_errors(self):
         import strict_e2e_runner_support as support
         import strict_e2e_resource_diagnostics as resources
-        for failure in ("busy", "remaining-budget", "host", "malformed-host", "device", "marker", "cores"):
+        for failure in ("busy", "remaining-budget", "device-at-cap", "host", "malformed-host", "device", "marker", "cores"):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as raw:
                 clock, reports = [0.0], []
                 def sample():
@@ -926,22 +926,28 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                     if failure == "malformed-host" and clock[0]:
                         return {"idle_percent": "private-input"}
                     return {"idle_percent": None if clock[0] == 0 else 0}
+                def device(*args, **kwargs):
+                    if failure == "device-at-cap":
+                        clock[0] = 360
+                        raise subprocess.TimeoutExpired(["private-input"], 5)
+                    if failure == "device":
+                        raise OSError("private-input")
+                    return 100
                 with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted",
                         "GITHUB_EVENT_NAME": "schedule", "RUNNER_TEMP": raw + "/missing" if failure == "marker" else raw}, clear=True), \
                         mock.patch.object(support.time, "monotonic", side_effect=lambda: clock[0]), \
                         mock.patch.object(support.time, "sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)), \
                         mock.patch.object(support.os, "cpu_count", return_value=None if failure == "cores" else 3), \
                         mock.patch.object(resources.HostProbe, "sample", side_effect=sample), \
-                        mock.patch.object(support, "_boot_device_cpu", side_effect=OSError("private-input") if failure == "device" else None,
-                                          return_value=100), \
+                        mock.patch.object(support, "_boot_device_cpu", side_effect=device), \
                         mock.patch.object(support, "boot_simulator", return_value=""), \
                         mock.patch.object(support, "wait_for_simulator_app_response", side_effect=lambda *a, **kw: (
                             clock.__setitem__(0, 590) if failure == "remaining-budget" else None, "")), \
                         mock.patch.object(support, "_BOOT_SETTLE_ATTEMPTED", False):
                     support.prepare_simulator("device", report=reports.append)
                 log = "\n".join(reports)
-                self.assertIn("outcome=" + ("timed-out" if failure in ("busy", "remaining-budget") else "unavailable"), log)
-                self.assertEqual(clock[0], 360 if failure == "busy" else 600 if failure == "remaining-budget" else 10 if failure in ("host", "malformed-host", "device") else 0)
+                self.assertIn("outcome=" + ("timed-out" if failure in ("busy", "remaining-budget", "device-at-cap") else "unavailable"), log)
+                self.assertEqual(clock[0], 360 if failure in ("busy", "device-at-cap") else 600 if failure == "remaining-budget" else 10 if failure in ("host", "malformed-host", "device") else 0)
                 self.assertIn("simulator-preparation: passed", log)
                 self.assertNotIn("private-input", log)
 

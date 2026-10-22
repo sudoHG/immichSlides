@@ -705,7 +705,7 @@ def _settle_simulator_boot(device: str, deadline: float) -> str:
                         qualifying_since = None
     except (OSError, ValueError, TypeError, AttributeError, KeyError, RuntimeError, subprocess.SubprocessError):
         # Never publish exception text, commands, process identities or a new verdict.
-        outcome = "unavailable"
+        outcome = "timed-out" if time.monotonic() >= deadline else "unavailable"
     finally:
         if probe is not None:
             probe.close()
