@@ -703,14 +703,14 @@ def _settle_simulator_boot(device: str, deadline: float) -> str:
                             break
                     else:
                         qualifying_since = None
-    except (OSError, ValueError, TypeError, KeyError, RuntimeError, subprocess.SubprocessError):
+    except (OSError, ValueError, TypeError, AttributeError, KeyError, RuntimeError, subprocess.SubprocessError):
         # Never publish exception text, commands, process identities or a new verdict.
         outcome = "unavailable"
     finally:
         if probe is not None:
             probe.close()
     def number(value):
-        return "null" if value is None or not math.isfinite(value) else f"{value:.3f}"
+        return f"{value:.3f}" if isinstance(value, (int, float)) and math.isfinite(value) else "null"
     return (f"simulator-boot-settle: outcome={outcome}; duration_seconds={time.monotonic() - started:.3f}; "
             f"idle_percent={number(idle)}; device_cpu_percent={number(cpu)}; "
             f"logical_cores={number(cores)}; idle_threshold_percent={number(threshold)}")
