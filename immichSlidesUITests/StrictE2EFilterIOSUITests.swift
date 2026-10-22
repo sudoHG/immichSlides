@@ -35,11 +35,11 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         startFilteredPlayback(app: app)
         pausePlaybackIfNeeded(app: app)
 
-        _ = capturePlaybackPNG(app: app, name: "album-play-1")
+        _ = try captureAlbumPlaybackPNG(app: app, name: "album-play-1")
         tapNext(app: app)
-        _ = capturePlaybackPNG(app: app, name: "album-play-2")
+        _ = try captureAlbumPlaybackPNG(app: app, name: "album-play-2")
         tapNext(app: app)
-        _ = capturePlaybackPNG(app: app, name: "album-play-3")
+        _ = try captureAlbumPlaybackPNG(app: app, name: "album-play-3")
     }
 
     // Swapping the target album through the real settings editor keeps filtered mode;
@@ -193,6 +193,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         setAlbumSelection(app: app, albumID: albumID, isSelectionRequested: true)
         returnFromAlbumFilter(app: app)
         startFilteredPlayback(app: app)
+        guard prepareAlbumCapturePlayback(app: app) else { return }
         guard pauseStableAlbumPlaybackIfNeeded(app: app) else { return }
         let firstScene = try captureStableAlbumPlaybackPNG(app: app, name: "album-play-1")
         tapNext(app: app)

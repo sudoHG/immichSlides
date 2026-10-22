@@ -1,6 +1,18 @@
 import XCTest
 
 #if os(iOS)
+private enum AlbumCaptureTiming {
+    // 5 s old target + 2.025 s transition + 1 s slope pair + 3.975 s scheduling margin; worst case
+    // (old target committed just before the save) leaves about 1.95 s plus return navigation.
+    static let intervalConfirmationSeconds = TestWait.seconds(.product(12))
+    // One second separates the 1/5 and 1/30 progress-per-second rates well above probe rounding.
+    static let progressSampleSeconds = TestWait.seconds(.product(1))
+    // Half to twice 1/30 allows cadence jitter, rejecting frozen probes and the old 1/5 rate.
+    static let longIntervalSlopeRange = (1.0 / 60)...(1.0 / 15)
+    // Twice the 0.3 s toolbar fade separates pixel readbacks within the existing 4.8 s cap.
+    static let minimumPixelPairSeconds = TestWait.seconds(.product(0.6))
+}
+
 extension StrictE2EFilterIOSUITests {
     @MainActor
     func snapshotPersonReturnSurface(
@@ -75,6 +87,164 @@ extension StrictE2EFilterIOSUITests {
         add(attachment)
         StrictE2EVisualEvidence.writePNG(png, name: name)
         return png
+    }
+
+    @MainActor
+    func captureAlbumPlaybackPNG(app: XCUIApplication, name: String) throws -> Data {
+        revealPlaybackControls(app: app)
+        let settleDeadline = Date().addingTimeInterval(TestWait.seconds(.product(0.8)))
+        let deadline = settleDeadline.addingTimeInterval(TestWait.seconds(.product(4)))
+        RunLoop.current.run(until: settleDeadline)
+        guard let capture = captureStableAlbumPixels(app: app, deadline: deadline) else { return Data() }
+        XCTAssertFalse(capture.png.isEmpty, "Playback screenshot must not be empty: \(name)")
+        let attachment = XCTAttachment(data: capture.png, uniformTypeIdentifier: "public.png")
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        try StrictE2EVisualEvidence.writeRequiredPNG(capture.png, name: name)
+        return capture.png
+    }
+
+    @MainActor
+    private func captureStableAlbumPixels(
+        app: XCUIApplication, deadline: Date
+    ) -> (png: Data, requestedAt: TimeInterval, returnedAt: TimeInterval)? {
+        // Compare decoded, full-resolution color pixels; a logical stable probe can precede presentation.
+        let minimumPairSeconds = AlbumCaptureTiming.minimumPixelPairSeconds
+        var previousPixels: Data?
+        var previousFormat: [Int] = []
+        var previousReturnedAt: Date?
+        var png = Data()
+        var requestedAt: TimeInterval = .zero
+        var returnedAt: TimeInterval = .zero
+        var captureCount = 0
+        var pairSeconds: TimeInterval = .zero
+        FirstFailureContext.mark("capture-frame", element: "app-window")
+        let isStable = TestWait.until(.product(max(.zero, deadline.timeIntervalSinceNow))) {
+            guard Date() < deadline else { return false }
+            if let previousReturnedAt, Date().timeIntervalSince(previousReturnedAt) < minimumPairSeconds {
+                return false
+            }
+            requestedAt = Date().timeIntervalSince1970
+            pairSeconds = previousReturnedAt.map { requestedAt - $0.timeIntervalSince1970 } ?? .zero
+            let screenshot = app.screenshotForFailureEvidence()
+            captureCount += 1
+            returnedAt = Date().timeIntervalSince1970
+            png = screenshot.pngRepresentation
+            guard let image = screenshot.image.cgImage, let buffer = image.dataProvider?.data,
+                Date() < deadline
+            else { return false }
+            let pixels = buffer as Data
+            let format = [
+                image.width, image.height, image.bytesPerRow, image.bitsPerComponent, image.bitsPerPixel,
+                Int(image.bitmapInfo.rawValue)
+            ]
+            let matches = previousFormat == format && previousPixels == pixels
+            previousPixels = pixels
+            previousFormat = format
+            previousReturnedAt = Date(timeIntervalSince1970: returnedAt)
+            return matches && Date() < deadline
+        }
+        guard isStable else {
+            XCTFail("Album capture pixels must match at least 0.6 seconds apart within the playback capture budget.")
+            return nil
+        }
+        print(
+            "Album pixel stability: captures=\(captureCount), pairSeconds=\(pairSeconds), remainingSeconds=\(deadline.timeIntervalSinceNow)"
+        )
+        return (png, requestedAt, returnedAt)
+    }
+
+    @MainActor
+    func prepareAlbumCapturePlayback(app: XCUIApplication) -> Bool {
+        let driver = IOSDriver(app: app)
+        driver.applyPlaybackSettings([.interval30Seconds])
+        #if DEBUG
+        let timeout = AlbumCaptureTiming.intervalConfirmationSeconds
+        let deadline = ProcessInfo.processInfo.systemUptime + timeout
+        var baseline: (layers: String, history: Int, progress: Double, sampledAt: TimeInterval)?
+        var shortIntervalTarget: (layers: String, history: Int)?
+        var before: [String: String] = [:]
+        var after: [String: String] = [:]
+        var hasValidProbe = false
+        var isLastProbeValid = false
+        var measuredSlope: Double?
+        FirstFailureContext.mark("wait-scene", element: "slideshow.scenePresentation.contract.summary")
+        let isConfirmed = TestWait.until(.product(timeout)) {
+            guard ProcessInfo.processInfo.systemUptime < deadline else { return false }
+            let requestedAt = ProcessInfo.processInfo.systemUptime
+            var didSnapshotFail = false
+            let snapshots = app.evidenceSnapshotsByIdentifier { _ in didSnapshotFail = true }
+            after = self.albumSceneObservation(snapshots: snapshots, didSnapshotFail: didSnapshotFail)
+            // Root progress can remain cached between state changes; this existing leaf follows TimelineView.
+            after["motionRender"] = snapshots["slideshow.scenePresentation.frameSynchronized.summary"]?.label ?? ""
+            let returnedAt = ProcessInfo.processInfo.systemUptime
+            let render = SharedSceneEvidenceManifest.parseKeyValueFields(after["motionRender"] ?? "")
+            let progressFields = (render["motionRawProgress"] ?? "").split(separator: "|")
+            let progressValues = progressFields.compactMap { Double($0) }
+            isLastProbeValid =
+                after["entryHintVisible"] != "unknown" && !render.isEmpty
+                && render["layerIDs"].map { !$0.isEmpty && $0 != "none" } == true
+                && Int(render["historyCount"] ?? "") != nil
+                && !progressValues.isEmpty && progressValues.count == progressFields.count
+                && progressValues.allSatisfy { $0.isFinite }
+            hasValidProbe = hasValidProbe || isLastProbeValid
+            guard isLastProbeValid, returnedAt < deadline,
+                let layers = render["layerIDs"], !layers.isEmpty, layers != "none",
+                let history = Int(render["historyCount"] ?? ""),
+                let progress = Double(render["motionRawProgress"] ?? ""),
+                render["playbackPaused"] == "false",
+                StrictE2ESceneCapture.isStableWindow(
+                    after.merging(["render": after["motionRender"] ?? ""]) { _, new in new })
+            else {
+                baseline = nil
+                return false
+            }
+            if let shortIntervalTarget, shortIntervalTarget.layers == layers, shortIntervalTarget.history == history {
+                return false
+            }
+            shortIntervalTarget = nil
+            // This probe has no timestamp; monotonic snapshot midpoints include delayed read cadence.
+            let sampledAt = (requestedAt + returnedAt) / 2
+            guard let first = baseline, first.layers == layers, first.history == history else {
+                before = after
+                baseline = (layers, history, progress, sampledAt)
+                return false
+            }
+            let elapsedSeconds = sampledAt - first.sampledAt
+            guard elapsedSeconds >= AlbumCaptureTiming.progressSampleSeconds else { return false }
+            let slope = (progress - first.progress) / elapsedSeconds
+            measuredSlope = slope
+            if AlbumCaptureTiming.longIntervalSlopeRange.contains(slope) { return true }
+            if slope > AlbumCaptureTiming.longIntervalSlopeRange.upperBound {
+                // A short target must naturally give way; never tap Next to force the interval.
+                shortIntervalTarget = (layers, history)
+            }
+            before = after
+            baseline = (layers, history, progress, sampledAt)
+            return false
+        }
+        after["interval_progress_slope"] = measuredSlope.map { String($0) } ?? "unknown"
+        attachStrictSceneObservation(before: before, after: after, name: "album-interval-confirmation")
+        guard isConfirmed else {
+            if !hasValidProbe || !isLastProbeValid {
+                XCTFail("Album interval confirmation must read a valid non-empty scene progress probe before Pause.")
+            } else if shortIntervalTarget != nil {
+                XCTFail(
+                    "Album interval confirmation must observe a new scene after measuring a short interval before Pause."
+                )
+            } else {
+                XCTFail(
+                    "Album interval confirmation must measure the current scene's 30-second progress slope before Pause."
+                )
+            }
+            return false
+        }
+        print(
+            "Album interval confirmation: slope=\(measuredSlope ?? .nan), remainingSeconds=\(deadline - ProcessInfo.processInfo.systemUptime)"
+        )
+        #endif
+        return true
     }
 
     @MainActor
@@ -229,9 +399,10 @@ extension StrictE2EFilterIOSUITests {
             }
             return [:]
         }
-        let captureRequestedAt = Date().timeIntervalSince1970
-        let png = app.screenshotForFailureEvidence().pngRepresentation
-        let captureReturnedAt = Date().timeIntervalSince1970
+        guard let capture = captureStableAlbumPixels(app: app, deadline: deadline) else { return [:] }
+        let captureRequestedAt = capture.requestedAt
+        let png = capture.png
+        let captureReturnedAt = capture.returnedAt
         let after = albumSceneObservation(app: app)
         let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
         attachment.name = name
@@ -259,7 +430,7 @@ extension StrictE2EFilterIOSUITests {
             "Visual ID failed \(name): the single capture must retain the complete paused scene")
         return before
         #else
-        _ = capturePlaybackPNG(app: app, name: name)
+        _ = try captureAlbumPlaybackPNG(app: app, name: name)
         return [:]
         #endif
     }
