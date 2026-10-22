@@ -177,7 +177,7 @@ def produce_environment_limits(summary, results, *, informational=(), policy_ver
                 continue
             samples = [event["sample"] for event in ledger["events"] if event["scope"] == "xcode"
                 and event["sequence"] == failures[0]["sequence"] and event["sample"] is not None]
-            hosted = bool(samples) and all(sample["runner_hosted"] is True for sample in samples)
+            hosted = len(samples) == 1 and samples[0]["runner_hosted"] is True
             proof = environment_limit_evidence(summary, entry, resources, runner_hosted=hosted, policy_version=policy_version)
             if proof is None:
                 reject("missing-xcode-host-samples" if not samples else

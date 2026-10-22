@@ -1334,8 +1334,12 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                 recorder = active()
                 receipt = recorder.receipt() if recorder is not None else None
                 if receipt is not None and resource_samplers:
-                    receipt["events"] = []
                     sequences = {sampler.sequence for sampler in resource_samplers.values()}
+                    # Keep hosting metadata alone so the growing shared ledger cannot exceed the export cap.
+                    receipt["events"] = [event for event in receipt["events"]
+                        if event["scope"] == "xcode" and event["phase"] == "test-execution"
+                        and event["state"] == "started" and event["sequence"] in sequences
+                        and event["sample"] is not None]
                     receipt["case_resources"] = [case for case in receipt.get("case_resources", [])
                                                   if case["sequence"] in sequences]
                     case_manifest["bounded_diagnostics"] = receipt

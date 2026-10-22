@@ -707,6 +707,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                 def xcode(*args):
                     self.assertTrue(ready.wait(2), "Release lifecycle execution must receive host samples")
                 with mock.patch.object(resources, "SAMPLE_INTERVAL_SECONDS", 0.001), \
+                        mock.patch.dict(os.environ, {"RUNNER_ENVIRONMENT": "github-hosted"}), \
                         mock.patch.object(resources.CaseSampler, "start", start), \
                         mock.patch.object(resources, "HostProbe", return_value=SimpleNamespace(sample=read_host, close=lambda: None, unavailable=False, spent=0, request_count=1)), \
                         mock.patch.object(resources, "process_sample") as ps:
@@ -726,6 +727,10 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                 self.assertTrue(all(value is None for row in case["failure_samples"] for value in row["cpu_percent"].values()))
                 self.assertEqual(0, case["sampler_wall_seconds"])
                 ps.assert_not_called()
+                exported = json.loads((Path(raw) / "evidence/case-manifest.json").read_text())["bounded_diagnostics"]
+                self.assertEqual([sampler.sequence], [event["sequence"] for event in exported["events"]])
+                self.assertIs(True, exported["events"][0]["sample"]["runner_hosted"])
+                self.assertIsNone(exported["collection_seconds"]["xcode"])
 
     def test_warm_test_inputs_do_not_prevent_private_bundle_disposal(self):
         import ci_execution_diagnostics as diagnostics
@@ -738,7 +743,10 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
             self.assertEqual(code, 0, stderr)
             manifest = evidence / "case-manifest.json"
             self.assertLessEqual(manifest.stat().st_size, 65536, "case evidence must fit the first-failure exporter cap")
-            self.assertEqual([], json.loads(manifest.read_text())["bounded_diagnostics"]["events"])
+            retained = json.loads(manifest.read_text())["bounded_diagnostics"]
+            self.assertEqual([case["sequence"] for case in retained["case_resources"]],
+                             [event["sequence"] for event in retained["events"]])
+            self.assertTrue(all(event["sample"]["processes"] == [] for event in retained["events"]))
             self.assertEqual(diagnostics.MAX_EVENTS, len(recorder.receipt()["events"]))
             self.assertEqual((evidence / "simulator-preparation.log").read_text(), "ready\n")
             self.assertEqual(list((root / "private").iterdir()), [])
@@ -2813,6 +2821,71 @@ class StrictCITracerTests(unittest.TestCase):
                     self.assertIn("ENVIRONMENT-LIMITED", (records / "summary.md").read_text())
                 else:
                     self.assertNotIn("environment_limit", observed["attempts"][0])
+
+    def test_case_start_hosting_proves_rotation_only_with_one_bound_hosted_event(self):
+        import copy
+        import ci_execution_diagnostics as diagnostics
+        import strict_e2e_resource_diagnostics as resources
+        from test_ci_summary import hosted_timeout_summary
+        from ci_report import method_observations
+        for mutation in (None, "no event", "self-hosted", "local", "unknown environment", "wrong sequence",
+                         "duplicate", "conflicting", "recording unavailable", "recording error"):
+            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as raw:
+                seed, resource = hosted_timeout_summary()
+                row = seed["population"]["observed"][0]
+                row.update(failure_phase="mode_selection", failure_class="navigation")
+                receipt = row["first_failure"]
+                receipt.update(step="mode-card", element="mode.random.button")
+                receipt["state"].update(surface="mode", scene_status="UNRECOGNIZABLE")
+                receipt["timing"].update(wait_elapsed_seconds=10.07, deadline_seconds=7)
+                resource.update(duration_seconds=92.22, first_failure_elapsed_seconds=81.4, sample_count=31,
+                    failure_samples=[dict(resource["failure_samples"][0], elapsed_seconds=elapsed, idle_percent=0)
+                                     for elapsed in (76.8, 80.3, 84.0)])
+                recorder = diagnostics.Recorder()
+                recorder.sequence = resource["sequence"] - 1
+                recorder.unavailable.add("xcode")
+                recorder.charged["xcode"] = diagnostics.COLLECTION_BUDGET_SECONDS["xcode"]
+                accounting = copy.deepcopy((recorder.cost, recorder.charged, recorder.ledger_remaining))
+                environment = {"RUNNER_ENVIRONMENT": {"self-hosted": "self-hosted", "local": "",
+                    "unknown environment": "PRIVATE_SENTINEL"}.get(mutation, "github-hosted")}
+                with mock.patch.dict(os.environ, environment), mock.patch.object(resources.threading, "Thread"), ExitStack() as guards:
+                    if mutation in {"recording unavailable", "recording error"}:
+                        guards.enter_context(mock.patch.object(recorder, "retain", side_effect=
+                            RuntimeError("PRIVATE_SENTINEL") if mutation == "recording error" else None))
+                    sampler = resources.CaseSampler(recorder, "device").start()
+                self.assertEqual(accounting, (recorder.cost, recorder.charged, recorder.ledger_remaining),
+                                 "hosting metadata must not consume any diagnostic allowance")
+                ledger = recorder.receipt()
+                ledger["case_resources"] = [resource]
+                if mutation == "no event":
+                    ledger["events"] = []
+                elif mutation == "wrong sequence":
+                    ledger["events"][0]["sequence"] = sampler.sequence + 1
+                elif mutation in {"duplicate", "conflicting"}:
+                    event = copy.deepcopy(ledger["events"][0])
+                    if mutation == "conflicting":
+                        event["sample"]["runner_hosted"] = False
+                    ledger["events"].append(event)
+                import contextlib
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    code, records, trace, summary = self._produce_validator_records(Path(raw), None,
+                        receipt_suite=None, runner_exit=65, nightly=True, timing_failure=(row, ledger),
+                        case=dict(platform="ios", device="ipad", configuration="Debug", suite="p2-rotation",
+                                  scenario="normal", fixture="b"))
+                observed = summary["population"]["observed"][0]
+                self.assertEqual(0 if mutation is None else 1, code)
+                self.assertEqual(mutation is None, "environment_limit" in observed)
+                self.assertEqual(("failed", 65), (observed["outcome"], observed["attempts"][0]["exit_code"]))
+                self.assertNotIn("PRIVATE_SENTINEL", (records / "summary.json").read_text())
+                if mutation is not None:
+                    reason = ("missing-xcode-host-samples" if mutation in {
+                        "no event", "wrong sequence", "recording unavailable", "recording error"} else "hosting-not-proven")
+                    self.assertIn(f"environment-limit: not eligible ({reason})", output.getvalue())
+                if mutation is None:
+                    methods, missing = method_observations(summary, trace, runner_hosted=True)
+                    self.assertEqual([], missing)
+                    self.assertEqual(observed["environment_limit"], methods[0]["environment_limit"])
 
     def test_album_environment_producer_requires_every_gate_fact(self):
         import copy

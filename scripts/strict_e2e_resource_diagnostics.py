@@ -316,6 +316,16 @@ class CaseSampler:
         if self.recorder is None or len(self.recorder.case_resources) >= MAX_RESOURCE_CASES:
             self.truncated = True
             return self
+        # Hosting is metadata, independent of the exhausted diagnostic collection allowances.
+        try:
+            self.recorder.retain({"scope": "xcode", "phase": "test-execution", "state": "started",
+                "sequence": self.sequence, "elapsed_seconds": 0, "cpu_seconds": None,
+                "input_sha256": None, "official_exports": None,
+                "sample": {"runner_hosted": {"github-hosted": True, "self-hosted": False}.get(
+                    os.environ.get("RUNNER_ENVIRONMENT")), "cpu_percent": None, "memory_free_bytes": None,
+                    "load_average": None, "image_version": None, "processes": []}})
+        except (OSError, RuntimeError, TypeError, ValueError):
+            self.truncated = True
         # Older ledgers lack process-only accounting; retain their conservative combined charge.
         self.previous_process_spent = self.recorder.process_sampler_wall_seconds
         if self.previous_process_spent is None:

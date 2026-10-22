@@ -177,13 +177,22 @@ The separate [prepared environment-limit proof](#prepared-hosted-strict-environm
 can classify a failed hosted timing observation only when its full criteria are met.
 Summary Markdown displays per-case sample counts, idle minimum/median, maximum
 load, peak App CPU, sampler costs and truncation; nearby samples remain in JSON.
-The case manifest and each tracer warm phase retain a bounded receipt with an
-empty `events` list and only that case's resource sequences, plus the shared
+The case manifest and each tracer warm phase retain only that case's resource
+sequences and one minimal hosting event per sampled invocation, plus the shared
 collection-cost and truncation metadata; the job summary retains the full ledger.
+At case start, the sampler records an existing xcode/test-execution started event
+with its own sequence. Its sample contains only the Boolean/null hosting flag
+derived from `RUNNER_ENVIRONMENT`; all measurements and image version are null,
+and `processes` is empty. Recording this metadata consumes no diagnostic allowance
+and remains available when Xcode diagnostic accounting is unavailable. The event
+still obeys the existing 512-event retention cap; a lost event cannot prove hosting.
+Every other event is cleared from the case copy to avoid duplicating the growing
+job ledger and exceeding the first-failure exporter's 65,536-byte manifest cap.
 This binds numbers to the existing case identity without publishing process names.
 The tracer validates `warm[].bounded_diagnostics` with the bounded-diagnostics
 reader's `validate_receipt` before writing this public sequence-to-case binding.
-Trusted trace readers ignore this field; they do not validate or use it for verdicts.
+Environment-limit readers recheck this binding before accepting a proof; resource
+measurements alone never change the raw verdict.
 `sequence` comes from the same monotonically increasing ledger counter as events;
 it is not an identity or an attempt number. The sampler claims its sequence
 immediately before the corresponding `xcodebuild` event. The enclosing case
@@ -736,7 +745,8 @@ The summary reader recomputes the projection from the original receipt and check
 the nightly strict source. The optional `strict_case_evidence` list binds each strict
 case `identity` to its original `bounded_diagnostics` receipt. Each proof must match
 that case's resource entry by sequence and full value, and have a matching xcode
-event sample whose `runner_hosted` is true; conflicting hosting samples fail closed.
+event sample whose `runner_hosted` is true. The producer requires exactly one
+matching sample; missing, duplicate or conflicting hosting samples fail closed.
 The producer fills this evidence slot from the same case trace only after the
 candidate summary and official method binding validate. Invalid or ambiguous evidence
 emits no proof and retains the raw failure. No unknown field, private assertion or
@@ -750,7 +760,9 @@ The fixed reasons are `informational-suite`, `phase-count`,
 `summary-reader-rejected`, and `official-method-not-bound`. They identify the
 first rejecting guard, add no summary field and do not change any verdict.
 Resource CPU samples alone do not prove hosting: the same invocation must also
-retain an xcode event sample with `runner_hosted: true`.
+retain an xcode event sample with `runner_hosted: true`. This is a producer
+pre-check; the reporter still verifies the current attempt's runner group and
+labels through the jobs API, so a forged environment flag is insufficient.
 
 All criteria are required:
 
