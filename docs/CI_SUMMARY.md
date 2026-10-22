@@ -160,7 +160,7 @@ and unknown measurements remain null.
 | `sample_count`, `truncated` | Integer 0–43,201 retained samples and boolean indicating incomplete collection or retention |
 | `idle_percent_min`, `idle_percent_median` | Host idle CPU percentages 0–100 or null; minimum cannot exceed median |
 | `load_1m_max`, `app_cpu_percent_peak` | Maximum 1-minute load and peak App CPU percentage, 0–10^6 or null; process CPU uses one core = 100% and may exceed 100% |
-| `sampler_wall_seconds`, `sampler_cpu_seconds` | Process-snapshot collection wall time 0–86,400 and collector plus child-process CPU time 0–10^12 seconds, or null; sleeping and separately bounded host reads are excluded; periodic sampling has the separate bounded allowance described below |
+| `sampler_wall_seconds`, `sampler_cpu_seconds` | Host-read plus process-snapshot collection wall time 0–86,400 and collector plus child-process CPU time 0–10^12 seconds, or null; interval sleeping is excluded; periodic sampling has the bounded allowances described below |
 | `first_failure_elapsed_seconds` | Offset from this case's sampling origin, 0–case duration, or null if no failure is bound; absence never proves a passing case |
 | `failure_samples` | At most six samples, no more than `sample_count`, strictly increasing by `elapsed_seconds`, within both the case duration and ±5 seconds of the first failure; empty when the failure time is unavailable |
 
@@ -206,24 +206,42 @@ reads are less than one second apart, including a quick read after a late worker
 each successful read still refreshes the tick and monotonic-time baseline.
 Host idle/load ticks follow two-second
 deadlines, skipping missed deadlines rather than issuing bursts. Each native host
-read runs in a daemon worker with a 0.2-second wait cap; observed host-read wall
-time has a separate five-second allowance per case, including thread startup.
+read runs in one reused daemon worker per case with a 0.2-second wait cap;
+observed host-read wall time has a separate five-second allowance per case,
+including the one-time thread startup and each request's response wait. Native
+Mach statistics and `getloadavg` launch no subprocess. Reusing the worker avoids
+charging thread creation and its scheduling handoff on every two-second tick.
 A timed-out host read skips ticks while its worker is still running, then fresh
 reads resume within the remaining allowance; late values are discarded. Stop
-never waits for another interval or starts a new process snapshot. These cheap
-reads do not consume the process-snapshot pool and are excluded from
-`sampler_wall_seconds`.
+never waits for another interval or starts a new process snapshot. The worker is
+signalled to exit on every case exit, including when idle between requests.
+After each successful tick, the collector reserves one 0.2-second call and spreads
+the remaining allowance over the invocation's existing Xcode timeout using the
+latest measured read cost. If two-second ticks would exhaust that allowance,
+it increases the interval to a multiple of two seconds, marking truncation.
+Four-second ticks still support a strictly before/after pair within ±5 seconds
+when the host responds and Xcode remains running. Arbitrarily slow reads cannot
+guarantee that window within five seconds of total collection cost: longer gaps,
+timed-out reads and exhausted budgets retain missing evidence and fail closed.
+No bound or test deadline is extended. Reaching the retained-sample cap evicts the
+oldest sample instead of ending collection, preserving recent actual samples.
+`sample_interval_seconds` remains the nominal two-second interval. Host costs now
+contribute to `sampler_wall_seconds`; older receipts reporting zero when process
+snapshots were disabled did not measure host cost.
 Process snapshots run at most once per ten seconds and have a separate
 180-second active-wall allowance shared across
 the job ledger. Each successor subtracts all persisted `sampler_wall_seconds`
-costs; an unknown predecessor cost exhausts the allowance conservatively. An
+costs, now conservatively including predecessor host reads;
+an unknown predecessor cost exhausts the allowance conservatively. An
 unavailable inherited diagnostic ledger disables process snapshots instead of granting
 a fresh allowance, while idle/load ticks continue. Hosted preparation ledger IO
 has a 0.1-second cap; an IO timeout can make inherited Xcode accounting unavailable
 even on a Release lifecycle shard that has not sampled yet. No
 fresh allowance is granted per case. This preserves the existing 10-second
 Xcode diagnostic pool for anomaly diagnostics, and keeps
-host sampler running through a 20–30 minute shard. At a ten-second process cadence,
+host sampler running through a 20–30 minute shard. The independent host cap remains
+five seconds per invocation and at most 64 invocations per receipt; CPU work is
+bounded by these active-wall allowances. At a ten-second process cadence,
 180 snapshots costing 1.1 seconds each would exhaust the pool near the end of a
 30-minute shard; only process snapshots stop, preserving late idle/load evidence.
 Ticks without a scheduled process snapshot have null categories and do not mark

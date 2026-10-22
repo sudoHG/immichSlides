@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import ctypes
 import json
+import math
 import os
+import queue
 import re
 import statistics
 import subprocess
@@ -211,6 +213,29 @@ class HostProbe:
         self.spent = 0.0
         self.unavailable = False
         self.done = None
+        self.worker = None
+        self.requests = queue.Queue(maxsize=1)
+        self.last_cost = 0.0
+
+    def _run(self):
+        try:
+            while True:
+                request = self.requests.get()
+                if request is None or self.unavailable:
+                    break
+                done, values = request
+                try:
+                    if self.host is None:
+                        self.host = HostCpu()
+                        self.host.idle()
+                    values.append(resource_sample(self.host, self.device, None))
+                except (OSError, ValueError, TypeError, AttributeError):
+                    pass
+                finally:
+                    done.set()
+        finally:
+            if self.host is not None:
+                self.host.close()
 
     def sample(self):
         remaining = HOST_WALL_BUDGET_SECONDS - self.spent
@@ -222,39 +247,35 @@ class HostProbe:
             return None
         done, values = Event(), []
         self.done = done
-        def read():
-            try:
-                if self.host is None:
-                    self.host = HostCpu()
-                    self.host.idle()
-                values.append(resource_sample(self.host, self.device, None))
-            except (OSError, ValueError, TypeError, AttributeError):
-                pass
-            finally:
-                if self.unavailable and self.host is not None:
-                    self.host.close()
-                done.set()
         started = time.perf_counter()
         try:
-            Thread(target=read, daemon=True).start()
+            # Pay thread startup once; per-tick startup can exhaust the cap on a loaded host.
+            if self.worker is None:
+                self.worker = Thread(target=self._run, daemon=True)
+                self.worker.start()
+            self.requests.put_nowait((done, values))
             finished = done.wait(max(0, min(HOST_SAMPLE_TIMEOUT_SECONDS, remaining)
                                         - (time.perf_counter() - started)))
-        except (OSError, RuntimeError):
+        except (OSError, RuntimeError, queue.Full):
             finished = False
-        self.spent += time.perf_counter() - started
+        self.last_cost = time.perf_counter() - started
+        self.spent += self.last_cost
         self.unavailable = finished and not values
         return values[0] if finished and values else None
 
     def close(self):
         self.unavailable = True
-        if self.host is not None and (self.done is None or self.done.is_set()):
-            self.host.close()
+        # Wake an idle worker; an in-flight read observes shutdown before taking more work.
+        try:
+            self.requests.put_nowait(None)
+        except queue.Full:
+            pass
 
 
 class CaseSampler:
     """Share a bounded sampling allowance across cases, independently of test waits."""
 
-    def __init__(self, recorder, device):
+    def __init__(self, recorder, device, *, duration_limit_seconds=MAX_DIAGNOSTIC_SECONDS):
         self.recorder = recorder
         self.device = device
         self.sequence = recorder.next_sequence() if recorder is not None else 0
@@ -263,6 +284,7 @@ class CaseSampler:
         self.duration = 0.0
         self.samples = []
         self.spent = 0.0
+        self.host_spent = 0.0
         self.truncated = False
         self.first_failure = None
         self.stopped = threading.Event()
@@ -271,6 +293,7 @@ class CaseSampler:
         self.finished = False
         self.closed = False
         self.clock_stable = False
+        self.duration_limit = min(MAX_DIAGNOSTIC_SECONDS, duration_limit_seconds)
 
     def start(self):
         if self.recorder is None or len(self.recorder.case_resources) >= MAX_RESOURCE_CASES:
@@ -302,15 +325,10 @@ class CaseSampler:
             next_tick = time.monotonic() + SAMPLE_INTERVAL_SECONDS
             next_process = next_tick
             while not self.stopped.wait(max(0, next_tick - time.monotonic())):
-                if len(self.samples) >= MAX_RESOURCE_SAMPLES:
-                    self.truncated = True
-                    break
                 sample = host.sample()
                 elapsed = time.monotonic() - self.origin
                 if sample is None:
                     self.truncated = True
-                    if host.unavailable:
-                        break
                     next_tick = time.monotonic() + SAMPLE_INTERVAL_SECONDS
                     continue
                 sample = dict(sample)
@@ -336,7 +354,19 @@ class CaseSampler:
                     self.truncated = True
                     break
                 self.samples.append({"elapsed_seconds": elapsed, **sample})
-                next_tick += SAMPLE_INTERVAL_SECONDS
+                if len(self.samples) > MAX_RESOURCE_SAMPLES:
+                    self.truncated = True
+                    del self.samples[0]
+                interval = SAMPLE_INTERVAL_SECONDS
+                remaining = HOST_WALL_BUDGET_SECONDS - host.spent - HOST_SAMPLE_TIMEOUT_SECONDS
+                # Hold one call in reserve and spread the rest through the invocation's existing deadline.
+                if remaining > 0:
+                    needed = max(0, self.duration_limit - elapsed) * host.last_cost / remaining
+                    interval *= max(1, math.ceil(needed / interval))
+                else:
+                    interval = max(interval, self.duration_limit - elapsed)
+                self.truncated |= interval > SAMPLE_INTERVAL_SECONDS
+                next_tick += interval
                 # Skip missed deadlines instead of issuing a burst after host descheduling.
                 if next_tick <= time.monotonic():
                     next_tick = time.monotonic() + SAMPLE_INTERVAL_SECONDS
@@ -345,6 +375,7 @@ class CaseSampler:
         finally:
             if host is not None:
                 host.close()
+                self.host_spent = host.spent
             self.finished = True
 
     def stop(self):
@@ -381,7 +412,7 @@ class CaseSampler:
         case = {"sequence": self.sequence, "duration_seconds": self.duration, "sample_interval_seconds": SAMPLE_INTERVAL_SECONDS,
             "sample_count": len(samples), "truncated": self.truncated, "idle_percent_min": min(idle) if idle else None,
             "idle_percent_median": statistics.median(idle) if idle else None, "load_1m_max": max(load) if load else None,
-            "app_cpu_percent_peak": max(app) if app else None, "sampler_wall_seconds": self.spent if self.finished else None,
+            "app_cpu_percent_peak": max(app) if app else None, "sampler_wall_seconds": self.spent + self.host_spent if self.finished else None,
             "sampler_cpu_seconds": None, "first_failure_elapsed_seconds": self.first_failure, "failure_samples": near[:6]}
         try:
             validate_case_resources([case])
