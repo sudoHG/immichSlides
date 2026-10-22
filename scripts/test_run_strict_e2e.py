@@ -2683,12 +2683,13 @@ class StrictCITracerTests(unittest.TestCase):
         import copy
         import contextlib
         import io
-        from ci_summary import parse_summary
+        from ci_summary import identity_key, parse_summary
         from ci_nightly import aggregate_nightly
         from ci_report import method_observations
         from test_ci_summary import hosted_timeout_summary
 
-        mutations = (None, "informational", "local", "self-hosted", "missing host", "conflicting host", "missing samples",
+        mutations = (None, "informational", "local", "self-hosted", "missing host", "conflicting host", "no events",
+            "null host sample", "wrong host sequence", "wrong host scope", "invalid ledger", "missing samples",
             "unbound epoch", "one-sided", "idle above limit", "null idle", "outside window", "ambiguous invocation",
             "unknown surface", "wrong surface", "wrong element", "wrong step", "snapshot hang", "visible controls",
             "BLACK", "BLANK", "UNRECOGNIZABLE", "process", "validator", "scene_identity", "control_state",
@@ -2704,6 +2705,16 @@ class StrictCITracerTests(unittest.TestCase):
                 resource = ledger["case_resources"][0]
                 if mutation in {"self-hosted", "missing host"}:
                     ledger["events"][0]["sample"]["runner_hosted"] = False if mutation == "self-hosted" else None
+                elif mutation == "no events":
+                    ledger["events"] = []
+                elif mutation == "null host sample":
+                    ledger["events"][0]["sample"] = None
+                elif mutation == "wrong host sequence":
+                    ledger["events"][0]["sequence"] = resource["sequence"] + 1
+                elif mutation == "wrong host scope":
+                    ledger["events"][0].update(scope="preparation", phase="simulator-readiness")
+                elif mutation == "invalid ledger":
+                    ledger["schema_version"] = 99
                 elif mutation == "conflicting host":
                     event = copy.deepcopy(ledger["events"][0])
                     event["sample"]["runner_hosted"] = False
@@ -2767,6 +2778,24 @@ class StrictCITracerTests(unittest.TestCase):
                 self.assertEqual(0 if mutation in {None, "informational"} else 1, code)
                 self.assertEqual(mutation is None, "environment_limit" in observed)
                 self.assertEqual(mutation is None, "::warning title=Environment-limited strict timing::" in output.getvalue())
+                rejection_lines = [line for line in output.getvalue().splitlines()
+                    if "environment-limit: not eligible (" in line]
+                if mutation in {None, "local"}:
+                    self.assertEqual([], rejection_lines)
+                else:
+                    reason = {"informational": "informational-suite", "self-hosted": "hosting-not-proven",
+                        "missing host": "hosting-not-proven", "conflicting host": "hosting-not-proven",
+                        "no events": "missing-xcode-host-samples", "null host sample": "missing-xcode-host-samples",
+                        "wrong host sequence": "missing-xcode-host-samples", "wrong host scope": "missing-xcode-host-samples",
+                        "invalid ledger": "invalid-bounded-receipt", "outside window": "invalid-bounded-receipt",
+                        "ambiguous invocation": "failure-resource-count",
+                        "unbound epoch": "failure-resource-count", "outer timeout": "invocation-not-verified",
+                        "interrupted": "invocation-not-verified", "missing log": "invocation-not-verified",
+                        "rebuild": "invocation-not-verified", "changed products": "invocation-not-verified",
+                        "official error": "invocation-not-verified", "case infrastructure": "invocation-not-verified",
+                        "missing method": "invocation-not-verified"}.get(mutation, "proof-not-eligible")
+                    self.assertEqual([identity_key(observed["identity"]) + ": environment-limit: not eligible (" + reason + ")"],
+                        rejection_lines)
                 informational = [item["suite"] for item in json.loads((Path(raw) / "manifest.json").read_text()).get("informational", [])]
                 aggregate = aggregate_nightly(summary["population"]["declared"], [summary], live_in_scope=False,
                     informational=informational)
@@ -2856,8 +2885,14 @@ class StrictCITracerTests(unittest.TestCase):
                 elif mutation == "infrastructure":
                     candidate["infrastructure"].append({"code": "cleanup-failed", "message": "Synthetic cleanup failure"})
                 proof = dict(summary["population"]["observed"][0]["environment_limit"], unexpected="refused")
+                rejections = {"stale-case": "stale-reason"}
                 with mock.patch("ci_failure_diagnostics.environment_limit_evidence", return_value=proof) if mutation == "bad projection" else ExitStack():
-                    self.assertEqual(1, produce_environment_limits(candidate, trace["warm"]))
+                    self.assertEqual(1, produce_environment_limits(candidate, trace["warm"], rejections=rejections))
+                from ci_summary import identity_key
+                expected = ({identity_key(candidate["population"]["observed"][0]["identity"]): "summary-reader-rejected"}
+                            if mutation == "bad projection" else
+                            {identity_key(extra): "phase-count"} if mutation == "mixed" else {})
+                self.assertEqual(expected, rejections)
                 observed = parse_summary(candidate)["population"]["observed"][0]
                 self.assertEqual(mutation != "bad projection", "environment_limit" in observed)
                 self.assertEqual("failed", observed["outcome"])

@@ -141,34 +141,47 @@ class RunnerGroupCleanupError(RuntimeError):
     """Build paths must be retained if runner descendants cannot be stopped."""
 
 
-def produce_environment_limits(summary, results, *, informational=(), policy_version=None):
+def produce_environment_limits(summary, results, *, informational=(), policy_version=None, rejections=None):
     """Attach only reader-validated same-case proofs; retain every raw outcome."""
     from ci_failure_diagnostics import ENVIRONMENT_LIMIT_FIELD, environment_limit_evidence
     from ci_bounded_diagnostics import validate_receipt
     summary.pop("strict_case_evidence", None)
+    if rejections is not None:
+        rejections.clear()
     for index, entry in enumerate(summary["population"]["observed"]):
+        def reject(reason):
+            if rejections is not None and entry["outcome"] == "failed":
+                rejections[identity_key(entry["identity"])] = reason
+
         if entry["identity"]["dimensions"]["suite"] in informational:
+            reject("informational-suite")
             continue
         phases = [phase for phase in results if phase["identity"] == entry["identity"]]
         if len(phases) != 1:
+            reject("phase-count")
             continue
         phase = phases[0]
         if (phase.get("infrastructure") or phase.get("official_error")
                 or phase.get("exit_code") in {None, 124, 130} or phase.get("log_present") is not True
                 or phase.get("build_operations") != 0 or phase.get("products_unchanged") is not True):
+            reject("invocation-not-verified")
             continue
+        rejection_reason = "invalid-bounded-receipt"
         try:
             ledger = phase.get("bounded_diagnostics")
             validate_receipt(ledger)
             resources = ledger.get("case_resources", [])
             failures = [resource for resource in resources if resource["first_failure_elapsed_seconds"] is not None]
             if len(failures) != 1:
+                reject("failure-resource-count")
                 continue
             samples = [event["sample"] for event in ledger["events"] if event["scope"] == "xcode"
                 and event["sequence"] == failures[0]["sequence"] and event["sample"] is not None]
             hosted = bool(samples) and all(sample["runner_hosted"] is True for sample in samples)
             proof = environment_limit_evidence(summary, entry, resources, runner_hosted=hosted, policy_version=policy_version)
             if proof is None:
+                reject("missing-xcode-host-samples" if not samples else
+                       "hosting-not-proven" if not hosted else "proof-not-eligible")
                 continue
             # Validate hosting, attempt shape and original case binding through the merged reader.
             candidate = copy.deepcopy(summary)
@@ -176,6 +189,7 @@ def produce_environment_limits(summary, results, *, informational=(), policy_ver
             target[ENVIRONMENT_LIMIT_FIELD] = target["attempts"][0][ENVIRONMENT_LIMIT_FIELD] = proof
             candidate.setdefault("strict_case_evidence", []).append({"identity": entry["identity"],
                 "bounded_diagnostics": ledger})
+            rejection_reason = "summary-reader-rejected"
             parse_summary(candidate)
             from ci_report import method_observations
             # Other incomplete cases retain red status without hiding a qualified case's warning.
@@ -183,11 +197,14 @@ def produce_environment_limits(summary, results, *, informational=(), policy_ver
             scoped["population"] = {"declared": [entry["identity"]],
                 "compiled": [identity for identity in scoped["population"]["compiled"] if identity == entry["identity"]],
                 "observed": [target], "deselected": [], "removed_by_pr": []}
+            rejection_reason = "official-method-not-bound"
             methods, missing = method_observations(scoped, {"warm": [phase]}, runner_hosted=hosted)
             claimed = [method for method in methods if method.get(ENVIRONMENT_LIMIT_FIELD) == proof]
             if missing or len(claimed) != 1:
+                reject("official-method-not-bound")
                 continue
         except (ValueError, TypeError, KeyError, AttributeError, IndexError):
+            reject(rejection_reason)
             continue
         entry[ENVIRONMENT_LIMIT_FIELD] = entry["attempts"][0][ENVIRONMENT_LIMIT_FIELD] = proof
         summary["strict_case_evidence"] = candidate["strict_case_evidence"]
@@ -353,6 +370,7 @@ def main(argv=None):
     simulator_prepared = False
     preparation_failure = None
     exit_code = 1
+    environment_rejections = {}
     from strict_e2e_resource_diagnostics import NativeActivityBudget
     native_budget = NativeActivityBudget()
 
@@ -381,7 +399,8 @@ def main(argv=None):
                 item["attempts"][0]["first_failure"] = preparation_failure
         diagnostics.attach(summary)
         exit_code = produce_environment_limits(summary, results,
-            informational=[entry["suite"] for entry in manifest.get("informational", [])])
+            informational=[entry["suite"] for entry in manifest.get("informational", [])],
+            rejections=environment_rejections)
         write_summary(summary, records)
 
     def invoke(case, evidence, derived, warm):
@@ -571,6 +590,10 @@ def main(argv=None):
         finally:
             signal.signal(signal.SIGTERM, previous_term)
     from ci_failure_diagnostics import render_environment_limit
+    if (summary["source"]["workflow_path"] == ".github/workflows/ci-nightly.yml"
+            and summary["source"]["event"] in {"schedule", "workflow_dispatch"}):
+        for key, reason in environment_rejections.items():
+            print(f"{key}: environment-limit: not eligible ({reason})", flush=True)
     for entry in summary["population"]["observed"]:
         if "environment_limit" in entry:
             print("::warning title=Environment-limited strict timing::" + identity_key(entry["identity"])

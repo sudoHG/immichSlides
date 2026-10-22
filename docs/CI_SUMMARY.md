@@ -742,6 +742,16 @@ candidate summary and official method binding validate. Invalid or ambiguous evi
 emits no proof and retains the raw failure. No unknown field, private assertion or
 free text is allowed.
 
+At finalization, nightly strict logs emit one
+`environment-limit: not eligible (<reason>)` line per rejected failed case.
+The fixed reasons are `informational-suite`, `phase-count`,
+`invocation-not-verified`, `invalid-bounded-receipt`, `failure-resource-count`,
+`missing-xcode-host-samples`, `hosting-not-proven`, `proof-not-eligible`,
+`summary-reader-rejected`, and `official-method-not-bound`. They identify the
+first rejecting guard, add no summary field and do not change any verdict.
+Resource CPU samples alone do not prove hosting: the same invocation must also
+retain an xcode event sample with `runner_hosted: true`.
+
 All criteria are required:
 
 1. The producer records GitHub-hosted execution. The reporter additionally binds the
