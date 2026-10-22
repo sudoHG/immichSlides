@@ -313,7 +313,7 @@ extension AccessLifecycleTVOSUITests {
         let midpointSetupAt = Date()
         ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
         moveFocus(.right, to: playPauseButton, maximumPresses: 3, message: "Focus must reach play/pause.")
-        // Reuse main's two control/focus allocations, conditional readback and half-cycle as one deadline.
+        // Pool both control/focus allocations, conditional readback and half-cycle under one deadline.
         let value = String(describing: playPauseButton.value ?? "")
         let isPlaying = value.contains("暂停") || value.lowercased().contains("pause")
         let midpointDeadline = midpointSetupAt.addingTimeInterval(
@@ -351,21 +351,37 @@ extension AccessLifecycleTVOSUITests {
         var snapshots = app.evidenceSnapshotsByIdentifier()
         if snapshots[AccessLifecycleContract.hiddenControlBarPlaybackIdentifier]?.hasFocus == true {
             FirstFailureRemote.press(.up)
-            while Date() < focusDeadline && snapshots["slideshow.control.playPause.button"]?.hasFocus != true {
-                snapshots = app.evidenceSnapshotsByIdentifier()
-                if snapshots["slideshow.control.playPause.button"]?.hasFocus == true { break }
-                RunLoop.current.run(
-                    until: min(focusDeadline, Date().addingTimeInterval(Timing.focusPoll)))
-            }
+        }
+        // Auto-hide can hand off focus while the control bar still appears visible.
+        while Date() < focusDeadline && snapshots["slideshow.control.playPause.button"]?.hasFocus != true {
+            snapshots = app.evidenceSnapshotsByIdentifier()
+            if snapshots["slideshow.control.playPause.button"]?.hasFocus == true { break }
+            RunLoop.current.run(
+                until: min(focusDeadline, Date().addingTimeInterval(Timing.focusPoll)))
         }
         XCTAssertTrue(
             Date() < focusDeadline && snapshots["slideshow.control.playPause.button"]?.hasFocus == true,
             "tvOS midpoint pause requires Play/Pause focus after at most one wake within the original step budget."
         )
+        let playingValue = String(describing: snapshots["slideshow.control.playPause.button"]?.value ?? "")
         FirstFailureRemote.press(.select)
         let midpointPauseReturnedAt = Date()
+        var didPause = false
+        while Date() < focusDeadline {
+            let observation = app.evidenceSnapshotsByIdentifier()
+            if let playPause = observation["slideshow.control.playPause.button"] {
+                let pausedValue = String(describing: playPause.value ?? "")
+                if !pausedValue.isEmpty && pausedValue != playingValue {
+                    didPause = true
+                    break
+                }
+            }
+            RunLoop.current.run(
+                until: min(focusDeadline, Date().addingTimeInterval(Timing.focusPoll)))
+        }
         XCTAssertTrue(
-            midpointPauseReturnedAt < midpointDeadline && midpointPauseReturnedAt < focusDeadline,
+            didPause && Date() < focusDeadline
+                && midpointPauseReturnedAt < midpointDeadline && midpointPauseReturnedAt < focusDeadline,
             "tvOS midpoint pause must return in the anchored stable window within the original step budget."
         )
         record("playback.pause")

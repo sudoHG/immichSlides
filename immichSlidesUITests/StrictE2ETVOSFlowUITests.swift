@@ -488,7 +488,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             waitUntil(timeout: TestWait.seconds(.product(4))) {
                 String(describing: playPauseButton.value ?? "") != pausedValue
             },
-            "Pressing Select again after pausing must resume autoplay."
+            "Pressing Select after pausing must resume autoplay."
         )
         let autoPlayBaseline = strictSceneFrameObservation(app: app)
         RunLoop.current.run(until: Date().addingTimeInterval(Timing.autoPlayObservationSeconds))
