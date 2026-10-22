@@ -105,7 +105,7 @@ enum FirstFailureContext {
         return (timeline, step, element, gate)
     }
 
-    /// Scope facts to the timeout assertion, including the frozen-transition and Next failures.
+    /// Attach timeout facts; per-test reset protects against XCTest aborts that skip the defer.
     static func withAlbumCaptureGate(_ gate: AlbumCaptureGate, _ failure: () -> Void) {
         guard isEnabled else { failure(); return }
         lock.lock()

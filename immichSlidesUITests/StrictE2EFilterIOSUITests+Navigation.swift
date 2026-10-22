@@ -210,6 +210,7 @@ extension StrictE2EFilterIOSUITests {
                 stable: render.isEmpty ? nil : StrictE2ESceneCapture.isStableWindow(before),
                 paused: render["playbackPaused"].flatMap(Bool.init),
                 entryHintHidden: before["entryHintVisible"].flatMap(Bool.init).map { !$0 },
+                // Advance means observed at any poll, not necessarily the last observation.
                 advanced: previousScene == nil ? nil : (hasObservedHistoryAdvance ? true : didAdvanceHistory),
                 layersChanged: previousScene == nil || render["layerIDs"] == nil || previousRender["layerIDs"] == nil
                     ? nil : didChangeLayers,
