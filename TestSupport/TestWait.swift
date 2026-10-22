@@ -58,11 +58,36 @@ struct FirstFailureTimeline {
 }
 
 enum FirstFailureContext {
+    struct AlbumCaptureGate {
+        enum Phase: String {
+            case unknown, empty, stablePhoto, grace, transition, loading, incomingFromLoading, paused, sourceError
+        }
+
+        let stable: Bool?
+        let paused: Bool?
+        let entryHintHidden: Bool?
+        let advanced: Bool?
+        let layersChanged: Bool?
+        let manifestComplete: Bool?
+        let phase: Phase
+
+        var projection: [String: Any] {
+            func observed(_ value: Bool?) -> Any { value.map { $0 as Any } ?? NSNull() }
+            return [
+                "kind": "album-capture", "stable": observed(stable), "paused": observed(paused),
+                "entry_hint_hidden": observed(entryHintHidden), "advanced": observed(advanced),
+                "layers_changed": observed(layersChanged), "manifest_complete": observed(manifestComplete),
+                "phase": phase.rawValue
+            ]
+        }
+    }
+
     static var isEnabled: Bool { ProcessInfo.processInfo.environment["STRICT_E2E_FIRST_FAILURE_ENABLED"] == "1" }
     private static let lock = NSLock()
     private static var timeline = FirstFailureTimeline()
     private static var step = "unknown"
     private static var element = "unknown"
+    private static var gate: AlbumCaptureGate?
 
     static func reset() {
         guard isEnabled else { return }
@@ -71,12 +96,27 @@ enum FirstFailureContext {
         timeline = FirstFailureTimeline()
         step = "unknown"
         element = "unknown"
+        gate = nil
     }
 
-    static func snapshot() -> (timeline: FirstFailureTimeline, step: String, element: String) {
+    static func snapshot() -> (timeline: FirstFailureTimeline, step: String, element: String, gate: AlbumCaptureGate?) {
         lock.lock()
         defer { lock.unlock() }
-        return (timeline, step, element)
+        return (timeline, step, element, gate)
+    }
+
+    /// Attach timeout facts; per-test reset protects against XCTest aborts that skip the defer.
+    static func withAlbumCaptureGate(_ gate: AlbumCaptureGate, _ failure: () -> Void) {
+        guard isEnabled else { failure(); return }
+        lock.lock()
+        self.gate = gate
+        lock.unlock()
+        defer {
+            lock.lock()
+            self.gate = nil
+            lock.unlock()
+        }
+        failure()
     }
 
     static func mark(_ step: String, element: String = "unknown") {

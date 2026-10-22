@@ -57,21 +57,41 @@ final class PrivateEvidenceDirectoryTests: XCTestCase {
                     continueMark: "A1", earlyMark: "A2", elapsedSeconds: 1, intervalSeconds: 30)
             }
         }
+        let gate = FirstFailureContext.AlbumCaptureGate(
+            stable: false, paused: true, entryHintHidden: true, advanced: nil,
+            layersChanged: nil, manifestComplete: false, phase: .transition)
         for (index, test) in cases.enumerated() {
-            XCTAssertThrowsError(try runBusinessFlow(test)) { error in
-                XCTAssertEqual(
-                    String(describing: error),
-                    String(
-                        describing: AccessLifecycleContract.AssertionError.message(
-                            "The same public pattern must stay for the first half of T after Continue")))
+            FirstFailureContext.withAlbumCaptureGate(gate) {
+                do {
+                    try runBusinessFlow(test)
+                    XCTFail("The synthetic business flow must throw its original failure")
+                } catch {
+                    XCTAssertEqual(
+                        String(describing: error),
+                        String(
+                            describing: AccessLifecycleContract.AssertionError.message(
+                                "The same public pattern must stay for the first half of T after Continue")))
+                }
             }
+            XCTAssertNil(FirstFailureContext.snapshot().gate)
             let data = try Data(contentsOf: root.appendingPathComponent("\(index).json"))
             let receipt = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            let recordedGate = try XCTUnwrap(receipt["gate"] as? [String: Any])
+            XCTAssertEqual(
+                Set(recordedGate.keys),
+                Set([
+                    "kind", "stable", "paused", "entry_hint_hidden", "advanced", "layers_changed",
+                    "manifest_complete", "phase"
+                ]))
             XCTAssertEqual(receipt["action"] as? String, "play-pause")
             XCTAssertEqual(receipt["step"] as? String, "wait-scene")
             let timing = try XCTUnwrap(receipt["timing"] as? [String: Any])
             XCTAssertNotNil(timing["since_action_returned_seconds"] as? Double)
             XCTAssertEqual(FirstFailureContext.snapshot().timeline.action, "terminate")
+        }
+        FirstFailureContext.withAlbumCaptureGate(gate) {
+            FirstFailureContext.reset()
+            XCTAssertNil(FirstFailureContext.snapshot().gate)
         }
         XCTAssertThrowsError(
             try FirstFailureEvidence.preservingThrownFailure(skipped) { throw XCTSkip("Synthetic environment skip") }
