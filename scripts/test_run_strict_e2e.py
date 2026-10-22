@@ -3560,15 +3560,22 @@ raise SystemExit(65)
         def slow_ps(*args, **kwargs):
             clock[0] += 1.1
             return SimpleNamespace(returncode=0, stdout="10 1 4 xcodebuild\n")
+        probes = []
         def host_sample():
-            clock[0] += 0.02
+            clock[0] += 0.04
+            probes[-1].spent += 0.04
+            probes[-1].request_count += 1
             return sample
+        def host_probe(device):
+            probe = SimpleNamespace(sample=host_sample, close=lambda: None, unavailable=False, spent=0, request_count=0)
+            probes.append(probe)
+            return probe
         event = SimpleNamespace(wait=long_wait, set=lambda: None, is_set=lambda: False)
         recorder = diagnostics.Recorder()
         recorder.charged["xcode"] = diagnostics.COLLECTION_BUDGET_SECONDS["xcode"]
-        with mock.patch.object(resources.threading, "Event", return_value=event), \
+        with tempfile.TemporaryDirectory() as raw, \
                 mock.patch.object(resources.threading, "Thread", side_effect=lambda *, target, daemon: SimpleNamespace(start=target, join=lambda timeout: None)), \
-                mock.patch.object(resources, "HostProbe", return_value=SimpleNamespace(sample=host_sample, close=lambda: None, unavailable=False, spent=0, request_count=1)), \
+                mock.patch.object(resources, "HostProbe", side_effect=host_probe), \
                 mock.patch.object(resources, "resource_sample", return_value=sample), \
                 mock.patch.object(resources.sys, "platform", "darwin"), \
                 mock.patch.object(resources.subprocess, "run", side_effect=slow_ps) as ps, \
@@ -3576,31 +3583,59 @@ raise SystemExit(65)
                 mock.patch.object(resources.time, "time", side_effect=lambda: 100 + clock[0]), \
                 mock.patch.object(resources.time, "perf_counter", side_effect=lambda: clock[0]):
             for index in range(5):
-                sampler = resources.CaseSampler(recorder, "device").start()
+                sampler = resources.CaseSampler(recorder, "device")
+                sampler.stopped = event
+                sampler.start()
                 sampler.stop()
                 sampler.bind_failure(sampler.epoch + 358)
+                recorder.save(Path(raw) / "job.json")
+                recorder = diagnostics.Recorder()
+                recorder.load(Path(raw) / "job.json")
                 end[0] += 360
         case = recorder.case_resources[-1]
         self.assertTrue(all(case["sample_count"] >= 170 for case in recorder.case_resources))
         self.assertTrue(case["failure_samples"], "late failure must retain nearby resource evidence")
         self.assertGreater(case["failure_samples"][-1]["elapsed_seconds"], 355)
-        self.assertTrue(all(case["sampler_wall_seconds"] < 45 for case in recorder.case_resources))
-        self.assertLess(sum(case["sampler_wall_seconds"] for case in recorder.case_resources), 181.1)
-        self.assertLessEqual(ps.call_count, 164)
-        self.assertGreater(ps.call_count, 100)
+        self.assertTrue(all(case["sampler_wall_seconds"] - probe.spent < 45
+                            for case, probe in zip(recorder.case_resources, probes)))
+        self.assertLess(recorder.process_sampler_wall_seconds, 181.1)
+        self.assertEqual(164, ps.call_count, "host costs must not reduce the shared process-snapshot coverage")
         self.assertFalse(recorder.case_resources[0]["truncated"], "ticks between process snapshots are intentionally partial")
-        self.assertAlmostEqual(ps.call_count * 1.1, sum(case["sampler_wall_seconds"] for case in recorder.case_resources))
+        self.assertAlmostEqual(ps.call_count * 1.1, recorder.process_sampler_wall_seconds)
+        self.assertAlmostEqual(ps.call_count * 1.1 + sum(probe.spent for probe in probes),
+                               sum(case["sampler_wall_seconds"] for case in recorder.case_resources))
         self.assertAlmostEqual(10, recorder.charged["xcode"])
         self.assertEqual(0, recorder.cost["xcode"], "periodic sampling must not consume native diagnostic allowance")
         for previous_cost in (179.6, 180, None):
             recorder = diagnostics.Recorder()
             recorder.case_resources = [{**case, "sequence": 0, "sampler_wall_seconds": previous_cost}]
+            with tempfile.TemporaryDirectory() as raw:
+                path = Path(raw) / "old-job.json"
+                recorder.save(path)
+                ledger = json.loads(path.read_text())
+                ledger.pop("process_sampler_wall_seconds")
+                path.write_text(json.dumps(ledger))
+                recorder = diagnostics.Recorder()
+                recorder.load(path)
             with mock.patch.object(resources.threading, "Thread") as thread:
                 successor = resources.CaseSampler(recorder, "device").start()
                 successor.stop()
             thread.return_value.start.assert_called_once()
             self.assertEqual(0, successor.reserved)
             self.assertTrue(recorder.case_resources[-1]["truncated"])
+        # A sampler that never finished cannot return its process allowance to later cases.
+        unfinished = diagnostics.Recorder()
+        with mock.patch.object(resources.threading, "Thread"):
+            resources.CaseSampler(unfinished, "device").start().stop()
+        self.assertIsNone(unfinished.process_sampler_wall_seconds)
+        with tempfile.TemporaryDirectory() as raw:
+            unfinished.save(Path(raw) / "unfinished-job.json")
+            unfinished = diagnostics.Recorder()
+            unfinished.load(Path(raw) / "unfinished-job.json")
+        with mock.patch.object(resources.threading, "Thread"):
+            successor = resources.CaseSampler(unfinished, "device").start()
+            successor.stop()
+        self.assertEqual(0, successor.reserved)
         missing = diagnostics.Recorder()
         with tempfile.TemporaryDirectory() as raw:
             missing.load(Path(raw) / "absent-ledger.json")
@@ -3613,7 +3648,7 @@ raise SystemExit(65)
 
     def test_host_probe_caps_hung_reads_and_total_wait_without_starting_more_workers(self):
         import strict_e2e_resource_diagnostics as resources
-        for spent, expected_limit in ((0, 0.2), (4.95, 0.05), (5, None)):
+        for spent, expected_limit in ((0, 0.2), (9.95, 0.05), (10, None)):
             with self.subTest(spent=spent), mock.patch.object(resources, "Event") as event, \
                     mock.patch.object(resources, "Thread") as worker, \
                     mock.patch.object(resources.time, "perf_counter", return_value=0):
@@ -3697,7 +3732,7 @@ raise SystemExit(65)
                         probe.close()
                         self.assertTrue(probe.done.is_set(), "shutdown must release the pending request")
                     else:
-                        probe.spent = 5
+                        probe.spent = resources.HOST_WALL_BUDGET_SECONDS
                         self.assertIsNone(probe.sample())
                     worker = threading.Thread(target=targets[0], daemon=True)
                     worker.start()
@@ -3732,7 +3767,7 @@ raise SystemExit(65)
         import strict_e2e_resource_diagnostics as resources
         from types import SimpleNamespace
         sample = {"idle_percent": 4, "load_1m": 6, "cpu_percent": dict.fromkeys(resources.RESOURCE_CATEGORIES, 0)}
-        for scenario, horizon, end in (("mixed", 300, 18), ("throttled", 600, 12),
+        for scenario, horizon, end in (("mixed", 600, 18), ("throttled", 600, 12),
                                        ("reserve", 600, 600), ("mixed-window", 600, 230), ("expensive-window", 600, 230)):
             with self.subTest(scenario=scenario):
                 clock, reads = [0.0], []
@@ -3741,7 +3776,8 @@ raise SystemExit(65)
                     reads.append(clock[0])
                     probe.request_count += 1
                     timeout = (scenario == "mixed" and len(reads) == 3) or (scenario == "mixed-window" and len(reads) % 10 == 0)
-                    cost = 0.2 if timeout else (0.06 if scenario in {"reserve", "mixed-window"} else 0.02)
+                    # At H=600, 80 ms reaches the reserve; 60 ms can now cover the full horizon.
+                    cost = 0.2 if timeout else {"reserve": 0.08, "mixed-window": 0.06, "throttled": 0.04}.get(scenario, 0.02)
                     if scenario == "expensive-window":
                         # Run 39753082747 p95 total wall/sample, used only as a conservative stress proxy.
                         cost = 0.18457019993333338
@@ -3773,19 +3809,22 @@ raise SystemExit(65)
                     self.assertAlmostEqual(4, reads[3] - reads[2] - 0.2, msg="a timeout must use the planned interval")
                     self.assertAlmostEqual(4, reads[4] - reads[3], msg="a cheap success must not erase average timeout cost")
                 elif scenario == "reserve":
-                    self.assertLess(case["sampler_wall_seconds"], 4.8 + 0.06,
-                                    "leave a worst-case call reserved instead of spending through the five-second cap")
-                    self.assertGreater(sampler.samples[-1]["elapsed_seconds"], 187)
+                    self.assertTrue(9.8 < case["sampler_wall_seconds"] < 9.8 + 0.08,
+                                    "leave a worst-case call reserved instead of spending through the ten-second cap")
+                    self.assertGreater(sampler.samples[-1]["elapsed_seconds"], 400)
                     self.assertLess(max(b - a for a, b in zip(reads, reads[1:])), 4.01)
-                    self.assertLess(reads[-1], 400, "exhaustion must stop sampling rather than stretch toward H")
+                    self.assertTrue(400 < reads[-1] < 600, "exhaustion must stop sampling rather than stretch toward H")
                 elif scenario in {"mixed-window", "expensive-window"}:
-                    self.assertLess(case["sampler_wall_seconds"], 5)
-                    for failure in (143, 187):
+                    if scenario == "expensive-window":
+                        self.assertTrue(5 < case["sampler_wall_seconds"] < 10)
+                    else:
+                        self.assertLess(case["sampler_wall_seconds"], 5)
+                    for failure in (143, 187, 220):
                         sampler.bind_failure(sampler.epoch + failure)
                         offsets = [row["elapsed_seconds"] - failure for row in recorder.case_resources[0]["failure_samples"]]
                         self.assertEqual(failure, recorder.case_resources[0]["first_failure_elapsed_seconds"])
                         covered = any(-5 <= offset < 0 for offset in offsets) and any(0 < offset <= 5 for offset in offsets)
-                        self.assertEqual(scenario == "mixed-window", covered, (failure, offsets))
+                        self.assertEqual(scenario == "mixed-window" or failure < 220, covered, (failure, offsets))
                         sampler.first_failure = None
 
     def test_slow_host_ticks_cover_a_late_failure_without_spending_the_case_budget_on_thread_startup(self):
@@ -4174,15 +4213,21 @@ raise SystemExit(65)
             operation = mock.Mock()
             stale_reader.ledger_io(operation)
             operation.assert_not_called()
-            invalid = json.loads(path.read_text())
-            invalid["ledger_remaining_seconds"] = float("inf")
-            path.write_text(json.dumps(invalid))
-            invalid_reader = diagnostics.Recorder()
-            invalid_reader.load(path)
-            invalid_reader.collect("xcode", operation, cap=0.01)
-            invalid_reader.ledger_io(operation)
-            operation.assert_not_called()
-            self.assertTrue(invalid_reader.truncated)
+            ledger = json.loads(path.read_text())
+            for field, value in (("ledger_remaining_seconds", float("inf")),
+                                 ("process_sampler_wall_seconds", float("inf")),
+                                 ("process_sampler_wall_seconds", -1),
+                                 ("process_sampler_wall_seconds", True),
+                                 ("process_sampler_wall_seconds", "0")):
+                with self.subTest(field=field, value=value):
+                    path.write_text(json.dumps({**ledger, field: value}))
+                    invalid_reader = diagnostics.Recorder()
+                    invalid_reader.load(path)
+                    self.assertIn("xcode", invalid_reader.unavailable, "invalid ledger accounting must exhaust the loan")
+                    invalid_reader.collect("xcode", operation, cap=0.01)
+                    invalid_reader.ledger_io(operation)
+                    operation.assert_not_called()
+                    self.assertTrue(invalid_reader.truncated)
             successor = diagnostics.Recorder()
             successor.load(Path(raw) / "missing.json")
             operation = mock.Mock()

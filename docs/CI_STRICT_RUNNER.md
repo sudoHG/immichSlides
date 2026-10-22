@@ -1103,6 +1103,10 @@ is contention evidence, not by itself proof of why an App action was slow.
 The case manifest and `trace.json`'s `warm[].bounded_diagnostics` follow that
 [receipt binding and validation contract](CI_SUMMARY.md#bounded-infrastructure-diagnostics).
 Each `ps` query is capped at 0.5 seconds within the unchanged 180-second allowance.
+The private job ledger carries process-only cost separately from each case's
+ten-second host-read allowance; the public wall total still includes both.
+Old ledgers retain conservative combined-cost charging; see the linked contract
+for shard expansion and compatibility details.
 If no App process is identified, per-sample App CPU and its case peak remain null;
 an identified but idle App can report zero. Diagnostic shutdown or native-projection
 errors mark Xcode diagnostics unavailable and truncated without replacing the

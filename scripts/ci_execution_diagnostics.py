@@ -133,6 +133,7 @@ class Recorder:
         self.unavailable = set()
         self.events = []
         self.case_resources = []
+        self.process_sampler_wall_seconds = None
         self.truncated = False
         self.sequence = 0
         self.xcode_timed_out = False
@@ -270,6 +271,9 @@ class Recorder:
                 return None
             ledger = json.loads(raw)
             validate_receipt(ledger["receipt"])
+            process_cost = ledger.get("process_sampler_wall_seconds")
+            if process_cost is not None and finite(process_cost, MAX_DIAGNOSTIC_SECONDS) is None:
+                return None
             remaining = ledger["remaining_seconds"]
             if finite(ledger["ledger_remaining_seconds"], LEDGER_ALLOWANCE_SECONDS) is None:
                 return None
@@ -298,6 +302,7 @@ class Recorder:
         self.ledger_remaining = min(self.ledger_remaining, max(0, ledger["ledger_remaining_seconds"] - io_charge))
         self.events, self.truncated = receipt["events"], receipt["truncated"]
         self.case_resources = receipt.get("case_resources", [])
+        self.process_sampler_wall_seconds = ledger.get("process_sampler_wall_seconds")
         if self.truncated:
             self.truncate("inherited")
         self.sequence = max((event["sequence"] for event in [*self.events, *self.case_resources]), default=0)
@@ -307,7 +312,8 @@ class Recorder:
         receipt = self.receipt()
         if receipt is None:
             return
-        self._write(path, {"receipt": receipt, "remaining_seconds": {
+        self._write(path, {"receipt": receipt, "process_sampler_wall_seconds": self.process_sampler_wall_seconds,
+                          "remaining_seconds": {
             scope: max(0, budget - self.charged[scope]) for scope, budget in COLLECTION_BUDGET_SECONDS.items()}})
 
     def reserve(self, path):
@@ -316,7 +322,8 @@ class Recorder:
         if receipt is None:
             return False
         receipt["collection_seconds"] = dict.fromkeys(COLLECTION_BUDGET_SECONDS, None)
-        ledger = {"receipt": receipt, "remaining_seconds": dict.fromkeys(COLLECTION_BUDGET_SECONDS, 0)}
+        ledger = {"receipt": receipt, "process_sampler_wall_seconds": None,
+                  "remaining_seconds": dict.fromkeys(COLLECTION_BUDGET_SECONDS, 0)}
         if not self._write(path, ledger):
             self.charged = dict(COLLECTION_BUDGET_SECONDS)
             self.unavailable = set(COLLECTION_BUDGET_SECONDS)
