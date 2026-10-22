@@ -78,6 +78,111 @@ extension StrictE2EFilterIOSUITests {
     }
 
     @MainActor
+    func captureAlbumPlaybackPNG(app: XCUIApplication, name: String) throws -> Data {
+        let settleDeadline = Date().addingTimeInterval(TestWait.seconds(.product(0.8)))
+        let deadline = settleDeadline.addingTimeInterval(TestWait.seconds(.product(4)))
+        RunLoop.current.run(until: settleDeadline)
+        revealPlaybackControls(app: app)
+        guard let capture = captureStableAlbumPixels(app: app, deadline: deadline) else { return Data() }
+        XCTAssertFalse(capture.png.isEmpty, "Playback screenshot must not be empty: \(name)")
+        let attachment = XCTAttachment(data: capture.png, uniformTypeIdentifier: "public.png")
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        try StrictE2EVisualEvidence.writeRequiredPNG(capture.png, name: name)
+        return capture.png
+    }
+
+    @MainActor
+    private func captureStableAlbumPixels(
+        app: XCUIApplication, deadline: Date
+    ) -> (png: Data, requestedAt: TimeInterval, returnedAt: TimeInterval)? {
+        // Compare decoded, full-resolution color pixels; a logical stable probe can precede presentation.
+        let minimumPairSeconds = TestWait.seconds(.product(0.6))
+        var previousPixels: Data?
+        var previousFormat: [Int] = []
+        var previousReturnedAt: Date?
+        var png = Data()
+        var requestedAt: TimeInterval = .zero
+        var returnedAt: TimeInterval = .zero
+        var captureCount = 0
+        var pairSeconds: TimeInterval = .zero
+        FirstFailureContext.mark("capture-frame", element: "app-window")
+        let isStable = TestWait.until(.product(max(.zero, deadline.timeIntervalSinceNow))) {
+            guard Date() < deadline else { return false }
+            if let previousReturnedAt, Date().timeIntervalSince(previousReturnedAt) < minimumPairSeconds {
+                return false
+            }
+            requestedAt = Date().timeIntervalSince1970
+            pairSeconds = previousReturnedAt.map { requestedAt - $0.timeIntervalSince1970 } ?? .zero
+            let screenshot = app.screenshotForFailureEvidence()
+            captureCount += 1
+            returnedAt = Date().timeIntervalSince1970
+            png = screenshot.pngRepresentation
+            guard let image = screenshot.image.cgImage, let buffer = image.dataProvider?.data,
+                Date() < deadline
+            else { return false }
+            let pixels = buffer as Data
+            let format = [
+                image.width, image.height, image.bytesPerRow, image.bitsPerComponent, image.bitsPerPixel,
+                Int(image.bitmapInfo.rawValue)
+            ]
+            let matches = previousFormat == format && previousPixels == pixels
+            previousPixels = pixels
+            previousFormat = format
+            previousReturnedAt = Date(timeIntervalSince1970: returnedAt)
+            return matches && Date() < deadline
+        }
+        guard isStable else {
+            XCTFail("Album capture pixels must match at least 0.6 seconds apart within the playback capture budget.")
+            return nil
+        }
+        print(
+            "Album pixel stability: captures=\(captureCount), pairSeconds=\(pairSeconds), remainingSeconds=\(deadline.timeIntervalSinceNow)"
+        )
+        return (png, requestedAt, returnedAt)
+    }
+
+    @MainActor
+    func prepareAlbumCapturePlayback(app: XCUIApplication, shouldUseSceneProbes: Bool = false) -> Bool {
+        let driver = IOSDriver(app: app)
+        driver.applyPlaybackSettings([.interval30Seconds])
+        #if DEBUG
+        if shouldUseSceneProbes {
+            // Existing targets keep their frozen interval; observe a new target before preparing Pause.
+            let deadline = Date().addingTimeInterval(TestWait.seconds(.product(12)))
+            FirstFailureContext.mark("wait-scene", element: "slideshow.scenePresentation.contract.summary")
+            let before = albumSceneObservation(app: app)
+            let previousRender = SharedSceneEvidenceManifest.parseKeyValueFields(before["render"] ?? "")
+            let previousLayers = Set((previousRender["layerIDs"] ?? "").split(separator: "|").filter { $0 != "none" })
+            var after = before
+            let didAdvance = TestWait.until(.product(max(.zero, deadline.timeIntervalSinceNow))) {
+                after = self.albumSceneObservation(app: app)
+                let render = SharedSceneEvidenceManifest.parseKeyValueFields(after["render"] ?? "")
+                let didAdvanceHistory =
+                    previousRender["phase"] == "stablePhoto"
+                    && Int(previousRender["historyCount"] ?? "").flatMap { previousCount in
+                        Int(render["historyCount"] ?? "").map { $0 > previousCount }
+                    } == true
+                let layers = Set((render["layerIDs"] ?? "").split(separator: "|").filter { $0 != "none" })
+                // Removing an outgoing layer is not a new generation.
+                let didObserveNewLayer = !previousLayers.isEmpty && !layers.subtracting(previousLayers).isEmpty
+                return Date() < deadline && (didAdvanceHistory || didObserveNewLayer)
+            }
+            attachStrictSceneObservation(before: before, after: after, name: "album-interval-advance")
+            guard didAdvance else {
+                XCTFail("Album playback must naturally advance after applying the 30-second interval before Pause.")
+                return false
+            }
+            return true
+        }
+        #endif
+        // Without generation probes, one verified Next installs a target with the saved interval.
+        driver.next()
+        return true
+    }
+
+    @MainActor
     func pauseStableAlbumPlaybackIfNeeded(app: XCUIApplication) -> Bool {
         #if DEBUG
         // Stability and the actionable target share the original 8 s Pause-preparation deadline.
@@ -229,9 +334,10 @@ extension StrictE2EFilterIOSUITests {
             }
             return [:]
         }
-        let captureRequestedAt = Date().timeIntervalSince1970
-        let png = app.screenshotForFailureEvidence().pngRepresentation
-        let captureReturnedAt = Date().timeIntervalSince1970
+        guard let capture = captureStableAlbumPixels(app: app, deadline: deadline) else { return [:] }
+        let captureRequestedAt = capture.requestedAt
+        let png = capture.png
+        let captureReturnedAt = capture.returnedAt
         let after = albumSceneObservation(app: app)
         let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
         attachment.name = name
@@ -259,7 +365,7 @@ extension StrictE2EFilterIOSUITests {
             "Visual ID failed \(name): the single capture must retain the complete paused scene")
         return before
         #else
-        _ = capturePlaybackPNG(app: app, name: name)
+        _ = try captureAlbumPlaybackPNG(app: app, name: name)
         return [:]
         #endif
     }

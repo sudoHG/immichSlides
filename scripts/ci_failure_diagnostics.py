@@ -988,6 +988,8 @@ PREFIX_RULES = (
     ("Album capture preparation paused during a transition; Pause freezes the current layers.", "control_action", "control_state"),
     ("Album capture preparation must observe paused playback after one Pause.", "control_action", "control_state"),
     ("Album capture preparation must reach a complete paused scene within the playback capture budget.", "visible_scene_capture", "probe_readback"),
+    ("Album capture pixels must match at least 0.6 seconds apart within the playback capture budget.", "visible_scene_capture", "scene_identity"),
+    ("Album playback must naturally advance after applying the 30-second interval before Pause.", "interval_setup", "timing_window"),
     ("Album Next must advance the paused scene within the playback capture budget.", "history_navigation", "navigation"),
     ("Next control must be actionable before tapping.", "control_action", "hidden_controls"),
     ("Final Next preparation must provide an actionable control.", "control_action", "hidden_controls"),
