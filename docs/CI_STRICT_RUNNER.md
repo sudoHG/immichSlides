@@ -438,8 +438,8 @@ put two samples in the band and still fail. The rule remains one sampled line.
 
 This boundary rule does not tighten existing limits. Exhaustive gamma-space
 RGB analysis over continuous alpha 0.2–0.8 covers every A1–A8 endpoint-color pair
-and both directions; the per-pair exact and segment assignments are in the PR's
-generated table. These residuals are pair-dependent, not confined to alpha near
+and both directions; the per-pair exact and segment assignments are in the
+generated table in PR #577. These residuals are pair-dependent, not confined to alpha near
 zero or one. With lexicographically sorted color indices, the A7 color 1 / A8
 color 0 blend is exact-assigned throughout 0.2–0.8 (A7 through alpha 0.5, then A8).
 A6 color 1 / A7 color 1 remains exact A6 through alpha 5/16; A2 color 1 / A4

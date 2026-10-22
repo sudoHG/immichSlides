@@ -231,8 +231,8 @@ def _with_exif_card(png: bytes, model: str) -> bytes:
 class FrameGlyphBoundaryTests(unittest.TestCase):
     @staticmethod
     def _interpolated_pair(*, horizontal: bool, boundary: int = 373, lines: int = 1,
-                           alpha: float = 0.5, defect: str = "", size: tuple[int, int] = (480, 1039)) -> bytes:
-        # Build at the public sample geometry, then recreate native capture scaling.
+                           alpha: float = 0.5, defect: str = "") -> bytes:
+        # Build directly at the public sample geometry.
         canvas = (480, 320) if horizontal else (480, 1039)
         span = canvas[1 if horizontal else 0]
         frame = Image.new("RGB", canvas)
@@ -253,7 +253,7 @@ class FrameGlyphBoundaryTests(unittest.TestCase):
                     after = (165, 3, 129) if before == (111, 51, 57) else (111, 51, 57)
             for line in range(boundary, boundary + lines):
                 color = tuple(round((1 - alpha) * a + alpha * b) for a, b in zip(before, after))
-                if defect == "unknown" and offset == span // 2:
+                if (defect == "unknown" and offset == span // 2) or defect == "unknown-band":
                     color = (0, 255, 255)
                 if defect == "foreign-palette":
                     color = (64, 85, 55)
@@ -266,30 +266,26 @@ class FrameGlyphBoundaryTests(unittest.TestCase):
         if defect == "non-palette-neighbor":
             box = (boundary - 1, 0, boundary, span) if horizontal else (0, boundary - 1, span, boundary)
             ImageDraw.Draw(frame).rectangle((box[0], box[1], box[2] - 1, box[3] - 1), fill=(0, 255, 255))
-        return _png(frame.resize(size, Image.Resampling.NEAREST))
+        return _png(frame)
 
     def test_one_interpolated_boundary_line_preserves_two_photo_identities(self) -> None:
-        for horizontal, positions, size in (
-            (False, (271, 373, 700), (480, 1039)),
-            (True, (137, 239, 337), (480, 320)),
-        ):
+        for horizontal, positions in ((False, (271, 373, 700)), (True, (137, 239, 337))):
             for boundary in positions:
                 with self.subTest(horizontal=horizontal, boundary=boundary):
                     photos = public_frame_photos_from_bytes(self._interpolated_pair(
-                        horizontal=horizontal, boundary=boundary, size=size))
+                        horizontal=horizontal, boundary=boundary))
                     self.assertEqual([(p.letter, p.mark, p.axis) for p in photos],
                                      [("A", "A3", "horizontal" if horizontal else "vertical"),
                                       ("A", "A2", "horizontal" if horizontal else "vertical")])
         for horizontal in (False, True):
             with self.subTest(following_photo_interpolation=True, horizontal=horizontal):
                 photos = public_frame_photos_from_bytes(self._interpolated_pair(
-                    horizontal=horizontal, boundary=239 if horizontal else 373, defect="following-checker",
-                    size=(480, 320) if horizontal else (480, 1039)))
+                    horizontal=horizontal, boundary=239 if horizontal else 373, defect="following-checker"))
                 self.assertEqual([p.mark for p in photos], ["A3", "A2"])
 
     def test_interpolated_boundary_rejects_wide_unknown_foreign_and_overlay_bands(self) -> None:
         for horizontal in (False, True):
-            for lines, defect in ((2, ""), (3, ""), (1, "unknown"), (1, "foreign-palette"),
+            for lines, defect in ((2, ""), (3, ""), (2, "unknown-band"), (1, "unknown"), (1, "foreign-palette"),
                                   (1, "non-palette-neighbor"), (1, "overlay"), (1, "mixed-palettes"),
                                   (1, "crossfade")):
                 with self.subTest(horizontal=horizontal, lines=lines, defect=defect):
@@ -297,7 +293,7 @@ class FrameGlyphBoundaryTests(unittest.TestCase):
                                                r"^unreadable public glyph slot: public photo colors are missing or mixed;"):
                         public_frame_photos_from_bytes(self._interpolated_pair(
                             horizontal=horizontal, boundary=239 if horizontal else 373,
-                            lines=lines, defect=defect, size=(480, 320) if horizontal else (480, 1039)))
+                            lines=lines, defect=defect))
 
     def test_crossfade_bands_outside_palette_tolerance_fail_on_both_axes(self) -> None:
         for horizontal in (False, True):
@@ -305,12 +301,11 @@ class FrameGlyphBoundaryTests(unittest.TestCase):
                 with self.assertRaisesRegex(IdentityAssertionError,
                                            r"^unreadable public glyph slot: public photo colors are missing or mixed;"):
                     public_frame_photos_from_bytes(self._interpolated_pair(
-                        horizontal=horizontal, boundary=239 if horizontal else 373, lines=8, defect="crossfade",
-                        size=(480, 320) if horizontal else (480, 1039)))
+                        horizontal=horizontal, boundary=239 if horizontal else 373, lines=8, defect="crossfade"))
 
     def test_first_sampled_line_cannot_wrap_to_the_last_photo(self) -> None:
         frame = Image.open(io.BytesIO(self._interpolated_pair(
-            horizontal=True, boundary=239, size=(480, 320)))).convert("RGB")
+            horizontal=True, boundary=239))).convert("RGB")
         frame.paste(frame.crop((239, 0, 240, 320)), (0, 0))
         # At ten raw pixels per sample the eight-raw-pixel edge band is empty.
         # Removing 0 < y would borrow the final A2 column beside the first A3 run.
@@ -334,8 +329,7 @@ class FrameGlyphBoundaryTests(unittest.TestCase):
 
     def test_boundary_exclusion_cannot_supply_missing_palette_support(self) -> None:
         for horizontal in (False, True):
-            png = self._interpolated_pair(horizontal=horizontal, boundary=239 if horizontal else 373,
-                                          size=(480, 320) if horizontal else (480, 1039))
+            png = self._interpolated_pair(horizontal=horizontal, boundary=239 if horizontal else 373)
             for remaining in (17, 18):
                 box = (239, 0, 240, 320 - remaining) if horizontal else (0, 373, 480 - remaining, 374)
                 with self.subTest(horizontal=horizontal, remaining=remaining):
