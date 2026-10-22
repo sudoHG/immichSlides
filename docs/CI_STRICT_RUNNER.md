@@ -420,24 +420,40 @@ At a boundary between different photos, segmentation may omit exactly one
 unassigned sampled line when its immediate neighbors independently identify
 different palettes. Every unmasked pixel on that line must uniquely resolve
 through the existing same-photo interpolation reader to the **same one** of
-those adjacent palettes, with at least 18 observed pixels. This is a clipped
-checker edge, not interpolation between two photos; it supplies no slot,
-texture or glyph evidence. Unknown colors, a third palette, mixed adjacent
-palettes within the line, and two or more unassigned lines remain unreadable.
+those adjacent palettes, with at least 18 observed pixels. This permits clipped
+checker or stripe edges and can also admit a single-line cross-photo blend
+within 12 levels of the permitted interpolation. It supplies no slot, texture
+or glyph evidence. Unknown colors, a third palette, mixed adjacent palettes
+within the line, non-exact or fully masked neighbors, and two or more unassigned
+lines remain unreadable. Full-frame blends without exact runs cannot use this
+exception. Color-excluded pixels supply neither color checks nor observations.
 The allowance is one sample line at every size: the reader uses NEAREST,
 which cannot spread one input line over multiple samples during downscaling.
 The motivating 1170x2532 capture has exact A3 through raw y=907, an A3 checker
 interpolation at y=908–911, and A2 from y=912. At 480x1039 only sampled y=373
 hits the interpolated band. The synthetic regression recreates these positions
-on both sides of the existing palette and glyph checks.
+on both sides of the existing palette and glyph checks. The sample step is
+about 2.44 raw rows, while that band spans four raw rows: a different crop can
+put two samples in the band and still fail. The rule remains one sampled line.
 
-This boundary rule does not tighten existing limits. A3/A2 crossfade bands with
-alpha 0.2–0.8 remain outside the 12-level palette tolerance and fail; near-endpoint
-mixtures can already fall within that tolerance (including alpha 0.1 and 0.9).
-The existing same-photo unknown-line fill also remains unchanged. An overlay
-whose pixels equal a permitted single-line checker interpolation is
-indistinguishable from that edge in a static PNG; other overlay colors cannot
-use this exception. NEAREST can miss a raw band entirely, as noted above.
+This boundary rule does not tighten existing limits. Exhaustive gamma-space
+RGB analysis over continuous alpha 0.2–0.8 covers every A1–A8 endpoint-color pair
+and both directions; the per-pair exact and segment assignments are in the PR's
+generated table. These residuals are pair-dependent, not confined to alpha near
+zero or one. With lexicographically sorted color indices, the A7 color 1 / A8
+color 0 blend is exact-assigned throughout 0.2–0.8 (A7 through alpha 0.5, then A8).
+A6 color 1 / A7 color 1 remains exact A6 through alpha 5/16; A2 color 1 / A4
+color 1 remains exact A2 through alpha 25/68. A1/A3 also has segment-only
+single-line acceptances. Exact assignments take precedence, so bands already
+inside palette tolerance are not universally rejected; two or more unassigned
+blend lines remain rejected. The existing same-photo unknown-line fill remains
+unchanged. An overlay within 12 levels of the permitted interpolation can be
+indistinguishable from a checker or stripe edge in a static PNG. Frozen push or
+slide transition frames likewise cannot be distinguished from static layouts,
+including subpixel seams. The numerical analysis assumes gamma-space channel
+blending and round-to-nearest RGB; the measured texture sample supports this
+model, but opacity compositing was not verified. NEAREST can miss a raw band
+entirely, as noted above.
 
 The pinned Apple TV 4K (3rd generation), tvOS 27.0, produces **3840x2160** PNGs.
 Scanner-approved frames measured the A2/A3 seam at x=1382 and the A5/A3 seam at

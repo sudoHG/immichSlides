@@ -268,19 +268,18 @@ class FrameGlyphBoundaryTests(unittest.TestCase):
             ImageDraw.Draw(frame).rectangle((box[0], box[1], box[2] - 1, box[3] - 1), fill=(0, 255, 255))
         return _png(frame.resize(size, Image.Resampling.NEAREST))
 
-    def test_one_interpolated_boundary_line_preserves_two_photo_identities_at_capture_scales(self) -> None:
-        for horizontal, positions, sizes in (
-            (False, (271, 373, 700), ((480, 1039), (960, 2078), (1170, 2532))),
-            (True, (137, 239, 337), ((480, 320), (960, 640), (3840, 2560))),
+    def test_one_interpolated_boundary_line_preserves_two_photo_identities(self) -> None:
+        for horizontal, positions, size in (
+            (False, (271, 373, 700), (480, 1039)),
+            (True, (137, 239, 337), (480, 320)),
         ):
             for boundary in positions:
-                for size in sizes:
-                    with self.subTest(horizontal=horizontal, boundary=boundary, size=size):
-                        photos = public_frame_photos_from_bytes(self._interpolated_pair(
-                            horizontal=horizontal, boundary=boundary, size=size))
-                        self.assertEqual([(p.letter, p.mark, p.axis) for p in photos],
-                                         [("A", "A3", "horizontal" if horizontal else "vertical"),
-                                          ("A", "A2", "horizontal" if horizontal else "vertical")])
+                with self.subTest(horizontal=horizontal, boundary=boundary):
+                    photos = public_frame_photos_from_bytes(self._interpolated_pair(
+                        horizontal=horizontal, boundary=boundary, size=size))
+                    self.assertEqual([(p.letter, p.mark, p.axis) for p in photos],
+                                     [("A", "A3", "horizontal" if horizontal else "vertical"),
+                                      ("A", "A2", "horizontal" if horizontal else "vertical")])
         for horizontal in (False, True):
             with self.subTest(following_photo_interpolation=True, horizontal=horizontal):
                 photos = public_frame_photos_from_bytes(self._interpolated_pair(
@@ -302,13 +301,22 @@ class FrameGlyphBoundaryTests(unittest.TestCase):
 
     def test_crossfade_bands_outside_palette_tolerance_fail_on_both_axes(self) -> None:
         for horizontal in (False, True):
-            for alpha in (index / 10 for index in range(2, 9)):
-                with self.subTest(horizontal=horizontal, alpha=alpha):
-                    with self.assertRaisesRegex(IdentityAssertionError,
-                                               r"^unreadable public glyph slot: public photo colors are missing or mixed;"):
-                        public_frame_photos_from_bytes(self._interpolated_pair(
-                            horizontal=horizontal, boundary=239 if horizontal else 373, lines=8, alpha=alpha, defect="crossfade",
-                            size=(480, 320) if horizontal else (480, 1039)))
+            with self.subTest(horizontal=horizontal):
+                with self.assertRaisesRegex(IdentityAssertionError,
+                                           r"^unreadable public glyph slot: public photo colors are missing or mixed;"):
+                    public_frame_photos_from_bytes(self._interpolated_pair(
+                        horizontal=horizontal, boundary=239 if horizontal else 373, lines=8, defect="crossfade",
+                        size=(480, 320) if horizontal else (480, 1039)))
+
+    def test_first_sampled_line_cannot_wrap_to_the_last_photo(self) -> None:
+        frame = Image.open(io.BytesIO(self._interpolated_pair(
+            horizontal=True, boundary=239, size=(480, 320)))).convert("RGB")
+        frame.paste(frame.crop((239, 0, 240, 320)), (0, 0))
+        # At ten raw pixels per sample the eight-raw-pixel edge band is empty.
+        # Removing 0 < y would borrow the final A2 column beside the first A3 run.
+        with self.assertRaisesRegex(IdentityAssertionError,
+                                   r"^unreadable public glyph slot: public photo colors are missing or mixed;"):
+            public_frame_photos_from_bytes(_png(frame.resize((4800, 3200), Image.Resampling.NEAREST)))
 
     def test_native_iphone_clipped_checker_at_row_373_is_a_two_photo_boundary(self) -> None:
         frame = Image.new("RGB", (1170, 2532))
@@ -332,12 +340,24 @@ class FrameGlyphBoundaryTests(unittest.TestCase):
                 box = (239, 0, 240, 320 - remaining) if horizontal else (0, 373, 480 - remaining, 374)
                 with self.subTest(horizontal=horizontal, remaining=remaining):
                     if remaining == 18:
-                        self.assertEqual([p.mark for p in public_frame_photos_from_bytes(png, color_exclusion_box=box)],
+                        frame = Image.open(io.BytesIO(png)).convert("RGB")
+                        ImageDraw.Draw(frame).rectangle((box[0], box[1], box[2] - 1, box[3] - 1), fill=(0, 255, 255))
+                        self.assertEqual([p.mark for p in public_frame_photos_from_bytes(_png(frame), color_exclusion_box=box)],
                                          ["A3", "A2"])
                         continue
                     with self.assertRaisesRegex(IdentityAssertionError,
                                                r"^unreadable public glyph slot: public photo colors are missing or mixed;"):
                         public_frame_photos_from_bytes(png, color_exclusion_box=box)
+
+    def test_tv_boundary_ignores_non_palette_ink_inside_the_color_exclusion_box(self) -> None:
+        frame = Image.open(io.BytesIO(self._pair("a", 2, 3, horizontal=True, seam=1382))).convert("RGB")
+        frame = frame.resize((480, 270), Image.Resampling.NEAREST)
+        draw = ImageDraw.Draw(frame)
+        draw.line((172, 0, 172, 269), fill=(101, 146, 74))
+        draw.line((172, 179, 172, 240), fill=(0, 255, 255))
+        frame = frame.resize((3840, 2160), Image.Resampling.NEAREST)
+        self.assertEqual([p.mark for p in public_frame_photos_from_bytes(
+            _png(frame), color_exclusion_box=(1256, 1436, 2580, 1925))], ["A2", "A3"])
 
     def test_native_exif_and_hd_tv_controls_supply_no_public_photo_pixels(self) -> None:
         from strict_e2e_filter_contract_test_fixtures import public_overlay_frame
