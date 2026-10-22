@@ -22,6 +22,14 @@ most 300 seconds within that gate. The [shared reset](#shared-simulator-reset)
 then starts the separate 120-second app/keychain/privacy reset clock;
 individual reset commands have at most 60 seconds. Local strict,
 fixture UI, listed retry and access-lifecycle runs use these preparation bounds too.
+Strict preparation never opts into the optional
+[UI boot-settling gate](CI_UI.md#fixture-execution-retry-and-public-output),
+including hosted scheduled and manually dispatched runs with an early boot.
+The hosted canary added about six minutes before strict cases, yet their host
+idle medians remained zero under the test workload; waiting before strict did
+not provide sustained resource headroom. Shared readiness and reset bounds stay
+unchanged.
+
 Official tests and summary exports each have 60 seconds. Unit callers retain
 `unit-results-timed-out` with export phase and elapsed time; strict callers retain
 their preparation/export phase codes. Test-execution budgets are separate.
