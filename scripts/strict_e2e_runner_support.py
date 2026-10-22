@@ -84,6 +84,7 @@ BOOT_SETTLE_WINDOW_SECONDS = 60
 BOOT_SETTLE_INTERVAL_SECONDS = 10
 # About one minute of missing ticks tolerates transient boot contention, but not a dead probe.
 BOOT_SETTLE_MAX_CONSECUTIVE_MISSES = 6
+# Process-local fallback if the job marker is unavailable; the disk marker spans processes.
 _BOOT_SETTLE_ATTEMPTED = False
 SERVICE_STARTUP_TIMEOUT_SECONDS = 60
 # Preserve strict/tracer preparation limits under their existing outer budgets.
@@ -692,6 +693,9 @@ def _settle_simulator_boot(device: str, deadline: float) -> str:
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         outcome = "timed-out"
+                        break
+                    if probe.unavailable:
+                        outcome = "sampling-failed"
                         break
                     time.sleep(min(BOOT_SETTLE_INTERVAL_SECONDS, remaining))
                     if time.monotonic() >= deadline:

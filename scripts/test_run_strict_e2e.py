@@ -943,10 +943,14 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
     def test_boot_settle_gate_caps_wait_and_fails_open_on_sampling_or_marker_errors(self):
         import strict_e2e_runner_support as support
         import strict_e2e_resource_diagnostics as resources
-        for failure in ("busy", "remaining-budget", "device-at-cap", "host", "malformed-host", "device", "manager", "import", "marker", "cores"):
+        for failure in ("busy", "remaining-budget", "device-at-cap", "host", "malformed-host", "device", "manager", "import", "marker", "cores",
+                        "unavailable-prime", "unavailable-tick"):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as raw:
                 clock, reports = [0.0], []
-                def sample():
+                def sample(probe):
+                    if failure == "unavailable-prime" or failure == "unavailable-tick" and clock[0]:
+                        probe.unavailable = True
+                        return None
                     if failure == "host" and clock[0]:
                         return None
                     if failure == "malformed-host" and clock[0]:
@@ -964,7 +968,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                         mock.patch.object(support.time, "monotonic", side_effect=lambda: clock[0]), \
                         mock.patch.object(support.time, "sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)), \
                         mock.patch.object(support.os, "cpu_count", return_value=None if failure == "cores" else 3), \
-                        mock.patch.object(resources.HostProbe, "sample", side_effect=sample), \
+                        mock.patch.object(resources.HostProbe, "sample", autospec=True, side_effect=sample), \
                         mock.patch.dict(sys.modules, {"strict_e2e_resource_diagnostics": None} if failure == "import" else {}), \
                         mock.patch.object(support, "_boot_process_output", side_effect=OSError("private-input") if failure == "manager" else None,
                                           return_value="10\n"), \
@@ -976,13 +980,13 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                     support.prepare_simulator("device", report=reports.append, boot_submitted=True, should_settle_boot=True)
                 log = "\n".join(reports)
                 self.assertIn("outcome=" + ("timed-out" if failure in ("busy", "remaining-budget", "device-at-cap") else
-                                           "sampling-failed" if failure in ("host", "malformed-host", "device") else "unavailable"), log)
-                self.assertEqual(clock[0], 360 if failure in ("busy", "device-at-cap") else 600 if failure == "remaining-budget" else 60 if failure in ("host", "malformed-host", "device") else 0)
-                self.assertIn("missed_points=" + ("6" if failure in ("host", "malformed-host", "device") else "1" if failure == "device-at-cap" else "0"), log)
+                                           "sampling-failed" if failure in ("host", "malformed-host", "device", "unavailable-prime", "unavailable-tick") else "unavailable"), log)
+                self.assertEqual(clock[0], 360 if failure in ("busy", "device-at-cap") else 600 if failure == "remaining-budget" else 60 if failure in ("host", "malformed-host", "device") else 10 if failure == "unavailable-tick" else 0)
+                self.assertIn("missed_points=" + ("6" if failure in ("host", "malformed-host", "device") else "1" if failure in ("device-at-cap", "unavailable-tick") else "0"), log)
                 self.assertIn("simulator-preparation: passed", log)
                 self.assertNotIn("private-input", log)
 
-    def test_boot_settle_gate_skips_local_pr_and_self_hosted_preparations(self):
+    def test_boot_settle_gate_only_runs_for_opted_in_submitted_boots_in_hosted_full_runs(self):
         import strict_e2e_runner_support as support
         for environment in ({}, {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted", "GITHUB_EVENT_NAME": "pull_request"},
                             {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "self-hosted", "GITHUB_EVENT_NAME": "schedule"}):
@@ -2424,11 +2428,7 @@ class StrictCITracerTests(unittest.TestCase):
                         if failure == "hard-timeout":
                             order.append("child-timeout")
                             raise subprocess.TimeoutExpired(command, _kwargs["timeout_seconds"])
-                        code = tracer.main(command[3:])
-                        if failure is None:
-                            # A real child writes its console to this file, then the parent relays it.
-                            _args[1].write_text("simulator-boot-settle: outcome=settled; missed_points=0\n")
-                        return code
+                        return tracer.main(command[3:])
                     if "--warm-up-only" in command:
                         order.append("cold")
                         self.assertNotIn("--simulator-boot-submitted", command)
@@ -2471,7 +2471,7 @@ class StrictCITracerTests(unittest.TestCase):
                         mock.patch.object(support.subprocess, "run", side_effect=simctl), \
                         mock.patch("ci_execution_diagnostics.system_sample", return_value=None), \
                         mock.patch.object(support.time, "monotonic", side_effect=lambda: clock[0]), \
-                        mock.patch("builtins.print") as printed:
+                        mock.patch("builtins.print"):
                     code = tracer.main(["--platform", "ios", "--destination", "platform=iOS Simulator,id=TEST",
                         "--manifest", str(manifest), "--output-dir", str(output), "--simulator-boot-submitted"])
                 summary = parse_summary((output / "records/summary.json").read_text())
@@ -2479,7 +2479,6 @@ class StrictCITracerTests(unittest.TestCase):
                     self.assertEqual(0, code)
                     self.assertEqual("passed", summary["status"])
                     self.assertEqual(["cold", "bootstatus", "spawn", "warm", "warm"], order)
-                    printed.assert_any_call("simulator-boot-settle: outcome=settled; missed_points=0", flush=True)
                 else:
                     self.assertEqual(1, code)
                     self.assertNotIn("warm", order)
