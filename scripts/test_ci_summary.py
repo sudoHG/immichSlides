@@ -179,6 +179,14 @@ class SummaryContractTests(unittest.TestCase):
                     self.assertIn("gate=album-capture", line)
                     self.assertIn("stable=false, paused=true, entry_hint_hidden=false, advanced=null, layers_changed=null, manifest_complete=true, phase=stablePhoto", line)
                     scan_diagnostic_json(json.dumps({"nested": [read]}).encode())
+            # A timeout before any completed poll publishes only nulls and an unknown phase.
+            unobserved = copy.deepcopy(row["first_failure"])
+            unobserved["gate"] = {"kind": "album-capture", **dict.fromkeys(("stable", "paused", "entry_hint_hidden",
+                "advanced", "layers_changed", "manifest_complete")), "phase": "unknown"}
+            self.assertEqual(unobserved["gate"], public_first_failure(unobserved)["gate"])
+            missing = copy.deepcopy(row["first_failure"])
+            del missing["gate"]["manifest_complete"]
+            self.assertIsNone(public_first_failure(missing))
             cases = [
                 (("gate",), None, "first failure gate: invalid fields"),
                 (("gate", "asset_id"), "private", "first failure gate: invalid fields"),
