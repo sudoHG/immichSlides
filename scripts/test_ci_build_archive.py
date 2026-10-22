@@ -52,8 +52,12 @@ class BuildArchiveTests(unittest.TestCase):
                                ("workflow_dispatch", "ipad", subprocess.CalledProcessError(128, ["git", "rev-parse", "HEAD^{tree}"],
                                    output="private identity output", stderr="private identity error")),
                                ("schedule", "appletv", subprocess.TimeoutExpired(["git", "rev-parse", "HEAD^{tree}"], 30,
+                                   output="private identity output", stderr="private identity error")),
+                               ("schedule", "ipad", subprocess.TimeoutExpired(["git", "rev-parse", "HEAD"], 120,
+                                   output="private identity output", stderr="private identity error")),
+                               ("workflow_dispatch", "ipad", subprocess.CalledProcessError(128, ["git", "rev-parse", "HEAD"],
                                    output="private identity output", stderr="private identity error"))):
-            with self.subTest(event=event, device=device), tempfile.TemporaryDirectory() as directory:
+            with self.subTest(event=event, device=device, command=failure.cmd), tempfile.TemporaryDirectory() as directory:
                 temporary = Path(directory)
                 environment = {"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": event, "GITHUB_REPOSITORY": "owner/repo",
                     "GITHUB_SHA": "a" * 40, "GITHUB_REF": "refs/heads/main", "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "2",
@@ -64,11 +68,10 @@ class BuildArchiveTests(unittest.TestCase):
                 scheduled = (next(item for item in plan["shards"] if item["device"] == "appletv") if device == "appletv" else
                              next(item for item in plan["shards"] if item["device"] == "ipad" and item["shard"] == "visual-b"))
                 def git_output(command, **options):
-                    self.assertEqual(30, options["timeout"])
-                    if command == ["git", "rev-parse", "HEAD"]:
-                        return "a" * 40
-                    self.assertEqual(["git", "rev-parse", "HEAD^{tree}"], command)
-                    raise failure
+                    if command == failure.cmd:
+                        raise failure
+                    self.assertIn(command, (["git", "rev-parse", "HEAD"], ["git", "rev-parse", "HEAD^{tree}"]))
+                    return ("a" if command[-1] == "HEAD" else "b") * 40
                 with patch.dict(os.environ, environment, clear=True), \
                         patch("run_host_checks.subprocess.check_output", side_effect=git_output) as git_process:
                     try:
@@ -77,7 +80,7 @@ class BuildArchiveTests(unittest.TestCase):
                         self.assertIs(failure, raised)
                     else:
                         self.fail("staging must preserve the identity exception")
-                self.assertEqual(2, git_process.call_count)
+                self.assertEqual(1 if failure.cmd[-1] == "HEAD" else 2, git_process.call_count)
                 self.assertEqual(["ui-identity/identity-failure.json"],
                                  [path.relative_to(temporary).as_posix() for path in temporary.rglob("*") if path.is_file()])
                 receipt = json.loads((temporary / "ui-identity/identity-failure.json").read_text())
@@ -100,7 +103,11 @@ class BuildArchiveTests(unittest.TestCase):
                 failure = (Interrupted(signal.SIGTERM) if mode == "cancelled" else
                            subprocess.TimeoutExpired(["git", "rev-parse", "HEAD^{tree}"], 30))
                 def git_output(command, **options):
-                    self.assertEqual(30, options["timeout"])
+                    if mode == "success":
+                        # Model a metadata read starved past the old 30 s cap without sleeping.
+                        self.assertLessEqual(options["timeout"], 120)
+                        if options["timeout"] < 45:
+                            raise subprocess.TimeoutExpired(command, options["timeout"])
                     if command == ["git", "rev-parse", "HEAD"]:
                         return "a" * 40
                     self.assertEqual(["git", "rev-parse", "HEAD^{tree}"], command)

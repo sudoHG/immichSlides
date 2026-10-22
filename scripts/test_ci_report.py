@@ -371,7 +371,6 @@ class ReporterTests(unittest.TestCase):
                             output=b"private identity output", stderr=b"private identity error")):
             def identity_failure(command, **options):
                 self.assertEqual(["git", "rev-parse", "HEAD"], command)
-                self.assertEqual(30, options["timeout"])
                 raise failure
             with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
                     "GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "schedule", "GITHUB_REPOSITORY": identity["repository"],
@@ -1163,7 +1162,6 @@ class ReporterTests(unittest.TestCase):
                         path.parent.mkdir(parents=True, exist_ok=True)
                         path.write_bytes(content)
                     def identity_output(command, **options):
-                        self.assertEqual(30, options["timeout"])
                         if command == ["git", "rev-parse", "HEAD"]:
                             return "a" * 40
                         self.assertEqual(["git", "rev-parse", "HEAD^{tree}"], command)
