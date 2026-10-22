@@ -924,7 +924,8 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                         mock.patch.object(support, "boot_simulator", return_value=""), \
                         mock.patch.object(support, "wait_for_simulator_service_response", side_effect=lambda *a, **kw: (order.append("ready"), "")), \
                         mock.patch.object(support, "_BOOT_SETTLE_ATTEMPTED", False):
-                    support.prepare_simulator("device", report=reports.append, should_check_app=False, boot_submitted=True)
+                    support.prepare_simulator("device", report=reports.append, should_check_app=False,
+                                              boot_submitted=True, should_settle_boot=True)
                     self.assertEqual(clock[0], expected)
                     self.assertEqual(order[0], "ready")
                     self.assertIn("outcome=" + ("timed-out" if expected == 360 else "settled"), "\n".join(reports))
@@ -934,7 +935,8 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                     manager.assert_called_once()
                     # Model the next runner process: the disk marker must still prevent a repeat.
                     support._BOOT_SETTLE_ATTEMPTED = False
-                    support.prepare_simulator("device", report=reports.append, should_check_app=False, boot_submitted=True)
+                    support.prepare_simulator("device", report=reports.append, should_check_app=False,
+                                              boot_submitted=True, should_settle_boot=True)
                     self.assertEqual(clock[0], expected)
                     self.assertIn("outcome=skipped-repeat", "\n".join(reports))
 
@@ -971,7 +973,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                         mock.patch.object(support, "wait_for_simulator_app_response", side_effect=lambda *a, **kw: (
                             clock.__setitem__(0, 590) if failure == "remaining-budget" else None, "")), \
                         mock.patch.object(support, "_BOOT_SETTLE_ATTEMPTED", False):
-                    support.prepare_simulator("device", report=reports.append, boot_submitted=True)
+                    support.prepare_simulator("device", report=reports.append, boot_submitted=True, should_settle_boot=True)
                 log = "\n".join(reports)
                 self.assertIn("outcome=" + ("timed-out" if failure in ("busy", "remaining-budget", "device-at-cap") else
                                            "sampling-failed" if failure in ("host", "malformed-host", "device") else "unavailable"), log)
@@ -988,16 +990,30 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                     mock.patch.object(support, "boot_simulator", return_value=""), \
                     mock.patch.object(support, "wait_for_simulator_app_response", return_value=(None, "")), \
                     mock.patch.object(support, "_boot_device_cpu") as device:
-                _, log = support.prepare_simulator("device", report=lambda line: None, boot_submitted=True)
+                _, log = support.prepare_simulator("device", report=lambda line: None, boot_submitted=True,
+                                                  should_settle_boot=True)
                 self.assertIn("outcome=skipped-environment", log)
                 device.assert_not_called()
-        with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted",
-                "GITHUB_EVENT_NAME": "workflow_dispatch"}, clear=True), \
-                mock.patch.object(support, "boot_simulator", return_value=""), \
-                mock.patch.object(support, "wait_for_simulator_service_response", return_value=(None, "")), \
-                mock.patch.object(support, "_settle_simulator_boot", return_value="simulator-boot-settle: outcome=settled") as gate:
-            support.prepare_simulator("device", should_check_app=False, report=lambda line: None)
-            gate.assert_not_called()
+        for event in ("schedule", "workflow_dispatch"):
+            for should_check_app in (False, True):
+                for scope in ("strict", "ui-cold", "ui-submitted"):
+                    with self.subTest(event=event, should_check_app=should_check_app, scope=scope), \
+                            mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted",
+                                "GITHUB_EVENT_NAME": event}, clear=True), \
+                            mock.patch.object(support, "boot_simulator", return_value=""), \
+                            mock.patch.object(support, "wait_for_simulator_app_response", return_value=(None, "")), \
+                            mock.patch.object(support, "wait_for_simulator_service_response", return_value=(None, "")), \
+                            mock.patch.object(support, "_settle_simulator_boot",
+                                return_value="simulator-boot-settle: outcome=settled") as gate:
+                        options = {} if scope == "strict" else {"should_settle_boot": True}
+                        _, log = support.prepare_simulator("device", should_check_app=should_check_app,
+                            boot_submitted=scope != "ui-cold", report=lambda line: None, **options)
+                        if scope == "ui-submitted":
+                            gate.assert_called_once()
+                            self.assertIn("simulator-boot-settle: outcome=settled", log)
+                        else:
+                            gate.assert_not_called()
+                            self.assertNotIn("simulator-boot-settle:", log)
 
     def test_boot_device_cpu_counts_only_the_requested_subtree_and_rejects_missing_samples(self):
         import strict_e2e_runner_support as support

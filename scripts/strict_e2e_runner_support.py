@@ -668,7 +668,7 @@ def _settle_simulator_boot(device: str, deadline: float) -> str:
             outcome = "skipped-repeat"
         else:
             _BOOT_SETTLE_ATTEMPTED = True
-            # RUNNER_TEMP is job-scoped, including the tracer's preparation and case children.
+            # RUNNER_TEMP is job-scoped, so repeated preparations share one attempt.
             marker = Path(os.environ["RUNNER_TEMP"]) / "immichslides-boot-settle-attempted"
             try:
                 descriptor = os.open(marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
@@ -745,7 +745,7 @@ def _settle_simulator_boot(device: str, deadline: float) -> str:
 
 def prepare_simulator(simulator_udid: str, bundle_id: str = "com.331works.immichSlides", *,
                       report: Callable[[str], None] | None = None, boot_submitted: bool = False,
-                      should_check_app: bool = True) -> tuple[str | None, str]:
+                      should_check_app: bool = True, should_settle_boot: bool = False) -> tuple[str | None, str]:
     """Gate preparation; prebuild callers may request service registration only, returning no container fact."""
     report = report or (lambda line: print(line, flush=True))
     recorder = active()
@@ -767,7 +767,7 @@ def prepare_simulator(simulator_udid: str, bundle_id: str = "com.331works.immich
             report(line)
             container, readiness_log = wait_for_simulator_service_response(simulator_udid, report=report, deadline=deadline)
         lines.extend(readiness_log.splitlines())
-        if boot_submitted:
+        if should_settle_boot and boot_submitted:
             line = _settle_simulator_boot(simulator_udid, deadline)
             lines.append(line)
             report(line)

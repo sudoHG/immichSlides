@@ -478,6 +478,47 @@ server startup/health check. For the job's early-booted UDID it goes straight to
 Its UDID, destination and platform are exported before
 boot, so cleanup still owns the same device if boot or later preparation fails.
 
+Only `ci_ui_tests.run_shard` opts into the shared preparation's boot-settling
+resource gate. On GitHub-hosted `schedule` and `workflow_dispatch` runs with an
+early boot already submitted (`boot_submitted=True`), the first preparation
+attempts it after readiness and before app reset or test execution. Strict
+tracer, fixture-runner reset and listed-retry preparations do not opt in.
+Local, PR and self-hosted runs skip it, as do UI preparations without an early
+boot. A private job-scoped `RUNNER_TEMP` marker and a process-local repeat guard
+prevent another attempt in the same job.
+
+The gate samples Mach host idle and the selected device's numeric process
+subtree CPU about every 10 seconds. A continuous window spanning at least
+60 seconds requires idle at least `max(30, 100 / logical_cpu_count)` percent and
+device CPU at most 120 percent (100 percent is one logical CPU). Three cores
+require 33.333 percent idle; four or more retain 30 percent. A quiet gate needs
+about 70 seconds for priming and a full window. The manager PID is read once at
+gate start; acquisition failure logs `unavailable` and proceeds. Missing,
+invalid or timed-out ticks reset the qualifying window and keep waiting. Six
+consecutive failed ticks log `sampling-failed` and proceed; a valid tick clears
+the failure streak even when busy. The gate consumes at most 360 seconds of
+the existing 600-second preparation budget remaining after readiness. Timeout,
+setup, marker and import failures also proceed with a diagnostic and never
+change a test verdict. `simulator-boot-settle` logs contain only an enum outcome
+and numeric/null duration, final idle/device CPU, integer core count, idle
+threshold and total missed-point count. Receipt schemas, readers, resource
+sampler budgets and product deadlines stay unchanged.
+
+The hosted strict canary on `6f1ba14` settled iPad debug-0 after 356 seconds and
+timed out iPhone debug-0 at 360 seconds. Following strict cases still had host
+idle medians of 0 percent with load 108–197: the test workload saturates the
+three-core runner, so strict no longer pays this wait. UI first launches instead
+failed with "Timed out while launching application via Xcode": iPhone visual-b
+on October 22 after about 241 seconds and iPad visual-d in run
+[39797680705](https://github.com/sudoHG/immichSlides/actions/runs/39797680705)
+after about 243 seconds. UI finished about 80 minutes before strict in the
+observed nightly. With 18 UI jobs and `max-parallel: 2`, up to nine jobs per slot
+can each add six minutes (54 minutes per slot, 108 job-minutes total).
+No nightly wall-time impact is expected within that measured slack; this is an
+estimate, not hosted acceptance of the UI-only gate. Accept when first-launch
+timeouts stop and UI stays off the critical path. If those timeouts persist or
+the UI path becomes critical, the coordinator lowers the cap or reverts.
+
 Fixture UI runners use the [shared simulator reset](CI_STRICT_RUNNER.md#shared-simulator-reset),
 including its clean-install requirements, preparation bounds and timing logs.
 

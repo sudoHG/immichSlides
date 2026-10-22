@@ -745,7 +745,7 @@ def run_shard(args):
     workspace_preflight(ROOT)
     try:
         udid = destination_udid(args.destination)
-        prepare_simulator(udid, boot_submitted=os.environ.get("UI_SIMULATOR") == udid)
+        prepare_simulator(udid, boot_submitted=os.environ.get("UI_SIMULATOR") == udid, should_settle_boot=True)
     except CommandError as error:
         failed_shard(args, error)
         print(f"UI simulator preparation failed: {error}", file=sys.stderr)

@@ -425,6 +425,7 @@ class BuildArchiveTests(unittest.TestCase):
                             def gate(udid, **kwargs):
                                 self.assertEqual(udid, 'cold-device')
                                 self.assertTrue(kwargs['boot_submitted'])
+                                self.assertTrue(kwargs['should_settle_boot'])
                                 gate_finished.append(True)
                                 if preparation_fails:
                                     from ci_execution_diagnostics import active
