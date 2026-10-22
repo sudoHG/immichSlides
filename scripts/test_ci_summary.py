@@ -182,7 +182,7 @@ def album_capture_gate_rejections(receipt):
             ("paused", (False, None), ineligible),
             ("entry_hint_hidden", (False, None), ineligible),
             ("advanced", (False, None), ineligible),
-            ("layers_changed", (None,), ineligible),
+            ("layers_changed", (False, None), ineligible),
             ("manifest_complete", (False, None), ineligible),
             ("phase", (None, "other"), "first failure: invalid gate phase"),
             ("phase", tuple(phase for phase in ALBUM_CAPTURE_GATE_PHASES
@@ -222,12 +222,11 @@ class SummaryContractTests(unittest.TestCase):
         row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
         self.assertEqual(proof, ci_summary.parse_summary(summary)["population"]["observed"][0]["environment_limit"])
         for phase in ("transition", "incomingFromLoading"):
-            for advanced, layers_changed in ((True, False), (True, True)):
-                changed = copy.deepcopy(row)
-                changed["first_failure"]["gate"].update(phase=phase, advanced=advanced, layers_changed=layers_changed)
-                with self.subTest(phase=phase, advanced=advanced, layers_changed=layers_changed):
-                    self.assertIsNotNone(environment_limit_evidence(summary, changed, [resource],
-                        runner_hosted=True, policy_version=2))
+            changed = copy.deepcopy(row)
+            changed["first_failure"]["gate"]["phase"] = phase
+            with self.subTest(phase=phase):
+                self.assertIsNotNone(environment_limit_evidence(summary, changed, [resource],
+                    runner_hosted=True, policy_version=2))
         for label, receipt, message in album_capture_gate_rejections(row["first_failure"]):
             changed = copy.deepcopy(row)
             changed["first_failure"] = receipt

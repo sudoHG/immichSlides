@@ -91,7 +91,7 @@ def environment_failure_projection(receipt):
         **({"gate": dict(receipt["gate"])} if "gate" in receipt else {})}
 
 
-def environment_timing(failure, phase, failure_class, *, policy_version=1):
+def environment_timing(failure, phase, failure_class, *, policy_version=ENVIRONMENT_POLICY_VERSION):
     album_capture = (policy_version == 2 and phase == "visible_scene_capture" and failure_class == "probe_readback"
         and failure["step"] == "wait-scene" and failure["element"] == "slideshow.scenePresentation.contract.summary")
     if album_capture:
@@ -99,7 +99,7 @@ def environment_timing(failure, phase, failure_class, *, policy_version=1):
         if not (gate.get("kind") == "album-capture" and gate.get("stable") is False
                 and gate.get("paused") is True and gate.get("entry_hint_hidden") is True
                 and gate.get("manifest_complete") is True
-                and gate.get("advanced") is True and type(gate.get("layers_changed")) is bool
+                and gate.get("advanced") is True and gate.get("layers_changed") is True
                 and gate.get("phase") in ENVIRONMENT_ALBUM_SETTLING_PHASES):
             return False
     expected_surface = "playback" if album_capture else ENVIRONMENT_WAIT_STEPS.get(

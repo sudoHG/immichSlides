@@ -1046,8 +1046,10 @@ null when there is no previous capture. `manifest_complete` describes the existi
 complete-visible-scene predicate. Missing observations remain null, and `phase`
 accepts only `unknown`, `empty`, `stablePhoto`, `grace`, `transition`, `loading`,
 `incomingFromLoading`, `paused`, or `sourceError`, matching the render probe.
-Other failure paths omit `gate`. This is attribution only: environment timing,
-the environment-failure projection, yellow eligibility and all verdicts are unchanged.
+Other failure paths omit `gate`. The environment-failure projection retains it,
+and policy v2 uses it for environment timing and yellow eligibility under the
+[versioned proof contract](CI_SUMMARY.md#prepared-hosted-strict-environment-limits).
+Policy v1 retains its existing eligibility rules.
 Reader support must merge before a producer starts emitting this optional object;
 old receipts, including retained nights, remain valid without it.
 

@@ -492,10 +492,17 @@ are authoritative; the plain-English boundary is:
 | --- | --- |
 | Reviewed UI availability wait with a full deadline and low-idle samples strictly before and after failure | Yes, in hosted nightly strict scope only. |
 | Album capture settling after Next took effect, paused playback, hidden entry hint and a complete loaded photo | Policy v2 only, with every published gate fact revalidated and an allowed settling phase. |
-| Next did not advance, changed layers without visible history advance, first capture with null progress, missing/incomplete gate or manifest, `grace`/`loading` or any other unreviewed phase | No. |
+| Next did not advance, unchanged layers, changed layers without visible history advance, first capture with null progress, missing/incomplete gate or manifest, `grace`/`loading` or any other unreviewed phase | No. |
 | Black, blank or unrecognizable playback, validator/functional failure, process loss or invocation infrastructure failure | No. |
 | Missing/one-sided/high-idle samples, unknown hosting, local/self-hosted/UI/informational suite | No. |
 | The same case's second consecutive yellow UTC night | No; the reporter escalates it to red. |
+
+Accepted residual risk: `advanced` is cumulative across polls. A double advance
+(`historyCount = previous + 2`), including autoplay advancing while paused, can
+still qualify when the final layer IDs differ and every other condition holds.
+The receipt cannot distinguish this from slow settling; no Swift change is made.
+The first night without CPU starvation is red, two consecutive yellow nights
+escalate to red, and independent strict pause and history cases remain in place.
 
 The policy v2 reader lands before a separate producer-default activation. Old v1
 proofs without gate facts retain their old interpretation. Aggregation rechecks

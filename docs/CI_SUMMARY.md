@@ -769,13 +769,15 @@ All criteria are required:
 
 Hogan approved the album exception on 2026-10-22. Its `gate.kind` must be
 `album-capture`; `paused`, `entry_hint_hidden` and `manifest_complete` must be
-true; `stable` must be false. `advanced` must be true, and `layers_changed` must be
-a known Boolean. Every null, missing or other value is red. The phase/progress
+true; `stable` must be false. `advanced` and `layers_changed` must both be true.
+Every null, missing or other value is red. The phase/progress
 audit deliberately narrows the proposed either-signal rule: hidden incoming
 layers can change before any new photo is visible, so `layers_changed` alone is
 insufficient. `installHiddenLayerIfNeeded` appends a zero-opacity, not-ready layer;
 even `promoteHiddenLayer` starts at zero opacity. History advances only after
 `incomingBecameVisible` passes its visibility guard.
+The generation UUID in layer IDs means a legitimate `transition` or
+`incomingFromLoading` after paused Next also changes the observed layer IDs.
 The exact phase set is derived from the App's underlying `ScenePresentationPhase`
 (the probe reports `underlyingPhase`, not the `.paused` suspension wrapper):
 
@@ -796,6 +798,13 @@ always stays red. First-capture timeouts have no previous scene, so #572 emits
 null for both progress facts; this also excludes the first-capture
 `rejectFrozenAlbumTransition` failure even when its phase is `transition` and
 Pause is true. Post-capture scene assertions and other capture steps stay red.
+
+Accepted residual risk: `advanced` is cumulative across polls. A double advance
+(`historyCount = previous + 2`), including autoplay advancing while paused, can
+still qualify when the final layer IDs differ and every other condition holds.
+The receipt cannot distinguish this from slow settling; no Swift change is made.
+The first night without CPU starvation is red, two consecutive yellow nights
+escalate to red, and independent strict pause and history cases remain in place.
 
 Policy v2 requires a new version because its proof projection carries a new field
 and its eligibility differs from v1. Reader-first rollout installs both validators
