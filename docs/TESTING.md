@@ -626,6 +626,30 @@ photo's brightness through the shared 0.8-second new-photo stable-window confirm
 cannot establish a dimming start on any platform. This recovery-veto cutoff also
 applies to iPad, whose own stable-photo requirement is one second. The shared
 predicate vetoes that recovery, including iPad's two-dim-frame flicker case.
+tvOS additionally calibrates a baseline for each observed control-bar state from
+the first half of T. Every calibration frame must return strictly before T/2,
+identify the original photo, and remain between 95% and 100% of the original baseline.
+Calibration ends at the first dim or unreadable frame; recovery cannot restart it.
+An eligible frame must complete the existing 0.8-second stable window with an
+unchanged control state, adjacent capture gaps at most 0.1 s plus tolerance, and
+the entire window's luminance range at most the existing 0.001 tolerance. The
+latest eligible frame supplies that state's additional baseline. A candidate
+uses it only in the same control state, with exactly the shared 95%, bright-anchor,
+strict-decrease, frozen-frame, gap, control-continuity and recovery-veto rules.
+The onset scan retains the original baseline path as an OR at every index and
+selects the earliest candidate across both paths. On the same samples, no original
+onset can move later, including an early fade that calibration would date later.
+
+The tvOS Continue collector captures full-resolution screenshots from
+`XCUIScreen.main` without an application lookup. It retains dense capture through
+the original absolute deadline and classifies photo identity afterwards. It reads
+only the calibrated Settings pixels during capture and sends at most one passive
+Up after observing auto-hide before T; this restores the visible calibration state
+without toggling playback or resetting the Continue origin. If visibility does
+not return, that calibration cannot sign a hidden-state fade. A new same-state
+bright anchor is still required after the wake. Per-frame request/capture/return
+times, identities, luminance, control states, calibration frames and the one wake
+are saved in `continue-watch-diagnostic.json`, including on assertion failure.
 A transition identity or a different identified photo remains direct onset
 evidence; tvOS also vetoes a TRANSITION marker when the old photo recovers through
 the same shared confirmation cutoff. iPad still applies conservative screenshot bounds

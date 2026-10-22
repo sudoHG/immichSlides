@@ -306,6 +306,109 @@ extension SettingsResumeContractTests {
         XCTAssertEqual(replay.start.mark, "A5")
     }
 
+    func testTVOSPauseUsesSettledFirstHalfBaselineWithoutDelayingOriginalEarlyOnset() throws {
+        let samples = tvosDriftingBaselineSamples(start: 10.3)
+        let evidence = try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
+            continueMark: "A1", baselineLuma: 0.497043, samples: samples, intervalSeconds: 10
+        )
+        XCTAssertEqual(evidence.start.requestElapsed, 10.3, accuracy: 0.001)
+        XCTAssertEqual(evidence.start.mark, "A1")
+        XCTAssertGreaterThan(evidence.stable.requestElapsed, 12)
+
+        let hiddenFade = samples.map { sample in
+            watchSample(
+                request: sample.requestElapsed, mark: sample.mark, status: sample.status, luma: sample.meanLuma,
+                isControlBarVisible: sample.requestElapsed < 8.2, returnLag: 0.19
+            )
+        }
+        XCTAssertThrowsError(
+            try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
+                continueMark: "A1", baselineLuma: 0.497043, samples: hiddenFade, intervalSeconds: 10
+            )
+        ) { XCTAssertTrue($0.localizedDescription.hasPrefix("No automatic photo change was captured within T±2")) }
+
+        // The calibrated threshold would first sign 8.1; the original threshold must still reject 7.9.
+        let early = tvosDriftingBaselineSamples(start: 7.9, hasControlBarHide: false)
+        XCTAssertThrowsError(
+            try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
+                continueMark: "A1", baselineLuma: 0.497043, samples: early, intervalSeconds: 10
+            )
+        ) { XCTAssertTrue($0.localizedDescription.hasPrefix("Automatic photo change occurred before T-2")) }
+    }
+
+    func testTVOSPauseCalibrationRejectsDimmingUnsettledAndPostHalfFrames() {
+        for signal in [
+            "already_dim", "gradual_dim", "brighter", "changing_controls", "gap", "unknown", "post_half",
+            "half_boundary", "short_stability"
+        ] {
+            let samples = (0...10).map { index in
+                let request =
+                    signal == "half_boundary"
+                    ? 3.8125 + Double(index) * 0.25
+                    : (signal == "post_half" ? 5.0 : 0.2) + Double(index) * (signal == "gap" ? 0.4 : 0.2)
+                let luma: Double
+                switch signal {
+                case "already_dim": luma = index == 0 ? 0.497043 : 0.460
+                case "gradual_dim": luma = 0.497043 - Double(index) * 0.005
+                case "brighter": luma = 0.52
+                default: luma = 0.486
+                }
+                return watchSample(
+                    request: request, mark: signal == "unknown" && index == 2 ? "UNRECOGNIZABLE" : "A1",
+                    status: signal == "unknown" && index == 2 ? "UNRECOGNIZABLE" : "MATCH", luma: luma,
+                    isControlBarVisible: signal != "changing_controls" || index.isMultiple(of: 2),
+                    returnLag: signal == "half_boundary" ? 0.1875 : 0.19
+                )
+            }
+            let bounded = signal == "short_stability" ? Array(samples.prefix(4)) : samples
+            XCTAssertTrue(
+                AccessLifecycleContract.tvOSContinueCalibrationSamples(
+                    continueMark: "A1", baselineLuma: 0.497043, samples: bounded, intervalSeconds: 10
+                ).isEmpty,
+                signal
+            )
+        }
+
+        // An already-dimming first-half frame must never replace the earlier original onset.
+        let early = tvosDriftingBaselineSamples(start: 2.0, hasControlBarHide: false)
+        XCTAssertThrowsError(
+            try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
+                continueMark: "A1", baselineLuma: 0.497043, samples: early, intervalSeconds: 10
+            )
+        ) { XCTAssertTrue($0.localizedDescription.hasPrefix("Automatic photo change occurred before T-2")) }
+    }
+
+    private func tvosDriftingBaselineSamples(
+        start: TimeInterval, hasControlBarHide: Bool = true
+    ) -> [AccessLifecycleContract.ContinueWatchSample] {
+        let firstHalf = (0...23).map { index in
+            watchSample(
+                request: 0.2 + Double(index) * 0.2, mark: "A1",
+                luma: index == 0 ? 0.497043 : 0.486, returnLag: 0.19
+            )
+        }.filter { $0.requestElapsed < start - 0.2 - AccessLifecycleContract.timingToleranceSeconds }
+        let preFade: [AccessLifecycleContract.ContinueWatchSample]
+        if hasControlBarHide {
+            preFade = [
+                watchSample(request: 8.0, mark: "A1", luma: 0.474632, returnLag: 0.19),
+                watchSample(request: 8.2, mark: "A1", luma: 0.470984, isControlBarVisible: false, returnLag: 0.19),
+                watchSample(request: 8.4, mark: "A1", luma: 0.470190, isControlBarVisible: false, returnLag: 0.19),
+                watchSample(request: 8.6, mark: "A1", luma: 0.469633, returnLag: 0.19),
+                watchSample(request: start - 0.2, mark: "A1", luma: 0.467417, returnLag: 0.19)
+            ]
+        } else {
+            preFade = [watchSample(request: start - 0.2, mark: "A1", luma: 0.486, returnLag: 0.19)]
+        }
+        let dimLumas = hasControlBarHide ? [0.448, 0.420, 0.390] : [0.470, 0.448, 0.420]
+        let dim = dimLumas.enumerated().map { index, luma in
+            watchSample(request: start + Double(index) * 0.2, mark: "A1", luma: luma, returnLag: 0.19)
+        }
+        let newPhoto = (0...6).map { index in
+            watchSample(request: max(start + 2, 8.2) + Double(index) * 0.2, mark: "A2", luma: 0.60, returnLag: 0.19)
+        }
+        return firstHalf + preFade + dim + newPhoto
+    }
+
     func testTVOSPauseRejectsEarlyAndLateFadeStarts() {
         for samples in [earlyFadeWithFrozenDimSamples(), slowEarlyFadeWithoutFrozenDimSamples()] {
             XCTAssertThrowsError(

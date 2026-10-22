@@ -64,6 +64,9 @@ extension AccessLifecycleContract {
                 "After about a full T, it must switch to the next scene; no stable new public photo was confirmed")
         }
         let threshold = baselineLuma * sustainedDimmingLuminanceRatio
+        let calibrations = tvOSContinueCalibrationSamples(
+            continueMark: continueMark, baselineLuma: baselineLuma, samples: samples, intervalSeconds: intervalSeconds
+        )
         let startIndex = samples.indices.first { index in
             let sample = samples[index]
             if sample.status == "MATCH", isUsableSceneMark(sample.mark), sample.mark != continueMark {
@@ -76,11 +79,20 @@ extension AccessLifecycleContract {
                 return !recovered
             }
             guard index > 0, sample.status == "MATCH", sample.mark == continueMark,
-                sample.meanLuma < threshold,
                 samples[index - 1].status == "MATCH", samples[index - 1].mark == continueMark,
                 samples[index - 1].isControlBarVisible == sample.isControlBarVisible
             else { return false }
-            return hasSustainedDimming(from: index, continueMark: continueMark, threshold: threshold, samples: samples)
+            var thresholds = [threshold]
+            if let calibration = calibrations[sample.isControlBarVisible] {
+                thresholds.append(calibration.meanLuma * sustainedDimmingLuminanceRatio)
+            }
+            // Preserve every original onset, including early ones, before considering the calibrated path.
+            return thresholds.contains { candidateThreshold in
+                sample.meanLuma < candidateThreshold
+                    && hasSustainedDimming(
+                        from: index, continueMark: continueMark, threshold: candidateThreshold, samples: samples
+                    )
+            }
         }
         guard let startIndex else {
             throw AssertionError.message("tvOS pause-continue evidence is invalid; no transition start was detected")
@@ -95,6 +107,44 @@ extension AccessLifecycleContract {
             failureMessage: "tvOS new photo must be stably identifiable within 4 s of transition start"
         )
         return (start, stable)
+    }
+
+    static func tvOSContinueCalibrationSamples(
+        continueMark: String,
+        baselineLuma: Double,
+        samples: [ContinueWatchSample],
+        intervalSeconds: TimeInterval
+    ) -> [Bool: ContinueWatchSample] {
+        let originalThreshold = baselineLuma * sustainedDimmingLuminanceRatio
+        var settled: [ContinueWatchSample] = []
+        var calibrations: [Bool: ContinueWatchSample] = [:]
+        for sample in samples {
+            // A dim or unreadable frame ends calibration; later recovery cannot supply a new baseline.
+            guard sample.requestElapsed >= 0, sample.returnElapsed < intervalSeconds / 2,
+                sample.status == "MATCH", sample.mark == continueMark,
+                sample.meanLuma.isFinite, sample.meanLuma >= originalThreshold, sample.meanLuma <= baselineLuma
+            else { break }
+            if let previous = settled.last,
+                sample.isControlBarVisible != previous.isControlBarVisible
+                    || sample.requestElapsed - previous.returnElapsed > newStableMarkPollInterval
+                        + timingToleranceSeconds
+            {
+                settled.removeAll()
+            }
+            settled.append(sample)
+            // The existing stable window and luminance tolerance exclude an observed fade or an unsettled bar.
+            while let minimum = settled.map(\.meanLuma).min(), let maximum = settled.map(\.meanLuma).max(),
+                maximum - minimum > luminanceTolerance
+            {
+                settled.removeFirst()
+            }
+            if let first = settled.first,
+                sample.requestElapsed - first.requestElapsed >= newStableMarkConfirmWindow
+            {
+                calibrations[sample.isControlBarVisible] = sample
+            }
+        }
+        return calibrations
     }
 
     static func assertContinueEarlyStillSameScene(

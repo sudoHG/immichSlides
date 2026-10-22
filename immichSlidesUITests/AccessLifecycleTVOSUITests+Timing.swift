@@ -540,17 +540,57 @@ extension AccessLifecycleTVOSUITests {
         controlBarReference: StrictE2EPhotoIdentity.ControlBarReference
     ) throws -> TVOSContinueWatchResult {
         let captureUntil = AccessLifecycleContract.continueWatchDenseCaptureDeadline(intervalSeconds: interval)
-        var capturedFrames: [(request: TimeInterval, returned: TimeInterval, png: Data)] = []
+        var capturedFrames: [(request: TimeInterval, captured: TimeInterval, returned: TimeInterval, png: Data)] = []
+        var controlBarWake: (issued: TimeInterval, returned: TimeInterval)?
         while Date().timeIntervalSince(continueAt) <= captureUntil {
             let request = Date().timeIntervalSince(continueAt)
-            let png = app.screenshotForFailureEvidence().pngRepresentation
+            let screenshot = XCUIScreen.main.screenshotForFailureEvidence()
+            let captured = Date().timeIntervalSince(continueAt)
+            let png = screenshot.pngRepresentation
             let returned = Date().timeIntervalSince(continueAt)
-            capturedFrames.append((request, returned, png))
+            capturedFrames.append((request, captured, returned, png))
+            // Restore the calibration's visible state once after auto-hide, without toggling playback.
+            if controlBarWake == nil, returned < interval, controlBarReference.isVisible(png: png) == false {
+                let issued = Date().timeIntervalSince(continueAt)
+                FirstFailureRemote.press(.up)
+                controlBarWake = (issued, Date().timeIntervalSince(continueAt))
+                record("playback.wake_controls")
+            }
         }
         var samples: [AccessLifecycleContract.ContinueWatchSample] = []
         var earlyMark = ""
         var earlyElapsed: TimeInterval = TestWait.seconds(.product(0))
         var baselineLuma: Double?
+        defer {
+            try? StrictE2EVisualEvidence.writeRequiredJSON(
+                [
+                    "baseline_luma": baselineLuma.map { $0 as Any } ?? NSNull(),
+                    "control_bar_wake": controlBarWake.map {
+                        ["issued": $0.issued, "returned": $0.returned] as Any
+                    } ?? NSNull(),
+                    "calibrations": baselineLuma.map { baseline in
+                        AccessLifecycleContract.tvOSContinueCalibrationSamples(
+                            continueMark: continueMark, baselineLuma: baseline,
+                            samples: samples, intervalSeconds: interval
+                        ).values.map { sample in
+                            [
+                                "request": sample.requestElapsed, "returned": sample.returnElapsed,
+                                "luma": sample.meanLuma, "controls": sample.isControlBarVisible
+                            ] as [String: Any]
+                        }
+                    } ?? [],
+                    "frames": capturedFrames.map { frame in
+                        ["request": frame.request, "captured": frame.captured, "returned": frame.returned]
+                    },
+                    "samples": samples.map { sample in
+                        [
+                            "request": sample.requestElapsed, "returned": sample.returnElapsed,
+                            "status": sample.status, "mark": sample.mark, "luma": sample.meanLuma,
+                            "controls": sample.isControlBarVisible
+                        ] as [String: Any]
+                    }
+                ], name: "continue-watch-diagnostic.json")
+        }
         do {
             for frame in capturedFrames {
                 let identity = StrictE2EPhotoIdentity.captureIdentity(png: frame.png)
