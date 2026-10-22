@@ -255,8 +255,11 @@ single Pause. Live hittability is checked before the final stable window snapsho
 `album-pause` evidence records that snapshot's request/return and the Pause tap's
 issue/return times. Its existing 4 s readback requires the paused probe and button
 value `play` in the same window snapshot. Each playback
-capture uses the original 0.8 + 4 s preparation budget and takes one PNG. The
-second capture also requires history to advance by one or different layer IDs.
+capture first preserves the original minimum 0.8 s settle, then checks the scene
+within the remaining 4 s of the same 4.8 s preparation deadline and takes one PNG.
+The scene probe can settle before the retained EXIF card finishes its separate
+fade; logical EXIF visibility does not prove that the old card's pixels are gone.
+The second capture also requires history to advance by one or different layer IDs.
 Post-Pause transitions get that capture budget to recover, including the designed
 fill-in fade. On timeout, the first capture (`album-play-1`) reports a last-observed
 paused transition with the frozen-transition prefix (`control_action/control_state`);

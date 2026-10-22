@@ -173,8 +173,9 @@ extension StrictE2EFilterIOSUITests {
         app: XCUIApplication, name: String, previousScene: [String: String]? = nil
     ) throws -> [String: String] {
         #if DEBUG
-        // Reuse the old 0.8 s settle + 4 s control-reveal budget; pixels are sampled only once.
-        let deadline = Date().addingTimeInterval(TestWait.seconds(.product(0.8)) + TestWait.seconds(.product(4)))
+        // Retained EXIF can still fade after the scene probe settles; preserve the old minimum settle time.
+        let settleDeadline = Date().addingTimeInterval(TestWait.seconds(.product(0.8)))
+        let deadline = settleDeadline.addingTimeInterval(TestWait.seconds(.product(4)))
         var before: [String: String] = [:]
         let previousRender = SharedSceneEvidenceManifest.parseKeyValueFields(previousScene?["render"] ?? "")
         var didAdvanceHistory: Bool?
@@ -182,6 +183,7 @@ extension StrictE2EFilterIOSUITests {
         var didChangeLayers = false
         FirstFailureContext.mark("wait-scene", element: "slideshow.scenePresentation.contract.summary")
         let isReady = TestWait.until(.product(max(.zero, deadline.timeIntervalSinceNow))) {
+            guard Date() >= settleDeadline else { return false }
             before = self.albumSceneObservation(app: app)
             let render = SharedSceneEvidenceManifest.parseKeyValueFields(before["render"] ?? "")
             didAdvanceHistory =
