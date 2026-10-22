@@ -1,6 +1,44 @@
 import XCTest
 
 #if os(tvOS)
+// Pixel decoding stays off the capture cadence; only the bounded observation state shares this lock.
+private final class TVOSControlBarProbe: @unchecked Sendable {
+    private let queue = DispatchQueue(label: "immichSlides.tests.controlBarProbe")
+    private let lock = NSLock()
+    private let reference: StrictE2EPhotoIdentity.ControlBarReference
+    private var hasPendingProbe = false
+    private var hasObservedVisible = false
+    private var hasObservedAutoHide = false
+
+    init(reference: StrictE2EPhotoIdentity.ControlBarReference) {
+        self.reference = reference
+    }
+
+    var didObserveAutoHide: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return hasObservedAutoHide
+    }
+
+    func submit(png: Data) {
+        lock.lock()
+        guard hasPendingProbe == false, hasObservedAutoHide == false else {
+            lock.unlock()
+            return
+        }
+        hasPendingProbe = true
+        lock.unlock()
+        queue.async { [self] in
+            let isVisible = reference.isVisible(png: png)
+            lock.lock()
+            defer { lock.unlock() }
+            hasPendingProbe = false
+            if isVisible == true { hasObservedVisible = true }
+            if isVisible == false, hasObservedVisible { hasObservedAutoHide = true }
+        }
+    }
+}
+
 extension AccessLifecycleTVOSUITests {
     @MainActor
     func assertTVOSNarrowEntryHasNoPin(app: XCUIApplication) throws {
@@ -542,6 +580,7 @@ extension AccessLifecycleTVOSUITests {
         let captureUntil = AccessLifecycleContract.continueWatchDenseCaptureDeadline(intervalSeconds: interval)
         var capturedFrames: [(request: TimeInterval, captured: TimeInterval, returned: TimeInterval, png: Data)] = []
         var controlBarWake: (issued: TimeInterval, returned: TimeInterval)?
+        let controlBarProbe = TVOSControlBarProbe(reference: controlBarReference)
         while Date().timeIntervalSince(continueAt) <= captureUntil {
             let request = Date().timeIntervalSince(continueAt)
             let screenshot = XCUIScreen.main.screenshotForFailureEvidence()
@@ -549,12 +588,15 @@ extension AccessLifecycleTVOSUITests {
             let png = screenshot.pngRepresentation
             let returned = Date().timeIntervalSince(continueAt)
             capturedFrames.append((request, captured, returned, png))
-            // Restore the calibration's visible state once after auto-hide, without toggling playback.
-            if controlBarWake == nil, returned < interval, controlBarReference.isVisible(png: png) == false {
-                let issued = Date().timeIntervalSince(continueAt)
-                FirstFailureRemote.press(.up)
-                controlBarWake = (issued, Date().timeIntervalSince(continueAt))
-                record("playback.wake_controls")
+            if controlBarWake == nil, returned < interval {
+                // Never wait for PNG decoding between captures, including across T-2.
+                controlBarProbe.submit(png: png)
+                if controlBarProbe.didObserveAutoHide {
+                    let issued = Date().timeIntervalSince(continueAt)
+                    FirstFailureRemote.press(.up)
+                    controlBarWake = (issued, Date().timeIntervalSince(continueAt))
+                    record("playback.wake_controls")
+                }
             }
         }
         var samples: [AccessLifecycleContract.ContinueWatchSample] = []
@@ -562,34 +604,27 @@ extension AccessLifecycleTVOSUITests {
         var earlyElapsed: TimeInterval = TestWait.seconds(.product(0))
         var baselineLuma: Double?
         defer {
-            try? StrictE2EVisualEvidence.writeRequiredJSON(
-                [
-                    "baseline_luma": baselineLuma.map { $0 as Any } ?? NSNull(),
-                    "control_bar_wake": controlBarWake.map {
-                        ["issued": $0.issued, "returned": $0.returned] as Any
-                    } ?? NSNull(),
-                    "calibrations": baselineLuma.map { baseline in
-                        AccessLifecycleContract.tvOSContinueCalibrationSamples(
-                            continueMark: continueMark, baselineLuma: baseline,
-                            samples: samples, intervalSeconds: interval
-                        ).values.map { sample in
+            do {
+                try StrictE2EVisualEvidence.writeRequiredJSON(
+                    [
+                        "baseline_luma": baselineLuma.map { $0 as Any } ?? NSNull(),
+                        "control_bar_wake": controlBarWake.map {
+                            ["issued": $0.issued, "returned": $0.returned] as Any
+                        } ?? NSNull(),
+                        "frames": capturedFrames.map { frame in
+                            ["request": frame.request, "captured": frame.captured, "returned": frame.returned]
+                        },
+                        "samples": samples.map { sample in
                             [
                                 "request": sample.requestElapsed, "returned": sample.returnElapsed,
-                                "luma": sample.meanLuma, "controls": sample.isControlBarVisible
+                                "status": sample.status, "mark": sample.mark, "luma": sample.meanLuma,
+                                "controls": sample.isControlBarVisible
                             ] as [String: Any]
                         }
-                    } ?? [],
-                    "frames": capturedFrames.map { frame in
-                        ["request": frame.request, "captured": frame.captured, "returned": frame.returned]
-                    },
-                    "samples": samples.map { sample in
-                        [
-                            "request": sample.requestElapsed, "returned": sample.returnElapsed,
-                            "status": sample.status, "mark": sample.mark, "luma": sample.meanLuma,
-                            "controls": sample.isControlBarVisible
-                        ] as [String: Any]
-                    }
-                ], name: "continue-watch-diagnostic.json")
+                    ], name: "continue-watch-diagnostic.json")
+            } catch {
+                print("Continue watch diagnostic could not be written: \(error.localizedDescription)")
+            }
         }
         do {
             for frame in capturedFrames {

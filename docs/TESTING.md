@@ -626,29 +626,24 @@ photo's brightness through the shared 0.8-second new-photo stable-window confirm
 cannot establish a dimming start on any platform. This recovery-veto cutoff also
 applies to iPad, whose own stable-photo requirement is one second. The shared
 predicate vetoes that recovery, including iPad's two-dim-frame flicker case.
-tvOS additionally calibrates a baseline for each observed control-bar state from
-the first half of T. Every calibration frame must return strictly before T/2,
-identify the original photo, and remain between 95% and 100% of the original baseline.
-Calibration ends at the first dim or unreadable frame; recovery cannot restart it.
-An eligible frame must complete the existing 0.8-second stable window with an
-unchanged control state, adjacent capture gaps at most 0.1 s plus tolerance, and
-the entire window's luminance range at most the existing 0.001 tolerance. The
-latest eligible frame supplies that state's additional baseline. A candidate
-uses it only in the same control state, with exactly the shared 95%, bright-anchor,
-strict-decrease, frozen-frame, gap, control-continuity and recovery-veto rules.
-The onset scan retains the original baseline path as an OR at every index and
-selects the earliest candidate across both paths. On the same samples, no original
-onset can move later, including an early fade that calibration would date later.
-
 The tvOS Continue collector captures full-resolution screenshots from
 `XCUIScreen.main` without an application lookup. It retains dense capture through
-the original absolute deadline and classifies photo identity afterwards. It reads
-only the calibrated Settings pixels during capture and sends at most one passive
-Up after observing auto-hide before T; this restores the visible calibration state
-without toggling playback or resetting the Continue origin. If visibility does
-not return, that calibration cannot sign a hidden-state fade. A new same-state
-bright anchor is still required after the wake. Per-frame request/capture/return
-times, identities, luminance, control states, calibration frames and the one wake
+the original absolute deadline and classifies photo identity afterwards. A serial
+background probe reads the calibrated Settings pixels, with at most one pending
+decode; the capture loop only submits PNG data and reads a locked observation.
+It never waits for decoding between captures, including across T−2. After observing
+visible controls followed by auto-hide before T, it sends at most one Up to restore
+the original visible control state. Up does not toggle playback or reset the
+Continue origin, but it is not entirely passive: control visibility triggers
+`updateFutureProtectionSnapshot`, which can discard the prepared next scene,
+invalidate a pending transition and re-plan it. This can delay a switch and cause
+a false failure; it cannot hide a late resume. There is also a race near the
+earliest fade: a measured wake returned at 9.203 s, leaving about 0.27 s after the
+0.3-second bar animation before the 9.773 s fade. A later wake can change control
+state during dimming and prevent signing that onset. A fresh same-state bright
+anchor remains mandatory after the wake; all luminance comparisons retain the
+original baseline. Per-frame request/capture/return times, identities, luminance,
+control states and the one wake
 are saved in `continue-watch-diagnostic.json`, including on assertion failure.
 A transition identity or a different identified photo remains direct onset
 evidence; tvOS also vetoes a TRANSITION marker when the old photo recovers through
@@ -670,7 +665,12 @@ photo means failure. Dense capture continues through the shared T+2+4-second
 look-ahead, before classification, so a designed fade beginning inside T±2 can pass
 when the new photo becomes stable after T+2. Like iPad, iPhone and tvOS require stable-photo
 confirmation to return within four seconds of the onset request, using the same
-deadline check and constant. Every screenshot requested before T−2 (including the
+deadline check and constant. This deadline has a known false-failure risk at 4K:
+five Release runs left only 86–451 ms of stability margin, with about 0.36 s of
+variation (roughly one capture cadence). An accurately detected onset, capture
+jitter or wake-triggered re-planning can exhaust the remaining 86 ms. The bound
+and verdict stay unchanged; a later sampling failure is not a pass.
+Every screenshot requested before T−2 (including the
 existing timing tolerance) must still identify the old photo: black, blank,
 unrecognizable, transition and different-photo frames fail, even if they recover.
 Detected starts before T−2 or after T+2 also fail. Evidence records the onset,
