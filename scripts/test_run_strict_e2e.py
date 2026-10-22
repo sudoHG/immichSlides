@@ -917,12 +917,14 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
     def test_boot_settle_gate_caps_wait_and_fails_open_on_sampling_or_marker_errors(self):
         import strict_e2e_runner_support as support
         import strict_e2e_resource_diagnostics as resources
-        for failure in ("busy", "remaining-budget", "host", "device", "marker", "cores"):
+        for failure in ("busy", "remaining-budget", "host", "malformed-host", "device", "marker", "cores"):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as raw:
                 clock, reports = [0.0], []
                 def sample():
                     if failure == "host" and clock[0]:
                         return None
+                    if failure == "malformed-host" and clock[0]:
+                        return {"idle_percent": "private-input"}
                     return {"idle_percent": None if clock[0] == 0 else 0}
                 with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted",
                         "GITHUB_EVENT_NAME": "schedule", "RUNNER_TEMP": raw + "/missing" if failure == "marker" else raw}, clear=True), \
@@ -939,7 +941,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                     support.prepare_simulator("device", report=reports.append)
                 log = "\n".join(reports)
                 self.assertIn("outcome=" + ("timed-out" if failure in ("busy", "remaining-budget") else "unavailable"), log)
-                self.assertEqual(clock[0], 360 if failure == "busy" else 600 if failure == "remaining-budget" else 10 if failure in ("host", "device") else 0)
+                self.assertEqual(clock[0], 360 if failure == "busy" else 600 if failure == "remaining-budget" else 10 if failure in ("host", "malformed-host", "device") else 0)
                 self.assertIn("simulator-preparation: passed", log)
                 self.assertNotIn("private-input", log)
 
