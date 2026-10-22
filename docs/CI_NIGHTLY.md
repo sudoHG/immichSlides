@@ -504,8 +504,10 @@ The receipt cannot distinguish this from slow settling; no Swift change is made.
 The first night without CPU starvation is red, two consecutive yellow nights
 escalate to red, and independent strict pause and history cases remain in place.
 
-The policy v2 reader lands before a separate producer-default activation. Old v1
-proofs without gate facts retain their old interpretation. Aggregation rechecks
+After activation, all new proofs are v2, including the existing UI availability
+waits. An older trusted reader would turn even those existing yellows red, which
+is why the reader merged first. Old v1 proofs without gate facts retain their
+old interpretation. Aggregation rechecks
 the original receipts; the reporter rechecks even compact proofs without those
 receipts and turns invalid claims red.
 

@@ -2618,6 +2618,7 @@ class StrictCITracerTests(unittest.TestCase):
                     self.assertEqual("passed", summary["status"])
                     self.assertEqual([observed], aggregate["informational"])
                 if mutation is None:
+                    self.assertEqual(2, observed["environment_limit"]["policy_version"])
                     methods, missing = method_observations(summary, trace, runner_hosted=True)
                     self.assertEqual([], missing)
                     self.assertEqual(observed["environment_limit"], methods[0]["environment_limit"])

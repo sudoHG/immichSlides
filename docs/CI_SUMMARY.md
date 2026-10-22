@@ -816,12 +816,11 @@ The first night without CPU starvation is red, two consecutive yellow nights
 escalate to red, and independent strict pause and history cases remain in place.
 
 Policy v2 requires a new version because its proof projection carries a new field
-and its eligibility differs from v1. Reader-first rollout installs both validators
-while the producer default stays v1; a separate activation commit switches the
-producer default to v2 only after that reader is on main. There is no CLI override.
-Library tests explicitly request v2 to exercise the real tracer producer before
-activation. Retained v1 proofs without a gate continue to validate under exactly
-the old table entries; they do not gain the album exception. Unknown versions
+and its eligibility differs from v1. The producer default is now v2: all new proofs
+use v2, including the existing UI availability waits. An older trusted reader
+would turn even those existing yellows red, which is why the reader merged first.
+There is no CLI override. Retained v1 proofs without a gate continue to validate
+under exactly the old table entries; they do not gain the album exception. Unknown versions
 remain red. A producer PR based on a pre-reader trusted base must be rebased after
 the reader merges; stacking alone does not activate trusted acceptance.
 
