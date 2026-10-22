@@ -470,9 +470,9 @@ retain default simulator signing, pinned toolchains and runtime fixture inputs.
 Only each job's pinned device simulator is created and deleted.
 The PR and nightly UI jobs use the standard-library `ci_simulator.py` bootstrap to
 create and submit boot for that fresh device after toolchain/pins verification and
-Python environment preparation. Only artifact downloads run between early boot
-and the consumer's shared readiness gate; startup can overlap those downloads.
-The gate precedes identity/archive validation, every simulator lookup and fixture
+Python environment preparation. Archive staging, downloads and verification run
+between early boot and the consumer's shared readiness gate; startup can overlap them.
+The gate precedes `run_shard` identity/archive validation, every simulator lookup and fixture
 server startup/health check. For the job's early-booted UDID it goes straight to
 `bootstatus -b`, avoiding another short `boot` command during cold settling.
 Its UDID, destination and platform are exported before
@@ -614,6 +614,17 @@ A subsequent control completed all 61 visual cases in 3,097.84 seconds of shard
 wall time, [exit 65 with one EXIF assertion](https://github.com/sudoHG/immichSlides/actions/runs/37798609844/job/113394133806).
 The larger infrastructure budget preserves product assertions and observation
 windows; partitioning does not change those allowances.
+
+The shared local Git metadata helper used by UI producer identity collection,
+including `stage-download`, allows 120 seconds per command without retries.
+Early simulator boot can starve these reads before the preparation gate runs.
+The nightly's commit and tree reads therefore have a combined four-minute cap;
+PR identity also reads merge headers, for at most six minutes. This fits within
+the setup allowance above without changing step, job or product deadlines.
+Other producers sharing `run_identity` use the same cap. An enclosing deadline,
+such as the archive gate's 120-second alarm, still takes precedence. Non-zero
+Git exits and expired reads propagate as failures; checkout and archive identity
+comparisons remain mandatory, and no cached identity replaces a checkout read.
 
 The four visual partitions use completed hosted per-method durations, including
 failures and approved skips. The frozen selectors cover all 61 iOS and 86 Apple TV

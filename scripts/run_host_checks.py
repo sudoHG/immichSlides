@@ -23,6 +23,7 @@ from ci_summary import (ContractError, identity_key, observation, parse_identity
                         render_markdown, test_identity, validate_observation, validate_test_identity, write_summary)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+GIT_METADATA_TIMEOUT_SECONDS = 120  # Bound local identity reads through hosted simulator first-boot starvation.
 GROUP_TERM_GRACE_SECONDS = 5
 HOST_CHECKS = [
     ("swift-format lint", ["xcrun", "swift-format", "lint", "--strict", "--recursive", "--parallel",
@@ -88,7 +89,7 @@ def partition_steps(population, selected, output, scope):
 
 def git(*args):
     return subprocess.check_output(["git", *args], cwd=REPO_ROOT, text=True,
-                                   stderr=subprocess.DEVNULL, timeout=30).strip()
+                                   stderr=subprocess.DEVNULL, timeout=GIT_METADATA_TIMEOUT_SECONDS).strip()
 
 
 def local_repository():
