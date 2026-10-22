@@ -1017,7 +1017,7 @@ named `immichSlidesUITests` remains part of the key. Official identifiers are re
 
 The optional receipt requires `schema_version: 1`, `source` (`xctest`,
 `validator`, `preparation`), `step`, `element`, `action`, `timing`, `state`,
-`validator`, and `screenshot`, and accepts optional `native_activity_seconds`.
+`validator`, and `screenshot`, and accepts optional `native_activity_seconds` and `gate`.
 All strings are closed vocabularies in
 `ci_failure_diagnostics.py`; `FIRST_FAILURE_ELEMENTS` is the single reviewed
 element table, supplied by fixture runners to the test-only recorder.
@@ -1034,6 +1034,22 @@ and malformed JSON containing the field are refused without echoing candidates.
 | `validator` | Null, or exactly closed `kind`, integer/null `slot` (1–64), and closed `axis`; requires validator source |
 | `screenshot` | `status`, `width`, `height`, `bytes`; a retained image needs positive dimensions <=1,536 and bytes <=1 MiB; unavailable images have null measurements |
 | `native_activity_seconds` | Optional, XCTest source only; exactly `pre_event_idle`, `find_window`, `synthesize_event`, `post_event_idle`, `ax_root_acquisition`, each finite 0–86,400 seconds or null |
+| `gate` | Optional album capture timeout facts; exactly `kind: album-capture`, `stable`, `paused`, `entry_hint_hidden`, `advanced`, `layers_changed`, `manifest_complete`, and `phase`; the six condition fields are Boolean or null |
+
+The `gate` reader accepts only XCTest `wait-scene` receipts for
+`slideshow.scenePresentation.contract.summary` or `slideshow.control.next.button`.
+It describes the last observation in `captureStableAlbumPlaybackPNG`, including
+the Album Next timeout. `stable` uses the existing stable-window predicate;
+`advanced` retains any observed history advance relative to the previous capture,
+while `layers_changed` describes the last observation's layer change. Both remain
+null when there is no previous capture. `manifest_complete` describes the existing
+complete-visible-scene predicate. Missing observations remain null, and `phase`
+accepts only `unknown`, `empty`, `stablePhoto`, `grace`, `transition`, `loading`,
+`incomingFromLoading`, `paused`, or `sourceError`, matching the render probe.
+Other failure paths omit `gate`. This is attribution only: environment timing,
+the environment-failure projection, yellow eligibility and all verdicts are unchanged.
+Reader support must merge before a producer starts emitting this optional object;
+old receipts, including retained nights, remain valid without it.
 
 Native activity support follows the
 [reader-first merge](CI_SUMMARY.md#reader-first-evolution). Strict-runner failure

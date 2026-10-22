@@ -29,6 +29,9 @@ FIRST_FAILURE_MAX_BYTES = 8192
 FIRST_FAILURE_MAX_SECONDS = 86400
 FIRST_FAILURE_MAX_IMAGE_BYTES = 1024 * 1024
 FIRST_FAILURE_MAX_IMAGE_SIDE = 1536
+ALBUM_CAPTURE_GATE_BOOLEANS = ("stable", "paused", "entry_hint_hidden", "advanced", "layers_changed", "manifest_complete")
+ALBUM_CAPTURE_GATE_PHASES = ("unknown", "empty", "stablePhoto", "grace", "transition", "loading",
+                             "incomingFromLoading", "paused", "sourceError")
 # The only reviewed element table. Fixture runners supply this vocabulary to the test-only recorder.
 FIRST_FAILURE_ELEMENTS = (
     "unknown", "app-window", "system.reduce-motion", "simulator",
@@ -481,14 +484,25 @@ def validate_first_failure(receipt):
         require(value is None or (type(value) in ((int,) if integral else (int, float))
                 and minimum <= value <= maximum and math.isfinite(value)), where + ": invalid number")
     fields = {"schema_version", "source", "step", "element", "action", "timing", "state", "validator", "screenshot"}
-    if isinstance(receipt, dict) and "native_activity_seconds" in receipt:
-        fields.add("native_activity_seconds")
+    for optional in ("native_activity_seconds", "gate"):
+        if isinstance(receipt, dict) and optional in receipt:
+            fields.add(optional)
     exact(receipt, fields, "first failure")
     require(type(receipt["schema_version"]) is int and receipt["schema_version"] == 1, "first failure: unsupported version")
     choice(receipt["source"], ("xctest", "validator", "preparation"), "source")
     choice(receipt["step"], FIRST_FAILURE_STEPS, "step")
     choice(receipt["element"], FIRST_FAILURE_ELEMENTS, "element")
     choice(receipt["action"], FIRST_FAILURE_ACTIONS, "action")
+    if "gate" in receipt:
+        gate = receipt["gate"]
+        exact(gate, {"kind", "phase", *ALBUM_CAPTURE_GATE_BOOLEANS}, "first failure gate")
+        choice(gate["kind"], ("album-capture",), "gate kind")
+        choice(gate["phase"], ALBUM_CAPTURE_GATE_PHASES, "gate phase")
+        for key in ALBUM_CAPTURE_GATE_BOOLEANS:
+            require(gate[key] is None or type(gate[key]) is bool, "first failure gate: invalid boolean")
+        require(receipt["source"] == "xctest" and receipt["step"] == "wait-scene"
+                and receipt["element"] in ("slideshow.scenePresentation.contract.summary", "slideshow.control.next.button"),
+                "first failure: gate requires album capture timeout context")
     timing = receipt["timing"]
     exact(timing, FIRST_FAILURE_TIMING_FIELDS, "first failure timing")
     for value in timing.values():
@@ -561,6 +575,11 @@ def render_first_failure(receipt):
     rendered = (f"{receipt['source']}/{receipt['step']}; {receipt['element']}; "
             f"since action={measured('since_action_issued_seconds')}; wait={measured('wait_elapsed_seconds')}; "
             f"deadline={measured('deadline_seconds')}; screenshot={receipt['screenshot']['status']}")
+    if "gate" in receipt:
+        gate = receipt["gate"]
+        rendered += "; gate=" + gate["kind"] + ": " + ", ".join(
+            key + "=" + json.dumps(gate[key]) for key in ALBUM_CAPTURE_GATE_BOOLEANS)
+        rendered += ", phase=" + gate["phase"]
     if "native_activity_seconds" in receipt:
         native = receipt["native_activity_seconds"]
         if all(value is None for value in native.values()):

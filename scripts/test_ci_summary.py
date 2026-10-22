@@ -111,7 +111,7 @@ def bounded_diagnostics_receipt(*, resources=False):
     return receipt
 
 
-def first_failure_receipt(*, native=False):
+def first_failure_receipt(*, native=False, gate=False):
     receipt = {"schema_version": 1, "source": "xctest", "step": "query-element",
         "element": "slideshow.control.playPause.button", "action": "select",
         "timing": {"since_action_issued_seconds": 8.28, "since_action_returned_seconds": 8.1,
@@ -124,6 +124,10 @@ def first_failure_receipt(*, native=False):
     if native:
         receipt["native_activity_seconds"] = {"pre_event_idle": 0.01, "find_window": 0.02,
             "synthesize_event": 0.36, "post_event_idle": 23.05, "ax_root_acquisition": None}
+    if gate:
+        receipt.update(step="wait-scene", element="slideshow.scenePresentation.contract.summary",
+            gate={"kind": "album-capture", "stable": False, "paused": True, "entry_hint_hidden": False,
+                  "advanced": None, "layers_changed": None, "manifest_complete": True, "phase": "stablePhoto"})
     return receipt
 
 
@@ -152,6 +156,60 @@ def hosted_timeout_summary():
 
 
 class SummaryContractTests(unittest.TestCase):
+    def test_album_gate_survives_public_summary_and_rejects_unbounded_facts(self):
+        from ci_failure_diagnostics import public_first_failure, scan_diagnostic_json
+        for summary in (archive_download_summary(), discovery_summary()):
+            summary.pop("archive_download", None)
+            if "compiled_evidence" in summary:
+                summary["compiled_evidence"]["first_exit_code"] = 65
+                summary["compiled_evidence"]["official_tests"]["testNodes"][0]["children"][0]["result"] = "Failed"
+                refresh_discovery_hash(summary)
+            identity = summary["population"]["declared"][0]
+            row = ci_summary.observation(identity, "failed", 1, exit_code=65)
+            row["first_failure"] = row["attempts"][0]["first_failure"] = first_failure_receipt(gate=True)
+            summary["population"]["observed"] = [row]
+            summary["status"] = "failed"
+            for element in ("slideshow.scenePresentation.contract.summary", "slideshow.control.next.button"):
+                row["first_failure"]["element"] = element
+                with self.subTest(version=summary["schema_version"], element=element):
+                    read = ci_summary.parse_summary(json.dumps(summary))
+                    receipt = read["population"]["observed"][0]["first_failure"]
+                    self.assertEqual(row["first_failure"]["gate"], public_first_failure(receipt)["gate"])
+                    line = next(line for line in ci_summary.render_markdown(read).splitlines() if "First failure:" in line)
+                    self.assertIn("gate=album-capture", line)
+                    self.assertIn("stable=false, paused=true, entry_hint_hidden=false, advanced=null, layers_changed=null, manifest_complete=true, phase=stablePhoto", line)
+                    scan_diagnostic_json(json.dumps({"nested": [read]}).encode())
+            # A timeout before any completed poll publishes only nulls and an unknown phase.
+            unobserved = copy.deepcopy(row["first_failure"])
+            unobserved["gate"] = {"kind": "album-capture", **dict.fromkeys(("stable", "paused", "entry_hint_hidden",
+                "advanced", "layers_changed", "manifest_complete")), "phase": "unknown"}
+            self.assertEqual(unobserved["gate"], public_first_failure(unobserved)["gate"])
+            missing = copy.deepcopy(row["first_failure"])
+            del missing["gate"]["manifest_complete"]
+            self.assertIsNone(public_first_failure(missing))
+            cases = [
+                (("gate",), None, "first failure gate: invalid fields"),
+                (("gate", "asset_id"), "private", "first failure gate: invalid fields"),
+                (("gate", "kind"), "private", "first failure: invalid gate kind"),
+                (("gate", "phase"), "private", "first failure: invalid gate phase"),
+                (("source",), "validator", "first failure: gate requires album capture timeout context"),
+                (("step",), "capture-frame", "first failure: gate requires album capture timeout context"),
+                (("element",), "app-window", "first failure: gate requires album capture timeout context"),
+            ]
+            for key in ("stable", "paused", "entry_hint_hidden", "advanced", "layers_changed", "manifest_complete"):
+                for invalid in (0, 1, "true", [], {}):
+                    cases.append((("gate", key), invalid, "first failure gate: invalid boolean"))
+            for path, value, message in cases:
+                changed = copy.deepcopy(row["first_failure"])
+                target = changed
+                for key in path[:-1]:
+                    target = target[key]
+                target[path[-1]] = value
+                with self.subTest(path=path, value=value):
+                    self.assertIsNone(public_first_failure(changed))
+                    with self.assertRaisesRegex(ci_summary.ContractError, "^" + message + "$"):
+                        scan_diagnostic_json(json.dumps({"nested": [{"first_failure": changed}]}).encode())
+
     def test_first_failure_lines_follow_all_summary_table_rows(self):
         summary = archive_download_summary()
         summary.pop("archive_download")
