@@ -1073,7 +1073,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
                 image = io.BytesIO()
                 Image.new("RGB", (64, 32), "blue").save(image, format="PNG", icc_profile=b"PRIVATE_PROFILE")
                 raw = image.getvalue()
-                receipt = first_failure_receipt()
+                receipt = first_failure_receipt(gate=True)
                 receipt["screenshot"].update(width=64, height=32, bytes=len(raw))
                 if defect == "private-element":
                     receipt["element"] = "PRIVATE_SENTINEL"
@@ -1122,6 +1122,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
                     public_image = output / "first-failure/0.png"
                     self.assertEqual(kept["screenshot"]["bytes"], public_image.stat().st_size)
                     self.assertEqual(kept["timing"], receipt["timing"])
+                    self.assertEqual(kept["gate"], receipt["gate"])
                     with Image.open(public_image) as picture:
                         self.assertEqual(picture.info, {})
                     runner.write_sensitive_scan(output, ["PRIVATE_SENTINEL", "PRIVATE_PROFILE"])

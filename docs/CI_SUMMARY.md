@@ -615,6 +615,17 @@ equal its first failing attempt's receipt; an existing listed retry cannot repla
 that first receipt with the retry's state. Preparation receipts belong to
 `not-run` attempts.
 
+An optional `first_failure.gate` carries the album capture gate's last observed
+conditions on its timeout paths only. The First failure line in `summary.md`
+renders its fixed Boolean/null facts and enumerated phase; it contains no raw
+probe text or identities. Exact fields, phase vocabulary and context restrictions
+are specified in [first-failure evidence](CI_STRICT_RUNNER.md#first-failure-evidence).
+Both summary versions and the recursive bounded diagnostic/publication readers
+accept the object and reject unknown keys or values. Historical receipts may omit
+it. This reader addition does not change environment timing, the environment-failure
+projection or yellow eligibility; producer activation follows the same reader-first
+merge requirement.
+
 The strict tracer emits the optional `validator_failure_message` field for failed
 cases with an explicit failing validator receipt, on both the observation and attempt.
 Readers accept at most 512 characters from the
