@@ -10,6 +10,254 @@ struct SmartFillMotionRuntimeIntegrationTests {
     private let portraitProbeSlotSizePoints = CGSize(width: 393, height: 852)
     private let iPhonePortraitPlanningPixelSize = PlaybackPlanningPixelSize(width: 1179, height: 2556)
 
+    enum RotationSceneKind: CaseIterable, Equatable, Sendable {
+        case single, double, fallback
+
+        var pixelSize: PlaybackPlanningPixelSize {
+            switch self {
+            case .single: PlaybackPlanningPixelSize(width: 2400, height: 4800)
+            case .double: PlaybackPlanningPixelSize(width: 1800, height: 2000)
+            case .fallback: PlaybackPlanningPixelSize(width: 3840, height: 2160)
+            }
+        }
+
+        var sceneType: PlaybackSmartFillSceneType {
+            switch self {
+            case .single: .single
+            case .double: .double
+            case .fallback: .fallback
+            }
+        }
+    }
+
+    @Test(arguments: [false, true], RotationSceneKind.allCases)
+    func `rotation reframes the visible assets without changing history or the playing or paused clock`(
+        isPaused: Bool, kind: RotationSceneKind
+    ) throws {
+        var now = 100.0
+        let vm = makeSmartFillViewModel(
+            assetPixelSize: kind.pixelSize,
+            timestamp: { now })
+        vm.autoPlayInterval = 30
+        func settleVisibleScene() throws {
+            let layer = try #require(vm.sceneRenderSnapshot.layers.last)
+            let scene = try #require(vm.scene(for: layer))
+            decodeAllRenderers(in: scene, layer: layer, viewModel: vm)
+            now += 0.1
+            vm.incomingBecameVisible(
+                ScenePresentationLayerIdentity(
+                    generation: layer.identity.generation, sceneID: layer.identity.sceneID, layerID: "scene-root"))
+            now = try #require(vm.fireScheduledScenePresentationWakeUpForTesting())
+            #expect(vm.sceneRenderSnapshot.underlyingPhase == .stablePhoto)
+        }
+        try settleVisibleScene()
+        vm.requestNextScene()
+        try settleVisibleScene()
+        let stableStartedAt = now
+        now += 2
+        if isPaused { vm.toggleAutoPlayFromUserInteraction() }
+        let before = vm.sceneRenderSnapshot
+        let layer = try #require(before.layers.first)
+        let original = try #require(vm.scene(for: layer))
+        #expect(original.photoSlots.count == (kind == .double ? 2 : 1))
+        #expect(original.smartFillReadback?.sceneType == kind.sceneType)
+        let history = vm.playbackHistoryLedgerDiagnosticsSummaryJSON
+        let recipes = vm.retainedPlaybackHistoryRecipesForTesting
+        #expect(recipes.count == 2)
+        func assertRetainedRecipes() {
+            let retained = vm.retainedPlaybackHistoryRecipesForTesting
+            #expect(retained.map(\.id) == recipes.map(\.id))
+            #expect(retained.map(\.planningSurface) == recipes.map(\.planningSurface))
+            #expect(retained.map { $0.photoSlots.map(\.planning) } == recipes.map { $0.photoSlots.map(\.planning) })
+        }
+        let navigationToken = vm.targetTransitionToken
+        let cursor = vm.smartFillCandidateCursorIndexForTesting
+        let landscape = PlaybackSmartFillSurface(
+            pixelSize: PlaybackPlanningPixelSize(width: 2556, height: 1179), profile: .iPhone, orientation: .landscape)
+
+        vm.smartFillMotionPreparedSlotPreloadHookForTesting = { _ in }
+        vm.clearPreparedSmartFillRingForTesting()
+        let preparedCursor = try #require(vm.currentPreparedSmartFillSourceCursorForTesting)
+        let preparedRequest = try #require(vm.capturePreparedSmartFillPlanRequestForTesting(startingAt: preparedCursor))
+        let preparedResult = try #require(SmartFillPreparedPlanBuilder.makeResult(for: preparedRequest))
+        #expect(vm.applyPreparedSmartFillPlanResultForTesting(preparedResult, request: preparedRequest) == .applied)
+        let preparedAssets = try #require(vm.preparedSmartFillNextAssetIdsForTesting)
+        #expect(!preparedAssets.isEmpty)
+        let protection = PlaybackProtectionSnapshot(regions: [
+            try #require(
+                PlaybackProtectionRegion.systemTopObstruction(
+                    rect: PlaybackProtectionRect(x: 0, y: 0, width: 1, height: 0.05),
+                    activeConditionSummary: "orientation=landscape"))
+        ])
+        vm.updateSmartFillSurface(landscape, protectionSnapshot: protection)
+        #expect(vm.preparedSmartFillNextAssetIdsForTesting == nil)
+        #expect(vm.applyPreparedSmartFillPlanResultForTesting(preparedResult, request: preparedRequest) == .stale)
+
+        let reframed = try #require(vm.scene(for: layer))
+        #expect(reframed.id == original.id)
+        #expect(reframed.playbackSessionId == original.playbackSessionId)
+        #expect(reframed.sequence == original.sequence)
+        #expect(reframed.assetIds == original.assetIds)
+        #expect(reframed.photoSlots.map(\.id) == original.photoSlots.map(\.id))
+        #expect(vm.playbackHistoryLedgerDiagnosticsSummaryJSON == history)
+        #expect(vm.targetTransitionToken == navigationToken)
+        #expect(vm.smartFillCandidateCursorIndexForTesting == cursor)
+        #expect(vm.sceneRenderSnapshot == before)
+        #expect(reframed.smartFillReadback?.surfaceKey == landscape.surfaceKey)
+        #expect(reframed.smartFillReadback?.sceneType == original.smartFillReadback?.sceneType)
+        #expect(reframed.smartFillReadback?.fallbackReason == original.smartFillReadback?.fallbackReason)
+        #expect(reframed.photoSlots.allSatisfy { $0.planning.faceProtection == .notApplied })
+        assertRetainedRecipes()
+        let context = try #require(vm.motionRuntimeContext(for: layer, platform: .iOS, isReduceMotionEnabled: false))
+        func motionFrame(_ slot: PhotoSlot, surface: PlaybackSmartFillSurface) throws
+            -> SmartFillMotionRenderedSlotFrame
+        {
+            let frame = slot.planning.displayFrame
+            let size = CGSize(
+                width: Double(surface.pixelSize.width) * frame.width,
+                height: Double(surface.pixelSize.height) * frame.height)
+            let pixels = try #require(slot.planning.sourceImage.assetPixelSize)
+            let placement = SmartFillSourceCropPlacement.resolve(
+                slotSize: size, sourceAspectRatio: Double(pixels.width) / Double(pixels.height),
+                cropRect: slot.planning.cropRect)
+            return SmartFillMotionSlotFrameResolver.resolve(
+                SmartFillMotionSlotFrameInput(
+                    motionContext: context, slot: slot,
+                    renderGeometry: MotionSlotRenderGeometry(slotSize: size, imageFrameInSlot: placement.imageFrame)))
+        }
+        let portrait = PlaybackSmartFillSurface(
+            pixelSize: iPhonePortraitPlanningPixelSize,
+            profile: .iPhone, orientation: .portrait)
+        for (originalSlot, slot) in zip(original.photoSlots, reframed.photoSlots) {
+            let frame = slot.planning.displayFrame
+            let crop = slot.planning.cropRect
+            let pixels = try #require(
+                slot.planning.sourceImage.assetPixelSize ?? slot.planning.sourceImage.exifPixelSize)
+            let sourceAspect = Double(pixels.width) / Double(pixels.height)
+            assertApproximatelyEqual(
+                sourceAspect * crop.width / crop.height, landscape.aspectRatio * frame.width / frame.height)
+            let originalMotion = try motionFrame(originalSlot, surface: portrait)
+            let reframedMotion = try motionFrame(slot, surface: landscape)
+            #expect(reframedMotion.diagnostics?.stableSeedHash == originalMotion.diagnostics?.stableSeedHash)
+            #expect(reframedMotion.diagnostics?.zoomDirection == originalMotion.diagnostics?.zoomDirection)
+            assertApproximatelyEqual(reframedMotion.transform.scale, originalMotion.transform.scale)
+        }
+        #expect(reframed.photoSlots.map { $0.planning.cropRect } != original.photoSlots.map { $0.planning.cropRect })
+        if kind == .double {
+            #expect(
+                reframed.photoSlots.map { $0.planning.displayFrame }
+                    != original.photoSlots.map { $0.planning.displayFrame })
+        }
+        now += 1
+        let laterLayer = try #require(vm.sceneRenderSnapshot.layers.first)
+        assertApproximatelyEqual(laterLayer.motionActiveTime, layer.motionActiveTime + (isPaused ? 0 : 1))
+        vm.updateSmartFillSurfaceForTesting(
+            PlaybackSmartFillSurface(
+                pixelSize: iPhonePortraitPlanningPixelSize, profile: .iPhone, orientation: .portrait))
+        let returned = try #require(vm.scene(for: layer))
+        #expect(returned.assetIds == original.assetIds)
+        #expect(returned.photoSlots.map { $0.planning.cropRect } == original.photoSlots.map { $0.planning.cropRect })
+        let interval = try #require(before.frozenInterval)
+        let expectedDeadline = isPaused ? now + interval - before.activeTime : stableStartedAt + interval
+        if isPaused { vm.toggleAutoPlayFromUserInteraction() }
+        let deadline = try #require(vm.scenePresentationWakeUpScheduler.scheduledDeadlineForTesting)
+        assertApproximatelyEqual(deadline, expectedDeadline)
+
+        vm.updateSmartFillSurface(landscape, protectionSnapshot: protection)
+        vm.requestPreviousScene()
+        try settleVisibleScene()
+        let previousLayer = try #require(vm.sceneRenderSnapshot.layers.first)
+        let previous = try #require(vm.scene(for: previousLayer))
+        #expect(previous.id == recipes[0].id)
+        #expect(previous.assetIds == recipes[0].assetIds)
+        #expect(previous.smartFillReadback?.surfaceKey == landscape.surfaceKey)
+        assertRetainedRecipes()
+
+        vm.requestNextScene()
+        let incoming = try #require(vm.sceneRenderSnapshot.layers.last)
+        decodeAllRenderers(in: try #require(vm.scene(for: incoming)), layer: incoming, viewModel: vm)
+        now += 0.1
+        let crossfade = vm.sceneRenderSnapshot
+        #expect(crossfade.phase == .transition)
+        #expect(crossfade.layers.count == 2)
+        for fadingLayer in crossfade.layers {
+            let fadingScene = try #require(vm.scene(for: fadingLayer))
+            #expect(fadingScene.smartFillReadback?.surfaceKey == landscape.surfaceKey)
+            for slot in fadingScene.photoSlots {
+                let pixels = try #require(slot.planning.sourceImage.assetPixelSize)
+                let crop = slot.planning.cropRect
+                let frame = slot.planning.displayFrame
+                assertApproximatelyEqual(
+                    Double(pixels.width) / Double(pixels.height) * crop.width / crop.height,
+                    landscape.aspectRatio * frame.width / frame.height)
+            }
+        }
+        vm.updateSmartFillSurfaceForTesting(portrait)
+        for fadingLayer in crossfade.layers {
+            #expect(vm.scene(for: fadingLayer)?.smartFillReadback?.surfaceKey == portrait.surfaceKey)
+        }
+        try settleVisibleScene()
+        let replayed = try #require(vm.safeCurrentScene)
+        #expect(replayed.id == original.id)
+        #expect(replayed.assetIds == original.assetIds)
+        #expect(replayed.photoSlots.map(\.planning) == original.photoSlots.map(\.planning))
+        #expect(vm.playbackHistoryLedgerDiagnosticsSummaryJSON == history)
+        assertRetainedRecipes()
+    }
+
+    enum ProjectionCacheUpdate: CaseIterable, Sendable {
+        case publishTiming, displayContent, surface
+    }
+
+    @Test(arguments: ProjectionCacheUpdate.allCases)
+    func `surface projections retain protection only updates until timing content or geometry invalidates the cache`(
+        update: ProjectionCacheUpdate
+    ) throws {
+        let vm = makeSmartFillViewModel(timestamp: { 100 })
+        let recipe = try #require(vm.safeCurrentScene)
+        let owner = PlaybackSessionOwner()
+        owner.resetPlayback(with: recipe.photoSlots.map(\.asset), initialScene: recipe, reason: .poolReloaded)
+        let landscape = PlaybackSmartFillSurface(
+            pixelSize: PlaybackPlanningPixelSize(width: 2556, height: 1179), profile: .iPhone, orientation: .landscape)
+        owner.updatePresentationSurface(landscape, protectionSnapshot: .empty)
+        let initialProjection = try #require(owner.currentScene)
+        let protection = PlaybackProtectionSnapshot(regions: [
+            try #require(
+                PlaybackProtectionRegion.systemTopObstruction(
+                    rect: PlaybackProtectionRect(x: 0, y: 0, width: 1, height: 0.05),
+                    activeConditionSummary: "orientation=landscape"))
+        ])
+
+        owner.updatePresentationSurface(landscape, protectionSnapshot: protection)
+        #expect(owner.currentScene?.protectionSnapshot == initialProjection.protectionSnapshot)
+        #expect(owner.currentScene?.photoSlots.map(\.planning) == initialProjection.photoSlots.map(\.planning))
+        switch update {
+        case .publishTiming:
+            owner.recordScenePublishTiming(
+                sceneID: initialProjection.id, actionTimestamp: 101, scenePublishTimestamp: 101.5)
+            let readback = try #require(owner.currentScene?.smartFillReadback)
+            #expect(readback.actionTimestamp == 101)
+            #expect(readback.scenePublishTimestamp == 101.5)
+            #expect(readback.qaDebugSummary.contains("actionToSceneLatencyMs=500.000"))
+        case .displayContent:
+            let primaryAsset = try #require(recipe.primaryAsset)
+            #expect(owner.replaceCurrentDisplayContent(with: PlaybackScene(primaryAsset: primaryAsset)))
+            #expect(owner.currentScene?.smartFillReadback == nil)
+            #expect(owner.replaceCurrentDisplayContent(with: recipe))
+            #expect(owner.currentScene?.smartFillReadback?.surfaceKey == landscape.surfaceKey)
+        case .surface:
+            let wider = PlaybackSmartFillSurface(
+                pixelSize: PlaybackPlanningPixelSize(width: 2700, height: 1179), profile: .iPhone,
+                orientation: .landscape)
+            owner.updatePresentationSurface(wider, protectionSnapshot: protection)
+            #expect(owner.currentScene?.planningSurface?.pixelSize == wider.pixelSize)
+            #expect(
+                owner.currentScene?.photoSlots.map { $0.planning.cropRect }
+                    != initialProjection.photoSlots.map { $0.planning.cropRect })
+        }
+        #expect(owner.currentScene?.protectionSnapshot == protection)
+    }
+
     @Test
     func `a full scene snapshot active time is the only product motion progress source`() throws {
         var now = 100.0
@@ -675,6 +923,7 @@ struct SmartFillMotionRuntimeIntegrationTests {
 
     private func makeSmartFillViewModel(
         source: PlaybackSource = .random,
+        assetPixelSize: PlaybackPlanningPixelSize = PlaybackPlanningPixelSize(width: 1800, height: 2000),
         timestamp: @escaping () -> TimeInterval
     ) -> SlideShowViewModel {
         let vm = SlideShowViewModel(source: source)
@@ -690,7 +939,7 @@ struct SmartFillMotionRuntimeIntegrationTests {
             )
         )
         let assets = (0..<6).map {
-            makeAsset(id: "asset-\($0)", width: 1800, height: 2000)
+            makeAsset(id: "asset-\($0)", width: assetPixelSize.width, height: assetPixelSize.height)
         }
         markReady(assets, in: vm.downloadManager)
         vm.replacePlaybackAssetsForTesting(assets)

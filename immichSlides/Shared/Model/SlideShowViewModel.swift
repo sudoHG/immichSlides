@@ -120,6 +120,8 @@ class SlideShowViewModel: ObservableObject {
         playbackSession.scenes
     }
     #if DEBUG
+    var retainedPlaybackHistoryRecipesForTesting: [PlaybackScene] { playbackSession.retainedHistoryRecipesForTesting }
+
     var smartFillCandidateCursorIndexForTesting: Int {
         candidateProgression.currentCursorIndex
     }
@@ -534,6 +536,7 @@ class SlideShowViewModel: ObservableObject {
             return
         }
         playbackSession.updateFutureProtectionSnapshot(protectionSnapshot)
+        playbackSession.updatePresentationSurface(surface, protectionSnapshot: protectionSnapshot)
         syncPlaybackReadbackFromSession()
         scheduleSmartFillInitialSceneActivationIfNeeded()
         refreshPreparedSmartFillSceneRingIfPossible()
@@ -624,7 +627,7 @@ class SlideShowViewModel: ObservableObject {
     }
 
     var playbackSceneCountForTesting: Int {
-        playbackSession.scenes.count
+        playbackSession.sceneCount
     }
 
     func clearPreparedSmartFillRingForTesting() {
@@ -757,15 +760,7 @@ class SlideShowViewModel: ObservableObject {
     }
 
     func assetIds(in range: ClosedRange<Int>) -> [String] {
-        guard !playbackScenes.isEmpty else { return [] }
-        let lowerBound = max(0, range.lowerBound)
-        let upperBound = min(playbackScenes.count - 1, range.upperBound)
-        guard lowerBound <= upperBound else { return [] }
-
-        let scenes = (lowerBound...upperBound).compactMap { index in
-            scene(at: index)
-        }
-        return PlaybackScene.assetIds(in: scenes)
+        playbackSession.assetIds(in: range)
     }
 
     private func assetIdLogValue(at index: Int) -> String {
@@ -949,9 +944,9 @@ class SlideShowViewModel: ObservableObject {
     }
 
     private func displayedAssetIdsBeforeCurrentScene() -> Set<String> {
-        let current = max(0, min(currentIndex, playbackSession.scenes.count))
+        let current = max(0, min(currentIndex, playbackSession.sceneCount))
         guard current > 0 else { return [] }
-        return Set(playbackSession.scenes.prefix(current).flatMap(\.assetIds))
+        return Set(playbackSession.assetIds(in: 0...(current - 1)))
     }
 
     // After the settings page clears the cache and returns, force-reload the current photo; this does not rely on the
@@ -1305,26 +1300,27 @@ class SlideShowViewModel: ObservableObject {
     }
 
     func makeKeepIds(currentIndex: Int) -> Set<String> {
-        guard !playbackScenes.isEmpty else { return [] }
-        guard currentIndex >= 0, currentIndex < playbackScenes.count else {
+        let sceneCount = playbackSession.sceneCount
+        guard sceneCount > 0 else { return [] }
+        guard currentIndex >= 0, currentIndex < sceneCount else {
             logger.warning(
-                "make keep ids invalid currentIndex=\(currentIndex, privacy: .public) sceneCount=\(self.playbackScenes.count, privacy: .public)"
+                "make keep ids invalid currentIndex=\(currentIndex, privacy: .public) sceneCount=\(sceneCount, privacy: .public)"
             )
             return []
         }
 
         let start = max(0, currentIndex - preloadCount)
 
-        let end = min(playbackScenes.count - 1, currentIndex + preloadCount)
+        let end = min(sceneCount - 1, currentIndex + preloadCount)
 
         guard start <= end else {
             logger.warning(
-                "make keep ids invalid range currentIndex=\(currentIndex, privacy: .public) sceneCount=\(self.playbackScenes.count, privacy: .public) start=\(start, privacy: .public) end=\(end, privacy: .public)"
+                "make keep ids invalid range currentIndex=\(currentIndex, privacy: .public) sceneCount=\(sceneCount, privacy: .public) start=\(start, privacy: .public) end=\(end, privacy: .public)"
             )
             return []
         }
         var keepIds = Set(assetIds(in: start...end))
-        keepIds.formUnion(PlaybackScene.assetIds(in: playbackScenes))
+        keepIds.formUnion(playbackSession.retainedAssetIds)
         if let pendingScene = playbackSession.pendingTransition?.scene {
             keepIds.formUnion(PlaybackScene.assetIds(in: [pendingScene]))
         }
@@ -1770,7 +1766,8 @@ extension SlideShowViewModel {
         let prototypeScene = PlaybackScene(
             id: "scene-smartfill-\(photoSlots.first?.asset.id ?? "empty")",
             photoSlots: photoSlots,
-            smartFillReadback: readback
+            smartFillReadback: readback,
+            planningSurface: smartFillSurface
         )
         recordSmartFillStartupFirstPlanMetrics(
             assetPoolSize: assets.count,

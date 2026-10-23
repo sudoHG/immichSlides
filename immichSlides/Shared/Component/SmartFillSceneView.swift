@@ -313,11 +313,8 @@ private struct SmartFillSlotImageView: View {
         return SmartFillMotionSlotFrameResolver.resolve(
             SmartFillMotionSlotFrameInput(
                 motionContext: motionContext,
-                slotId: slot.id,
-                assetId: slot.asset.id,
-                renderGeometry: geometry,
-                cropRectInSource: slot.planning.cropRect.motionUnitRect,
-                focalSource: slot.planning.focalSummary?.motionFocalSource ?? .cropCenterFallback
+                slot: slot,
+                renderGeometry: geometry
             )
         )
     }

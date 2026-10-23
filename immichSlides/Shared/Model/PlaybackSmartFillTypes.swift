@@ -137,6 +137,21 @@ struct SmartFillPlanningRawAssetSnapshot: Equatable, Sendable {
     let faceRects: [PlaybackPlanningRect]?
     let subjectRects: [PlaybackPlanningRect]?
 
+    init(asset: Asset) {
+        self.init(
+            assetId: asset.id, width: asset.width, height: asset.height,
+            exifImageWidth: asset.exifInfo?.exifImageWidth, exifImageHeight: asset.exifInfo?.exifImageHeight,
+            orientation: asset.exifInfo?.orientation, thumbhash: asset.thumbhash,
+            rawFaces: (asset.people ?? []).flatMap { person in
+                (person.faces ?? []).map { face in
+                    SmartFillPlanningRawFaceSnapshot(
+                        boundingBoxX1: face.boundingBoxX1, boundingBoxX2: face.boundingBoxX2,
+                        boundingBoxY1: face.boundingBoxY1, boundingBoxY2: face.boundingBoxY2,
+                        imageWidth: face.imageWidth, imageHeight: face.imageHeight, sourceType: face.sourceType)
+                }
+            })
+    }
+
     nonisolated init(
         assetId: String,
         width: Int? = nil,
@@ -275,7 +290,7 @@ enum SmartFillPreparedPlanBuilder {
         )
     }
 
-    private nonisolated static func candidateSummary(
+    nonisolated static func candidateSummary(
         from raw: SmartFillPlanningRawAssetSnapshot
     ) -> PlaybackSmartFillCandidateSummary {
         PlaybackSmartFillCandidateSummary(

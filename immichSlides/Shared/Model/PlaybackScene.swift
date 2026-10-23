@@ -404,15 +404,18 @@ struct PhotoSlot: Identifiable {
     let id: String
     let asset: Asset
     let planning: PlaybackPlanningSnapshot
+    let motionSeedCropRect: PlaybackPlanningRect
 
     init(
         id: String,
         asset: Asset,
-        planning: PlaybackPlanningSnapshot? = nil
+        planning: PlaybackPlanningSnapshot? = nil,
+        motionSeedCropRect: PlaybackPlanningRect? = nil
     ) {
         self.id = id
         self.asset = asset
         self.planning = planning ?? .legacyScaledToFit(for: asset)
+        self.motionSeedCropRect = motionSeedCropRect ?? self.planning.cropRect
     }
 }
 
@@ -430,6 +433,7 @@ struct PlaybackScene: Identifiable {
     let fallbackReason: PlaybackSceneFallbackReason
     let protectionSnapshot: PlaybackProtectionSnapshot
     let smartFillReadback: PlaybackSmartFillSceneReadback?
+    let planningSurface: PlaybackSmartFillSurface?
 
     init(
         id: String,
@@ -438,7 +442,8 @@ struct PlaybackScene: Identifiable {
         photoSlots: [PhotoSlot],
         fallbackReason: PlaybackSceneFallbackReason = .none,
         protectionSnapshot: PlaybackProtectionSnapshot = .empty,
-        smartFillReadback: PlaybackSmartFillSceneReadback? = nil
+        smartFillReadback: PlaybackSmartFillSceneReadback? = nil,
+        planningSurface: PlaybackSmartFillSurface? = nil
     ) {
         self.id = id
         self.playbackSessionId = playbackSessionId
@@ -447,6 +452,7 @@ struct PlaybackScene: Identifiable {
         self.fallbackReason = fallbackReason
         self.protectionSnapshot = protectionSnapshot
         self.smartFillReadback = smartFillReadback
+        self.planningSurface = planningSurface
     }
 
     init(
@@ -504,7 +510,8 @@ struct PlaybackScene: Identifiable {
             photoSlots: photoSlots,
             fallbackReason: fallbackReason,
             protectionSnapshot: protectionSnapshot,
-            smartFillReadback: smartFillReadback
+            smartFillReadback: smartFillReadback,
+            planningSurface: planningSurface
         )
     }
 
@@ -516,7 +523,8 @@ struct PlaybackScene: Identifiable {
             photoSlots: photoSlots,
             fallbackReason: fallbackReason,
             protectionSnapshot: protectionSnapshot,
-            smartFillReadback: readback
+            smartFillReadback: readback,
+            planningSurface: planningSurface
         )
     }
 
@@ -528,7 +536,8 @@ struct PlaybackScene: Identifiable {
             photoSlots: scene.photoSlots,
             fallbackReason: scene.fallbackReason,
             protectionSnapshot: protectionSnapshot,
-            smartFillReadback: scene.smartFillReadback
+            smartFillReadback: scene.smartFillReadback,
+            planningSurface: scene.planningSurface
         )
     }
 
