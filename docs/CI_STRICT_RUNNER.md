@@ -1620,8 +1620,8 @@ New enum meanings and why the previous vocabulary cannot express them:
 
 | Fixed source prefix | Phase | Class | Public source |
 |---|---|---|---|
-| `tvOS flow entry precondition failed:` | `history_navigation` | `control_state` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L287); red when autoplay advanced before the entry pause |
-| `tvOS flow entry anchor must remain paused before checking the history boundary.` | `history_navigation` | `control_state` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L291) |
+| `tvOS flow entry precondition failed:` | `history_navigation` | `control_state` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L282) and [#L302](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L302); red when the initial scene did not stabilize before the entry pause, or when autoplay advanced before it. The `tvos-entry-capture-window` attachment distinguishes the two |
+| `tvOS flow entry anchor must remain paused before checking the history boundary.` | `history_navigation` | `control_state` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L306) |
 | `tvOS midpoint setup exhausted the original step budget before the half-cycle pause.` | `continue_timing` | `timing_window` | [AccessLifecycleTVOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift#L343) |
 | `tvOS midpoint pause requires Play/Pause focus after at most one wake within the original step budget.` | `control_action` | `focus` | [AccessLifecycleTVOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift#L364) |
 | `tvOS midpoint pause must return in the anchored stable window within the original step budget.` | `continue_timing` | `timing_window` | [AccessLifecycleTVOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift#L385) |
