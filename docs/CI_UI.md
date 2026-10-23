@@ -85,9 +85,11 @@ successful build job keeps its original archive and evidence attempt.
 
 Shards download that exact artifact ID/run. Before simulator preparation, the
 consumer requires regular, non-symlink `manifest.json` and `build.tar.gz` files.
-A missing or nonregular member fails with `archive-download-incomplete` in the
-infrastructure summary and no test observations, even if the download action
-reported success. This presence check does not retry downloads or replace the
+A missing directory or member fails with `archive-member-missing`; a present
+nonregular member (directory or symlink) fails with `archive-download-incomplete`.
+The infrastructure summary records no executed tests; scoped discovery shards
+record declared tests as `not-run`, even if the download action reported success.
+This presence check does not retry downloads or replace the
 nightly's [staging integrity gate](CI_NIGHTLY.md#complete-fixture-ui).
 The PR workflow still downloads directly to the consumer directory.
 Shards then repeat the full
