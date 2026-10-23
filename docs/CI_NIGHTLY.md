@@ -496,14 +496,24 @@ are authoritative; the plain-English boundary is:
 | --- | --- |
 | Reviewed UI availability wait with a full deadline and low-idle samples strictly before and after failure | Yes, in hosted nightly strict scope only. |
 | Mode page remained visible after tapping Continue, with `mode-departure` at `mode.continue.button` and `mode_selection/navigation` or `playback_entry/navigation` | Policy v3 only, with failure surface `mode` and every existing timing, starvation and hosting requirement. |
-| Continue disappeared before departure (`mode-continue`), or departure reached an unexpected surface | Red under v3; retained v1/v2 keep their original allowlist interpretation. |
+| Continue disappeared before departure (`mode-card` at `mode.continue.button`), or departure reached an unexpected surface | No. The `mode-continue` UI-availability wait remains eligible in v1/v2/v3. |
 | Album capture settling after Next took effect, paused playback, hidden entry hint and a complete loaded photo | Policies v2/v3, with every published gate fact revalidated and an allowed settling phase. |
 | Next did not advance, unchanged layers, changed layers without visible history advance, first capture with null progress, missing/incomplete gate or manifest, `grace`/`loading` or any other unreviewed phase | No. |
-| Black, blank or unrecognizable playback, validator/functional failure, process loss or invocation infrastructure failure | No. |
+| Black, blank or unrecognizable playback, validator/functional failure, process loss or invocation infrastructure failure | No, except the indistinguishable v3 mode-departure functional failures in the accepted residual risk below. |
 | Missing/one-sided/high-idle samples, unknown hosting, local/self-hosted/UI/informational suite | No. |
 | The same case's second consecutive yellow UTC night | No; the reporter escalates it to red. |
 
-Accepted residual risk: `advanced` is cumulative across polls. A double advance
+Accepted residual risk (v3 mode departure): Continue tapped but no navigation,
+an unhandled non-password alert over the mode page, and load-only navigation bugs
+produce receipts identical to a slow departure. With every required proof field,
+they can be yellow once on a CPU-starved night. A night without starvation is red;
+two consecutive yellow nights escalate to red. Alternating yellow/pass nights
+never auto-escalate, so the coordinator reviews any test that is yellow three or
+more times in a week (Hogan, 2026-10-22). Local tests on the pinned devices remain
+an independent check. Successful mode navigation clears the failure-context step
+and element so later assertions cannot reuse its departure eligibility.
+
+Accepted residual risk (album capture): `advanced` is cumulative across polls. A double advance
 (`historyCount = previous + 2`), including autoplay advancing while paused, can
 still qualify when the final layer IDs differ and every other condition holds.
 The receipt cannot distinguish this from slow settling; no Swift change is made.

@@ -2924,7 +2924,7 @@ class StrictCITracerTests(unittest.TestCase):
         from test_ci_summary import hosted_mode_departure_summary
 
         for phase in ("mode_selection", "playback_entry"):
-            for mutation in (None, "missing marker", "duplicate marker", "mode-continue", "wrong element",
+            for mutation in (None, "missing marker", "duplicate marker", "mode-card", "wrong element",
                              "wrong surface", "before only", "after only", "high idle", "validator", "informational"):
                 with self.subTest(phase=phase, mutation=mutation), tempfile.TemporaryDirectory() as raw:
                     seed, resource = hosted_mode_departure_summary(phase)
@@ -2934,7 +2934,7 @@ class StrictCITracerTests(unittest.TestCase):
                         ledger["events"] = []
                     elif mutation == "duplicate marker":
                         ledger["events"].append(copy.deepcopy(ledger["events"][0]))
-                    elif mutation == "mode-continue":
+                    elif mutation == "mode-card":
                         row["first_failure"]["step"] = mutation
                     elif mutation == "wrong element":
                         row["first_failure"]["element"] = "mode.filtered.button"

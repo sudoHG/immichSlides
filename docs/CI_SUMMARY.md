@@ -795,7 +795,7 @@ All criteria are required:
 
 | Phase | Class | Step and target element | Expected surface |
 | --- | --- | --- | --- |
-| `mode_selection` | `navigation` | `mode-card`: `mode.random.button` or `mode.filtered.button`; retained v1/v2 only: `mode-continue` at `mode.continue.button` | `mode` |
+| `mode_selection` | `navigation` | `mode-card`: `mode.random.button` or `mode.filtered.button`; `mode-continue` at `mode.continue.button` (v1/v2/v3) | `mode` |
 | `mode_selection`, `playback_entry` | `navigation` | Policy v3 only: `mode-departure` at `mode.continue.button` | `mode` |
 | `playback_entry` | `navigation` | `query-element`: `slideshow.control.playPause.button` | `playback` |
 | `settings_navigation` | `navigation` | `query-element` or `select`: `slideshow.control.settings.button` | `playback` |
@@ -803,22 +803,32 @@ All criteria are required:
 | `interval_setup` | `hidden_controls` | `query-element`: the same playback controls | `playback` |
 | `visible_scene_capture` | `probe_readback` | `wait-scene`: `slideshow.scenePresentation.contract.summary`; policy v2/v3 album gate only | `playback` |
 
-Hogan approved the mode-departure exception on 2026-10-23. Policy v3 allows only
-the wait for the mode page to depart after Continue, with the exact step, element,
+Hogan approved the mode-departure exception on 2026-10-23. Policy v3 preserves
+every v2 entry and adds the wait for the mode page to depart after Continue, with the exact step, element,
 phase/class and `mode` failure surface above, plus all existing timing, starvation,
-hosting and functional-failure guards. Any other failure surface stays red.
+hosting and validator exclusions. Any other failure surface stays red.
 The receipts confirm both mapped assertion paths: [iPad filter-person,
 39840861064](https://github.com/sudoHG/immichSlides/actions/runs/39840861064) reports
 `mode_selection/navigation`; [iPhone Release lifecycle-pause,
 39873318049](https://github.com/sudoHG/immichSlides/actions/runs/39873318049) reports
 `playback_entry/navigation`. These match the generic first-boot navigation and
 mode-departure assertion prefixes in `ci_failure_diagnostics.py`.
-Policy v3 excludes `mode-continue` (Continue disappeared before departure), which
-was included in the legacy v1/v2 allowlist; retained v1/v2 proofs keep that original
-interpretation. A mode-page `UNRECOGNIZABLE` photo status alone is eligible because
+The `mode-continue` UI-availability wait remains eligible in v1/v2/v3. Continue
+disappearing before departure produces `mode-card` at `mode.continue.button`,
+which remains red. A mode-page `UNRECOGNIZABLE` photo status alone is eligible because
 no playback photo is expected there; BLACK/BLANK and unrecognizable playback
 remain excluded. The older iPad and album receipts lack hosted markers and remain
 red: this exception does not supply missing evidence or reclassify old nights.
+
+Accepted residual risk (v3 mode departure): Continue tapped but no navigation,
+an unhandled non-password alert over the mode page, and load-only navigation bugs
+produce receipts identical to a slow departure. With every required proof field,
+they can be yellow once on a CPU-starved night. A night without starvation is red;
+two consecutive yellow nights escalate to red. Alternating yellow/pass nights
+never auto-escalate, so the coordinator reviews any test that is yellow three or
+more times in a week (Hogan, 2026-10-22). Local tests on the pinned devices remain
+an independent check. Successful mode navigation clears the failure-context step
+and element so later assertions cannot reuse its departure eligibility.
 
 Hogan approved the album exception on 2026-10-22. Its `gate.kind` must be
 `album-capture`; `paused`, `entry_hint_hidden` and `manifest_complete` must be
@@ -874,8 +884,8 @@ would change historical verdicts. The reader accepts v3 while the producer still
 emits v2. Merge this reader first, then activate the producer in a separate PR
 based on the merged reader. A trusted base without the v3 reader rejects new
 proofs, including unchanged UI waits and album settling proofs. Versions v1/v2
-retain their verdicts; v3 keeps v2 album semantics and replaces the legacy
-`mode-continue` entry with the reviewed `mode-departure` entries. Unknown versions
+retain their verdicts; v3 keeps every v2 entry and its album semantics, adding
+exactly the two reviewed `mode-departure` entries. Unknown versions
 remain red. No original receipt, raw failure, threshold, deadline, wait or retry changes.
 
 This is an explicit allowlist, not an inference from an exception name. A deadline

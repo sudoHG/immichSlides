@@ -1994,13 +1994,15 @@ class ReporterTests(unittest.TestCase):
             self.assertIn("RED: repeated environment limit", summary_path.read_text())
             self.assertIn("ci-nightly.yml: failed", summary_path.read_text())
             self.assertNotIn("WARNING: hosted timing failures", summary_path.read_text())
-        for mutation in ("missing version", "future version", "changed policy", "malformed"):
+        for mutation, version in (("missing version", None), ("future version", 999),
+                ("next version", 4), ("boolean version", True), ("float version", 3.0),
+                ("changed policy", None), ("malformed", None)):
             retained = copy.deepcopy(compact)
             bad = retained["observed"][0]["environment_limit"]
             if mutation == "missing version":
                 bad.pop("policy_version")
-            elif mutation == "future version":
-                bad["policy_version"] = 999
+            elif version is not None:
+                bad["policy_version"] = version
             elif mutation == "changed policy":
                 bad["failure"]["surface"] = "unknown"
             else:

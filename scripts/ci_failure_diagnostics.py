@@ -79,7 +79,7 @@ ENVIRONMENT_WAIT_STEPS = {
                        "slideshow.control.playPause.button", "slideshow.control.next.button", "slideshow.hiddenWakeReceiver")},
 }
 ENVIRONMENT_WAIT_STEPS_V3 = {
-    **{key: surface for key, surface in ENVIRONMENT_WAIT_STEPS.items() if key[2] != "mode-continue"},
+    **ENVIRONMENT_WAIT_STEPS,
     **{(phase, "navigation", "mode-departure", "mode.continue.button"): "mode"
        for phase in ("mode_selection", "playback_entry")},
 }
