@@ -2441,9 +2441,19 @@ class FailureDiagnosticsTests(unittest.TestCase):
 
 class StrictCITracerTests(unittest.TestCase):
     def test_submitted_boot_settles_during_cold_build_and_gates_every_warm_case(self):
+        import ci_execution_diagnostics as diagnostics
         import run_strict_ci_tracer as tracer
         import strict_e2e_runner_support as support
         from ci_summary import parse_summary
+        from types import SimpleNamespace
+
+        thread = diagnostics.threading.Thread
+        def diagnostic_worker(*, target, daemon):
+            # This test exercises preparation ordering and receipts, not diagnostic IO deadlines.
+            if target.__qualname__ in ("Recorder.collect.<locals>.work", "Recorder.ledger_io.<locals>.work"):
+                return SimpleNamespace(start=target)
+            return thread(target=target, daemon=daemon)
+
         identity = {"schema_version": 1, "event": "local", "repository": "sudoHG/immichSlides",
                     "commit_sha": "0" * 40, "tree_sha": "0" * 40, "dirty": False}
         for failure in (None, "readiness", "service", "cold", "hard-timeout"):
@@ -2500,7 +2510,9 @@ class StrictCITracerTests(unittest.TestCase):
                         mock.patch.object(tracer.shutil, "disk_usage", return_value=mock.Mock(total=200 * 1024**3, free=100 * 1024**3)), \
                         mock.patch.object(tracer, "toolchain", return_value={"versions": {"python": "test"}, "signing_mode": "not-applicable"}), \
                         mock.patch.object(support.subprocess, "run", side_effect=simctl), \
-                        mock.patch("ci_execution_diagnostics.system_sample", return_value=None), \
+                        mock.patch.object(diagnostics, "system_sample", return_value=None), \
+                        mock.patch.object(diagnostics.threading, "Thread", side_effect=diagnostic_worker), \
+                        mock.patch.object(diagnostics.time, "perf_counter", return_value=0), \
                         mock.patch.object(support.time, "monotonic", side_effect=lambda: clock[0]), \
                         mock.patch("builtins.print"):
                     code = tracer.main(["--platform", "ios", "--destination", "platform=iOS Simulator,id=TEST",
