@@ -261,10 +261,25 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
         let previousButton = app.buttons["slideshow.control.previous.button"]
         let nextButton = app.buttons["slideshow.control.next.button"]
         let entryHint = app.otherElements["slideshow.entryHint.banner"]
+        let playbackEntryDeadline = Date().addingTimeInterval(TestWait.seconds(.product(30)))
         XCTAssertTrue(
             settingsButton.waitForPublicElement(
                 "slideshow.control.settings.button", timeout: TestWait.seconds(.product(30))),
             "After Continue, the app must reach the playback page and show the control bar."
+        )
+        // Pause freezes incoming layers too; finish the initial fade within the existing entry budget.
+        var previousEntryObservation: [String: String] = [:]
+        var entryObservation: [String: String] = [:]
+        let didReachStableEntry = TestWait.until(.product(max(0, playbackEntryDeadline.timeIntervalSinceNow))) {
+            previousEntryObservation = entryObservation
+            entryObservation = self.strictSceneFrameObservation(app: app)
+            return StrictE2ESceneCapture.isStableWindow(entryObservation) && Date() < playbackEntryDeadline
+        }
+        attachStrictSceneObservation(
+            before: previousEntryObservation, after: entryObservation, name: "tvos-entry-capture-window")
+        XCTAssertEqual(
+            didReachStableEntry, true,
+            "tvOS flow entry precondition failed: initial scene did not stabilize before Pause."
         )
         // Pause before screenshots or focus travel can consume the first autoplay interval.
         let playingValue = String(describing: playPauseButton.value ?? "")

@@ -320,6 +320,14 @@ Backward history identity uses the complete pixel signature and ledger reference
 Probes cannot supply a
 missing pixel identity. A5 and A1+A5 have different signatures.
 
+Before the initial `tvos-flow` Pause, control-bar readiness and the complete stable
+scene share the existing 30-second playback-entry deadline. Each scene poll reads
+one fallible App snapshot, and the final observations are attached as
+`tvos-entry-capture-window`. Pausing during the initial fade freezes its incoming
+layers, even when their opacity has already reached one; that state cannot serve
+as the stable history anchor. The single Pause, four-second pause readback,
+history-count precondition and capture-time pixel/manifest proof remain unchanged.
+
 `UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE=1` enables the Debug manifest probes.
 Probe-only launches are `album-empty`, `journey-b`, `tvos-flow`, `tvos-person`, `late-image`, `ios-lifecycle-first-wake`,
 and `AccessLifecycleIOSUITests.prepareLaunch`, including its cold relaunches and
@@ -1612,8 +1620,8 @@ New enum meanings and why the previous vocabulary cannot express them:
 
 | Fixed source prefix | Phase | Class | Public source |
 |---|---|---|---|
-| `tvOS flow entry precondition failed:` | `history_navigation` | `control_state` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L287); red when autoplay advanced before the entry pause |
-| `tvOS flow entry anchor must remain paused before checking the history boundary.` | `history_navigation` | `control_state` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L291) |
+| `tvOS flow entry precondition failed:` | `history_navigation` | `control_state` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L282) and [#L302](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L302); red when the initial scene did not stabilize before the entry pause, or when autoplay advanced before it. The `tvos-entry-capture-window` attachment distinguishes the two |
+| `tvOS flow entry anchor must remain paused before checking the history boundary.` | `history_navigation` | `control_state` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L306) |
 | `tvOS midpoint setup exhausted the original step budget before the half-cycle pause.` | `continue_timing` | `timing_window` | [AccessLifecycleTVOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift#L343) |
 | `tvOS midpoint pause requires Play/Pause focus after at most one wake within the original step budget.` | `control_action` | `focus` | [AccessLifecycleTVOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift#L364) |
 | `tvOS midpoint pause must return in the anchored stable window within the original step budget.` | `continue_timing` | `timing_window` | [AccessLifecycleTVOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift#L385) |
