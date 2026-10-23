@@ -756,11 +756,15 @@ attributes; live hittability is required by the final fresh preparation after th
 single wake. A hidden receiver's automatic query retries therefore cannot consume
 the budget before the baseline photo is read.
 
-Rotation captures refresh the canvas control bar before each readiness check, so
-its eight-second auto-hide cannot expire between the visibility snapshot and the
-three live hittability reads. Each refresh is recorded separately and remains
-inside the existing stable-frame budget; the short readiness window starts after
-it returns. Every saved candidate still requires all three controls to be
+Rotation captures first use the existing control-readiness check, with no extra
+canvas tap in the steady state. If that check fails, the capture refreshes the bar
+once and checks readiness once more, starting the second check after the wake
+returns with a freshly reset auto-hide timer. This does not guarantee that the
+timer cannot expire during a slow native interaction. Both checks and the refresh
+remain inside the existing stable-frame budget. Per-capture logs record explicit
+refreshes and driver wakes from existing action receipts; rotation logs record
+elapsed time against the unchanged natural-switch bound.
+Every saved candidate still requires all three controls to be
 hittable, the requested orientation and public photo identity, and the stable
 frame pair. The shared driver and other callers retain their existing behavior.
 Failures retain the `visible_scene_capture` / `timing_window` or rotation-capture
