@@ -495,23 +495,38 @@ are authoritative; the plain-English boundary is:
 | Failure | Can be yellow? |
 | --- | --- |
 | Reviewed UI availability wait with a full deadline and low-idle samples strictly before and after failure | Yes, in hosted nightly strict scope only. |
-| Album capture settling after Next took effect, paused playback, hidden entry hint and a complete loaded photo | Policy v2 only, with every published gate fact revalidated and an allowed settling phase. |
+| Mode page remained visible after tapping Continue, with `mode-departure` at `mode.continue.button` and `mode_selection/navigation` or `playback_entry/navigation` | Policy v3 only, with failure surface `mode` and every existing timing, starvation and hosting requirement. |
+| Continue unavailable before departure (`mode-continue` at the card identifier, for example `mode.random.button`), or departure reached an unexpected surface | No. Only a failed Continue tap itself (`mode-continue` at `mode.continue.button`) is a UI-availability wait, eligible in v1/v2/v3. |
+| Album capture settling after Next took effect, paused playback, hidden entry hint and a complete loaded photo | Policies v2/v3, with every published gate fact revalidated and an allowed settling phase. |
 | Next did not advance, unchanged layers, changed layers without visible history advance, first capture with null progress, missing/incomplete gate or manifest, `grace`/`loading` or any other unreviewed phase | No. |
-| Black, blank or unrecognizable playback, validator/functional failure, process loss or invocation infrastructure failure | No. |
+| Black, blank or unrecognizable playback, validator/functional failure, process loss or invocation infrastructure failure | No, except the indistinguishable v3 mode-departure functional failures in the accepted residual risk below. |
 | Missing/one-sided/high-idle samples, unknown hosting, local/self-hosted/UI/informational suite | No. |
 | The same case's second consecutive yellow UTC night | No; the reporter escalates it to red. |
 
-Accepted residual risk: `advanced` is cumulative across polls. A double advance
+Accepted residual risk (v3 mode departure): Continue tapped but no navigation,
+an unhandled non-password alert over the mode page, and load-only navigation bugs
+produce receipts identical to a slow departure. With every required proof field,
+they can be yellow once on a CPU-starved night. A night without starvation is red;
+two consecutive yellow nights escalate to red. Alternating yellow/pass nights
+never auto-escalate, so the coordinator reviews any test that is yellow three or
+more times in a week (Hogan, 2026-10-22). Local tests on the pinned devices remain
+an independent check. Successful mode navigation clears the failure-context step
+and element so later assertions cannot reuse its departure eligibility.
+
+Accepted residual risk (album capture): `advanced` is cumulative across polls. A double advance
 (`historyCount = previous + 2`), including autoplay advancing while paused, can
 still qualify when the final layer IDs differ and every other condition holds.
 The receipt cannot distinguish this from slow settling; no Swift change is made.
 The first night without CPU starvation is red, two consecutive yellow nights
 escalate to red, and independent strict pause and history cases remain in place.
 
-After activation, all new proofs are v2, including the existing UI availability
-waits. An older trusted reader would turn even those existing yellows red, which
-is why the reader merged first. Old v1 proofs without gate facts retain their
-old interpretation. Aggregation rechecks
+The producer still emits v2; the reader accepts v3 ahead of separate activation.
+After v3 activation, all new proofs use v3, including existing UI waits and album
+settling. Merge the reader before activating from a trusted base containing it:
+an older reader would turn even those existing yellows red. Retained v1/v2 proofs
+keep their old interpretation, including the legacy `mode-continue` entry;
+changing an existing version's allowlist would alter compact-history revalidation.
+Aggregation rechecks
 the original receipts; the reporter rechecks even compact proofs without those
 receipts and turns invalid claims red.
 

@@ -2914,6 +2914,69 @@ class StrictCITracerTests(unittest.TestCase):
                     self.assertEqual([], missing)
                     self.assertEqual(observed["environment_limit"], methods[0]["environment_limit"])
 
+    def test_mode_departure_producer_rechecks_hosting_scope_and_starvation(self):
+        import copy
+        import contextlib
+        from ci_nightly import aggregate_nightly
+        from ci_report import method_observations
+        from ci_summary import identity_key, parse_summary
+        from run_strict_ci_tracer import produce_environment_limits
+        from test_ci_summary import hosted_mode_departure_summary
+
+        for phase in ("mode_selection", "playback_entry"):
+            for mutation in (None, "missing marker", "duplicate marker", "mode-card", "wrong element",
+                             "wrong surface", "before only", "after only", "high idle", "validator", "informational"):
+                with self.subTest(phase=phase, mutation=mutation), tempfile.TemporaryDirectory() as raw:
+                    seed, resource = hosted_mode_departure_summary(phase)
+                    row = seed["population"]["observed"][0]
+                    ledger = seed["strict_case_evidence"][0]["bounded_diagnostics"]
+                    if mutation == "missing marker":
+                        ledger["events"] = []
+                    elif mutation == "duplicate marker":
+                        ledger["events"].append(copy.deepcopy(ledger["events"][0]))
+                    elif mutation == "mode-card":
+                        row["first_failure"]["step"] = mutation
+                    elif mutation == "wrong element":
+                        row["first_failure"]["element"] = "mode.filtered.button"
+                    elif mutation == "wrong surface":
+                        row["first_failure"]["state"]["surface"] = "playback"
+                    elif mutation == "before only":
+                        resource["failure_samples"][1]["elapsed_seconds"] = 7
+                    elif mutation == "after only":
+                        resource["failure_samples"][0]["elapsed_seconds"] = 9
+                    elif mutation == "high idle":
+                        resource["failure_samples"][1]["idle_percent"] = 5.01
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        _, _, trace, candidate = self._produce_validator_records(Path(raw), None,
+                            receipt_suite=None, runner_exit=65, nightly=True, timing_failure=(row, ledger),
+                            case=dict(platform="ios", device="iphone", configuration="Debug", suite="smoke",
+                                      scenario="normal", fixture="a"))
+                    observed = candidate["population"]["observed"][0]
+                    # A future activated default may have attached the proof already.
+                    observed.pop("environment_limit", None)
+                    observed["attempts"][0].pop("environment_limit", None)
+                    if mutation == "validator":
+                        observed["validator_failure_message"] = "All black must not count as a pass"
+                    rejections = {}
+                    self.assertEqual(0 if mutation is None else 1, produce_environment_limits(candidate, trace["warm"],
+                        policy_version=3, rejections=rejections, informational=["smoke"] if mutation == "informational" else ()))
+                    self.assertEqual(("failed", 65), (observed["outcome"], observed["attempts"][0]["exit_code"]))
+                    if mutation is not None:
+                        reason = {"missing marker": "missing-xcode-host-samples", "duplicate marker": "hosting-not-proven",
+                            "informational": "informational-suite"}.get(mutation, "proof-not-eligible")
+                        self.assertEqual({identity_key(observed["identity"]): reason}, rejections)
+                        self.assertNotIn("environment_limit", observed)
+                        self.assertNotIn("environment_limit", observed["attempts"][0])
+                        continue
+                    self.assertEqual({}, rejections)
+                    self.assertEqual(observed["environment_limit"], observed["attempts"][0]["environment_limit"])
+                    self.assertEqual("failed", parse_summary(candidate)["status"])
+                    methods, missing = method_observations(candidate, trace, runner_hosted=True)
+                    self.assertEqual([], missing)
+                    self.assertEqual(observed["environment_limit"], methods[0]["environment_limit"])
+                    self.assertEqual("environment-limited", aggregate_nightly(candidate["population"]["declared"],
+                        [candidate], live_in_scope=False)["status"])
+
     def test_album_environment_producer_requires_every_gate_fact(self):
         import copy
         from ci_summary import parse_summary

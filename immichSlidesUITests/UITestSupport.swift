@@ -957,6 +957,8 @@ struct IOSFirstBootNavigation {
             step = didIssueContinue ? "mode-departure" : "mode-card"
             if didIssueContinue {
                 if !observation.isModePage && destinationIdentifier.map({ observation.hasDestination($0) }) == true {
+                    // A later assertion must not inherit a completed mode-page wait's eligibility.
+                    FirstFailureContext.mark("unknown")
                     print(
                         "First-boot mode departure confirmed; Continue issued=true returned=\(didReturnContinue); passwordPromptDismissed=\(didConfirmPromptGone); promptSource=\(promptSource)"
                     )
@@ -964,6 +966,7 @@ struct IOSFirstBootNavigation {
                 }
             } else if observation.isModeCardSelected(identifier) && !observation.hasModalObstacle {
                 guard let departureTimeout else {
+                    FirstFailureContext.mark("unknown")
                     print("First-boot target mode selection confirmed; Continue issued=false")
                     return selectionDeadline
                 }
