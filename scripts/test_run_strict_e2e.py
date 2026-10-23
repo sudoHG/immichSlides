@@ -1321,6 +1321,8 @@ class FailureDiagnosticsTests(unittest.TestCase):
             ("immichSlidesUITests/RotationUITests.swift", "rotation-start-portrait did not stabilize within the ", "rotation_start_capture", "timing_window"),
             ("immichSlidesUITests/RotationUITests.swift", "rotation-landscape-stable did not stabilize within the ", "rotation_landscape_capture", "timing_window"),
             ("immichSlidesUITests/RotationUITests.swift", "rotation-portrait-stable did not stabilize within the ", "rotation_portrait_capture", "timing_window"),
+            ("immichSlidesUITests/RotationUITests.swift", "layout-landscape-multi did not stabilize within the ", "visible_scene_capture", "timing_window"),
+            ("immichSlidesUITests/RotationUITests.swift", "layout-portrait-multi did not stabilize within the ", "visible_scene_capture", "timing_window"),
             ("immichSlidesUITests/RotationUITests.swift", "Could not recognize a public photo on screen within ", "visible_scene_capture", "scene_identity"),
             ("immichSlidesUITests/RotationUITests.swift", "The public photo on screen did not change after next;", "history_navigation", "scene_identity"),
             ("immichSlidesUITests/RotationUITests.swift", "Before rotating, the play button value must be pause (playing),", "control_action", "control_state"),
@@ -1645,6 +1647,11 @@ class FailureDiagnosticsTests(unittest.TestCase):
                     self.assertIn('"\\(name) did not stabilize within the ', (root / source).read_text())
                     self.assertRegex((root / source).read_text(),
                                      r'captureStable\(\s*"' + re.escape(prefix.split()[0]) + '",')
+                elif prefix.startswith("layout-"):
+                    self.assertIn('"\\(name) did not stabilize within the ', (root / source).read_text())
+                    self.assertRegex((root / source).read_text(),
+                                     r'\("' + re.escape(prefix.split()[0]) + '",')
+                    self.assertRegex((root / source).read_text(), r'captureStable\(\s*target.name,')
                 else:
                     self.assertIn('"' + prefix, (root / source).read_text())
                 expected = {"failure_phase": phase, "failure_class": kind}
@@ -1684,7 +1691,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
                 elif (source, prefix, phase, kind) in capture_cases or "AccessLifecycle" in source:
                     assertion_source = (root / source).read_text()
                     template = ('\\(name) did not stabilize within the '
-                                if prefix.startswith("rotation-") else prefix)
+                                if prefix.startswith(("rotation-", "layout-")) else prefix)
                     message_start = assertion_source.index('"' + template)
                 else:
                     assertion_source = None
