@@ -496,7 +496,7 @@ are authoritative; the plain-English boundary is:
 | --- | --- |
 | Reviewed UI availability wait with a full deadline and low-idle samples strictly before and after failure | Yes, in hosted nightly strict scope only. |
 | Mode page remained visible after tapping Continue, with `mode-departure` at `mode.continue.button` and `mode_selection/navigation` or `playback_entry/navigation` | Policy v3 only, with failure surface `mode` and every existing timing, starvation and hosting requirement. |
-| Continue disappeared before departure (`mode-card` at `mode.continue.button`), or departure reached an unexpected surface | No. The `mode-continue` UI-availability wait remains eligible in v1/v2/v3. |
+| Continue unavailable before departure (`mode-continue` at the card identifier, for example `mode.random.button`), or departure reached an unexpected surface | No. Only a failed Continue tap itself (`mode-continue` at `mode.continue.button`) is a UI-availability wait, eligible in v1/v2/v3. |
 | Album capture settling after Next took effect, paused playback, hidden entry hint and a complete loaded photo | Policies v2/v3, with every published gate fact revalidated and an allowed settling phase. |
 | Next did not advance, unchanged layers, changed layers without visible history advance, first capture with null progress, missing/incomplete gate or manifest, `grace`/`loading` or any other unreviewed phase | No. |
 | Black, blank or unrecognizable playback, validator/functional failure, process loss or invocation infrastructure failure | No, except the indistinguishable v3 mode-departure functional failures in the accepted residual risk below. |

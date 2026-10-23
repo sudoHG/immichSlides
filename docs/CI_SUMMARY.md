@@ -813,9 +813,10 @@ The receipts confirm both mapped assertion paths: [iPad filter-person,
 39873318049](https://github.com/sudoHG/immichSlides/actions/runs/39873318049) reports
 `playback_entry/navigation`. These match the generic first-boot navigation and
 mode-departure assertion prefixes in `ci_failure_diagnostics.py`.
-The `mode-continue` UI-availability wait remains eligible in v1/v2/v3. Continue
-disappearing before departure produces `mode-card` at `mode.continue.button`,
-which remains red. A mode-page `UNRECOGNIZABLE` photo status alone is eligible because
+The `mode-continue` UI-availability wait (a failed Continue tap itself, at
+`mode.continue.button`) remains eligible in v1/v2/v3. Continue unavailable before
+departure produces `mode-continue` at the card identifier (for example
+`mode.random.button`), which no version allowlists, so it remains red. A mode-page `UNRECOGNIZABLE` photo status alone is eligible because
 no playback photo is expected there; BLACK/BLANK and unrecognizable playback
 remain excluded. The older iPad and album receipts lack hosted markers and remain
 red: this exception does not supply missing evidence or reclassify old nights.
