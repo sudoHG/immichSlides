@@ -280,11 +280,13 @@ after its back-navigation loop, including the early-ready path, before returning
 No refresh restarts a deadline or sends a second reveal.
 The separate strict `pause-window` Play/Pause preparation starts its existing
 4-second readiness observation after its single canvas wake returns. Native tap
-delivery cannot consume that observation before the first snapshot. It records
+delivery, including XCTest's post-event idle wait, cannot consume that observation before
+the first snapshot; the wake's cost is recorded as `action_duration`/`post_event_idle`. It records
 the wake as `reveal-controls` and the subsequent wait as `query-element`, both
 targeting `slideshow.control.playPause.button`. Late readiness snapshots still
-fail; the actual Play/Pause tap, 2-second Play readback and 7-second midpoint
-detection retain their existing clocks and deadlines.
+fail; the actual Play/Pause tap, 2-second Play readback, 4-second Pause readback in
+`pausePlaybackIfNeeded` and 7-second midpoint detection retain their existing clocks
+and deadlines.
 Playback History Settings entry and sampling-overlay pre-Next retain their
 explicit refresh assertions so their mapped failure prefixes stay available.
 The SmartFill manual-lifecycle Pause also requires a complete stable scene and

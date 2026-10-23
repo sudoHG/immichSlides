@@ -57,7 +57,8 @@ extension StrictE2EFirstBatchIOSUITests {
         FirstFailureContext.action("tap") {
             app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tap()
         }
-        // Observe readiness after the wake returns; native event delivery is not a product response window.
+        // The test readiness budget starts when the wake returns; the wake's own cost, including XCTest's
+        // post-event idle wait, is recorded as action_duration/post_event_idle rather than spent from this budget.
         let deadline = Date().addingTimeInterval(timeout)
         FirstFailureContext.beginWait(seconds: timeout)
         defer { FirstFailureContext.endWait() }
