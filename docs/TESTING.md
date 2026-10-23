@@ -756,6 +756,21 @@ attributes; live hittability is required by the final fresh preparation after th
 single wake. A hidden receiver's automatic query retries therefore cannot consume
 the budget before the baseline photo is read.
 
+Rotation captures first use the existing control-readiness check, with no extra
+canvas tap in the steady state. If that check fails, the capture refreshes the bar
+once and checks readiness once more, starting the second check after the wake
+returns with a freshly reset auto-hide timer. This does not guarantee that the
+timer cannot expire during a slow native interaction. Both checks and the refresh
+run inside an iteration the existing stable-frame loop admits; like the existing
+check, they are not cut off at its deadline. Per-capture logs record explicit
+refreshes and driver wakes from existing action receipts; rotation logs record
+elapsed time against the unchanged natural-switch bound.
+Every saved candidate still requires all three controls to be
+hittable, the requested orientation and public photo identity, and the stable
+frame pair. The shared driver and other callers retain their existing behavior.
+Failures retain the `visible_scene_capture` / `timing_window` or rotation-capture
+classification; this does not introduce yellow eligibility.
+
 Run serially within a checkout because the runner manages temporary test configuration. Use a new evidence directory outside the repository for each run. The runner prepares the fixture and app state, reads official test statistics, checks result contracts and cleans up. Zero selected tests, skipped strict tests, missing evidence or an unknown image are failures. A successful contract check does not replace human visual review; inspect the current run's original screenshots. The separate [iPad host tool](../scripts/ipad-pause-host-testing.md) remains diagnostic tooling and does not replace an XCTest result.
 
 For explicit shard warm-up, build reuse, cold/warm budgets, full simulator resets and

@@ -113,6 +113,7 @@ final class RotationUITests: XCTestCase {
             )
             let elapsed = Date().timeIntervalSince(sceneStartedAt)
             let limit = RotationTiming.naturalSwitchEarliest
+            print("Rotation sequence: elapsedSeconds=\(elapsed), limitSeconds=\(limit)")
             guard elapsed < limit else {
                 throw Failure(
                     "The rotation sequence took \(Int(elapsed)) seconds, reaching the \(Int(limit))-second earliest natural switch; a timed switch cannot be told apart from the rotation. Rerun."
@@ -200,12 +201,49 @@ final class RotationUITests: XCTestCase {
         deadline: Date? = nil,
         isSceneReady: (Data) -> Bool = StableFrame.showsFixturePhoto
     ) throws {
+        var refreshDurationsSeconds: [TimeInterval] = []
+        var helperWakeDurationsSeconds: [TimeInterval] = []
+        defer {
+            print(
+                "Rotation capture controls: name=\(name), refreshCount=\(refreshDurationsSeconds.count), refreshDurationsSeconds=\(refreshDurationsSeconds), helperWakeTimingAvailable=\(FirstFailureContext.isEnabled), helperWakeDurationsSeconds=\(helperWakeDurationsSeconds)"
+            )
+        }
+        // Read the existing action receipt without querying the UI again or changing the driver's behavior.
+        func controlsAreReady() -> Bool {
+            let startedAt = ProcessInfo.processInfo.systemUptime
+            let isReady = driver.revealUsableControls()
+            let observedAt = ProcessInfo.processInfo.systemUptime
+            let context = FirstFailureContext.snapshot()
+            let timing = context.timeline.timing(at: observedAt)
+            if context.timeline.action == "tap",
+                let ageSeconds = timing["since_action_issued_seconds"] as? TimeInterval,
+                observedAt - ageSeconds >= startedAt,
+                let durationSeconds = timing["action_duration_seconds"] as? TimeInterval
+            {
+                helperWakeDurationsSeconds.append(durationSeconds)
+            }
+            return isReady
+        }
         let timeout = deadline?.timeIntervalSinceNow ?? Timing.stableFrameTimeout
         let frame = StableFrame.wait(
             in: driver.app,
             orientation: orientation,
             timeout: timeout,
-            prepare: { driver.revealUsableControls() },
+            prepare: {
+                if controlsAreReady() { return true }
+                // Refresh once after failure; the second readiness check starts after this wake returns.
+                // Both checks and the wake run inside an iteration the stable-frame loop admits; like the
+                // existing check, they are not cut off at its deadline.
+                FirstFailureContext.mark("reveal-controls", element: "slideshow.control.playPause.button")
+                let wakeStartedAt = ProcessInfo.processInfo.systemUptime
+                // Same canvas point as the driver's control wake in IOSDriver.prepareControl.
+                let controlRevealPoint = CGVector(dx: 0.5, dy: 0.4)
+                driver.app.coordinate(withNormalizedOffset: controlRevealPoint).tapForFailureEvidence()
+                let wakeSeconds = ProcessInfo.processInfo.systemUptime - wakeStartedAt
+                refreshDurationsSeconds.append(wakeSeconds)
+                print("Rotation control refresh: name=\(name), seconds=\(wakeSeconds)")
+                return controlsAreReady()
+            },
             accept: isSceneReady
         )
         guard frame.isStable else {
