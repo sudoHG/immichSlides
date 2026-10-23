@@ -219,6 +219,9 @@ hue check and cross-photo seam interpolation; Swift uses the stricter
 `public_frame_photos_from_bytes` palette, texture and glyph rules for composites.
 Swift retains rectangle segmentation for the real iPad/TV primary-plus-pair
 triples; the strict Python full-span axis reader cannot represent those layouts.
+Swift requires a texture pattern in every slot and a sharp stripe for B slots;
+Python's multi-photo path permits an unknown texture pattern and does not require
+stripe sharpness. Qualified public fixture slots satisfy both Swift checks.
 Swift also accepts stacked mosaics with black borders along the stacking axis
 when the canvas fills the other axis; Python's full-span reader rejects them.
 Swift bounds consecutive unsupported interior lines by the single-photo

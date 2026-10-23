@@ -18,5 +18,13 @@
   {"name":"ipad-measured-home-indicator","size":[1640,2360],"slots":[[5,0,0,1640,1180],[2,0,1180,1640,1180]],"bands":[[543,2330,554,19,37,109,19]],"marks":["A5","A2"]},
   {"name":"ipad-foreign-colour-outside-box","size":[1640,2360],"slots":[[5,0,0,1640,1180],[2,0,1180,1640,1180]],"bands":[[543,2290,554,19,37,109,19]],"marks":[]},
   {"name":"tv-hd-fragmented-control-glyph","size":[1920,1080],"slots":[[2,0,0,1920,540],[3,0,540,1920,540]],"bands":[[628,718,662,245,0,0,0]],"marks":["A2","A3"]},
-  {"name":"tv-4k-fragmented-control-glyph","size":[3840,2160],"slots":[[2,0,0,3840,1080],[3,0,1080,3840,1080]],"bands":[[1256,1436,1324,489,0,0,0]],"marks":["A2","A3"]}
+  {"name":"tv-4k-fragmented-control-glyph","size":[3840,2160],"slots":[[2,0,0,3840,1080],[3,0,1080,3840,1080]],"bands":[[1256,1436,1324,489,0,0,0]],"marks":["A2","A3"]},
+  {"name":"tv-three-columns-control","size":[3840,2160],"slots":[[2,0,0,1280,2160],[5,1280,0,1280,2160],[3,2560,0,1280,2160]],"bands":[[1256,1436,1324,489,0,0,0]],"marks":["A2","A5","A3"]},
+  {"name":"iphone-foreign-colour-inside-glyph-box","size":[1170,2532],"slots":[[5,0,0,1170,1266],[3,0,1266,1170,1266]],"glyphOffsetY":170,"bands":[[68,2126,1034,188,74,170,38]],"marks":[]},
+  {"name":"tv-hd-foreign-colour-left-of-control","size":[1920,1080],"slots":[[2,0,0,1920,540],[3,0,540,1920,540]],"bands":[[548,718,80,245,74,170,38]],"marks":[]},
+  {"name":"tv-4k-foreign-colour-left-of-control","size":[3840,2160],"slots":[[2,0,0,3840,1080],[3,0,1080,3840,1080]],"bands":[[1096,1436,160,489,74,170,38]],"marks":[]},
+  {"name":"ipad-large-measured-exif-panel","size":[2064,2752],"slots":[[5,0,0,1032,2752],[3,1032,0,1032,2752]],"bands":[[1308,60,696,382,37,109,19]],"marks":["A5","A3"]},
+  {"name":"unmeasured-landscape-control","size":[2532,1170],"slots":[[5,0,0,2532,585],[3,0,585,2532,585]],"bands":[[68,1000,1034,100,74,170,38]],"marks":[]},
+  {"name":"narrow-invalid-band-beside-valid-glyph","size":[480,720],"slots":[[5,0,0,480,360],[3,0,360,480,360]],"bands":[[220,30,20,28,255,255,255]],"marks":[]},
+  {"name":"tv-boundary-through-control","size":[3840,2160],"slots":[[3,0,0,1912,2160],[2,1920,0,1920,2160]],"bands":[[1912,0,8,2160,138,27,93],[1256,1436,1324,489,0,0,0]],"marks":["A3","A2"]}
 ]

@@ -991,7 +991,7 @@ enum StrictE2EPhotoIdentity {
         guard (canvas.width == CGFloat(width) || canvas.height == CGFloat(height)),
             canvas.contains(CGPoint(x: CGFloat(width) / 2, y: CGFloat(height) / 2))
         else { return rejected }
-        guard isCaptureCanvasTiled(slots, canvas: canvas, pixels: pixels, width: width),
+        guard isCaptureCanvasTiled(slots, canvas: canvas, pixels: pixels, width: width, exclusion: exclusions.color),
             !slots.indices.contains(where: { index in
                 slots.dropFirst(index + 1).contains { slots[index].rect.intersects($0.rect) }
             }),
@@ -1079,7 +1079,7 @@ enum StrictE2EPhotoIdentity {
     }
 
     private static func isCaptureCanvasTiled(
-        _ slots: [(mark: String, rect: CGRect)], canvas: CGRect, pixels: [UInt8], width: Int
+        _ slots: [(mark: String, rect: CGRect)], canvas: CGRect, pixels: [UInt8], width: Int, exclusion: CGRect?
     ) -> Bool {
         let rects = slots.map(\.rect)
         if rects.reduce(CGFloat(0), { $0 + $1.width * $1.height }) == canvas.width * canvas.height { return true }
@@ -1105,6 +1105,8 @@ enum StrictE2EPhotoIdentity {
                     var boundaryMark: String?
                     var observed = 0
                     for offset in Int(span.lowerBound)..<Int(span.upperBound) {
+                        let point = CGPoint(x: step.x == 0 ? offset : x, y: step.x == 0 ? y : offset)
+                        if exclusion?.contains(point) == true { continue }
                         let index = (step.x == 0 ? y * width + offset : offset * width + x) * pixelChannelCount
                         let mark = captureEdgeMark((0..<3).map { Double(pixels[index + $0]) })
                         guard [slots[first].mark, slots[second].mark].contains(mark),
