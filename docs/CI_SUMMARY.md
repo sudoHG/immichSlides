@@ -871,8 +871,8 @@ The first night without CPU starvation is red, two consecutive yellow nights
 escalate to red, and independent strict pause and history cases remain in place.
 
 Policy v2 required a new version because its proof projection carries a new field
-and its eligibility differs from v1. The producer default remains v2: all new proofs
-use v2, including the existing UI availability waits. An older trusted reader
+and its eligibility differs from v1. The v2 activation moved all new proofs to v2,
+including the existing UI availability waits. An older trusted reader
 would turn even those existing yellows red, which is why the reader merged first.
 There is no CLI override. Retained v1 proofs without a gate continue to validate
 under exactly the old table entries; they do not gain the album exception. Unknown versions
@@ -881,9 +881,9 @@ the reader merges; stacking alone does not activate trusted acceptance.
 
 Policy v3 also requires reader-first rollout, although its proof shape is unchanged:
 retained proofs are revalidated by policy version, so changing the v2 allowlist
-would change historical verdicts. The reader accepts v3 while the producer still
-emits v2. Merge this reader first, then activate the producer in a separate PR
-based on the merged reader. A trusted base without the v3 reader rejects new
+would change historical verdicts. The producer now emits v3 for all new proofs;
+reader support precedes this activation. Merge the reader first, then rebase this
+activation onto main containing that reader. A trusted base without the v3 reader rejects new
 proofs, including unchanged UI waits and album settling proofs. Versions v1/v2
 retain their verdicts; v3 keeps every v2 entry and its album semantics, adding
 exactly the two reviewed `mode-departure` entries. Unknown versions
