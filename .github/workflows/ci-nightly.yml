@@ -219,7 +219,7 @@ jobs:
           "$RUNNER_TEMP/nightly-python/bin/python3" -B scripts/run_strict_ci_tracer.py \
             --manifest scripts/nightly-matrix.json --shard "$NIGHTLY_SHARD" \
             --platform "$NIGHTLY_PLATFORM" --destination "$NIGHTLY_DESTINATION" \
-            --output-dir "$RUNNER_TEMP/nightly-strict" --min-free-gib 30 \
+            --output-dir "$RUNNER_TEMP/nightly-strict" --min-free-gib 20 \
             --cold-timeout-seconds 1200 --warm-timeout-seconds 600 \
             --simulator-boot-submitted \
             --preparation-diagnostics "$RUNNER_TEMP/preparation-diagnostics.json"
