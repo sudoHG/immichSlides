@@ -294,7 +294,11 @@ as unobserved, tracking the failure under the separate nightly infrastructure is
 according to the [reporting boundary](CI_REPORT.md#issue-lifecycle).
 This mode starts no builds or tests and changes no preparation or execution budget.
 Planning/aggregate have 15-minute caps.
-Hosted disk floor stays 30 GiB; local default stays 80 GiB.
+The hosted nightly strict disk floor is 20 GiB; other hosted jobs keep 30 GiB and the
+local default stays 80 GiB. Hosted macOS runners start with about 35 GiB free, and a
+fresh simulator's first boot downloads 1.5–2.5 GiB of system assets, so a 30 GiB floor
+left about 5 GiB for a six-case shard (nightly 39840861064 stopped three iPad cases at
+29.7 GiB). Twenty GiB keeps a large safety margin while leaving about 15 GiB per shard.
 
 ## Complete fixture UI
 
