@@ -739,8 +739,15 @@ unchanged. The combined runner uses Debug, where the measured-progress probes ex
 pair, instead of taking a separate scene-check screenshot before the saved frame.
 Control readiness, orientation, the 10-second budget, the 0.5-second pair spacing
 and the pixel-difference limit remain unchanged. Thrown failures are recorded
-before app termination. Stable-frame diagnostics separate control preparation,
-screenshot capture and pixel analysis without additional UI reads. IOSDriver Next
+before app termination. This frame-acquisition budget is separate from the
+pause/Continue T±2 onset contract and its four-second onset-to-stability bound;
+none of these deadlines is adjusted for test overhead.
+Stable-frame diagnostics separate control preparation,
+screenshot capture and pixel analysis without additional UI reads. iOS control
+preparation reads live hittability immediately for each snapshot-qualified button;
+only an unready button enters the existing capped property waiter. The same
+enabled-state, in-window geometry, live-hittability checks and outer deadline
+still apply. IOSDriver Next
 also separates its pre-tap scene capture and classification durations, within its
 existing preparation budget. Its initial control preparation uses snapshot
 attributes; live hittability is required by the final fresh preparation after the
