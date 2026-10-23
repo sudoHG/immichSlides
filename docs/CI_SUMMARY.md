@@ -903,7 +903,20 @@ without a separately reviewed timing-only interpretation. The pause-window
 wait like the other allowlisted control waits, so it can be environment-limited under
 the same starvation proof; the pause-window T±2 and midpoint contract assertions
 themselves remain excluded (coordinator ruling, 2026-10-24, under Hogan's approved
-policy). Missing or ambiguous
+policy).
+
+IOSDriver Next preserves its pre-wake preparation remainder by excluding the
+measured canvas-wake cost. A readiness timeout can therefore now reach an actual
+`query-element` wait on `slideshow.control.next.button`, with a positive expired
+budget, instead of failing immediately at `select` with a zero budget after the
+wake. This changes potential yellow eligibility: both `ENVIRONMENT_WAIT_STEPS`
+and `ENVIRONMENT_WAIT_STEPS_V3` already allow that `control_action/hidden_controls`
+availability wait, subject to every existing hosted starvation and surface proof.
+The allowlists, prefix mappings and policy versions are unchanged. The original
+zero-budget receipt gains no eligibility; baseline and post-Next scene-identity
+failures remain red.
+
+Missing or ambiguous
 receipts, samples or case bindings stay red; an old night gains no classification.
 `firstboot_setup/navigation` also includes a confirmed connection-error alert,
 and `mode_selection/navigation` at `query-element` includes an unexpected legacy
