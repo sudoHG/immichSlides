@@ -896,7 +896,14 @@ BLACK/BLANK frames, UNRECOGNIZABLE playback frames, process failures, and all ot
 combinations stay red. In particular, `history_navigation` / no-advance and
 `continue_timing` / `timing_window` mix observable functional outcomes with timing
 checks and are excluded. Rotation and pause-window contracts are also excluded
-without a separately reviewed timing-only interpretation. Missing or ambiguous
+without a separately reviewed timing-only interpretation. The pause-window
+*preparation* readiness wait (canvas wake → visible Play/Pause control, mapped
+`control_action/hidden_controls` at `query-element` on
+`slideshow.control.playPause.button`) is an ordinary hidden-controls UI-availability
+wait like the other allowlisted control waits, so it can be environment-limited under
+the same starvation proof; the pause-window T±2 and midpoint contract assertions
+themselves remain excluded (coordinator ruling, 2026-10-24, under Hogan's approved
+policy). Missing or ambiguous
 receipts, samples or case bindings stay red; an old night gains no classification.
 `firstboot_setup/navigation` also includes a confirmed connection-error alert,
 and `mode_selection/navigation` at `query-element` includes an unexpected legacy

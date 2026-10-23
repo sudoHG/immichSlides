@@ -32,7 +32,7 @@ extension StrictE2EFirstBatchIOSUITests {
     func pausePlaybackIfNeeded(app: XCUIApplication) {
         guard
             let button = preparePauseWindowPlayPause(
-                app: app, deadline: Date().addingTimeInterval(TestWait.seconds(.product(4))),
+                app: app, timeout: TestWait.seconds(.product(4)),
                 failureMessage: "The control bar must be visible before opening settings.")
         else { return }
         if playPauseState(button) != "play" {
@@ -48,15 +48,22 @@ extension StrictE2EFirstBatchIOSUITests {
     }
 
     @MainActor
-    func preparePauseWindowPlayPause(app: XCUIApplication, deadline: Date, failureMessage: String)
+    func preparePauseWindowPlayPause(app: XCUIApplication, timeout: TimeInterval, failureMessage: String)
         -> XCUIElementSnapshot?
     {
         let identifier = "slideshow.control.playPause.button"
         // Refresh auto-hide once before observing; the playback surface is never the requested control.
-        if Date() < deadline {
-            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tapForFailureEvidence()
+        FirstFailureContext.mark("reveal-controls", element: identifier)
+        FirstFailureContext.action("tap") {
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tap()
         }
+        // The test readiness budget starts when the wake returns; the wake's own cost, including XCTest's
+        // post-event idle wait, is recorded as action_duration/post_event_idle rather than spent from this budget.
+        let deadline = Date().addingTimeInterval(timeout)
+        FirstFailureContext.beginWait(seconds: timeout)
+        defer { FirstFailureContext.endWait() }
         while Date() < deadline {
+            FirstFailureContext.mark("query-element", element: identifier)
             let observation = try? app.slideshowControlBarButtonObservation(identifier: identifier)
             guard Date() < deadline else { break }
             if let observation, observation.isReady, let button = observation.button,
