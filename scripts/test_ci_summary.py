@@ -168,6 +168,16 @@ def hosted_album_timeout_summary():
     return summary, resource
 
 
+def hosted_mode_departure_summary(phase):
+    summary, resource = hosted_timeout_summary()
+    row = summary["population"]["observed"][0]
+    row.update(failure_phase=phase, failure_class="navigation")
+    row["attempts"][0].update(failure_phase=phase, failure_class="navigation")
+    row["first_failure"].update(step="mode-departure", element="mode.continue.button", action="tap")
+    row["first_failure"]["state"].update(surface="mode", scene_status="UNRECOGNIZABLE")
+    return summary, resource
+
+
 def album_capture_gate_rejections(receipt):
     """Single-fact violations shared by proof-reader and producer boundary tests."""
     from ci_failure_diagnostics import ALBUM_CAPTURE_GATE_PHASES
@@ -212,6 +222,93 @@ def album_capture_gate_rejections(receipt):
 
 
 class SummaryContractTests(unittest.TestCase):
+    def test_mode_departure_policy_preserves_each_retained_version(self):
+        from ci_failure_diagnostics import environment_limit_evidence, scan_diagnostic_json, validate_environment_limit
+        for phase in ("mode_selection", "playback_entry"):
+            summary, resource = hosted_mode_departure_summary(phase)
+            row = summary["population"]["observed"][0]
+            proof = environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=3)
+            with self.subTest(phase=phase):
+                self.assertIsNotNone(proof)
+                row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
+                self.assertEqual(proof, ci_summary.parse_summary(summary)["population"]["observed"][0]["environment_limit"])
+                scan_diagnostic_json(json.dumps(summary).encode())
+                for version in (1, 2):
+                    with self.subTest(legacy_version=version), self.assertRaisesRegex(ci_summary.ContractError,
+                            "^environment limit: failure is not an eligible timing wait$"):
+                        validate_environment_limit(dict(proof, policy_version=version))
+        for version in (1, 2, 3):
+            summary, resource = hosted_mode_departure_summary("mode_selection")
+            row = summary["population"]["observed"][0]
+            row["first_failure"]["step"] = "mode-continue"
+            with self.subTest(continue_version=version):
+                proof = environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=version)
+                if version == 3:
+                    self.assertIsNone(proof)
+                else:
+                    self.assertIsNotNone(proof)
+                    row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
+                    self.assertEqual(proof, ci_summary.parse_summary(summary)["population"]["observed"][0]["environment_limit"])
+        for phase in ("transition", "incomingFromLoading"):
+            summary, resource = hosted_album_timeout_summary()
+            row = summary["population"]["observed"][0]
+            row["first_failure"]["gate"]["phase"] = phase
+            proof = environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=3)
+            with self.subTest(album_phase=phase):
+                self.assertIsNotNone(proof)
+                row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
+                self.assertEqual(proof, ci_summary.parse_summary(summary)["population"]["observed"][0]["environment_limit"])
+                if phase == "transition":
+                    for label, receipt, message in album_capture_gate_rejections(row["first_failure"]):
+                        changed = copy.deepcopy(proof)
+                        changed["failure"].pop("gate")
+                        if "gate" in receipt:
+                            changed["failure"]["gate"] = receipt["gate"]
+                        changed["failure"]["element"] = receipt["element"]
+                        with self.subTest(v3_album_rejection=label), self.assertRaisesRegex(ci_summary.ContractError,
+                                "^" + message + "$"):
+                            validate_environment_limit(changed)
+
+    def test_mode_departure_rejects_each_non_timing_or_unproven_failure(self):
+        from ci_failure_diagnostics import environment_limit_evidence, validate_environment_limit
+        summary, resource = hosted_mode_departure_summary("mode_selection")
+        row = summary["population"]["observed"][0]
+        proof = environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=3)
+        self.assertIsNotNone(proof)
+        for path, value in (
+                *((("failure", "surface"), surface) for surface in (
+                    "playback", "firstboot", "cache", "playback-settings", "system-settings", "unknown")),
+                (("failure", "step"), "mode-continue"), (("failure", "step"), "query-element"),
+                (("failure", "element"), "mode.random.button"),
+                (("failure_phase",), "firstboot_setup"), (("failure_class",), "control_state"),
+                (("failure", "source"), "validator"), (("failure", "app"), "background"),
+                (("failure", "scene_status"), "BLACK"), (("failure", "scene_status"), "BLANK"),
+                (("failure", "wait_elapsed_seconds"), 4.99), (("failure", "wait_elapsed_seconds"), None),
+                (("failure", "deadline_seconds"), 0), (("failure", "deadline_seconds"), None)):
+            changed = copy.deepcopy(proof)
+            target = changed
+            for key in path[:-1]:
+                target = target[key]
+            target[path[-1]] = value
+            with self.subTest(path=path, value=value), self.assertRaisesRegex(ci_summary.ContractError,
+                    "^environment limit: failure is not an eligible timing wait$"):
+                validate_environment_limit(changed)
+        for path, value in (
+                (("failure_samples", 0, "elapsed_seconds"), 9),
+                (("failure_samples", 1, "elapsed_seconds"), 7),
+                (("failure_samples", 0, "elapsed_seconds"), 8),
+                (("failure_samples", 1, "elapsed_seconds"), 8),
+                (("failure_samples", 0, "idle_percent"), 5.01),
+                (("failure_samples",), [resource["failure_samples"][0]])):
+            changed = copy.deepcopy(proof)
+            target = changed["resources"]
+            for key in path[:-1]:
+                target = target[key]
+            target[path[-1]] = value
+            with self.subTest(resource_path=path, value=value), self.assertRaisesRegex(ci_summary.ContractError,
+                    "^environment limit: insufficient starvation evidence$"):
+                validate_environment_limit(changed)
+
     def test_album_environment_policy_rechecks_gate_and_preserves_legacy_proofs(self):
         from ci_failure_diagnostics import environment_limit_evidence, validate_environment_limit
         summary, resource = hosted_album_timeout_summary()

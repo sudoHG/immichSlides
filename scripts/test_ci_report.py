@@ -39,6 +39,36 @@ def entry(day="2026-10-01", outcome="failed", run=10, attempt=1):
 
 
 class ReporterTests(unittest.TestCase):
+    def test_retained_mode_departure_versions_revalidate_and_escalate(self):
+        from ci_failure_diagnostics import environment_limit_evidence
+        from test_ci_summary import hosted_mode_departure_summary
+        for phase in ("mode_selection", "playback_entry"):
+            summary, resource = hosted_mode_departure_summary(phase)
+            row = summary["population"]["observed"][0]
+            proof = environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=3)
+            self.assertIsNotNone(proof)
+            row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
+            report = entry()
+            report.update(status="environment-limited", observed=[row], diagnostics=summary_diagnostics([summary]))
+            compact = ci_report.compact_entry(report, set())
+            self.assertNotIn('"first_failure": {', json.dumps(compact))
+            with self.subTest(phase=phase):
+                restored = ci_report.merge_snapshot(None, [compact], date(2026, 10, 1))["days"]["2026-10-01"]["entries"][0]
+                self.assertEqual("environment-limited", restored["status"])
+                self.assertEqual("failed", restored["observed"][0]["outcome"])
+                following = copy.deepcopy(compact)
+                following.update(day="2026-10-02", run={"id": 11, "attempt": 1})
+                escalated = ci_report.merge_snapshot(None, [compact, following], date(2026, 10, 2))["days"]["2026-10-02"]["entries"][0]
+                self.assertEqual("failed", escalated["status"])
+                self.assertIn("RED: repeated environment limit", render_entry(escalated))
+                for version in (1, 2):
+                    changed = copy.deepcopy(compact)
+                    changed["observed"][0]["environment_limit"]["policy_version"] = version
+                    old = ci_report.merge_snapshot(None, [changed], date(2026, 10, 1))["days"]["2026-10-01"]["entries"][0]
+                    self.assertEqual("failed", old["status"])
+                    self.assertEqual("RED: invalid or obsolete environment-limit proof under the current policy",
+                        old["observed"][0]["environment_limit_rejection"])
+
     def test_retained_album_proof_rechecks_gate_without_original_receipts(self):
         from ci_failure_diagnostics import environment_limit_evidence
         from test_ci_summary import hosted_album_timeout_summary, album_capture_gate_rejections

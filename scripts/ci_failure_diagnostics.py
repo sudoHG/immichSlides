@@ -62,7 +62,7 @@ ENVIRONMENT_LIMIT_FIELD = "environment_limit"
 ENVIRONMENT_POLICY_VERSION = 2
 ENVIRONMENT_IDLE_MAX_PERCENT = 5
 ENVIRONMENT_ALBUM_SETTLING_PHASES = frozenset({"transition", "incomingFromLoading"})
-# Legacy UI availability waits; policy v2 handles the album settling gate separately.
+# Retained v1/v2 UI waits keep their original interpretation.
 ENVIRONMENT_WAIT_STEPS = {
     **{("mode_selection", "navigation", "mode-card", element): "mode"
        for element in ("mode.random.button", "mode.filtered.button")},
@@ -78,6 +78,11 @@ ENVIRONMENT_WAIT_STEPS = {
        for element in ("slideshow.control.settings.button", "slideshow.control.previous.button",
                        "slideshow.control.playPause.button", "slideshow.control.next.button", "slideshow.hiddenWakeReceiver")},
 }
+ENVIRONMENT_WAIT_STEPS_V3 = {
+    **{key: surface for key, surface in ENVIRONMENT_WAIT_STEPS.items() if key[2] != "mode-continue"},
+    **{(phase, "navigation", "mode-departure", "mode.continue.button"): "mode"
+       for phase in ("mode_selection", "playback_entry")},
+}
 
 
 def environment_failure_projection(receipt):
@@ -92,7 +97,7 @@ def environment_failure_projection(receipt):
 
 
 def environment_timing(failure, phase, failure_class, *, policy_version=ENVIRONMENT_POLICY_VERSION):
-    album_capture = (policy_version == 2 and phase == "visible_scene_capture" and failure_class == "probe_readback"
+    album_capture = (policy_version in {2, 3} and phase == "visible_scene_capture" and failure_class == "probe_readback"
         and failure["step"] == "wait-scene" and failure["element"] == "slideshow.scenePresentation.contract.summary")
     if album_capture:
         gate = failure.get("gate", {})
@@ -102,7 +107,8 @@ def environment_timing(failure, phase, failure_class, *, policy_version=ENVIRONM
                 and gate.get("advanced") is True and gate.get("layers_changed") is True
                 and gate.get("phase") in ENVIRONMENT_ALBUM_SETTLING_PHASES):
             return False
-    expected_surface = "playback" if album_capture else ENVIRONMENT_WAIT_STEPS.get(
+    wait_steps = ENVIRONMENT_WAIT_STEPS_V3 if policy_version == 3 else ENVIRONMENT_WAIT_STEPS
+    expected_surface = "playback" if album_capture else wait_steps.get(
         (phase, failure_class, failure["step"], failure["element"]))
     if (failure["source"] != "xctest" or failure["app"] != "running-foreground"
             or failure["scene_status"] in {"BLACK", "BLANK"}
@@ -121,14 +127,14 @@ def validate_environment_limit(proof):
     from ci_bounded_diagnostics import validate_case_resources
     fields(proof, {"schema_version", "policy_version", "runner_hosted", "failure_phase", "failure_class", "failure", "resources"},
            "environment limit")
-    require(type(proof["policy_version"]) is int and proof["policy_version"] in {1, 2},
+    require(type(proof["policy_version"]) is int and proof["policy_version"] in {1, 2, 3},
             "environment limit: unsupported policy version")
     require(type(proof["schema_version"]) is int and proof["schema_version"] == 1
             and proof["runner_hosted"] is True, "environment limit: hosted evidence required")
     failure = proof["failure"]
     failure_fields = {"source", "step", "element", "action", "app", "surface", "control_bar", "scene_status", "wait_elapsed_seconds", "deadline_seconds",
                       "action_duration_seconds", "post_event_idle"}
-    if proof["policy_version"] == 2 and isinstance(failure, dict) and "gate" in failure:
+    if proof["policy_version"] in {2, 3} and isinstance(failure, dict) and "gate" in failure:
         failure_fields.add("gate")
     fields(failure, failure_fields, "environment failure")
     receipt = unavailable_first_failure("xctest")
