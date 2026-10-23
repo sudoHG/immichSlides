@@ -805,8 +805,8 @@ enum StrictE2EPhotoIdentity {
         return regions
     }
 
-    private static func completeSceneCandidates(png: Data) -> [String] {
-        let capture = captureIdentity(png: png)
+    static func completeSceneCandidates(png: Data) -> [String] {
+        let capture = legacyCaptureIdentity(png: png)
         let completeMarks = (capture.mark ?? "").split(separator: "+").map(String.init)
         guard capture.status == .match, (2...3).contains(completeMarks.count),
             let source = CGImageSourceCreateWithData(png as CFData, nil),
@@ -855,7 +855,7 @@ enum StrictE2EPhotoIdentity {
         guard slotMarks.count >= 2 else { return legacy }
         return Result(
             status: .match, mark: slotMarks.joined(separator: "+"), scores: legacy.scores, meanLuma: legacy.meanLuma,
-            notes: ["strict-photo-slot-match"] + legacy.notes)
+            notes: ["strict-multi-slot"])
     }
 
     private static func legacyCaptureIdentity(png: Data) -> Result {

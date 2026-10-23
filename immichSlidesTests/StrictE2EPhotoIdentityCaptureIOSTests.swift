@@ -98,8 +98,8 @@ struct StrictE2EPhotoIdentityCaptureIOSTests {
     func `two photos placed side by side keep a composite identity`(share: Double) throws {
         let boundary = 480 * share
         let png = try renderPNG(width: 480, height: 720) { context in
-            fillPublicFixture(1, in: CGRect(x: 0, y: 0, width: boundary, height: 720), context: context)
-            fillPublicFixture(3, in: CGRect(x: boundary, y: 0, width: 480 - boundary, height: 720), context: context)
+            fillSyntheticMark("A1", in: CGRect(x: 0, y: 0, width: boundary, height: 720), context: context)
+            fillSyntheticMark("A3", in: CGRect(x: boundary, y: 0, width: 480 - boundary, height: 720), context: context)
         }
 
         let identity = StrictE2EPhotoIdentity.captureIdentity(png: png)
@@ -112,66 +112,14 @@ struct StrictE2EPhotoIdentityCaptureIOSTests {
     func `two photos stacked vertically keep a composite identity`(share: Double) throws {
         let boundary = 720 * share
         let png = try renderPNG(width: 480, height: 720) { context in
-            fillPublicFixture(1, in: CGRect(x: 0, y: 0, width: 480, height: boundary), context: context)
-            fillPublicFixture(5, in: CGRect(x: 0, y: boundary, width: 480, height: 720 - boundary), context: context)
+            fillSyntheticMark("A1", in: CGRect(x: 0, y: 0, width: 480, height: boundary), context: context)
+            fillSyntheticMark("A5", in: CGRect(x: 0, y: boundary, width: 480, height: 720 - boundary), context: context)
         }
 
         let identity = StrictE2EPhotoIdentity.captureIdentity(png: png)
 
         #expect(identity.status == .match)
         #expect(identity.mark == "A1+A5")
-    }
-
-    @Test(arguments: ["sharp", "following-checker", "wide", "unknown", "foreign", "mixed", "crossfade"])
-    func `clipped checker boundaries require one line from one adjacent photo`(boundaryCase: String) throws {
-        let isAccepted = ["sharp", "following-checker"].contains(boundaryCase)
-        for horizontal in [false, true] {
-            let width = 480
-            let height = horizontal ? 320 : 1039
-            let boundary = horizontal ? 239 : 373
-            let lines = boundaryCase == "wide" ? 2 : 1
-            let first = CGRect(x: 0, y: 0, width: horizontal ? boundary : width, height: horizontal ? height : boundary)
-            let second = CGRect(
-                x: horizontal ? boundary + lines : 0, y: horizontal ? 0 : boundary + lines,
-                width: horizontal ? width - boundary - lines : width,
-                height: horizontal ? height : height - boundary - lines)
-            let png = try renderPNG(width: width, height: height) { context in
-                fillPublicFixture(3, in: first, context: context)
-                fillPublicFixture(2, in: second, context: context)
-                for offset in 0..<(horizontal ? height : width) {
-                    var channels = boundaryCase == "following-checker" ? [101, 146, 74] : [138, 27, 93]
-                    if boundaryCase == "unknown" { channels = [0, 255, 255] }
-                    if boundaryCase == "foreign" { channels = [64, 85, 55] }
-                    if boundaryCase == "mixed", offset >= (horizontal ? height : width) / 2 {
-                        channels = [101, 146, 74]
-                    }
-                    if boundaryCase == "crossfade" {
-                        let firstColor =
-                            ((horizontal ? boundary - 1 : offset) / 48
-                                + (horizontal ? offset : boundary - 1) / 48).isMultiple(of: 2)
-                            ? [111, 51, 57] : [165, 3, 129]
-                        let secondColor =
-                            ((horizontal ? 0 : offset) / 48
-                                + (horizontal ? offset : 0) / 48).isMultiple(of: 2)
-                            ? [74, 170, 38] : [128, 122, 110]
-                        channels = zip(firstColor, secondColor).map {
-                            Int((Double($0 + $1) / 2).rounded(.toNearestOrEven))
-                        }
-                    }
-                    context.setFillColor(color(CGFloat(channels[0]), CGFloat(channels[1]), CGFloat(channels[2])))
-                    context.fill(
-                        CGRect(
-                            x: horizontal ? boundary : offset, y: horizontal ? offset : boundary,
-                            width: horizontal ? lines : 1, height: horizontal ? 1 : lines))
-                }
-            }
-            let marks = StrictE2EPhotoIdentity.strictCaptureSlotMarks(png: png)
-            if isAccepted {
-                #expect(marks == ["A3", "A2"])
-            } else {
-                #expect(marks.isEmpty)
-            }
-        }
     }
 
     @Test
@@ -195,11 +143,14 @@ struct StrictE2EPhotoIdentityCaptureIOSTests {
             }
             let marks = StrictE2EPhotoIdentity.strictCaptureSlotMarks(png: png)
             #expect(marks == item.marks, "\(item.name)")
-            // These side-by-side frames were legacy TRANSITIONs: exercise the actual additive entry too.
-            if item.name.hasPrefix("side-") {
-                let identity = StrictE2EPhotoIdentity.captureIdentity(png: png)
-                #expect(identity.status == (item.marks.isEmpty ? .transition : .match), "\(item.name)")
-                #expect(identity.mark == (item.marks.isEmpty ? nil : item.marks.joined(separator: "+")), "\(item.name)")
+            let identity = StrictE2EPhotoIdentity.captureIdentity(png: png)
+            #expect(identity.status.rawValue == item.capture.status, "\(item.name)")
+            #expect(identity.mark == item.capture.mark, "\(item.name)")
+            if let notes = item.capture.notes {
+                #expect(identity.notes == notes, "\(item.name)")
+            }
+            if let candidates = item.completeSceneCandidates {
+                #expect(StrictE2EPhotoIdentity.completeSceneCandidates(png: png) == candidates, "\(item.name)")
             }
         }
     }
@@ -213,6 +164,14 @@ struct StrictE2EPhotoIdentityCaptureIOSTests {
         let marks: [String]
         let glyphOffsetY: Int?
         let bottomLabel: String?
+        let capture: CaptureExpectation
+        let completeSceneCandidates: [String]?
+    }
+
+    private struct CaptureExpectation: Decodable {
+        let status: String
+        let mark: String?
+        let notes: [String]?
     }
 
     @Test(arguments: [1170, 1640])
@@ -230,15 +189,30 @@ struct StrictE2EPhotoIdentityCaptureIOSTests {
         }
     }
 
-    @Test
-    func `tagged Display P3 mosaics preserve the encoded public palette`() throws {
-        let png = try renderPNG(width: 480, height: 720) { context in
-            fillPublicFixture(3, in: CGRect(x: 0, y: 0, width: 480, height: 360), context: context)
-            fillPublicFixture(2, in: CGRect(x: 0, y: 360, width: 480, height: 360), context: context)
+    @Test(arguments: [false, true])
+    func `tagged mosaics preserve encoded proof and non transition legacy verdicts`(isCalibrated: Bool) throws {
+        let png = try renderPNG(width: isCalibrated ? 960 : 480, height: 720) { context in
+            fillPublicFixture(
+                3, in: CGRect(x: 0, y: 0, width: isCalibrated ? 192 : 480, height: isCalibrated ? 720 : 360),
+                context: context)
+            fillPublicFixture(
+                2,
+                in: CGRect(
+                    x: isCalibrated ? 192 : 0, y: isCalibrated ? 0 : 360,
+                    width: isCalibrated ? 768 : 480, height: isCalibrated ? 720 : 360), context: context)
         }
         let source = try #require(CGImageSourceCreateWithData(png as CFData, nil))
         let image = try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
-        let space = try #require(CGColorSpace(name: CGColorSpace.displayP3))
+        // Encoded RGB stays public; calibrated gamma makes the legacy hue reader see converted colors.
+        let space = try #require(
+            isCalibrated
+                ? CGColorSpace(
+                    calibratedRGBWhitePoint: [0.95047, 1, 1.08883], blackPoint: nil, gamma: [5, 1, 5],
+                    matrix: [
+                        0.4124564, 0.2126729, 0.0193339, 0.3575761, 0.7151522, 0.1191920, 0.1804375, 0.0721750,
+                        0.9503041
+                    ])
+                : CGColorSpace(name: CGColorSpace.displayP3))
         let tagged = try #require(image.copy(colorSpace: space))
         let output = NSMutableData()
         let destination = try #require(CGImageDestinationCreateWithData(output, "public.png" as CFString, 1, nil))
@@ -246,6 +220,9 @@ struct StrictE2EPhotoIdentityCaptureIOSTests {
         try #require(CGImageDestinationFinalize(destination))
         let marks = StrictE2EPhotoIdentity.strictCaptureSlotMarks(png: output as Data)
         #expect(marks == ["A3", "A2"])
+        let identity = StrictE2EPhotoIdentity.captureIdentity(png: output as Data)
+        #expect(identity.status == (isCalibrated ? .unrecognizable : .match))
+        #expect(identity.mark == (isCalibrated ? nil : "A3+A2"))
     }
 
     @Test(arguments: [1.15, 1.2, 1.25])

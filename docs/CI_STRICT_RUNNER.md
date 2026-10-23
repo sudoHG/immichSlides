@@ -186,7 +186,8 @@ of each rectangle and retain their existing results, including unequal doubles,
 balanced triples and all four primary-plus-pair triple orientations. Swift first
 runs this unchanged legacy capture path. Only a legacy TRANSITION is eligible
 for an additive `strictCaptureSlotMarks` check. Successful strict proof returns
-MATCH with the slot marks; rejection returns the legacy result unchanged.
+MATCH with the slot marks and the single note `strict-multi-slot`; rejection
+returns the legacy result unchanged.
 Legacy MATCH, UNRECOGNIZABLE, BLACK and BLANK results never enter the new path.
 The region readers and complete-scene inheritance retain the legacy contract.
 
@@ -220,8 +221,11 @@ first-row strokes. Visible cells and digits must still agree with the texture.
 The shared `immichSlidesTests/Fixtures/public-photo-identity-cases.json` table
 constructs the same checker cells, glyph origins and defect boxes in the Swift
 reader suite and `scripts/test_strict_e2e_photo_identity.py`; the table compares
-Swift's strict fallback entry with Python `public_frame_photos_from_bytes`, not
-the legacy-compatible capture verdict. Native sizes and all parity rows remain
+Swift's strict fallback entry with Python `public_frame_photos_from_bytes`.
+Each row also records the observed Swift legacy result and independently asserts
+the additive `captureIdentity` verdict; strict rejection does not override legacy
+MATCH, and strict proof cannot supply complete-scene inheritance candidates.
+Native sizes and all parity rows remain
 intact; the Python test draws and caches identical 48-pixel background rectangles
 instead of generating and encoding every background pixel in Python.
 
