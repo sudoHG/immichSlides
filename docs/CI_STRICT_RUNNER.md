@@ -1190,6 +1190,14 @@ and malformed JSON containing the field are refused without echoing candidates.
 | `native_activity_seconds` | Optional, XCTest source only; exactly `pre_event_idle`, `find_window`, `synthesize_event`, `post_event_idle`, `ax_root_acquisition`, each finite 0–86,400 seconds or null |
 | `gate` | Optional album capture timeout facts; exactly `kind: album-capture`, `stable`, `paused`, `entry_hint_hidden`, `advanced`, `layers_changed`, `manifest_complete`, and `phase`; the six condition fields are Boolean or null |
 
+`capture_request_seconds` and `capture_return_seconds` are offsets from the
+failure to the optional diagnostic screenshot request and return. Their difference
+measures that later screenshot, not the capture that caused the original failure.
+`wait_elapsed_seconds` covers the recorded wait, which can include queries,
+control preparation, screenshots and pixel analysis. A `capture-frame` step alone
+does not locate that cost. Use the original capture's phase diagnostics to separate
+those operations; null capture offsets provide no screenshot duration.
+
 The `gate` reader accepts only XCTest `wait-scene` receipts for
 `slideshow.scenePresentation.contract.summary` or `slideshow.control.next.button`.
 It describes the last observation in `captureStableAlbumPlaybackPNG`, including

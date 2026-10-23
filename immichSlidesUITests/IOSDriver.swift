@@ -473,7 +473,11 @@ struct IOSDriver: PlaybackDriver {
                             button.elementType == .button, button.isEnabled, !button.frame.isEmpty,
                             observation.windowFrame.contains(button.frame)
                         else { return false }
-                        return observation.windowElement.buttons[requiredIdentifier].wait(
+                        let control = observation.windowElement.buttons[requiredIdentifier]
+                        // Ready controls do not need another property-wait polling interval.
+                        if control.isHittable { return true }
+                        guard Date() < deadline else { return false }
+                        return control.wait(
                             for: \.isHittable, toEqual: true,
                             timeout: min(
                                 UITestSupportWaitTiming.identityPollSeconds, max(.zero, deadline.timeIntervalSinceNow)))
