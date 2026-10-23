@@ -2840,7 +2840,7 @@ class StrictCITracerTests(unittest.TestCase):
                     self.assertEqual("passed", summary["status"])
                     self.assertEqual([observed], aggregate["informational"])
                 if mutation is None:
-                    self.assertEqual(2, observed["environment_limit"]["policy_version"])
+                    self.assertEqual(3, observed["environment_limit"]["policy_version"])
                     methods, missing = method_observations(summary, trace, runner_hosted=True)
                     self.assertEqual([], missing)
                     self.assertEqual(observed["environment_limit"], methods[0]["environment_limit"])
@@ -2913,6 +2913,27 @@ class StrictCITracerTests(unittest.TestCase):
                     methods, missing = method_observations(summary, trace, runner_hosted=True)
                     self.assertEqual([], missing)
                     self.assertEqual(observed["environment_limit"], methods[0]["environment_limit"])
+
+    def test_activated_mode_departure_emits_yellow_without_promoting_the_raw_failure(self):
+        import contextlib
+        from test_ci_summary import hosted_mode_departure_summary
+        for phase in ("mode_selection", "playback_entry"):
+            seed, _ = hosted_mode_departure_summary(phase)
+            row = seed["population"]["observed"][0]
+            ledger = seed["strict_case_evidence"][0]["bounded_diagnostics"]
+            with self.subTest(phase=phase), tempfile.TemporaryDirectory() as raw:
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    code, _, _, summary = self._produce_validator_records(Path(raw), None,
+                        receipt_suite=None, runner_exit=65, nightly=True, timing_failure=(row, ledger),
+                        case=dict(platform="ios", device="iphone", configuration="Debug", suite="smoke",
+                                  scenario="normal", fixture="a"))
+                self.assertEqual(0, code)
+                observed = summary["population"]["observed"][0]
+                self.assertEqual(("failed", "failed", 65),
+                    (summary["status"], observed["outcome"], observed["attempts"][0]["exit_code"]))
+                self.assertEqual(3, observed["environment_limit"]["policy_version"])
+                self.assertIn("::warning title=Environment-limited strict timing::", output.getvalue())
 
     def test_mode_departure_producer_rechecks_hosting_scope_and_starvation(self):
         import copy

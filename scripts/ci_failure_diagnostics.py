@@ -59,7 +59,7 @@ _validator_input = ContextVar("first_failure_validator_input", default=None)
 _validator_enabled = ContextVar("first_failure_validator_enabled", default=False)
 
 ENVIRONMENT_LIMIT_FIELD = "environment_limit"
-ENVIRONMENT_POLICY_VERSION = 2
+ENVIRONMENT_POLICY_VERSION = 3
 ENVIRONMENT_IDLE_MAX_PERCENT = 5
 ENVIRONMENT_ALBUM_SETTLING_PHASES = frozenset({"transition", "incomingFromLoading"})
 # Retained v1/v2 UI waits keep their original interpretation.

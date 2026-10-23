@@ -520,10 +520,10 @@ The receipt cannot distinguish this from slow settling; no Swift change is made.
 The first night without CPU starvation is red, two consecutive yellow nights
 escalate to red, and independent strict pause and history cases remain in place.
 
-The producer still emits v2; the reader accepts v3 ahead of separate activation.
-After v3 activation, all new proofs use v3, including existing UI waits and album
-settling. Merge the reader before activating from a trusted base containing it:
-an older reader would turn even those existing yellows red. Retained v1/v2 proofs
+The producer emits v3 for all new proofs, including existing UI waits and album
+settling. Reader support was introduced in a separate change before producer
+activation; trusted acceptance requires a base containing that reader.
+An older reader would turn even those existing yellows red. Retained v1/v2 proofs
 keep their old interpretation, including the legacy `mode-continue` entry;
 changing an existing version's allowlist would alter compact-history revalidation.
 Aggregation rechecks
