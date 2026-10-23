@@ -534,7 +534,7 @@ struct IOSDriver: PlaybackDriver {
         let classificationStartedAt = ProcessInfo.processInfo.systemUptime
         let identity = StrictE2EPhotoIdentity.captureIdentity(png: png)
         return (
-            identity.status == .match ? identity.mark : nil, capturedAt,
+            identity.navigationMark, capturedAt,
             classificationStartedAt - captureStartedAt,
             ProcessInfo.processInfo.systemUptime - classificationStartedAt
         )

@@ -229,6 +229,52 @@ def _with_exif_card(png: bytes, model: str) -> bytes:
 
 
 class FrameGlyphBoundaryTests(unittest.TestCase):
+    def test_shared_public_frames_have_the_same_swift_and_python_verdicts(self) -> None:
+        cases = json.loads((SCRIPT_DIR.parent / "immichSlidesTests/Fixtures/public-photo-identity-cases.json").read_text())
+        checker_frames = {}
+        for case in cases:
+            with self.subTest(case=case["name"]):
+                frame = Image.new("RGB", tuple(case["size"]))
+                for number, x, y, width, height in case["slots"]:
+                    # Identical 48px checker, glyph scale/origin and half-open boxes as Swift.
+                    key = (width, height, number)
+                    if key not in checker_frames:
+                        checker = Image.new("RGB", (width, height))
+                        checker_draw = ImageDraw.Draw(checker)
+                        for cy in range(0, height, 48):
+                            for cx in range(0, width, 48):
+                                block = (cx // 48 + cy // 48) % 2
+                                color = ((number * 37 + block * 54) % 180,
+                                         (number * 61 + (1 - block) * 48) % 180,
+                                         (number * 19 + block * 72) % 180)
+                                checker_draw.rectangle((cx, cy, cx + 47, cy + 47), fill=color)
+                        checker_frames[key] = checker
+                    # Native-size rectangles preserve pixels without the per-pixel Python PNG generator.
+                    photo = checker_frames[key].copy()
+                    draw = ImageDraw.Draw(photo)
+                    scale = max(8, min(width // 18, height // 10))
+                    left = (width - 11 * scale) // 2
+                    top = (height - 7 * scale) // 2 + case.get("glyphOffsetY", 0)
+                    label = case.get("bottomLabel", f"A{number}") if y > 0 else f"A{number}"
+                    for index, key in enumerate(label):
+                        for row, bits in enumerate(GLYPHS[key]):
+                            for column, bit in enumerate(bits):
+                                if bit == "1":
+                                    gx, gy = left + (index * 6 + column) * scale, top + row * scale
+                                    draw.rectangle((gx, gy, gx + scale - 1, gy + scale - 1), fill="white")
+                    frame.paste(photo, (x, y))
+                draw = ImageDraw.Draw(frame)
+                for x, y, width, height, red, green, blue in case["bands"]:
+                    draw.rectangle((x, y, x + width - 1, y + height - 1), fill=(red, green, blue))
+                color_box, glyph_box = PUBLIC_SCENE_GEOMETRIES.get(frame.size, (None, None))
+                png = _png(frame)
+                if case["marks"]:
+                    self.assertEqual([photo.mark for photo in public_frame_photos_from_bytes(
+                        png, color_exclusion_box=color_box, glyph_overlay_box=glyph_box)], case["marks"])
+                else:
+                    with self.assertRaisesRegex(IdentityAssertionError, r"^unreadable public glyph slot"):
+                        public_frame_photos_from_bytes(png, color_exclusion_box=color_box, glyph_overlay_box=glyph_box)
+
     @staticmethod
     def _interpolated_pair(*, horizontal: bool, boundary: int = 373, lines: int = 1,
                            alpha: float = 0.5, defect: str = "") -> bytes:
