@@ -466,7 +466,7 @@ enum StrictE2EPhotoIdentity {
         shouldIncludeViewportEdges: Bool = false
     ) -> (frame: (width: Int, height: Int, pixels: [UInt8]), colors: [(String, Int)?], exclusion: CGRect?)? {
         // Half-resolution capture separates a bilinear footprint from blur. The 96-pixel proof remains below.
-        let width = min(frame.width, max(minimumSampleHeightPixels, frame.width / 2))
+        let width = textureProbeWidth(frame.width)
         let height = max(
             minimumSampleHeightPixels,
             Int((Double(frame.height) * Double(width) / Double(frame.width)).rounded(.toNearestOrEven)))
@@ -930,11 +930,15 @@ enum StrictE2EPhotoIdentity {
                 image: image, colorSpace: image.colorSpace.flatMap { $0.model == .rgb ? $0 : nil })
         else { return ([], false) }
         let (width, height, pixels) = frame
+        let exclusions = captureSceneExclusions(image: image, width: width, height: height)
         var paletteCache: [Int: String] = [:]
         var edgeCache: [Int: String] = [:]
         let edgeWidth = captureEdgeBandRawPixels * width / image.width
         let edgeHeight = captureEdgeBandRawPixels * height / image.height
         let assignments: [String] = stride(from: 0, to: pixels.count, by: pixelChannelCount).map { offset in
+            let column = offset / pixelChannelCount % width
+            let row = offset / pixelChannelCount / width
+            if exclusions.color?.contains(CGPoint(x: column, y: row)) == true { return "" }
             let key = Int(pixels[offset]) << 16 | Int(pixels[offset + 1]) << 8 | Int(pixels[offset + 2])
             var mark = paletteCache[key]
             if mark == nil {
@@ -948,8 +952,6 @@ enum StrictE2EPhotoIdentity {
                 mark = matches.count == 1 ? matches[0] : ""
                 paletteCache[key] = mark
             }
-            let column = offset / pixelChannelCount % width
-            let row = offset / pixelChannelCount / width
             if mark == "",
                 column < edgeWidth || column >= width - edgeWidth || row < edgeHeight || row >= height - edgeHeight
             {
@@ -979,7 +981,9 @@ enum StrictE2EPhotoIdentity {
         }
         // A nested overlay on one photo retains the existing single-photo classification.
         let isMultiPhotoCandidate = slots.indices.contains { index in
-            slots.dropFirst(index + 1).contains { !slots[index].rect.intersects($0.rect) }
+            slots.dropFirst(index + 1).contains {
+                !slots[index].rect.contains($0.rect) && !$0.rect.contains(slots[index].rect)
+            }
         }
         let rejected: ([String], Bool) = ([], isMultiPhotoCandidate)
         guard (2...3).contains(slots.count) else { return rejected }
@@ -999,7 +1003,10 @@ enum StrictE2EPhotoIdentity {
         else { return rejected }
         var letters = Set<String>()
         for slot in slots {
-            guard isCaptureSlotReadable(assignments, width: width, rect: slot.rect, mark: slot.mark) else {
+            guard
+                isCaptureSlotReadable(
+                    assignments, width: width, rect: slot.rect, mark: slot.mark, exclusion: exclusions.color)
+            else {
                 return rejected
             }
             var slotPixels = [UInt8]()
@@ -1010,8 +1017,11 @@ enum StrictE2EPhotoIdentity {
             let slotFrame = (width: Int(slot.rect.width), height: Int(slot.rect.height), pixels: slotPixels)
             guard
                 let pattern = publicTexturePattern(
-                    frame: slotFrame, colors: paletteColors(frame: slotFrame), mark: slot.mark, exclusion: nil),
-                publicSlotLetters(frame: slotFrame, mark: slot.mark) == [pattern]
+                    frame: slotFrame, colors: paletteColors(frame: slotFrame), mark: slot.mark,
+                    exclusion: exclusions.color?.offsetBy(dx: -slot.rect.minX, dy: -slot.rect.minY)),
+                publicSlotLetters(
+                    frame: slotFrame, mark: slot.mark,
+                    exclusion: exclusions.glyph?.offsetBy(dx: -slot.rect.minX, dy: -slot.rect.minY)) == [pattern]
             else { return rejected }
             letters.insert(pattern)
         }
@@ -1021,6 +1031,51 @@ enum StrictE2EPhotoIdentity {
                 $0.rect.minY == $1.rect.minY ? $0.rect.minX < $1.rect.minX : $0.rect.minY < $1.rect.minY
             }.map(\.mark), true
         )
+    }
+
+    private static func captureSceneExclusions(image: CGImage, width: Int, height: Int) -> (
+        color: CGRect?, glyph: CGRect?
+    ) {
+        // Mirror Python PUBLIC_SCENE_GEOMETRIES; unknown sizes receive no chrome exemption.
+        let color: CGRect?
+        let glyph: CGRect?
+        switch (image.width, image.height) {
+        case (1170, 2532):
+            color = CGRect(x: 373, y: 2489, width: 425, height: 23)
+            glyph = CGRect(x: 68, y: 2126, width: 1034, height: 188)
+        case (1640, 2360):
+            color = CGRect(x: 543, y: 2330, width: 554, height: 19)
+            glyph = nil
+        case (2064, 2752):
+            color = CGRect(x: 1308, y: 60, width: 696, height: 382)
+            glyph = nil
+        case (1920, 1080):
+            color = CGRect(x: 628, y: 718, width: 662, height: 245)
+            glyph = color
+        case (approvedTVFrameWidthPixels, approvedTVFrameHeightPixels):
+            color = CGRect(
+                x: approvedTVControlBarMinXPixels, y: approvedTVControlBarMinYPixels,
+                width: approvedTVControlBarMaxXPixels - approvedTVControlBarMinXPixels,
+                height: approvedTVControlBarMaxYPixels - approvedTVControlBarMinYPixels)
+            glyph = color
+        default:
+            return (nil, nil)
+        }
+        func scaled(_ box: CGRect?) -> CGRect? {
+            box.map {
+                let left = floor($0.minX * Double(width) / Double(image.width))
+                let top = floor($0.minY * Double(height) / Double(image.height))
+                return CGRect(
+                    x: left, y: top,
+                    width: ceil($0.maxX * Double(width) / Double(image.width)) - left,
+                    height: ceil($0.maxY * Double(height) / Double(image.height)) - top)
+            }
+        }
+        return (scaled(color), scaled(glyph))
+    }
+
+    private static func textureProbeWidth(_ width: Int) -> Int {
+        min(width, max(minimumSampleHeightPixels, width / 2))
     }
 
     private static func isCaptureCanvasTiled(
@@ -1088,12 +1143,19 @@ enum StrictE2EPhotoIdentity {
         return matches.count == 1 ? matches[0] : ""
     }
 
-    private static func isCaptureSlotReadable(_ assignments: [String], width: Int, rect: CGRect, mark: String) -> Bool {
+    private static func isCaptureSlotReadable(
+        _ assignments: [String], width: Int, rect: CGRect, mark: String, exclusion: CGRect?
+    ) -> Bool {
         for horizontal in [false, true] {
             let lines = horizontal ? Int(rect.minX)..<Int(rect.maxX) : Int(rect.minY)..<Int(rect.maxY)
             let offsets = horizontal ? Int(rect.minY)..<Int(rect.maxY) : Int(rect.minX)..<Int(rect.maxX)
             var matches: [Bool] = []
             for line in lines {
+                if offsets.allSatisfy({ offset in
+                    exclusion?.contains(CGPoint(x: horizontal ? line : offset, y: horizontal ? offset : line)) == true
+                }) {
+                    continue
+                }
                 var counts: [String: Int] = [:]
                 for offset in offsets {
                     let observed = assignments[horizontal ? offset * width + line : line * width + offset]
@@ -1107,7 +1169,9 @@ enum StrictE2EPhotoIdentity {
             var missing = 0
             for present in matches {
                 missing = present ? 0 : missing + 1
-                if missing > textureMaximumCellDriftPixels { return false }
+                if Double(missing * textureProbeWidth(width)) / Double(width) > Double(textureMaximumCellDriftPixels) {
+                    return false
+                }
             }
         }
         return true
@@ -1131,11 +1195,13 @@ enum StrictE2EPhotoIdentity {
     private static let publicGlyphMinimumWhiteCells = 5
 
     private static func publicSlotLetters(
-        frame: (width: Int, height: Int, pixels: [UInt8]), mark: String
+        frame: (width: Int, height: Int, pixels: [UInt8]), mark: String, exclusion: CGRect?
     ) -> Set<String> {
-        // Mirror Python's unoccluded public glyph reader; SmartFill has no EXIF panel.
+        // Mirror Python's measured control-bar fragment joining and clipped-cell scale estimate.
+        func isObserved(_ x: Int, _ y: Int) -> Bool { exclusion?.contains(CGPoint(x: x, y: y)) != true }
         let white = stride(from: 0, to: frame.pixels.count, by: pixelChannelCount).map { offset in
-            (0..<3).allSatisfy { frame.pixels[offset + $0] >= 240 }
+            isObserved(offset / pixelChannelCount % frame.width, offset / pixelChannelCount / frame.width)
+                && (0..<3).allSatisfy { frame.pixels[offset + $0] >= 240 }
         }
         func isWhite(_ x: Int, _ y: Int) -> Bool { white[y * frame.width + x] }
         func glyphBit(_ glyph: String, _ row: Int, _ column: Int) -> Bool {
@@ -1149,41 +1215,75 @@ enum StrictE2EPhotoIdentity {
                 bands.append((y, y + 1))
             }
         }
+        var joined: [(top: Int, bottom: Int)] = []
+        for band in bands where exclusion != nil || band.bottom - band.top >= publicGlyphMinimumBandHeight {
+            if let last = joined.last, let exclusion,
+                exclusion.minY <= Double(last.bottom), last.bottom <= band.top, Double(band.top) <= exclusion.maxY
+            {
+                joined[joined.count - 1].bottom = band.bottom
+            } else {
+                joined.append(band)
+            }
+        }
         var letters = Set<String>()
-        for band in bands where band.bottom - band.top >= publicGlyphMinimumBandHeight {
-            let cell = Double(band.bottom - band.top) / 7
-            var origins = Set<Double>()
-            for row in 0..<7 {
-                let y = Int(Double(band.top) + (Double(row) + 0.5) * cell)
-                for x in 1..<frame.width where isWhite(x, y) != isWhite(x - 1, y) {
-                    for column in 0..<6 {
-                        origins.insert(((Double(x) - Double(column) * cell) * 10).rounded(.toNearestOrEven) / 10)
+        for band in joined where band.bottom - band.top >= publicGlyphMinimumBandHeight {
+            var cells: Set<Double> = [Double(band.bottom - band.top) / 7]
+            if let exclusion, Double(band.top) < exclusion.minY,
+                exclusion.minY <= Double(band.bottom), Double(band.bottom) <= exclusion.maxY
+            {
+                let boundaries =
+                    [0] + (1..<frame.width).filter { isWhite($0, band.top) != isWhite($0 - 1, band.top) }
+                    + [frame.width]
+                for (left, right) in zip(boundaries, boundaries.dropFirst())
+                where left > 0 && right < frame.width && isWhite(left, band.top) {
+                    for columns in 1...5 {
+                        let cell = Double(right - left) / Double(columns)
+                        let bottom = Double(band.top) + 7 * cell
+                        if Double(band.bottom) < bottom, bottom <= min(Double(frame.height), exclusion.maxY) {
+                            cells.insert(cell)
+                        }
                     }
                 }
             }
             var bandLetters = Set<String>()
-            for origin in origins {
-                var observed: [(row: Int, column: Int, white: Bool)] = []
-                var digitMatches = true
+            for cell in cells {
+                var origins = Set<Double>()
                 for row in 0..<7 {
                     let y = Int(Double(band.top) + (Double(row) + 0.5) * cell)
-                    for column in 0..<5 {
-                        let x = Int((origin + (Double(column) + 0.5) * cell).rounded(.toNearestOrEven))
-                        if (0..<frame.width).contains(x) { observed.append((row, column, isWhite(x, y))) }
-                        let digitX = Int((origin + (Double(6 + column) + 0.5) * cell).rounded(.toNearestOrEven))
-                        if (0..<frame.width).contains(digitX),
-                            glyphBit(String(mark.suffix(1)), row, column) != isWhite(digitX, y)
-                        {
-                            digitMatches = false
+                    for x in 1..<frame.width
+                    where isObserved(x, y) && isObserved(x - 1, y)
+                        && isWhite(x, y) != isWhite(x - 1, y)
+                    {
+                        for column in 0..<6 {
+                            origins.insert(((Double(x) - Double(column) * cell) * 10).rounded(.toNearestOrEven) / 10)
                         }
                     }
                 }
-                guard digitMatches, observed.count >= publicGlyphMinimumObservedCells,
-                    observed.filter(\.white).count >= publicGlyphMinimumWhiteCells
-                else { continue }
-                for letter in ["A", "B"] where observed.allSatisfy({ glyphBit(letter, $0.row, $0.column) == $0.white })
-                {
-                    bandLetters.insert(letter)
+                for origin in origins {
+                    var observed: [(row: Int, column: Int, white: Bool)] = []
+                    var digitMatches = true
+                    for row in 0..<7 {
+                        let y = Int(Double(band.top) + (Double(row) + 0.5) * cell)
+                        for column in 0..<5 {
+                            let x = Int((origin + (Double(column) + 0.5) * cell).rounded(.toNearestOrEven))
+                            if (0..<frame.width).contains(x), isObserved(x, y) {
+                                observed.append((row, column, isWhite(x, y)))
+                            }
+                            let digitX = Int((origin + (Double(6 + column) + 0.5) * cell).rounded(.toNearestOrEven))
+                            if (0..<frame.width).contains(digitX), isObserved(digitX, y),
+                                glyphBit(String(mark.suffix(1)), row, column) != isWhite(digitX, y)
+                            {
+                                digitMatches = false
+                            }
+                        }
+                    }
+                    guard digitMatches, observed.count >= publicGlyphMinimumObservedCells,
+                        observed.filter(\.white).count >= publicGlyphMinimumWhiteCells
+                    else { continue }
+                    for letter in ["A", "B"]
+                    where observed.allSatisfy({ glyphBit(letter, $0.row, $0.column) == $0.white }) {
+                        bandLetters.insert(letter)
+                    }
                 }
             }
             if bandLetters.isEmpty {

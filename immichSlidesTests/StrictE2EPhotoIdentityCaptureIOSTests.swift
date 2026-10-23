@@ -4,6 +4,7 @@ import ImageIO
 import Testing
 import UIKit
 
+// These reader tests run on both iOS and tvOS; keep the existing suite identity for CI routing.
 @Suite
 struct StrictE2EPhotoIdentityCaptureIOSTests {
     enum ControlBarCaptureCase: CaseIterable, Sendable {
@@ -175,6 +176,42 @@ struct StrictE2EPhotoIdentityCaptureIOSTests {
         }
     }
 
+    @Test
+    func `shared public frames have the same Swift and Python verdicts`() throws {
+        let url = try #require(
+            Bundle(for: FixtureBundle.self).url(
+                forResource: "public-photo-identity-cases", withExtension: "json", subdirectory: "Fixtures"))
+        let cases = try JSONDecoder().decode([ParityCase].self, from: Data(contentsOf: url))
+        for item in cases {
+            let png = try renderPNG(width: item.size[0], height: item.size[1]) { context in
+                for slot in item.slots {
+                    fillPublicFixture(
+                        slot[0], in: CGRect(x: slot[1], y: slot[2], width: slot[3], height: slot[4]),
+                        context: context, label: slot[2] > 0 ? item.bottomLabel : nil,
+                        glyphOffsetY: item.glyphOffsetY ?? 0)
+                }
+                for band in item.bands {
+                    context.setFillColor(color(CGFloat(band[4]), CGFloat(band[5]), CGFloat(band[6])))
+                    context.fill(CGRect(x: band[0], y: band[1], width: band[2], height: band[3]))
+                }
+            }
+            let identity = StrictE2EPhotoIdentity.captureIdentity(png: png)
+            #expect((identity.status == .match) == !item.marks.isEmpty, "\(item.name)")
+            #expect(identity.mark == (item.marks.isEmpty ? nil : item.marks.joined(separator: "+")), "\(item.name)")
+        }
+    }
+
+    private final class FixtureBundle {}
+    private struct ParityCase: Decodable {
+        let name: String
+        let size: [Int]
+        let slots: [[Int]]
+        let bands: [[Int]]
+        let marks: [String]
+        let glyphOffsetY: Int?
+        let bottomLabel: String?
+    }
+
     @Test(arguments: [1170, 1640])
     func `native public portrait pairs identify every slot`(width: Int) throws {
         let height = width == 1170 ? 2532 : 2360
@@ -189,6 +226,89 @@ struct StrictE2EPhotoIdentityCaptureIOSTests {
             #expect(identity.status == .match)
             #expect(identity.mark == pair.map { "A\($0)" }.joined(separator: "+"))
         }
+    }
+
+    @Test
+    func `tagged Display P3 mosaics preserve the encoded public palette`() throws {
+        let png = try renderPNG(width: 480, height: 720) { context in
+            fillPublicFixture(3, in: CGRect(x: 0, y: 0, width: 480, height: 360), context: context)
+            fillPublicFixture(2, in: CGRect(x: 0, y: 360, width: 480, height: 360), context: context)
+        }
+        let source = try #require(CGImageSourceCreateWithData(png as CFData, nil))
+        let image = try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        let space = try #require(CGColorSpace(name: CGColorSpace.displayP3))
+        let tagged = try #require(image.copy(colorSpace: space))
+        let output = NSMutableData()
+        let destination = try #require(CGImageDestinationCreateWithData(output, "public.png" as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, tagged, nil)
+        try #require(CGImageDestinationFinalize(destination))
+        let identity = StrictE2EPhotoIdentity.captureIdentity(png: output as Data)
+        #expect(identity.status == .match)
+        #expect(identity.mark == "A3+A2")
+    }
+
+    @Test(arguments: [1.15, 1.2, 1.25])
+    func `bilinearly enlarged moving fixtures retain their composite identity`(zoom: Double) throws {
+        let sources = try [(1, 320, 180), (5, 240, 360)].map { number, width, height in
+            let png = try renderPNG(width: width, height: height) { context in
+                fillPublicFixture(number, in: CGRect(x: 0, y: 0, width: width, height: height), context: context)
+            }
+            let source = try #require(CGImageSourceCreateWithData(png as CFData, nil))
+            return try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        }
+        let enlarged = try sources.enumerated().map { index, image in
+            try bilinearFill(image, width: 1170, height: index == 0 ? 1822 : 710, zoom: zoom)
+        }
+        let png = try renderPNG(width: 1170, height: 2532) { context in
+            for (index, image) in enlarged.enumerated() {
+                let slot = CGRect(x: 0, y: index == 0 ? 0 : 1822, width: image.width, height: image.height)
+                context.saveGState()
+                context.interpolationQuality = .none
+                context.translateBy(x: 0, y: slot.minY + slot.maxY)
+                context.scaleBy(x: 1, y: -1)
+                context.draw(image, in: slot)
+                context.restoreGState()
+            }
+        }
+        let identity = StrictE2EPhotoIdentity.captureIdentity(png: png)
+        #expect(identity.status == .match)
+        #expect(identity.mark == "A1+A5")
+    }
+
+    // Explicit bilinear reconstruction avoids CoreGraphics choosing a different upscaling filter on each OS.
+    private func bilinearFill(_ image: CGImage, width: Int, height: Int, zoom: Double) throws -> CGImage {
+        let source = try #require(image.dataProvider?.data) as Data
+        try #require(image.bitsPerPixel == 32)
+        let scale = max(Double(width) / Double(image.width), Double(height) / Double(image.height)) * zoom
+        var pixels = [UInt8](repeating: 255, count: width * height * 4)
+        for y in 0..<height {
+            let sy = (Double(y) + 0.5 - Double(height) / 2) / scale + Double(image.height) / 2 - 0.5
+            let top = max(0, min(image.height - 1, Int(floor(sy))))
+            let bottom = min(image.height - 1, top + 1)
+            let dy = sy - floor(sy)
+            for x in 0..<width {
+                let sx = (Double(x) + 0.5 - Double(width) / 2) / scale + Double(image.width) / 2 - 0.5
+                let left = max(0, min(image.width - 1, Int(floor(sx))))
+                let right = min(image.width - 1, left + 1)
+                let dx = sx - floor(sx)
+                for channel in 0..<3 {
+                    func value(_ column: Int, _ row: Int) -> Double {
+                        Double(source[row * image.bytesPerRow + column * 4 + channel])
+                    }
+                    let upper = value(left, top) * (1 - dx) + value(right, top) * dx
+                    let lower = value(left, bottom) * (1 - dx) + value(right, bottom) * dx
+                    pixels[(y * width + x) * 4 + channel] = UInt8(
+                        (upper * (1 - dy) + lower * dy).rounded(.toNearestOrEven))
+                }
+            }
+        }
+        let provider = try #require(CGDataProvider(data: Data(pixels) as CFData))
+        return try #require(
+            CGImage(
+                width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
+                bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+                provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent))
     }
 
     @Test(arguments: [
@@ -232,32 +352,65 @@ struct StrictE2EPhotoIdentityCaptureIOSTests {
         }
     }
 
-    @Test(arguments: [false, true])
-    func `three photo layouts retain each independently verified slot`(hasMixedBand: Bool) throws {
-        for horizontal in [false, true] {
-            let png = try renderPNG(width: 720, height: 480) { context in
-                let first = CGRect(x: 0, y: 0, width: horizontal ? 432 : 720, height: horizontal ? 480 : 288)
+    @Test(arguments: ["sharp", "unknown-band", "boundary", "mixed-boundary", "wide-boundary"])
+    func `three photo layouts retain each independently verified slot`(defect: String) throws {
+        for orientation in 0..<4 {
+            let horizontal = orientation >= 2
+            let isReversed = orientation.isMultiple(of: 2) == false
+            let isOriginalBandCase = defect == "unknown-band"
+            let canvasScale: CGFloat = isOriginalBandCase ? 1.5 : 1
+            let png = try renderPNG(width: isOriginalBandCase ? 720 : 480, height: isOriginalBandCase ? 480 : 320) {
+                context in
+                let gap = defect == "wide-boundary" ? 2 : defect.contains("boundary") ? 1 : 0
+                let first = CGRect(
+                    x: horizontal && isReversed ? 192 + gap : 0,
+                    y: !horizontal && isReversed ? 128 + gap : 0,
+                    width: horizontal ? 288 - (isReversed ? gap : 0) : 480,
+                    height: horizontal ? 320 : 192 - (isReversed ? gap : 0))
                 let second = CGRect(
-                    x: horizontal ? 432 : 0, y: horizontal ? 0 : 288, width: horizontal ? 288 : 360,
-                    height: horizontal ? 240 : 192)
+                    x: horizontal ? (isReversed ? 0 : 288 + gap) : 0,
+                    y: horizontal || isReversed ? 0 : 192 + gap,
+                    width: horizontal ? 192 - (isReversed ? 0 : gap) : 240,
+                    height: horizontal ? 160 : 128 - (isReversed ? 0 : gap))
                 let third = CGRect(
-                    x: horizontal ? 432 : 360, y: horizontal ? 240 : 288, width: horizontal ? 288 : 360,
-                    height: horizontal ? 240 : 192)
-                fillPublicFixture(3, in: first, context: context)
-                fillPublicFixture(2, in: second, context: context)
-                fillPublicFixture(1, in: third, context: context)
-                if hasMixedBand {
+                    x: horizontal ? second.minX : 240, y: horizontal ? 160 : second.minY,
+                    width: second.width, height: second.height)
+                let transform = CGAffineTransform(scaleX: canvasScale, y: canvasScale)
+                for (number, rect) in zip([3, 2, 1], [first, second, third]) {
+                    fillPublicFixture(number, in: rect.applying(transform), context: context)
+                }
+                if isOriginalBandCase {
+                    let corruptedSlot = second.applying(transform)
                     context.setFillColor(color(0, 255, 255))
-                    context.fill(CGRect(x: second.minX + 10, y: second.minY, width: 8, height: second.height))
+                    context.fill(
+                        CGRect(
+                            x: corruptedSlot.minX + 10, y: corruptedSlot.minY, width: 8, height: corruptedSlot.height))
+                }
+                if gap > 0 {
+                    let boundary = horizontal ? (isReversed ? 192 : 288) : (isReversed ? 128 : 192)
+                    context.setFillColor(color(138, 27, 93))
+                    context.fill(
+                        CGRect(
+                            x: horizontal ? boundary : 0, y: horizontal ? 0 : boundary,
+                            width: horizontal ? gap : 480, height: horizontal ? 320 : gap))
+                    if defect == "mixed-boundary" {
+                        // Corrupt only one shared span; the other span must not hide it in the cache.
+                        context.setFillColor(color(101, 146, 74))
+                        context.fill(
+                            CGRect(
+                                x: horizontal ? boundary : 360, y: horizontal ? 240 : boundary,
+                                width: horizontal ? gap : 120, height: horizontal ? 80 : gap))
+                    }
                 }
             }
             let identity = StrictE2EPhotoIdentity.captureIdentity(png: png)
-            if hasMixedBand {
+            if !["sharp", "boundary"].contains(defect) {
                 #expect(identity.status == .transition)
                 #expect(identity.mark == nil)
             } else {
                 #expect(identity.status == .match)
-                #expect(identity.mark == "A3+A2+A1")
+                let expected = isReversed ? (horizontal ? "A2+A3+A1" : "A2+A1+A3") : "A3+A2+A1"
+                #expect(identity.mark == expected)
             }
         }
     }
@@ -283,7 +436,8 @@ struct StrictE2EPhotoIdentityCaptureIOSTests {
 
     // Same public generator as strict_e2e_server._png: 48-pixel cells and centered bitmap ink.
     private func fillPublicFixture(
-        _ number: Int, in rect: CGRect, context: CGContext, label: String? = nil, isStriped: Bool = false
+        _ number: Int, in rect: CGRect, context: CGContext, label: String? = nil, isStriped: Bool = false,
+        glyphOffsetY: Int = 0
     ) {
         let glyphs = [
             "A": ["01110", "10001", "10001", "11111", "10001", "10001", "10001"],
@@ -291,6 +445,7 @@ struct StrictE2EPhotoIdentityCaptureIOSTests {
             "1": ["00100", "01100", "00100", "00100", "00100", "00100", "01110"],
             "2": ["01110", "10001", "00001", "00010", "00100", "01000", "11111"],
             "3": ["11110", "00001", "00001", "01110", "00001", "00001", "11110"],
+            "4": ["00010", "00110", "01010", "10010", "11111", "00010", "00010"],
             "5": ["11111", "10000", "10000", "11110", "00001", "00001", "11110"]
         ]
         context.saveGState()
@@ -309,7 +464,7 @@ struct StrictE2EPhotoIdentityCaptureIOSTests {
         let scale = max(8, min(Int(rect.width) / 18, Int(rect.height) / 10))
         let origin = CGPoint(
             x: rect.minX + CGFloat((Int(rect.width) - 11 * scale) / 2),
-            y: rect.minY + CGFloat((Int(rect.height) - 7 * scale) / 2))
+            y: rect.minY + CGFloat((Int(rect.height) - 7 * scale) / 2 + glyphOffsetY))
         context.setFillColor(color(255, 255, 255))
         for (index, key) in (label ?? "A\(number)").map(String.init).enumerated() {
             for (row, text) in glyphs[key]!.enumerated() {

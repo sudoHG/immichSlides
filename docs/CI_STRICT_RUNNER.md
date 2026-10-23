@@ -192,21 +192,40 @@ one adjacent photo's palette interpolation across the entire shared span. It
 cannot mix the two photos' palettes along the line or use cross-photo RGB
 interpolation as proof. Black seams and wider gaps remain rejected. Identities
 use top-to-bottom, then left-to-right rectangle order.
-Swift returns TRANSITION when disjoint public photo candidates fail these
+Swift returns TRANSITION when public photo rectangles that do not contain one another fail these
 checks, rather than accepting the dominant whole-frame mark. Nested overlays on
 one photo retain the original whole-frame classification. For Next, MATCH means
 every slot passed; the comparison sorts all slot marks, preserving multiplicity,
 so rearranging the same photos cannot prove a change. Single-photo marks and all
 control actions, deadlines and waits are unchanged.
+Changing to a subset or superset still counts as Next: SmartFill can reuse the
+current photo as an auxiliary or collapse to one slot. An in-place rearrangement
+that also changes the slot set could therefore satisfy this pixel comparison.
+
+Composite chrome handling mirrors Python `PUBLIC_SCENE_GEOMETRIES`: color and
+glyph exclusions are independent, scaled outward to the 480-wide sample and
+translated into each slot. They cover the measured iPhone control bar, iPad
+home indicator or EXIF panel, and TV control bar/entry hint. Unknown sizes get
+no exemption. Glyph fragments join only across gaps wholly inside the measured
+box; a bottom-clipped glyph can estimate square cell width from surviving
+first-row strokes. Visible cells and digits must still agree with the texture.
+The shared `immichSlidesTests/Fixtures/public-photo-identity-cases.json` table
+constructs the same checker cells, glyph origins and defect boxes in the Swift
+reader suite and `scripts/test_strict_e2e_photo_identity.py`; both assert the
+listed complete-slot verdict through their public entry points.
 
 Intentional differences: Python `capture_identity` still uses the legacy interior
 hue check and cross-photo seam interpolation; Swift uses the stricter
 `public_frame_photos_from_bytes` palette, texture and glyph rules for composites.
 Swift retains rectangle segmentation for the real iPad/TV primary-plus-pair
 triples; the strict Python full-span axis reader cannot represent those layouts.
-Swift also rejects more than two consecutive unsupported interior lines, using
-the existing texture drift bound. Its glyph check has no overlay exemption:
-SmartFill composites have no EXIF panel. These helpers ship only in test targets.
+Swift also accepts stacked mosaics with black borders along the stacking axis
+when the canvas fills the other axis; Python's full-span reader rejects them.
+Swift bounds consecutive unsupported interior lines by the single-photo
+half-resolution probe and shared texture drift constant (at most four rows at
+480 scale); Python joins any length bracketed by the same photo. The existing
+eight-pixel cyan-band T-layout negative remains rejected. These helpers ship
+only in test targets.
 The unchanged single-photo fallback has a pre-existing near-endpoint residual:
 blend 80% of a sharp stacked A2/A1 frame over 20% of a sharp stacked A3/A2
 frame (480x1040, equal slots, public `_png` fixtures). The bottom palette falls

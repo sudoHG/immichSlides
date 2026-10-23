@@ -77,8 +77,8 @@ final class RotationUITests: XCTestCase {
                 Wait.until(
                     timeout: Timing.multiPhotoWait,
                     {
-                        guard let mark = visibleSceneMark() else { return false }
-                        return mark != sceneBeforeNext
+                        guard let navigationMark = visibleSceneMark() else { return false }
+                        return navigationMark != sceneBeforeNext
                     })
             else {
                 throw Failure(
@@ -186,7 +186,7 @@ final class RotationUITests: XCTestCase {
     @MainActor
     private func visibleSceneMark() -> String? {
         let identity = StrictE2EPhotoIdentity.captureIdentity(png: StableFrame.uprightScreenPNG())
-        return identity.status == .match ? identity.mark : nil
+        return identity.navigationMark
     }
 
     // Check isSceneReady on the saved frame's pixels, alongside control readiness and stable orientation.
