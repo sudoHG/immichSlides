@@ -914,10 +914,18 @@ and `ENVIRONMENT_WAIT_STEPS_V3` already allow that `control_action/hidden_contro
 availability wait, subject to every existing hosted starvation and surface proof.
 The allowlists, prefix mappings and policy versions are unchanged. The original
 zero-budget receipt gains no eligibility; baseline and post-Next scene-identity
-failures remain red.
+failures remain red. This applies to every Next caller, including p2-rotation
+(`testRotationDuringPlaybackIOS`): its Next readiness wait can be environment-limited
+under the same proof, while the rotation 30-second bound, rotation captures and
+scene-change assertions stay red. The readiness remainder can be only milliseconds
+when baseline capture and classification used most of the preparation budget, so
+such a candidate may reflect starvation of the test process's own pixel
+classification rather than a slow control; the starvation proof still applies. A
+zero-observation failure left at `reveal-controls` would need a sub-millisecond
+positive budget that never enters the readiness loop, and the same deadline and
+starvation proofs still gate it.
 
-Missing or ambiguous
-receipts, samples or case bindings stay red; an old night gains no classification.
+Missing or ambiguous receipts, samples or case bindings stay red; an old night gains no classification.
 `firstboot_setup/navigation` also includes a confirmed connection-error alert,
 and `mode_selection/navigation` at `query-element` includes an unexpected legacy
 control assertion, so neither qualifies. Under v1/v2, `mode-departure` stays red.

@@ -758,8 +758,9 @@ post-event idle, remains in the reveal timing and action receipt. The original
 8-second preparation-plus-outcome ceiling excludes that same wake cost; the actual
 Next tap still consumes the ceiling, and outcome observation lasts at most 4 seconds
 from tap return. Late readiness snapshots and late outcome captures still fail.
-The final fresh snapshot requires enabled, in-window controls and no Settings
-navigation evidence, without a live hittability query or optional playback probe.
+The final fresh snapshot requires an enabled Next control, the other three control
+buttons present in the window with non-empty frames, and no Settings navigation
+evidence, without a live hittability query or optional playback probe.
 
 Rotation captures first use the existing control-readiness check, with no extra
 canvas tap in the steady state. If that check fails, the capture refreshes the bar
