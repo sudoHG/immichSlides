@@ -205,7 +205,15 @@ final class RotationUITests: XCTestCase {
             in: driver.app,
             orientation: orientation,
             timeout: timeout,
-            prepare: { driver.revealUsableControls() },
+            prepare: {
+                // Refresh auto-hide before live hittability reads; a previously visible bar can expire mid-query.
+                // The wake stays inside the stable-frame budget, before the unchanged short readiness wait.
+                FirstFailureContext.mark("reveal-controls", element: "slideshow.control.playPause.button")
+                let wakeStartedAt = ProcessInfo.processInfo.systemUptime
+                driver.app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tapForFailureEvidence()
+                print("Rotation control refresh: seconds=\(ProcessInfo.processInfo.systemUptime - wakeStartedAt)")
+                return driver.revealUsableControls()
+            },
             accept: isSceneReady
         )
         guard frame.isStable else {

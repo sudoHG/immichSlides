@@ -756,6 +756,16 @@ attributes; live hittability is required by the final fresh preparation after th
 single wake. A hidden receiver's automatic query retries therefore cannot consume
 the budget before the baseline photo is read.
 
+Rotation captures refresh the canvas control bar before each readiness check, so
+its eight-second auto-hide cannot expire between the visibility snapshot and the
+three live hittability reads. Each refresh is recorded separately and remains
+inside the existing stable-frame budget; the short readiness window starts after
+it returns. Every saved candidate still requires all three controls to be
+hittable, the requested orientation and public photo identity, and the stable
+frame pair. The shared driver and other callers retain their existing behavior.
+Failures retain the `visible_scene_capture` / `timing_window` or rotation-capture
+classification; this does not introduce yellow eligibility.
+
 Run serially within a checkout because the runner manages temporary test configuration. Use a new evidence directory outside the repository for each run. The runner prepares the fixture and app state, reads official test statistics, checks result contracts and cleans up. Zero selected tests, skipped strict tests, missing evidence or an unknown image are failures. A successful contract check does not replace human visual review; inspect the current run's original screenshots. The separate [iPad host tool](../scripts/ipad-pause-host-testing.md) remains diagnostic tooling and does not replace an XCTest result.
 
 For explicit shard warm-up, build reuse, cold/warm budgets, full simulator resets and
