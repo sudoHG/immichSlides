@@ -308,7 +308,7 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
 
         guard
             let playPause = preparePauseWindowPlayPause(
-                app: app, deadline: Date().addingTimeInterval(TestWait.seconds(.product(4))),
+                app: app, timeout: TestWait.seconds(.product(4)),
                 failureMessage: "The control bar must be visible before starting pause-window playback.")
         else { return }
         let playUptime = ProcessInfo.processInfo.systemUptime
