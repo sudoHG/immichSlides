@@ -181,18 +181,40 @@ the public fixture RGB pairs, the same tolerance 12 and minimum 18 matching pixe
 per line, and a nearest-neighbour sample capped at 480 pixels wide. A composite
 requires two or three distinct, non-overlapping rectangles that tile their canvas.
 That canvas must cover the image center and fill at least one image axis; each
-slot needs clean rows and columns and an independent interior color match.
+slot needs clean rows and columns. Swift verifies the complete slot's public
+texture and bitmap letter/digit instead of classifying a glyph-heavy interior crop.
 This covers unequal doubles, balanced triples and the four primary-plus-pair
 triple orientations. Missing interior lines can join only matching neighbours;
 an entirely black outer edge contributes no identity. Mixed slot lines, overlaps
-and gaps reject the composite. A fractional slot boundary may leave one sampled
-row or column between rectangles: every pixel must be an interpolation of its
-immediate neighbours in two distinct slots, within the existing RGB tolerance.
-Black seams and wider gaps remain rejected. Identities use top-to-bottom, then
-left-to-right rectangle order. Otherwise the original whole-frame verdict is preserved,
-so single-photo, black and transition frames gain no composite identity. These
-helpers ship only in test targets; the glyph/texture validators and their
-acceptance requirements are unchanged.
+and gaps reject the composite. Swift follows the strict Python reader's clipped
+checker boundary rule below: one missing sampled line must belong uniquely to
+one adjacent photo's palette interpolation across the entire shared span. It
+cannot mix the two photos' palettes along the line or use cross-photo RGB
+interpolation as proof. Black seams and wider gaps remain rejected. Identities
+use top-to-bottom, then left-to-right rectangle order.
+Swift returns TRANSITION when disjoint public photo candidates fail these
+checks, rather than accepting the dominant whole-frame mark. Nested overlays on
+one photo retain the original whole-frame classification. For Next, MATCH means
+every slot passed; the comparison sorts all slot marks, preserving multiplicity,
+so rearranging the same photos cannot prove a change. Single-photo marks and all
+control actions, deadlines and waits are unchanged.
+
+Intentional differences: Python `capture_identity` still uses the legacy interior
+hue check and cross-photo seam interpolation; Swift uses the stricter
+`public_frame_photos_from_bytes` palette, texture and glyph rules for composites.
+Swift retains rectangle segmentation for the real iPad/TV primary-plus-pair
+triples; the strict Python full-span axis reader cannot represent those layouts.
+Swift also rejects more than two consecutive unsupported interior lines, using
+the existing texture drift bound. Its glyph check has no overlay exemption:
+SmartFill composites have no EXIF panel. These helpers ship only in test targets.
+The unchanged single-photo fallback has a pre-existing near-endpoint residual:
+blend 80% of a sharp stacked A2/A1 frame over 20% of a sharp stacked A3/A2
+frame (480x1040, equal slots, public `_png` fixtures). The bottom palette falls
+within tolerance 12 of A1 while the top supplies no second exact palette, so
+both the old and current Swift reader return MATCH A1. At 20% incoming the same
+case is TRANSITION; at 50% it is UNRECOGNIZABLE. This change does not tighten
+single-photo qualification or claim that tolerance-admitted near-endpoint blends
+can always be distinguished from one static photo; see the boundary residuals below.
 The scanner's existing unique same-photo interpolation is used only within its
 existing eight-raw-pixel outer edge band, preserving clipped texture edges.
 

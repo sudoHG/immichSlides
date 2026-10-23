@@ -1,4 +1,3 @@
-#if os(iOS)
 import CoreGraphics
 import Foundation
 import ImageIO
@@ -98,8 +97,8 @@ struct StrictE2EPhotoIdentityCaptureIOSTests {
     func `two photos placed side by side keep a composite identity`(share: Double) throws {
         let boundary = 480 * share
         let png = try renderPNG(width: 480, height: 720) { context in
-            fillSyntheticMark("A1", in: CGRect(x: 0, y: 0, width: boundary, height: 720), context: context)
-            fillSyntheticMark("A3", in: CGRect(x: boundary, y: 0, width: 480 - boundary, height: 720), context: context)
+            fillPublicFixture(1, in: CGRect(x: 0, y: 0, width: boundary, height: 720), context: context)
+            fillPublicFixture(3, in: CGRect(x: boundary, y: 0, width: 480 - boundary, height: 720), context: context)
         }
 
         let identity = StrictE2EPhotoIdentity.captureIdentity(png: png)
@@ -112,14 +111,216 @@ struct StrictE2EPhotoIdentityCaptureIOSTests {
     func `two photos stacked vertically keep a composite identity`(share: Double) throws {
         let boundary = 720 * share
         let png = try renderPNG(width: 480, height: 720) { context in
-            fillSyntheticMark("A1", in: CGRect(x: 0, y: 0, width: 480, height: boundary), context: context)
-            fillSyntheticMark("A5", in: CGRect(x: 0, y: boundary, width: 480, height: 720 - boundary), context: context)
+            fillPublicFixture(1, in: CGRect(x: 0, y: 0, width: 480, height: boundary), context: context)
+            fillPublicFixture(5, in: CGRect(x: 0, y: boundary, width: 480, height: 720 - boundary), context: context)
         }
 
         let identity = StrictE2EPhotoIdentity.captureIdentity(png: png)
 
         #expect(identity.status == .match)
         #expect(identity.mark == "A1+A5")
+    }
+
+    @Test(arguments: ["sharp", "following-checker", "wide", "unknown", "foreign", "mixed", "crossfade"])
+    func `clipped checker boundaries require one line from one adjacent photo`(boundaryCase: String) throws {
+        let isAccepted = ["sharp", "following-checker"].contains(boundaryCase)
+        for horizontal in [false, true] {
+            let width = 480
+            let height = horizontal ? 320 : 1039
+            let boundary = horizontal ? 239 : 373
+            let lines = boundaryCase == "wide" ? 2 : 1
+            let first = CGRect(x: 0, y: 0, width: horizontal ? boundary : width, height: horizontal ? height : boundary)
+            let second = CGRect(
+                x: horizontal ? boundary + lines : 0, y: horizontal ? 0 : boundary + lines,
+                width: horizontal ? width - boundary - lines : width,
+                height: horizontal ? height : height - boundary - lines)
+            let png = try renderPNG(width: width, height: height) { context in
+                fillPublicFixture(3, in: first, context: context)
+                fillPublicFixture(2, in: second, context: context)
+                for offset in 0..<(horizontal ? height : width) {
+                    var channels = boundaryCase == "following-checker" ? [101, 146, 74] : [138, 27, 93]
+                    if boundaryCase == "unknown" { channels = [0, 255, 255] }
+                    if boundaryCase == "foreign" { channels = [64, 85, 55] }
+                    if boundaryCase == "mixed", offset >= (horizontal ? height : width) / 2 {
+                        channels = [101, 146, 74]
+                    }
+                    if boundaryCase == "crossfade" {
+                        let firstColor =
+                            ((horizontal ? boundary - 1 : offset) / 48
+                                + (horizontal ? offset : boundary - 1) / 48).isMultiple(of: 2)
+                            ? [111, 51, 57] : [165, 3, 129]
+                        let secondColor =
+                            ((horizontal ? 0 : offset) / 48
+                                + (horizontal ? offset : 0) / 48).isMultiple(of: 2)
+                            ? [74, 170, 38] : [128, 122, 110]
+                        channels = zip(firstColor, secondColor).map {
+                            Int((Double($0 + $1) / 2).rounded(.toNearestOrEven))
+                        }
+                    }
+                    context.setFillColor(color(CGFloat(channels[0]), CGFloat(channels[1]), CGFloat(channels[2])))
+                    context.fill(
+                        CGRect(
+                            x: horizontal ? boundary : offset, y: horizontal ? offset : boundary,
+                            width: horizontal ? lines : 1, height: horizontal ? 1 : lines))
+                }
+            }
+            let identity = StrictE2EPhotoIdentity.captureIdentity(png: png)
+            if isAccepted {
+                #expect(identity.status == .match)
+                #expect(identity.mark == "A3+A2")
+            } else {
+                #expect(identity.status == .transition)
+                #expect(identity.mark == nil)
+            }
+        }
+    }
+
+    @Test(arguments: [1170, 1640])
+    func `native public portrait pairs identify every slot`(width: Int) throws {
+        let height = width == 1170 ? 2532 : 2360
+        for pair in [[3, 2], [2, 1]] {
+            let png = try renderPNG(width: width, height: height) { context in
+                fillPublicFixture(pair[0], in: CGRect(x: 0, y: 0, width: width, height: height / 2), context: context)
+                fillPublicFixture(
+                    pair[1], in: CGRect(x: 0, y: height / 2, width: width, height: height - height / 2),
+                    context: context)
+            }
+            let identity = StrictE2EPhotoIdentity.captureIdentity(png: png)
+            #expect(identity.status == .match)
+            #expect(identity.mark == pair.map { "A\($0)" }.joined(separator: "+"))
+        }
+    }
+
+    @Test(arguments: [
+        "sharp", "sharpB", "third-palette", "missing-glyph", "wrong-digit", "foreign-pattern", "mixed-letter",
+        "crossfade"
+    ])
+    func `public slot evidence rejects mixed or unreadable photos`(defect: String) throws {
+        let png = try renderPNG(width: 480, height: 720) { context in
+            fillPublicFixture(
+                3, in: CGRect(x: 0, y: 0, width: 480, height: 360), context: context,
+                label: defect == "sharpB" ? "B3" : "A3", isStriped: defect == "sharpB")
+            let isSecondStriped = ["sharpB", "mixed-letter"].contains(defect)
+            fillPublicFixture(
+                2, in: CGRect(x: 0, y: 360, width: 480, height: 360), context: context,
+                label: isSecondStriped ? "B2" : "A2", isStriped: isSecondStriped)
+            if defect == "third-palette" {
+                context.setFillColor(color(37, 109, 19))
+                context.fill(CGRect(x: 0, y: 20, width: 480, height: 8))
+            }
+            if defect == "missing-glyph" || defect == "wrong-digit" {
+                fillPublicFixture(
+                    2, in: CGRect(x: 0, y: 360, width: 480, height: 360), context: context,
+                    label: defect == "missing-glyph" ? "" : "A1")
+            }
+            if defect == "foreign-pattern" {
+                fillPublicFixture(
+                    2, in: CGRect(x: 0, y: 360, width: 480, height: 360), context: context, isStriped: true)
+            }
+            if defect == "crossfade" {
+                context.setAlpha(0.5)
+                fillPublicFixture(1, in: CGRect(x: 0, y: 0, width: 480, height: 720), context: context)
+            }
+        }
+        let identity = StrictE2EPhotoIdentity.captureIdentity(png: png)
+        if ["sharp", "sharpB"].contains(defect) {
+            #expect(identity.status == .match)
+            #expect(identity.mark == "A3+A2")
+        } else {
+            #expect(identity.status != .match)
+            #expect(identity.mark == nil)
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func `three photo layouts retain each independently verified slot`(hasMixedBand: Bool) throws {
+        for horizontal in [false, true] {
+            let png = try renderPNG(width: 720, height: 480) { context in
+                let first = CGRect(x: 0, y: 0, width: horizontal ? 432 : 720, height: horizontal ? 480 : 288)
+                let second = CGRect(
+                    x: horizontal ? 432 : 0, y: horizontal ? 0 : 288, width: horizontal ? 288 : 360,
+                    height: horizontal ? 240 : 192)
+                let third = CGRect(
+                    x: horizontal ? 432 : 360, y: horizontal ? 240 : 288, width: horizontal ? 288 : 360,
+                    height: horizontal ? 240 : 192)
+                fillPublicFixture(3, in: first, context: context)
+                fillPublicFixture(2, in: second, context: context)
+                fillPublicFixture(1, in: third, context: context)
+                if hasMixedBand {
+                    context.setFillColor(color(0, 255, 255))
+                    context.fill(CGRect(x: second.minX + 10, y: second.minY, width: 8, height: second.height))
+                }
+            }
+            let identity = StrictE2EPhotoIdentity.captureIdentity(png: png)
+            if hasMixedBand {
+                #expect(identity.status == .transition)
+                #expect(identity.mark == nil)
+            } else {
+                #expect(identity.status == .match)
+                #expect(identity.mark == "A3+A2+A1")
+            }
+        }
+    }
+
+    @Test
+    func `next compares every slot without counting rearrangement as a photo change`() throws {
+        func frame(_ marks: [Int]) throws -> StrictE2EPhotoIdentity.Result {
+            let png = try renderPNG(width: 480, height: 720) { context in
+                for (index, mark) in marks.enumerated() {
+                    fillPublicFixture(
+                        mark, in: CGRect(x: 0, y: index * 720 / marks.count, width: 480, height: 720 / marks.count),
+                        context: context)
+                }
+            }
+            return StrictE2EPhotoIdentity.captureIdentity(png: png)
+        }
+        let before = try #require(frame([3, 2]).navigationMark)
+        #expect(try frame([2, 3]).navigationMark == before)
+        #expect(try frame([3, 1]).navigationMark != before)
+        #expect(try frame([3]).navigationMark == "A3")
+        #expect(try frame([2]).navigationMark == "A2")
+    }
+
+    // Same public generator as strict_e2e_server._png: 48-pixel cells and centered bitmap ink.
+    private func fillPublicFixture(
+        _ number: Int, in rect: CGRect, context: CGContext, label: String? = nil, isStriped: Bool = false
+    ) {
+        let glyphs = [
+            "A": ["01110", "10001", "10001", "11111", "10001", "10001", "10001"],
+            "B": ["11110", "10001", "10001", "11110", "10001", "10001", "11110"],
+            "1": ["00100", "01100", "00100", "00100", "00100", "00100", "01110"],
+            "2": ["01110", "10001", "00001", "00010", "00100", "01000", "11111"],
+            "3": ["11110", "00001", "00001", "01110", "00001", "00001", "11110"],
+            "5": ["11111", "10000", "10000", "11110", "00001", "00001", "11110"]
+        ]
+        context.saveGState()
+        context.clip(to: rect)
+        for y in stride(from: 0, to: Int(rect.height), by: 48) {
+            for x in stride(from: 0, to: Int(rect.width), by: 48) {
+                let block = (isStriped ? y / 48 : x / 48 + y / 48) % 2
+                context.setFillColor(
+                    color(
+                        CGFloat((number * 37 + block * 54) % 180),
+                        CGFloat((number * 61 + (1 - block) * 48) % 180),
+                        CGFloat((number * 19 + block * 72) % 180)))
+                context.fill(CGRect(x: rect.minX + CGFloat(x), y: rect.minY + CGFloat(y), width: 48, height: 48))
+            }
+        }
+        let scale = max(8, min(Int(rect.width) / 18, Int(rect.height) / 10))
+        let origin = CGPoint(
+            x: rect.minX + CGFloat((Int(rect.width) - 11 * scale) / 2),
+            y: rect.minY + CGFloat((Int(rect.height) - 7 * scale) / 2))
+        context.setFillColor(color(255, 255, 255))
+        for (index, key) in (label ?? "A\(number)").map(String.init).enumerated() {
+            for (row, text) in glyphs[key]!.enumerated() {
+                for (column, bit) in text.enumerated() where bit == "1" {
+                    let x = origin.x + CGFloat((index * 6 + column) * scale)
+                    let y = origin.y + CGFloat(row * scale)
+                    context.fill(CGRect(x: x, y: y, width: CGFloat(scale), height: CGFloat(scale)))
+                }
+            }
+        }
+        context.restoreGState()
     }
 
     private func fillSyntheticMark(_ mark: String, in rect: CGRect, context: CGContext) {
@@ -203,4 +404,3 @@ struct StrictE2EPhotoIdentityCaptureIOSTests {
         case encodingFailed
     }
 }
-#endif

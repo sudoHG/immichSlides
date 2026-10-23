@@ -19,6 +19,12 @@ enum StrictE2EPhotoIdentity {
         let scores: [String: Double]
         let meanLuma: Double
         let notes: [String]
+
+        // Next proves a change of photos, not a rearrangement of the same slots.
+        var navigationMark: String? {
+            guard status == .match, let mark else { return nil }
+            return mark.split(separator: "+").sorted().joined(separator: "+")
+        }
     }
 
     // Calibrate the unchanged Settings glyph before timing starts, then read only captured pixels.
@@ -146,7 +152,6 @@ enum StrictE2EPhotoIdentity {
     private static let captureSampleWidthPixels = 480
     private static let captureEdgeBandRawPixels = 8
     private static let textureMaximumCellDriftPixels = 2
-    private static let captureInnerBox: (CGFloat, CGFloat, CGFloat, CGFloat) = (0.28, 0.18, 0.72, 0.82)
     private static let capturePalettes: [String: [[Int]]] = [
         "A1": [[37, 109, 19], [91, 61, 91]],
         "A2": [[74, 170, 38], [128, 122, 110]],
@@ -667,6 +672,12 @@ enum StrictE2EPhotoIdentity {
     private static func hasPublicTexture(
         frame: (width: Int, height: Int, pixels: [UInt8]), colors: [(String, Int)?], mark: String, exclusion: CGRect?
     ) -> Bool {
+        publicTexturePattern(frame: frame, colors: colors, mark: mark, exclusion: exclusion) != nil
+    }
+
+    private static func publicTexturePattern(
+        frame: (width: Int, height: Int, pixels: [UInt8]), colors: [(String, Int)?], mark: String, exclusion: CGRect?
+    ) -> String? {
         // Mirror Python's existing row texture gates inside the independently detected foreground.
         var pattern: String?
         for row in 0..<frame.height {
@@ -709,14 +720,16 @@ enum StrictE2EPhotoIdentity {
                     || max(transitions.first!, Double(frame.width - 1) - transitions.last!)
                         > period + Double(textureMaximumCellDriftPixels)
                 {
-                    return false
+                    return nil
                 }
             }
-            if let pattern, pattern != observed { return false }
+            if let pattern, pattern != observed { return nil }
             pattern = observed
         }
-        guard let pattern else { return false }
-        return pattern != "B" || hasSharpPublicStripe(frame: frame, colors: colors, mark: mark, exclusion: exclusion)
+        guard let pattern,
+            pattern != "B" || hasSharpPublicStripe(frame: frame, colors: colors, mark: mark, exclusion: exclusion)
+        else { return nil }
+        return pattern
     }
 
     private static func hasSharpPublicStripe(
@@ -835,16 +848,22 @@ enum StrictE2EPhotoIdentity {
     }
 
     static func captureIdentity(png: Data) -> Result {
-        let full = classify(png: png)
-        let slotMarks = captureSlotMarks(png: png)
-        if slotMarks.count >= 2 {
+        let slots = captureSlotMarks(png: png)
+        // Complete-slot proof already qualifies composites; the expensive single-photo proof stays single-only.
+        let full = classify(png: png, shouldQualifySinglePhoto: !slots.isMultiPhotoCandidate)
+        if slots.marks.count >= 2 {
             return Result(
                 status: .match,
-                mark: slotMarks.joined(separator: "+"),
+                mark: slots.marks.joined(separator: "+"),
                 scores: full.scores,
                 meanLuma: full.meanLuma,
                 notes: ["photo-slot-axis-match"] + full.notes
             )
+        }
+        if slots.isMultiPhotoCandidate {
+            return Result(
+                status: .transition, mark: nil, scores: full.scores, meanLuma: full.meanLuma,
+                notes: ["unreadable-public-slots"] + full.notes)
         }
         return full
     }
@@ -903,12 +922,13 @@ enum StrictE2EPhotoIdentity {
         return didDraw ? (width, height, pixels) : nil
     }
 
-    private static func captureSlotMarks(png: Data) -> [String] {
+    private static func captureSlotMarks(png: Data) -> (marks: [String], isMultiPhotoCandidate: Bool) {
         guard let source = CGImageSourceCreateWithData(png as CFData, nil),
             let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
             image.width >= minDisplayCropEdgePixels, image.height >= minDisplayCropEdgePixels,
-            let frame = capturePixels(image: image)
-        else { return [] }
+            let frame = capturePixels(
+                image: image, colorSpace: image.colorSpace.flatMap { $0.model == .rgb ? $0 : nil })
+        else { return ([], false) }
         let (width, height, pixels) = frame
         var paletteCache: [Int: String] = [:]
         var edgeCache: [Int: String] = [:]
@@ -957,12 +977,17 @@ enum StrictE2EPhotoIdentity {
                 slots.append((mark, CGRect(x: left, y: top, width: right - left + 1, height: bottom - top + 1)))
             }
         }
-        guard (2...3).contains(slots.count) else { return [] }
+        // A nested overlay on one photo retains the existing single-photo classification.
+        let isMultiPhotoCandidate = slots.indices.contains { index in
+            slots.dropFirst(index + 1).contains { !slots[index].rect.intersects($0.rect) }
+        }
+        let rejected: ([String], Bool) = ([], isMultiPhotoCandidate)
+        guard (2...3).contains(slots.count) else { return rejected }
         let canvas = slots.reduce(CGRect.null) { $0.union($1.rect) }
         guard (canvas.width == CGFloat(width) || canvas.height == CGFloat(height)),
             canvas.contains(CGPoint(x: CGFloat(width) / 2, y: CGFloat(height) / 2))
-        else { return [] }
-        guard isCaptureCanvasTiled(slots.map(\.rect), canvas: canvas, pixels: pixels, width: width),
+        else { return rejected }
+        guard isCaptureCanvasTiled(slots, canvas: canvas, pixels: pixels, width: width),
             !slots.indices.contains(where: { index in
                 slots.dropFirst(index + 1).contains { slots[index].rect.intersects($0.rect) }
             }),
@@ -971,24 +996,39 @@ enum StrictE2EPhotoIdentity {
                     || (pixels[index * pixelChannelCount] == 0 && pixels[index * pixelChannelCount + 1] == 0
                         && pixels[index * pixelChannelCount + 2] == 0)
             })
-        else { return [] }
+        else { return rejected }
+        var letters = Set<String>()
         for slot in slots {
-            guard isCaptureSlotReadable(assignments, width: width, rect: slot.rect, mark: slot.mark) else { return [] }
-            let box = (
-                (slot.rect.minX + captureInnerBox.0 * slot.rect.width) / CGFloat(width),
-                (slot.rect.minY + captureInnerBox.1 * slot.rect.height) / CGFloat(height),
-                (slot.rect.minX + captureInnerBox.2 * slot.rect.width) / CGFloat(width),
-                (slot.rect.minY + captureInnerBox.3 * slot.rect.height) / CGFloat(height)
-            )
-            guard capturePhotoMark(png: png, box: box) == slot.mark else { return [] }
+            guard isCaptureSlotReadable(assignments, width: width, rect: slot.rect, mark: slot.mark) else {
+                return rejected
+            }
+            var slotPixels = [UInt8]()
+            for row in Int(slot.rect.minY)..<Int(slot.rect.maxY) {
+                let start = (row * width + Int(slot.rect.minX)) * pixelChannelCount
+                slotPixels.append(contentsOf: pixels[start..<(start + Int(slot.rect.width) * pixelChannelCount)])
+            }
+            let slotFrame = (width: Int(slot.rect.width), height: Int(slot.rect.height), pixels: slotPixels)
+            guard
+                let pattern = publicTexturePattern(
+                    frame: slotFrame, colors: paletteColors(frame: slotFrame), mark: slot.mark, exclusion: nil),
+                publicSlotLetters(frame: slotFrame, mark: slot.mark) == [pattern]
+            else { return rejected }
+            letters.insert(pattern)
         }
-        return slots.sorted {
-            $0.rect.minY == $1.rect.minY ? $0.rect.minX < $1.rect.minX : $0.rect.minY < $1.rect.minY
-        }.map(\.mark)
+        guard letters.count == 1 else { return rejected }
+        return (
+            slots.sorted {
+                $0.rect.minY == $1.rect.minY ? $0.rect.minX < $1.rect.minX : $0.rect.minY < $1.rect.minY
+            }.map(\.mark), true
+        )
     }
 
-    private static func isCaptureCanvasTiled(_ rects: [CGRect], canvas: CGRect, pixels: [UInt8], width: Int) -> Bool {
+    private static func isCaptureCanvasTiled(
+        _ slots: [(mark: String, rect: CGRect)], canvas: CGRect, pixels: [UInt8], width: Int
+    ) -> Bool {
+        let rects = slots.map(\.rect)
         if rects.reduce(CGFloat(0), { $0 + $1.width * $1.height }) == canvas.width * canvas.height { return true }
+        var boundaryChecks = [String: Bool]()
         for y in Int(canvas.minY)..<Int(canvas.maxY) {
             for x in Int(canvas.minX)..<Int(canvas.maxX) {
                 let point = CGPoint(x: x, y: y)
@@ -1000,19 +1040,30 @@ enum StrictE2EPhotoIdentity {
                     guard let first = rects.firstIndex(where: { $0.contains(before) }),
                         let second = rects.firstIndex(where: { $0.contains(after) }), first != second
                     else { return false }
-                    let index = (y * width + x) * pixelChannelCount
-                    let offset = (Int(step.y) * width + Int(step.x)) * pixelChannelCount
-                    let a = (0..<3).map { Double(pixels[index - offset + $0]) }
-                    let delta = (0..<3).map { Double(pixels[index + offset + $0]) - a[$0] }
-                    let color = (0..<3).map { Double(pixels[index + $0]) }
-                    let squaredLength = delta.reduce(0.0) { $0 + $1 * $1 }
-                    let fraction =
-                        squaredLength == 0
-                        ? 0.5 : (0..<3).reduce(0.0) { $0 + (color[$1] - a[$1]) * delta[$1] } / squaredLength
-                    return fraction > 0 && fraction < 1
-                        && (0..<3).allSatisfy {
-                            abs(color[$0] - (a[$0] + fraction * delta[$0])) <= Double(extendedPaletteChannelTolerance)
+                    let key = "\(step.x == 0 ? y : x):\(step.x):\(first):\(second)"
+                    if let cached = boundaryChecks[key] { return cached }
+                    // Mirror #577: the entire missing line belongs uniquely to one adjacent photo's checker.
+                    let span =
+                        step.x == 0
+                        ? max(rects[first].minX, rects[second].minX)..<min(rects[first].maxX, rects[second].maxX)
+                        : max(rects[first].minY, rects[second].minY)..<min(rects[first].maxY, rects[second].maxY)
+                    var boundaryMark: String?
+                    var observed = 0
+                    for offset in Int(span.lowerBound)..<Int(span.upperBound) {
+                        let index = (step.x == 0 ? y * width + offset : offset * width + x) * pixelChannelCount
+                        let mark = captureEdgeMark((0..<3).map { Double(pixels[index + $0]) })
+                        guard [slots[first].mark, slots[second].mark].contains(mark),
+                            boundaryMark == nil || boundaryMark == mark
+                        else {
+                            boundaryChecks[key] = false
+                            return false
                         }
+                        boundaryMark = mark
+                        observed += 1
+                    }
+                    let isReadable = observed >= minimumChromaticPixelCount
+                    boundaryChecks[key] = isReadable
+                    return isReadable
                 }
                 if !isBlendedBoundary { return false }
             }
@@ -1053,24 +1104,101 @@ enum StrictE2EPhotoIdentity {
             }
             // Missing interior lines can borrow only from the same independently identified photo on both sides.
             guard matches.first == true, matches.last == true else { return false }
+            var missing = 0
+            for present in matches {
+                missing = present ? 0 : missing + 1
+                if missing > textureMaximumCellDriftPixels { return false }
+            }
         }
         return true
     }
 
-    private static func capturePhotoMark(
-        png: Data,
-        box: (CGFloat, CGFloat, CGFloat, CGFloat)
-    ) -> String? {
-        guard let cropped = cropPNG(png, box: box) else { return nil }
-        // The complete slot already passed the existing RGB/coverage gates.
-        let identity = classify(png: cropped, shouldQualifySinglePhoto: false)
-        guard identity.status == .match,
-            let mark = identity.mark,
-            marks.contains(mark)
-        else {
-            return nil
+    private static let publicGlyphs: [String: [String]] = [
+        "A": ["01110", "10001", "10001", "11111", "10001", "10001", "10001"],
+        "B": ["11110", "10001", "10001", "11110", "10001", "10001", "11110"],
+        "1": ["00100", "01100", "00100", "00100", "00100", "00100", "01110"],
+        "2": ["01110", "10001", "00001", "00010", "00100", "01000", "11111"],
+        "3": ["11110", "00001", "00001", "01110", "00001", "00001", "11110"],
+        "4": ["00010", "00110", "01010", "10010", "11111", "00010", "00010"],
+        "5": ["11111", "10000", "10000", "11110", "00001", "00001", "11110"],
+        "6": ["01110", "10000", "10000", "11110", "10001", "10001", "01110"],
+        "7": ["11111", "00001", "00010", "00100", "01000", "01000", "01000"],
+        "8": ["01110", "10001", "10001", "01110", "10001", "10001", "01110"]
+    ]
+    private static let publicGlyphMinimumBandHeight = 10
+    private static let publicGlyphMaximumBlankRows = 4
+    private static let publicGlyphMinimumObservedCells = 14
+    private static let publicGlyphMinimumWhiteCells = 5
+
+    private static func publicSlotLetters(
+        frame: (width: Int, height: Int, pixels: [UInt8]), mark: String
+    ) -> Set<String> {
+        // Mirror Python's unoccluded public glyph reader; SmartFill has no EXIF panel.
+        let white = stride(from: 0, to: frame.pixels.count, by: pixelChannelCount).map { offset in
+            (0..<3).allSatisfy { frame.pixels[offset + $0] >= 240 }
         }
-        return mark
+        func isWhite(_ x: Int, _ y: Int) -> Bool { white[y * frame.width + x] }
+        func glyphBit(_ glyph: String, _ row: Int, _ column: Int) -> Bool {
+            Array(publicGlyphs[glyph]![row])[column] == "1"
+        }
+        var bands: [(top: Int, bottom: Int)] = []
+        for y in 0..<frame.height where (0..<frame.width).contains(where: { isWhite($0, y) }) {
+            if let last = bands.last, y <= last.bottom + publicGlyphMaximumBlankRows {
+                bands[bands.count - 1].bottom = y + 1
+            } else {
+                bands.append((y, y + 1))
+            }
+        }
+        var letters = Set<String>()
+        for band in bands where band.bottom - band.top >= publicGlyphMinimumBandHeight {
+            let cell = Double(band.bottom - band.top) / 7
+            var origins = Set<Double>()
+            for row in 0..<7 {
+                let y = Int(Double(band.top) + (Double(row) + 0.5) * cell)
+                for x in 1..<frame.width where isWhite(x, y) != isWhite(x - 1, y) {
+                    for column in 0..<6 {
+                        origins.insert(((Double(x) - Double(column) * cell) * 10).rounded(.toNearestOrEven) / 10)
+                    }
+                }
+            }
+            var bandLetters = Set<String>()
+            for origin in origins {
+                var observed: [(row: Int, column: Int, white: Bool)] = []
+                var digitMatches = true
+                for row in 0..<7 {
+                    let y = Int(Double(band.top) + (Double(row) + 0.5) * cell)
+                    for column in 0..<5 {
+                        let x = Int((origin + (Double(column) + 0.5) * cell).rounded(.toNearestOrEven))
+                        if (0..<frame.width).contains(x) { observed.append((row, column, isWhite(x, y))) }
+                        let digitX = Int((origin + (Double(6 + column) + 0.5) * cell).rounded(.toNearestOrEven))
+                        if (0..<frame.width).contains(digitX),
+                            glyphBit(String(mark.suffix(1)), row, column) != isWhite(digitX, y)
+                        {
+                            digitMatches = false
+                        }
+                    }
+                }
+                guard digitMatches, observed.count >= publicGlyphMinimumObservedCells,
+                    observed.filter(\.white).count >= publicGlyphMinimumWhiteCells
+                else { continue }
+                for letter in ["A", "B"] where observed.allSatisfy({ glyphBit(letter, $0.row, $0.column) == $0.white })
+                {
+                    bandLetters.insert(letter)
+                }
+            }
+            if bandLetters.isEmpty {
+                let inkColumns = (0..<frame.width).filter { x in
+                    (band.top..<band.bottom).contains { isWhite(x, $0) }
+                }
+                if let first = inkColumns.first, let last = inkColumns.last,
+                    Double(last - first + 1) <= Double(band.bottom - band.top) * 11 / 7 + 2
+                {
+                    return []
+                }
+            }
+            letters.formUnion(bandLetters)
+        }
+        return letters
     }
 
     private static func cropPNG(_ png: Data, box: (CGFloat, CGFloat, CGFloat, CGFloat)) -> Data? {
