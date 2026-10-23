@@ -7,6 +7,7 @@ import base64
 import os
 import plistlib
 import platform
+import shutil
 import signal
 import subprocess
 import sys
@@ -42,6 +43,102 @@ def share_ui_source_fixture(test):
 
 
 class BuildArchiveTests(unittest.TestCase):
+    def test_ui_archive_download_must_be_complete_before_simulator_preparation(self):
+        from ci_summary import parse_summary, test_identity
+        from ci_ui_packing import pack_scoped_selection
+        share_ui_source_fixture(self)
+        pins = json.loads((ui.ROOT / "scripts/ci-pins.json").read_text())
+        device, platform_name = "iphone", "ios"
+        for scoped in (False, True):
+            defects = ("missing-directory",) if scoped else (None, "missing-directory", "missing-manifest", "missing-tar", "manifest-link", "tar-directory")
+            for defect in defects:
+                with self.subTest(scoped=scoped, defect=defect), tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    downloaded = root / "downloaded"
+                    downloaded.mkdir()
+                    products = root / "build-products"
+                    shutil.copytree(self.products, products, symlinks=True)
+                    app = products / "Debug-iphonesimulator/App.app"
+                    app.rename(app.with_name("immichSlides.app"))
+                    packed = downloaded / "build.tar.gz"
+                    archive.pack_products(products, packed)
+                    manifest = archive.make_manifest(products, identity=self.identity, run_id="123", attempt=1,
+                        platform=platform_name, architecture=[platform.machine()], xcode_build=pins["xcode"]["build"],
+                        source_path=root / "removed-source", archive_sha=archive.file_hash(packed),
+                        pins_sha=archive.file_hash(ui.ROOT / "scripts/ci-pins.json"), signing_mode="adhoc")
+                    ui.write_json(downloaded / "manifest.json", manifest)
+                    selection = {"identity": self.identity, "platform": platform_name,
+                        "producer_run_id": "123", "producer_attempt": 1,
+                        "build_manifest_sha256": archive.file_hash(downloaded / "manifest.json")}
+                    shard = "scoped-a" if scoped else "navigation"
+                    if scoped:
+                        selection["packing"] = pack_scoped_selection({"iphone": [test_identity(
+                            "ui", "immichSlidesUITests/testFirstBootValidationAndDisabledSaveButton",
+                            platform="ios", device="iphone")],
+                            "ipad": [], "appletv": []},
+                            {"schema_version": 1, "revision": "test-v1", "default_seconds": 120,
+                             "seconds": {name: {} for name in ui.DEVICES}})
+                    ui.write_json(root / "selection.json", selection)
+                    shutil.rmtree(products)
+                    if defect == "missing-directory":
+                        shutil.rmtree(downloaded)
+                    elif defect == "missing-manifest":
+                        (downloaded / "manifest.json").unlink()
+                    elif defect == "missing-tar":
+                        packed.unlink()
+                    elif defect == "manifest-link":
+                        (downloaded / "manifest.json").rename(root / "outside-manifest.json")
+                        (downloaded / "manifest.json").symlink_to(root / "outside-manifest.json")
+                    elif defect == "tar-directory":
+                        packed.unlink()
+                        packed.mkdir()
+                    ctx = {"identity": self.identity,
+                        "source": {"repository": "owner/repo", "event": "pull_request", "workflow_path": ui.WORKFLOW,
+                                   "fork_originated": False, "ci_changing": False},
+                        "run": {"id": "456", "attempt": 1, "tier": "ui", "job": "ui-" + device, "shard": shard}}
+                    records, relocated = root / "records", root / "relocated"
+                    def fixture(*unused, **options):
+                        records.mkdir()
+                        return 0
+                    with patch.object(ui, "context", return_value=ctx), patch.object(ui, "workspace_preflight"), \
+                            patch("strict_e2e_runner_support.prepare_simulator") as prepare, \
+                            patch.object(ui, "measure_signing", return_value="adhoc"), \
+                            patch("ci_publish_git.read_blob", return_value=(ui.ROOT / "scripts/ci-test-policy.json").read_text()), \
+                            patch("run_fixture_ui_tests.registry_revision", return_value="HEAD"), \
+                            patch("run_fixture_ui_tests.load_registry", return_value=({"schema_version": 1, "entries": []}, "f" * 64)), \
+                            patch("run_fixture_ui_tests.main", side_effect=fixture) as execute, redirect_stderr(io.StringIO()) as errors:
+                        code = ui.main(["run", "--device", device, "--shard", shard,
+                            "--destination", "platform=" + ("tvOS" if platform_name == "tvos" else "iOS") + " Simulator,id=fixture-device",
+                            "--archive-dir", str(downloaded), "--selection-path", str(root / "selection.json"),
+                            "--relocated-path", str(relocated), "--output-dir", str(records)]
+                            + (["--compiled-from-official-results"] if scoped else []))
+                    if defect:
+                        reason = ("archive-member-missing" if defect.startswith("missing-")
+                                  else "archive-download-incomplete")
+                        self.assertEqual(1, code)
+                        self.assertIn("UI producer refused: ContractError: " + reason, errors.getvalue())
+                        prepare.assert_not_called()
+                        execute.assert_not_called()
+                        self.assertFalse(relocated.exists())
+                        summary = parse_summary((records / "summary.json").read_text())
+                        self.assertEqual("failed", summary["status"])
+                        self.assertEqual([{"code": reason, "message": reason}],
+                                         summary["infrastructure"])
+                        self.assertTrue(summary["population"]["declared"])
+                        if scoped:
+                            self.assertEqual(2, summary["schema_version"])
+                            self.assertEqual([], summary["population"]["compiled"])
+                            self.assertEqual(summary["population"]["declared"],
+                                             [entry["identity"] for entry in summary["population"]["observed"]])
+                            self.assertEqual({"not-run"}, {entry["outcome"] for entry in summary["population"]["observed"]})
+                        else:
+                            self.assertEqual([], summary["population"]["observed"])
+                    else:
+                        self.assertEqual(0, code, errors.getvalue())
+                        prepare.assert_called_once()
+                        execute.assert_called_once()
+                        self.assertTrue((relocated / "Products/App.xctestrun").is_file())
+
     def test_staging_identity_failures_preserve_git_errors_and_only_write_scheduled_receipts(self):
         import argparse
         from ci_nightly import parse_identity_failure

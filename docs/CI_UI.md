@@ -83,7 +83,16 @@ or missing exact-identity archive or timeout fails selection. A rerun job cannot
 reuse an earlier attempt's archive; a retained
 successful build job keeps its original archive and evidence attempt.
 
-Shards download that exact artifact ID/run. They repeat the full
+Shards download that exact artifact ID/run. Before simulator preparation, the
+consumer requires regular, non-symlink `manifest.json` and `build.tar.gz` files.
+A missing directory or member fails with `archive-member-missing`; a present
+nonregular member (directory or symlink) fails with `archive-download-incomplete`.
+The infrastructure summary records no executed tests; scoped discovery shards
+record declared tests as `not-run`, even if the download action reported success.
+This presence check does not retry downloads or replace the
+nightly's [staging integrity gate](CI_NIGHTLY.md#complete-fixture-ui).
+The PR workflow still downloads directly to the consumer directory.
+Shards then repeat the full
 [archive validation](CI_BUILD_ARCHIVE.md), validate architecture, extract and
 inspect files/permissions/links, measure the app's ad-hoc signature and require
 the original producer source and Products paths to be absent. Products move to
@@ -472,7 +481,8 @@ The PR and nightly UI jobs use the standard-library `ci_simulator.py` bootstrap 
 create and submit boot for that fresh device after toolchain/pins verification and
 Python environment preparation. Archive staging, downloads and verification run
 between early boot and the consumer's shared readiness gate; startup can overlap them.
-The gate precedes `run_shard` identity/archive validation, every simulator lookup and fixture
+The readiness gate follows the archive-member presence check and precedes
+`run_shard` identity/archive integrity validation, every simulator lookup and fixture
 server startup/health check. For the job's early-booted UDID it goes straight to
 `bootstatus -b`, avoiding another short `boot` command during cold settling.
 Its UDID, destination and platform are exported before

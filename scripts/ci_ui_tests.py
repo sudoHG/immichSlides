@@ -50,6 +50,16 @@ def write_json(path, value):
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def is_regular_archive_file(path):
+    return path.is_file() and not path.is_symlink()
+
+
+def archive_failure(reason):
+    error = ContractError(reason)
+    error.entry = {"code": reason, "message": reason}
+    return error
+
+
 def stage_download(args=None):
     def identity_failed():
         declared = default_plan_populations(ROOT, (args.device,))[args.device][args.shard]
@@ -95,7 +105,7 @@ def gate_archive(args):
         staging = args.staging_dir
         for name in receipt["member_bytes"]:
             path = staging / name
-            if path.is_file() and not path.is_symlink():
+            if is_regular_archive_file(path):
                 size = path.stat().st_size
                 if 0 <= size <= MAX_ARCHIVE_BYTES:
                     receipt["member_bytes"][name] = size
@@ -112,7 +122,7 @@ def gate_archive(args):
         reason = "archive-download-incomplete"
         for name in receipt["member_bytes"]:
             path = staging / name
-            require(path.is_file() and not path.is_symlink(), reason)
+            require(is_regular_archive_file(path), reason)
         reason = "archive-size-mismatch"
         require(all(value is not None for value in receipt["member_bytes"].values())
                 and receipt["member_bytes"]["manifest.json"] <= 4 * 1024 * 1024, reason)
@@ -176,11 +186,9 @@ def gate_archive(args):
     receipt["failure_reason"] = reason
     write_json(args.download_receipt_path, receipt)
     if reason:
-        error = ContractError(reason)
-        error.entry = {"code": reason, "message": reason}
         # Nightly gates bind the full shard even when the downloaded selection is unreadable.
         failure_args = argparse.Namespace(**{**vars(args), "selection_path": None})
-        failed_shard(failure_args, error)
+        failed_shard(failure_args, archive_failure(reason))
         print(reason, file=sys.stderr)
         return 1
     return 0
@@ -743,6 +751,14 @@ def run_shard(args):
     from run_fixture_ui_tests import declared_tests, main as fixture_main
     from strict_e2e_runner_support import CommandError, destination_udid, prepare_simulator
     workspace_preflight(ROOT)
+    # A successful download action can leave an incomplete extraction without reporting an error.
+    archive_dir = getattr(args, "archive_dir", None)
+    if archive_dir:
+        members = [archive_dir / name for name in ("manifest.json", "build.tar.gz")]
+        if not all(os.path.lexists(path) for path in members):
+            raise archive_failure("archive-member-missing")
+        if not all(is_regular_archive_file(path) for path in members):
+            raise archive_failure("archive-download-incomplete")
     try:
         udid = destination_udid(args.destination)
         prepare_simulator(udid, boot_submitted=os.environ.get("UI_SIMULATOR") == udid, should_settle_boot=True)
