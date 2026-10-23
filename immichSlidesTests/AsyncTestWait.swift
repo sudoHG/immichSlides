@@ -1,7 +1,8 @@
 import Foundation
 
-/// Default deadline for `waitUntil`. It only has to stop a hang: parallel suites can hold the main actor for over 10 seconds.
-let defaultAsyncTestWaitTimeout: Duration = .seconds(30)
+/// Default deadline for `waitUntil`. It only has to stop a hang: parallel suites on a loaded host can hold the
+/// main actor for over 40 seconds, so a shorter guard turns ordinary scheduling delay into a false failure.
+let defaultAsyncTestWaitTimeout: Duration = .seconds(120)
 
 /// Re-checks `condition` until it holds and returns `true`, or returns `false` once `timeout` has passed.
 /// Without `pollInterval` it yields between checks, matching a plain `while !condition { await Task.yield() }` loop.
