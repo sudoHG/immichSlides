@@ -521,9 +521,9 @@ The first night without CPU starvation is red, two consecutive yellow nights
 escalate to red, and independent strict pause and history cases remain in place.
 
 The producer emits v3 for all new proofs, including existing UI waits and album
-settling. Reader support precedes activation; merge the reader first and rebase
-activation onto main containing it:
-an older reader would turn even those existing yellows red. Retained v1/v2 proofs
+settling. Reader support was introduced in a separate change before producer
+activation; trusted acceptance requires a base containing that reader.
+An older reader would turn even those existing yellows red. Retained v1/v2 proofs
 keep their old interpretation, including the legacy `mode-continue` entry;
 changing an existing version's allowlist would alter compact-history revalidation.
 Aggregation rechecks

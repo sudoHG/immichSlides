@@ -876,14 +876,14 @@ including the existing UI availability waits. An older trusted reader
 would turn even those existing yellows red, which is why the reader merged first.
 There is no CLI override. Retained v1 proofs without a gate continue to validate
 under exactly the old table entries; they do not gain the album exception. Unknown versions
-remain red. A producer PR based on a pre-reader trusted base must be rebased after
-the reader merges; stacking alone does not activate trusted acceptance.
+remain red. The reader-first rollout required a trusted base containing the
+reader; stacking alone did not activate trusted acceptance.
 
-Policy v3 also requires reader-first rollout, although its proof shape is unchanged:
+Policy v3 also required reader-first rollout, although its proof shape is unchanged:
 retained proofs are revalidated by policy version, so changing the v2 allowlist
-would change historical verdicts. The producer now emits v3 for all new proofs;
-reader support precedes this activation. Merge the reader first, then rebase this
-activation onto main containing that reader. A trusted base without the v3 reader rejects new
+would change historical verdicts. The producer now emits v3 for all new proofs.
+Reader support was introduced separately before producer activation; trusted
+acceptance requires a base containing that reader. A trusted base without the v3 reader rejects new
 proofs, including unchanged UI waits and album settling proofs. Versions v1/v2
 retain their verdicts; v3 keeps every v2 entry and its album semantics, adding
 exactly the two reviewed `mode-departure` entries. Unknown versions

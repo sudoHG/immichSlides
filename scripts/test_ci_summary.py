@@ -524,7 +524,8 @@ class SummaryContractTests(unittest.TestCase):
             changed["first_failure"]["state"][state_field] = value
             with self.subTest(state_field=state_field, value=value):
                 self.assertIsNone(environment_limit_evidence(yellow, changed, [resources], runner_hosted=True))
-        for step, element, version in (("mode-continue", "mode.continue.button", 2), ("mode-card", "mode.filtered.button", 3)):
+        for step, element, version in (("mode-continue", "mode.continue.button", 2),
+                ("mode-card", "mode.filtered.button", 2), ("mode-card", "mode.filtered.button", 3)):
             changed = copy.deepcopy(mode_wait)
             changed["first_failure"].update(step=step, element=element)
             self.assertIsNotNone(environment_limit_evidence(yellow, changed, [resources], runner_hosted=True, policy_version=version))
