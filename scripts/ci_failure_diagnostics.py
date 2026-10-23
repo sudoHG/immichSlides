@@ -866,6 +866,8 @@ PREFIX_RULES = (
     ("rotation-start-portrait did not stabilize within the ", "rotation_start_capture", "timing_window"),
     ("rotation-landscape-stable did not stabilize within the ", "rotation_landscape_capture", "timing_window"),
     ("rotation-portrait-stable did not stabilize within the ", "rotation_portrait_capture", "timing_window"),
+    ("layout-landscape-multi did not stabilize within the ", "visible_scene_capture", "timing_window"),
+    ("layout-portrait-multi did not stabilize within the ", "visible_scene_capture", "timing_window"),
     ("Could not recognize a public photo on screen within ", "visible_scene_capture", "scene_identity"),
     ("The public photo on screen did not change after next;", "history_navigation", "scene_identity"),
     ("Before rotating, the play button value must be pause (playing),", "control_action", "control_state"),

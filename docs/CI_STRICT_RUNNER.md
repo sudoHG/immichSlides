@@ -1671,6 +1671,8 @@ New enum meanings and why the previous vocabulary cannot express them:
 | `rotation-start-portrait did not stabilize within the ` | `rotation_start_capture` | `timing_window` | [RotationUITests.swift](../immichSlidesUITests/RotationUITests.swift); initial portrait stable wait |
 | `rotation-landscape-stable did not stabilize within the ` | `rotation_landscape_capture` | `timing_window` | [RotationUITests.swift](../immichSlidesUITests/RotationUITests.swift); landscape stable wait |
 | `rotation-portrait-stable did not stabilize within the ` | `rotation_portrait_capture` | `timing_window` | [RotationUITests.swift](../immichSlidesUITests/RotationUITests.swift); final portrait stable wait |
+| `layout-landscape-multi did not stabilize within the ` | `visible_scene_capture` | `timing_window` | [RotationUITests.swift](../immichSlidesUITests/RotationUITests.swift); iPad landscape multi-photo stable wait |
+| `layout-portrait-multi did not stabilize within the ` | `visible_scene_capture` | `timing_window` | [RotationUITests.swift](../immichSlidesUITests/RotationUITests.swift); iPad portrait multi-photo stable wait |
 | `Could not recognize a public photo on screen within ` | `visible_scene_capture` | `scene_identity` | [RotationUITests.swift](../immichSlidesUITests/RotationUITests.swift); public photo identity before Next |
 | `The public photo on screen did not change after next;` | `history_navigation` | `scene_identity` | [RotationUITests.swift](../immichSlidesUITests/RotationUITests.swift); Next must start a new scene before rotation |
 | `Before rotating, the play button value must be pause (playing),` | `control_action` | `control_state` | [RotationUITests.swift](../immichSlidesUITests/RotationUITests.swift); playing-state precondition |
