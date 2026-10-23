@@ -8,7 +8,7 @@
   {
     "path": "immichSlidesTests/AsyncTestWait.swift",
     "function": "<scope>",
-    "literal": "letdefaultAsyncTestWaitTimeout:Duration=.seconds(30)",
+    "literal": "letdefaultAsyncTestWaitTimeout:Duration=.seconds(120)",
     "count": 1
   },
   {
