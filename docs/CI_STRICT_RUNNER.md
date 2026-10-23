@@ -320,6 +320,14 @@ Backward history identity uses the complete pixel signature and ledger reference
 Probes cannot supply a
 missing pixel identity. A5 and A1+A5 have different signatures.
 
+Before the initial `tvos-flow` Pause, control-bar readiness and the complete stable
+scene share the existing 30-second playback-entry deadline. Each scene poll reads
+one fallible App snapshot, and the final observations are attached as
+`tvos-entry-capture-window`. Pausing during the initial fade freezes its incoming
+layers, even when their opacity has already reached one; that state cannot serve
+as the stable history anchor. The single Pause, four-second pause readback,
+history-count precondition and capture-time pixel/manifest proof remain unchanged.
+
 `UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE=1` enables the Debug manifest probes.
 Probe-only launches are `album-empty`, `journey-b`, `tvos-flow`, `tvos-person`, `late-image`, `ios-lifecycle-first-wake`,
 and `AccessLifecycleIOSUITests.prepareLaunch`, including its cold relaunches and
