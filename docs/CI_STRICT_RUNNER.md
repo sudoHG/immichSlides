@@ -161,9 +161,14 @@ the window, a visible control bar, and no Settings navigation evidence. It does 
 require the optional playback-marker probe. Its frame supplies the sole coordinate tap;
 there is no live hittability query or element tap that re-resolves the button.
 Snapshot geometry establishes readiness; an observed photo change is required to
-pass. This existing check does not establish forward direction. Preparation retains
-its 4-second deadline. The outcome window starts at tap return, lasts at most
-4 seconds, and ends within the original 8-second total.
+pass. This existing check does not establish forward direction. Baseline scene
+identification and final readiness share the original 4-second preparation budget,
+excluding only the measured canvas-wake duration. Readiness after wake return gets
+the pre-wake remainder, not another full preparation window. The outcome window
+starts at tap return, lasts at most 4 seconds, and ends within the original
+8-second total plus that same measured wake duration. The actual Next tap still
+consumes the total ceiling; late snapshots/captures do not pass. Wake delivery,
+including XCTest post-event idle, is recorded separately as reveal/action timing.
 Image-failure recovery locally prepares Next and redo without the playback probe:
 one preparatory snapshot must exclude Settings navigation, then at most one wake
 precedes a fresh snapshot of an enabled Next button with a nonempty frame inside

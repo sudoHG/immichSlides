@@ -750,11 +750,17 @@ Control readiness, orientation, the 10-second budget, the 0.5-second pair spacin
 and the pixel-difference limit remain unchanged. Thrown failures are recorded
 before app termination. Stable-frame diagnostics separate control preparation,
 screenshot capture and pixel analysis without additional UI reads. IOSDriver Next
-also separates its pre-tap scene capture and classification durations, within its
-existing preparation budget. Its initial control preparation uses snapshot
-attributes; live hittability is required by the final fresh preparation after the
-single wake. A hidden receiver's automatic query retries therefore cannot consume
-the budget before the baseline photo is read.
+also separates its pre-tap scene capture and classification durations. Scene
+identification and control readiness still share the original 4-second preparation
+budget, but the measured canvas wake is excluded: after the wake returns, readiness
+gets only the remainder that existed before that wake. Its cost, including XCTest
+post-event idle, remains in the reveal timing and action receipt. The original
+8-second preparation-plus-outcome ceiling excludes that same wake cost; the actual
+Next tap still consumes the ceiling, and outcome observation lasts at most 4 seconds
+from tap return. Late readiness snapshots and late outcome captures still fail.
+The final fresh snapshot requires an enabled Next control, the other three control
+buttons present in the window with non-empty frames, and no Settings navigation
+evidence, without a live hittability query or optional playback probe.
 
 Rotation captures first use the existing control-readiness check, with no extra
 canvas tap in the steady state. If that check fails, the capture refreshes the bar

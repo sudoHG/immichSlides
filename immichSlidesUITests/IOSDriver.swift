@@ -192,22 +192,27 @@ struct IOSDriver: PlaybackDriver {
             let revealStartedAt = Date()
             // EXIF passes hits through; the upper photo area stays clear of the bar, tip and DEBUG buttons.
             let playbackWakePoint = CGVector(dx: 0.5, dy: 0.2)
-            app.coordinate(withNormalizedOffset: playbackWakePoint).tapForFailureEvidence()
+            FirstFailureContext.action("tap") {
+                app.coordinate(withNormalizedOffset: playbackWakePoint).tap()
+            }
             let duration = Date().timeIntervalSince(revealStartedAt)
             action.timing.revealSeconds += duration
             action.timing.revealDurationsSeconds.append(duration)
         }
+        // Keep the pre-wake remainder; XCTest wake delivery is recorded separately from readiness.
+        let preparationDeadline = deadline.addingTimeInterval(action.timing.revealSeconds)
         guard
             let before = prepareControl(
-                identifier, until: deadline, action: &action, shouldRequireHittability: false)
+                identifier, until: preparationDeadline, action: &action, shouldRequireHittability: false)
         else {
             XCTFail("Final Next preparation must provide an actionable control. (\(action.diagnostic))")
             return
         }
         activateControl(before, action: &action)
-        // Start at tap return while retaining main's preparation plus outcome ceiling.
+        // Exclude only the measured wake from the original preparation plus outcome ceiling.
         let stateDeadline = min(
-            totalDeadline, Date().addingTimeInterval(UITestSupportWaitTiming.stateChangeTimeoutSeconds))
+            totalDeadline.addingTimeInterval(action.timing.revealSeconds),
+            Date().addingTimeInterval(UITestSupportWaitTiming.stateChangeTimeoutSeconds))
         var lastVisiblePhoto: String?
         var lastCaptureRemainingSeconds: TimeInterval?
         let changed = Wait.until(timeout: max(.zero, stateDeadline.timeIntervalSinceNow)) {
