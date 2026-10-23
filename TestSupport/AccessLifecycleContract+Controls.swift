@@ -24,6 +24,54 @@ extension AccessLifecycleContract {
         let mark: String
         let meanLuma: Double
         let isControlBarVisible: Bool
+        let photoPixels: TVOSPhotoPixels?
+        let identityNotes: [String]
+
+        init(
+            requestElapsed: TimeInterval, returnElapsed: TimeInterval, classifiedElapsed: TimeInterval,
+            status: String, mark: String, meanLuma: Double, isControlBarVisible: Bool,
+            photoPixels: TVOSPhotoPixels? = nil, identityNotes: [String] = []
+        ) {
+            self.requestElapsed = requestElapsed
+            self.returnElapsed = returnElapsed
+            self.classifiedElapsed = classifiedElapsed
+            self.status = status
+            self.mark = mark
+            self.meanLuma = meanLuma
+            self.isControlBarVisible = isControlBarVisible
+            self.photoPixels = photoPixels
+            self.identityNotes = identityNotes
+        }
+    }
+
+    struct TVOSPhotoPixels {
+        let highlightLuma: Int?
+        let whiteCoreFraction: Double?
+        let decodedMeanLuma: Double?
+    }
+
+    enum TVOSPhotoMotionBounds {
+        static let maximumSpanSeconds: TimeInterval = TestWait.seconds(.product(2))
+        static let maximumMotionFractionPerAxis: Double = 0.01
+        static let whiteCoreErosionFractionPerAxis: Double = 0.02
+    }
+
+    struct TVOSFadeRescuePolicy {
+        let requiredMark: String
+        let isSinglePhotoModeVerified: Bool
+        let plateauHighlightLuma: Int
+        let minimumDimHighlightDrop: Int
+        let proofHighlightRatio: Double
+        let minimumMeanDrop: Double
+        let minimumWhiteCoreFraction: Double
+        let maximumAnchorToProofRequestSeconds: TimeInterval
+        let maximumAnchorToProofReturnSeconds: TimeInterval
+    }
+
+    struct TVOSFadeRescue {
+        let anchor: ContinueWatchSample
+        let dim: ContinueWatchSample
+        let proof: ContinueWatchSample
     }
 
     struct IPadPauseTimingEvidence {

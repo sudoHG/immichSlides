@@ -243,7 +243,8 @@ final class AccessLifecycleTVOSUITests: XCTestCase {
                 app: app,
                 playPauseButton: playPauseButton,
                 nextButton: nextButton,
-                intervalSeconds: interval.actual
+                intervalSeconds: interval.actual,
+                isSinglePhotoModeVerified: interval.isSinglePhotoModeVerified
             )
             try writeTVOSResumeJSON(
                 name: "pause-next-continue.json",

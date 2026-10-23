@@ -628,8 +628,8 @@ return and the next request no greater than the existing 0.1-second poll cadence
 plus its tolerance. Pinned 4K TV capture measured
 0.309-second median and 0.453-second maximum request cadence: requiring three
 already-dim MATCH frames can outlast the identifiable portion of the designed
-1.0-second outgoing fade. The bright anchor retains at least three observations
-without counting black or unreadable frames as fade evidence. An isolated black
+1.0-second outgoing fade. That original predicate retains at least three observations
+without counting black or unrecognized frames as fade evidence. An isolated black
 frame, a constant whole-screen dim or a dimming sequence that recovers the old
 photo's brightness through the shared 0.8-second new-photo stable-window confirmation
 cannot establish a dimming start on any platform. This recovery-veto cutoff also
@@ -677,8 +677,10 @@ change cannot sign onset. Missing an early onset can defer it to a TRANSITION or
 new-photo frame, shortening the measured onset-to-stable delay: this is a
 loosening direction for the four-second rule, and can also hide an early fade.
 Re-planning delays the physical switch; the gap can delay its detection. A fresh
-same-state bright anchor remains mandatory after the wake; all luminance comparisons
-retain the original baseline. `continue-watch-diagnostic.json` saves every frame's
+same-state bright anchor remains mandatory after the wake; the original predicate's
+luminance comparisons retain the original baseline. The draft tvOS rescue described
+below is an explicit exception, using a local photo anchor.
+`continue-watch-diagnostic.json` saves every frame's
 request/capture/return times and the wake times or skipped flag, including on
 assertion failure. Identity, luminance and control-state `samples` stop at the
 first stable new photo; later captured frames retain timestamps only.
@@ -726,6 +728,64 @@ records the start-to-stable return delay and retains cached dense PNGs requested
 from T−2 through confirmation as `continue-transition-<sample index>.png`, alongside
 the sample request/return/classification times. These exports happen after dense
 capture and use the existing public fixture evidence path.
+
+The **draft tvOS A1 photo rescue awaits Hogan's explicit approval before merge**.
+It loosens the validator, expands its PASS set and changes the #555 ruling:
+one dim old-photo MATCH followed by a decoded, strictly decreasing MATCH or
+UNRECOGNIZABLE photo measurement may establish a bounded fade interval. It does
+not reclassify UNRECOGNIZABLE as MATCH. The shared sustained-dimming predicate,
+iPhone and iPad entries remain unchanged. The rescue runs only after the original
+tvOS judge throws the existing late-window failure. Every original PASS retains
+exactly its original onset, window and four-second computation; early, invalid,
+missing-stable-photo and four-second failures cannot be rescued.
+
+The tvOS call site supplies named A1 thresholds and enables rescue only from the
+singlePhoto option's actual selected-state readback. Its offline helper decodes
+each original 3840x2160 PNG, computes photo q95 from the fixed top-left 72% by 78%
+region, and derives the original reader's mean from that same decoded image.
+The means must agree exactly. Missing metrics, decode failures, `unreadable` or
+`undrawn` notes break the chain; zero is never substituted for missing evidence.
+All earlier same-A1, same-control-state frames through the anchor must have q95
+equal to the calibration maximum, including a first-half observation. An anchor
+requires q95=255 and at least 6% white-core coverage: RGB channels >=254 remain
+white after erosion by 2% of the original screen dimensions on each axis.
+The current single-photo policy scales about the centre without translation;
+the unit contract bounds two seconds of motion by 1% per axis, with an additional
+1% sampling margin. A geometry-policy change must invalidate that unit bound.
+
+The first dim still requires an A1 MATCH, a q95 drop of at least three channel
+units and a mean drop exceeding the existing 0.001 tolerance. At most one prior
+quantized old-image frame is allowed: q95 has fallen by one or two units and
+mean has not risen. Subsequent outgoing observations must decrease in mean by
+more than 0.001 and in q95 by at least one unit, with unchanged controls and
+the original 0.101-second return-to-request gap. A later decoded MATCH or
+UNRECOGNIZABLE proof must lose at least 0.030 mean luma from the local anchor
+and have q95 below 95% of 255. The 0.030 guard exceeds the measured short-span,
+same-state motion/control variation; the independent q95 and white-core checks
+distinguish photo attenuation from changing colour areas. The request span is
+at most 1.001 seconds and the anchor-request to proof-return span at most
+2.001 seconds. Original recovery vetoes remain, and reappearing A1 identity
+after loss of recognition, or bright/rising old-photo q95 after proof, vetoes
+the rescue through the shared stable-photo cutoff. Incoming unrecognized
+brightness may rise after proof; it never supplies the outgoing decline.
+
+The entire interval [anchor request, proof return] must lie within T±2 using
+the iPad-style 0.001-second boundary tolerance. Stable-new-photo confirmation
+must return within the unchanged four seconds, measured from the interval's
+lower bound. The interval deliberately includes the later proof rather than
+backdating a small dip from its first dim return. It can reject otherwise valid
+late-window fades or sparse captures. q95=255 still has roughly one channel
+tick of quantization slack (about 4 ms in the reviewed fade model), plus a
+rendering tick; this is not a guaranteed physical-onset enclosure.
+
+Known residual: non-App full-screen dimming near T+2 that persists into a later
+real fade could still satisfy the rescue. The singlePhoto App path has no such
+overlay, but this pixel-only rule does not prove the absence of system overlays.
+The diagnostic records optional q95, white-core fraction and same-image mean
+for every captured frame, plus the mode readback and rescue interval. A rescue
+retains its anchor/dim/proof PNGs. Existing `detected` / `official_signed` receipt
+semantics and failure prefixes are unchanged; the interval is an additive field.
+
 Continue issued is zero, aligning tvOS with iOS `press.issued`; the remote Select
 return time is recorded separately and never becomes the screenshot-request
 clock's origin. This intentionally replaces tvOS's former Select-return origin.
