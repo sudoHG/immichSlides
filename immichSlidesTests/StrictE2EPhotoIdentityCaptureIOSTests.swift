@@ -165,13 +165,11 @@ struct StrictE2EPhotoIdentityCaptureIOSTests {
                             width: horizontal ? lines : 1, height: horizontal ? 1 : lines))
                 }
             }
-            let identity = StrictE2EPhotoIdentity.captureIdentity(png: png)
+            let marks = StrictE2EPhotoIdentity.strictCaptureSlotMarks(png: png)
             if isAccepted {
-                #expect(identity.status == .match)
-                #expect(identity.mark == "A3+A2")
+                #expect(marks == ["A3", "A2"])
             } else {
-                #expect(identity.status == .transition)
-                #expect(identity.mark == nil)
+                #expect(marks.isEmpty)
             }
         }
     }
@@ -195,9 +193,14 @@ struct StrictE2EPhotoIdentityCaptureIOSTests {
                     context.fill(CGRect(x: band[0], y: band[1], width: band[2], height: band[3]))
                 }
             }
-            let identity = StrictE2EPhotoIdentity.captureIdentity(png: png)
-            #expect((identity.status == .match) == !item.marks.isEmpty, "\(item.name)")
-            #expect(identity.mark == (item.marks.isEmpty ? nil : item.marks.joined(separator: "+")), "\(item.name)")
+            let marks = StrictE2EPhotoIdentity.strictCaptureSlotMarks(png: png)
+            #expect(marks == item.marks, "\(item.name)")
+            // These side-by-side frames were legacy TRANSITIONs: exercise the actual additive entry too.
+            if item.name.hasPrefix("side-") {
+                let identity = StrictE2EPhotoIdentity.captureIdentity(png: png)
+                #expect(identity.status == (item.marks.isEmpty ? .transition : .match), "\(item.name)")
+                #expect(identity.mark == (item.marks.isEmpty ? nil : item.marks.joined(separator: "+")), "\(item.name)")
+            }
         }
     }
 
@@ -222,9 +225,8 @@ struct StrictE2EPhotoIdentityCaptureIOSTests {
                     pair[1], in: CGRect(x: 0, y: height / 2, width: width, height: height - height / 2),
                     context: context)
             }
-            let identity = StrictE2EPhotoIdentity.captureIdentity(png: png)
-            #expect(identity.status == .match)
-            #expect(identity.mark == pair.map { "A\($0)" }.joined(separator: "+"))
+            let marks = StrictE2EPhotoIdentity.strictCaptureSlotMarks(png: png)
+            #expect(marks == pair.map { "A\($0)" })
         }
     }
 
@@ -242,9 +244,8 @@ struct StrictE2EPhotoIdentityCaptureIOSTests {
         let destination = try #require(CGImageDestinationCreateWithData(output, "public.png" as CFString, 1, nil))
         CGImageDestinationAddImage(destination, tagged, nil)
         try #require(CGImageDestinationFinalize(destination))
-        let identity = StrictE2EPhotoIdentity.captureIdentity(png: output as Data)
-        #expect(identity.status == .match)
-        #expect(identity.mark == "A3+A2")
+        let marks = StrictE2EPhotoIdentity.strictCaptureSlotMarks(png: output as Data)
+        #expect(marks == ["A3", "A2"])
     }
 
     @Test(arguments: [1.15, 1.2, 1.25])
@@ -270,9 +271,8 @@ struct StrictE2EPhotoIdentityCaptureIOSTests {
                 context.restoreGState()
             }
         }
-        let identity = StrictE2EPhotoIdentity.captureIdentity(png: png)
-        #expect(identity.status == .match)
-        #expect(identity.mark == "A1+A5")
+        let marks = StrictE2EPhotoIdentity.strictCaptureSlotMarks(png: png)
+        #expect(marks == ["A1", "A5"])
     }
 
     // Explicit bilinear reconstruction avoids CoreGraphics choosing a different upscaling filter on each OS.
@@ -342,13 +342,11 @@ struct StrictE2EPhotoIdentityCaptureIOSTests {
                 fillPublicFixture(1, in: CGRect(x: 0, y: 0, width: 480, height: 720), context: context)
             }
         }
-        let identity = StrictE2EPhotoIdentity.captureIdentity(png: png)
+        let marks = StrictE2EPhotoIdentity.strictCaptureSlotMarks(png: png)
         if ["sharp", "sharpB"].contains(defect) {
-            #expect(identity.status == .match)
-            #expect(identity.mark == "A3+A2")
+            #expect(marks == ["A3", "A2"])
         } else {
-            #expect(identity.status != .match)
-            #expect(identity.mark == nil)
+            #expect(marks.isEmpty)
         }
     }
 
@@ -403,14 +401,12 @@ struct StrictE2EPhotoIdentityCaptureIOSTests {
                     }
                 }
             }
-            let identity = StrictE2EPhotoIdentity.captureIdentity(png: png)
+            let marks = StrictE2EPhotoIdentity.strictCaptureSlotMarks(png: png)
             if !["sharp", "boundary"].contains(defect) {
-                #expect(identity.status == .transition)
-                #expect(identity.mark == nil)
+                #expect(marks.isEmpty)
             } else {
-                #expect(identity.status == .match)
                 let expected = isReversed ? (horizontal ? "A2+A3+A1" : "A2+A1+A3") : "A3+A2+A1"
-                #expect(identity.mark == expected)
+                #expect(marks.joined(separator: "+") == expected)
             }
         }
     }

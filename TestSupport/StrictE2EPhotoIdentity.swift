@@ -152,6 +152,7 @@ enum StrictE2EPhotoIdentity {
     private static let captureSampleWidthPixels = 480
     private static let captureEdgeBandRawPixels = 8
     private static let textureMaximumCellDriftPixels = 2
+    private static let captureInnerBox: (CGFloat, CGFloat, CGFloat, CGFloat) = (0.28, 0.18, 0.72, 0.82)
     private static let capturePalettes: [String: [[Int]]] = [
         "A1": [[37, 109, 19], [91, 61, 91]],
         "A2": [[74, 170, 38], [128, 122, 110]],
@@ -848,22 +849,26 @@ enum StrictE2EPhotoIdentity {
     }
 
     static func captureIdentity(png: Data) -> Result {
-        let slots = captureSlotMarks(png: png)
-        // Complete-slot proof already qualifies composites; the expensive single-photo proof stays single-only.
-        let full = classify(png: png, shouldQualifySinglePhoto: !slots.isMultiPhotoCandidate)
-        if slots.marks.count >= 2 {
+        let legacy = legacyCaptureIdentity(png: png)
+        guard legacy.status == .transition else { return legacy }
+        let slotMarks = strictCaptureSlotMarks(png: png)
+        guard slotMarks.count >= 2 else { return legacy }
+        return Result(
+            status: .match, mark: slotMarks.joined(separator: "+"), scores: legacy.scores, meanLuma: legacy.meanLuma,
+            notes: ["strict-photo-slot-match"] + legacy.notes)
+    }
+
+    private static func legacyCaptureIdentity(png: Data) -> Result {
+        let full = classify(png: png)
+        let slotMarks = captureSlotMarks(png: png)
+        if slotMarks.count >= 2 {
             return Result(
                 status: .match,
-                mark: slots.marks.joined(separator: "+"),
+                mark: slotMarks.joined(separator: "+"),
                 scores: full.scores,
                 meanLuma: full.meanLuma,
                 notes: ["photo-slot-axis-match"] + full.notes
             )
-        }
-        if slots.isMultiPhotoCandidate {
-            return Result(
-                status: .transition, mark: nil, scores: full.scores, meanLuma: full.meanLuma,
-                notes: ["unreadable-public-slots"] + full.notes)
         }
         return full
     }
@@ -922,13 +927,184 @@ enum StrictE2EPhotoIdentity {
         return didDraw ? (width, height, pixels) : nil
     }
 
-    private static func captureSlotMarks(png: Data) -> (marks: [String], isMultiPhotoCandidate: Bool) {
+    private static func captureSlotMarks(png: Data) -> [String] {
+        guard let source = CGImageSourceCreateWithData(png as CFData, nil),
+            let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
+            image.width >= minDisplayCropEdgePixels, image.height >= minDisplayCropEdgePixels,
+            let frame = capturePixels(image: image)
+        else { return [] }
+        let (width, height, pixels) = frame
+        var paletteCache: [Int: String] = [:]
+        var edgeCache: [Int: String] = [:]
+        let edgeWidth = captureEdgeBandRawPixels * width / image.width
+        let edgeHeight = captureEdgeBandRawPixels * height / image.height
+        let assignments: [String] = stride(from: 0, to: pixels.count, by: pixelChannelCount).map { offset in
+            let key = Int(pixels[offset]) << 16 | Int(pixels[offset + 1]) << 8 | Int(pixels[offset + 2])
+            var mark = paletteCache[key]
+            if mark == nil {
+                let matches = capturePalettes.compactMap { mark, palette in
+                    palette.contains { reference in
+                        (0..<3).allSatisfy {
+                            abs(Int(pixels[offset + $0]) - reference[$0]) <= extendedPaletteChannelTolerance
+                        }
+                    } ? mark : nil
+                }
+                mark = matches.count == 1 ? matches[0] : ""
+                paletteCache[key] = mark
+            }
+            let column = offset / pixelChannelCount % width
+            let row = offset / pixelChannelCount / width
+            if mark == "",
+                column < edgeWidth || column >= width - edgeWidth || row < edgeHeight || row >= height - edgeHeight
+            {
+                if let cached = edgeCache[key] { return cached }
+                let edgeMark = captureEdgeMark((0..<3).map { Double(pixels[offset + $0]) })
+                edgeCache[key] = edgeMark
+                return edgeMark
+            }
+            return mark ?? ""
+        }
+        let markIndices = Dictionary(uniqueKeysWithValues: marks.enumerated().map { ($1, $0) })
+        var rowCounts = marks.map { _ in [Int](repeating: 0, count: height) }
+        var columnCounts = marks.map { _ in [Int](repeating: 0, count: width) }
+        for (index, mark) in assignments.enumerated() {
+            if let markIndex = markIndices[mark] {
+                rowCounts[markIndex][index / width] += 1
+                columnCounts[markIndex][index % width] += 1
+            }
+        }
+        var slots: [(mark: String, rect: CGRect)] = []
+        for (markIndex, mark) in marks.enumerated() {
+            let rows = (0..<height).filter { rowCounts[markIndex][$0] >= minimumChromaticPixelCount }
+            let columns = (0..<width).filter { columnCounts[markIndex][$0] >= minimumChromaticPixelCount }
+            if let top = rows.first, let bottom = rows.last, let left = columns.first, let right = columns.last {
+                slots.append((mark, CGRect(x: left, y: top, width: right - left + 1, height: bottom - top + 1)))
+            }
+        }
+        guard (2...3).contains(slots.count) else { return [] }
+        let canvas = slots.reduce(CGRect.null) { $0.union($1.rect) }
+        guard (canvas.width == CGFloat(width) || canvas.height == CGFloat(height)),
+            canvas.contains(CGPoint(x: CGFloat(width) / 2, y: CGFloat(height) / 2))
+        else { return [] }
+        guard isCaptureCanvasTiled(slots.map(\.rect), canvas: canvas, pixels: pixels, width: width),
+            !slots.indices.contains(where: { index in
+                slots.dropFirst(index + 1).contains { slots[index].rect.intersects($0.rect) }
+            }),
+            (0..<(width * height)).allSatisfy({ index in
+                canvas.contains(CGPoint(x: index % width, y: index / width))
+                    || (pixels[index * pixelChannelCount] == 0 && pixels[index * pixelChannelCount + 1] == 0
+                        && pixels[index * pixelChannelCount + 2] == 0)
+            })
+        else { return [] }
+        for slot in slots {
+            guard isCaptureSlotReadable(assignments, width: width, rect: slot.rect, mark: slot.mark) else { return [] }
+            let box = (
+                (slot.rect.minX + captureInnerBox.0 * slot.rect.width) / CGFloat(width),
+                (slot.rect.minY + captureInnerBox.1 * slot.rect.height) / CGFloat(height),
+                (slot.rect.minX + captureInnerBox.2 * slot.rect.width) / CGFloat(width),
+                (slot.rect.minY + captureInnerBox.3 * slot.rect.height) / CGFloat(height)
+            )
+            guard capturePhotoMark(png: png, box: box) == slot.mark else { return [] }
+        }
+        return slots.sorted {
+            $0.rect.minY == $1.rect.minY ? $0.rect.minX < $1.rect.minX : $0.rect.minY < $1.rect.minY
+        }.map(\.mark)
+    }
+
+    private static func isCaptureCanvasTiled(_ rects: [CGRect], canvas: CGRect, pixels: [UInt8], width: Int) -> Bool {
+        if rects.reduce(CGFloat(0), { $0 + $1.width * $1.height }) == canvas.width * canvas.height { return true }
+        for y in Int(canvas.minY)..<Int(canvas.maxY) {
+            for x in Int(canvas.minX)..<Int(canvas.maxX) {
+                let point = CGPoint(x: x, y: y)
+                if rects.contains(where: { $0.contains(point) }) { continue }
+                // A fractional edge may leave one sampled line, backed by distinct slots immediately on both sides.
+                let isBlendedBoundary = [CGPoint(x: 1, y: 0), CGPoint(x: 0, y: 1)].contains { step in
+                    let before = CGPoint(x: point.x - step.x, y: point.y - step.y)
+                    let after = CGPoint(x: point.x + step.x, y: point.y + step.y)
+                    guard let first = rects.firstIndex(where: { $0.contains(before) }),
+                        let second = rects.firstIndex(where: { $0.contains(after) }), first != second
+                    else { return false }
+                    let index = (y * width + x) * pixelChannelCount
+                    let offset = (Int(step.y) * width + Int(step.x)) * pixelChannelCount
+                    let a = (0..<3).map { Double(pixels[index - offset + $0]) }
+                    let delta = (0..<3).map { Double(pixels[index + offset + $0]) - a[$0] }
+                    let color = (0..<3).map { Double(pixels[index + $0]) }
+                    let squaredLength = delta.reduce(0.0) { $0 + $1 * $1 }
+                    let fraction =
+                        squaredLength == 0
+                        ? 0.5 : (0..<3).reduce(0.0) { $0 + (color[$1] - a[$1]) * delta[$1] } / squaredLength
+                    return fraction > 0 && fraction < 1
+                        && (0..<3).allSatisfy {
+                            abs(color[$0] - (a[$0] + fraction * delta[$0])) <= Double(extendedPaletteChannelTolerance)
+                        }
+                }
+                if !isBlendedBoundary { return false }
+            }
+        }
+        return true
+    }
+
+    private static func captureEdgeMark(_ channels: [Double]) -> String {
+        let matches = capturePalettes.compactMap { mark, palette -> String? in
+            let first = palette[0].map(Double.init)
+            let delta = zip(palette[1], palette[0]).map { Double($0.0 - $0.1) }
+            let fraction =
+                zip(zip(channels, first), delta).reduce(0.0) { $0 + ($1.0.0 - $1.0.1) * $1.1 }
+                / delta.reduce(0.0) { $0 + $1 * $1 }
+            guard fraction > 0, fraction < 1,
+                (0..<3).allSatisfy({
+                    abs(channels[$0] - (first[$0] + fraction * delta[$0])) <= Double(extendedPaletteChannelTolerance)
+                })
+            else { return nil }
+            return mark
+        }
+        return matches.count == 1 ? matches[0] : ""
+    }
+
+    private static func isCaptureSlotReadable(_ assignments: [String], width: Int, rect: CGRect, mark: String) -> Bool {
+        for horizontal in [false, true] {
+            let lines = horizontal ? Int(rect.minX)..<Int(rect.maxX) : Int(rect.minY)..<Int(rect.maxY)
+            let offsets = horizontal ? Int(rect.minY)..<Int(rect.maxY) : Int(rect.minX)..<Int(rect.maxX)
+            var matches: [Bool] = []
+            for line in lines {
+                var counts: [String: Int] = [:]
+                for offset in offsets {
+                    let observed = assignments[horizontal ? offset * width + line : line * width + offset]
+                    if !observed.isEmpty { counts[observed, default: 0] += 1 }
+                }
+                if counts.contains(where: { $0.key != mark && $0.value >= minimumChromaticPixelCount }) { return false }
+                matches.append((counts[mark] ?? 0) >= minimumChromaticPixelCount)
+            }
+            // Missing interior lines can borrow only from the same independently identified photo on both sides.
+            guard matches.first == true, matches.last == true else { return false }
+        }
+        return true
+    }
+
+    private static func capturePhotoMark(
+        png: Data,
+        box: (CGFloat, CGFloat, CGFloat, CGFloat)
+    ) -> String? {
+        guard let cropped = cropPNG(png, box: box) else { return nil }
+        // The complete slot already passed the existing RGB/coverage gates.
+        let identity = classify(png: cropped, shouldQualifySinglePhoto: false)
+        guard identity.status == .match,
+            let mark = identity.mark,
+            marks.contains(mark)
+        else {
+            return nil
+        }
+        return mark
+    }
+
+    // This is the additive TRANSITION fallback; shared parity tests exercise its own verdict.
+    static func strictCaptureSlotMarks(png: Data) -> [String] {
         guard let source = CGImageSourceCreateWithData(png as CFData, nil),
             let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
             image.width >= minDisplayCropEdgePixels, image.height >= minDisplayCropEdgePixels,
             let frame = capturePixels(
                 image: image, colorSpace: image.colorSpace.flatMap { $0.model == .rgb ? $0 : nil })
-        else { return ([], false) }
+        else { return [] }
         let (width, height, pixels) = frame
         let exclusions = captureSceneExclusions(image: image, width: width, height: height)
         var paletteCache: [Int: String] = [:]
@@ -979,18 +1155,11 @@ enum StrictE2EPhotoIdentity {
                 slots.append((mark, CGRect(x: left, y: top, width: right - left + 1, height: bottom - top + 1)))
             }
         }
-        // A nested overlay on one photo retains the existing single-photo classification.
-        let isMultiPhotoCandidate = slots.indices.contains { index in
-            slots.dropFirst(index + 1).contains {
-                !slots[index].rect.contains($0.rect) && !$0.rect.contains(slots[index].rect)
-            }
-        }
-        let rejected: ([String], Bool) = ([], isMultiPhotoCandidate)
-        guard (2...3).contains(slots.count) else { return rejected }
+        guard (2...3).contains(slots.count) else { return [] }
         let canvas = slots.reduce(CGRect.null) { $0.union($1.rect) }
         guard (canvas.width == CGFloat(width) || canvas.height == CGFloat(height)),
             canvas.contains(CGPoint(x: CGFloat(width) / 2, y: CGFloat(height) / 2))
-        else { return rejected }
+        else { return [] }
         guard isCaptureCanvasTiled(slots, canvas: canvas, pixels: pixels, width: width, exclusion: exclusions.color),
             !slots.indices.contains(where: { index in
                 slots.dropFirst(index + 1).contains { slots[index].rect.intersects($0.rect) }
@@ -1000,14 +1169,14 @@ enum StrictE2EPhotoIdentity {
                     || (pixels[index * pixelChannelCount] == 0 && pixels[index * pixelChannelCount + 1] == 0
                         && pixels[index * pixelChannelCount + 2] == 0)
             })
-        else { return rejected }
+        else { return [] }
         var letters = Set<String>()
         for slot in slots {
             guard
                 isCaptureSlotReadable(
                     assignments, width: width, rect: slot.rect, mark: slot.mark, exclusion: exclusions.color)
             else {
-                return rejected
+                return []
             }
             var slotPixels = [UInt8]()
             for row in Int(slot.rect.minY)..<Int(slot.rect.maxY) {
@@ -1022,15 +1191,13 @@ enum StrictE2EPhotoIdentity {
                 publicSlotLetters(
                     frame: slotFrame, mark: slot.mark,
                     exclusion: exclusions.glyph?.offsetBy(dx: -slot.rect.minX, dy: -slot.rect.minY)) == [pattern]
-            else { return rejected }
+            else { return [] }
             letters.insert(pattern)
         }
-        guard letters.count == 1 else { return rejected }
-        return (
-            slots.sorted {
-                $0.rect.minY == $1.rect.minY ? $0.rect.minX < $1.rect.minX : $0.rect.minY < $1.rect.minY
-            }.map(\.mark), true
-        )
+        guard letters.count == 1 else { return [] }
+        return slots.sorted {
+            $0.rect.minY == $1.rect.minY ? $0.rect.minX < $1.rect.minX : $0.rect.minY < $1.rect.minY
+        }.map(\.mark)
     }
 
     private static func captureSceneExclusions(image: CGImage, width: Int, height: Int) -> (
@@ -1126,23 +1293,6 @@ enum StrictE2EPhotoIdentity {
             }
         }
         return true
-    }
-
-    private static func captureEdgeMark(_ channels: [Double]) -> String {
-        let matches = capturePalettes.compactMap { mark, palette -> String? in
-            let first = palette[0].map(Double.init)
-            let delta = zip(palette[1], palette[0]).map { Double($0.0 - $0.1) }
-            let fraction =
-                zip(zip(channels, first), delta).reduce(0.0) { $0 + ($1.0.0 - $1.0.1) * $1.1 }
-                / delta.reduce(0.0) { $0 + $1 * $1 }
-            guard fraction > 0, fraction < 1,
-                (0..<3).allSatisfy({
-                    abs(channels[$0] - (first[$0] + fraction * delta[$0])) <= Double(extendedPaletteChannelTolerance)
-                })
-            else { return nil }
-            return mark
-        }
-        return matches.count == 1 ? matches[0] : ""
     }
 
     private static func isCaptureSlotReadable(

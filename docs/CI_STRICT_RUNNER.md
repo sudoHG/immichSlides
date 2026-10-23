@@ -181,28 +181,36 @@ the public fixture RGB pairs, the same tolerance 12 and minimum 18 matching pixe
 per line, and a nearest-neighbour sample capped at 480 pixels wide. A composite
 requires two or three distinct, non-overlapping rectangles that tile their canvas.
 That canvas must cover the image center and fill at least one image axis; each
-slot needs clean rows and columns. Swift verifies the complete slot's public
-texture and bitmap letter/digit instead of classifying a glyph-heavy interior crop.
-This covers unequal doubles, balanced triples and the four primary-plus-pair
-triple orientations. Missing interior lines can join only matching neighbours;
-an entirely black outer edge contributes no identity. Mixed slot lines, overlaps
-and gaps reject the composite. Swift follows the strict Python reader's clipped
-checker boundary rule below: one missing sampled line must belong uniquely to
+slot needs clean rows and columns. The legacy readers classify an interior crop
+of each rectangle and retain their existing results, including unequal doubles,
+balanced triples and all four primary-plus-pair triple orientations. Swift first
+runs this unchanged legacy capture path. Only a legacy TRANSITION is eligible
+for an additive `strictCaptureSlotMarks` check. Successful strict proof returns
+MATCH with the slot marks; rejection returns the legacy result unchanged.
+Legacy MATCH, UNRECOGNIZABLE, BLACK and BLANK results never enter the new path.
+The region readers and complete-scene inheritance retain the legacy contract.
+
+The strict fallback verifies every complete slot's public texture and bitmap
+letter/digit, rather than its glyph-heavy interior crop. Missing interior lines
+can join only matching neighbours; an entirely black outer edge contributes no
+identity. Mixed slot lines, overlaps and gaps reject strict proof. The fallback
+follows the strict Python reader's clipped checker boundary rule below:
+one missing sampled line must belong uniquely to
 one adjacent photo's palette interpolation across the entire shared span. It
 cannot mix the two photos' palettes along the line or use cross-photo RGB
 interpolation as proof. Black seams and wider gaps remain rejected. Identities
 use top-to-bottom, then left-to-right rectangle order.
-Swift returns TRANSITION when public photo rectangles that do not contain one another fail these
-checks, rather than accepting the dominant whole-frame mark. Nested overlays on
-one photo retain the original whole-frame classification. For Next, MATCH means
-every slot passed; the comparison sorts all slot marks, preserving multiplicity,
-so rearranging the same photos cannot prove a change. Single-photo marks and all
+Strict rejection cannot revoke a legacy acceptance. In particular, crossing
+rectangles can still fall back to a dominant legacy whole-frame mark, and nested
+overlays keep their legacy classification. For Next, the comparison sorts all
+slot marks, preserving multiplicity, so rearranging the same photos cannot prove
+a change. Single-photo marks and all
 control actions, deadlines and waits are unchanged.
 Changing to a subset or superset still counts as Next: SmartFill can reuse the
 current photo as an auxiliary or collapse to one slot. An in-place rearrangement
 that also changes the slot set could therefore satisfy this pixel comparison.
 
-Composite chrome handling mirrors Python `PUBLIC_SCENE_GEOMETRIES`: color and
+Strict-fallback chrome handling mirrors Python `PUBLIC_SCENE_GEOMETRIES`: color and
 glyph exclusions are independent, scaled outward to the 480-wide sample and
 translated into each slot. They cover the measured iPhone control bar, iPad
 home indicator or EXIF panel, and TV control bar/entry hint. Unknown sizes get
@@ -211,23 +219,34 @@ box; a bottom-clipped glyph can estimate square cell width from surviving
 first-row strokes. Visible cells and digits must still agree with the texture.
 The shared `immichSlidesTests/Fixtures/public-photo-identity-cases.json` table
 constructs the same checker cells, glyph origins and defect boxes in the Swift
-reader suite and `scripts/test_strict_e2e_photo_identity.py`; both assert the
-listed complete-slot verdict through their public entry points.
+reader suite and `scripts/test_strict_e2e_photo_identity.py`; the table compares
+Swift's strict fallback entry with Python `public_frame_photos_from_bytes`, not
+the legacy-compatible capture verdict. Native sizes and all parity rows remain
+intact; the Python test draws and caches identical 48-pixel background rectangles
+instead of generating and encoding every background pixel in Python.
 
-Intentional differences: Python `capture_identity` still uses the legacy interior
-hue check and cross-photo seam interpolation; Swift uses the stricter
-`public_frame_photos_from_bytes` palette, texture and glyph rules for composites.
-Swift retains rectangle segmentation for the real iPad/TV primary-plus-pair
+Intentional differences: both legacy capture readers retain their interior hue
+check and cross-photo seam interpolation. The display-policy validator's region
+path still uses Python `capture_identity` through `_complete_scene_candidates`;
+filter-switch scene validation uses the stricter `public_scene_photos_from_bytes`.
+Existing region-contract synthetic pairs stretch square source glyph cells into
+rectangles, which the strict readers reject. App SmartFill placement preserves
+the source aspect ratio; those synthetic frames are region-contract inputs,
+not evidence of App output. Legacy capture also preserves cropped-glyph T layouts,
+fractional seams and the dark-top stand-in that the strict reader rejects.
+These acceptances are not claims of strict Python parity.
+
+The strict Swift fallback retains rectangle segmentation for real iPad/TV primary-plus-pair
 triples; the strict Python full-span axis reader cannot represent those layouts.
-Swift requires a texture pattern in every slot and a sharp stripe for B slots;
+It requires a texture pattern in every slot and a sharp stripe for B slots;
 Python's multi-photo path permits an unknown texture pattern and does not require
 stripe sharpness. Qualified public fixture slots satisfy both Swift checks.
-Swift also accepts stacked mosaics with black borders along the stacking axis
+It also accepts stacked mosaics with black borders along the stacking axis
 when the canvas fills the other axis; Python's full-span reader rejects them.
-Swift bounds consecutive unsupported interior lines by the single-photo
+It bounds consecutive unsupported interior lines by the single-photo
 half-resolution probe and shared texture drift constant (at most four rows at
 480 scale); Python joins any length bracketed by the same photo. The existing
-eight-pixel cyan-band T-layout negative remains rejected. These helpers ship
+eight-pixel cyan-band T-layout negative remains rejected by strict proof. These helpers ship
 only in test targets.
 The unchanged single-photo fallback has a pre-existing near-endpoint residual:
 blend 80% of a sharp stacked A2/A1 frame over 20% of a sharp stacked A3/A2
