@@ -743,6 +743,13 @@ def run_shard(args):
     from run_fixture_ui_tests import declared_tests, main as fixture_main
     from strict_e2e_runner_support import CommandError, destination_udid, prepare_simulator
     workspace_preflight(ROOT)
+    # A successful download action can leave an incomplete extraction without reporting an error.
+    archive_dir = getattr(args, "archive_dir", None)
+    if archive_dir and not all((archive_dir / name).is_file() and not (archive_dir / name).is_symlink()
+                               for name in ("manifest.json", "build.tar.gz")):
+        error = ContractError("archive-download-incomplete")
+        error.entry = {"code": "archive-download-incomplete", "message": "archive-download-incomplete"}
+        raise error
     try:
         udid = destination_udid(args.destination)
         prepare_simulator(udid, boot_submitted=os.environ.get("UI_SIMULATOR") == udid, should_settle_boot=True)

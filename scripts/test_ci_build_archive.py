@@ -7,6 +7,7 @@ import base64
 import os
 import plistlib
 import platform
+import shutil
 import signal
 import subprocess
 import sys
@@ -42,6 +43,81 @@ def share_ui_source_fixture(test):
 
 
 class BuildArchiveTests(unittest.TestCase):
+    def test_ui_archive_download_must_be_complete_before_simulator_preparation(self):
+        from ci_summary import parse_summary
+        share_ui_source_fixture(self)
+        pins = json.loads((ui.ROOT / "scripts/ci-pins.json").read_text())
+        for device, platform_name in ui.DEVICES.items():
+            for defect in (None, "missing-directory", "missing-manifest", "missing-tar", "manifest-link", "tar-directory"):
+                with self.subTest(device=device, defect=defect), tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    downloaded = root / "downloaded"
+                    downloaded.mkdir()
+                    products = root / "build-products"
+                    shutil.copytree(self.products, products, symlinks=True)
+                    app = products / "Debug-iphonesimulator/App.app"
+                    app.rename(app.with_name("immichSlides.app"))
+                    if platform_name == "tvos":
+                        app.parent.rename(products / "Debug-appletvsimulator")
+                    packed = downloaded / "build.tar.gz"
+                    archive.pack_products(products, packed)
+                    manifest = archive.make_manifest(products, identity=self.identity, run_id="123", attempt=1,
+                        platform=platform_name, architecture=[platform.machine()], xcode_build=pins["xcode"]["build"],
+                        source_path=root / "removed-source", archive_sha=archive.file_hash(packed),
+                        pins_sha=archive.file_hash(ui.ROOT / "scripts/ci-pins.json"), signing_mode="adhoc")
+                    ui.write_json(downloaded / "manifest.json", manifest)
+                    ui.write_json(root / "selection.json", {"identity": self.identity, "platform": platform_name,
+                        "producer_run_id": "123", "producer_attempt": 1,
+                        "build_manifest_sha256": archive.file_hash(downloaded / "manifest.json")})
+                    shutil.rmtree(products)
+                    if defect == "missing-directory":
+                        shutil.rmtree(downloaded)
+                    elif defect == "missing-manifest":
+                        (downloaded / "manifest.json").unlink()
+                    elif defect == "missing-tar":
+                        packed.unlink()
+                    elif defect == "manifest-link":
+                        (downloaded / "manifest.json").rename(root / "outside-manifest.json")
+                        (downloaded / "manifest.json").symlink_to(root / "outside-manifest.json")
+                    elif defect == "tar-directory":
+                        packed.unlink()
+                        packed.mkdir()
+                    ctx = {"identity": self.identity,
+                        "source": {"repository": "owner/repo", "event": "pull_request", "workflow_path": ui.WORKFLOW,
+                                   "fork_originated": False, "ci_changing": False},
+                        "run": {"id": "456", "attempt": 1, "tier": "ui", "job": "ui-" + device, "shard": "navigation"}}
+                    records, relocated = root / "records", root / "relocated"
+                    def fixture(*unused, **options):
+                        records.mkdir()
+                        return 0
+                    with patch.object(ui, "context", return_value=ctx), patch.object(ui, "workspace_preflight"), \
+                            patch("strict_e2e_runner_support.prepare_simulator") as prepare, \
+                            patch.object(ui, "measure_signing", return_value="adhoc"), \
+                            patch("run_fixture_ui_tests.registry_revision", return_value="HEAD"), \
+                            patch("run_fixture_ui_tests.load_registry", return_value=({"schema_version": 1, "entries": []}, "f" * 64)), \
+                            patch("run_fixture_ui_tests.main", side_effect=fixture) as execute, redirect_stderr(io.StringIO()) as errors:
+                        code = ui.main(["run", "--device", device, "--shard", "navigation",
+                            "--destination", "platform=" + ("tvOS" if platform_name == "tvos" else "iOS") + " Simulator,id=fixture-device",
+                            "--archive-dir", str(downloaded), "--selection-path", str(root / "selection.json"),
+                            "--relocated-path", str(relocated), "--output-dir", str(records)])
+                    if defect:
+                        self.assertEqual(1, code)
+                        self.assertIn("UI producer refused: ContractError: archive-download-incomplete", errors.getvalue())
+                        prepare.assert_not_called()
+                        execute.assert_not_called()
+                        self.assertFalse(relocated.exists())
+                        summary = parse_summary((records / "summary.json").read_text())
+                        self.assertEqual("failed", summary["status"])
+                        self.assertEqual([{"code": "archive-download-incomplete", "message": "archive-download-incomplete"}],
+                                         summary["infrastructure"])
+                        self.assertTrue(summary["population"]["declared"])
+                        self.assertEqual([], summary["population"]["observed"])
+                    else:
+                        self.assertEqual(0, code, errors.getvalue())
+                        prepare.assert_called_once()
+                        execute.assert_called_once()
+                        self.assertTrue((relocated / "Products/App.xctestrun").is_file())
+
     def test_staging_identity_failures_preserve_git_errors_and_only_write_scheduled_receipts(self):
         import argparse
         from ci_nightly import parse_identity_failure
