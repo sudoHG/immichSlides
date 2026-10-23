@@ -232,11 +232,13 @@ final class RotationUITests: XCTestCase {
             prepare: {
                 if controlsAreReady() { return true }
                 // Refresh once after failure; the second readiness check starts after this wake returns.
-                // Both checks and the wake remain inside the existing stable-frame budget.
+                // Both checks and the wake run inside an iteration the stable-frame loop admits; like the
+                // existing check, they are not cut off at its deadline.
                 FirstFailureContext.mark("reveal-controls", element: "slideshow.control.playPause.button")
                 let wakeStartedAt = ProcessInfo.processInfo.systemUptime
-                let playbackWakePoint = CGVector(dx: 0.5, dy: 0.4)
-                driver.app.coordinate(withNormalizedOffset: playbackWakePoint).tapForFailureEvidence()
+                // Same canvas point as the driver's control wake in IOSDriver.prepareControl.
+                let controlRevealPoint = CGVector(dx: 0.5, dy: 0.4)
+                driver.app.coordinate(withNormalizedOffset: controlRevealPoint).tapForFailureEvidence()
                 let wakeSeconds = ProcessInfo.processInfo.systemUptime - wakeStartedAt
                 refreshDurationsSeconds.append(wakeSeconds)
                 print("Rotation control refresh: name=\(name), seconds=\(wakeSeconds)")

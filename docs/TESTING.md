@@ -761,7 +761,8 @@ canvas tap in the steady state. If that check fails, the capture refreshes the b
 once and checks readiness once more, starting the second check after the wake
 returns with a freshly reset auto-hide timer. This does not guarantee that the
 timer cannot expire during a slow native interaction. Both checks and the refresh
-remain inside the existing stable-frame budget. Per-capture logs record explicit
+run inside an iteration the existing stable-frame loop admits; like the existing
+check, they are not cut off at its deadline. Per-capture logs record explicit
 refreshes and driver wakes from existing action receipts; rotation logs record
 elapsed time against the unchanged natural-switch bound.
 Every saved candidate still requires all three controls to be
