@@ -75,12 +75,32 @@ struct PlaybackHistoryLedger {
     }
 }
 
-/// Coordinates accepted transitions and retained visible history without owning planning or presentation policy.
+/// Coordinates retained history and cached surface projections; the engine owns presentation clocks and policy.
 @MainActor
 final class PlaybackSessionOwner {
     private var engine = PlaybackSessionEngine()
     private var historyLedger = PlaybackHistoryLedger()
     private var pendingHistoryCommits: [UUID: HistoryCommit] = [:]
+    private var presentationSurface: PlaybackSmartFillSurface?
+    private var presentationProtectionSnapshot = PlaybackProtectionSnapshot.empty
+    private var reframedScenes: [String: SurfaceProjection] = [:]
+
+    private struct SurfaceProjection {
+        let source: PlaybackScene
+        let scene: PlaybackScene
+
+        func matches(_ recipe: PlaybackScene) -> Bool {
+            source.playbackSessionId == recipe.playbackSessionId && source.sequence == recipe.sequence
+                && source.planningSurface == recipe.planningSurface
+                && source.smartFillReadback == recipe.smartFillReadback
+                && source.protectionSnapshot == recipe.protectionSnapshot
+                && source.photoSlots.count == recipe.photoSlots.count
+                && zip(source.photoSlots, recipe.photoSlots).allSatisfy {
+                    $0.id == $1.id && $0.asset.id == $1.asset.id && $0.planning == $1.planning
+                        && $0.motionSeedCropRect == $1.motionSeedCropRect
+                }
+        }
+    }
 
     private enum HistoryCommit {
         case moveCursor(Int)
@@ -111,8 +131,10 @@ final class PlaybackSessionOwner {
         let previousAssetID: String?
     }
 
-    var scenes: [PlaybackScene] { engine.scenes }
-    var currentScene: PlaybackScene? { engine.currentScene }
+    var scenes: [PlaybackScene] { engine.scenes.map(presentationScene) }
+    var sceneCount: Int { engine.scenes.count }
+    var retainedAssetIds: [String] { engine.scenes.flatMap(\.assetIds) }
+    var currentScene: PlaybackScene? { engine.currentScene.map(presentationScene) }
     var currentIndex: Int { engine.currentIndex }
     var targetIndex: Int { engine.pendingTransition?.targetIndex ?? engine.currentIndex }
     var targetTransitionToken: UUID { engine.targetTransitionToken }
@@ -141,13 +163,55 @@ final class PlaybackSessionOwner {
     }
 
     func scene(at index: Int) -> PlaybackScene? {
-        if engine.pendingTransition?.targetIndex == index { return engine.pendingTransition?.scene }
+        if engine.pendingTransition?.targetIndex == index {
+            return engine.pendingTransition.map { presentationScene($0.scene) }
+        }
         guard engine.scenes.indices.contains(index) else { return nil }
-        return engine.scenes[index]
+        return presentationScene(engine.scenes[index])
+    }
+
+    func assetIds(in range: ClosedRange<Int>) -> [String] {
+        let lower = max(0, range.lowerBound)
+        let upper = min(engine.scenes.count - 1, range.upperBound)
+        guard lower <= upper else { return [] }
+        return (lower...upper).flatMap { index in
+            if engine.pendingTransition?.targetIndex == index, let pending = engine.pendingTransition {
+                return pending.scene.assetIds
+            }
+            return engine.scenes[index].assetIds
+        }
     }
 
     func scene(for identity: PlaybackSessionEngine.ScenePresentationIdentity) -> PlaybackScene? {
-        engine.scene(for: identity)
+        engine.scene(for: identity).map(presentationScene)
+    }
+
+    func updatePresentationSurface(_ surface: PlaybackSmartFillSurface, protectionSnapshot: PlaybackProtectionSnapshot)
+    {
+        if presentationSurface?.pixelSize != surface.pixelSize
+            || presentationSurface?.surfaceKey != surface.surfaceKey
+        {
+            reframedScenes = [:]
+        }
+        presentationSurface = surface
+        presentationProtectionSnapshot = protectionSnapshot
+    }
+
+    private func presentationScene(_ scene: PlaybackScene) -> PlaybackScene {
+        guard let surface = presentationSurface, scene.smartFillReadback != nil else { return scene }
+        guard scene.planningSurface != surface else { return scene }
+        if let reframed = reframedScenes[scene.id], reframed.matches(scene) { return reframed.scene }
+        let reframed = PlaybackSmartFillPlanner.reframe(
+            scene, surface: surface, protectionSnapshot: presentationProtectionSnapshot)
+        let retainedIDs = Set(engine.scenes.map(\.id))
+            .union(
+                [
+                    engine.scenePresentationState.currentTarget?.identity.sceneID,
+                    engine.scenePresentationState.pendingTarget?.identity.sceneID
+                ].compactMap { $0 })
+        reframedScenes = reframedScenes.filter { retainedIDs.contains($0.key) }
+        reframedScenes[scene.id] = SurfaceProjection(source: scene, scene: reframed)
+        return reframed
     }
 
     func sceneRenderSnapshot(at time: TimeInterval) -> PlaybackSessionEngine.SceneRenderSnapshot {
@@ -303,6 +367,7 @@ final class PlaybackSessionOwner {
     }
 
     func resetPlayback(with assets: [Asset], initialScene: PlaybackScene?, reason: PlaybackSessionInvalidationReason) {
+        reframedScenes = [:]
         engine.reset(with: assets, initialScene: initialScene, reason: reason)
         historyLedger.reset(with: nil)
         pendingHistoryCommits = [:]
@@ -312,10 +377,14 @@ final class PlaybackSessionOwner {
     func rebuildInitialScene(
         with assets: [Asset], initialScene: PlaybackScene, reason: PlaybackSessionInvalidationReason
     ) {
+        reframedScenes = [:]
         engine.reset(with: assets, initialScene: initialScene, reason: reason)
     }
 
-    func invalidate(reason: PlaybackSessionInvalidationReason) { engine.invalidate(reason: reason) }
+    func invalidate(reason: PlaybackSessionInvalidationReason) {
+        reframedScenes = [:]
+        engine.invalidate(reason: reason)
+    }
 
     func updateFutureProtectionSnapshot(_ snapshot: PlaybackProtectionSnapshot) {
         engine.updateFutureProtectionSnapshot(snapshot)
@@ -323,6 +392,7 @@ final class PlaybackSessionOwner {
 
     @discardableResult
     func replaceCurrentDisplayContent(with scene: PlaybackScene) -> Bool {
+        reframedScenes[engine.currentScene?.id ?? ""] = nil
         guard let currentScene = engine.currentScene,
             engine.updateCurrentScene({ $0.replacingDisplayContent(with: scene) })
         else { return false }
@@ -333,6 +403,7 @@ final class PlaybackSessionOwner {
     func recordScenePublishTiming(
         sceneID: String, actionTimestamp: TimeInterval, scenePublishTimestamp: TimeInterval
     ) {
+        reframedScenes[sceneID] = nil
         engine.updateCurrentScene { scene in
             guard scene.id == sceneID, let readback = scene.smartFillReadback else { return scene }
             return scene.replacingSmartFillReadback(
@@ -362,6 +433,8 @@ final class PlaybackSessionOwner {
     }
 
     #if DEBUG
+    var retainedHistoryRecipesForTesting: [PlaybackScene] { historyLedger.entries.map(\.scene) }
+
     var automaticFadeMidpointForTesting: TimeInterval? {
         engine.scenePresentationState.automaticFadeMidpointForTesting
     }

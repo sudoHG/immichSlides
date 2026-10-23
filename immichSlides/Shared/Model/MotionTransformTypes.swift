@@ -260,6 +260,7 @@ struct MotionTransformInput: Equatable, Sendable {
     let focalSource: MotionFocalSource
     let isMotionEnabled: Bool
     let isReduceMotionEnabled: Bool
+    var seedCropRectInSource: MotionUnitRect? = nil
 }
 
 struct MotionTransform: Equatable, Sendable {

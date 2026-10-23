@@ -45,6 +45,7 @@ struct SmartFillMotionSlotFrameInput: Equatable, Sendable {
     let renderGeometry: MotionSlotRenderGeometry
     let cropRectInSource: MotionUnitRect
     let focalSource: MotionFocalSource
+    let seedCropRectInSource: MotionUnitRect?
 
     nonisolated init(
         motionContext: MotionRuntimeContext?,
@@ -52,7 +53,8 @@ struct SmartFillMotionSlotFrameInput: Equatable, Sendable {
         assetId: String,
         renderGeometry: MotionSlotRenderGeometry,
         cropRectInSource: MotionUnitRect,
-        focalSource: MotionFocalSource
+        focalSource: MotionFocalSource,
+        seedCropRectInSource: MotionUnitRect? = nil
     ) {
         self.motionContext = motionContext
         self.slotId = slotId
@@ -60,6 +62,15 @@ struct SmartFillMotionSlotFrameInput: Equatable, Sendable {
         self.renderGeometry = renderGeometry
         self.cropRectInSource = cropRectInSource
         self.focalSource = focalSource
+        self.seedCropRectInSource = seedCropRectInSource
+    }
+
+    @MainActor init(motionContext: MotionRuntimeContext?, slot: PhotoSlot, renderGeometry: MotionSlotRenderGeometry) {
+        self.init(
+            motionContext: motionContext, slotId: slot.id, assetId: slot.asset.id, renderGeometry: renderGeometry,
+            cropRectInSource: slot.planning.cropRect.motionUnitRect,
+            focalSource: slot.planning.focalSummary?.motionFocalSource ?? .cropCenterFallback,
+            seedCropRectInSource: slot.motionSeedCropRect.motionUnitRect)
     }
 }
 
@@ -100,7 +111,8 @@ enum SmartFillMotionSlotFrameResolver {
             cropRectInSource: input.cropRectInSource,
             focalSource: input.focalSource,
             isMotionEnabled: motionContext.isMotionEnabled,
-            isReduceMotionEnabled: motionContext.isReduceMotionEnabled
+            isReduceMotionEnabled: motionContext.isReduceMotionEnabled,
+            seedCropRectInSource: input.seedCropRectInSource
         )
         let transform = MotionTransformResolver.resolve(transformInput)
 

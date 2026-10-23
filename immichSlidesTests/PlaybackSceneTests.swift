@@ -15,6 +15,133 @@ import Testing
 struct PlaybackSceneTests {
     private let geometryComparisonTolerance: CGFloat = 0.000_001
 
+    enum ReflowProtectionCase: CaseIterable, Equatable, Sendable {
+        case protectedFace, impossibleCrop, hardOverlay
+    }
+
+    @Test(arguments: ReflowProtectionCase.allCases)
+    func `fixed asset reflow protects edge faces and reports impossible crops and hard overlays`(
+        protectionCase: ReflowProtectionCase
+    ) throws {
+        let protected =
+            protectionCase == .impossibleCrop
+            ? PlaybackPlanningRect.fullUnitRect
+            : PlaybackPlanningRect(x: 0.04, y: 0.02, width: 0.1, height: 0.1)
+        let faces =
+            [
+                FaceBox(
+                    id: nil, boundingBoxX1: protected.x * 4000, boundingBoxX2: (protected.x + protected.width) * 4000,
+                    boundingBoxY1: protected.y * 4000, boundingBoxY2: (protected.y + protected.height) * 4000,
+                    imageWidth: 4000, imageHeight: 4000, sourceType: "machine-learning")
+            ]
+        let slots = (0..<2).map { index in
+            // Keep the overlay defect inside the original retained crop; the other cases distinguish slot evidence.
+            let width = index == 1 && protectionCase != .hardOverlay ? 3000 : 4000
+            let sourceImage = PlaybackPlanningSourceImageSummary(
+                assetPixelSize: PlaybackPlanningPixelSize(width: width, height: 4000), exifPixelSize: nil,
+                orientation: "1")
+            return PhotoSlot(
+                id: "protected-slot-\(index)",
+                asset: makeAsset(
+                    id: "protected-asset-\(index)", width: width, height: 4000,
+                    people: [
+                        People(
+                            id: "person", name: "fixture", isHidden: false,
+                            isFavorite: false, faces: faces)
+                    ]),
+                planning: PlaybackPlanningSnapshot(
+                    version: "smart-fill-planner-v2", sourceImage: sourceImage,
+                    displayFrame: PlaybackPlanningRect(x: 0, y: Double(index) / 2, width: 1, height: 0.5),
+                    cropRect: .fullUnitRect, qualityDecision: .smartFillAccepted, faceProtection: .accepted,
+                    focalSummary: PlaybackPlanningFocalSummary(
+                        source: .face, rectInSource: protected),
+                    fallbackReasons: []))
+        }
+        let original = PlaybackScene(
+            id: "protected-scene", photoSlots: slots,
+            smartFillReadback: PlaybackSmartFillSceneReadback(
+                version: "smart-fill-scene-v2", sceneType: .double,
+                layoutPolicyId: "ipad-portrait-pr49-v1", layoutVariant: .verticalEqual, ratioPreset: "50/50",
+                slotRoles: [.primary, .secondary], fallbackReason: nil, reasonCodes: []
+            )
+            .recordingQADebugSummary(
+                "currentAssetDisposition=\(PlaybackSmartFillCurrentAssetDisposition.secondarySlot.rawValue);currentAssetAbsentReason=none;currentAssetCropRetention=1.000"
+            )
+            .recordingPublishTiming(actionTimestamp: 10, scenePublishTimestamp: 10.5))
+        let surface = PlaybackSmartFillSurface(
+            pixelSize: PlaybackPlanningPixelSize(width: 6000, height: 4000),
+            profile: .iPad, orientation: .landscape)
+
+        let protection = PlaybackProtectionSnapshot(
+            regions: protectionCase == .hardOverlay
+                ? [
+                    try #require(
+                        PlaybackProtectionRegion.systemTopObstruction(
+                            rect: PlaybackProtectionRect(x: 0, y: 0, width: 1, height: 0.15),
+                            activeConditionSummary: "orientation=landscape"))
+                ] : [])
+        let projected = PlaybackSmartFillPlanner.reframe(original, surface: surface, protectionSnapshot: protection)
+
+        #expect(projected.assetIds == original.assetIds)
+        #expect(projected.smartFillReadback?.sceneType == .double)
+        #expect(projected.smartFillReadback?.fallbackReason == nil)
+        let readback = try #require(projected.smartFillReadback)
+        #expect(readback.actionTimestamp == 10)
+        #expect(readback.scenePublishTimestamp == 10.5)
+        #expect(readback.qaDebugSummary.contains("actionToSceneLatencyMs=500.000"))
+        #expect(readback.qaDebugSummary.contains("actionTimestamp=10.000"))
+        #expect(readback.qaDebugSummary.contains("scenePublishTimestamp=10.500"))
+        #expect(readback.qaDebugSummary.contains("currentAssetDisposition=secondary-slot"))
+        #expect(readback.qaDebugSummary.contains("currentAssetAbsentReason=none"))
+        let currentSlot = try #require(projected.photoSlots.last)
+        let retention = currentSlot.planning.cropRect.width * currentSlot.planning.cropRect.height
+        #expect(readback.qaDebugSummary.contains("currentAssetCropRetention=\(String(format: "%.3f", retention))"))
+        #expect(
+            readback.qaDebugSummary.contains(
+                "currentAssetFaceProtectionPassed=\(currentSlot.planning.faceProtection == .accepted)"))
+        #expect(!currentSlot.planning.qaDebugSummary.isEmpty)
+        #expect(
+            readback.qaDebugSummary.contains(
+                "currentAssetVisibleQualityClass=\(protectionCase == .protectedFace ? "acceptable" : "fail")"))
+        #expect(readback.reasonCodes.contains("surface:\(surface.surfaceKey)"))
+        #expect(readback.reasonCodes.contains("policy:\(readback.layoutPolicyId)"))
+        #expect(readback.reasonCodes.contains("layout:\(readback.layoutVariant.rawValue)"))
+        if protectionCase != .protectedFace {
+            #expect(
+                projected.photoSlots.map { $0.planning.displayFrame }
+                    == original.photoSlots.map { $0.planning.displayFrame })
+            if protectionCase == .impossibleCrop {
+                #expect(projected.photoSlots.allSatisfy { $0.planning.faceProtection == .rejected })
+            } else {
+                #expect(readback.qaDebugSummary.contains("protectionStatus=rejected"))
+                #expect(
+                    readback.reasonCodes.contains(
+                        "reject:\(PlaybackSmartFillPlannerRejectReason.protectionOverlap.rawValue)"))
+            }
+            #expect(
+                projected.smartFillReadback?.qaDebugSummary.contains("surfaceReflow=retained-layout-unrepresentable")
+                    == true)
+        } else {
+            #expect(
+                projected.photoSlots.map { $0.planning.displayFrame }
+                    != original.photoSlots.map { $0.planning.displayFrame })
+            for slot in projected.photoSlots {
+                #expect(slot.planning.cropRect.contains(protected, margin: 0))
+                #expect(slot.planning.faceProtection == .accepted)
+            }
+            #expect(projected.smartFillReadback?.qaDebugSummary.contains("surfaceReflow=accepted") == true)
+        }
+        for slot in projected.photoSlots {
+            let pixels = try #require(slot.planning.sourceImage.assetPixelSize)
+            let sourceAspect = Double(pixels.width) / Double(pixels.height)
+            let frame = slot.planning.displayFrame
+            let crop = slot.planning.cropRect
+            #expect(
+                abs(sourceAspect * crop.width / crop.height - surface.aspectRatio * frame.width / frame.height)
+                    < geometryComparisonTolerance)
+        }
+    }
+
     @Test
     func `single photo scene generates a stable scene id and slot id`() {
         let asset = makeAsset(id: "asset-a")
@@ -397,7 +524,8 @@ struct PlaybackSceneTests {
         width: Int? = nil,
         height: Int? = nil,
         thumbhash: String? = nil,
-        exifInfo: ExifInfo? = nil
+        exifInfo: ExifInfo? = nil,
+        people: [People]? = nil
     ) -> Asset {
         Asset(
             id: id,
@@ -406,7 +534,7 @@ struct PlaybackSceneTests {
             isTrashed: false,
             isArchived: false,
             exifInfo: exifInfo,
-            people: nil,
+            people: people,
             tags: nil,
             livePhotoVideoID: nil,
             width: width,

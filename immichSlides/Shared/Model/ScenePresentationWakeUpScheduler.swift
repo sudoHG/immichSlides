@@ -61,6 +61,8 @@ final class ScenePresentationWakeUpScheduler {
     }
 
     #if DEBUG
+    var scheduledDeadlineForTesting: TimeInterval? { wakeUpKey?.deadline }
+
     func scheduleWithoutSleepingForTesting(generation: UUID, deadline: TimeInterval) {
         _ = replaceKey(generation: generation, deadline: deadline)
     }

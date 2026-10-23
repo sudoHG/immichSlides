@@ -6,7 +6,7 @@ import OSLog
 
 extension SlideShowViewModel {
     func requestPreviousScene() {
-        guard !playbackSession.scenes.isEmpty else { return }
+        guard playbackSession.sceneCount > 0 else { return }
         let actionTimestamp = playbackManifestTimestamp()
         candidateProgression.cancelPendingSelection()
         switch playbackSession.requestPrevious(at: scenePresentationTimestamp()) {

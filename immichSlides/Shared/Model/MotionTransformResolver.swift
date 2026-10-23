@@ -144,6 +144,7 @@ enum MotionTransformResolver {
 
     private nonisolated static func stableSeed(_ input: MotionTransformInput) -> MotionStableSeed {
         let identity = input.progressFrame.identity
+        let seedCrop = input.seedCropRectInSource ?? input.cropRectInSource
         let focalRect = input.focalSource.rectInSource
         let focalKey: String
         let focalKeySource: String
@@ -164,7 +165,7 @@ enum MotionTransformResolver {
             identity.sceneId,
             identity.slotId,
             identity.assetId,
-            "\(input.cropRectInSource.x)|\(input.cropRectInSource.y)|\(input.cropRectInSource.width)|\(input.cropRectInSource.height)",
+            "\(seedCrop.x)|\(seedCrop.y)|\(seedCrop.width)|\(seedCrop.height)",
             focalKey
         ].joined(separator: "|")
         var hash: UInt64 = fnvOffsetBasis
@@ -181,7 +182,7 @@ enum MotionTransformResolver {
                 "sceneId=\(diagnosticIdentityToken(identity.sceneId))",
                 "slotId=\(diagnosticIdentityToken(identity.slotId))",
                 "assetId=\(diagnosticIdentityToken(identity.assetId))",
-                "cropRect=\(input.cropRectInSource.x),\(input.cropRectInSource.y),\(input.cropRectInSource.width),\(input.cropRectInSource.height)",
+                "cropRect=\(seedCrop.x),\(seedCrop.y),\(seedCrop.width),\(seedCrop.height)",
                 "focalKey=\(focalKey)"
             ].joined(separator: "|")
         )

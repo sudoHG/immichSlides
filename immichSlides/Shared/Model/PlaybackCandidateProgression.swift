@@ -340,7 +340,7 @@ extension PlaybackCandidateProgression {
         let request = completion.request
         let result = completion.result
         guard isPreparedResultFresh(result, request: request, in: input) else { return .stale }
-        guard let scene = scene(from: result, assets: input.assets) else { return .invalid }
+        guard let scene = scene(from: result, assets: input.assets, surface: request.surface) else { return .invalid }
         guard let fingerprint = preparedFingerprint(in: input) else { return .stale }
         return .proposal(
             PreparedProposal(
@@ -403,7 +403,7 @@ extension PlaybackCandidateProgression {
         _ completion: PreparedCompletion, in input: PreparationInput
     ) -> PlaybackScene? {
         guard isLookaheadResultFresh(completion.result, request: completion.request, in: input),
-            let scene = scene(from: completion.result, assets: input.assets)
+            let scene = scene(from: completion.result, assets: input.assets, surface: completion.request.surface)
         else { return nil }
         lookaheadProposal = completion
         return scene
@@ -464,7 +464,9 @@ extension PlaybackCandidateProgression {
         return true
     }
 
-    private func scene(from result: SmartFillPreparedPlanResult, assets: [Asset]) -> PlaybackScene? {
+    private func scene(from result: SmartFillPreparedPlanResult, assets: [Asset], surface: PlaybackSmartFillSurface)
+        -> PlaybackScene?
+    {
         guard result.slots.count == result.selectedAssetIds.count else { return nil }
 
         var assetsById: [String: Asset] = [:]
@@ -490,7 +492,8 @@ extension PlaybackCandidateProgression {
         let scene = PlaybackScene(
             id: "scene-smartfill-\(photoSlots.first?.asset.id ?? "empty")",
             photoSlots: photoSlots,
-            smartFillReadback: result.readback
+            smartFillReadback: result.readback,
+            planningSurface: surface
         )
         return scene
     }
@@ -527,7 +530,7 @@ extension PlaybackCandidateProgression {
             windowCount: input.candidateWindowCount,
             displayedAssetIdsForExclusion: displayedAssetIds
         ).map { asset in
-            smartFillRawAssetSnapshot(for: asset)
+            SmartFillPlanningRawAssetSnapshot(asset: asset)
         }
         guard !rawSnapshots.isEmpty else { return nil }
         let policy = PlaybackSmartFillLayoutPolicy.policy(for: planningSurface)
@@ -545,31 +548,6 @@ extension PlaybackCandidateProgression {
             sceneOrdinal: sceneOrdinal ?? startIndex,
             preparedFingerprint: fingerprint,
             rawAssetSnapshots: rawSnapshots
-        )
-    }
-
-    private func smartFillRawAssetSnapshot(for asset: Asset) -> SmartFillPlanningRawAssetSnapshot {
-        SmartFillPlanningRawAssetSnapshot(
-            assetId: asset.id,
-            width: asset.width,
-            height: asset.height,
-            exifImageWidth: asset.exifInfo?.exifImageWidth,
-            exifImageHeight: asset.exifInfo?.exifImageHeight,
-            orientation: asset.exifInfo?.orientation,
-            thumbhash: asset.thumbhash,
-            rawFaces: (asset.people ?? []).flatMap { person in
-                (person.faces ?? []).map { face in
-                    SmartFillPlanningRawFaceSnapshot(
-                        boundingBoxX1: face.boundingBoxX1,
-                        boundingBoxX2: face.boundingBoxX2,
-                        boundingBoxY1: face.boundingBoxY1,
-                        boundingBoxY2: face.boundingBoxY2,
-                        imageWidth: face.imageWidth,
-                        imageHeight: face.imageHeight,
-                        sourceType: face.sourceType
-                    )
-                }
-            }
         )
     }
 
