@@ -76,7 +76,8 @@ def render_app_hang_hint(stack):
         # Older projections have no call-path relationship; show one frame without inventing a chain.
         selected = ([frame for frame in frames if frame["module"] == "immichSlides"] or frames)[:1]
     hint = " ← ".join("`" + frame["symbol"] + "`" for frame in selected) or stack["status"]
-    return f"app-hang-stack: {hint} ({stack['sample_count']} samples)"
+    count = f"{selected[0]['samples']}/{stack['sample_count']}" if selected else str(stack["sample_count"])
+    return f"app-hang-stack: {hint} ({count} samples)"
 
 
 def exact_fields(value, names, where):

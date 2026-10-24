@@ -4157,14 +4157,26 @@ raise SystemExit(65)
         system = resources.reduce_main_thread_sample(raw.replace("immichSlides.debug.dylib", "unknown"))
         self.assertEqual("Thread_work", system["frames"][system["hint"][0]]["symbol"])
 
+    def test_hint_prefers_a_body_only_when_it_is_hot_relative_to_all_app_frames(self):
+        import strict_e2e_resource_diagnostics as resources
+        for body_samples, expected in ((2, "SettingsViewModel.reload"), (67, "SettingsViewModel.reload"),
+                                       (68, "SettingsViewIOS.body.getter")):
+            raw = ("    89 Thread_42 DispatchQueue_1: com.apple.main-thread (serial)\n"
+                   "      85 SettingsViewModel.reload()  (in immichSlides.debug.dylib) + 1\n"
+                   "        75 SettingsViewModel.resolve()  (in immichSlides.debug.dylib) + 1\n"
+                   f"          {body_samples} closure #1 in SettingsViewIOS.body.getter  (in immichSlides.debug.dylib) + 1\n")
+            with self.subTest(body_samples=body_samples):
+                stack = resources.reduce_main_thread_sample(raw)
+                self.assertEqual(expected, stack["frames"][stack["hint"][0]]["symbol"])
+
     def test_tracer_binds_stack_hint_to_case_identity_without_changing_outcome(self):
         from test_ci_summary import bounded_diagnostics_receipt
         ledger = bounded_diagnostics_receipt(resources=True)
         resource = ledger["case_resources"][0]
         resource.update(first_failure_elapsed_seconds=None, failure_samples=[])
-        resource["app_hang_stack"] = {"status": "captured", "sample_count": 20, "hint": [0, 1, 2],
-            "frames": [{"symbol": "SettingsViewIOS.body", "module": "immichSlides", "samples": 20},
-                       {"symbol": "NavigationSplitView", "module": "SwiftUI", "samples": 20},
+        resource["app_hang_stack"] = {"status": "captured", "sample_count": 20, "hint": [1, 0, 2],
+            "frames": [{"symbol": "NavigationSplitView", "module": "SwiftUI", "samples": 20},
+                       {"symbol": "SettingsViewIOS.body", "module": "immichSlides", "samples": 4},
                        {"symbol": "_UIHostingView.layoutSubviews", "module": "UIKitCore", "samples": 20}]}
         with tempfile.TemporaryDirectory() as raw:
             code, records, _, summary = self._produce_validator_records(Path(raw), None,
@@ -4175,7 +4187,7 @@ raise SystemExit(65)
             hints = [line for line in (records / "summary.md").read_text().splitlines() if "app-hang-stack:" in line]
             self.assertEqual(1, len(hints))
             for detail in ("smoke", "device=iphone", "fixture=b", "configuration=Debug",
-                    "`SettingsViewIOS.body` ← `NavigationSplitView` ← `_UIHostingView.layoutSubviews`"):
+                    "`SettingsViewIOS.body` ← `NavigationSplitView` ← `_UIHostingView.layoutSubviews` (4/20 samples)"):
                 self.assertIn(detail, hints[0])
 
     def test_sampler_uses_fast_process_ticks_only_during_an_eligible_high_cpu_span(self):

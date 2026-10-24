@@ -257,7 +257,11 @@ Process snapshots normally run at most once per ten seconds. After a hosted App
 reading of at least 85%, they use two-second ticks only while this case and job
 still have a capture allowance and enough budget to reserve a capture. A low or
 missing App reading, a capture attempt, or exhausted allowance restores ten-second
-process ticks; independent idle/load ticks do not change. Process snapshots share a separate
+process ticks; independent idle/load ticks do not change. Nominal delay from a hang
+starting to capture starting can approach 18 seconds (up to ten seconds before the
+first high reading, then eight seconds to confirm it); host descheduling can delay
+it further. Shorter hangs, including those within eight-second control waits, may
+end before a capture starts. Process snapshots share a separate
 180-second active-wall allowance shared across
 the job ledger. A private `process_sampler_wall_seconds` balance carries only
 completed process-snapshot and App stack capture cost across serial case processes; host reads remain
@@ -330,13 +334,16 @@ is mapped to `immichSlides`; symbol filtering is unchanged. PID executable name
 and assigned-device membership are checked again immediately before `sample`.
 App frames and the selected observed call path take priority over outer framework
 wrappers within the 30-frame / 4 KiB cap; remaining frames rank by inclusive sample
-count and depth (recursive occurrences can add counts). A view body from the App
-is preferred for the hint, otherwise another App frame or the deepest frame with
-at least 80% of the highest count. Unrecognized symbols are omitted.
+count and depth (recursive occurrences can add counts). The hint prefers the deepest
+App view body only when its count is at least 80% of the highest App-frame count;
+otherwise it uses the hottest App frame, breaking ties by depth. Without App frames,
+it uses the deepest public frame with at least 80% of the highest public-frame count.
+Closure labels are attributed to their enclosing function, so a body name may
+represent its content closure. Unrecognized symbols are omitted.
 The enclosing case's resource sequence links the JSON to its identity using the
 existing case manifest. The tracer retains that validated case/receipt join in
 `strict_case_evidence` for stack-bearing cases independently of yellow eligibility;
-Markdown adds `app-hang-stack: ... (N samples)` in that case's table row alongside
+Markdown adds `app-hang-stack: ... (anchor/total samples)` in that case's table row alongside
 its complete dimensions. Symbols use code formatting and arrows point toward the
 callee on the left. Older stack projections without `hint` show one frame without
 inventing a path. An invalid producer stack is dropped independently, preserving

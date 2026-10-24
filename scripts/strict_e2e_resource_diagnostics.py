@@ -101,13 +101,17 @@ def reduce_main_thread_sample(raw):
             depths[key] = max(depth, depths.get(key, 0))
     public = [node for node in nodes if node["key"] is not None]
     app = [node for node in public if node["key"][1] == "immichSlides"]
-    bodies = [node for node in app if re.search(r"\.body(?:\.|$)", node["key"][0])]
-    candidates = bodies or app or public
+    candidates = app or public
     path = []
     if candidates:
-        # Prefer a deep frame on a heavily sampled branch over invariant entry-point wrappers.
         heavy = max(node["count"] for node in candidates) * 0.8
-        anchor = max((node for node in candidates if node["count"] >= heavy), key=lambda node: node["depth"])
+        bodies = [node for node in app if node["count"] >= heavy and re.search(r"\.body(?:\.|$)", node["key"][0])]
+        if bodies:
+            anchor = max(bodies, key=lambda node: node["depth"])
+        elif app:
+            anchor = max(app, key=lambda node: (node["count"], node["depth"]))
+        else:
+            anchor = max((node for node in public if node["count"] >= heavy), key=lambda node: node["depth"])
         while anchor is not None:
             if anchor["key"] is not None and anchor["key"] not in path:
                 path.append(anchor["key"])

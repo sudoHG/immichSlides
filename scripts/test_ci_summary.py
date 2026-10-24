@@ -985,13 +985,13 @@ class SummaryContractTests(unittest.TestCase):
         old = copy.deepcopy(summary)
         case = summary["bounded_diagnostics"]["case_resources"][0]
         case["app_hang_stack"] = {"status": "captured", "sample_count": 12,
-            "frames": [{"symbol": "SettingsViewIOS.body", "module": "immichSlides", "samples": 12}]}
+            "frames": [{"symbol": "SettingsViewIOS.body", "module": "immichSlides", "samples": 4}]}
         for night in (old, summary):
             self.assertEqual(night, ci_summary.parse_summary(json.dumps(night)))
             scan_diagnostic_json(json.dumps(night).encode())
             self.assertEqual(old["status"], night["status"])
         self.assertNotIn("app-hang-stack", ci_summary.render_markdown(old))
-        self.assertIn("app-hang-stack: `SettingsViewIOS.body` (12 samples)", ci_summary.render_markdown(summary))
+        self.assertIn("app-hang-stack: `SettingsViewIOS.body` (4/12 samples)", ci_summary.render_markdown(summary))
         stack = case["app_hang_stack"]
         for path, defect in ((("status",), "unknown"), (("sample_count",), True), (("frames",), [{}]),
                              (("frames", 0, "symbol"), str(Path("/", "Users", "private-user", "secret"))),
