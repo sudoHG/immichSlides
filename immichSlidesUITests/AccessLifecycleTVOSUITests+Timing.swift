@@ -1,6 +1,126 @@
 import XCTest
+import ImageIO
 
 #if os(tvOS)
+// These metrics are derived offline from one decoded PNG, independently of public-photo identity.
+private enum TVOSContinuePhotoCapture {
+    static let requiredMark = "A1"
+    static let expectedWidthPixels = 3840
+    static let expectedHeightPixels = 2160
+    static let photoRightFraction = 0.72
+    static let photoBottomFraction = 0.78
+    static let highlightPercentile = 0.95
+    static let whiteChannelMinimum = 254
+    static let plateauHighlightLuma = 255
+    static let minimumDimHighlightDrop = 3
+    static let proofHighlightRatio = 0.95
+    static let minimumMeanDrop = 0.030
+    static let minimumWhiteCoreFraction = 0.06
+    static let maximumAnchorToProofRequestSeconds = TestWait.seconds(.product(1))
+
+    static func policy(isSinglePhoto: Bool) -> AccessLifecycleContract.TVOSFadeRescuePolicy {
+        .init(
+            requiredMark: requiredMark, isSinglePhotoModeVerified: isSinglePhoto,
+            plateauHighlightLuma: plateauHighlightLuma, minimumDimHighlightDrop: minimumDimHighlightDrop,
+            proofHighlightRatio: proofHighlightRatio, minimumMeanDrop: minimumMeanDrop,
+            minimumWhiteCoreFraction: minimumWhiteCoreFraction,
+            maximumAnchorToProofRequestSeconds: maximumAnchorToProofRequestSeconds,
+            maximumAnchorToProofReturnSeconds: AccessLifecycleContract.TVOSPhotoMotionBounds.maximumSpanSeconds)
+    }
+
+    static func pixels(png: Data) -> AccessLifecycleContract.TVOSPhotoPixels? {
+        guard let source = CGImageSourceCreateWithData(png as CFData, nil),
+            let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
+            image.width == expectedWidthPixels, image.height == expectedHeightPixels,
+            let full = bitmap(image: image, width: image.width, height: image.height, isFlipped: false),
+            let mean = identityMean(image: image)
+        else { return nil }
+        let width = Int(Double(image.width) * photoRightFraction)
+        let height = Int(Double(image.height) * photoBottomFraction)
+        let stride = width + 1
+        var integral = [Int32](repeating: 0, count: stride * (height + 1))
+        var histogram = [Int](repeating: 0, count: 256)
+        for row in 0..<height {
+            var whiteCount: Int32 = 0
+            for column in 0..<width {
+                let offset = (row * image.width + column) * 4
+                let red = full[offset]
+                let green = full[offset + 1]
+                let blue = full[offset + 2]
+                let luma = Int((0.299 * Double(red) + 0.587 * Double(green) + 0.114 * Double(blue)).rounded())
+                histogram[luma] += 1
+                if Int(min(red, green, blue)) >= whiteChannelMinimum { whiteCount += 1 }
+                integral[(row + 1) * stride + column + 1] = integral[row * stride + column + 1] + whiteCount
+            }
+        }
+        let pixelCount = width * height
+        let target = Int(ceil(Double(pixelCount) * highlightPercentile))
+        var accumulated = 0
+        let highlight = histogram.indices.first { index in
+            accumulated += histogram[index]
+            return accumulated >= target
+        }
+        let erosion = AccessLifecycleContract.TVOSPhotoMotionBounds.whiteCoreErosionFractionPerAxis
+        let radiusX = Int(ceil(Double(image.width) * erosion))
+        let radiusY = Int(ceil(Double(image.height) * erosion))
+        let kernelPixelCount = Int32((2 * radiusX + 1) * (2 * radiusY + 1))
+        var corePixelCount = 0
+        for row in radiusY..<(height - radiusY) {
+            for column in radiusX..<(width - radiusX) {
+                let top = (row - radiusY) * stride
+                let bottom = (row + radiusY + 1) * stride
+                let left = column - radiusX
+                let right = column + radiusX + 1
+                let covered =
+                    integral[bottom + right] - integral[top + right]
+                    - integral[bottom + left] + integral[top + left]
+                if covered == kernelPixelCount { corePixelCount += 1 }
+            }
+        }
+        return .init(
+            highlightLuma: highlight, whiteCoreFraction: Double(corePixelCount) / Double(pixelCount),
+            decodedMeanLuma: mean)
+    }
+
+    private static func bitmap(image: CGImage, width: Int, height: Int, isFlipped: Bool) -> [UInt8]? {
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        let drawn = bytes.withUnsafeMutableBytes { buffer -> Bool in
+            guard
+                let context = CGContext(
+                    data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8,
+                    bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+            else { return false }
+            context.interpolationQuality = .low
+            if isFlipped {
+                context.translateBy(x: 0, y: CGFloat(height))
+                context.scaleBy(x: 1, y: -1)
+            }
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        return drawn ? bytes : nil
+    }
+
+    // Match the existing reader's sampling exactly, using the same CGImage as the photo metrics.
+    private static func identityMean(image: CGImage) -> Double? {
+        let width = 96
+        let height = max(8, Int((Double(width) * Double(image.height) / Double(image.width)).rounded(.down)))
+        guard let bytes = bitmap(image: image, width: width, height: height, isFlipped: true) else { return nil }
+        var sum = 0.0
+        for row in 0..<height where row <= Int(Double(height) * 0.86) {
+            for column in 0..<width {
+                if column > Int(Double(width) * 0.72) && row < Int(Double(height) * 0.22) { continue }
+                let offset = (row * width + column) * 4
+                sum +=
+                    (0.299 * Double(bytes[offset]) + 0.587 * Double(bytes[offset + 1])
+                        + 0.114 * Double(bytes[offset + 2])) / 255
+            }
+        }
+        return sum / Double(max(1, Int(Double(width * height) * 0.86 * 0.85)))
+    }
+}
+
 // Pixel decoding stays off the capture cadence; only the bounded observation state shares this lock.
 private final class TVOSControlBarProbe: @unchecked Sendable {
     private let queue = DispatchQueue(label: "immichSlides.tests.controlBarProbe")
@@ -234,7 +354,7 @@ extension AccessLifecycleTVOSUITests {
     @MainActor
     func configureTVOSTimingPlaybackSettings(
         app: XCUIApplication
-    ) throws -> (actual: Int, shouldRequireIntervalReview: Bool) {
+    ) throws -> (actual: Int, shouldRequireIntervalReview: Bool, isSinglePhotoModeVerified: Bool) {
         try enterPlaybackSettings(app: app)
         selectPlaybackToggle(
             app: app,
@@ -255,7 +375,7 @@ extension AccessLifecycleTVOSUITests {
             stepsToLink: 2
         )
         record("settings.save.interval")
-        selectPlaybackToggle(
+        let isSinglePhotoModeVerified = selectPlaybackToggle(
             app: app,
             link: "settings.playback.displayMode.link",
             option: "settings.playback.displayMode.singlePhoto.button",
@@ -265,7 +385,7 @@ extension AccessLifecycleTVOSUITests {
         FirstFailureRemote.press(.menu)
         waitForFocusVisualSettle()
         returnToSlideShow(app: app)
-        return resolved
+        return (resolved.actual, resolved.shouldRequireIntervalReview, isSinglePhotoModeVerified)
     }
 
     @MainActor
@@ -345,7 +465,8 @@ extension AccessLifecycleTVOSUITests {
         app: XCUIApplication,
         playPauseButton: XCUIElement,
         nextButton: XCUIElement,
-        intervalSeconds: Int
+        intervalSeconds: Int,
+        isSinglePhotoModeVerified: Bool
     ) throws -> [[String: Any]] {
         let interval = TimeInterval(intervalSeconds)
         let midpointSetupAt = Date()
@@ -477,7 +598,8 @@ extension AccessLifecycleTVOSUITests {
             continueAt: continueAt,
             continueMark: afterNext.mark,
             interval: interval,
-            controlBarReference: controlBarReference
+            controlBarReference: controlBarReference,
+            isSinglePhotoModeVerified: isSinglePhotoModeVerified
         )
         return [
             [
@@ -496,7 +618,10 @@ extension AccessLifecycleTVOSUITests {
                 "name": "first_transition_start", "status": "detected", "official_signed": true,
                 "elapsed": continueWatch.start.requestElapsed, "request_elapsed": continueWatch.start.requestElapsed,
                 "return_elapsed": continueWatch.start.returnElapsed, "mark": continueWatch.start.mark,
-                "identity_status": continueWatch.start.mark == afterNext.mark ? "DIMMING" : continueWatch.start.status
+                "identity_status": continueWatch.start.mark == afterNext.mark ? "DIMMING" : continueWatch.start.status,
+                "rescue_interval": continueWatch.rescue.map {
+                    ["lower": $0.anchor.requestElapsed, "upper": $0.proof.returnElapsed]
+                } as Any? ?? NSNull()
             ],
             [
                 "name": "new_image_confirmation", "elapsed": continueWatch.advanced.requestElapsed,
@@ -566,6 +691,7 @@ extension AccessLifecycleTVOSUITests {
         let start: AccessLifecycleContract.ContinueWatchSample
         let advanced: AccessLifecycleContract.ContinueWatchSample
         let samples: [AccessLifecycleContract.ContinueWatchSample]
+        let rescue: AccessLifecycleContract.TVOSFadeRescue?
     }
 
     // T±2 judges the shared transition onset; stable new-photo evidence may follow that window.
@@ -575,7 +701,8 @@ extension AccessLifecycleTVOSUITests {
         continueAt: Date,
         continueMark: String,
         interval: TimeInterval,
-        controlBarReference: StrictE2EPhotoIdentity.ControlBarReference
+        controlBarReference: StrictE2EPhotoIdentity.ControlBarReference,
+        isSinglePhotoModeVerified: Bool
     ) throws -> TVOSContinueWatchResult {
         let captureUntil = AccessLifecycleContract.continueWatchDenseCaptureDeadline(intervalSeconds: interval)
         // 0.224 s measured press gap + 0.3 s animation must finish before T-0.25, the earliest fade
@@ -590,24 +717,40 @@ extension AccessLifecycleTVOSUITests {
         var earlyMark = ""
         var earlyElapsed: TimeInterval = TestWait.seconds(.product(0))
         var baselineLuma: Double?
+        var photoPixels: [AccessLifecycleContract.TVOSPhotoPixels?] = []
+        var rescue: AccessLifecycleContract.TVOSFadeRescue?
         defer {
             do {
                 try StrictE2EVisualEvidence.writeRequiredJSON(
                     [
                         "baseline_luma": baselineLuma.map { $0 as Any } ?? NSNull(),
+                        "single_photo_mode_verified": isSinglePhotoModeVerified,
+                        "rescue_interval": rescue.map {
+                            ["lower": $0.anchor.requestElapsed, "upper": $0.proof.returnElapsed]
+                        } as Any? ?? NSNull(),
                         "control_bar_wake": controlBarWake.map {
                             ["issued": $0.issued, "returned": $0.returned] as Any
                         } ?? NSNull(),
                         "control_bar_wake_skipped": isControlBarWakeSkipped,
                         "control_bar_wake_deadline": wakeDeadline,
-                        "frames": capturedFrames.map { frame in
-                            ["request": frame.request, "captured": frame.captured, "returned": frame.returned]
+                        "frames": capturedFrames.enumerated().map { index, frame in
+                            let pixels = index < photoPixels.count ? photoPixels[index] : nil
+                            return [
+                                "request": frame.request, "captured": frame.captured, "returned": frame.returned,
+                                "photo_q95": pixels?.highlightLuma as Any? ?? NSNull(),
+                                "photo_white_core_fraction": pixels?.whiteCoreFraction as Any? ?? NSNull(),
+                                "photo_decoded_mean_luma": pixels?.decodedMeanLuma as Any? ?? NSNull()
+                            ] as [String: Any]
                         },
                         "samples": samples.map { sample in
                             [
                                 "request": sample.requestElapsed, "returned": sample.returnElapsed,
                                 "status": sample.status, "mark": sample.mark, "luma": sample.meanLuma,
-                                "controls": sample.isControlBarVisible
+                                "controls": sample.isControlBarVisible,
+                                "photo_q95": sample.photoPixels?.highlightLuma as Any? ?? NSNull(),
+                                "photo_white_core_fraction": sample.photoPixels?.whiteCoreFraction as Any? ?? NSNull(),
+                                "photo_decoded_mean_luma": sample.photoPixels?.decodedMeanLuma as Any? ?? NSNull(),
+                                "identity_notes": sample.identityNotes
                             ] as [String: Any]
                         }
                     ], name: "continue-watch-diagnostic.json")
@@ -645,13 +788,17 @@ extension AccessLifecycleTVOSUITests {
                 }
             }
             for frame in capturedFrames {
+                photoPixels.append(autoreleasepool { TVOSContinuePhotoCapture.pixels(png: frame.png) })
+            }
+            for (index, frame) in capturedFrames.enumerated() {
                 let identity = StrictE2EPhotoIdentity.captureIdentity(png: frame.png)
                 let mark = contractTVOSMark(identity)
                 let sample = AccessLifecycleContract.ContinueWatchSample(
                     requestElapsed: frame.request, returnElapsed: frame.returned,
                     classifiedElapsed: Date().timeIntervalSince(continueAt), status: identity.status.rawValue,
                     mark: mark, meanLuma: identity.meanLuma,
-                    isControlBarVisible: try XCTUnwrap(controlBarReference.isVisible(png: frame.png))
+                    isControlBarVisible: try XCTUnwrap(controlBarReference.isVisible(png: frame.png)),
+                    photoPixels: photoPixels[index], identityNotes: identity.notes
                 )
                 samples.append(sample)
                 if earlyMark.isEmpty {
@@ -681,8 +828,20 @@ extension AccessLifecycleTVOSUITests {
                 )
             }
             let evidence = try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
-                continueMark: continueMark, baselineLuma: baselineLuma, samples: samples, intervalSeconds: interval
+                continueMark: continueMark, baselineLuma: baselineLuma, samples: samples, intervalSeconds: interval,
+                rescuePolicy: TVOSContinuePhotoCapture.policy(isSinglePhoto: isSinglePhotoModeVerified)
             )
+            rescue = evidence.rescue
+            if let rescue {
+                for (sample, name) in [
+                    (rescue.anchor, "continue-rescue-anchor"), (rescue.dim, "continue-rescue-dim"),
+                    (rescue.proof, "continue-rescue-proof")
+                ] {
+                    if let frame = capturedFrames.first(where: { $0.request == sample.requestElapsed }) {
+                        try persistTVOSCapturedPNG(frame.png, name: name)
+                    }
+                }
+            }
             for (sample, name) in [(evidence.start, "first-transition-start"), (evidence.stable, "after-auto-advance")]
             {
                 if let frame = capturedFrames.first(where: { $0.request == sample.requestElapsed }) {
@@ -691,7 +850,7 @@ extension AccessLifecycleTVOSUITests {
             }
             return TVOSContinueWatchResult(
                 earlyMark: earlyMark, earlyElapsed: earlyElapsed,
-                start: evidence.start, advanced: evidence.stable, samples: samples
+                start: evidence.start, advanced: evidence.stable, samples: samples, rescue: rescue
             )
         } catch {
             if let lastFrame = capturedFrames.last {

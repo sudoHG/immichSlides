@@ -232,12 +232,13 @@ extension AccessLifecycleTVOSUITests {
     }
 
     @MainActor
+    @discardableResult
     func selectPlaybackToggle(
         app: XCUIApplication,
         link: String,
         option: String,
         stepsToLink: Int
-    ) {
+    ) -> Bool {
         moveFocusToSettingsControl(app: app, identifier: link, maxSteps: max(stepsToLink, 6))
         FirstFailureRemote.press(.select)
         let optionButton = app.buttons[option]
@@ -249,9 +250,11 @@ extension AccessLifecycleTVOSUITests {
             moveFocus(.down, to: optionButton, maximumPresses: 6, message: "Must be able to focus \(option).")
         }
         FirstFailureRemote.press(.select)
-        XCTAssertTrue(valueContainsSelected(optionButton), "After choosing \(option), it must be selected.")
+        let isSelected = valueContainsSelected(optionButton)
+        XCTAssertTrue(isSelected, "After choosing \(option), it must be selected.")
         FirstFailureRemote.press(.menu)
         waitForFocusVisualSettle()
+        return isSelected
     }
 
     @MainActor

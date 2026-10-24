@@ -37,7 +37,47 @@ extension AccessLifecycleContract {
         continueMark: String,
         baselineLuma: Double,
         samples: [ContinueWatchSample],
-        intervalSeconds: TimeInterval
+        intervalSeconds: TimeInterval,
+        rescuePolicy: TVOSFadeRescuePolicy? = nil
+    ) throws -> (start: ContinueWatchSample, stable: ContinueWatchSample, rescue: TVOSFadeRescue?) {
+        do {
+            do {
+                let original = try originalTVOSPauseTimingEvidence(
+                    continueMark: continueMark, baselineLuma: baselineLuma, samples: samples,
+                    intervalSeconds: intervalSeconds)
+                return (original.start, original.stable, nil)
+            } catch let AssertionError.automaticPhotoChangeLate(message) {
+                // Existing passes, early failures and four-second failures retain the original computation.
+                guard let rescuePolicy,
+                    let stable = firstStableNewImage(continueMark: continueMark, samples: samples),
+                    let rescue = tvosFadeRescue(
+                        continueMark: continueMark, baselineLuma: baselineLuma, samples: samples,
+                        stable: stable, intervalSeconds: intervalSeconds, policy: rescuePolicy)
+                else { throw AssertionError.automaticPhotoChangeLate(message) }
+                let earliest = intervalSeconds - continueCaptureSlackSeconds
+                let latest = intervalSeconds + continueCaptureSlackSeconds
+                if rescue.anchor.requestElapsed + timingToleranceSeconds < earliest {
+                    try assertContinueAutoAdvanceInWindow(
+                        continueMark: continueMark, laterMark: stable.mark,
+                        elapsedSeconds: rescue.anchor.requestElapsed, intervalSeconds: intervalSeconds)
+                }
+                if rescue.proof.returnElapsed > latest + timingToleranceSeconds {
+                    try assertContinueAutoAdvanceInWindow(
+                        continueMark: continueMark, laterMark: stable.mark,
+                        elapsedSeconds: rescue.proof.returnElapsed, intervalSeconds: intervalSeconds)
+                }
+                try assertStableImageWithinTransitionDeadline(
+                    start: rescue.anchor, stable: stable,
+                    failureMessage: "tvOS new photo must be stably identifiable within 4 s of transition start")
+                return (rescue.anchor, stable, rescue)
+            }
+        } catch let AssertionError.automaticPhotoChangeLate(message) {
+            throw AssertionError.message(message)
+        }
+    }
+
+    private static func originalTVOSPauseTimingEvidence(
+        continueMark: String, baselineLuma: Double, samples: [ContinueWatchSample], intervalSeconds: TimeInterval
     ) throws -> (start: ContinueWatchSample, stable: ContinueWatchSample) {
         guard intervalSeconds.isFinite, intervalSeconds > 0,
             baselineLuma.isFinite, baselineLuma > minimumBaselineLuminance,
@@ -97,6 +137,137 @@ extension AccessLifecycleContract {
         return (start, stable)
     }
 
+    private static func tvosFadeRescue(
+        continueMark: String, baselineLuma: Double, samples: [ContinueWatchSample], stable: ContinueWatchSample,
+        intervalSeconds: TimeInterval, policy: TVOSFadeRescuePolicy
+    ) -> TVOSFadeRescue? {
+        guard policy.isSinglePhotoModeVerified, continueMark == policy.requiredMark,
+            policy.plateauHighlightLuma == Int(UInt8.max),
+            policy.minimumDimHighlightDrop > 0, policy.proofHighlightRatio > 0, policy.proofHighlightRatio < 1,
+            policy.minimumMeanDrop.isFinite, policy.minimumMeanDrop > luminanceTolerance,
+            policy.minimumWhiteCoreFraction.isFinite, (0...1).contains(policy.minimumWhiteCoreFraction),
+            policy.maximumAnchorToProofRequestSeconds.isFinite, policy.maximumAnchorToProofRequestSeconds > 0,
+            policy.maximumAnchorToProofReturnSeconds.isFinite, policy.maximumAnchorToProofReturnSeconds > 0,
+            policy.maximumAnchorToProofReturnSeconds <= TVOSPhotoMotionBounds.maximumSpanSeconds
+        else { return nil }
+
+        func pixels(_ sample: ContinueWatchSample) -> TVOSPhotoPixels? {
+            guard !sample.identityNotes.contains(where: { $0.contains("unreadable") || $0.contains("undrawn") }),
+                let pixels = sample.photoPixels,
+                let highlight = pixels.highlightLuma, (0...Int(UInt8.max)).contains(highlight),
+                let core = pixels.whiteCoreFraction, core.isFinite, (0...1).contains(core),
+                let mean = pixels.decodedMeanLuma, mean.isFinite, mean == sample.meanLuma
+            else { return nil }
+            return pixels
+        }
+
+        var anchorIndex: Int?
+        var dimIndex: Int?
+        var ambiguousFrameCount = 0
+        func discardCandidate() {
+            anchorIndex = nil
+            dimIndex = nil
+            ambiguousFrameCount = 0
+        }
+        for index in samples.indices {
+            let sample = samples[index]
+            guard sample.requestElapsed <= stable.requestElapsed else { break }
+            guard let photo = pixels(sample), let highlight = photo.highlightLuma else {
+                anchorIndex = nil
+                dimIndex = nil
+                continue
+            }
+            if sample.status == "MATCH", sample.mark == continueMark,
+                highlight == policy.plateauHighlightLuma
+            {
+                // Every earlier same-state A1 frame must independently confirm the calibration maximum.
+                let prior = samples[...index].filter {
+                    $0.status == "MATCH" && $0.mark == continueMark
+                        && $0.isControlBarVisible == sample.isControlBarVisible
+                }
+                let isCalibrated = prior.allSatisfy { pixels($0)?.highlightLuma == policy.plateauHighlightLuma }
+                if isCalibrated, prior.contains(where: { $0.requestElapsed <= intervalSeconds / 2 }),
+                    let core = photo.whiteCoreFraction, core >= policy.minimumWhiteCoreFraction
+                {
+                    anchorIndex = index
+                } else {
+                    anchorIndex = nil
+                }
+                dimIndex = nil
+                ambiguousFrameCount = 0
+                continue
+            }
+            guard let anchorIndex, index > anchorIndex else { continue }
+            let anchor = samples[anchorIndex]
+            let previous = samples[index - 1]
+            let gap = sample.requestElapsed - previous.returnElapsed
+            guard sample.isControlBarVisible == anchor.isControlBarVisible,
+                gap >= 0, gap <= newStableMarkPollInterval + timingToleranceSeconds,
+                sample.requestElapsed - anchor.requestElapsed
+                    <= policy.maximumAnchorToProofRequestSeconds + timingToleranceSeconds,
+                sample.returnElapsed - anchor.requestElapsed
+                    <= policy.maximumAnchorToProofReturnSeconds + timingToleranceSeconds,
+                let previousHighlight = pixels(previous)?.highlightLuma
+            else {
+                discardCandidate()
+                continue
+            }
+            if dimIndex == nil {
+                guard sample.status == "MATCH", sample.mark == continueMark,
+                    sample.meanLuma <= previous.meanLuma
+                else {
+                    discardCandidate()
+                    continue
+                }
+                let drop = policy.plateauHighlightLuma - highlight
+                if drop >= policy.minimumDimHighlightDrop,
+                    sample.meanLuma < anchor.meanLuma - luminanceTolerance
+                {
+                    dimIndex = index
+                } else if drop > 0, drop < policy.minimumDimHighlightDrop, ambiguousFrameCount == 0 {
+                    ambiguousFrameCount += 1
+                } else {
+                    discardCandidate()
+                }
+                continue
+            }
+            guard let dimIndex,
+                (sample.status == "MATCH" && sample.mark == continueMark)
+                    || (sample.status == "UNRECOGNIZABLE" && sample.mark == "UNRECOGNIZABLE"),
+                sample.meanLuma < previous.meanLuma - luminanceTolerance,
+                highlight < previousHighlight
+            else {
+                discardCandidate()
+                continue
+            }
+            guard anchor.meanLuma - sample.meanLuma >= policy.minimumMeanDrop,
+                Double(highlight) < Double(policy.plateauHighlightLuma) * policy.proofHighlightRatio
+            else { continue }
+            var didLoseOldIdentity = sample.status != "MATCH"
+            var previousOldHighlight = highlight
+            let recovered = samples.dropFirst(index + 1).prefix {
+                $0.requestElapsed <= stable.requestElapsed
+            }.contains { later in
+                guard pixels(later) != nil else { return true }
+                guard later.status == "MATCH", later.mark == continueMark else {
+                    if later.status == "UNRECOGNIZABLE" || later.status == "BLACK" { didLoseOldIdentity = true }
+                    return false
+                }
+                guard let laterHighlight = pixels(later)?.highlightLuma else { return true }
+                defer { previousOldHighlight = laterHighlight }
+                return didLoseOldIdentity
+                    || later.meanLuma >= baselineLuma * sustainedDimmingLuminanceRatio
+                    || Double(laterHighlight) >= Double(policy.plateauHighlightLuma) * policy.proofHighlightRatio
+                    || laterHighlight > previousOldHighlight
+            }
+            if !recovered {
+                return TVOSFadeRescue(anchor: anchor, dim: samples[dimIndex], proof: sample)
+            }
+            discardCandidate()
+        }
+        return nil
+    }
+
     static func assertContinueEarlyStillSameScene(
         continueMark: String,
         earlyMark: String,
@@ -126,7 +297,7 @@ extension AccessLifecycleContract {
         let earliest = intervalSeconds - continueCaptureSlackSeconds
         let latest = intervalSeconds + continueCaptureSlackSeconds
         if elapsedSeconds > latest {
-            throw AssertionError.message(
+            throw AssertionError.automaticPhotoChangeLate(
                 "No automatic photo change was captured within T±2; if waiting for idleness crossed the window, classify this as a test timing failure"
             )
         }

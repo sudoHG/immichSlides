@@ -1,4 +1,5 @@
 import XCTest
+@testable import immichSlides
 
 extension SettingsResumeContractTests {
     func testIPhonePauseSignsSustainedFadeOnRequestClockBeforeLateStablePhoto() throws {
@@ -336,6 +337,7 @@ extension SettingsResumeContractTests {
                 )
             ) { error in
                 XCTAssertEqual(error.localizedDescription, message)
+                XCTAssertTrue(String(describing: error).hasPrefix("message("))
             }
         }
     }
@@ -530,6 +532,272 @@ extension SettingsResumeContractTests {
                 )
             }
         }
+    }
+
+    func testTVOSPauseRescuesOneDimMatchOnlyWithDecodedPhotoDecline() throws {
+        for proofStatus in ["MATCH", "UNRECOGNIZABLE"] {
+            let samples = tvosRescueSamples(proofStatus: proofStatus)
+            let evidence = try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
+                continueMark: "A1", baselineLuma: 0.497, samples: samples, intervalSeconds: 10,
+                rescuePolicy: tvosRescuePolicy()
+            )
+            let rescue = try XCTUnwrap(evidence.rescue)
+            XCTAssertEqual(evidence.start.requestElapsed, 10, accuracy: 0.001)
+            XCTAssertEqual(rescue.dim.requestElapsed, 10.25, accuracy: 0.001)
+            XCTAssertEqual(rescue.proof.returnElapsed, 10.74, accuracy: 0.001)
+            XCTAssertEqual(rescue.proof.status, proofStatus)
+        }
+    }
+
+    func testTVOSPauseRescueRejectsUnreadableUnboundAndNonPhotoEvidence() throws {
+        for mutation in [
+            "unreadable", "undrawn", "nil_pixels", "nil_q95", "nil_core", "black_proxy", "wrong_image", "wrong_state",
+            "core", "gap",
+            "calibration", "rising_q95", "rising_mean", "excess_ambiguous", "long_span",
+            "shallow_proof", "bright_proof", "no_first_half", "unrecognized_dim", "wrong_required_mark"
+        ] {
+            var samples = tvosRescueSamples(cadence: mutation == "long_span" ? 0.6 : 0.25)
+            let target =
+                ["wrong_state", "unrecognized_dim"].contains(mutation)
+                ? 41 : (mutation == "core" || mutation == "gap" ? 40 : 42)
+            let original = samples[target]
+            samples[target] = rescueSample(
+                request: original.requestElapsed,
+                mark: mutation == "black_proxy"
+                    ? "BLACK" : (mutation == "unrecognized_dim" ? "UNRECOGNIZABLE" : original.mark),
+                status: mutation == "black_proxy"
+                    ? "BLACK" : (mutation == "unrecognized_dim" ? "UNRECOGNIZABLE" : original.status),
+                luma: original.meanLuma,
+                highlight: mutation == "nil_q95" ? nil : original.photoPixels?.highlightLuma,
+                core: mutation == "nil_core"
+                    ? nil : (mutation == "core" ? 0.059 : original.photoPixels?.whiteCoreFraction),
+                controls: mutation != "wrong_state",
+                returnLag: mutation == "gap" ? 0.05 : 0.24,
+                decodedMean: mutation == "wrong_image" ? 0 : original.meanLuma,
+                hasPixels: mutation != "nil_pixels",
+                notes: ["unreadable", "undrawn"].contains(mutation) ? [mutation] : []
+            )
+            if mutation == "shallow_proof" || mutation == "bright_proof" {
+                for index in 42..<samples.count where samples[index].mark != "A2" {
+                    samples[index] = rescueSample(
+                        request: samples[index].requestElapsed, mark: "UNRECOGNIZABLE", status: "UNRECOGNIZABLE",
+                        luma: mutation == "shallow_proof" ? 0.443 : 0.41,
+                        highlight: mutation == "bright_proof" ? 243 : 212)
+                }
+            }
+            if mutation == "no_first_half" {
+                for index in samples.indices where samples[index].requestElapsed <= 5 {
+                    samples[index] = rescueSample(
+                        request: samples[index].requestElapsed, luma: samples[index].meanLuma,
+                        highlight: 255, core: 0.064, controls: false)
+                }
+            }
+            if mutation == "calibration" {
+                samples[4] = rescueSample(request: 1, luma: 0.472, highlight: 254)
+            }
+            if mutation == "rising_q95" || mutation == "rising_mean" {
+                samples[42] = rescueSample(
+                    request: 10.5, luma: mutation == "rising_mean" ? 0.46 : 0.45,
+                    highlight: mutation == "rising_q95" ? 248 : 243)
+                samples[43] = rescueSample(
+                    request: 10.75, mark: "UNRECOGNIZABLE", status: "UNRECOGNIZABLE", luma: 0.41, highlight: 212)
+            }
+            if mutation == "excess_ambiguous" {
+                samples[41] = rescueSample(request: 10.25, luma: 0.4715, highlight: 253)
+                samples[42] = rescueSample(request: 10.5, luma: 0.4714, highlight: 253)
+                samples[43] = rescueSample(request: 10.75, luma: 0.455, highlight: 247)
+                samples[44] = rescueSample(
+                    request: 11, mark: "UNRECOGNIZABLE", status: "UNRECOGNIZABLE", luma: 0.41, highlight: 212)
+            }
+            XCTAssertThrowsError(
+                try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
+                    continueMark: "A1", baselineLuma: 0.497, samples: samples, intervalSeconds: 10,
+                    rescuePolicy: tvosRescuePolicy(requiredMark: mutation == "wrong_required_mark" ? "A2" : "A1")
+                ), mutation
+            ) { XCTAssertEqual($0.localizedDescription, self.tvosLateMessage, mutation) }
+        }
+        XCTAssertThrowsError(
+            try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
+                continueMark: "A1", baselineLuma: 0.497, samples: tvosRescueSamples(), intervalSeconds: 10,
+                rescuePolicy: tvosRescuePolicy(isSinglePhoto: false)
+            )
+        ) { XCTAssertEqual($0.localizedDescription, self.tvosLateMessage) }
+
+        var longCapture = tvosRescueSamples(anchor: 9.5)
+        let proofIndex = try XCTUnwrap(longCapture.firstIndex { $0.requestElapsed == 10 })
+        longCapture[proofIndex] = rescueSample(
+            request: 10, mark: "UNRECOGNIZABLE", status: "UNRECOGNIZABLE", luma: 0.41,
+            highlight: 212, returnLag: 1.6)
+        longCapture = longCapture.enumerated().filter { $0.offset <= proofIndex || $0.element.requestElapsed >= 11.6 }
+            .map(\.element)
+        XCTAssertThrowsError(
+            try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
+                continueMark: "A1", baselineLuma: 0.497, samples: longCapture, intervalSeconds: 10,
+                rescuePolicy: tvosRescuePolicy())
+        ) { XCTAssertEqual($0.localizedDescription, self.tvosLateMessage) }
+    }
+
+    func testTVOSPauseRescueRejectsOldPhotoRecoveryAndUnreadablePostProofFrames() {
+        for mutation in ["rising_old_photo", "reappearing_old_photo", "undrawn"] {
+            var samples = tvosRescueSamples(proofStatus: "MATCH")
+            if mutation == "rising_old_photo" {
+                samples[43] = rescueSample(request: 10.75, luma: 0.4, highlight: 213)
+            } else if mutation == "reappearing_old_photo" {
+                samples[44] = rescueSample(request: 11, luma: 0.29, highlight: 159)
+            } else {
+                samples[43] = rescueSample(
+                    request: 10.75, mark: "UNRECOGNIZABLE", status: "UNRECOGNIZABLE", luma: 0.3,
+                    highlight: 160, notes: ["undrawn"])
+            }
+            XCTAssertThrowsError(
+                try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
+                    continueMark: "A1", baselineLuma: 0.497, samples: samples, intervalSeconds: 10,
+                    rescuePolicy: tvosRescuePolicy()
+                ), mutation
+            ) { XCTAssertEqual($0.localizedDescription, self.tvosLateMessage, mutation) }
+        }
+    }
+
+    func testTVOSPauseRescueRejectsEarlyAndLateIntervals() {
+        for (dim, message) in [(7.95, tvosEarlyMessage), (12.05, tvosLateMessage)] {
+            let samples = tvosRescueSamples(anchor: dim - 0.25, newStart: max(12.01, dim + 1.76))
+            XCTAssertThrowsError(
+                try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
+                    continueMark: "A1", baselineLuma: 0.497, samples: samples, intervalSeconds: 10,
+                    rescuePolicy: tvosRescuePolicy()
+                )
+            ) { XCTAssertEqual($0.localizedDescription, message) }
+        }
+    }
+
+    func testTVOSPauseRescueKeepsOriginalPassAndItsFourSecondOrigin() throws {
+        var samples = tvosRescueSamples(proofStatus: "MATCH", newStart: 12.76)
+        samples[40] = rescueSample(request: 10, luma: 0.497, highlight: 255, core: 0.064)
+        let original = try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
+            continueMark: "A1", baselineLuma: 0.497, samples: samples, intervalSeconds: 10)
+        let augmented = try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
+            continueMark: "A1", baselineLuma: 0.497, samples: samples, intervalSeconds: 10,
+            rescuePolicy: tvosRescuePolicy())
+        XCTAssertEqual(augmented.start.requestElapsed, original.start.requestElapsed)
+        XCTAssertEqual(augmented.stable.returnElapsed, original.stable.returnElapsed)
+        XCTAssertEqual(augmented.stable.returnElapsed - augmented.start.requestElapsed, 4, accuracy: 0.001)
+        XCTAssertNil(augmented.rescue)
+    }
+
+    func testTVOSPauseRescueKeepsConservativeFourSecondDeadline() {
+        XCTAssertThrowsError(
+            try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
+                continueMark: "A1", baselineLuma: 0.497,
+                samples: tvosRescueSamples(newStart: 12.76), intervalSeconds: 10,
+                rescuePolicy: tvosRescuePolicy()
+            )
+        ) {
+            XCTAssertEqual(
+                $0.localizedDescription, "tvOS new photo must be stably identifiable within 4 s of transition start")
+        }
+    }
+
+    func testTVOSPhotoPixelsLeaveIPhoneAndIPadVerdictsUnchanged() throws {
+        let annotated = tvosRescueSamples()
+        let plain = annotated.map { sample in
+            AccessLifecycleContract.ContinueWatchSample(
+                requestElapsed: sample.requestElapsed, returnElapsed: sample.returnElapsed,
+                classifiedElapsed: sample.classifiedElapsed, status: sample.status, mark: sample.mark,
+                meanLuma: sample.meanLuma, isControlBarVisible: sample.isControlBarVisible)
+        }
+        let original = try AccessLifecycleContract.assertIPhonePauseTimingEvidence(
+            continueMark: "A1", baselineLuma: 0.497, samples: plain, intervalSeconds: 10)
+        let withPixels = try AccessLifecycleContract.assertIPhonePauseTimingEvidence(
+            continueMark: "A1", baselineLuma: 0.497, samples: annotated, intervalSeconds: 10)
+        XCTAssertEqual(withPixels.verdict, original.verdict)
+        XCTAssertFalse(withPixels.isOfficialStartSigned)
+        for samples in [plain, annotated] {
+            XCTAssertThrowsError(
+                try AccessLifecycleContract.assertIPadPauseTimingEvidence(
+                    continueMark: "A1", baselineLuma: 0.497, samples: samples, intervalSeconds: 10)
+            ) {
+                XCTAssertTrue($0.localizedDescription.hasPrefix("A continuous, reliable screenshot"))
+            }
+        }
+    }
+
+    func testTVOSPhotoRescueGeometryBoundCoversActualSinglePhotoPolicy() {
+        let lifecycle = SceneLifecycleContract(
+            configuredInterval: TimeInterval(AccessLifecycleContract.tvOSRequestedIntervalSeconds))
+        let profile = SceneAnimationProfile(lifecycle: lifecycle)
+        for direction in [SceneAnimationDirection.zoomIn, .zoomOut] {
+            let before = profile.singlePhotoTransform(direction: direction, activeTime: 0, isMotionEnabled: true)
+            let after = profile.singlePhotoTransform(
+                direction: direction,
+                activeTime: AccessLifecycleContract.TVOSPhotoMotionBounds.maximumSpanSeconds
+                    + AccessLifecycleContract.timingToleranceSeconds,
+                isMotionEnabled: true)
+            XCTAssertLessThanOrEqual(
+                abs(after.scale - before.scale) / 2,
+                AccessLifecycleContract.TVOSPhotoMotionBounds.maximumMotionFractionPerAxis)
+            XCTAssertEqual(before.translationInSlot, .zero)
+            XCTAssertEqual(after.translationInSlot, .zero)
+            XCTAssertEqual(after.anchorUnitPointInSlot, CGPoint(x: 0.5, y: 0.5))
+        }
+        XCTAssertGreaterThanOrEqual(
+            AccessLifecycleContract.TVOSPhotoMotionBounds.whiteCoreErosionFractionPerAxis,
+            2 * AccessLifecycleContract.TVOSPhotoMotionBounds.maximumMotionFractionPerAxis)
+    }
+
+    private var tvosLateMessage: String {
+        "No automatic photo change was captured within T±2; if waiting for idleness crossed the window, classify this as a test timing failure"
+    }
+
+    private var tvosEarlyMessage: String {
+        "Automatic photo change occurred before T-2; first check test timing and image recognition instead of immediately calling it a product bug"
+    }
+
+    private func tvosRescuePolicy(isSinglePhoto: Bool = true, requiredMark: String = "A1")
+        -> AccessLifecycleContract.TVOSFadeRescuePolicy
+    {
+        .init(
+            requiredMark: requiredMark, isSinglePhotoModeVerified: isSinglePhoto,
+            plateauHighlightLuma: 255, minimumDimHighlightDrop: 3, proofHighlightRatio: 0.95,
+            minimumMeanDrop: 0.030, minimumWhiteCoreFraction: 0.06,
+            maximumAnchorToProofRequestSeconds: 1, maximumAnchorToProofReturnSeconds: 2)
+    }
+
+    private func rescueSample(
+        request: Double, mark: String = "A1", status: String = "MATCH", luma: Double,
+        highlight: Int?, core: Double? = 0, controls: Bool = true, returnLag: Double = 0.24,
+        decodedMean: Double? = nil, hasPixels: Bool = true, notes: [String] = []
+    ) -> AccessLifecycleContract.ContinueWatchSample {
+        .init(
+            requestElapsed: request, returnElapsed: request + returnLag, classifiedElapsed: request + returnLag + 0.1,
+            status: status, mark: mark, meanLuma: luma, isControlBarVisible: controls,
+            photoPixels: hasPixels
+                ? .init(highlightLuma: highlight, whiteCoreFraction: core, decodedMeanLuma: decodedMean ?? luma) : nil,
+            identityNotes: notes)
+    }
+
+    private func tvosRescueSamples(
+        anchor: Double = 10, proofStatus: String = "UNRECOGNIZABLE", newStart: Double = 12.01,
+        cadence: Double = 0.25
+    ) -> [AccessLifecycleContract.ContinueWatchSample] {
+        let old = stride(from: 0.0, to: anchor - 0.001, by: 0.25).map { request in
+            rescueSample(
+                request: request, luma: request == 0 ? 0.497 : 0.472, highlight: 255, core: 0.064,
+                returnLag: min(0.24, anchor - request))
+        }
+        let fade = [
+            rescueSample(request: anchor, luma: 0.472, highlight: 255, core: 0.064, returnLag: cadence - 0.01),
+            rescueSample(request: anchor + cadence, luma: 0.455, highlight: 247, returnLag: cadence - 0.01),
+            rescueSample(
+                request: anchor + 2 * cadence, mark: proofStatus == "MATCH" ? "A1" : "UNRECOGNIZABLE",
+                status: proofStatus, luma: 0.41, highlight: 212, returnLag: cadence - 0.01)
+        ]
+        let middle = stride(from: anchor + 3 * cadence, through: newStart - 0.24, by: 0.25).map { request in
+            rescueSample(request: request, mark: "UNRECOGNIZABLE", status: "UNRECOGNIZABLE", luma: 0.3, highlight: 160)
+        }
+        let next = (0...6).map { index in
+            rescueSample(request: newStart + Double(index) * 0.25, mark: "A2", luma: 0.6, highlight: 212)
+        }
+        return old + fade + middle + next
     }
 
     func tvosFadeSamples(start: TimeInterval) -> [AccessLifecycleContract.ContinueWatchSample] {
