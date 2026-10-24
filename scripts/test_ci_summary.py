@@ -1070,6 +1070,49 @@ class SummaryContractTests(unittest.TestCase):
         self.assertEqual(summary, ci_summary.parse_summary(summary))
         self.assertIn("Runner cleanup survivors: unavailable", ci_summary.render_markdown(summary))
 
+    def test_simulator_process_projection_preserves_old_nights_and_yellow_history(self):
+        from ci_failure_diagnostics import scan_diagnostic_json, environment_limit_evidence
+        summary, resource = hosted_timeout_summary()
+        old = copy.deepcopy(summary)
+        resource["simulator_processes"] = {"unavailable": False, "truncated": True,
+            "entries": [{"name": "STExtractionService", "mean": 85, "peak": 140, "samples": 2},
+                        {"name": "other", "mean": 4, "peak": 8, "samples": 2}]}
+        row = summary["population"]["observed"][0]
+        proof = environment_limit_evidence(summary, row, [resource], runner_hosted=True)
+        self.assertIsNotNone(proof)
+        row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
+        for night in (old, summary):
+            self.assertEqual(night, ci_summary.parse_summary(json.dumps(night)))
+            scan_diagnostic_json(json.dumps(night).encode())
+        self.assertNotIn("sim-top:", ci_summary.render_markdown(old))
+        self.assertIn("sim-top: STExtractionService 85%/140%, other 4%/8% (truncated)",
+                      ci_summary.render_markdown(summary))
+        # Re-read the unchanged projection through the archived yellow proof too.
+        self.assertIn("simulator_processes", summary["population"]["observed"][0]["environment_limit"]["resources"])
+        for path, defect in ((('entries', 0, 'name'), '/private/secret'),
+                (('entries', 0, 'name'), 'UnknownWidget'), (('entries', 0, 'mean'), float('nan')),
+                (('entries', 0, 'peak'), float('inf')), (('entries', 0, 'samples'), True),
+                (('entries', 0, 'mean'), -1), (('entries', 0, 'peak'), 84),
+                (('entries', 0, 'samples'), 0), (('entries', 0, 'pid'), 123),
+                (('entries', 0, 'samples'), 43202), (('entries', 0, 'mean'), True),
+                (('entries', 0, 'mean'), 1000001), (('entries', 0, 'samples'), 3),
+                (('entries',), [dict(resource['simulator_processes']['entries'][0], name=name) for name in
+                    ('diagnosticd', 'lsd', 'STExtractionService', 'PosterBoard', 'intelligenceplatformd', 'photoanalysisd', 'other')]),
+                (('entries',), [resource['simulator_processes']['entries'][0]] * 2
+                    + [resource['simulator_processes']['entries'][1]]),
+                (('udid',), 'private-device'), (('entries',), []),
+                (('entries', 1, 'name'), 'lsd'), (('entries', 0, 'mean'), None),
+                (('unavailable',), True),
+                (('unavailable',), 'false'), (('truncated',), 1)):
+            changed = copy.deepcopy(summary)
+            target = changed['strict_case_evidence'][0]['bounded_diagnostics']['case_resources'][0]['simulator_processes']
+            for key in path[:-1]:
+                target = target[key]
+            target[path[-1]] = defect
+            with self.subTest(path=path, defect=defect), self.assertRaisesRegex(
+                    ci_summary.ContractError, '^simulator processes: invalid projection$'):
+                ci_summary.parse_summary(changed)
+
     def test_optional_app_hang_stack_round_trips_and_old_nights_keep_their_verdict(self):
         from ci_failure_diagnostics import scan_diagnostic_json
         summary, _ = hosted_timeout_summary()

@@ -24,6 +24,7 @@ from ci_bounded_diagnostics import (MAX_DIAGNOSTIC_SECONDS,
     MAX_INTEGER, public_stack_symbol, validate_app_hang_stack)
 from ci_bounded_diagnostics import (MAX_CONTINUE_WATCH_BYTES, MAX_CONTINUE_WATCH_FRAMES,
                                     CONTINUE_WATCH_STATUSES, validate_continue_watch)
+from ci_bounded_diagnostics import SIMULATOR_PROCESS_NAMES, validate_simulator_processes
 from ci_execution_diagnostics import finite
 from ci_failure_diagnostics import NATIVE_ACTIVITY_FIELDS, public_first_failure
 
@@ -427,11 +428,13 @@ def app_on_device(pid, device):
     return ("/Devices/" + device + "/") in path and Path(path).name == "immichSlides"
 
 
-def process_categories(raw, device, *, identify_app=None, app_processes=None):
+def process_categories(raw, device, *, identify_app=None, app_processes=None, simulator_snapshots=None,
+                       executable_names=False):
     identify_app = app_on_device if identify_app is None else identify_app
     if len(raw.encode()) > MAX_PROCESS_TABLE_BYTES:
         return dict.fromkeys(RESOURCE_CATEGORIES)
     rows = {}
+    projection_complete = True
     for line in raw.splitlines():
         parts = line.split(None, 3)
         if len(parts) != 4 or len(rows) >= MAX_PROCESS_ROWS:
@@ -442,11 +445,20 @@ def process_categories(raw, device, *, identify_app=None, app_processes=None):
             return dict.fromkeys(RESOURCE_CATEGORIES)
         if pid <= 0 or parent < 0 or finite(cpu, MAX_PROCESS_CPU_PERCENT) is None or pid in rows:
             return dict.fromkeys(RESOURCE_CATEGORIES)
-        rows[pid] = (parent, cpu, parts[3].strip())
+        name = parts[3].strip()
+        basename = name
+        if executable_names:
+            accounting = parts[3].split(None, 1)
+            name = accounting[0]
+            argv_zero = accounting[1].strip() if len(accounting) == 2 else ""
+            basename = Path(argv_zero).name if argv_zero else None
+            projection_complete &= basename is not None
+        rows[pid] = (parent, cpu, name, basename)
     totals = dict.fromkeys(RESOURCE_CATEGORIES, 0.0)
     unknown_app = False
     found_app = False
-    for pid, (parent, cpu, name) in rows.items():
+    simulator_roots = set()
+    for pid, (parent, cpu, name, _) in rows.items():
         category = "other"
         if name == "immichSlides":
             belongs = identify_app(pid, device)
@@ -456,13 +468,21 @@ def process_categories(raw, device, *, identify_app=None, app_processes=None):
                 category = "app"
                 if app_processes is not None:
                     app_processes.append((pid, cpu))
+                if simulator_snapshots is not None:
+                    seen, ancestor = set(), pid
+                    while ancestor in rows and ancestor not in seen:
+                        seen.add(ancestor)
+                        if rows[ancestor][2] == "launchd_sim":
+                            simulator_roots.add(ancestor)
+                            break
+                        ancestor = rows[ancestor][0]
         elif name == "xcodebuild" or name.startswith(("xctest", "testmanagerd", "immichSlidesUIT")):
             category = "test_tools"
         if category == "other":
             seen, ancestor = set(), pid
             while ancestor in rows and ancestor not in seen:
                 seen.add(ancestor)
-                next_parent, _, ancestor_name = rows[ancestor]
+                next_parent, _, ancestor_name, _ = rows[ancestor]
                 if ancestor_name == "launchd_sim":
                     category = "simulator_daemons"
                     break
@@ -470,6 +490,21 @@ def process_categories(raw, device, *, identify_app=None, app_processes=None):
         totals[category] += cpu
     if not rows:
         return dict.fromkeys(RESOURCE_CATEGORIES)
+    if simulator_snapshots is not None and projection_complete and len(simulator_roots) == 1:
+        simulator_root = next(iter(simulator_roots))
+        snapshot = {"other": 0.0}
+        for pid, (_, cpu, accounting_name, name) in rows.items():
+            if accounting_name == "immichSlides" or accounting_name == "xcodebuild" or accounting_name.startswith(("xctest", "testmanagerd", "immichSlidesUIT")):
+                continue
+            seen, ancestor = set(), pid
+            while ancestor in rows and ancestor not in seen and ancestor != simulator_root:
+                seen.add(ancestor)
+                ancestor = rows[ancestor][0]
+            if ancestor == simulator_root:
+                key = name if name in SIMULATOR_PROCESS_NAMES else "other"
+                snapshot[key] = snapshot.get(key, 0.0) + cpu
+        if all(finite(value, MAX_PROCESS_CPU_PERCENT) is not None for value in snapshot.values()):
+            simulator_snapshots.append(snapshot)
     if unknown_app:
         # An inaccessible candidate cannot be counted as definitely absent or as another category.
         return dict.fromkeys(RESOURCE_CATEGORIES)
@@ -488,16 +523,23 @@ def resource_sample(host_cpu, device, timeout):
     return {"idle_percent": idle, "load_1m": load, "cpu_percent": categories}
 
 
-def process_sample(device, timeout, *, app_processes=None):
+def process_sample(device, timeout, *, app_processes=None, simulator_snapshots=None):
     categories = dict.fromkeys(RESOURCE_CATEGORIES)
+    snapshots = []
     if sys.platform == "darwin":
         try:
-            completed = subprocess.run(["/bin/ps", "-A", "-o", "pid=,ppid=,%cpu=,ucomm="],
+            # comm reads argv[0] (usually a path) only in memory; no other argv or environment is read.
+            columns = "pid=,ppid=,%cpu=,ucomm=" + (",comm=" if simulator_snapshots is not None else "")
+            completed = subprocess.run(["/bin/ps", "-A", "-ww", "-o", columns],
                 capture_output=True, text=True, check=False, timeout=timeout)
             if completed.returncode == 0:
-                categories = process_categories(completed.stdout, device, app_processes=app_processes)
+                categories = process_categories(completed.stdout, device, app_processes=app_processes,
+                    simulator_snapshots=snapshots if simulator_snapshots is not None else None,
+                    executable_names=simulator_snapshots is not None)
         except (OSError, ValueError, subprocess.SubprocessError):
             pass
+    if simulator_snapshots is not None:
+        simulator_snapshots.append(snapshots[0] if snapshots else None)
     return categories
 
 
@@ -594,6 +636,7 @@ class CaseSampler:
         self.epoch = time.time()
         self.duration = 0.0
         self.samples = []
+        self.simulator_snapshots = []
         self.spent = 0.0
         self.capture_spent = 0.0
         self.host_spent = 0.0
@@ -670,12 +713,12 @@ class CaseSampler:
                     remaining = self.reserved - self.spent - (self.hang.charge if self.hang is not None else 0)
                     if remaining > SAMPLE_COMMAND_TIMEOUT_SECONDS:
                         started = time.perf_counter()
-                        if self.hang is None:
-                            sample["cpu_percent"] = process_sample(self.device, min(SAMPLE_COMMAND_TIMEOUT_SECONDS, remaining))
-                        else:
-                            processes = []
-                            sample["cpu_percent"] = process_sample(self.device, min(SAMPLE_COMMAND_TIMEOUT_SECONDS, remaining),
-                                app_processes=processes)
+                        processes = []
+                        sample["cpu_percent"] = process_sample(self.device, min(SAMPLE_COMMAND_TIMEOUT_SECONDS, remaining),
+                            app_processes=processes, simulator_snapshots=self.simulator_snapshots)
+                        if len(self.simulator_snapshots) > MAX_RESOURCE_SAMPLES:
+                            del self.simulator_snapshots[0]
+                            self.truncated = True
                         self.spent += time.perf_counter() - started
                         self.truncated |= any(value is None for key, value in sample["cpu_percent"].items() if key != "app")
                         if self.hang is not None:
@@ -799,6 +842,24 @@ class CaseSampler:
                 case["app_hang_stack"] = self.hang.result
             except (ValueError, TypeError, KeyError):
                 pass  # A stack projection must never discard numeric failure-window evidence.
+        try:
+            valid = [snapshot for snapshot in self.simulator_snapshots if snapshot is not None]
+            names = [name for name in SIMULATOR_PROCESS_NAMES if any(name in snapshot for snapshot in valid)]
+            names.sort(key=lambda name: (-statistics.mean(snapshot.get(name, 0) for snapshot in valid),
+                                         SIMULATOR_PROCESS_NAMES.index(name)))
+            selected = names[:5]
+            entries = []
+            for name in [*selected, "other"]:
+                readings = [snapshot.get(name, 0) if name != "other" else
+                    sum(cpu for key, cpu in snapshot.items() if key not in selected) for snapshot in valid]
+                entries.append({"name": name, "mean": round(statistics.mean(readings), 3) if readings else None,
+                    "peak": round(max(readings), 3) if readings else None, "samples": len(readings)})
+            projection = {"entries": entries, "unavailable": not valid,
+                "truncated": self.truncated or not self.finished or len(valid) != len(self.simulator_snapshots) or not valid}
+            validate_simulator_processes(projection)
+            case["simulator_processes"] = projection
+        except (ValueError, TypeError, KeyError, OverflowError):
+            pass  # Drop only this optional projection; retain all existing measurements and verdicts.
         try:
             validate_case_resources([case])
         except (ValueError, TypeError, KeyError):
