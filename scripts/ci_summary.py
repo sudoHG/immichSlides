@@ -423,10 +423,13 @@ def render_markdown(payload):
         outcome = "failed (environment-limited; yellow)" if "environment_limit" in entry else entry["outcome"]
         hints = []
         if payload.get("strict_case_evidence"):
-            from ci_bounded_diagnostics import render_app_hang_hint
+            from ci_bounded_diagnostics import render_app_hang_hint, render_continue_watch
             hints = [render_app_hang_hint(resource["app_hang_stack"])
                 for case in payload["strict_case_evidence"] if case["identity"] == entry["identity"]
                 for resource in case[BOUNDED_DIAGNOSTICS_FIELD].get("case_resources", []) if "app_hang_stack" in resource]
+            hints += [render_continue_watch(resource["continue_watch"])
+                for case in payload["strict_case_evidence"] if case["identity"] == entry["identity"]
+                for resource in case[BOUNDED_DIAGNOSTICS_FIELD].get("case_resources", []) if "continue_watch" in resource]
         label = entry["identity"]["key"]
         if hints:
             label += " (" + ", ".join(f"{key}={value}" for key, value in sorted(entry["identity"]["dimensions"].items())) + ")"

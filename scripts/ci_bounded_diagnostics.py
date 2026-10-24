@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import statistics
 
 from ci_summary import require
 
@@ -33,6 +34,13 @@ MAX_RESOURCE_SAMPLES = 43201
 MAX_FAILURE_RESOURCE_SAMPLES = 6
 RESOURCE_CATEGORIES = ("app", "simulator_daemons", "test_tools", "other")
 MAX_APP_HANG_STACK_BYTES = 4096
+MAX_CONTINUE_WATCH_BYTES = 8192
+MAX_CONTINUE_WATCH_FRAMES = 80
+CONTINUE_WATCH_STATUSES = (None, "MATCH", "TRANSITION", "BLACK", "BLANK", "UNRECOGNIZABLE")
+CONTINUE_WATCH_JUDGES = ("not_recorded", "not_evaluated", "passed", "early", "late", "no_transition_start",
+                         "no_stable_new_photo", "four_second", "other")
+CONTINUE_WATCH_RESCUE_STAGES = ("not_recorded", "not_run", "passed", "ineligible", "no_anchor", "no_dim",
+                              "no_proof", "missing_pixels", "span", "continuity", "window_early", "window_late", "four_second", "recovery")
 APP_HANG_MODULES = frozenset(("immichSlides", "SwiftUI", "SwiftUICore", "UIKitCore", "UIKit", "AttributeGraph",
     "CoreFoundation", "Foundation", "QuartzCore", "CoreGraphics", "GraphicsServices", "dyld", "libdyld.dylib",
     "libswiftCore.dylib", "libswift_Concurrency.dylib", "libsystem_kernel.dylib", "libsystem_pthread.dylib",
@@ -43,6 +51,61 @@ def public_stack_symbol(value):
     return (isinstance(value, str) and 0 < len(value) <= 160
             and re.fullmatch(r"[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*", value) is not None
             and re.search(r"\.(?:com|net|org|local|internal|invalid|test)(?:\.|$)", value, re.I) is None)
+
+
+def validate_continue_watch(value):
+    def numeric(item, ceiling=MAX_DIAGNOSTIC_SECONDS):
+        return type(item) in (int, float) and 0 <= item <= ceiling
+    required = {"total_frames", "truncated", "frames", "indices", "wake"}
+    optional = {"judge", "rescue_ran", "rescue_stage", "single_photo_mode_verified", "control_bar_wake_skipped"}
+    valid = isinstance(value, dict) and required <= set(value) <= required | optional
+    if valid:
+        frames, indices, wake = value["frames"], value["indices"], value["wake"]
+        valid = (type(value["total_frames"]) is int and 0 <= value["total_frames"] <= MAX_INTEGER
+            and type(value["truncated"]) is bool and isinstance(frames, list)
+            and len(frames) <= min(MAX_CONTINUE_WATCH_FRAMES, value["total_frames"])
+            and value["truncated"] == (len(frames) < value["total_frames"])
+            and isinstance(indices, dict) and set(indices) <= {"anchor", "dim", "proof"}
+            and all(type(index) is int and 0 <= index < len(frames) for index in indices.values())
+            and (wake is None or (isinstance(wake, list) and len(wake) == 2
+                 and all(numeric(item) for item in wake) and wake[0] <= wake[1])))
+    if valid:
+        valid = (all(value.get(key) is None or type(value[key]) is bool for key in
+                     ("rescue_ran", "single_photo_mode_verified", "control_bar_wake_skipped"))
+                 and ("judge" not in value or value["judge"] in CONTINUE_WATCH_JUDGES)
+                 and ("rescue_stage" not in value or value["rescue_stage"] in CONTINUE_WATCH_RESCUE_STAGES))
+    if valid:
+        previous = -1
+        for frame in frames:
+            valid = (isinstance(frame, list) and len(frame) == 9
+                and all(numeric(item) for item in frame[:3]) and previous <= frame[0] <= frame[1] <= frame[2]
+                and frame[3] in CONTINUE_WATCH_STATUSES
+                and (frame[4] is None or (isinstance(frame[4], str)
+                     and re.fullmatch(r"A[1-8](?:\+A[1-8]){0,3}", frame[4]) is not None))
+                and (frame[5] is None or numeric(frame[5], 1))
+                and (frame[6] is None or numeric(frame[6], 255))
+                and (frame[7] is None or numeric(frame[7], 1))
+                and (frame[8] is None or type(frame[8]) is bool))
+            if not valid:
+                break
+            previous = frame[2]
+    if valid:
+        valid = len(json.dumps(value, separators=(",", ":")).encode()) <= MAX_CONTINUE_WATCH_BYTES
+    require(valid, "continue watch: invalid projection")
+
+
+def render_continue_watch(value):
+    frames = value["frames"]
+    gaps = [right[0] - left[0] for left, right in zip(frames, frames[1:])]
+    gap = f"{round(statistics.median(gaps), 3):g}s" if gaps else "unavailable"
+    anchor = next((frame for frame in frames if frame[3] == "MATCH" and frame[4] is not None), None)
+    dim = sum(frame[3] == "MATCH" and frame[4] == anchor[4] and frame[6] is not None
+              and frame[6] <= anchor[6] - 3 and frame[5] is not None and frame[5] < anchor[5] for frame in frames
+              ) if anchor is not None and anchor[6] is not None and anchor[5] is not None else 0
+    ran = {True: "ran", False: "not-run", None: "unknown"}[value.get("rescue_ran")]
+    return (f"continue-watch: frames={len(frames)}/{value['total_frames']}, median request interval={gap}, "
+            f"dim MATCH={dim}, judge={value.get('judge', 'not_recorded')}, "
+            f"rescue={ran}/{value.get('rescue_stage', 'not_recorded')}")
 
 
 def validate_app_hang_stack(stack):
@@ -169,6 +232,9 @@ def validate_case_resources(cases):
         if isinstance(case, dict) and "app_hang_stack" in case:
             fields.add("app_hang_stack")
             validate_app_hang_stack(case["app_hang_stack"])
+        if isinstance(case, dict) and "continue_watch" in case:
+            fields.add("continue_watch")
+            validate_continue_watch(case["continue_watch"])
         exact_fields(case, fields, "case resources")
         number(case["sequence"], MAX_INTEGER, "case resources sequence", integral=True)
         require(case["sequence"] not in sequences, "case resources: duplicate sequence")

@@ -1042,6 +1042,71 @@ class SummaryContractTests(unittest.TestCase):
             with self.subTest(path=path), self.assertRaisesRegex(ci_summary.ContractError, "^app hang stack: invalid projection$"):
                 ci_summary.parse_summary(changed)
 
+    def test_optional_continue_watch_round_trips_and_old_nights_keep_their_verdict(self):
+        from ci_failure_diagnostics import scan_diagnostic_json
+        summary, resource = hosted_timeout_summary()
+        old = copy.deepcopy(summary)
+        resource["continue_watch"] = {"total_frames": 5, "truncated": False,
+            "frames": [[0, .01, .02, "MATCH", "A1", .7, 255, .1, False],
+                       [.1, .13, .14, "MATCH", "A1", .6, 252, .05, False],
+                       [.3, .34, .35, "TRANSITION", "A1", .5, 240, .01, False],
+                       [1.2, 1.26, 1.29, "MATCH", "A2", .4, 200, .01, False],
+                       [1.3, 1.31, 1.32, "MATCH", "A1", .3, 253, .01, False]],
+            "indices": {}, "wake": None}
+        for night in (old, summary):
+            self.assertEqual(night, ci_summary.parse_summary(json.dumps(night)))
+            scan_diagnostic_json(json.dumps(night).encode())
+            self.assertEqual("failed", night["status"])
+        self.assertNotIn("continue-watch:", ci_summary.render_markdown(old))
+        self.assertIn("continue-watch: frames=5/5, median request interval=0.15s, dim MATCH=1, "
+                      "judge=not_recorded, rescue=unknown/not_recorded",
+                      ci_summary.render_markdown(summary))
+        projection = resource["continue_watch"]
+        projection.update(judge="early", rescue_ran=False, rescue_stage="not_run")
+        self.assertIn("judge=early, rescue=not-run/not_run", ci_summary.render_markdown(summary))
+        projection.update(judge="late", rescue_ran=True, rescue_stage="span",
+                          single_photo_mode_verified=False, control_bar_wake_skipped=True)
+        for mark in ("A1+A2", "A1+A2+A3+A4"):
+            projection["frames"][3][4] = mark
+            self.assertEqual(summary, ci_summary.parse_summary(summary))
+        self.assertIn("judge=late, rescue=ran/span", ci_summary.render_markdown(summary))
+        projection["rescue_stage"] = "missing_pixels"
+        self.assertEqual(summary, ci_summary.parse_summary(summary))
+        self.assertIn("rescue=ran/missing_pixels", ci_summary.render_markdown(summary))
+        for field, defect in (("total_frames", True),
+                ("truncated", "yes"), ("rescue", "rejected"), ("wake", [0, float("inf")]),
+                ("indices", {"anchor": 5}), ("indices", {"private-name": 0}),
+                ("judge", "private-name"), ("rescue_stage", "https://private-host.local"),
+                ("rescue_ran", 1), ("single_photo_mode_verified", "private-name"),
+                ("control_bar_wake_skipped", 1), ("extra", "https://private-host.local")):
+            changed = copy.deepcopy(summary)
+            changed["strict_case_evidence"][0]["bounded_diagnostics"]["case_resources"][0]["continue_watch"][field] = defect
+            with self.subTest(field=field), self.assertRaisesRegex(ci_summary.ContractError,
+                    "^continue watch: invalid projection$"):
+                ci_summary.parse_summary(changed)
+        over_frames = copy.deepcopy(summary)
+        projection = over_frames["strict_case_evidence"][0]["bounded_diagnostics"]["case_resources"][0]["continue_watch"]
+        projection.update(total_frames=81, frames=[[0, 0, 0, "MATCH", "A1", .7, 255, .1, False]] * 81)
+        self.assertLess(len(json.dumps(projection, separators=(",", ":")).encode()), 8192)
+        with self.assertRaisesRegex(ci_summary.ContractError, "^continue watch: invalid projection$"):
+            ci_summary.parse_summary(over_frames)
+        for column, defect in ((0, -1), (1, -.01), (2, 86401), (3, "private-name"),
+                (4, "A9"), (5, float("nan")), (6, 256), (7, 1.1), (8, "private-name")):
+            changed = copy.deepcopy(summary)
+            changed["strict_case_evidence"][0]["bounded_diagnostics"]["case_resources"][0]["continue_watch"]["frames"][0][column] = defect
+            with self.subTest(column=column), self.assertRaisesRegex(ci_summary.ContractError,
+                    "^continue watch: invalid projection$"):
+                ci_summary.parse_summary(changed)
+        oversized = copy.deepcopy(summary)
+        projection = oversized["strict_case_evidence"][0]["bounded_diagnostics"]["case_resources"][0]["continue_watch"]
+        projection.update(total_frames=80, truncated=False, frames=[
+            [i + .123456789012345, i + .123456789012346, i + .123456789012347,
+             "UNRECOGNIZABLE", None, .123456789012345, 234.1234567890123, .123456789012345, False]
+            for i in range(80)])
+        self.assertGreater(len(json.dumps(projection, separators=(",", ":")).encode()), 8192)
+        with self.assertRaisesRegex(ci_summary.ContractError, "^continue watch: invalid projection$"):
+            ci_summary.parse_summary(oversized)
+
     def test_bounded_diagnostics_retains_over_budget_and_unavailable_collection_times(self):
         for measurements, details in (({"preparation": 5.001, "xcode": 10.001, "fixture": 2.001},
                                       ("preparation=5.001 s (over budget)", "xcode=10.001 s (over budget)",

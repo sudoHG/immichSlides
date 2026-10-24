@@ -150,7 +150,7 @@ issue decisions do not consume the measurements.
 The reader also accepts `case_resources`, an array of at most 64 case measurements.
 Strict producers emit it for each actual Xcode case invocation, including an
 existing listed retry. Fixture UI producers do not sample continuously. Each entry has
-the following required fields and optional `app_hang_stack`. All numbers are finite, booleans are not numbers,
+the following required fields and optional `app_hang_stack` and `continue_watch`. All numbers are finite, booleans are not numbers,
 and unknown measurements remain null.
 
 | Fields | Bounds and meaning |
@@ -164,6 +164,7 @@ and unknown measurements remain null.
 | `first_failure_elapsed_seconds` | Offset from this case's sampling origin, 0–case duration, or null if no failure is bound; absence never proves a passing case |
 | `failure_samples` | At most six samples, no more than `sample_count`, strictly increasing by `elapsed_seconds`, within both the case duration and ±5 seconds of the first failure; empty when the failure time is unavailable |
 | `app_hang_stack` (optional) | At most 4,096 compact JSON bytes: `status` (`captured`, `failure`, `timeout`, `cancelled`), `sample_count` (main-thread samples), and `frames` (at most 30 objects containing only `symbol`, allowlisted `module`, and inclusive `samples` count); optional `hint` contains at most three distinct frame indices in observed callee-to-caller order; non-captured states have zero samples and no frames |
+| `continue_watch` (optional) | Failed `tvos-lifecycle-pause` only; at most 8,192 compact JSON bytes and the first 80 frames, rounded to three decimals; see the numeric projection below |
 
 Each failure sample has exactly `elapsed_seconds` (0–86,400), `idle_percent`
 (0–100 or null), `load_1m` (0–10^6 or null), and `cpu_percent`. The latter has
@@ -349,6 +350,51 @@ callee on the left. Older stack projections without `hint` show one frame withou
 inventing a path. An invalid producer stack is dropped independently, preserving
 the case's numeric measurements and `failure_samples`. Missing symbols or
 unsuccessful capture are diagnostic gaps only.
+
+The failed tvOS Continue watch projection is read from the case-owned
+`continue-watch-diagnostic.json` in the evidence directory after XCTest and the
+official exports finish. The raw file is never added to hosted artifacts.
+`frames` contains compact arrays in this order: request, captured, returned
+(seconds since Continue), status, public mark, mean luma (0–1, decoded photo mean
+when unclassified), photo q95
+(0–255), white-core fraction (0–1), controls visible. Only A1–A8 marks (including
+combinations of up to four, such as `A1+A2`) and the
+existing public identity statuses are accepted; missing classification or pixel
+measurements are null. Classification can stop before capture does. `total_frames`
+and `truncated` expose omitted frames; `indices` retains recorded anchor/dim/proof
+indices only when their frames survived the cap. `wake` is issued/returned seconds
+or null. Optional `judge` records the original judge's step (`passed`, `early`,
+`late`, `no_transition_start`, `no_stable_new_photo`, `four_second`, `other`, or
+`not_evaluated`). `early` also covers scene-check failures before T−2, including
+BLACK, UNRECOGNIZABLE or TRANSITION frames and a different public mark.
+`rescue_ran` and `rescue_stage` distinguish an unattempted rescue
+from `ineligible`, `no_anchor`, `no_dim`, `no_proof`, `missing_pixels`, `span`, `continuity`, `recovery`,
+`window_early`, `window_late`, `four_second`, or `passed`. The sealed, passive
+observation object cannot run a callback or return a decision to the judge.
+Indices describe the last examined candidate, including failed window, recovery
+and four-second checks; a later anchor replaces its earlier candidate indices.
+Missing pixels interrupt an active candidate with `missing_pixels`; without an
+active candidate they do not overwrite the previous candidate's rejection stage.
+`single_photo_mode_verified` and `control_bar_wake_skipped` preserve the observed
+eligibility and wake context. Source files predating the observation hook use
+`not_recorded` for `judge`/`rescue_stage` and null for `rescue_ran`; their existing
+`single_photo_mode_verified` and `control_bar_wake_skipped` booleans are preserved.
+A missing boolean measurement is null. Projections without these optional fields
+remain valid. No legacy `rescue` outcome field is published or accepted; it was
+removed before the first main producer, so no archived night depends on it.
+Nothing recomputes the verdict. An invalid projection is dropped independently
+of resource samples and hang stacks. Source reads are capped at 2 MiB, symlinks
+are refused, and no free text, notes, paths, URLs, device IDs or names are retained.
+The tracer preserves the case/receipt join independently of yellow eligibility.
+The 80-frame and rounding limits normally fit within 8 KiB; the byte-truncation
+loop is a fallback for future field growth and also removes indices for omitted frames.
+The case row adds `continue-watch: frames=N/total, median request interval=…s,
+dim MATCH=k, judge=<step>, rescue=<ran|not-run|unknown>/<stage>`; the interval is
+the next request minus the prior request over retained frames. Dim MATCH counts
+only MATCH frames with the first MATCH mark, mean below that frame's mean, and
+q95 at least three below that frame's plateau measurement. These are observations,
+not a replay of the rescue or timing judge. Historical nights without the field
+retain their original readability and verdicts.
 
 `run_strict_e2e.py --local-force-app-hang-capture` exercises the capture on the
 first identified App CPU read, including idle CPU. It is ignored whenever `CI`,
@@ -789,7 +835,7 @@ The same sequence applies to `bounded_diagnostics.case_resources` and
 `first_failure.native_activity_seconds`: merge reader support before opening the
 producer activation PR. Historical records without either optional field remain valid.
 
-A scoped exception permits the optional App hang-stack projection and its reader
+A scoped exception permits the optional App hang-stack and Continue watch projections and their readers
 to ship together. The trusted base gate/UI publisher's supported producers in
 `ci_publish_git.py` do not consume strict-tracer or P2-review diagnostic artifacts;
 candidate tracer checks use their producer checkout's reader, nightly aggregation
@@ -799,6 +845,10 @@ not activate a field in required gate/UI records. Old nights and old stack proje
 This exception relies on that consumer boundary: introducing the field into a
 base-read publication path or reading it with an older revision requires a separate
 reader rollout first. The PR must document this transition analysis.
+Both `continue_watch` and `app_hang_stack` are copied into
+`environment_limit.resources` in the 90-day yellow history and validated again by
+later readers. Their archived validation may only be loosened, never tightened;
+otherwise a previously accepted night could become unreadable or red.
 
 ### Prepared hosted strict environment limits
 
