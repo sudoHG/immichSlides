@@ -4094,6 +4094,7 @@ raise SystemExit(65)
                 mock.patch.object(resources.subprocess, 'run', return_value=SimpleNamespace(returncode=0, stdout=process_table(rows))) as ps:
             resources.process_sample('private-device', .1, simulator_snapshots=snapshots)
             self.assertEqual(1, ps.call_count, 'projection must reuse the existing ps invocation')
+            self.assertIn('-ww', ps.call_args.args[0], 'comm must not be truncated without a tty')
         self.assertEqual({'STExtractionService': 60, 'diagnosticd': 12, 'photoanalysisd': 10, 'other': 31}, snapshots[0])
         for name in ('diagnosticd', 'lsd', 'STExtractionService', 'PosterBoard', 'intelligenceplatformd',
                 'photoanalysisd', 'mediaanalysisd', 'fileindexerd', 'mobileassetd', 'nsurlsessiond', 'chronod',

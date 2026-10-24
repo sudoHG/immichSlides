@@ -193,8 +193,8 @@ Only in memory, the stripped argv[0] basename is compared with the enum below;
 no other argv or process environment is read. `-ww` prevents terminal-width
 truncation, including without a tty. Category accounting retains its short-name
 rules and reads the first whitespace-delimited `ucomm` token when `comm` is present.
-A missing `comm` makes only the simulator projection unavailable, preserving the
-snapshot's category accounting.
+A missing `comm` drops only that simulator snapshot (the projection is truncated,
+or unavailable when no snapshot remains), preserving the snapshot's category accounting.
 The already device-verified App's `launchd_sim` ancestor identifies the assigned
 tree in that snapshot. A missing, inaccessible or ambiguous root makes that
 snapshot unavailable; it never falls back to other simulator trees. In particular,
