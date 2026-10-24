@@ -130,10 +130,49 @@ def reduce_main_thread_sample(raw):
     return result
 
 
-def capture_main_thread(pid, stopped, *, device):
+class CaptureCleanupError(RuntimeError):
+    """An owned capture must not be treated as stopped until its child is reaped."""
+
+
+class CaptureProcess:
+    """Serialize launch with case shutdown, retaining ownership until wait succeeds."""
+
+    def __init__(self, stopped):
+        self.stopped = stopped
+        self.lock = threading.Lock()
+        self.closed = False
+        self.process = None
+
+    def start(self, command):
+        with self.lock:
+            if self.closed or self.stopped.is_set():
+                return None
+            # Keep the runner's process group as a second cleanup boundary.
+            self.process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return self.process
+
+    def close(self, deadline):
+        if not self.lock.acquire(timeout=max(0, deadline - time.monotonic())):
+            raise CaptureCleanupError("App hang capture launch or reap did not finish before shutdown")
+        try:
+            self.closed = True
+            process = self.process
+            if process is not None:
+                if process.returncode is None:
+                    process.kill()
+                try:
+                    process.wait(timeout=max(0, deadline - time.monotonic()))
+                except subprocess.TimeoutExpired:
+                    raise CaptureCleanupError("App hang capture did not reap after SIGKILL") from None
+                self.process = None
+        finally:
+            self.lock.release()
+
+
+def capture_main_thread(pid, stopped, *, device, capture_process=None):
     """Keep raw output in a private temporary directory, never in an evidence tree."""
     result = {"status": "failure", "sample_count": 0, "frames": []}
-    process = None
+    capture_process = capture_process or CaptureProcess(stopped)
     deadline = time.monotonic() + APP_HANG_TIMEOUT_SECONDS
     try:
         with tempfile.TemporaryDirectory(prefix="strict-app-hang-") as directory:
@@ -143,8 +182,9 @@ def capture_main_thread(pid, stopped, *, device):
                     return {**result, "status": "cancelled"}
                 if app_on_device(pid, device) is not True:
                     return result
-                process = subprocess.Popen(["/usr/bin/sample", str(pid), "1", "10", "-file", str(path)],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                process = capture_process.start(["/usr/bin/sample", str(pid), "1", "10", "-file", str(path)])
+                if process is None:
+                    return {**result, "status": "cancelled"}
                 while True:
                     if stopped.is_set():
                         return {**result, "status": "cancelled"}
@@ -161,12 +201,7 @@ def capture_main_thread(pid, stopped, *, device):
                     if len(raw) <= MAX_RAW_SAMPLE_BYTES and time.monotonic() < deadline:
                         return reduce_main_thread_sample(raw.decode("utf-8", errors="replace"))
             finally:
-                if process is not None and process.poll() is None:
-                    process.kill()
-                    try:
-                        process.wait(timeout=0.1)
-                    except subprocess.SubprocessError:
-                        pass
+                capture_process.close(time.monotonic() + 0.1)
     except (OSError, ValueError, TypeError, subprocess.SubprocessError):
         pass
     return result
@@ -186,6 +221,7 @@ class AppHangCapture:
         self.worker = None
         self.charge = 0.0
         self.wall_seconds = None
+        self.capture_process = CaptureProcess(stopped)
 
     def can_capture(self, remaining_seconds):
         return (not self.attempted and not self.case_state.get("attempted", False) and not self.stopped.is_set()
@@ -210,13 +246,14 @@ class AppHangCapture:
         def collect():
             started = time.perf_counter()
             try:
-                self.result = capture_main_thread(pid, self.stopped, device=self.device)
+                self.result = capture_main_thread(pid, self.stopped, device=self.device,
+                    capture_process=self.capture_process)
             except (OSError, ValueError, TypeError, RuntimeError, subprocess.SubprocessError):
                 self.result = {"status": "failure", "sample_count": 0, "frames": []}
             finally:
                 self.wall_seconds = time.perf_counter() - started
         try:
-            self.worker = threading.Thread(target=collect, daemon=True)
+            self.worker = threading.Thread(target=collect, daemon=False)
             self.worker.start()
         except (OSError, RuntimeError):
             self.result = {"status": "failure", "sample_count": 0, "frames": []}
@@ -627,14 +664,17 @@ class CaseSampler:
     def stop(self):
         if self.closed:
             return
-        self.closed = True
         elapsed = time.monotonic() - self.origin
         self.clock_stable = abs((time.time() - self.epoch) - elapsed) <= CLOCK_DRIFT_TOLERANCE_SECONDS
         self.duration = min(MAX_DIAGNOSTIC_SECONDS, max(0, elapsed))
         self.stopped.set()
         stop_deadline = time.monotonic() + STOP_TIMEOUT_SECONDS if self.hang is not None else None
+        if self.hang is not None:
+            # Reap from the case thread even if the capture worker is descheduled.
+            self.hang.capture_process.close(stop_deadline)
+        self.closed = True
         if self.thread is not None:
-            self.thread.join(STOP_TIMEOUT_SECONDS)
+            self.thread.join(max(0, stop_deadline - time.monotonic()) if stop_deadline is not None else STOP_TIMEOUT_SECONDS)
         if self.hang is not None:
             if self.hang.worker is not None:
                 self.hang.worker.join(max(0, stop_deadline - time.monotonic()))

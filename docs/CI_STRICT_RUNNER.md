@@ -1161,6 +1161,15 @@ defines the trigger, per-case/job caps, redaction, accounting and local-only
 `--local-force-app-hang-capture` exercise. It changes no first-failure, verdict,
 environment-limit eligibility or timing contract.
 
+Case shutdown owns and reaps a running capture before returning, using the same
+shared 0.8-second stop deadline for reaping and worker joins. Capture launch and
+shutdown are serialized, and capture workers finish their private-file cleanup
+before interpreter exit. The process remains inside the runner group as an
+additional cancellation boundary. Failure to reap is an infrastructure cleanup
+failure, not an optional missing stack. If tracer group cleanup itself fails, the
+error and bounded receipt retain sanitized surviving executable/parent basenames
+and states; see the [resource diagnostics contract](CI_SUMMARY.md#bounded-infrastructure-diagnostics).
+
 The [hosted strict environment-limit policy](CI_SUMMARY.md#prepared-hosted-strict-environment-limits)
 uses these receipts and the same case's resource samples. The strict tracer now
 projects qualifying failures at its checkpoint, validates the candidate summary and

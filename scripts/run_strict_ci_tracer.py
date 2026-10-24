@@ -19,6 +19,8 @@ from pathlib import Path
 from ci_build_archive import file_hash, workspace_preflight
 from ci_failure_diagnostics import VALIDATOR_FAILURE_FIELD, public_validator_failure_message
 from ci_execution_diagnostics import Recorder, TRUNCATION_PREFIX, TRUNCATION_REASONS, report_truncation, session
+from ci_bounded_diagnostics import (MAX_DIAGNOSTIC_SECONDS, MAX_PROCESSES, public_runner_process_name,
+                                    render_runner_group_members)
 from ci_summary import decode, identity_key, observation, parse_summary, require, test_identity, write_summary
 from run_host_checks import GROUP_TERM_GRACE_SECONDS, group_has_live_members, run_identity, source_metadata, stop_group, toolchain
 from run_strict_e2e import (CommandError, FILTER_PERSON_SESSIONS, resolve_suite_selector,
@@ -140,6 +142,33 @@ def evaluate_tracer(declared, results, *, interrupted=False, informational=()):
 class RunnerGroupCleanupError(RuntimeError):
     """Build paths must be retained if runner descendants cannot be stopped."""
 
+    def __init__(self, reason, *, members=None):
+        self.members = members
+        super().__init__(reason + "; live members: " + render_runner_group_members(members))
+
+
+def runner_group_members(group_id):
+    """A failure-only ps projection: no arguments, paths, PIDs or arbitrary names survive."""
+    try:
+        table = subprocess.check_output(["ps", "-axo", "pid=,ppid=,pgid=,stat=,comm="],
+            text=True, stderr=subprocess.DEVNULL, timeout=0.5)
+        if len(table.encode()) > 2 * 1024 * 1024:
+            return None
+        rows = [line.split(None, 4) for line in table.splitlines()]
+        rows = {row[0]: row for row in rows if len(row) == 5 and all(value.isdecimal() for value in row[:3])}
+        members = []
+        for row in rows.values():
+            if row[2] != str(group_id) or row[3].startswith("Z"):
+                continue
+            parent = rows.get(row[1])
+            members.append({"name": public_runner_process_name(row[4]),
+                "parent": public_runner_process_name(parent[4]) if parent else "unknown",
+                "state": {"R": "running", "S": "sleeping", "I": "sleeping", "U": "uninterruptible",
+                          "D": "uninterruptible", "T": "stopped"}.get(row[3][:1], "unknown")})
+        return members[:MAX_PROCESSES]
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
 
 def produce_environment_limits(summary, results, *, informational=(), policy_version=None, rejections=None):
     """Attach only reader-validated same-case proofs; retain every raw outcome."""
@@ -234,7 +263,10 @@ def run_runner(command, repo_root, log_path, *, timeout_seconds, truncation_seen
                         raise RuntimeError("Runner process group still has live members")
                     time.sleep(0.05)
             except BaseException as error:
-                raise RunnerGroupCleanupError(f"Runner process group cleanup failed: {type(error).__name__}: {error}") from error
+                reason = ("RuntimeError: Runner process group still has live members" if str(error) == "Runner process group still has live members"
+                          else type(error).__name__)
+                raise RunnerGroupCleanupError("Runner process group cleanup failed: " + reason,
+                    members=runner_group_members(process.pid)) from None
             log.seek(offset)
             lines = log.read().splitlines()
             truncation = next((line for line in lines if line.startswith(TRUNCATION_PREFIX)
@@ -330,6 +362,7 @@ def main(argv=None):
     records.mkdir()
     diagnostics_path = output / "bounded-diagnostics.json"
     diagnostics = Recorder()
+    cleanup_event = None
     if args.preparation_diagnostics:
         diagnostics.load(args.preparation_diagnostics)
     diagnostics.save(diagnostics_path)
@@ -377,6 +410,8 @@ def main(argv=None):
     def checkpoint():
         nonlocal exit_code
         diagnostics.load(diagnostics_path)
+        if cleanup_event is not None and cleanup_event not in diagnostics.events:
+            diagnostics.retain(cleanup_event)
         if child_truncated.is_set():
             diagnostics.truncate("inherited")
         diagnostics.save(diagnostics_path)
@@ -571,6 +606,10 @@ def main(argv=None):
         can_cleanup = not isinstance(error, RunnerGroupCleanupError)
         if not can_cleanup:
             (output / "runner-group-cleanup-failed").touch()
+            cleanup_event = {"scope": "xcode", "phase": "unknown", "state": "after-reap", "sequence": 0,
+                "elapsed_seconds": min(MAX_DIAGNOSTIC_SECONDS, max(0, time.time() - trace["started_epoch"])),
+                "cpu_seconds": None, "sample": None, "input_sha256": None, "official_exports": None,
+                "runner_group_members": error.members}
         code = ("simulator-preparation-failed" if preparation_failure is not None else
                 "strict-tracer-failed" if isinstance(error, CommandError) else
                 "step-timeout" if isinstance(error, subprocess.TimeoutExpired) else "interrupted")

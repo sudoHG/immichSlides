@@ -27,6 +27,11 @@ STATES = ("started", "completed", "spawn-started", "spawn-completed", "communica
 PROCESS_NAMES = ("simctl", "CoreSimulatorService", "Simulator", "launchd_sim", "xcodebuild", "xctest",
                  "testmanagerd", "immichSlides", "immichSlidesUITests-Runner", "swift-frontend")
 PROCESS_STATES = ("running", "sleeping", "uninterruptible", "stopped", "zombie", "unknown")
+RUNNER_PROCESS_NAMES = frozenset((*PROCESS_NAMES, "other", "unknown", "sample", "Python", "python",
+    "swift", "swiftc", "swift-driver", "swift-plugin-server", "clang", "clang++", "ld", "XCBBuildService",
+    "SourceKitService", "sourcekit-lsp", "ibtoold", "actool", "assetcatalogd", "codesign", "xcrun", "ps",
+    "vm_stat", "launchd", "lldb", "debugserver", "bash", "sh", "zsh", "git", "git-remote-https",
+    "sandbox-exec", "ditto"))
 MAX_EVENTS = 512
 MAX_RESOURCE_CASES = 64
 MAX_RESOURCE_SAMPLES = 43201
@@ -78,6 +83,24 @@ def render_app_hang_hint(stack):
     hint = " ← ".join("`" + frame["symbol"] + "`" for frame in selected) or stack["status"]
     count = f"{selected[0]['samples']}/{stack['sample_count']}" if selected else str(stack["sample_count"])
     return f"app-hang-stack: {hint} ({count} samples)"
+
+
+def public_runner_process_name(executable):
+    name = executable.rsplit("/", 1)[-1]
+    return name if (name in RUNNER_PROCESS_NAMES or re.fullmatch(r"(?:python|Python)[23](?:\.\d{1,2}){0,2}", name)) else "other"
+
+
+def validate_runner_group_members(members):
+    valid = members is None or (isinstance(members, list) and len(members) <= MAX_PROCESSES
+        and all(isinstance(member, dict) and set(member) == {"name", "parent", "state"}
+            and all(isinstance(member[key], str) and public_runner_process_name(member[key]) == member[key]
+                    for key in ("name", "parent")) and member["state"] in PROCESS_STATES for member in members))
+    require(valid, "runner group: invalid projection")
+
+
+def render_runner_group_members(members):
+    return ("unavailable" if members is None else ", ".join(
+        f"{member['name']}(parent={member['parent']},state={member['state']})" for member in members) or "none")
 
 
 def exact_fields(value, names, where):
@@ -135,8 +158,14 @@ def validate_receipt(receipt):
     events = receipt["events"]
     require(isinstance(events, list) and len(events) <= MAX_EVENTS, "bounded diagnostics: invalid event count")
     for event in events:
-        exact_fields(event, {"scope", "phase", "state", "sequence", "elapsed_seconds", "cpu_seconds", "sample",
-                             "input_sha256", "official_exports"}, "bounded diagnostic event")
+        fields = {"scope", "phase", "state", "sequence", "elapsed_seconds", "cpu_seconds", "sample",
+                  "input_sha256", "official_exports"}
+        if isinstance(event, dict) and "runner_group_members" in event:
+            fields.add("runner_group_members")
+            validate_runner_group_members(event["runner_group_members"])
+            require((event.get("scope"), event.get("phase"), event.get("state")) == ("xcode", "unknown", "after-reap"),
+                    "runner group: invalid event")
+        exact_fields(event, fields, "bounded diagnostic event")
         scope = event["scope"]
         require(isinstance(scope, str) and scope in PHASES, "bounded diagnostic event: invalid scope")
         require(event["phase"] in PHASES[scope], "bounded diagnostic event: invalid phase")
@@ -230,6 +259,9 @@ def render_receipt(receipt):
                        for scope, event in latest.items()) or "none"
     rendered = (f"\nBounded diagnostics (measurements only): {'; '.join(costs)}; events={len(receipt['events'])}; "
             f"truncated={'yes' if receipt['truncated'] else 'no'}. Last retained phase: {phases}\n")
+    for event in receipt["events"]:
+        if "runner_group_members" in event:
+            rendered += "\nRunner cleanup survivors: " + render_runner_group_members(event["runner_group_members"]) + "\n"
     def measured(value):
         return "unavailable" if value is None else f"{value:g}"
     for case in receipt.get("case_resources", []):

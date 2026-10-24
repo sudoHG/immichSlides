@@ -307,13 +307,22 @@ main thread itself was busy. Only one unambiguous App process on the assigned
 simulator is eligible. A background `/usr/bin/sample PID 1 10` (one second,
 10 ms sampling interval, leaving room for symbolication) has a three-second
 subprocess deadline, is cancelled on case exit, and never blocks the idle/load worker.
+The case owns the subprocess independently of the capture worker: shutdown closes
+the launch gate, kills any in-flight capture and calls `wait` before returning,
+even when that worker cannot resume. The capture stays in the runner process group,
+so tracer cancellation remains a second cleanup boundary; a detached session could
+hide an orphan from that boundary. The capture worker is non-daemon so interpreter
+shutdown also waits for its private-file finalizer.
 No test or case deadline changes. At most three attempts per job (including
 failures) share the existing 180-second process-sampler allowance; three seconds
 are reserved before each launch and the completed active wall cost is charged to
 both the private balance and public `sampler_wall_seconds`. Unfinished work
-retains its full reservation. The existing stop-wait bound is not extended.
+retains its full reservation. Reaping and both worker joins share the existing
+0.8-second stop deadline. An unreaped capture or a launch lock still held at that
+deadline is an infrastructure cleanup error, rather than a successful stop; the
+runner must not suppress it as an optional diagnostic failure.
 The subprocess deadline does not include PID inspection, raw-file reduction,
-kill/reap (up to another 0.1 second) or temporary-directory cleanup; their actual
+worker-owned kill/reap (up to another 0.1 second) or temporary-directory cleanup; their actual
 wall cost is charged too, so host descheduling or cleanup can exceed the reservation.
 `sample` briefly suspends the App at each sample and consumes CPU for symbolication,
 so collection can perturb a running case even though verdict rules and deadlines
@@ -789,7 +798,8 @@ The same sequence applies to `bounded_diagnostics.case_resources` and
 `first_failure.native_activity_seconds`: merge reader support before opening the
 producer activation PR. Historical records without either optional field remain valid.
 
-A scoped exception permits the optional App hang-stack projection and its reader
+A scoped exception permits the optional App hang-stack projection, strict runner
+cleanup member event and their readers
 to ship together. The trusted base gate/UI publisher's supported producers in
 `ci_publish_git.py` do not consume strict-tracer or P2-review diagnostic artifacts;
 candidate tracer checks use their producer checkout's reader, nightly aggregation
@@ -799,6 +809,18 @@ not activate a field in required gate/UI records. Old nights and old stack proje
 This exception relies on that consumer boundary: introducing the field into a
 base-read publication path or reading it with an older revision requires a separate
 reader rollout first. The PR must document this transition analysis.
+
+On a strict runner process-group cleanup failure, the tracer takes one additional
+`ps` read (0.5-second timeout, at most 2 MiB) and retains at most 64 live members in
+`events[].runner_group_members`. Each entry has only `name`, `parent` and `state`;
+the event is restricted to `xcode/unknown/after-reap`. Executable and parent names
+are public tool basenames from a fixed allowlist (plus versioned Python names),
+unknown names become `other`, absent parents become `unknown`, and process states
+use the existing closed vocabulary. Paths, arguments, PIDs and device identifiers
+are discarded; zombies and other process groups are excluded. A failed probe is
+null, distinct from an empty observed group. The same projection appears in the
+cleanup exception and Markdown summary. This failure-only read does not extend
+the group grace or change a case verdict, retry, deadline or yellow qualification.
 
 ### Prepared hosted strict environment limits
 
