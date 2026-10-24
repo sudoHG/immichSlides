@@ -2478,6 +2478,8 @@ class StrictCITracerTests(unittest.TestCase):
                 "identity_notes": ["https://private-host.local/Users/private-name"]} for i in range(120)],
             "control_bar_wake": {"issued": 8.1234567, "returned": 8.4},
             "rescue_outcome": "rejected", "rescue_indices": {"anchor": 1, "dim": 2, "proof": 3},
+            "judge": "late", "rescue_ran": True, "rescue_stage": "span",
+            "single_photo_mode_verified": False, "control_bar_wake_skipped": True,
             "private": "00000000-1111-2222-3333-444444444444"}
         with tempfile.TemporaryDirectory() as directory:
             evidence = Path(directory)
@@ -2489,9 +2491,11 @@ class StrictCITracerTests(unittest.TestCase):
                     ("tvos", "tvos-lifecycle-pause", "PASSED", False),
                     ("tvos", "tvos-lifecycle-pause", "RUNNING", False)):
                 receipt = bounded_diagnostics_receipt(resources=True)
+                receipt["case_resources"].insert(0, dict(receipt["case_resources"][0], sequence=3))
                 with self.subTest(platform=platform, suite=suite, result=result):
                     attach_continue_watch(receipt, evidence, platform=platform, suite=suite, result=result, sequence=4)
-                    case = receipt["case_resources"][0]
+                    self.assertNotIn("continue_watch", receipt["case_resources"][0])
+                    case = receipt["case_resources"][1]
                     self.assertEqual(expected, "continue_watch" in case)
                     if expected:
                         projection = case["continue_watch"]
@@ -2504,8 +2508,42 @@ class StrictCITracerTests(unittest.TestCase):
                         self.assertEqual({"anchor": 1, "dim": 2, "proof": 3}, projection["indices"])
                         self.assertEqual([8.123, 8.4], projection["wake"])
                         self.assertEqual("rejected", projection["rescue"])
+                        self.assertEqual(("late", True, "span", False, True), tuple(projection[key] for key in
+                            ("judge", "rescue_ran", "rescue_stage", "single_photo_mode_verified", "control_bar_wake_skipped")))
                         self.assertNotIn("private", encoded)
                         self.assertNotIn("00000000", encoded)
+            for mark in ("A1+A2", "A1+A2+A3+A4"):
+                changed = json.loads(json.dumps(raw))
+                changed["samples"][0]["mark"] = mark
+                path.write_text(json.dumps(changed))
+                receipt = bounded_diagnostics_receipt(resources=True)
+                attach_continue_watch(receipt, evidence, platform="tvos", suite="tvos-lifecycle-pause",
+                                      result="FAILED", sequence=4)
+                self.assertEqual(mark, receipt["case_resources"][0]["continue_watch"]["frames"][0][4])
+            changed = dict(raw, rescue_indices={"anchor": 79, "dim": 80, "proof": 119})
+            path.write_text(json.dumps(changed))
+            receipt = bounded_diagnostics_receipt(resources=True)
+            attach_continue_watch(receipt, evidence, platform="tvos", suite="tvos-lifecycle-pause", result="FAILED", sequence=4)
+            self.assertEqual({"anchor": 79}, receipt["case_resources"][0]["continue_watch"]["indices"])
+            for field in ("request", "returned"):
+                changed = json.loads(json.dumps(raw))
+                changed["samples"][0][field] += .001
+                path.write_text(json.dumps(changed))
+                receipt = bounded_diagnostics_receipt(resources=True)
+                before = json.loads(json.dumps(receipt))
+                with self.subTest(misaligned=field):
+                    attach_continue_watch(receipt, evidence, platform="tvos", suite="tvos-lifecycle-pause",
+                                          result="FAILED", sequence=4)
+                    self.assertEqual(before, receipt)
+            target = evidence / "public-watch.json"
+            target.write_text(json.dumps(raw))
+            path.unlink()
+            path.symlink_to(target)
+            receipt = bounded_diagnostics_receipt(resources=True)
+            before = json.loads(json.dumps(receipt))
+            attach_continue_watch(receipt, evidence, platform="tvos", suite="tvos-lifecycle-pause", result="FAILED", sequence=4)
+            self.assertEqual(before, receipt)
+            path.unlink()
             for field, defect in (("mark", "https://private-host.local"), ("status", "private-name"),
                                   ("luma", float("nan")), ("controls", "private-name")):
                 changed = json.loads(json.dumps(raw))

@@ -744,6 +744,88 @@ extension SettingsResumeContractTests {
             2 * AccessLifecycleContract.TVOSPhotoMotionBounds.maximumMotionFractionPerAxis)
     }
 
+    func testTVOSObservationPreservesVerdictsAndErrorBytesWhileRecordingFailureStages() {
+        typealias Observation = AccessLifecycleContract.TVOSPauseTimingObservation
+        let observation = Observation()
+        func check(
+            _ samples: [AccessLifecycleContract.ContinueWatchSample],
+            mark: String = "A1", baseline: Double = 0.497, interval: Double = 10,
+            policy: AccessLifecycleContract.TVOSFadeRescuePolicy? = nil,
+            judge: Observation.JudgeStep, ran: Bool, stage: Observation.RescueStage,
+            indices: [String: Int] = [:], file: StaticString = #filePath, line: UInt = #line
+        ) {
+            func outcome(_ sink: Observation?) -> [UInt8] {
+                do {
+                    let evidence = try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
+                        continueMark: mark, baselineLuma: baseline, samples: samples,
+                        intervalSeconds: interval, rescuePolicy: policy, observation: sink)
+                    let times = [
+                        evidence.start.requestElapsed, evidence.stable.returnElapsed,
+                        evidence.rescue?.anchor.requestElapsed ?? -1,
+                        evidence.rescue?.dim.requestElapsed ?? -1, evidence.rescue?.proof.returnElapsed ?? -1
+                    ].map(\.bitPattern)
+                    return Array("pass:\(times)".utf8)
+                } catch {
+                    return Array("\(String(reflecting: error)):\(error.localizedDescription)".utf8)
+                }
+            }
+            XCTAssertEqual(outcome(observation), outcome(nil), file: file, line: line)
+            XCTAssertEqual(observation.judgeStep, judge, file: file, line: line)
+            XCTAssertEqual(observation.rescueRan, ran, file: file, line: line)
+            XCTAssertEqual(observation.rescueStage, stage, file: file, line: line)
+            XCTAssertEqual(observation.indices, indices, file: file, line: line)
+        }
+        let rescued = tvosRescueSamples()
+        let fullCandidate = ["anchor": 40, "dim": 41, "proof": 42]
+        check(rescued, policy: tvosRescuePolicy(), judge: .late, ran: true, stage: .passed, indices: fullCandidate)
+        check(rescued, policy: tvosRescuePolicy(isSinglePhoto: false), judge: .late, ran: true, stage: .ineligible)
+        check(rescued, judge: .late, ran: false, stage: .ineligible)
+        check(rescued, baseline: .nan, judge: .other, ran: false, stage: .notRun)
+        check(
+            [watchSample(request: 0, mark: "A1"), watchSample(request: 9, mark: "A1")],
+            judge: .noStableNewPhoto, ran: false, stage: .notRun)
+        check(
+            tvosFadeSamples(start: 10), mark: "A5", baseline: 0.53, interval: 12,
+            judge: .passed, ran: false, stage: .notRun)
+        check(
+            earlyFadeWithFrozenDimSamples(), mark: "A5", baseline: 0.53, interval: 12,
+            judge: .early, ran: false, stage: .notRun)
+
+        var noDim = rescued
+        noDim[41] = rescueSample(request: 10.25, luma: 0.455, highlight: 255, core: 0.064)
+        check(noDim, policy: tvosRescuePolicy(), judge: .late, ran: true, stage: .noDim, indices: ["anchor": 41])
+        var noProof = rescued
+        noProof[42] = rescueSample(
+            request: 10.5, mark: "UNRECOGNIZABLE", status: "UNRECOGNIZABLE", luma: 0.46, highlight: 212)
+        check(
+            noProof, policy: tvosRescuePolicy(), judge: .late, ran: true, stage: .noProof,
+            indices: ["anchor": 40, "dim": 41])
+        check(
+            tvosRescueSamples(cadence: 0.6), policy: tvosRescuePolicy(), judge: .late, ran: true, stage: .span,
+            indices: ["anchor": 40, "dim": 41])
+        var recovered = tvosRescueSamples(proofStatus: "MATCH")
+        recovered[43] = rescueSample(request: 10.75, luma: 0.4, highlight: 213)
+        check(
+            recovered, policy: tvosRescuePolicy(), judge: .late, ran: true, stage: .recovery,
+            indices: fullCandidate)
+        check(
+            tvosRescueSamples(anchor: 7.7), policy: tvosRescuePolicy(), judge: .late, ran: true,
+            stage: .windowEarly, indices: ["anchor": 31, "dim": 32, "proof": 33])
+        check(
+            tvosRescueSamples(anchor: 11.8, newStart: 13.81), policy: tvosRescuePolicy(), judge: .late, ran: true,
+            stage: .windowLate, indices: ["anchor": 48, "dim": 49, "proof": 50])
+        check(
+            tvosRescueSamples(newStart: 12.76), policy: tvosRescuePolicy(), judge: .late, ran: true,
+            stage: .fourSecond, indices: fullCandidate)
+        var originalFourSecond = tvosRescueSamples(proofStatus: "MATCH", newStart: 12.77)
+        originalFourSecond[40] = rescueSample(request: 10, luma: 0.497, highlight: 255, core: 0.064)
+        check(originalFourSecond, policy: tvosRescuePolicy(), judge: .fourSecond, ran: false, stage: .notRun)
+        // Reuse the sink after failures to prove a later pass cannot retain stale candidate indices.
+        check(
+            tvosFadeSamples(start: 10), mark: "A5", baseline: 0.53, interval: 12,
+            judge: .passed, ran: false, stage: .notRun)
+    }
+
     private var tvosLateMessage: String {
         "No automatic photo change was captured within T±2; if waiting for idleness crossed the window, classify this as a test timing failure"
     }

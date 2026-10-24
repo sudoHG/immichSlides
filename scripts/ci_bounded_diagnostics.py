@@ -38,6 +38,10 @@ MAX_CONTINUE_WATCH_BYTES = 8192
 MAX_CONTINUE_WATCH_FRAMES = 80
 CONTINUE_WATCH_STATUSES = (None, "MATCH", "TRANSITION", "BLACK", "BLANK", "UNRECOGNIZABLE")
 CONTINUE_WATCH_RESCUES = ("not_recorded", "not_evaluated", "rejected", "original_pass", "rescued")
+CONTINUE_WATCH_JUDGES = ("not_recorded", "not_evaluated", "passed", "early", "late", "no_transition_start",
+                         "no_stable_new_photo", "four_second", "other")
+CONTINUE_WATCH_RESCUE_STAGES = ("not_recorded", "not_run", "passed", "ineligible", "no_anchor", "no_dim",
+                              "no_proof", "span", "continuity", "window_early", "window_late", "four_second", "recovery")
 APP_HANG_MODULES = frozenset(("immichSlides", "SwiftUI", "SwiftUICore", "UIKitCore", "UIKit", "AttributeGraph",
     "CoreFoundation", "Foundation", "QuartzCore", "CoreGraphics", "GraphicsServices", "dyld", "libdyld.dylib",
     "libswiftCore.dylib", "libswift_Concurrency.dylib", "libsystem_kernel.dylib", "libsystem_pthread.dylib",
@@ -53,7 +57,9 @@ def public_stack_symbol(value):
 def validate_continue_watch(value):
     def numeric(item, ceiling=MAX_DIAGNOSTIC_SECONDS):
         return type(item) in (int, float) and 0 <= item <= ceiling
-    valid = isinstance(value, dict) and set(value) == {"total_frames", "truncated", "frames", "indices", "rescue", "wake"}
+    required = {"total_frames", "truncated", "frames", "indices", "rescue", "wake"}
+    optional = {"judge", "rescue_ran", "rescue_stage", "single_photo_mode_verified", "control_bar_wake_skipped"}
+    valid = isinstance(value, dict) and required <= set(value) <= required | optional
     if valid:
         frames, indices, wake = value["frames"], value["indices"], value["wake"]
         valid = (type(value["total_frames"]) is int and 0 <= value["total_frames"] <= MAX_INTEGER
@@ -66,12 +72,18 @@ def validate_continue_watch(value):
             and (wake is None or (isinstance(wake, list) and len(wake) == 2
                  and all(numeric(item) for item in wake) and wake[0] <= wake[1])))
     if valid:
+        valid = (all(value.get(key) is None or type(value[key]) is bool for key in
+                     ("rescue_ran", "single_photo_mode_verified", "control_bar_wake_skipped"))
+                 and ("judge" not in value or value["judge"] in CONTINUE_WATCH_JUDGES)
+                 and ("rescue_stage" not in value or value["rescue_stage"] in CONTINUE_WATCH_RESCUE_STAGES))
+    if valid:
         previous = -1
         for frame in frames:
             valid = (isinstance(frame, list) and len(frame) == 9
                 and all(numeric(item) for item in frame[:3]) and previous <= frame[0] <= frame[1] <= frame[2]
                 and frame[3] in CONTINUE_WATCH_STATUSES
-                and (frame[4] is None or (isinstance(frame[4], str) and re.fullmatch(r"A[1-8]", frame[4]) is not None))
+                and (frame[4] is None or (isinstance(frame[4], str)
+                     and re.fullmatch(r"A[1-8](?:\+A[1-8]){0,3}", frame[4]) is not None))
                 and (frame[5] is None or numeric(frame[5], 1))
                 and (frame[6] is None or numeric(frame[6], 255))
                 and (frame[7] is None or numeric(frame[7], 1))
@@ -88,9 +100,14 @@ def render_continue_watch(value):
     frames = value["frames"]
     gaps = [right[0] - left[0] for left, right in zip(frames, frames[1:])]
     gap = f"{round(statistics.median(gaps), 3):g}s" if gaps else "unavailable"
-    dim = sum(frame[3] == "MATCH" and frame[6] is not None and frame[6] < 255 for frame in frames)
-    return (f"continue-watch: frames={len(frames)}/{value['total_frames']}, median gap={gap}, "
-            f"dim MATCH={dim}, rescue={value['rescue']}")
+    anchor = next((frame for frame in frames if frame[3] == "MATCH" and frame[4] is not None), None)
+    dim = sum(frame[3] == "MATCH" and frame[4] == anchor[4] and frame[6] is not None
+              and frame[6] <= anchor[6] - 3 and frame[5] is not None and frame[5] < anchor[5] for frame in frames
+              ) if anchor is not None and anchor[6] is not None and anchor[5] is not None else 0
+    ran = {True: "ran", False: "not-run", None: "unknown"}[value.get("rescue_ran")]
+    return (f"continue-watch: frames={len(frames)}/{value['total_frames']}, median request interval={gap}, "
+            f"dim MATCH={dim}, judge={value.get('judge', 'not_recorded')}, "
+            f"rescue={ran}/{value.get('rescue_stage', 'not_recorded')}")
 
 
 def validate_app_hang_stack(stack):

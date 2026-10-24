@@ -357,21 +357,36 @@ official exports finish. The raw file is never added to hosted artifacts.
 `frames` contains compact arrays in this order: request, captured, returned
 (seconds since Continue), status, public mark, mean luma (0–1, decoded photo mean
 when unclassified), photo q95
-(0–255), white-core fraction (0–1), controls visible. Only A1–A8 marks and the
+(0–255), white-core fraction (0–1), controls visible. Only A1–A8 marks (including
+combinations of up to four, such as `A1+A2`) and the
 existing public identity statuses are accepted; missing classification or pixel
 measurements are null. Classification can stop before capture does. `total_frames`
 and `truncated` expose omitted frames; `indices` retains recorded anchor/dim/proof
 indices only when their frames survived the cap. `wake` is issued/returned seconds
-or null. `rescue` is `not_evaluated`, `rejected`, `original_pass`, or `rescued`;
-old source files without that observation use `not_recorded`. `rejected` means the
-timing judge threw, and does not infer which rescue eligibility check failed.
+or null. Optional `judge` records the original judge's step (`passed`, `early`,
+`late`, `no_transition_start`, `no_stable_new_photo`, `four_second`, `other`, or
+`not_evaluated`). `rescue_ran` and `rescue_stage` distinguish an unattempted rescue
+from `ineligible`, `no_anchor`, `no_dim`, `no_proof`, `span`, `continuity`, `recovery`,
+`window_early`, `window_late`, `four_second`, or `passed`. The sealed, passive
+observation object cannot run a callback or return a decision to the judge.
+Indices describe the last examined candidate, including failed window, recovery
+and four-second checks; a later anchor replaces its earlier candidate indices.
+`single_photo_mode_verified` and `control_bar_wake_skipped` preserve the observed
+eligibility and wake context. Old source files use `not_recorded` enums and null
+booleans; old projections without these optional fields remain valid. The legacy
+`rescue` field remains accepted, including its ambiguous `rejected` value, but is
+not used to infer whether a rescue ran.
 Nothing recomputes the verdict. An invalid projection is dropped independently
 of resource samples and hang stacks. Source reads are capped at 2 MiB, symlinks
 are refused, and no free text, notes, paths, URLs, device IDs or names are retained.
 The tracer preserves the case/receipt join independently of yellow eligibility.
-The case row adds `continue-watch: frames=N/total, median gap=…s, dim MATCH=k,
-rescue=…`; gap is the next request minus the prior request over retained frames,
-and dim MATCH counts MATCH frames with photo q95 below 255. These are observations,
+The 80-frame and rounding limits normally fit within 8 KiB; the byte-truncation
+loop is a fallback for future field growth and also removes indices for omitted frames.
+The case row adds `continue-watch: frames=N/total, median request interval=…s,
+dim MATCH=k, judge=<step>, rescue=<ran|not-run|unknown>/<stage>`; the interval is
+the next request minus the prior request over retained frames. Dim MATCH counts
+only MATCH frames with the first MATCH mark, mean below that frame's mean, and
+q95 at least three below that frame's plateau measurement. These are observations,
 not a replay of the rescue or timing judge. Historical nights without the field
 retain their original readability and verdicts.
 
@@ -824,6 +839,10 @@ not activate a field in required gate/UI records. Old nights and old stack proje
 This exception relies on that consumer boundary: introducing the field into a
 base-read publication path or reading it with an older revision requires a separate
 reader rollout first. The PR must document this transition analysis.
+Both `continue_watch` and `app_hang_stack` are copied into
+`environment_limit.resources` in the 90-day yellow history and validated again by
+later readers. Their archived validation may only be loosened, never tightened;
+otherwise a previously accepted night could become unreadable or red.
 
 ### Prepared hosted strict environment limits
 

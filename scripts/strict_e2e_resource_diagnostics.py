@@ -96,12 +96,17 @@ def attach_continue_watch(receipt, evidence_dir, *, platform, suite, result, seq
         wake = raw.get("control_bar_wake")
         projection = {"total_frames": len(frames), "truncated": len(rows) < len(frames), "frames": rows,
             "indices": raw.get("rescue_indices", {}), "rescue": raw.get("rescue_outcome", "not_recorded"),
+            "judge": raw.get("judge", "not_recorded"), "rescue_ran": raw.get("rescue_ran"),
+            "rescue_stage": raw.get("rescue_stage", "not_recorded"),
+            "single_photo_mode_verified": raw.get("single_photo_mode_verified"),
+            "control_bar_wake_skipped": raw.get("control_bar_wake_skipped"),
             "wake": [rounded(wake[key]) for key in ("issued", "returned")] if wake is not None else None}
         # Validate before trimming so malformed optional metadata is never laundered by the cap.
         indices = projection["indices"]
         if not isinstance(indices, dict) or set(indices) - {"anchor", "dim", "proof"} or any(
                 type(index) is not int or not 0 <= index < len(frames) for index in indices.values()):
             return
+        # Fallback for future compatible fields; rounded, currently valid rows already fit below this byte cap.
         while len(json.dumps(projection, separators=(",", ":")).encode()) > MAX_CONTINUE_WATCH_BYTES and rows:
             rows.pop()
         projection["truncated"] = len(rows) < len(frames)

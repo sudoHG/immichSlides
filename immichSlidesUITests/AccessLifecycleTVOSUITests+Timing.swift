@@ -719,23 +719,17 @@ extension AccessLifecycleTVOSUITests {
         var baselineLuma: Double?
         var photoPixels: [AccessLifecycleContract.TVOSPhotoPixels?] = []
         var rescue: AccessLifecycleContract.TVOSFadeRescue?
-        var rescueOutcome = "not_evaluated"
+        let timingObservation = AccessLifecycleContract.TVOSPauseTimingObservation()
         defer {
             do {
                 try StrictE2EVisualEvidence.writeRequiredJSON(
                     [
                         "baseline_luma": baselineLuma.map { $0 as Any } ?? NSNull(),
                         "single_photo_mode_verified": isSinglePhotoModeVerified,
-                        "rescue_outcome": rescueOutcome,
-                        "rescue_indices": rescue.map { candidate in
-                            var indices: [String: Int] = [:]
-                            for (name, sample) in [
-                                ("anchor", candidate.anchor), ("dim", candidate.dim), ("proof", candidate.proof)
-                            ] {
-                                indices[name] = samples.firstIndex { $0.requestElapsed == sample.requestElapsed }
-                            }
-                            return indices
-                        } ?? [:],
+                        "judge": timingObservation.judgeStep.rawValue,
+                        "rescue_ran": timingObservation.rescueRan,
+                        "rescue_stage": timingObservation.rescueStage.rawValue,
+                        "rescue_indices": timingObservation.indices,
                         "rescue_interval": rescue.map {
                             ["lower": $0.anchor.requestElapsed, "upper": $0.proof.returnElapsed]
                         } as Any? ?? NSNull(),
@@ -838,13 +832,12 @@ extension AccessLifecycleTVOSUITests {
                     "The first-half evidence window after Continue crossed its bounds; missing original photo evidence"
                 )
             }
-            rescueOutcome = "rejected"
             let evidence = try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
                 continueMark: continueMark, baselineLuma: baselineLuma, samples: samples, intervalSeconds: interval,
-                rescuePolicy: TVOSContinuePhotoCapture.policy(isSinglePhoto: isSinglePhotoModeVerified)
+                rescuePolicy: TVOSContinuePhotoCapture.policy(isSinglePhoto: isSinglePhotoModeVerified),
+                observation: timingObservation
             )
             rescue = evidence.rescue
-            rescueOutcome = rescue == nil ? "original_pass" : "rescued"
             if let rescue {
                 for (sample, name) in [
                     (rescue.anchor, "continue-rescue-anchor"), (rescue.dim, "continue-rescue-dim"),
