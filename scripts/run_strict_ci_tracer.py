@@ -401,15 +401,6 @@ def main(argv=None):
         exit_code = produce_environment_limits(summary, results,
             informational=[entry["suite"] for entry in manifest.get("informational", [])],
             rejections=environment_rejections)
-        # Retain the existing case/receipt join for diagnostic hints even when a case is not yellow.
-        bound = {identity_key(case["identity"]) for case in summary.get("strict_case_evidence", [])}
-        for phase in results:
-            receipt = phase.get("bounded_diagnostics", {})
-            if (identity_key(phase["identity"]) not in bound
-                    and any("app_hang_stack" in case for case in receipt.get("case_resources", []))):
-                summary.setdefault("strict_case_evidence", []).append({"identity": phase["identity"],
-                    "bounded_diagnostics": receipt})
-                bound.add(identity_key(phase["identity"]))
         write_summary(summary, records)
 
     def invoke(case, evidence, derived, warm):

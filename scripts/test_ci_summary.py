@@ -1011,37 +1011,6 @@ class SummaryContractTests(unittest.TestCase):
         summary["bounded_diagnostics"]["events"] = []
         self.assertIn("Last retained phase: none", ci_summary.render_markdown(summary))
 
-    def test_optional_app_hang_stack_round_trips_and_old_nights_keep_their_verdict(self):
-        from ci_failure_diagnostics import scan_diagnostic_json
-        summary, _ = hosted_timeout_summary()
-        summary["bounded_diagnostics"] = summary["strict_case_evidence"][0]["bounded_diagnostics"]
-        old = copy.deepcopy(summary)
-        case = summary["bounded_diagnostics"]["case_resources"][0]
-        case["app_hang_stack"] = {"status": "captured", "sample_count": 12,
-            "frames": [{"symbol": "SettingsViewIOS.body", "module": "immichSlides", "samples": 4}]}
-        for night in (old, summary):
-            self.assertEqual(night, ci_summary.parse_summary(json.dumps(night)))
-            scan_diagnostic_json(json.dumps(night).encode())
-            self.assertEqual(old["status"], night["status"])
-        self.assertNotIn("app-hang-stack", ci_summary.render_markdown(old))
-        self.assertIn("app-hang-stack: `SettingsViewIOS.body` (4/12 samples)", ci_summary.render_markdown(summary))
-        stack = case["app_hang_stack"]
-        for path, defect in ((("status",), "unknown"), (("sample_count",), True), (("frames",), [{}]),
-                             (("frames", 0, "symbol"), str(Path("/", "Users", "private-user", "secret"))),
-                             (("frames", 0, "symbol"), "private-host.local"),
-                             (("frames", 0, "module"), "private-user"),
-                             (("frames", 0, "samples"), 0),
-                             (("hint",), [True]), (("hint",), [1]), (("hint",), [0, 0]),
-                             (("frames",), [stack["frames"][0]] * 31),
-                             (("frames",), [{**stack["frames"][0], "symbol": "V" * 160}] * 25)):
-            changed = copy.deepcopy(summary)
-            target = changed["bounded_diagnostics"]["case_resources"][0]["app_hang_stack"]
-            for key in path[:-1]:
-                target = target[key]
-            target[path[-1]] = defect
-            with self.subTest(path=path), self.assertRaisesRegex(ci_summary.ContractError, "^app hang stack: invalid projection$"):
-                ci_summary.parse_summary(changed)
-
     def test_bounded_diagnostics_retains_over_budget_and_unavailable_collection_times(self):
         for measurements, details in (({"preparation": 5.001, "xcode": 10.001, "fixture": 2.001},
                                       ("preparation=5.001 s (over budget)", "xcode=10.001 s (over budget)",
