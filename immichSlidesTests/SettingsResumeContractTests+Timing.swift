@@ -337,6 +337,7 @@ extension SettingsResumeContractTests {
                 )
             ) { error in
                 XCTAssertEqual(error.localizedDescription, message)
+                XCTAssertTrue(String(describing: error).hasPrefix("message("))
             }
         }
     }

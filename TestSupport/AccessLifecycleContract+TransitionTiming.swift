@@ -41,34 +41,38 @@ extension AccessLifecycleContract {
         rescuePolicy: TVOSFadeRescuePolicy? = nil
     ) throws -> (start: ContinueWatchSample, stable: ContinueWatchSample, rescue: TVOSFadeRescue?) {
         do {
-            let original = try originalTVOSPauseTimingEvidence(
-                continueMark: continueMark, baselineLuma: baselineLuma, samples: samples,
-                intervalSeconds: intervalSeconds)
-            return (original.start, original.stable, nil)
-        } catch let AssertionError.automaticPhotoChangeLate(message) {
-            // Existing passes, early failures and four-second failures retain the original computation.
-            guard let rescuePolicy,
-                let stable = firstStableNewImage(continueMark: continueMark, samples: samples),
-                let rescue = tvosFadeRescue(
+            do {
+                let original = try originalTVOSPauseTimingEvidence(
                     continueMark: continueMark, baselineLuma: baselineLuma, samples: samples,
-                    stable: stable, intervalSeconds: intervalSeconds, policy: rescuePolicy)
-            else { throw AssertionError.automaticPhotoChangeLate(message) }
-            let earliest = intervalSeconds - continueCaptureSlackSeconds
-            let latest = intervalSeconds + continueCaptureSlackSeconds
-            if rescue.anchor.requestElapsed + timingToleranceSeconds < earliest {
-                try assertContinueAutoAdvanceInWindow(
-                    continueMark: continueMark, laterMark: stable.mark,
-                    elapsedSeconds: rescue.anchor.requestElapsed, intervalSeconds: intervalSeconds)
+                    intervalSeconds: intervalSeconds)
+                return (original.start, original.stable, nil)
+            } catch let AssertionError.automaticPhotoChangeLate(message) {
+                // Existing passes, early failures and four-second failures retain the original computation.
+                guard let rescuePolicy,
+                    let stable = firstStableNewImage(continueMark: continueMark, samples: samples),
+                    let rescue = tvosFadeRescue(
+                        continueMark: continueMark, baselineLuma: baselineLuma, samples: samples,
+                        stable: stable, intervalSeconds: intervalSeconds, policy: rescuePolicy)
+                else { throw AssertionError.automaticPhotoChangeLate(message) }
+                let earliest = intervalSeconds - continueCaptureSlackSeconds
+                let latest = intervalSeconds + continueCaptureSlackSeconds
+                if rescue.anchor.requestElapsed + timingToleranceSeconds < earliest {
+                    try assertContinueAutoAdvanceInWindow(
+                        continueMark: continueMark, laterMark: stable.mark,
+                        elapsedSeconds: rescue.anchor.requestElapsed, intervalSeconds: intervalSeconds)
+                }
+                if rescue.proof.returnElapsed > latest + timingToleranceSeconds {
+                    try assertContinueAutoAdvanceInWindow(
+                        continueMark: continueMark, laterMark: stable.mark,
+                        elapsedSeconds: rescue.proof.returnElapsed, intervalSeconds: intervalSeconds)
+                }
+                try assertStableImageWithinTransitionDeadline(
+                    start: rescue.anchor, stable: stable,
+                    failureMessage: "tvOS new photo must be stably identifiable within 4 s of transition start")
+                return (rescue.anchor, stable, rescue)
             }
-            if rescue.proof.returnElapsed > latest + timingToleranceSeconds {
-                try assertContinueAutoAdvanceInWindow(
-                    continueMark: continueMark, laterMark: stable.mark,
-                    elapsedSeconds: rescue.proof.returnElapsed, intervalSeconds: intervalSeconds)
-            }
-            try assertStableImageWithinTransitionDeadline(
-                start: rescue.anchor, stable: stable,
-                failureMessage: "tvOS new photo must be stably identifiable within 4 s of transition start")
-            return (rescue.anchor, stable, rescue)
+        } catch let AssertionError.automaticPhotoChangeLate(message) {
+            throw AssertionError.message(message)
         }
     }
 

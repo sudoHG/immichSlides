@@ -730,14 +730,15 @@ from T−2 through confirmation as `continue-transition-<sample index>.png`, alo
 the sample request/return/classification times. These exports happen after dense
 capture and use the existing public fixture evidence path.
 
-The tvOS A1 photo rescue requires explicit maintainer approval before merge.
-It loosens the validator, expands its PASS set and changes the #555 ruling:
+The tvOS A1 photo rescue is a maintainer-approved validator loosening:
+it expands its PASS set and changes the #555 ruling:
 one dim old-photo MATCH followed by a decoded, strictly decreasing MATCH or
 UNRECOGNIZABLE photo measurement may establish a bounded fade interval. It does
 not reclassify UNRECOGNIZABLE as MATCH. The shared sustained-dimming predicate,
 iPhone and iPad entries remain unchanged. The rescue runs only after the original
-tvOS judge throws the typed late-window error; its diagnostic text is unchanged.
-Every original PASS retains
+tvOS judge throws the typed late-window error. The public tvOS entry converts
+outgoing late errors to the legacy `message(...)` wrapper so XCTest text retains
+the existing `continue_timing/timing_window` classification. Every original PASS retains
 exactly its original onset, window and four-second computation; early, invalid,
 missing-stable-photo and four-second failures cannot be rescued.
 
@@ -786,7 +787,8 @@ overlay, but this pixel-only rule does not prove the absence of system overlays.
 The diagnostic records optional q95, white-core fraction and same-image mean
 for every captured frame, plus the mode readback and rescue interval. A rescue
 retains its anchor/dim/proof PNGs. Existing `detected` / `official_signed` receipt
-semantics and failure prefixes are unchanged; the interval is an additive field.
+semantics are retained, and outgoing failures preserve the legacy error wrapper
+and message prefixes used by CI classification; the interval is an additive field.
 
 Continue issued is zero, aligning tvOS with iOS `press.issued`; the remote Select
 return time is recorded separately and never becomes the screenshot-request
