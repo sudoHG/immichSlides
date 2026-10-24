@@ -2951,23 +2951,29 @@ class StrictCITracerTests(unittest.TestCase):
         from run_strict_ci_tracer import produce_environment_limits
         from test_ci_summary import hosted_mode_departure_summary
 
-        for phase in ("mode_selection", "playback_entry"):
-            for mutation in (None, "missing marker", "duplicate marker", "mode-card", "wrong element",
+        for phase, step, element, version in (
+                *((phase, "mode-departure", "mode.continue.button", version)
+                  for phase in ("mode_selection", "playback_entry") for version in (3, 4)),
+                *(("mode_selection", "save-password-prompt", element, 4)
+                  for element in ("mode.random.button", "mode.filtered.button"))):
+            for mutation in (None, "missing marker", "duplicate marker", "wrong step", "wrong element",
                              "wrong surface", "before only", "after only", "high idle", "validator", "informational"):
-                with self.subTest(phase=phase, mutation=mutation), tempfile.TemporaryDirectory() as raw:
+                with self.subTest(phase=phase, step=step, element=element, version=version, mutation=mutation), tempfile.TemporaryDirectory() as raw:
                     seed, resource = hosted_mode_departure_summary(phase)
                     row = seed["population"]["observed"][0]
+                    row["first_failure"].update(step=step, element=element)
                     ledger = seed["strict_case_evidence"][0]["bounded_diagnostics"]
                     if mutation == "missing marker":
                         ledger["events"] = []
                     elif mutation == "duplicate marker":
                         ledger["events"].append(copy.deepcopy(ledger["events"][0]))
-                    elif mutation == "mode-card":
-                        row["first_failure"]["step"] = mutation
+                    elif mutation == "wrong step":
+                        row["first_failure"]["step"] = "mode-continue" if step == "save-password-prompt" else "mode-card"
                     elif mutation == "wrong element":
-                        row["first_failure"]["element"] = "mode.filtered.button"
+                        row["first_failure"]["element"] = ("mode.continue.button"
+                            if step == "save-password-prompt" else "mode.filtered.button")
                     elif mutation == "wrong surface":
-                        row["first_failure"]["state"]["surface"] = "playback"
+                        row["first_failure"]["state"]["surface"] = "cache"
                     elif mutation == "before only":
                         resource["failure_samples"][1]["elapsed_seconds"] = 7
                     elif mutation == "after only":
@@ -2987,7 +2993,7 @@ class StrictCITracerTests(unittest.TestCase):
                         observed["validator_failure_message"] = "All black must not count as a pass"
                     rejections = {}
                     self.assertEqual(0 if mutation is None else 1, produce_environment_limits(candidate, trace["warm"],
-                        policy_version=3, rejections=rejections, informational=["smoke"] if mutation == "informational" else ()))
+                        policy_version=version, rejections=rejections, informational=["smoke"] if mutation == "informational" else ()))
                     self.assertEqual(("failed", 65), (observed["outcome"], observed["attempts"][0]["exit_code"]))
                     if mutation is not None:
                         reason = {"missing marker": "missing-xcode-host-samples", "duplicate marker": "hosting-not-proven",

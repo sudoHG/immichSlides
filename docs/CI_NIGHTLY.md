@@ -495,15 +495,32 @@ are authoritative; the plain-English boundary is:
 | Failure | Can be yellow? |
 | --- | --- |
 | Reviewed UI availability wait with a full deadline and low-idle samples strictly before and after failure | Yes, in hosted nightly strict scope only. |
-| Mode page remained visible after tapping Continue, with `mode-departure` at `mode.continue.button` and `mode_selection/navigation` or `playback_entry/navigation` | Policy v3 only, with failure surface `mode` and every existing timing, starvation and hosting requirement. |
-| Continue unavailable before departure (`mode-continue` at the card identifier, for example `mode.random.button`), or departure reached an unexpected surface | No. Only a failed Continue tap itself (`mode-continue` at `mode.continue.button`) is a UI-availability wait, eligible in v1/v2/v3. |
-| Album capture settling after Next took effect, paused playback, hidden entry hint and a complete loaded photo | Policies v2/v3, with every published gate fact revalidated and an allowed settling phase. |
+| Mode page remained visible after tapping Continue, with `mode-departure` at `mode.continue.button` and `mode_selection/navigation` or `playback_entry/navigation` | Policies v3/v4, with failure surface `mode` and every existing timing, starvation and hosting requirement. |
+| Mode-selection timeout while handling Save Password, with `mode_selection/navigation`, `save-password-prompt` and `mode.random.button` or `mode.filtered.button` | Policy v4 only, with surface `mode`, the existing hosted marker, full deadline and samples strictly before and after failure, each at most 5% idle. |
+| Continue unavailable before departure (`mode-continue` at the card identifier, for example `mode.random.button`), or departure reached an unexpected surface | No. Only a failed Continue tap itself (`mode-continue` at `mode.continue.button`) is a UI-availability wait, eligible in v1/v2/v3/v4. |
+| Album capture settling after Next took effect, paused playback, hidden entry hint and a complete loaded photo | Policies v2/v3/v4, with every published gate fact revalidated and an allowed settling phase. |
 | Next did not advance, unchanged layers, changed layers without visible history advance, first capture with null progress, missing/incomplete gate or manifest, `grace`/`loading` or any other unreviewed phase | No. |
-| Black, blank or unrecognizable playback, validator/functional failure, process loss or invocation infrastructure failure | No, except the indistinguishable v3 mode-departure functional failures in the accepted residual risk below. |
+| Black, blank or unrecognizable playback, validator/functional failure, process loss or invocation infrastructure failure | No, except the indistinguishable mode-departure and Save Password functional failures in the accepted residual risks below. |
 | Missing/one-sided/high-idle samples, unknown hosting, local/self-hosted/UI/informational suite | No. |
 | The same case's second consecutive yellow UTC night | No; the reporter escalates it to red. |
 
-Accepted residual risk (v3 mode departure): Continue tapped but no navigation,
+Accepted residual risk (v4 Save Password): the receipt does not record whether a
+decline was issued, whether the prompt is still present, or whether the target
+card is selected. The App re-triggering the prompt after a decline or a card
+reselect; an App alert or sheet, duplicate prompt, or ambiguous or unhittable
+Not Now preventing any decline; and an App main-thread stall causing `observe()`
+to throw while the step stays `save-password-prompt` can all match a slow host's
+receipt and be yellow once with complete hosted starvation proof. Other steps,
+elements, surfaces and phase/class pairs stay red; the nearest red sibling is
+`save-password-prompt` at `mode.continue.button`, after Continue has been issued.
+Retained v1/v2/v3 receipts keep their old verdicts. No Swift receipt change is
+needed: the mode loop sets the step as soon as it observes the prompt, then
+re-marks it and the card identifier at each iteration and at timeout, even if no
+decline was issued. A night without starvation is red; the second consecutive
+yellow UTC night escalates to red, bounding consecutive exposure. The existing
+weekly review below still applies. Yellow never counts as pass or recovery.
+
+Accepted residual risk (v3/v4 mode departure): Continue tapped but no navigation,
 an unhandled non-password alert over the mode page, and load-only navigation bugs
 produce receipts identical to a slow departure. With every required proof field,
 they can be yellow once on a CPU-starved night. A night without starvation is red;
@@ -520,10 +537,11 @@ The receipt cannot distinguish this from slow settling; no Swift change is made.
 The first night without CPU starvation is red, two consecutive yellow nights
 escalate to red, and independent strict pause and history cases remain in place.
 
-The producer emits v3 for all new proofs, including existing UI waits and album
-settling. Reader support was introduced in a separate change before producer
-activation; trusted acceptance requires a base containing that reader.
-An older reader would turn even those existing yellows red. Retained v1/v2 proofs
+The producer still emits v3; the reader accepts v4 ahead of separate activation.
+After activation, all new proofs use v4, including existing UI waits and album
+settling. Producer activation requires a trusted base containing the reader;
+a stacked draft alone does not establish trusted acceptance.
+An older reader would turn even those existing yellows red. Retained v1/v2/v3 proofs
 keep their old interpretation, including the legacy `mode-continue` entry;
 changing an existing version's allowlist would alter compact-history revalidation.
 Aggregation rechecks

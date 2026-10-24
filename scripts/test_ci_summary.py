@@ -224,6 +224,39 @@ def album_capture_gate_rejections(receipt):
 
 
 class SummaryContractTests(unittest.TestCase):
+    def test_password_prompt_timing_requires_new_policy_and_exact_mode_evidence(self):
+        from ci_failure_diagnostics import (ENVIRONMENT_WAIT_STEPS_V3, ENVIRONMENT_WAIT_STEPS_V4,
+            environment_limit_evidence, validate_environment_limit)
+        self.assertEqual({**ENVIRONMENT_WAIT_STEPS_V3,
+            **{("mode_selection", "navigation", "save-password-prompt", element): "mode"
+               for element in ("mode.random.button", "mode.filtered.button")}}, ENVIRONMENT_WAIT_STEPS_V4)
+        for element in ("mode.random.button", "mode.filtered.button"):
+            summary, resource = hosted_mode_departure_summary("mode_selection")
+            row = summary["population"]["observed"][0]
+            row["first_failure"].update(step="save-password-prompt", element=element)
+            proof = environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=4)
+            with self.subTest(element=element):
+                self.assertIsNotNone(proof)
+                row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
+                parsed = ci_summary.parse_summary(summary)
+                self.assertEqual(proof, parsed["population"]["observed"][0]["environment_limit"])
+                self.assertEqual("failed", parsed["population"]["observed"][0]["outcome"])
+                for path, value, message in (
+                        *((('policy_version',), version, "failure is not an eligible timing wait") for version in (1, 2, 3)),
+                        (("failure", "element"), "mode.continue.button", "failure is not an eligible timing wait"),
+                        (("failure", "surface"), "firstboot", "failure is not an eligible timing wait"),
+                        (("failure_phase",), "playback_entry", "failure is not an eligible timing wait"),
+                        (("failure_class",), "control_state", "failure is not an eligible timing wait"),
+                        (("resources", "failure_samples"), [], "insufficient starvation evidence")):
+                    changed = copy.deepcopy(proof)
+                    target = changed
+                    for key in path[:-1]:
+                        target = target[key]
+                    target[path[-1]] = value
+                    with self.subTest(path=path, value=value), self.assertRaisesRegex(ci_summary.ContractError,
+                            "^environment limit: " + message + "$"):
+                        validate_environment_limit(changed)
+
     def test_mode_departure_policy_preserves_each_retained_version(self):
         from ci_failure_diagnostics import (ENVIRONMENT_WAIT_STEPS, ENVIRONMENT_WAIT_STEPS_V3,
             environment_limit_evidence, scan_diagnostic_json, validate_environment_limit)
@@ -243,7 +276,7 @@ class SummaryContractTests(unittest.TestCase):
                     with self.subTest(legacy_version=version), self.assertRaisesRegex(ci_summary.ContractError,
                             "^environment limit: failure is not an eligible timing wait$"):
                         validate_environment_limit(dict(proof, policy_version=version))
-        for version in (1, 2, 3):
+        for version in (1, 2, 3, 4):
             summary, resource = hosted_mode_departure_summary("mode_selection")
             row = summary["population"]["observed"][0]
             row["first_failure"]["step"] = "mode-continue"
@@ -252,12 +285,12 @@ class SummaryContractTests(unittest.TestCase):
                 self.assertIsNotNone(proof)
                 row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
                 self.assertEqual(proof, ci_summary.parse_summary(summary)["population"]["observed"][0]["environment_limit"])
-        for phase in ("transition", "incomingFromLoading"):
+        for phase, version in ((phase, version) for phase in ("transition", "incomingFromLoading") for version in (3, 4)):
             summary, resource = hosted_album_timeout_summary()
             row = summary["population"]["observed"][0]
             row["first_failure"]["gate"]["phase"] = phase
-            proof = environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=3)
-            with self.subTest(album_phase=phase):
+            proof = environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=version)
+            with self.subTest(album_phase=phase, version=version):
                 self.assertIsNotNone(proof)
                 row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
                 self.assertEqual(proof, ci_summary.parse_summary(summary)["population"]["observed"][0]["environment_limit"])
@@ -613,7 +646,7 @@ class SummaryContractTests(unittest.TestCase):
             scan_diagnostic_json(json.dumps(private).encode())
         for path, value, prefix in ((('schema_version',), True, "environment limit: hosted evidence required"),
                 (('policy_version',), 999, "environment limit: unsupported policy version"),
-                (('policy_version',), 4, "environment limit: unsupported policy version"),
+                (('policy_version',), 5, "environment limit: unsupported policy version"),
                 (('policy_version',), True, "environment limit: unsupported policy version"),
                 (('policy_version',), 3.0, "environment limit: unsupported policy version"),
                 (('runner_hosted',), False, "environment limit: hosted evidence required"),
