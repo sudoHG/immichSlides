@@ -737,11 +737,11 @@ An informational failure without a proof can therefore keep the producer failed
 and turn an otherwise environment-limited (yellow) night red.
 
 A failed strict observation and its sole failed attempt may carry the same optional
-`environment_limit` object. It contains exactly `schema_version: 1`, `policy_version: 1`, `2` or `3`,
+`environment_limit` object. It contains exactly `schema_version: 1`, `policy_version: 1`, `2`, `3` or `4`,
 `runner_hosted: true`, paired `failure_phase` / `failure_class`, `failure`, and
 `resources`. `failure` is the closed projection of `first_failure`: `source`,
 `step`, `element`, `action`, `app`, `surface`, `control_bar`, `scene_status`, `wait_elapsed_seconds`, `deadline_seconds`,
-`action_duration_seconds`, and `post_event_idle`. Policies v2/v3 additionally accept the
+`action_duration_seconds`, and `post_event_idle`. Policies v2/v3/v4 additionally accept the
 optional, unchanged `gate` object from that receipt; policy v1 keeps its original
 closed projection without a gate. Numbers retain the first-failure
 bounds and nulls. `resources` is one unchanged, validated `case_resources` entry.
@@ -788,20 +788,40 @@ All criteria are required:
    sample must qualify, including the boundary values. Missing idle is red.
    `truncated: true` and absent category CPU values do not disqualify measured idle;
    load and App CPU are displayed, not used as classification thresholds.
-4. For the policy v2/v3 album capture entry, every gate condition below must hold.
+4. For the policy v2/v3/v4 album capture entry, every gate condition below must hold.
    The projected proof retains the gate, and the proof validator rechecks its
    closed shape, kind, Boolean types and eligibility. Summary, official-method,
    nightly aggregation and compact-history readers do not trust a producer's claim.
 
 | Phase | Class | Step and target element | Expected surface |
 | --- | --- | --- | --- |
-| `mode_selection` | `navigation` | `mode-card`: `mode.random.button` or `mode.filtered.button`; `mode-continue` at `mode.continue.button` (v1/v2/v3) | `mode` |
-| `mode_selection`, `playback_entry` | `navigation` | Policy v3 only: `mode-departure` at `mode.continue.button` | `mode` |
+| `mode_selection` | `navigation` | `mode-card`: `mode.random.button` or `mode.filtered.button`; `mode-continue` at `mode.continue.button` (v1/v2/v3/v4) | `mode` |
+| `mode_selection`, `playback_entry` | `navigation` | Policies v3/v4: `mode-departure` at `mode.continue.button` | `mode` |
+| `mode_selection` | `navigation` | Policy v4 only: `save-password-prompt` at `mode.random.button` or `mode.filtered.button` | `mode` |
 | `playback_entry` | `navigation` | `query-element`: `slideshow.control.playPause.button` | `playback` |
 | `settings_navigation` | `navigation` | `query-element` or `select`: `slideshow.control.settings.button` | `playback` |
 | `control_action`, `hidden_controls` | `hidden_controls` | `query-element` or `reveal-controls`: settings, previous, playPause or next under `slideshow.control.*.button`, or `slideshow.hiddenWakeReceiver` | `playback` |
 | `interval_setup` | `hidden_controls` | `query-element`: the same playback controls | `playback` |
-| `visible_scene_capture` | `probe_readback` | `wait-scene`: `slideshow.scenePresentation.contract.summary`; policy v2/v3 album gate only | `playback` |
+| `visible_scene_capture` | `probe_readback` | `wait-scene`: `slideshow.scenePresentation.contract.summary`; policy v2/v3/v4 album gate only | `playback` |
+
+Hogan approved the Save Password mode-selection exception on 2026-10-24.
+Policy v4 preserves every v3 entry and adds exactly the two `save-password-prompt`
+keys above. The motivating [nightly 39969370437](https://github.com/sudoHG/immichSlides/actions/runs/39969370437),
+shard `iphone-immichSlides-iOS-debug-0`, fixture A `album-empty`, reports
+`mode_selection/navigation`, `mode.filtered.button`, surface `mode`, wait 23.41 s
+against a 22 s deadline. `IOSFirstBootNavigation.navigateMode` already emits the
+step and target card at each loop iteration after a decline tap; no Swift receipt
+change is needed. Eligibility still requires the existing hosted marker, a full
+deadline and low-idle samples strictly before and after the failure, each at most
+5% idle. Other elements, surfaces, phase/class pairs and missing evidence stay red.
+Retained v1/v2/v3 receipts never gain this exception; no old night is reclassified.
+
+Accepted residual risk (v4 Save Password): a prompt-handling or mode-selection
+defect with the same receipt can be yellow once when every starvation and hosting
+condition holds. A night without starvation stays red, and two consecutive yellow
+UTC nights escalate to red. The existing weekly review of tests yellow three or
+more times still applies. Yellow retains the raw failure and never counts as pass
+or recovery; all other failures keep their existing interpretation.
 
 Hogan approved the mode-departure exception on 2026-10-23. Policy v3 preserves
 every v2 entry and adds the wait for the mode page to depart after Continue, with the exact step, element,
@@ -814,7 +834,7 @@ The receipts confirm both mapped assertion paths: [iPad filter-person,
 `playback_entry/navigation`. These match the generic first-boot navigation and
 mode-departure assertion prefixes in `ci_failure_diagnostics.py`.
 The `mode-continue` UI-availability wait (a failed Continue tap itself, at
-`mode.continue.button`) remains eligible in v1/v2/v3. Continue unavailable before
+`mode.continue.button`) remains eligible in v1/v2/v3/v4. Continue unavailable before
 departure produces `mode-continue` at the card identifier (for example
 `mode.random.button`), which no version allowlists, so it remains red. A mode-page `UNRECOGNIZABLE` photo status alone is eligible because
 no playback photo is expected there; BLACK/BLANK and unrecognizable playback
@@ -881,13 +901,20 @@ reader; stacking alone did not activate trusted acceptance.
 
 Policy v3 also required reader-first rollout, although its proof shape is unchanged:
 retained proofs are revalidated by policy version, so changing the v2 allowlist
-would change historical verdicts. The producer now emits v3 for all new proofs.
+would change historical verdicts. The v3 activation moved all new proofs to v3.
 Reader support was introduced separately before producer activation; trusted
 acceptance requires a base containing that reader. A trusted base without the v3 reader rejects new
 proofs, including unchanged UI waits and album settling proofs. Versions v1/v2
 retain their verdicts; v3 keeps every v2 entry and its album semantics, adding
 exactly the two reviewed `mode-departure` entries. Unknown versions
 remain red. No original receipt, raw failure, threshold, deadline, wait or retry changes.
+
+Policy v4 follows the same reader-first rollout with an unchanged proof shape.
+The reader accepts v4 while the producer still emits v3. Merge this reader first,
+then activate v4 in a separate PR based on the merged reader; a stacked draft
+alone does not establish trusted-base acceptance. Older readers reject v4 even
+for existing UI waits and album settling. Retained v1/v2/v3 interpretations stay
+unchanged, and unknown or noninteger versions stay red.
 
 This is an explicit allowlist, not an inference from an exception name. A deadline
 left over from a completed wait cannot turn a value or scene assertion yellow.
@@ -929,7 +956,7 @@ Missing or ambiguous receipts, samples or case bindings stay red; an old night g
 `firstboot_setup/navigation` also includes a confirmed connection-error alert,
 and `mode_selection/navigation` at `query-element` includes an unexpected legacy
 control assertion, so neither qualifies. Under v1/v2, `mode-departure` stays red.
-Under v3, it may be yellow only with the exact mode-page timing and starvation
+Under v3/v4, it may be yellow only with the exact mode-page timing and starvation
 proof above; an unexpected destination or any missing evidence stays red.
 An unrecognizable photo identity on a known non-playback surface, such as the mode
 page, does not by itself assert that the App displayed a wrong photo.
@@ -967,7 +994,7 @@ Nights containing yellow are ineligible unchanged-SHA baselines so the next
 scheduled night can collect the evidence needed for escalation.
 
 Retained compact proofs are rechecked under their supported policy version (v1,
-v2 or v3). Missing, unknown or obsolete policy versions and invalid proofs degrade to red with a fixed public
+v2, v3 or v4). Missing, unknown or obsolete policy versions and invalid proofs degrade to red with a fixed public
 reason; rendering, history loading and issue decisions must not raise because of
 those proofs. Original first-failure receipts remain outside compact history.
 

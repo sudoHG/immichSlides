@@ -39,6 +39,45 @@ def entry(day="2026-10-01", outcome="failed", run=10, attempt=1):
 
 
 class ReporterTests(unittest.TestCase):
+    def test_retained_password_prompt_proofs_revalidate_and_escalate(self):
+        from ci_failure_diagnostics import environment_limit_evidence
+        from test_ci_summary import hosted_mode_departure_summary
+        for element in ("mode.random.button", "mode.filtered.button"):
+            summary, resource = hosted_mode_departure_summary("mode_selection")
+            row = summary["population"]["observed"][0]
+            row["first_failure"].update(step="save-password-prompt", element=element)
+            proof = environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=4)
+            self.assertIsNotNone(proof)
+            row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
+            report = entry()
+            report.update(status="environment-limited", observed=[row], diagnostics=summary_diagnostics([summary]))
+            compact = ci_report.compact_entry(report, set())
+            self.assertNotIn('"first_failure": {', json.dumps(compact))
+            with self.subTest(element=element):
+                restored = ci_report.merge_snapshot(None, [compact], date(2026, 10, 1))["days"]["2026-10-01"]["entries"][0]
+                self.assertEqual("environment-limited", restored["status"])
+                self.assertEqual("failed", restored["observed"][0]["outcome"])
+                following = copy.deepcopy(compact)
+                following.update(day="2026-10-02", run={"id": 11, "attempt": 1})
+                escalated = ci_report.merge_snapshot(None, [compact, following], date(2026, 10, 2))["days"]["2026-10-02"]["entries"][0]
+                self.assertEqual("failed", escalated["status"])
+                self.assertIn("RED: repeated environment limit", render_entry(escalated))
+                for path, value in (
+                        *((('policy_version',), version) for version in (1, 2, 3, 5, True, 4.0)),
+                        (("failure", "element"), "mode.continue.button"),
+                        (("failure", "surface"), "firstboot"),
+                        (("resources", "failure_samples"), [])):
+                    changed = copy.deepcopy(compact)
+                    target = changed["observed"][0]["environment_limit"]
+                    for key in path[:-1]:
+                        target = target[key]
+                    target[path[-1]] = value
+                    with self.subTest(path=path, value=value):
+                        red = ci_report.merge_snapshot(None, [changed], date(2026, 10, 1))["days"]["2026-10-01"]["entries"][0]
+                        self.assertEqual("failed", red["status"])
+                        self.assertEqual("RED: invalid or obsolete environment-limit proof under the current policy",
+                            red["observed"][0]["environment_limit_rejection"])
+
     def test_retained_mode_departure_versions_revalidate_and_escalate(self):
         from ci_failure_diagnostics import environment_limit_evidence
         from test_ci_summary import hosted_mode_departure_summary
@@ -1995,7 +2034,7 @@ class ReporterTests(unittest.TestCase):
             self.assertIn("ci-nightly.yml: failed", summary_path.read_text())
             self.assertNotIn("WARNING: hosted timing failures", summary_path.read_text())
         for mutation, version in (("missing version", None), ("future version", 999),
-                ("next version", 4), ("boolean version", True), ("float version", 3.0),
+                ("next version", 5), ("boolean version", True), ("float version", 3.0),
                 ("changed policy", None), ("malformed", None)):
             retained = copy.deepcopy(compact)
             bad = retained["observed"][0]["environment_limit"]
