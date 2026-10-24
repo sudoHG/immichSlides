@@ -215,9 +215,9 @@ card waits for a fresh observation, without a coordinate tap that can invoke
 XCTest's generic interruption handler. Read selection from the unique mode card's
 snapshot `isSelected` trait, rather than a generic system-symbol identifier.
 Confirm the prompt is absent and the intended mode is selected before issuing
-one Continue; record its issue and return separately, then prove mode disappeared
-and the caller's exact destination identifier appeared within the existing departure
-deadline. Callers name only their own destination; the shared observer does not
+one Continue; record its issue and return separately, then start the existing departure
+duration at tap return and prove mode disappeared and the caller's exact destination
+identifier appeared before that deadline. Callers name only their own destination; the shared observer does not
 reference unrelated playback or filter surfaces. A returned,
 hittable Continue without a post-Continue prompt that leaves mode visible is a navigation failure,
 including a possible App defect; do not resend Continue or retry the flow.
@@ -226,7 +226,28 @@ snapshot errors re-observe within that same budget and never authorize a tap.
 When replacing independent credential-entry card and Continue waits with one
 selection cap, preserve their sum, the first-attempt hittability/selected-state
 readbacks and any existing prompt allowance. Do not
-borrow repeated-tap or whole-flow retry budgets, or extend the departure deadline.
+borrow repeated-tap or whole-flow retry budgets. Mode-card and exact Not Now taps
+exclude only their measured native action duration from the active mode-navigation
+clock. Query, live-check, polling and previous observation time still consume that
+same selection or departure allowance; a tap never renews the allowance. Record
+the action separately and resume the wait with its remaining duration. Reject
+snapshots that return after the adjusted deadline. Standalone prompt dismissal
+and visibility helpers keep their callers' original absolute deadlines.
+Keep the prompt step's observed decline identifier (or `unknown`) in failure
+context rather than replacing it with the target mode-card identifier.
+
+The shared navigation callers retain these observation durations in seconds:
+
+| Caller | Selection | Departure after Continue returns |
+| --- | ---: | ---: |
+| First-batch onboarding | 14 | 20 for cold relaunch; 30 otherwise |
+| Strict Filter onboarding | 22 | 28 |
+| Late-image onboarding | 10 | 8 |
+| Access-lifecycle onboarding | 22 | 30 |
+| `IOSDriver.launchToPlayback` (including cache smoke) | 7 | 30 |
+| Interactive visual audit | 5 | 8 |
+| Visual-audit selection-only calls | 5 | No Continue |
+
 The strict Filter departure cap is 28 seconds, preserving the original fixed
 8-second post-Continue wait plus the 20-second summary wait as one absolute budget.
 A successful prompt-visibility observation remains evidence even after the retry
