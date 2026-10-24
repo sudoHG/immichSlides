@@ -317,10 +317,17 @@ No test or case deadline changes. At most three attempts per job (including
 failures) share the existing 180-second process-sampler allowance; three seconds
 are reserved before each launch and the completed active wall cost is charged to
 both the private balance and public `sampler_wall_seconds`. Unfinished work
-retains its full reservation. Reaping and both worker joins share the existing
-0.8-second stop deadline. An unreaped capture or a launch lock still held at that
-deadline is an infrastructure cleanup error, rather than a successful stop; the
-runner must not suppress it as an optional diagnostic failure.
+retains its full reservation. Shutdown uses 0.8 seconds plus a reap floor:
+launch-lock waiting and worker joins share the original 0.8-second deadline, and
+after SIGKILL `wait` always receives at least 0.1 second even if lock waiting spent
+that deadline. Failure to acquire the lock or reap is recorded in the runner's
+existing `cleanup_failures` and `cleanup-failures.json`. Its primary nonzero exit
+and any propagating exception are preserved; with no primary failure, the existing
+cleanup policy returns 2. Before recording the failure, process-sampling cost is
+charged conservatively, including the full reservation for an unfinished capture
+and unknown cost for an unfinished sampler. A cleanup retry neither refunds nor
+double-charges that reservation. If publishing that cost fails too, inherited
+Xcode accounting is made unavailable so the next case cannot reclaim it.
 The subprocess deadline does not include PID inspection, raw-file reduction,
 worker-owned kill/reap (up to another 0.1 second) or temporary-directory cleanup; their actual
 wall cost is charged too, so host descheduling or cleanup can exceed the reservation.
@@ -811,16 +818,25 @@ base-read publication path or reading it with an older revision requires a separ
 reader rollout first. The PR must document this transition analysis.
 
 On a strict runner process-group cleanup failure, the tracer takes one additional
-`ps` read (0.5-second timeout, at most 2 MiB) and retains at most 64 live members in
+`ps` read (three-second timeout, 2 MiB parse limit after reading) and retains at most 64 live members in
 `events[].runner_group_members`. Each entry has only `name`, `parent` and `state`;
 the event is restricted to `xcode/unknown/after-reap`. Executable and parent names
 are public tool basenames from a fixed allowlist (plus versioned Python names),
-unknown names become `other`, absent parents become `unknown`, and process states
-use the existing closed vocabulary. Paths, arguments, PIDs and device identifiers
+unknown names become `other`, absent parents become `unknown`, and an adopted
+parent is reported as `launchd`. The allowlist includes locally verified Xcode 27
+`SWBBuildService`, `XCBBuildService` and `swbuild` basenames. Process states
+use a closed vocabulary, including `exiting` when macOS reports the `E` flag.
+Paths, arguments, PIDs and device identifiers
 are discarded; zombies and other process groups are excluded. A failed probe is
-null, distinct from an empty observed group. The same projection appears in the
-cleanup exception and Markdown summary. This failure-only read does not extend
-the group grace or change a case verdict, retry, deadline or yellow qualification.
+null, distinct from an empty observed group. A member can exit between the last
+group check and this probe, so `none` is a later empty observation and does not
+cancel the cleanup error. Optional `runner_group_truncated` is true when more than
+64 members were observed; the exception and Markdown show the truncation too.
+Old events without this flag remain accepted. Inner exception text is deliberately
+dropped for privacy; only its type is retained. Any probe failure, including
+KeyboardInterrupt or SystemExit, still raises `RunnerGroupCleanupError` with an
+unavailable projection so live build inputs are retained. This failure-only read
+does not extend the group grace or change a case verdict, retry, deadline or yellow qualification.
 
 ### Prepared hosted strict environment limits
 

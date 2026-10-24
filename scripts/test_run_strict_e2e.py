@@ -800,15 +800,39 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                     self.assertFalse(quarantine["result_bundle_disposed"])
                     self.assertTrue(Path(quarantine["private_path"]).is_dir())
 
-    def test_capture_cleanup_failure_escapes_the_optional_diagnostics_handler(self):
+    def test_capture_cleanup_failure_keeps_primary_exit_and_records_cleanup_failure(self):
         import strict_e2e_resource_diagnostics as resources
         stop = resources.CaseSampler.stop
+        message = "App hang capture did not reap after SIGKILL"
         def failed_stop(sampler):
             stop(sampler)
-            raise resources.CaptureCleanupError("App hang capture did not reap after SIGKILL")
+            raise resources.CaptureCleanupError(message)
+        for primary, timeout, retry, expected in ((0, None, False, 2), (65, None, False, 65),
+                (124, None, False, 124), (0, "xcodebuild", True, 124), (0, "xcodebuild", False, 2)):
+            with self.subTest(primary=primary, timeout=timeout), tempfile.TemporaryDirectory() as raw, \
+                    mock.patch.object(resources.CaseSampler, "stop", failed_stop):
+                evidence = Path(raw) / "evidence"
+                code, _, stderr, _ = self._run_p2_main(evidence, suite="smoke", platform="ios", model="iPhone",
+                    warm=True, retry=retry, xcodebuild_exit=primary, timeout_phase=timeout)
+                self.assertEqual(expected, code, stderr)
+                failures = json.loads((evidence / "cleanup-failures.json").read_text())["failures"]
+                self.assertIn("app_hang_capture: CaptureCleanupError: " + message, failures)
+                receipts = list(evidence.glob("*-reuse.json"))
+                if retry or timeout is None:
+                    self.assertTrue(receipts, "warm attempt must retain its original exit mapping")
+                for receipt in receipts:
+                    self.assertEqual(124 if timeout else primary, json.loads(receipt.read_text())["exit_code"])
+        original = KeyboardInterrupt("fixture cancellation")
+        def interrupt(*args):
+            raise original
         with tempfile.TemporaryDirectory() as raw, mock.patch.object(resources.CaseSampler, "stop", failed_stop):
-            with self.assertRaisesRegex(resources.CaptureCleanupError, "App hang capture did not reap after SIGKILL"):
-                self._run_p2_main(Path(raw) / "evidence", suite="smoke", platform="ios", model="iPhone", warm=True)
+            evidence = Path(raw) / "evidence"
+            with self.assertRaises(KeyboardInterrupt) as raised:
+                self._run_p2_main(evidence, suite="smoke", platform="ios", model="iPhone", warm=True,
+                    late_image_attempt=interrupt)
+            self.assertIs(original, raised.exception, "capture cleanup must not replace a propagating exception")
+            self.assertIn("app_hang_capture: CaptureCleanupError: " + message,
+                json.loads((evidence / "cleanup-failures.json").read_text())["failures"])
 
     def test_xcode_execution_timeout_remains_a_case_failure_without_infrastructure_diagnostics(self):
         with tempfile.TemporaryDirectory() as raw:
@@ -4191,6 +4215,145 @@ raise SystemExit(65)
                         owner.process.kill.side_effect = None
                     sampler.stop()
 
+    def test_failed_capture_stop_charges_the_ledger_before_propagating_and_never_refunds_on_retry(self):
+        import threading
+        import ci_execution_diagnostics as diagnostics
+        import strict_e2e_resource_diagnostics as resources
+        from types import SimpleNamespace
+        for finished, bad_publish, worker_finished in ((True, False, False), (False, False, False),
+                (False, True, False), (True, False, True)):
+            with self.subTest(finished=finished, bad_publish=bad_publish, worker_finished=worker_finished), tempfile.TemporaryDirectory() as raw, \
+                    mock.patch.dict(os.environ, {}, clear=True):
+                entered, resume = threading.Event(), threading.Event()
+                def capture(*args, **kwargs):
+                    entered.set()
+                    if not worker_finished and not resume.wait(5):
+                        raise RuntimeError("capture did not resume")
+                    return {"status": "cancelled", "sample_count": 0, "frames": []}
+                recorder = diagnostics.Recorder()
+                sampler = resources.CaseSampler(recorder, "device", force_app_hang_capture=True)
+                sampler.previous_process_spent, sampler.spent, sampler.finished = 11, 0.25, finished
+                publish = sampler.publish
+                try:
+                    with mock.patch.object(resources, "capture_main_thread", side_effect=capture):
+                        sampler.hang.observe(123, 1, 0, remaining_seconds=20)
+                        self.assertTrue(entered.wait(5))
+                        if worker_finished:
+                            sampler.hang.worker.join(5)
+                            sampler.hang.capture_process.process = mock.Mock(returncode=None)
+                        if bad_publish:
+                            sampler.publish = mock.Mock(side_effect=RuntimeError("PRIVATE_SENTINEL"))
+                        with mock.patch.object(sampler.hang.capture_process, "close",
+                                side_effect=resources.CaptureCleanupError("App hang capture did not reap after SIGKILL")):
+                            with self.assertRaisesRegex(resources.CaptureCleanupError, "App hang capture did not reap after SIGKILL"):
+                                sampler.stop()
+                    self.assertEqual(3.25, sampler.spent, "unfinished or unreaped capture must keep its full prepaid reservation")
+                    self.assertEqual(14.25 if finished else None, recorder.process_sampler_wall_seconds)
+                    path = Path(raw) / "ledger.json"
+                    recorder.save(path)
+                    loaded = diagnostics.Recorder()
+                    loaded.load(path)
+                    with mock.patch.object(resources.threading, "Thread", return_value=SimpleNamespace(start=lambda: None)):
+                        successor = resources.CaseSampler(loaded, "device").start()
+                    self.assertEqual(165.75 if finished else 0, successor.reserved,
+                        "cleanup failure cannot grant a successor the previous capture's allowance")
+                finally:
+                    resume.set()
+                    if sampler.hang.worker is not None:
+                        sampler.hang.worker.join(5)
+                    sampler.publish = publish
+                    sampler.stop()
+                self.assertEqual(3.25, sampler.spent, "cleanup retry must not double-charge or refund the reservation")
+
+    def test_case_stop_waits_for_a_popen_already_inside_the_launch_lock_and_reaps_it(self):
+        import threading
+        import ci_execution_diagnostics as diagnostics
+        import strict_e2e_resource_diagnostics as resources
+        popen = subprocess.Popen
+        entered, closing, closed, resume = (threading.Event() for _ in range(4))
+        children, failures, held = [], [], []
+        class ObservedLock:
+            def __init__(self):
+                self.lock = threading.Lock()
+            def __enter__(self):
+                return self.lock.__enter__()
+            def __exit__(self, *args):
+                return self.lock.__exit__(*args)
+            def acquire(self, *, timeout):
+                held.append(self.lock.locked())
+                closing.set()
+                return self.lock.acquire(timeout=timeout)
+            def release(self):
+                self.lock.release()
+        def spawn(command, **kwargs):
+            entered.set()
+            if not closing.wait(5):
+                raise RuntimeError("close did not start")
+            # Force the faulty interleaving when start loses its lock: close sees
+            # no child before Popen returns, then the worker cannot clean it up.
+            if not held[0] and not closed.wait(5):
+                raise RuntimeError("unlocked close did not finish")
+            child = popen([sys.executable, "-c", "import time; time.sleep(60)"], **kwargs)
+            children.append(child)
+            wait = child.wait
+            def delayed_wait(timeout=None):
+                if threading.current_thread() is sampler.hang.worker and not resume.wait(5):
+                    raise RuntimeError("capture did not resume")
+                return wait(timeout=timeout)
+            child.wait = delayed_wait
+            return child
+        with mock.patch.dict(os.environ, {}, clear=True), \
+                mock.patch.object(resources, "app_on_device", return_value=True), \
+                mock.patch.object(resources.subprocess, "Popen", side_effect=spawn):
+            sampler = resources.CaseSampler(diagnostics.Recorder(), "device", force_app_hang_capture=True)
+            sampler.hang.capture_process.lock = ObservedLock()
+            def stop():
+                try:
+                    sampler.stop()
+                except BaseException as error:
+                    failures.append(error)
+                finally:
+                    closed.set()
+            closer = threading.Thread(target=stop)
+            try:
+                sampler.hang.observe(123, 1, 0, remaining_seconds=20)
+                self.assertTrue(entered.wait(5))
+                closer.start()
+                self.assertTrue(closed.wait(5), "case stop must finish after the pending launch")
+                self.assertEqual([], failures)
+                self.assertTrue(children, "pending Popen must finish before close can return")
+                self.assertIsNotNone(children[0].returncode, "close must reap the child created by the pending Popen")
+            finally:
+                resume.set()
+                if closer.ident is not None:
+                    closer.join(5)
+                if sampler.hang.worker is not None:
+                    sampler.hang.worker.join(5)
+                for child in children:
+                    if child.poll() is None:
+                        child.kill()
+                    child.wait(timeout=5)
+
+    def test_case_stop_guarantees_a_reap_floor_when_launch_wait_spends_the_stop_deadline(self):
+        import ci_execution_diagnostics as diagnostics
+        import strict_e2e_resource_diagnostics as resources
+        from types import SimpleNamespace
+        clock, waits = [0.0], []
+        def acquire(*, timeout):
+            clock[0] += timeout
+            return True
+        def wait(*, timeout):
+            waits.append(timeout)
+        with mock.patch.dict(os.environ, {}, clear=True), \
+                mock.patch.object(resources.time, "monotonic", side_effect=lambda: clock[0]):
+            sampler = resources.CaseSampler(diagnostics.Recorder(), "device", force_app_hang_capture=True)
+            owner = sampler.hang.capture_process
+            owner.lock = SimpleNamespace(acquire=acquire, release=lambda: None)
+            owner.process = mock.Mock(returncode=None, wait=wait)
+            sampler.stop()
+        self.assertEqual(1, len(waits))
+        self.assertGreaterEqual(waits[0], 0.1, "SIGKILL must leave at least 0.1 seconds to reap")
+
     def test_app_hang_capture_bounds_transport_and_discards_raw_on_every_exit(self):
         import threading
         import strict_e2e_resource_diagnostics as resources
@@ -5369,7 +5532,9 @@ raise SystemExit(65)
                     "commit_sha": "0" * 40, "tree_sha": "0" * 40, "dirty": False}
         cleanup = tracer.RunnerGroupCleanupError("Runner process group still has live members",
             members=[{"name": "sample", "parent": "Python", "state": "sleeping"}])
-        for error in (KeyboardInterrupt(), KeyError("unexpected state"), cleanup):
+        truncated = tracer.RunnerGroupCleanupError("Runner process group still has live members",
+            members=cleanup.members * 64, truncated=True)
+        for error in (KeyboardInterrupt(), KeyError("unexpected state"), cleanup, truncated):
             with self.subTest(error=type(error).__name__), tempfile.TemporaryDirectory() as raw, mock.patch(
                 "run_strict_ci_tracer.run_runner", side_effect=error
             ), mock.patch("run_strict_ci_tracer.workspace_preflight"), mock.patch(
@@ -5387,18 +5552,19 @@ raise SystemExit(65)
                 self.assertEqual(len(summary["population"]["observed"]), 3)
                 self.assertTrue(all(entry["outcome"] == "not-run" for entry in summary["population"]["observed"]))
                 self.assertTrue((output / "records/trace.json").is_file())
-                if error is cleanup:
+                if isinstance(error, tracer.RunnerGroupCleanupError):
                     events = summary["bounded_diagnostics"]["events"]
-                    self.assertEqual(cleanup.members, events[-1]["runner_group_members"])
+                    self.assertEqual(error.members, events[-1]["runner_group_members"])
+                    self.assertEqual(error.members_truncated, events[-1]["runner_group_truncated"])
                     self.assertIn("sample", (output / "records/summary.md").read_text())
 
     def test_runner_cleanup_error_identifies_survivors_without_private_process_metadata(self):
         import run_strict_ci_tracer as tracer
         from types import SimpleNamespace
         private = str(Path("/", "Users", "private-user"))
-        table = (f"77 1 77 S {private}/Python\n88 77 42 S /usr/bin/sample\n"
+        table = (f"1 0 1 S /sbin/launchd\n77 1 77 S {private}/Python\n88 77 42 S /usr/bin/sample\n"
                  f"89 77 42 Z {private}/private-tool\n90 999 42 U {private}/private-tool\n"
-                 "91 77 12 S /usr/bin/git\n")
+                 "91 77 12 S /usr/bin/git\n92 1 42 SE /Xcode/SWBBuildService\n93 77 42 R /Xcode/swbuild\n")
         with tempfile.TemporaryDirectory() as raw, \
                 mock.patch.object(tracer.subprocess, "Popen", return_value=SimpleNamespace(pid=42, wait=lambda **kwargs: 0)), \
                 mock.patch.object(tracer.subprocess, "check_output", return_value=table), \
@@ -5408,14 +5574,17 @@ raise SystemExit(65)
             with self.assertRaisesRegex(tracer.RunnerGroupCleanupError, "Runner process group still has live members") as raised:
                 tracer.run_runner(["unused"], Path(raw), Path(raw) / "runner.log", timeout_seconds=2)
         self.assertEqual([{"name": "sample", "parent": "Python", "state": "sleeping"},
-                          {"name": "other", "parent": "unknown", "state": "uninterruptible"}], raised.exception.members)
+                          {"name": "other", "parent": "unknown", "state": "uninterruptible"},
+                          {"name": "SWBBuildService", "parent": "launchd", "state": "exiting"},
+                          {"name": "swbuild", "parent": "Python", "state": "running"}], raised.exception.members)
         self.assertIn("sample(parent=Python,state=sleeping)", str(raised.exception))
         for rejected in (private, "private-tool", "git", "88", "999"):
             self.assertNotIn(rejected, str(raised.exception))
-        for output, count in (("x" * (2 * 1024 * 1024 + 1), None),
-                (subprocess.TimeoutExpired("ps", 0.5), None),
-                ("77 1 77 S /usr/bin/python3.9\n" + "".join(f"{100 + i} 77 42 S /usr/bin/sample\n" for i in range(65)), 64)):
-            with self.subTest(count=count), tempfile.TemporaryDirectory() as raw, \
+        for output, count, truncated in (("x" * (2 * 1024 * 1024 + 1), None, False),
+                (subprocess.TimeoutExpired("ps", 3), None, False), ("", 0, False),
+                *(("77 1 77 S /usr/bin/python3.9\n" + "".join(f"{100 + i} 77 42 S /usr/bin/sample\n" for i in range(n)), 64, n > 64)
+                  for n in (64, 65))):
+            with self.subTest(count=count, truncated=truncated), tempfile.TemporaryDirectory() as raw, \
                     mock.patch.object(tracer.subprocess, "Popen", return_value=SimpleNamespace(pid=42, wait=lambda **kwargs: 0)), \
                     mock.patch.object(tracer.subprocess, "check_output", **(
                         {"side_effect": output} if isinstance(output, Exception) else {"return_value": output})), \
@@ -5424,25 +5593,65 @@ raise SystemExit(65)
                     mock.patch.object(tracer, "GROUP_TERM_GRACE_SECONDS", 0):
                 with self.assertRaisesRegex(tracer.RunnerGroupCleanupError, "Runner process group still has live members") as raised:
                     tracer.run_runner(["unused"], Path(raw), Path(raw) / "runner.log", timeout_seconds=2)
+                self.assertEqual(3, tracer.subprocess.check_output.call_args.kwargs["timeout"])
+            self.assertEqual(truncated, raised.exception.members_truncated)
             if count is None:
                 self.assertIsNone(raised.exception.members)
                 self.assertIn("live members: unavailable", str(raised.exception))
-            else:
+            elif count:
                 self.assertEqual(count, len(raised.exception.members))
                 self.assertEqual({"python3.9"}, {member["parent"] for member in raised.exception.members})
+                if truncated:
+                    self.assertIn("truncated after 64 members", str(raised.exception))
+            else:
+                self.assertEqual([], raised.exception.members)
+                self.assertIn("live members: none", str(raised.exception))
+
+    def test_interrupted_survivor_probe_preserves_cleanup_error_and_retains_build_paths(self):
+        import run_strict_ci_tracer as tracer
+        from types import SimpleNamespace
+        run_runner = tracer.run_runner
+        identity = {"schema_version": 1, "event": "local", "repository": "sudoHG/immichSlides",
+                    "commit_sha": "0" * 40, "tree_sha": "0" * 40, "dirty": False}
+        for interruption in (KeyboardInterrupt(), SystemExit(65), RuntimeError("PRIVATE_SENTINEL")):
+            with self.subTest(interruption=type(interruption).__name__), tempfile.TemporaryDirectory() as raw:
+                output = Path(raw) / "trace"
+                def invoke(command, root, log, **kwargs):
+                    for name in ("derived", "SourcePackages"):
+                        (output / name).mkdir()
+                        (output / name / "owned").touch()
+                    return run_runner(["unused"], root, log, **kwargs)
+                with mock.patch.object(tracer, "run_runner", side_effect=invoke), \
+                        mock.patch.object(tracer.subprocess, "Popen", return_value=SimpleNamespace(pid=42, wait=lambda **kwargs: 0)), \
+                        mock.patch.object(tracer, "stop_group"), \
+                        mock.patch.object(tracer, "group_has_live_members", return_value=True), \
+                        mock.patch.object(tracer, "GROUP_TERM_GRACE_SECONDS", 0), \
+                        mock.patch.object(tracer, "runner_group_members", side_effect=interruption), \
+                        mock.patch.object(tracer, "workspace_preflight"), \
+                        mock.patch.object(tracer, "run_identity", return_value=identity), \
+                        mock.patch.object(tracer, "source_metadata", return_value=(None, False)), \
+                        mock.patch.object(tracer.shutil, "disk_usage", return_value=SimpleNamespace(total=200 * 1024**3, free=100 * 1024**3)), \
+                        mock.patch.object(tracer, "toolchain", return_value={"versions": {"python": "test"}, "signing_mode": "not-applicable"}):
+                    self.assertEqual(1, tracer.main(["--platform", "ios", "--destination", "unused", "--output-dir", str(output)]))
+                summary = json.loads((output / "records/summary.json").read_text())
+                self.assertIn("RunnerGroupCleanupError", summary["infrastructure"][0]["message"])
+                self.assertNotIn("PRIVATE_SENTINEL", json.dumps(summary))
+                self.assertIsNone(summary["bounded_diagnostics"]["events"][-1]["runner_group_members"])
+                for name in ("derived", "SourcePackages"):
+                    self.assertTrue((output / name / "owned").is_file(), "failed group cleanup must retain live build inputs")
 
     def test_runner_exit_waits_for_capture_private_file_finalization(self):
         import run_strict_ci_tracer as tracer
-        from run_host_checks import group_has_live_members
         import shutil
         code = '''
-import atexit,json,os,pathlib,subprocess,sys,threading,time
+import atexit,json,os,pathlib,subprocess,sys,threading
 sys.path.insert(0,sys.argv[1])
 import ci_execution_diagnostics as diagnostics
 import strict_e2e_resource_diagnostics as resources
 marker=pathlib.Path(sys.argv[2])
 popen=subprocess.Popen
 entered=threading.Event()
+resume=threading.Event()
 def spawn(command,**kwargs):
     path=pathlib.Path(command[-1])
     marker.write_text(json.dumps({"directory":str(path.parent),"group":os.getpgrp()}))
@@ -5451,7 +5660,7 @@ def spawn(command,**kwargs):
 reduce=resources.reduce_main_thread_sample
 def delayed_reduce(raw):
     entered.set()
-    time.sleep(1.2)
+    assert resume.wait(5), "private finalizer was not released"
     return reduce(raw)
 resources.subprocess.Popen=spawn
 resources.app_on_device=lambda *args: True
@@ -5460,6 +5669,10 @@ sampler=resources.CaseSampler(diagnostics.Recorder(),"device",force_app_hang_cap
 sampler.hang.observe(123,1,0,remaining_seconds=20)
 assert entered.wait(5), "capture must reach private-file reduction"
 sampler.stop()
+try:
+    assert not sampler.hang.worker.daemon, "capture finalizer must participate in interpreter shutdown"
+finally:
+    resume.set()
 '''
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)
@@ -5469,7 +5682,6 @@ sampler.stop()
                     root, root / "runner.log", timeout_seconds=10))
                 retained = json.loads(marker.read_text())
                 self.assertFalse(Path(retained["directory"]).exists(), "runner exit must finish private raw-file cleanup")
-                self.assertFalse(group_has_live_members(retained["group"]), "runner exit must leave no live capture process")
             finally:
                 if marker.exists():
                     shutil.rmtree(json.loads(marker.read_text())["directory"], ignore_errors=True)

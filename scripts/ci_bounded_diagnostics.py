@@ -26,9 +26,9 @@ STATES = ("started", "completed", "spawn-started", "spawn-completed", "communica
           "kill-started", "kill-completed", "reap-started", "reap-completed", "before-kill", "after-reap")
 PROCESS_NAMES = ("simctl", "CoreSimulatorService", "Simulator", "launchd_sim", "xcodebuild", "xctest",
                  "testmanagerd", "immichSlides", "immichSlidesUITests-Runner", "swift-frontend")
-PROCESS_STATES = ("running", "sleeping", "uninterruptible", "stopped", "zombie", "unknown")
+PROCESS_STATES = ("running", "sleeping", "uninterruptible", "stopped", "zombie", "unknown", "exiting")
 RUNNER_PROCESS_NAMES = frozenset((*PROCESS_NAMES, "other", "unknown", "sample", "Python", "python",
-    "swift", "swiftc", "swift-driver", "swift-plugin-server", "clang", "clang++", "ld", "XCBBuildService",
+    "swift", "swiftc", "swift-driver", "swift-plugin-server", "clang", "clang++", "ld", "XCBBuildService", "SWBBuildService", "swbuild",
     "SourceKitService", "sourcekit-lsp", "ibtoold", "actool", "assetcatalogd", "codesign", "xcrun", "ps",
     "vm_stat", "launchd", "lldb", "debugserver", "bash", "sh", "zsh", "git", "git-remote-https",
     "sandbox-exec", "ditto"))
@@ -98,9 +98,10 @@ def validate_runner_group_members(members):
     require(valid, "runner group: invalid projection")
 
 
-def render_runner_group_members(members):
-    return ("unavailable" if members is None else ", ".join(
+def render_runner_group_members(members, *, truncated=False):
+    rendered = ("unavailable" if members is None else ", ".join(
         f"{member['name']}(parent={member['parent']},state={member['state']})" for member in members) or "none")
+    return rendered + (f"; truncated after {MAX_PROCESSES} members" if truncated else "")
 
 
 def exact_fields(value, names, where):
@@ -165,6 +166,12 @@ def validate_receipt(receipt):
             validate_runner_group_members(event["runner_group_members"])
             require((event.get("scope"), event.get("phase"), event.get("state")) == ("xcode", "unknown", "after-reap"),
                     "runner group: invalid event")
+        if isinstance(event, dict) and "runner_group_truncated" in event:
+            fields.add("runner_group_truncated")
+            members = event.get("runner_group_members")
+            require(type(event["runner_group_truncated"]) is bool and "runner_group_members" in event
+                    and (not event["runner_group_truncated"] or isinstance(members, list) and len(members) == MAX_PROCESSES),
+                    "runner group: invalid truncation flag")
         exact_fields(event, fields, "bounded diagnostic event")
         scope = event["scope"]
         require(isinstance(scope, str) and scope in PHASES, "bounded diagnostic event: invalid scope")
@@ -261,7 +268,8 @@ def render_receipt(receipt):
             f"truncated={'yes' if receipt['truncated'] else 'no'}. Last retained phase: {phases}\n")
     for event in receipt["events"]:
         if "runner_group_members" in event:
-            rendered += "\nRunner cleanup survivors: " + render_runner_group_members(event["runner_group_members"]) + "\n"
+            rendered += "\nRunner cleanup survivors: " + render_runner_group_members(event["runner_group_members"],
+                truncated=event.get("runner_group_truncated", False)) + "\n"
     def measured(value):
         return "unavailable" if value is None else f"{value:g}"
     for case in receipt.get("case_resources", []):

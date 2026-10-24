@@ -48,6 +48,7 @@ APP_HANG_SUSTAINED_SECONDS = 8
 APP_HANG_MAX_GAP_SECONDS = 4.5
 APP_HANG_JOB_CAP = 3
 APP_HANG_TIMEOUT_SECONDS = 3
+APP_HANG_REAP_FLOOR_SECONDS = 0.1
 MAX_RAW_SAMPLE_BYTES = 2 * 1024 * 1024
 
 
@@ -161,7 +162,7 @@ class CaptureProcess:
                 if process.returncode is None:
                     process.kill()
                 try:
-                    process.wait(timeout=max(0, deadline - time.monotonic()))
+                    process.wait(timeout=max(APP_HANG_REAP_FLOOR_SECONDS, deadline - time.monotonic()))
                 except subprocess.TimeoutExpired:
                     raise CaptureCleanupError("App hang capture did not reap after SIGKILL") from None
                 self.process = None
@@ -203,7 +204,7 @@ def capture_main_thread(pid, stopped, *, device, capture_process=None):
                     if len(raw) <= MAX_RAW_SAMPLE_BYTES and time.monotonic() < deadline:
                         return reduce_main_thread_sample(raw.decode("utf-8", errors="replace"))
             finally:
-                capture_process.close(time.monotonic() + 0.1)
+                capture_process.close(time.monotonic() + APP_HANG_REAP_FLOOR_SECONDS)
     except (OSError, ValueError, TypeError, subprocess.SubprocessError):
         pass
     return result
@@ -528,6 +529,7 @@ class CaseSampler:
         self.duration = 0.0
         self.samples = []
         self.spent = 0.0
+        self.capture_spent = 0.0
         self.host_spent = 0.0
         self.previous_process_spent = 0.0
         self.truncated = False
@@ -671,21 +673,38 @@ class CaseSampler:
         self.duration = min(MAX_DIAGNOSTIC_SECONDS, max(0, elapsed))
         self.stopped.set()
         stop_deadline = time.monotonic() + STOP_TIMEOUT_SECONDS if self.hang is not None else None
-        if self.hang is not None:
-            # Reap from the case thread even if the capture worker is descheduled.
-            self.hang.capture_process.close(stop_deadline)
-        self.closed = True
-        if self.thread is not None:
-            self.thread.join(max(0, stop_deadline - time.monotonic()) if stop_deadline is not None else STOP_TIMEOUT_SECONDS)
-        if self.hang is not None:
-            if self.hang.worker is not None:
+        cleanup_error = None
+        try:
+            if self.hang is not None:
+                # Reap from the case thread even if the capture worker is descheduled.
+                self.hang.capture_process.close(stop_deadline)
+            self.closed = True
+            if self.thread is not None:
+                self.thread.join(max(0, stop_deadline - time.monotonic()) if stop_deadline is not None else STOP_TIMEOUT_SECONDS)
+            if self.hang is not None and self.hang.worker is not None:
                 self.hang.worker.join(max(0, stop_deadline - time.monotonic()))
-            self.spent += self.hang.cost
+        except CaptureCleanupError as error:
+            cleanup_error = error
+        finally:
+            if self.hang is not None:
+                charged = max(self.capture_spent, self.hang.cost,
+                    self.hang.charge if cleanup_error is not None else 0)
+                self.spent += charged - self.capture_spent
+                self.capture_spent = charged
+            if self.recorder is not None:
+                if self.thread is not None and not self.finished:
+                    self.truncated = True
+                self.recorder.process_sampler_wall_seconds = self.previous_process_spent + self.spent if self.finished else None
         if self.recorder is not None:
-            if self.thread is not None and not self.finished:
-                self.truncated = True
-            self.recorder.process_sampler_wall_seconds = self.previous_process_spent + self.spent if self.finished else None
-            self.publish()
+            try:
+                self.publish()
+            except Exception:
+                if cleanup_error is None:
+                    raise
+                # Missing numeric evidence must not let a successor reclaim unknown cost.
+                self.recorder.unavailable.add("xcode")
+        if cleanup_error is not None:
+            raise cleanup_error
 
     def bind_failure(self, epoch):
         elapsed = finite(epoch - self.epoch, self.duration) if self.clock_stable and type(epoch) in (int, float) else None

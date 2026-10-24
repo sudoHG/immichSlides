@@ -1008,8 +1008,8 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                 finally:
                     try:
                         sampler.stop()
-                    except CaptureCleanupError:
-                        raise
+                    except CaptureCleanupError as error:
+                        cleanup_failures.append(f"app_hang_capture: {type(error).__name__}: {error}")
                     except Exception:
                         recorder = active()
                         if recorder is not None:
