@@ -995,7 +995,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                 return call
             from ci_flaky import check_retry_flags
             def measured_run(call, operation):
-                from strict_e2e_resource_diagnostics import CaseSampler
+                from strict_e2e_resource_diagnostics import CaptureCleanupError, CaseSampler
                 bundle = Path(call[call.index("-resultBundlePath") + 1])
                 sampler = CaseSampler(active(), simulator_udid,
                     force_app_hang_capture=arguments.local_force_app_hang_capture,
@@ -1008,6 +1008,8 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                 finally:
                     try:
                         sampler.stop()
+                    except CaptureCleanupError as error:
+                        cleanup_failures.append(f"app_hang_capture: {type(error).__name__}: {error}")
                     except Exception:
                         recorder = active()
                         if recorder is not None:

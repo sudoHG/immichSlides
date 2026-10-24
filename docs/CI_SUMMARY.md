@@ -308,13 +308,30 @@ main thread itself was busy. Only one unambiguous App process on the assigned
 simulator is eligible. A background `/usr/bin/sample PID 1 10` (one second,
 10 ms sampling interval, leaving room for symbolication) has a three-second
 subprocess deadline, is cancelled on case exit, and never blocks the idle/load worker.
+The case owns the subprocess independently of the capture worker: shutdown closes
+the launch gate, kills any in-flight capture and calls `wait` before returning,
+even when that worker cannot resume. The capture stays in the runner process group,
+so tracer cancellation remains a second cleanup boundary; a detached session could
+hide an orphan from that boundary. The capture worker is non-daemon so interpreter
+shutdown also waits for its private-file finalizer.
 No test or case deadline changes. At most three attempts per job (including
 failures) share the existing 180-second process-sampler allowance; three seconds
 are reserved before each launch and the completed active wall cost is charged to
 both the private balance and public `sampler_wall_seconds`. Unfinished work
-retains its full reservation. The existing stop-wait bound is not extended.
+retains its full reservation. Shutdown uses 0.8 seconds plus a reap floor:
+launch-lock waiting and worker joins share the original 0.8-second deadline, and
+after SIGKILL `wait` always receives at least 0.1 second even if lock waiting spent
+that deadline. Failure to acquire the lock or reap is recorded in the runner's
+existing `cleanup_failures` and `cleanup-failures.json`. Its primary nonzero exit
+and any propagating exception are preserved; with no primary failure, the existing
+cleanup policy returns 2. Before recording the failure, process-sampling cost is
+charged conservatively, including the full reservation for an unfinished capture
+and unknown cost for an unfinished sampler. A cleanup retry neither refunds nor
+double-charges that reservation. If publishing that cost fails too, inherited
+Xcode accounting is made unavailable so the next case cannot reclaim it.
 The subprocess deadline does not include PID inspection, raw-file reduction,
-kill/reap (up to another 0.1 second) or temporary-directory cleanup; their actual
+worker-owned kill/reap (up to another 0.2 seconds: 0.1 second waiting for the lock
+plus a 0.1-second reap floor) or temporary-directory cleanup; their actual
 wall cost is charged too, so host descheduling or cleanup can exceed the reservation.
 `sample` briefly suspends the App at each sample and consumes CPU for symbolication,
 so collection can perturb a running case even though verdict rules and deadlines
@@ -835,7 +852,8 @@ The same sequence applies to `bounded_diagnostics.case_resources` and
 `first_failure.native_activity_seconds`: merge reader support before opening the
 producer activation PR. Historical records without either optional field remain valid.
 
-A scoped exception permits the optional App hang-stack and Continue watch projections and their readers
+A scoped exception permits the optional App hang-stack and Continue watch projections,
+strict runner cleanup member event and their readers
 to ship together. The trusted base gate/UI publisher's supported producers in
 `ci_publish_git.py` do not consume strict-tracer or P2-review diagnostic artifacts;
 candidate tracer checks use their producer checkout's reader, nightly aggregation
@@ -849,6 +867,31 @@ Both `continue_watch` and `app_hang_stack` are copied into
 `environment_limit.resources` in the 90-day yellow history and validated again by
 later readers. Their archived validation may only be loosened, never tightened;
 otherwise a previously accepted night could become unreadable or red.
+The `runner_group_*` fields belong to summary-level `events`, not `case_resources`,
+and are not copied into `environment_limit.resources`; that 90-day rule does not
+apply to them.
+
+On a strict runner process-group cleanup failure, the tracer takes one additional
+`ps` read (three-second timeout, 2 MiB parse limit after reading) and retains at most 64 live members in
+`events[].runner_group_members`. Each entry has only `name`, `parent` and `state`;
+the event is restricted to `xcode/unknown/after-reap`. Executable and parent names
+are public tool basenames from a fixed allowlist (plus versioned Python names),
+unknown names become `other`, absent parents become `unknown`, and an adopted
+parent is reported as `launchd`. The allowlist includes locally verified Xcode 27
+`SWBBuildService`, `XCBBuildService` and `swbuild` basenames. Survivor states
+use their own closed vocabulary, including `exiting` when macOS reports the `E` flag;
+the ordinary sampler's `processes[].state` vocabulary remains unchanged.
+Paths, arguments, PIDs and device identifiers
+are discarded; zombies and other process groups are excluded. A failed probe is
+null, distinct from an empty observed group. A member can exit between the last
+group check and this probe, so `none` is a later empty observation and does not
+cancel the cleanup error. Optional `runner_group_truncated` is true when more than
+64 members were observed; the exception and Markdown show the truncation too.
+Old events without this flag remain accepted. Inner exception text is deliberately
+dropped for privacy; only its type is retained. Any probe failure, including
+KeyboardInterrupt or SystemExit, still raises `RunnerGroupCleanupError` with an
+unavailable projection so live build inputs are retained. This failure-only read
+does not extend the group grace or change a case verdict, retry, deadline or yellow qualification.
 
 ### Prepared hosted strict environment limits
 

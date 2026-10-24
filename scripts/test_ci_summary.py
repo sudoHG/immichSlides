@@ -1011,6 +1011,65 @@ class SummaryContractTests(unittest.TestCase):
         summary["bounded_diagnostics"]["events"] = []
         self.assertIn("Last retained phase: none", ci_summary.render_markdown(summary))
 
+    def test_runner_cleanup_members_round_trip_and_reject_private_or_unbounded_projections(self):
+        from ci_failure_diagnostics import scan_diagnostic_json
+        summary = archive_download_summary()
+        summary.pop("archive_download")
+        summary["bounded_diagnostics"] = bounded_diagnostics_receipt()
+        event = summary["bounded_diagnostics"]["events"][1]
+        event.update(scope="xcode", phase="unknown", state="after-reap", sample=None,
+                     runner_group_members=[{"name": "sample", "parent": "Python", "state": "sleeping"}],
+                     runner_group_truncated=False)
+        self.assertEqual(summary, ci_summary.parse_summary(json.dumps(summary)))
+        scan_diagnostic_json(json.dumps(summary).encode())
+        self.assertIn("sample(parent=Python,state=sleeping)", ci_summary.render_markdown(summary))
+        legacy = copy.deepcopy(summary)
+        legacy["bounded_diagnostics"]["events"][1].pop("runner_group_truncated")
+        self.assertEqual(legacy, ci_summary.parse_summary(legacy))
+        for field, value in (("name", "/private/secret"), ("name", "private-tool"),
+                ("parent", "12345678-1234-1234-1234-123456789012"), ("state", "S args")):
+            changed = copy.deepcopy(summary)
+            changed["bounded_diagnostics"]["events"][1]["runner_group_members"][0][field] = value
+            with self.subTest(field=field, value=value), self.assertRaisesRegex(ci_summary.ContractError, "runner group: invalid projection"):
+                ci_summary.parse_summary(changed)
+        for field, value, message in (("runner_group_members", event["runner_group_members"] * 65, "runner group: invalid projection"),
+                ("scope", "preparation", "runner group: invalid event"),
+                ("state", "started", "runner group: invalid event"),
+                ("phase", "test-execution", "runner group: invalid event")):
+            changed = copy.deepcopy(summary)
+            changed["bounded_diagnostics"]["events"][1][field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(ci_summary.ContractError, message):
+                ci_summary.parse_summary(changed)
+        event["runner_group_members"] *= 64
+        self.assertEqual(summary, ci_summary.parse_summary(summary))
+        event["runner_group_truncated"] = True
+        self.assertEqual(summary, ci_summary.parse_summary(summary))
+        self.assertIn("truncated after 64 members", ci_summary.render_markdown(summary))
+        for value in (None, 0, "true"):
+            changed = copy.deepcopy(summary)
+            changed["bounded_diagnostics"]["events"][1]["runner_group_truncated"] = value
+            with self.subTest(truncation=value), self.assertRaisesRegex(ci_summary.ContractError, "runner group: invalid truncation flag"):
+                ci_summary.parse_summary(changed)
+        for missing in (True, False):
+            changed = copy.deepcopy(summary)
+            target = changed["bounded_diagnostics"]["events"][1]
+            if missing:
+                target.pop("runner_group_members")
+            else:
+                target["runner_group_members"] = target["runner_group_members"][:1]
+            with self.subTest(missing=missing), self.assertRaisesRegex(ci_summary.ContractError, "runner group: invalid truncation flag"):
+                ci_summary.parse_summary(changed)
+        event["runner_group_members"] = [{"name": "SWBBuildService", "parent": "launchd", "state": "exiting"}]
+        event["runner_group_truncated"] = False
+        self.assertEqual(summary, ci_summary.parse_summary(summary))
+        changed = copy.deepcopy(summary)
+        changed["bounded_diagnostics"]["events"][0]["sample"]["processes"][0]["state"] = "exiting"
+        with self.assertRaisesRegex(ci_summary.ContractError, "^bounded diagnostic process: invalid state$"):
+            ci_summary.parse_summary(changed)
+        event["runner_group_members"] = None
+        self.assertEqual(summary, ci_summary.parse_summary(summary))
+        self.assertIn("Runner cleanup survivors: unavailable", ci_summary.render_markdown(summary))
+
     def test_optional_app_hang_stack_round_trips_and_old_nights_keep_their_verdict(self):
         from ci_failure_diagnostics import scan_diagnostic_json
         summary, _ = hosted_timeout_summary()

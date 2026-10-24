@@ -1158,8 +1158,23 @@ Historical traces and summaries without the field remain valid and gain no new c
 Hosted cases also collect a bounded, optional App main-thread stack after
 sustained high App CPU. The [resource diagnostics contract](CI_SUMMARY.md#bounded-infrastructure-diagnostics)
 defines the trigger, per-case/job caps, redaction, accounting and local-only
-`--local-force-app-hang-capture` exercise. It changes no first-failure, verdict,
-environment-limit eligibility or timing contract.
+`--local-force-app-hang-capture` exercise. Optional capture results do not change
+first-failure, functional verdict, environment-limit eligibility or timing rules;
+capture cleanup failures use the existing runner cleanup policy below.
+
+Case shutdown owns and reaps a running capture before returning, using the same
+0.8 seconds plus a reap floor: launch-lock waiting and worker joins share the
+0.8-second deadline, while `wait` gets at least 0.1 second after SIGKILL. Capture launch and
+shutdown are serialized, and capture workers finish their private-file cleanup
+before interpreter exit. The process remains inside the runner group as an
+additional cancellation boundary. Failure to reap is appended to `cleanup_failures`
+and written to `cleanup-failures.json`, preserving the primary nonzero exit,
+the existing 124 timeout mapping and any propagating exception. A successful primary
+run returns 2 under the existing cleanup policy. Sampling cost is retained before
+recording the failure, with a full reservation for unfinished capture work and no
+fresh allowance for unknown sampler cost. If tracer group cleanup itself fails, the
+error and bounded receipt retain sanitized surviving executable/parent basenames
+and states; see the [resource diagnostics contract](CI_SUMMARY.md#bounded-infrastructure-diagnostics).
 
 The [hosted strict environment-limit policy](CI_SUMMARY.md#prepared-hosted-strict-environment-limits)
 uses these receipts and the same case's resource samples. The strict tracer now
