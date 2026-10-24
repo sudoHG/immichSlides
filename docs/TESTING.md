@@ -1004,12 +1004,8 @@ own private bundle, `official-tests-<session>.json`, `official-summary-<session>
 or quarantine record with the same suffix. `official-summary.json` remains the suite aggregate;
 the case manifest records each session export's hash. A later session failure preserves all
 attempted sessions, including earlier passes, without claiming the suite passed.
-Its Debug captures use the existing album stable-scene preparation: a read-only scene probe must
-show a complete stable scene before the single Pause, followed by a complete paused scene and
-unchanged pixels at least 0.6 seconds apart. The existing 8-second preparation, 4-second Pause
-readback and 0.8 + 4-second capture budgets are retained. Probes establish capture readiness only;
-the unchanged Python validator still proves membership from public photo pixels. Pausing a fade
-is valid App behavior, but that frozen dim frame cannot establish qualified membership evidence.
+Its Debug and Release capture paths, window allocation and residual timing limits are described
+in the [strict runner capture contract](CI_STRICT_RUNNER.md).
 
 Run the standalone access-protection flows with:
 

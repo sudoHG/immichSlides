@@ -435,7 +435,7 @@ class StrictE2ERunnerTestsCasesConfiguration:
             "PATH", "STRICT_E2E_INPUT_SERVER_URL", "STRICT_E2E_INPUT_PUBLIC_KEY", "STRICT_E2E_INPUT_SCENARIO",
         })
         from strict_e2e_runner_support import write_app_launch_environment_audit
-        for suite in ("album-empty", "journey-b", "tvos-flow", "tvos-person", "late-image",
+        for suite in ("album-empty", "filter-person", "journey-b", "tvos-flow", "tvos-person", "late-image",
                       "ios-lifecycle-first-wake", "ios-lifecycle-settings"):
             with self.subTest(suite=suite), tempfile.TemporaryDirectory() as directory:
                 evidence = Path(directory)
