@@ -1213,6 +1213,18 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
 
 
 class FailureDiagnosticsTests(unittest.TestCase):
+    def test_mode_navigation_markers_preserve_environment_policy_boundaries(self):
+        source = (REPO_ROOT / "immichSlidesUITests/UITestSupport.swift").read_text()
+        navigation = source.split("private func navigateMode(", 1)[1].split("\n    private func poll(", 1)[0]
+        # These source markers distinguish unavailable Continue from an issued tap in the public receipt.
+        elements = re.findall(r"FirstFailureContext\.mark\(step,\s*element:\s*([^)]+)\)", navigation)
+        self.assertEqual(['didIssueContinue ? "mode.continue.button" : identifier'] * 2,
+                         [" ".join(element.split()) for element in elements])
+        will_tap = navigation.split("willTap: {", 1)[1].split("})", 1)[0]
+        self.assertNotIn("FirstFailureContext.endWait()", will_tap)
+        self.assertRegex(navigation, r'step = "mode-departure"\s+FirstFailureContext\.endWait\(\)\s+'
+                         r'FirstFailureContext\.beginWait\(seconds: departureTimeout\)')
+
     def test_tvos_timing_preconditions_are_classified_and_stay_red(self):
         from ci_failure_diagnostics import classify_messages, environment_timing, unknown_diagnostics
         cases = (

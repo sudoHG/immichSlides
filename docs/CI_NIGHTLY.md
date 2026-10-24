@@ -520,10 +520,23 @@ decline was issued. A night without starvation is red; the second consecutive
 yellow UTC night escalates to red, bounding consecutive exposure. The existing
 weekly review below still applies. Yellow never counts as pass or recovery.
 
+Mode-navigation clocks exclude measured tap time, including XCTest's pre- and
+post-event waits for the App or prompt host to idle. This can absorb about
+60 seconds of App non-idleness per tap when the destination is then reached
+within its allowance; the time is not proven to be exclusively host overhead.
+The coordinator accepts the same risk as for Next, without a new cap or threshold.
+The mode observation log and failure detail retain each deducted duration and
+their total, including Continue; see [the caller formulas](TESTING.md#3-assertions).
+
 Accepted residual risk (v3/v4 mode departure): Continue tapped but no navigation,
 an unhandled non-password alert over the mode page, and load-only navigation bugs
 produce receipts identical to a slow departure. With every required proof field,
-they can be yellow once on a CPU-starved night. A night without starvation is red;
+they can be yellow once on a CPU-starved night. The departure deadline is now
+always `D` after Continue returns, rather than the pre-tap remainder `max(0, D-C)`
+for tap duration `C`. An App that remains non-idle for a long time after Continue
+and then stays on the mode page for `D` seconds can therefore be yellow with every
+required starvation proof. The motivating iPad journey-b's unrecognizable playback
+surface still stays red. A night without starvation is red;
 two consecutive yellow nights escalate to red. Alternating yellow/pass nights
 never auto-escalate, so the coordinator reviews any test that is yellow three or
 more times in a week (Hogan, 2026-10-22). Local tests on the pinned devices remain

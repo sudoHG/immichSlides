@@ -767,6 +767,17 @@ equal its first failing attempt's receipt; an existing listed retry cannot repla
 that first receipt with the retry's state. Preparation receipts belong to
 `not-run` attempts.
 
+Mode-navigation timing field notes: after a card/Not Now tap restarts the wait,
+`timing.deadline_seconds` is the remaining observation allowance, not the original
+selection/departure duration or total wall time. `wait_elapsed_seconds` measures
+that restarted segment, so a display such as `wait=0.31s / deadline=0.30s` is valid.
+The nonnegative remainder can be zero, which remains ineligible for yellow.
+After Continue returns, the initial departure `deadline_seconds` is the caller's
+full duration `D`; the tap, including XCTest's idle waits, is recorded separately
+in `action_duration_seconds`. Later actions can replace that single-action field;
+the mode observation log and failure detail retain each deducted tap duration and
+their total, including Continue.
+
 An optional `first_failure.gate` carries the album capture gate's last observed
 conditions on its timeout paths only. The First failure line in `summary.md`
 renders its fixed Boolean/null facts and enumerated phase; it contains no raw
@@ -1021,10 +1032,22 @@ no playback photo is expected there; BLACK/BLANK and unrecognizable playback
 remain excluded. The older iPad and album receipts lack hosted markers and remain
 red: this exception does not supply missing evidence or reclassify old nights.
 
-Accepted residual risk (v3 mode departure): Continue tapped but no navigation,
+Mode-navigation clocks exclude measured tap time, including XCTest's pre- and
+post-event waits for the App or prompt host to idle. Each tap can therefore absorb
+about 60 seconds of App non-idleness if navigation then succeeds within its
+remaining allowance; no evidence attributes that time exclusively to the host.
+The coordinator accepts this risk as for Next; no new cap or threshold is added.
+See the [caller formulas and deducted-time diagnostics](TESTING.md#3-assertions).
+
+Accepted residual risk (v3/v4 mode departure): Continue tapped but no navigation,
 an unhandled non-password alert over the mode page, and load-only navigation bugs
 produce receipts identical to a slow departure. With every required proof field,
-they can be yellow once on a CPU-starved night. A night without starvation is red;
+they can be yellow once on a CPU-starved night. The departure deadline is now
+always `D` after Continue returns, rather than the pre-tap deadline's remainder
+`max(0, D-C)` for tap duration `C`. An App that remains non-idle for a long time
+after Continue and then stays on the mode page for `D` seconds can therefore be
+yellow with every required starvation proof. Unrecognizable playback, including
+the motivating iPad journey-b receipt, still stays red. A night without starvation is red;
 two consecutive yellow nights escalate to red. Alternating yellow/pass nights
 never auto-escalate, so the coordinator reviews any test that is yellow three or
 more times in a week (Hogan, 2026-10-22). Local tests on the pinned devices remain
