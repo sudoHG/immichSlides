@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import statistics
 
 from ci_summary import require
 
@@ -33,6 +34,10 @@ MAX_RESOURCE_SAMPLES = 43201
 MAX_FAILURE_RESOURCE_SAMPLES = 6
 RESOURCE_CATEGORIES = ("app", "simulator_daemons", "test_tools", "other")
 MAX_APP_HANG_STACK_BYTES = 4096
+MAX_CONTINUE_WATCH_BYTES = 8192
+MAX_CONTINUE_WATCH_FRAMES = 80
+CONTINUE_WATCH_STATUSES = (None, "MATCH", "TRANSITION", "BLACK", "BLANK", "UNRECOGNIZABLE")
+CONTINUE_WATCH_RESCUES = ("not_recorded", "not_evaluated", "rejected", "original_pass", "rescued")
 APP_HANG_MODULES = frozenset(("immichSlides", "SwiftUI", "SwiftUICore", "UIKitCore", "UIKit", "AttributeGraph",
     "CoreFoundation", "Foundation", "QuartzCore", "CoreGraphics", "GraphicsServices", "dyld", "libdyld.dylib",
     "libswiftCore.dylib", "libswift_Concurrency.dylib", "libsystem_kernel.dylib", "libsystem_pthread.dylib",
@@ -43,6 +48,49 @@ def public_stack_symbol(value):
     return (isinstance(value, str) and 0 < len(value) <= 160
             and re.fullmatch(r"[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*", value) is not None
             and re.search(r"\.(?:com|net|org|local|internal|invalid|test)(?:\.|$)", value, re.I) is None)
+
+
+def validate_continue_watch(value):
+    def numeric(item, ceiling=MAX_DIAGNOSTIC_SECONDS):
+        return type(item) in (int, float) and 0 <= item <= ceiling
+    valid = isinstance(value, dict) and set(value) == {"total_frames", "truncated", "frames", "indices", "rescue", "wake"}
+    if valid:
+        frames, indices, wake = value["frames"], value["indices"], value["wake"]
+        valid = (type(value["total_frames"]) is int and 0 <= value["total_frames"] <= MAX_INTEGER
+            and type(value["truncated"]) is bool and isinstance(frames, list)
+            and len(frames) <= min(MAX_CONTINUE_WATCH_FRAMES, value["total_frames"])
+            and value["truncated"] == (len(frames) < value["total_frames"])
+            and isinstance(value["rescue"], str) and value["rescue"] in CONTINUE_WATCH_RESCUES
+            and isinstance(indices, dict) and set(indices) <= {"anchor", "dim", "proof"}
+            and all(type(index) is int and 0 <= index < len(frames) for index in indices.values())
+            and (wake is None or (isinstance(wake, list) and len(wake) == 2
+                 and all(numeric(item) for item in wake) and wake[0] <= wake[1])))
+    if valid:
+        previous = -1
+        for frame in frames:
+            valid = (isinstance(frame, list) and len(frame) == 9
+                and all(numeric(item) for item in frame[:3]) and previous <= frame[0] <= frame[1] <= frame[2]
+                and frame[3] in CONTINUE_WATCH_STATUSES
+                and (frame[4] is None or (isinstance(frame[4], str) and re.fullmatch(r"A[1-8]", frame[4]) is not None))
+                and (frame[5] is None or numeric(frame[5], 1))
+                and (frame[6] is None or numeric(frame[6], 255))
+                and (frame[7] is None or numeric(frame[7], 1))
+                and (frame[8] is None or type(frame[8]) is bool))
+            if not valid:
+                break
+            previous = frame[2]
+    if valid:
+        valid = len(json.dumps(value, separators=(",", ":")).encode()) <= MAX_CONTINUE_WATCH_BYTES
+    require(valid, "continue watch: invalid projection")
+
+
+def render_continue_watch(value):
+    frames = value["frames"]
+    gaps = [right[0] - left[2] for left, right in zip(frames, frames[1:])]
+    gap = f"{statistics.median(gaps):g}s" if gaps else "unavailable"
+    dim = sum(frame[3] == "MATCH" and frame[6] is not None and frame[6] < 255 for frame in frames)
+    return (f"continue-watch: frames={len(frames)}/{value['total_frames']}, median gap={gap}, "
+            f"dim MATCH={dim}, rescue={value['rescue']}")
 
 
 def validate_app_hang_stack(stack):
@@ -169,6 +217,9 @@ def validate_case_resources(cases):
         if isinstance(case, dict) and "app_hang_stack" in case:
             fields.add("app_hang_stack")
             validate_app_hang_stack(case["app_hang_stack"])
+        if isinstance(case, dict) and "continue_watch" in case:
+            fields.add("continue_watch")
+            validate_continue_watch(case["continue_watch"])
         exact_fields(case, fields, "case resources")
         number(case["sequence"], MAX_INTEGER, "case resources sequence", integral=True)
         require(case["sequence"] not in sequences, "case resources: duplicate sequence")

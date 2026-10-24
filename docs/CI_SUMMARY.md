@@ -150,7 +150,7 @@ issue decisions do not consume the measurements.
 The reader also accepts `case_resources`, an array of at most 64 case measurements.
 Strict producers emit it for each actual Xcode case invocation, including an
 existing listed retry. Fixture UI producers do not sample continuously. Each entry has
-the following required fields and optional `app_hang_stack`. All numbers are finite, booleans are not numbers,
+the following required fields and optional `app_hang_stack` and `continue_watch`. All numbers are finite, booleans are not numbers,
 and unknown measurements remain null.
 
 | Fields | Bounds and meaning |
@@ -164,6 +164,7 @@ and unknown measurements remain null.
 | `first_failure_elapsed_seconds` | Offset from this case's sampling origin, 0–case duration, or null if no failure is bound; absence never proves a passing case |
 | `failure_samples` | At most six samples, no more than `sample_count`, strictly increasing by `elapsed_seconds`, within both the case duration and ±5 seconds of the first failure; empty when the failure time is unavailable |
 | `app_hang_stack` (optional) | At most 4,096 compact JSON bytes: `status` (`captured`, `failure`, `timeout`, `cancelled`), `sample_count` (main-thread samples), and `frames` (at most 30 objects containing only `symbol`, allowlisted `module`, and inclusive `samples` count); optional `hint` contains at most three distinct frame indices in observed callee-to-caller order; non-captured states have zero samples and no frames |
+| `continue_watch` (optional) | Failed `tvos-lifecycle-pause` only; at most 8,192 compact JSON bytes and the first 80 frames, rounded to three decimals; see the numeric projection below |
 
 Each failure sample has exactly `elapsed_seconds` (0–86,400), `idle_percent`
 (0–100 or null), `load_1m` (0–10^6 or null), and `cpu_percent`. The latter has
@@ -349,6 +350,29 @@ callee on the left. Older stack projections without `hint` show one frame withou
 inventing a path. An invalid producer stack is dropped independently, preserving
 the case's numeric measurements and `failure_samples`. Missing symbols or
 unsuccessful capture are diagnostic gaps only.
+
+After reader-first producer activation, the failed tvOS Continue watch projection is read from the case-owned
+`continue-watch-diagnostic.json` in the evidence directory after XCTest and the
+official exports finish. The raw file is never added to hosted artifacts.
+`frames` contains compact arrays in this order: request, captured, returned
+(seconds since Continue), status, public mark, mean luma (0–1), photo q95
+(0–255), white-core fraction (0–1), controls visible. Only A1–A8 marks and the
+existing public identity statuses are accepted; missing classification or pixel
+measurements are null. Classification can stop before capture does. `total_frames`
+and `truncated` expose omitted frames; `indices` retains recorded anchor/dim/proof
+indices only when their frames survived the cap. `wake` is issued/returned seconds
+or null. `rescue` is `not_evaluated`, `rejected`, `original_pass`, or `rescued`;
+old source files without that observation use `not_recorded`. `rejected` means the
+timing judge threw, and does not infer which rescue eligibility check failed.
+Nothing recomputes the verdict. An invalid projection is dropped independently
+of resource samples and hang stacks. Source reads are capped at 2 MiB, symlinks
+are refused, and no free text, notes, paths, URLs, device IDs or names are retained.
+The tracer preserves the case/receipt join independently of yellow eligibility.
+The case row adds `continue-watch: frames=N/total, median gap=…s, dim MATCH=k,
+rescue=…`; gap is the next request minus the prior return over retained frames,
+and dim MATCH counts MATCH frames with photo q95 below 255. These are observations,
+not a replay of the rescue or timing judge. Historical nights without the field
+retain their original readability and verdicts.
 
 `run_strict_e2e.py --local-force-app-hang-capture` exercises the capture on the
 first identified App CPU read, including idle CPU. It is ignored whenever `CI`,
