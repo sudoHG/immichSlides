@@ -108,7 +108,7 @@ def capture_main_thread(pid, stopped):
             try:
                 if stopped.is_set():
                     return {**result, "status": "cancelled"}
-                process = subprocess.Popen(["/usr/bin/sample", str(pid), "2", "-file", str(path)],
+                process = subprocess.Popen(["/usr/bin/sample", str(pid), "1", "10", "-file", str(path)],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 while True:
                     if stopped.is_set():

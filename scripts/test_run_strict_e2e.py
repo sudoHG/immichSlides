@@ -4108,7 +4108,7 @@ raise SystemExit(65)
                     result = resources.capture_main_thread(123, stopped)
                 self.assertEqual("captured" if mode == "ok" else mode if mode != "spawn" else "failure", result["status"])
                 for command in commands:
-                    self.assertEqual(["/usr/bin/sample", "123", "2", "-file"], command[:-1])
+                    self.assertEqual(["/usr/bin/sample", "123", "1", "10", "-file"], command[:-1])
                     self.assertFalse(Path(command[-1]).exists())
                 self.assertNotIn("PRIVATE_SENTINEL", json.dumps(result))
                 if mode in ("timeout", "cancelled") and commands:

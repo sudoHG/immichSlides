@@ -297,7 +297,8 @@ simulator App PID has at least 85% CPU (one core = 100%) at consecutive process
 reads spanning at least eight seconds. Missing/low reads, PID changes, or gaps
 over 4.5 seconds reset that span. These are `ps` CPU estimates, not proof that the
 main thread itself was busy. Only one unambiguous App process on the assigned
-simulator is eligible. A background `/usr/bin/sample PID 2` has a three-second
+simulator is eligible. A background `/usr/bin/sample PID 1 10` (one second,
+10 ms sampling interval, leaving room for symbolication) has a three-second
 hard deadline, is cancelled on case exit, and never blocks the idle/load worker.
 No test or case deadline changes. At most three attempts per job (including
 failures) share the existing 180-second process-sampler allowance; three seconds
