@@ -4298,18 +4298,20 @@ raise SystemExit(65)
                 raise RuntimeError("unlocked close did not finish")
             # Pay the real spawn cost before the shutdown deadline; this seam
             # controls only when the pending Popen publishes its owned child.
-            wait = child.wait
-            def delayed_wait(timeout=None):
-                if threading.current_thread() is sampler.hang.worker and not resume.wait(5):
-                    raise RuntimeError("capture did not resume")
-                return wait(timeout=timeout)
-            child.wait = delayed_wait
             return child
         with mock.patch.dict(os.environ, {}, clear=True), \
                 mock.patch.object(resources, "app_on_device", return_value=True), \
                 mock.patch.object(resources.subprocess, "Popen", side_effect=spawn):
             sampler = resources.CaseSampler(diagnostics.Recorder(), "device", force_app_hang_capture=True)
             sampler.hang.capture_process.lock = ObservedLock()
+            close = sampler.hang.capture_process.close
+            def worker_delayed_close(deadline):
+                # Pause before lock acquisition: pausing wait() inside close
+                # would hold the very lock the case thread needs to reap.
+                if threading.current_thread() is sampler.hang.worker and not resume.wait(5):
+                    raise RuntimeError("capture cleanup did not resume")
+                return close(deadline)
+            sampler.hang.capture_process.close = worker_delayed_close
             def stop():
                 try:
                     sampler.stop()
