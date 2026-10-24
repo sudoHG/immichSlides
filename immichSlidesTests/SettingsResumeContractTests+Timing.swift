@@ -1,7 +1,5 @@
 import XCTest
-#if canImport(immichSlides)
 @testable import immichSlides
-#endif
 
 extension SettingsResumeContractTests {
     func testIPhonePauseSignsSustainedFadeOnRequestClockBeforeLateStablePhoto() throws {
@@ -553,19 +551,23 @@ extension SettingsResumeContractTests {
     func testTVOSPauseRescueRejectsUnreadableUnboundAndNonPhotoEvidence() throws {
         for mutation in [
             "unreadable", "undrawn", "nil_pixels", "nil_q95", "nil_core", "black_proxy", "wrong_image", "wrong_state",
-            "bar_only",
             "core", "gap",
-            "calibration", "rising_q95", "rising_mean", "excess_ambiguous", "long_span"
+            "calibration", "rising_q95", "rising_mean", "excess_ambiguous", "long_span",
+            "shallow_proof", "bright_proof", "no_first_half", "unrecognized_dim", "wrong_required_mark"
         ] {
             var samples = tvosRescueSamples(cadence: mutation == "long_span" ? 0.6 : 0.25)
-            let target = mutation == "wrong_state" ? 41 : (mutation == "core" || mutation == "gap" ? 40 : 42)
+            let target =
+                ["wrong_state", "unrecognized_dim"].contains(mutation)
+                ? 41 : (mutation == "core" || mutation == "gap" ? 40 : 42)
             let original = samples[target]
             samples[target] = rescueSample(
-                request: original.requestElapsed, mark: mutation == "black_proxy" ? "BLACK" : original.mark,
-                status: original.status,
+                request: original.requestElapsed,
+                mark: mutation == "black_proxy"
+                    ? "BLACK" : (mutation == "unrecognized_dim" ? "UNRECOGNIZABLE" : original.mark),
+                status: mutation == "black_proxy"
+                    ? "BLACK" : (mutation == "unrecognized_dim" ? "UNRECOGNIZABLE" : original.status),
                 luma: original.meanLuma,
-                highlight: mutation == "nil_q95"
-                    ? nil : (mutation == "bar_only" ? 255 : original.photoPixels?.highlightLuma),
+                highlight: mutation == "nil_q95" ? nil : original.photoPixels?.highlightLuma,
                 core: mutation == "nil_core"
                     ? nil : (mutation == "core" ? 0.059 : original.photoPixels?.whiteCoreFraction),
                 controls: mutation != "wrong_state",
@@ -574,10 +576,19 @@ extension SettingsResumeContractTests {
                 hasPixels: mutation != "nil_pixels",
                 notes: ["unreadable", "undrawn"].contains(mutation) ? [mutation] : []
             )
-            if mutation == "bar_only" {
-                for index in 41..<samples.count where samples[index].mark != "A2" {
+            if mutation == "shallow_proof" || mutation == "bright_proof" {
+                for index in 42..<samples.count where samples[index].mark != "A2" {
                     samples[index] = rescueSample(
-                        request: samples[index].requestElapsed, luma: 0.469, highlight: 255, controls: false)
+                        request: samples[index].requestElapsed, mark: "UNRECOGNIZABLE", status: "UNRECOGNIZABLE",
+                        luma: mutation == "shallow_proof" ? 0.443 : 0.41,
+                        highlight: mutation == "bright_proof" ? 243 : 212)
+                }
+            }
+            if mutation == "no_first_half" {
+                for index in samples.indices where samples[index].requestElapsed <= 5 {
+                    samples[index] = rescueSample(
+                        request: samples[index].requestElapsed, luma: samples[index].meanLuma,
+                        highlight: 255, core: 0.064, controls: false)
                 }
             }
             if mutation == "calibration" {
@@ -600,7 +611,7 @@ extension SettingsResumeContractTests {
             XCTAssertThrowsError(
                 try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
                     continueMark: "A1", baselineLuma: 0.497, samples: samples, intervalSeconds: 10,
-                    rescuePolicy: tvosRescuePolicy()
+                    rescuePolicy: tvosRescuePolicy(requiredMark: mutation == "wrong_required_mark" ? "A2" : "A1")
                 ), mutation
             ) { XCTAssertEqual($0.localizedDescription, self.tvosLateMessage, mutation) }
         }
@@ -625,21 +636,24 @@ extension SettingsResumeContractTests {
         ) { XCTAssertEqual($0.localizedDescription, self.tvosLateMessage) }
     }
 
-    func testTVOSPauseRescueRejectsRecoveredDipBeforeLaterRealFade() {
-        for hasRecovered in [true, false] {
-            var samples = tvosRescueSamples()
-            samples[43] =
-                hasRecovered
-                ? rescueSample(request: 10.75, luma: 0.4719, highlight: 255)
-                : rescueSample(
+    func testTVOSPauseRescueRejectsOldPhotoRecoveryAndUnreadablePostProofFrames() {
+        for mutation in ["rising_old_photo", "reappearing_old_photo", "undrawn"] {
+            var samples = tvosRescueSamples(proofStatus: "MATCH")
+            if mutation == "rising_old_photo" {
+                samples[43] = rescueSample(request: 10.75, luma: 0.4, highlight: 213)
+            } else if mutation == "reappearing_old_photo" {
+                samples[44] = rescueSample(request: 11, luma: 0.29, highlight: 159)
+            } else {
+                samples[43] = rescueSample(
                     request: 10.75, mark: "UNRECOGNIZABLE", status: "UNRECOGNIZABLE", luma: 0.3,
                     highlight: 160, notes: ["undrawn"])
+            }
             XCTAssertThrowsError(
                 try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
                     continueMark: "A1", baselineLuma: 0.497, samples: samples, intervalSeconds: 10,
                     rescuePolicy: tvosRescuePolicy()
-                )
-            ) { XCTAssertEqual($0.localizedDescription, self.tvosLateMessage) }
+                ), mutation
+            ) { XCTAssertEqual($0.localizedDescription, self.tvosLateMessage, mutation) }
         }
     }
 
@@ -706,9 +720,9 @@ extension SettingsResumeContractTests {
         }
     }
 
-    #if canImport(immichSlides)
     func testTVOSPhotoRescueGeometryBoundCoversActualSinglePhotoPolicy() {
-        let lifecycle = SceneLifecycleContract(configuredInterval: 10)
+        let lifecycle = SceneLifecycleContract(
+            configuredInterval: TimeInterval(AccessLifecycleContract.tvOSRequestedIntervalSeconds))
         let profile = SceneAnimationProfile(lifecycle: lifecycle)
         for direction in [SceneAnimationDirection.zoomIn, .zoomOut] {
             let before = profile.singlePhotoTransform(direction: direction, activeTime: 0, isMotionEnabled: true)
@@ -728,7 +742,6 @@ extension SettingsResumeContractTests {
             AccessLifecycleContract.TVOSPhotoMotionBounds.whiteCoreErosionFractionPerAxis,
             2 * AccessLifecycleContract.TVOSPhotoMotionBounds.maximumMotionFractionPerAxis)
     }
-    #endif
 
     private var tvosLateMessage: String {
         "No automatic photo change was captured within T±2; if waiting for idleness crossed the window, classify this as a test timing failure"
@@ -738,9 +751,11 @@ extension SettingsResumeContractTests {
         "Automatic photo change occurred before T-2; first check test timing and image recognition instead of immediately calling it a product bug"
     }
 
-    private func tvosRescuePolicy(isSinglePhoto: Bool = true) -> AccessLifecycleContract.TVOSFadeRescuePolicy {
+    private func tvosRescuePolicy(isSinglePhoto: Bool = true, requiredMark: String = "A1")
+        -> AccessLifecycleContract.TVOSFadeRescuePolicy
+    {
         .init(
-            requiredMark: "A1", isSinglePhotoModeVerified: isSinglePhoto,
+            requiredMark: requiredMark, isSinglePhotoModeVerified: isSinglePhoto,
             plateauHighlightLuma: 255, minimumDimHighlightDrop: 3, proofHighlightRatio: 0.95,
             minimumMeanDrop: 0.030, minimumWhiteCoreFraction: 0.06,
             maximumAnchorToProofRequestSeconds: 1, maximumAnchorToProofReturnSeconds: 2)

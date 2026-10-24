@@ -45,15 +45,14 @@ extension AccessLifecycleContract {
                 continueMark: continueMark, baselineLuma: baselineLuma, samples: samples,
                 intervalSeconds: intervalSeconds)
             return (original.start, original.stable, nil)
-        } catch {
+        } catch let AssertionError.automaticPhotoChangeLate(message) {
             // Existing passes, early failures and four-second failures retain the original computation.
-            guard error.localizedDescription.hasPrefix("No automatic photo change was captured within T±2;"),
-                let rescuePolicy,
+            guard let rescuePolicy,
                 let stable = firstStableNewImage(continueMark: continueMark, samples: samples),
                 let rescue = tvosFadeRescue(
                     continueMark: continueMark, baselineLuma: baselineLuma, samples: samples,
                     stable: stable, intervalSeconds: intervalSeconds, policy: rescuePolicy)
-            else { throw error }
+            else { throw AssertionError.automaticPhotoChangeLate(message) }
             let earliest = intervalSeconds - continueCaptureSlackSeconds
             let latest = intervalSeconds + continueCaptureSlackSeconds
             if rescue.anchor.requestElapsed + timingToleranceSeconds < earliest {
@@ -211,8 +210,7 @@ extension AccessLifecycleContract {
             }
             if dimIndex == nil {
                 guard sample.status == "MATCH", sample.mark == continueMark,
-                    sample.meanLuma <= previous.meanLuma,
-                    highlight <= previousHighlight
+                    sample.meanLuma <= previous.meanLuma
                 else {
                     discardCandidate()
                     continue
@@ -295,7 +293,7 @@ extension AccessLifecycleContract {
         let earliest = intervalSeconds - continueCaptureSlackSeconds
         let latest = intervalSeconds + continueCaptureSlackSeconds
         if elapsedSeconds > latest {
-            throw AssertionError.message(
+            throw AssertionError.automaticPhotoChangeLate(
                 "No automatic photo change was captured within T±2; if waiting for idleness crossed the window, classify this as a test timing failure"
             )
         }

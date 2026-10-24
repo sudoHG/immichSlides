@@ -13,9 +13,10 @@ enum AccessLifecycleContract {
 
     enum AssertionError: LocalizedError {
         case message(String)
+        case automaticPhotoChangeLate(String)
         var errorDescription: String? {
             switch self {
-            case .message(let text):
+            case .message(let text), .automaticPhotoChangeLate(let text):
                 return text
             }
         }

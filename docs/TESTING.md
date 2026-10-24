@@ -678,12 +678,13 @@ new-photo frame, shortening the measured onset-to-stable delay: this is a
 loosening direction for the four-second rule, and can also hide an early fade.
 Re-planning delays the physical switch; the gap can delay its detection. A fresh
 same-state bright anchor remains mandatory after the wake; the original predicate's
-luminance comparisons retain the original baseline. The draft tvOS rescue described
+luminance comparisons retain the original baseline. The tvOS rescue described
 below is an explicit exception, using a local photo anchor.
 `continue-watch-diagnostic.json` saves every frame's
 request/capture/return times and the wake times or skipped flag, including on
 assertion failure. Identity, luminance and control-state `samples` stop at the
-first stable new photo; later captured frames retain timestamps only.
+first stable new photo; later captured frames retain timestamps and decoded-photo
+q95, white-core coverage and same-image mean metrics.
 A transition identity or a different identified photo remains direct onset
 evidence; tvOS also vetoes a TRANSITION marker when the old photo recovers through
 the same shared confirmation cutoff. iPad still applies conservative screenshot bounds
@@ -729,13 +730,14 @@ from T−2 through confirmation as `continue-transition-<sample index>.png`, alo
 the sample request/return/classification times. These exports happen after dense
 capture and use the existing public fixture evidence path.
 
-The **draft tvOS A1 photo rescue awaits Hogan's explicit approval before merge**.
+The tvOS A1 photo rescue requires explicit maintainer approval before merge.
 It loosens the validator, expands its PASS set and changes the #555 ruling:
 one dim old-photo MATCH followed by a decoded, strictly decreasing MATCH or
 UNRECOGNIZABLE photo measurement may establish a bounded fade interval. It does
 not reclassify UNRECOGNIZABLE as MATCH. The shared sustained-dimming predicate,
 iPhone and iPad entries remain unchanged. The rescue runs only after the original
-tvOS judge throws the existing late-window failure. Every original PASS retains
+tvOS judge throws the typed late-window error; its diagnostic text is unchanged.
+Every original PASS retains
 exactly its original onset, window and four-second computation; early, invalid,
 missing-stable-photo and four-second failures cannot be rescued.
 
