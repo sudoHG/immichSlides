@@ -680,6 +680,8 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
     parser.add_argument("--destination", required=True)
     parser.add_argument("--evidence-dir", type=Path, required=True)
     parser.add_argument("--diagnostics-receipt", type=Path, help="shared job measurement ledger")
+    parser.add_argument("--local-force-app-hang-capture", action="store_true",
+        help="local diagnostic exercise: capture once after the first App CPU read; ignored in CI")
     parser.add_argument("--native-diagnostics-allowance-seconds", type=int, choices=range(3), default=2,
                         help="prepaid native failure-extraction allowance supplied by the job coordinator")
     parser.add_argument("--simulator-boot-submitted", action="store_true",
@@ -782,6 +784,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
     private_test_runs: list[Path] = []
     first_failure_spools = {}
     resource_samplers = {}
+    app_hang_case_state = {}
     official_tests_digests: dict[str, str] = {}
 
     def record_timeout(error: InfrastructureTimeout) -> None:
@@ -995,6 +998,8 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                 from strict_e2e_resource_diagnostics import CaseSampler
                 bundle = Path(call[call.index("-resultBundlePath") + 1])
                 sampler = CaseSampler(active(), simulator_udid,
+                    force_app_hang_capture=arguments.local_force_app_hang_capture,
+                    app_hang_case_state=app_hang_case_state,
                     duration_limit_seconds=arguments.warm_timeout_seconds if warm_receipt is not None
                     else XCODEBUILD_TIMEOUT_SECONDS).start()
                 resource_samplers[bundle] = sampler

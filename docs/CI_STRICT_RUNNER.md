@@ -1155,6 +1155,12 @@ Historical traces and summaries without the field remain valid and gain no new c
 
 ### First-failure evidence
 
+Hosted cases also collect a bounded, optional App main-thread stack after
+sustained high App CPU. The [resource diagnostics contract](CI_SUMMARY.md#bounded-infrastructure-diagnostics)
+defines the trigger, per-case/job caps, redaction, accounting and local-only
+`--local-force-app-hang-capture` exercise. It changes no first-failure, verdict,
+environment-limit eligibility or timing contract.
+
 The [hosted strict environment-limit policy](CI_SUMMARY.md#prepared-hosted-strict-environment-limits)
 uses these receipts and the same case's resource samples. The strict tracer now
 projects qualifying failures at its checkpoint, validates the candidate summary and

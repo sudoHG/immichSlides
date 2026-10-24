@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 
 from ci_summary import require
@@ -31,6 +32,52 @@ MAX_RESOURCE_CASES = 64
 MAX_RESOURCE_SAMPLES = 43201
 MAX_FAILURE_RESOURCE_SAMPLES = 6
 RESOURCE_CATEGORIES = ("app", "simulator_daemons", "test_tools", "other")
+MAX_APP_HANG_STACK_BYTES = 4096
+APP_HANG_MODULES = frozenset(("immichSlides", "SwiftUI", "SwiftUICore", "UIKitCore", "UIKit", "AttributeGraph",
+    "CoreFoundation", "Foundation", "QuartzCore", "CoreGraphics", "GraphicsServices", "dyld", "libdyld.dylib",
+    "libswiftCore.dylib", "libswift_Concurrency.dylib", "libsystem_kernel.dylib", "libsystem_pthread.dylib",
+    "libsystem_platform.dylib", "libsystem_c.dylib", "libdispatch.dylib", "libobjc.A.dylib"))
+
+
+def public_stack_symbol(value):
+    return (isinstance(value, str) and 0 < len(value) <= 160
+            and re.fullmatch(r"[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*", value) is not None
+            and re.search(r"\.(?:com|net|org|local|internal|invalid|test)(?:\.|$)", value, re.I) is None)
+
+
+def validate_app_hang_stack(stack):
+    valid = (isinstance(stack, dict) and {"status", "sample_count", "frames"} <= set(stack)
+             and set(stack) <= {"status", "sample_count", "frames", "hint"})
+    if valid:
+        frames = stack["frames"]
+        valid = (stack["status"] in ("captured", "failure", "timeout", "cancelled")
+                 and type(stack["sample_count"]) is int and 0 <= stack["sample_count"] <= MAX_INTEGER
+                 and isinstance(frames, list) and len(frames) <= 30)
+    if valid:
+        valid = all(isinstance(frame, dict) and set(frame) == {"symbol", "module", "samples"}
+                    and public_stack_symbol(frame["symbol"]) and isinstance(frame["module"], str)
+                    and frame["module"] in APP_HANG_MODULES
+                    and type(frame["samples"]) is int and 1 <= frame["samples"] <= MAX_INTEGER for frame in frames)
+        valid = valid and (stack["status"] == "captured" or (not frames and stack["sample_count"] == 0))
+        hint = stack.get("hint", [])
+        valid = valid and isinstance(hint, list) and len(hint) <= 3
+        if valid:
+            valid = all(type(index) is int and 0 <= index < len(frames) for index in hint) and len(set(hint)) == len(hint)
+    if valid:
+        valid = len(json.dumps(stack, separators=(",", ":")).encode()) <= MAX_APP_HANG_STACK_BYTES
+    require(valid, "app hang stack: invalid projection")
+
+
+def render_app_hang_hint(stack):
+    frames = stack["frames"]
+    if "hint" in stack:
+        selected = [frames[index] for index in stack["hint"]]
+    else:
+        # Older projections have no call-path relationship; show one frame without inventing a chain.
+        selected = ([frame for frame in frames if frame["module"] == "immichSlides"] or frames)[:1]
+    hint = " ← ".join("`" + frame["symbol"] + "`" for frame in selected) or stack["status"]
+    count = f"{selected[0]['samples']}/{stack['sample_count']}" if selected else str(stack["sample_count"])
+    return f"app-hang-stack: {hint} ({count} samples)"
 
 
 def exact_fields(value, names, where):
@@ -116,9 +163,13 @@ def validate_case_resources(cases):
     require(isinstance(cases, list) and len(cases) <= MAX_RESOURCE_CASES, "case resources: invalid case count")
     sequences = set()
     for case in cases:
-        exact_fields(case, {"sequence", "duration_seconds", "sample_interval_seconds", "sample_count", "truncated",
+        fields = {"sequence", "duration_seconds", "sample_interval_seconds", "sample_count", "truncated",
             "idle_percent_min", "idle_percent_median", "load_1m_max", "app_cpu_percent_peak", "sampler_wall_seconds",
-            "sampler_cpu_seconds", "first_failure_elapsed_seconds", "failure_samples"}, "case resources")
+            "sampler_cpu_seconds", "first_failure_elapsed_seconds", "failure_samples"}
+        if isinstance(case, dict) and "app_hang_stack" in case:
+            fields.add("app_hang_stack")
+            validate_app_hang_stack(case["app_hang_stack"])
+        exact_fields(case, fields, "case resources")
         number(case["sequence"], MAX_INTEGER, "case resources sequence", integral=True)
         require(case["sequence"] not in sequences, "case resources: duplicate sequence")
         sequences.add(case["sequence"])
