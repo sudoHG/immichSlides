@@ -504,13 +504,21 @@ are authoritative; the plain-English boundary is:
 | Missing/one-sided/high-idle samples, unknown hosting, local/self-hosted/UI/informational suite | No. |
 | The same case's second consecutive yellow UTC night | No; the reporter escalates it to red. |
 
-Accepted residual risk (v4 Save Password): prompt-handling or mode-selection
-defects with the same receipt may be yellow once with complete hosted starvation
-proof. Other elements, surfaces and phase/class pairs stay red. Retained v1/v2/v3
-receipts keep their old verdicts. No Swift receipt change is needed: the existing
-mode loop already emits the step and card identifier. A night without starvation
-is red; two consecutive yellow UTC nights escalate to red, and the existing weekly
-review below still applies. Yellow never counts as pass or recovery.
+Accepted residual risk (v4 Save Password): the receipt does not record whether a
+decline was issued, whether the prompt is still present, or whether the target
+card is selected. The App re-triggering the prompt after a decline or a card
+reselect; an App alert or sheet, duplicate prompt, or ambiguous or unhittable
+Not Now preventing any decline; and an App main-thread stall causing `observe()`
+to throw while the step stays `save-password-prompt` can all match a slow host's
+receipt and be yellow once with complete hosted starvation proof. Other steps,
+elements, surfaces and phase/class pairs stay red; the nearest red sibling is
+`save-password-prompt` at `mode.continue.button`, after Continue has been issued.
+Retained v1/v2/v3 receipts keep their old verdicts. No Swift receipt change is
+needed: the mode loop sets the step as soon as it observes the prompt, then
+re-marks it and the card identifier at each iteration and at timeout, even if no
+decline was issued. A night without starvation is red; the second consecutive
+yellow UTC night escalates to red, bounding consecutive exposure. The existing
+weekly review below still applies. Yellow never counts as pass or recovery.
 
 Accepted residual risk (v3/v4 mode departure): Continue tapped but no navigation,
 an unhandled non-password alert over the mode page, and load-only navigation bugs
@@ -531,7 +539,7 @@ escalate to red, and independent strict pause and history cases remain in place.
 
 The producer still emits v3; the reader accepts v4 ahead of separate activation.
 After activation, all new proofs use v4, including existing UI waits and album
-settling. Merge the reader first, then activate from a trusted base containing it;
+settling. Producer activation requires a trusted base containing the reader;
 a stacked draft alone does not establish trusted acceptance.
 An older reader would turn even those existing yellows red. Retained v1/v2/v3 proofs
 keep their old interpretation, including the legacy `mode-continue` entry;

@@ -2968,12 +2968,12 @@ class StrictCITracerTests(unittest.TestCase):
                     elif mutation == "duplicate marker":
                         ledger["events"].append(copy.deepcopy(ledger["events"][0]))
                     elif mutation == "wrong step":
-                        row["first_failure"]["step"] = "select" if step == "save-password-prompt" else "mode-card"
+                        row["first_failure"]["step"] = "mode-continue" if step == "save-password-prompt" else "mode-card"
                     elif mutation == "wrong element":
                         row["first_failure"]["element"] = ("mode.continue.button"
                             if step == "save-password-prompt" else "mode.filtered.button")
                     elif mutation == "wrong surface":
-                        row["first_failure"]["state"]["surface"] = "firstboot"
+                        row["first_failure"]["state"]["surface"] = "cache"
                     elif mutation == "before only":
                         resource["failure_samples"][1]["elapsed_seconds"] = 7
                     elif mutation == "after only":

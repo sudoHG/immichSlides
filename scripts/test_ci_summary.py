@@ -225,7 +225,11 @@ def album_capture_gate_rejections(receipt):
 
 class SummaryContractTests(unittest.TestCase):
     def test_password_prompt_timing_requires_new_policy_and_exact_mode_evidence(self):
-        from ci_failure_diagnostics import environment_limit_evidence, validate_environment_limit
+        from ci_failure_diagnostics import (ENVIRONMENT_WAIT_STEPS_V3, ENVIRONMENT_WAIT_STEPS_V4,
+            environment_limit_evidence, validate_environment_limit)
+        self.assertEqual({**ENVIRONMENT_WAIT_STEPS_V3,
+            **{("mode_selection", "navigation", "save-password-prompt", element): "mode"
+               for element in ("mode.random.button", "mode.filtered.button")}}, ENVIRONMENT_WAIT_STEPS_V4)
         for element in ("mode.random.button", "mode.filtered.button"):
             summary, resource = hosted_mode_departure_summary("mode_selection")
             row = summary["population"]["observed"][0]

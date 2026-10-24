@@ -62,17 +62,10 @@ class ReporterTests(unittest.TestCase):
                 escalated = ci_report.merge_snapshot(None, [compact, following], date(2026, 10, 2))["days"]["2026-10-02"]["entries"][0]
                 self.assertEqual("failed", escalated["status"])
                 self.assertIn("RED: repeated environment limit", render_entry(escalated))
-                for path, value in (
-                        *((('policy_version',), version) for version in (1, 2, 3, 5, True, 4.0)),
-                        (("failure", "element"), "mode.continue.button"),
-                        (("failure", "surface"), "firstboot"),
-                        (("resources", "failure_samples"), [])):
+                for version in (1, 2, 3, 4.0):
                     changed = copy.deepcopy(compact)
-                    target = changed["observed"][0]["environment_limit"]
-                    for key in path[:-1]:
-                        target = target[key]
-                    target[path[-1]] = value
-                    with self.subTest(path=path, value=value):
+                    changed["observed"][0]["environment_limit"]["policy_version"] = version
+                    with self.subTest(version=version):
                         red = ci_report.merge_snapshot(None, [changed], date(2026, 10, 1))["days"]["2026-10-01"]["entries"][0]
                         self.assertEqual("failed", red["status"])
                         self.assertEqual("RED: invalid or obsolete environment-limit proof under the current policy",

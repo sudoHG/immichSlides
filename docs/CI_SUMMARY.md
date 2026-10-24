@@ -809,19 +809,28 @@ Policy v4 preserves every v3 entry and adds exactly the two `save-password-promp
 keys above. The motivating [nightly 39969370437](https://github.com/sudoHG/immichSlides/actions/runs/39969370437),
 shard `iphone-immichSlides-iOS-debug-0`, fixture A `album-empty`, reports
 `mode_selection/navigation`, `mode.filtered.button`, surface `mode`, wait 23.41 s
-against a 22 s deadline. `IOSFirstBootNavigation.navigateMode` already emits the
-step and target card at each loop iteration after a decline tap; no Swift receipt
-change is needed. Eligibility still requires the existing hosted marker, a full
+against a 22 s deadline. `IOSFirstBootNavigation.navigateMode` sets the step as
+soon as it observes the prompt, then re-marks that step and the target card at
+each loop iteration and at timeout; a decline need not have been issued.
+No Swift receipt change is needed. Eligibility still requires the existing hosted marker, a full
 deadline and low-idle samples strictly before and after the failure, each at most
 5% idle. Other elements, surfaces, phase/class pairs and missing evidence stay red.
 Retained v1/v2/v3 receipts never gain this exception; no old night is reclassified.
+The nearest red sibling is `save-password-prompt` at `mode.continue.button`:
+a prompt observed after Continue has been issued does not gain this exception.
 
-Accepted residual risk (v4 Save Password): a prompt-handling or mode-selection
-defect with the same receipt can be yellow once when every starvation and hosting
-condition holds. A night without starvation stays red, and two consecutive yellow
-UTC nights escalate to red. The existing weekly review of tests yellow three or
-more times still applies. Yellow retains the raw failure and never counts as pass
-or recovery; all other failures keep their existing interpretation.
+Accepted residual risk (v4 Save Password): the receipt does not record whether a
+decline was issued, whether the prompt is still present, or whether the target
+card is selected. These functional faults can therefore produce the same receipt
+as a slow host: the App re-triggering the prompt after a decline or a card
+reselect; an App alert or sheet, duplicate prompt, or ambiguous or unhittable
+Not Now preventing any decline; and an App main-thread stall causing `observe()`
+to throw while the step stays `save-password-prompt`. With complete hosting and
+starvation proof, these indistinguishable faults can be yellow once. A night
+without starvation stays red; the second consecutive yellow UTC night escalates
+to red, bounding consecutive exposure. The existing weekly review of tests yellow
+three or more times still applies. Yellow retains the raw failure and never
+counts as pass or recovery; all other failures keep their existing interpretation.
 
 Hogan approved the mode-departure exception on 2026-10-23. Policy v3 preserves
 every v2 entry and adds the wait for the mode page to depart after Continue, with the exact step, element,
@@ -910,9 +919,9 @@ exactly the two reviewed `mode-departure` entries. Unknown versions
 remain red. No original receipt, raw failure, threshold, deadline, wait or retry changes.
 
 Policy v4 follows the same reader-first rollout with an unchanged proof shape.
-The reader accepts v4 while the producer still emits v3. Merge this reader first,
-then activate v4 in a separate PR based on the merged reader; a stacked draft
-alone does not establish trusted-base acceptance. Older readers reject v4 even
+The reader accepts v4 while the producer still emits v3. Producer activation
+requires a separate PR based on the merged reader; a stacked draft alone does
+not establish trusted-base acceptance. Older readers reject v4 even
 for existing UI waits and album settling. Retained v1/v2/v3 interpretations stay
 unchanged, and unknown or noninteger versions stay red.
 
