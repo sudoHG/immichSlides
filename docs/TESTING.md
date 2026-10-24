@@ -227,26 +227,45 @@ When replacing independent credential-entry card and Continue waits with one
 selection cap, preserve their sum, the first-attempt hittability/selected-state
 readbacks and any existing prompt allowance. Do not
 borrow repeated-tap or whole-flow retry budgets. Mode-card and exact Not Now taps
-exclude only their measured native action duration from the active mode-navigation
-clock. Query, live-check, polling and previous observation time still consume that
+exclude their measured tap duration, including XCTest's pre- and post-event waits
+for the App or prompt host to idle, from the active mode-navigation clock.
+This is not proof that the excluded time is outside the App's responsibility.
+Query, live-check, polling and previous observation time still consume that
 same selection or departure allowance; a tap never renews the allowance. Record
 the action separately and resume the wait with its remaining duration. Reject
 snapshots that return after the adjusted deadline. Standalone prompt dismissal
 and visibility helpers keep their callers' original absolute deadlines.
-Keep the prompt step's observed decline identifier (or `unknown`) in failure
-context rather than replacing it with the target mode-card identifier.
+The outer receipt markers retain the target card until Continue is issued, then
+use `mode.continue.button`, preserving the environment-policy boundaries. The tap
+itself still marks its actual target. Keep the selection wait active during Continue
+and end it only after the tap returns, before beginning the departure wait.
 
-The shared navigation callers retain these observation durations in seconds:
+Let `t0` be navigation entry, `tc` Continue issue, `C` its measured tap duration,
+`A` the sum of pre-Continue card/Not Now taps, and `B` the sum of post-Continue
+Not Now taps. For selection/departure allowances `S`/`D`, the old deadlines were
+`t0+S` / `tc+D`; the new deadlines are `t0+S+A` / `tc+C+D+B`.
+All callers reuse the returned deadline for their subsequent wait:
 
-| Caller | Selection | Departure after Continue returns |
-| --- | ---: | ---: |
-| First-batch onboarding | 14 | 20 for cold relaunch; 30 otherwise |
-| Strict Filter onboarding | 22 | 28 |
-| Late-image onboarding | 10 | 8 |
-| Access-lifecycle onboarding | 22 | 30 |
-| `IOSDriver.launchToPlayback` (including cache smoke) | 7 | 30 |
-| Interactive visual audit | 5 | 8 |
-| Visual-audit selection-only calls | 5 | No Continue |
+| Caller | S / D seconds | Old selection / departure deadline | New selection / departure deadline | Returned deadline use and product-timing boundary |
+| --- | --- | --- | --- | --- |
+| journey-b filtered | 14 / 20 | `t0+14` / `tc+20` | `t0+14+A` / `tc+C+20+B` | Filter summary; not a product-duration measurement. journey-a cold relaunch bypasses this helper. |
+| journey-b random, pause-stage, single-photo | 14 / 30 | `t0+14` / `tc+30` | `t0+14+A` / `tc+C+30+B` | Playback controls; pause-window T±2 starts at the later Play action. |
+| Strict Filter | 22 / 28 | `t0+22` / `tc+28` | `t0+22+A` / `tc+C+28+B` | Summary; restores the pre-consolidation post-click 8 s + 20 s origin. |
+| Late-image | 10 / 8 | `t0+10` / `tc+8` | `t0+10+A` / `tc+C+8+B` | Next readiness and `promptDeadline`; the immediate-Next origin shifts by `C+B`, but the test explicitly releases the old image response rather than using a fixed delivery clock. |
+| Access lifecycle | 22 / 30 | `t0+22` / `tc+30` | `t0+22+A` / `tc+C+30+B` | Playback controls; not a product-duration measurement. |
+| `IOSDriver.launchToPlayback` (cache smoke, ReduceMotion, EXIF, Rotation, ScenePresentation) | 7 / 30 | `t0+7` / `tc+30` | `t0+7+A` / `tc+C+30+B` | Playback controls; not a product-duration measurement. |
+| Interactive visual audit | 5 / 8 | `t0+5` / `tc+8` | `t0+5+A` / `tc+C+8+B` | Filter album button; not a product-duration measurement. |
+| Visual-audit selection-only calls | 5 / none | `t0+5` / none | `t0+5+A` / none | Selected-state screenshots, no Continue. |
+
+The coordinator accepts the same residual risk as the Next timing repair:
+XCTest idle waits can absorb about 60 seconds of App non-idleness per tap if the
+destination is then reached within its allowance. Each tap contributes separately;
+no new cap or threshold is introduced. `First-boot mode observations:` and failure
+details record `deductedTapSeconds` for every returned navigation tap, including
+Continue, and `totalDeductedTapSeconds` (`A+C+B`). These diagnostics issue no extra
+UI queries. The [environment-limit contract](CI_SUMMARY.md#prepared-hosted-strict-environment-limits)
+describes the corresponding v3/v4 yellow risk; unchanged duration values do not
+imply an unchanged wall-clock deadline.
 
 The strict Filter departure cap is 28 seconds, preserving the original fixed
 8-second post-Continue wait plus the 20-second summary wait as one absolute budget.
