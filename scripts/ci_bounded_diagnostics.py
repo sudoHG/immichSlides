@@ -39,6 +39,12 @@ MAX_RESOURCE_CASES = 64
 MAX_RESOURCE_SAMPLES = 43201
 MAX_FAILURE_RESOURCE_SAMPLES = 6
 RESOURCE_CATEGORIES = ("app", "simulator_daemons", "test_tools", "other")
+# Archived in environment_limit.resources: accepted names and bounds may only be loosened.
+SIMULATOR_PROCESS_NAMES = ("diagnosticd", "lsd", "STExtractionService", "PosterBoard",
+    "intelligenceplatformd", "photoanalysisd", "mediaanalysisd", "fileindexerd", "mobileassetd",
+    "nsurlsessiond", "chronod", "Spotlight", "searchd", "BackgroundShortcutRunner",
+    "MercuryPosterExtension", "EmojiPosterExtension", "GradientPosterExtension")
+MAX_SIMULATOR_PROCESS_BYTES = 1024
 MAX_APP_HANG_STACK_BYTES = 4096
 MAX_CONTINUE_WATCH_BYTES = 8192
 MAX_CONTINUE_WATCH_FRAMES = 80
@@ -259,6 +265,40 @@ def validate_receipt(receipt):
         validate_case_resources(receipt["case_resources"])
 
 
+def validate_simulator_processes(value):
+    def numeric(item):
+        return type(item) in (int, float) and 0 <= item <= MAX_PROCESS_CPU_PERCENT
+    valid = (isinstance(value, dict) and set(value) == {"entries", "unavailable", "truncated"}
+        and type(value["unavailable"]) is bool and type(value["truncated"]) is bool
+        and isinstance(value["entries"], list) and 1 <= len(value["entries"]) <= 6)
+    if valid:
+        entries = value["entries"]
+        names = []
+        for row in entries:
+            valid = (isinstance(row, dict) and set(row) == {"name", "mean", "peak", "samples"}
+                and isinstance(row["name"], str) and row["name"] in (*SIMULATOR_PROCESS_NAMES, "other")
+                and type(row["samples"]) is int and 0 <= row["samples"] <= MAX_RESOURCE_SAMPLES
+                and ((row["samples"] == 0 and value["unavailable"] and row["mean"] is None and row["peak"] is None)
+                    or (row["samples"] > 0 and not value["unavailable"] and numeric(row["mean"])
+                        and numeric(row["peak"]) and row["mean"] <= row["peak"])))
+            if not valid:
+                break
+            names.append(row["name"])
+        valid = (valid and len(names) == len(set(names)) and names[-1:] == ["other"]
+            and (not value["unavailable"] or len(entries) == 1)
+            and len({row["samples"] for row in entries}) == 1)
+    if valid:
+        valid = len(json.dumps(value, separators=(",", ":")).encode()) <= MAX_SIMULATOR_PROCESS_BYTES
+    require(valid, "simulator processes: invalid projection")
+
+
+def render_simulator_processes(value):
+    if value["unavailable"]:
+        return "sim-top: unavailable"
+    text = "sim-top: " + ", ".join(f"{row['name']} {row['mean']:g}%/{row['peak']:g}%" for row in value["entries"])
+    return text + (" (truncated)" if value["truncated"] else "")
+
+
 def validate_case_resources(cases):
     require(isinstance(cases, list) and len(cases) <= MAX_RESOURCE_CASES, "case resources: invalid case count")
     sequences = set()
@@ -272,6 +312,9 @@ def validate_case_resources(cases):
         if isinstance(case, dict) and "continue_watch" in case:
             fields.add("continue_watch")
             validate_continue_watch(case["continue_watch"])
+        if isinstance(case, dict) and "simulator_processes" in case:
+            fields.add("simulator_processes")
+            validate_simulator_processes(case["simulator_processes"])
         exact_fields(case, fields, "case resources")
         number(case["sequence"], MAX_INTEGER, "case resources sequence", integral=True)
         require(case["sequence"] not in sequences, "case resources: duplicate sequence")

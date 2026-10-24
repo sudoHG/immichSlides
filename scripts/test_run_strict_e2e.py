@@ -4071,6 +4071,80 @@ raise SystemExit(65)
         self.assertEqual(0, recorder.ledger_remaining)
         self.assertTrue(recorder.truncated)
 
+    def test_simulator_projection_isolates_tree_and_aggregates_valid_snapshots(self):
+        import ci_execution_diagnostics as diagnostics
+        import strict_e2e_resource_diagnostics as resources
+        from types import SimpleNamespace
+        rows = ('10 1 1 launchd_sim\n11 10 20 STExtractionService\n12 10 40 STExtractionService\n'
+                '13 10 12 diagnosticd\n14 10 500 immichSlides\n15 10 600 testmanagerd_sim\n'
+                '16 10 30 PRIVATE_SENTINEL\n20 1 1 launchd_sim\n21 20 900 diagnosticd\n'
+                '22 1 800 mobileassetd\n17 16 10 photoanalysisd\n23 20 999 immichSlides\n')
+        snapshots = []
+        with mock.patch.object(resources.sys, 'platform', 'darwin'), \
+                mock.patch.object(resources, 'app_on_device', side_effect=lambda pid, device: pid == 14), \
+                mock.patch.object(resources.subprocess, 'run', return_value=SimpleNamespace(returncode=0, stdout=rows)) as ps:
+            resources.process_sample('private-device', .1, simulator_snapshots=snapshots)
+            self.assertEqual(1, ps.call_count, 'projection must reuse the existing ps invocation')
+        self.assertEqual({'STExtractionService': 60, 'diagnosticd': 12, 'photoanalysisd': 10, 'other': 31}, snapshots[0])
+        for name in ('diagnosticd', 'lsd', 'STExtractionService', 'PosterBoard', 'intelligenceplatformd',
+                'photoanalysisd', 'mediaanalysisd', 'fileindexerd', 'mobileassetd', 'nsurlsessiond', 'chronod',
+                'Spotlight', 'searchd', 'BackgroundShortcutRunner', 'MercuryPosterExtension',
+                'EmojiPosterExtension', 'GradientPosterExtension', 'UnknownWidget', 'diagnosticd-private',
+                '/private/diagnosticd', '12345678-1234-1234-1234-123456789012'):
+            snapshot = []
+            with self.subTest(name=name), mock.patch.object(resources.sys, 'platform', 'darwin'), \
+                    mock.patch.object(resources, 'app_on_device', return_value=True), \
+                    mock.patch.object(resources.subprocess, 'run', return_value=SimpleNamespace(returncode=0,
+                        stdout=f'10 1 0 launchd_sim\n11 10 1 immichSlides\n12 10 7 {name}\n')):
+                resources.process_sample('private-device', .1, simulator_snapshots=snapshot)
+            expected = 'other' if name in ('UnknownWidget', 'diagnosticd-private', '/private/diagnosticd',
+                '12345678-1234-1234-1234-123456789012') else name
+            self.assertEqual({**{'other': 0}, expected: 7}, snapshot[0])
+        recorder = diagnostics.Recorder()
+        sampler = resources.CaseSampler(recorder, 'private-device')
+        sampler.simulator_snapshots = [snapshots[0], None,
+            {'STExtractionService': 0, 'diagnosticd': 32, 'mobileassetd': 21, 'other': 1}]
+        sampler.duration = 30
+        sampler.finished = True
+        sampler.publish()
+        projection = recorder.case_resources[0]['simulator_processes']
+        self.assertEqual([('STExtractionService', 30, 60, 2), ('diagnosticd', 22, 32, 2),
+                          ('mobileassetd', 10.5, 21, 2), ('photoanalysisd', 5, 10, 2), ('other', 16, 31, 2)],
+                         [(row['name'], row['mean'], row['peak'], row['samples']) for row in projection['entries']])
+        self.assertTrue(projection['truncated'])
+        self.assertFalse(projection['unavailable'])
+        self.assertLessEqual(len(json.dumps(projection, separators=(',', ':')).encode()), 1024)
+        self.assertNotIn('PRIVATE_SENTINEL', json.dumps(projection))
+        self.assertNotIn('private-device', json.dumps(projection))
+        # A peak-ranked implementation picks the spiky service over the steady one.
+        names = ['diagnosticd', 'lsd', 'STExtractionService', 'PosterBoard', 'intelligenceplatformd', 'photoanalysisd']
+        sampler.simulator_snapshots = [dict.fromkeys(names, 20), dict.fromkeys(names, 20)]
+        sampler.simulator_snapshots[0]['photoanalysisd'] = 39
+        sampler.simulator_snapshots[1]['photoanalysisd'] = 0
+        sampler.simulator_snapshots[0]['other'] = 1
+        sampler.simulator_snapshots[1]['other'] = 39
+        sampler.publish()
+        projection = recorder.case_resources[0]['simulator_processes']
+        self.assertEqual(names[:5] + ['other'], [row['name'] for row in projection['entries']])
+        self.assertEqual((39.5, 40), (projection['entries'][-1]['mean'], projection['entries'][-1]['peak']))
+        # Losing the tree or a malformed table is unavailable, never a host-wide substitute.
+        for belongs, raw in ((False, rows), (True, 'bad row'), (None, rows), (True, rows),
+                (True, rows.replace('14 10 500', '14 1 500').replace('23 20 999 immichSlides\n', ''))):
+            missing = []
+            with self.subTest(belongs=belongs), mock.patch.object(resources.sys, 'platform', 'darwin'), \
+                    mock.patch.object(resources, 'app_on_device', return_value=belongs), \
+                    mock.patch.object(resources.subprocess, 'run', return_value=SimpleNamespace(returncode=0, stdout=raw)):
+                resources.process_sample('private-device', .1, simulator_snapshots=missing)
+            self.assertEqual([None], missing)
+        sampler.simulator_snapshots = [None]
+        sampler.publish()
+        self.assertEqual({'entries': [{'name': 'other', 'mean': None, 'peak': None, 'samples': 0}],
+                          'unavailable': True, 'truncated': True}, recorder.case_resources[0]['simulator_processes'])
+        with mock.patch.object(resources, 'validate_simulator_processes', side_effect=ValueError('invalid projection')):
+            sampler.publish()
+        self.assertNotIn('simulator_processes', recorder.case_resources[0])
+        self.assertEqual(30, recorder.case_resources[0]['duration_seconds'])
+
     def test_case_sampler_preserves_numeric_categories_and_failure_windows(self):
         import ci_execution_diagnostics as diagnostics
         from ci_summary import parse_summary
@@ -4227,7 +4301,7 @@ raise SystemExit(65)
                 return waits.pop(0)
             event = SimpleNamespace(wait=tick, set=lambda: None, is_set=lambda: False)
             sample = {"idle_percent": 25, "load_1m": 4, "cpu_percent": dict.fromkeys(resources.RESOURCE_CATEGORIES)}
-            def process_sample(device, timeout, *, app_processes=None):
+            def process_sample(device, timeout, *, app_processes=None, **_kwargs):
                 if app_processes is not None:
                     app_processes.append((123, cpu))
                 return {**dict.fromkeys(resources.RESOURCE_CATEGORIES, 0), "app": cpu}
@@ -4642,7 +4716,7 @@ raise SystemExit(65)
                 clock[0] += seconds
                 return clock[0] >= 44
             event = SimpleNamespace(wait=tick, set=lambda: None, is_set=lambda: False)
-            def ps(device, timeout, *, app_processes):
+            def ps(device, timeout, *, app_processes, **_kwargs):
                 reads.append(clock[0])
                 cpu = (0 if clock[0] == 2 else 85) if kind == "rise" else (84 if clock[0] == 4 else 85)
                 app_processes.append((123, cpu))
@@ -4673,7 +4747,7 @@ raise SystemExit(65)
             clock[0] += seconds
             return clock[0] >= 16
         event = SimpleNamespace(wait=tick, set=lambda: None, is_set=lambda: False)
-        def ps(device, timeout, *, app_processes):
+        def ps(device, timeout, *, app_processes, **_kwargs):
             reads.append(clock[0])
             clock[0] += 0.4
             app_processes.append((123, 90))

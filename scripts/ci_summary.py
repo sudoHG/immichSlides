@@ -430,6 +430,11 @@ def render_markdown(payload):
             hints += [render_continue_watch(resource["continue_watch"])
                 for case in payload["strict_case_evidence"] if case["identity"] == entry["identity"]
                 for resource in case[BOUNDED_DIAGNOSTICS_FIELD].get("case_resources", []) if "continue_watch" in resource]
+            if entry["outcome"] == "failed":
+                from ci_bounded_diagnostics import render_simulator_processes
+                hints += [render_simulator_processes(resource["simulator_processes"])
+                    for case in payload["strict_case_evidence"] if case["identity"] == entry["identity"]
+                    for resource in case[BOUNDED_DIAGNOSTICS_FIELD].get("case_resources", []) if "simulator_processes" in resource]
         label = entry["identity"]["key"]
         if hints:
             label += " (" + ", ".join(f"{key}={value}" for key, value in sorted(entry["identity"]["dimensions"].items())) + ")"

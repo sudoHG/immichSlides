@@ -150,7 +150,7 @@ issue decisions do not consume the measurements.
 The reader also accepts `case_resources`, an array of at most 64 case measurements.
 Strict producers emit it for each actual Xcode case invocation, including an
 existing listed retry. Fixture UI producers do not sample continuously. Each entry has
-the following required fields and optional `app_hang_stack` and `continue_watch`. All numbers are finite, booleans are not numbers,
+the following required fields and optional `app_hang_stack`, `continue_watch` and `simulator_processes`. All numbers are finite, booleans are not numbers,
 and unknown measurements remain null.
 
 | Fields | Bounds and meaning |
@@ -165,6 +165,7 @@ and unknown measurements remain null.
 | `failure_samples` | At most six samples, no more than `sample_count`, strictly increasing by `elapsed_seconds`, within both the case duration and ±5 seconds of the first failure; empty when the failure time is unavailable |
 | `app_hang_stack` (optional) | At most 4,096 compact JSON bytes: `status` (`captured`, `failure`, `timeout`, `cancelled`), `sample_count` (main-thread samples), and `frames` (at most 30 objects containing only `symbol`, allowlisted `module`, and inclusive `samples` count); optional `hint` contains at most three distinct frame indices in observed callee-to-caller order; non-captured states have zero samples and no frames |
 | `continue_watch` (optional) | Failed `tvos-lifecycle-pause` only; at most 8,192 compact JSON bytes and the first 80 frames, rounded to three decimals; see the numeric projection below |
+| `simulator_processes` (optional) | At most 1,024 compact JSON bytes: `entries` (at most five named entries followed by `other`), boolean `unavailable` and `truncated`; each entry contains only allowlisted `name`, `mean` / `peak` CPU percentages (0–10^6, or null when unavailable), and integer `samples` (0–43,201 valid snapshots) |
 
 Each failure sample has exactly `elapsed_seconds` (0–86,400), `idle_percent`
 (0–100 or null), `load_1m` (0–10^6 or null), and `cpu_percent`. The latter has
@@ -172,13 +173,47 @@ exactly `app`, `simulator_daemons`, `test_tools`, and `other`, each 0–10^6 or 
 These categories are disjoint: the App under test; simulator system daemons
 descended from `launchd_sim`; XCTest, testmanagerd and xcodebuild tools; and all
 remaining host processes. App and test-tool membership takes precedence over
-simulator ancestry. Apart from the optional stack's symbol/module names, no executable names, PIDs, paths, arguments or activity
+simulator ancestry. Apart from the optional stack's symbol/module names and the simulator projection's allowlisted basenames, no executable names, PIDs, paths, arguments or activity
 titles are published. Measurements with unavailable membership must remain null.
 Sampling limitations, including missing intervals, do not alter a test result.
 The separate [prepared environment-limit proof](#prepared-hosted-strict-environment-limits)
 can classify a failed hosted timing observation only when its full criteria are met.
 Summary Markdown displays per-case sample counts, idle minimum/median, maximum
 load, peak App CPU, sampler costs and truncation; nearby samples remain in JSON.
+Failed strict case rows also show one compact `sim-top: name mean%/peak%, ...`
+line, including unavailable or truncated status. The optional projection does not
+participate in verdicts, yellow eligibility, retries, deadlines or scheduling.
+
+`simulator_processes` consumes the existing process snapshots and cadence, within
+the same 180-second job pool; it adds no child processes, threads or root query.
+The already device-verified App's `launchd_sim` ancestor identifies the assigned
+tree in that snapshot. A missing, inaccessible or ambiguous root makes that
+snapshot unavailable; it never falls back to other simulator trees. In particular,
+before the App appears or after it exits, device-tree evidence can be unavailable.
+Roots are resolved again from each snapshot rather than reusing a PID across
+reboots. Existing all-tree `simulator_daemons` totals retain their original meaning.
+App, XCTest, testmanagerd and xcodebuild entries are excluded before aggregation.
+
+The fixed basename enum is `diagnosticd`, `lsd`, `STExtractionService`, `PosterBoard`,
+`intelligenceplatformd`, `photoanalysisd`, `mediaanalysisd`, `fileindexerd`,
+`mobileassetd`, `nsurlsessiond`, `chronod`, `Spotlight`, `searchd`,
+`BackgroundShortcutRunner`, `MercuryPosterExtension`, `EmojiPosterExtension`, and
+`GradientPosterExtension`. These are explicit system services and extensions
+identified in the local iOS/iPadOS/tvOS first-boot investigation: diagnostics and
+registration, streaming extraction and assets, analysis/indexing, and wallpaper /
+widget activity. No wildcard matches or arbitrary basenames are published;
+unidentified MobileAsset workers and extensions remain `other`.
+Multiple instances of one name are summed per snapshot. Select at most five
+names by their CPU mean across valid snapshots, breaking ties by the enum order
+above; a confirmed absence in a valid snapshot is zero, while missing snapshots
+never enter the denominator. Sum unselected names and unknown processes into
+`other` in each snapshot before computing its mean and peak. Thus `other`'s peak
+is not a sum of nonconcurrent peaks. Numbers are rounded to three decimals.
+All entries share their valid-snapshot count; with no valid snapshots, only
+`other` remains, with null mean/peak, zero samples and `unavailable: true`.
+Incomplete collection is marked truncated. An invalid producer projection is
+dropped alone, preserving the case's numeric evidence.
+
 The last retained phase excludes metadata-only hosting markers, which do not
 establish that Xcode reached test execution; other events render as before.
 The case manifest and each tracer warm phase retain only that case's resource
@@ -863,7 +898,7 @@ The same sequence applies to `bounded_diagnostics.case_resources` and
 `first_failure.native_activity_seconds`: merge reader support before opening the
 producer activation PR. Historical records without either optional field remain valid.
 
-A scoped exception permits the optional App hang-stack and Continue watch projections,
+A scoped exception permits the optional App hang-stack, Continue watch and simulator-process projections,
 strict runner cleanup member event and their readers
 to ship together. The trusted base gate/UI publisher's supported producers in
 `ci_publish_git.py` do not consume strict-tracer or P2-review diagnostic artifacts;
@@ -874,10 +909,18 @@ not activate a field in required gate/UI records. Old nights and old stack proje
 This exception relies on that consumer boundary: introducing the field into a
 base-read publication path or reading it with an older revision requires a separate
 reader rollout first. The PR must document this transition analysis.
-Both `continue_watch` and `app_hang_stack` are copied into
+`continue_watch`, `app_hang_stack` and `simulator_processes` are copied into
 `environment_limit.resources` in the 90-day yellow history and validated again by
 later readers. Their archived validation may only be loosened, never tightened;
 otherwise a previously accepted night could become unreadable or red.
+For `simulator_processes`, this freezes acceptance of its current names, nullable
+unavailable form, fields, numeric/sample bounds and byte/entry caps: future
+readers may only broaden acceptance. A stricter successor producer needs a new
+version while preserving this historical reader. Absence of the field remains
+valid, including in old proofs. The shared `validate_case_resources` reader is
+used by summaries, nightly aggregation, the reporter and environment-limit proof
+validation; the trusted-base gate/UI publication paths do not consume this strict
+projection. Moving it into those paths requires a separate reader-first rollout.
 The `runner_group_*` fields belong to summary-level `events`, not `case_resources`,
 and are not copied into `environment_limit.resources`; that 90-day rule does not
 apply to them.
