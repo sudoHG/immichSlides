@@ -27,7 +27,8 @@ STATES = ("started", "completed", "spawn-started", "spawn-completed", "communica
           "kill-started", "kill-completed", "reap-started", "reap-completed", "before-kill", "after-reap")
 PROCESS_NAMES = ("simctl", "CoreSimulatorService", "Simulator", "launchd_sim", "xcodebuild", "xctest",
                  "testmanagerd", "immichSlides", "immichSlidesUITests-Runner", "swift-frontend")
-PROCESS_STATES = ("running", "sleeping", "uninterruptible", "stopped", "zombie", "unknown", "exiting")
+PROCESS_STATES = ("running", "sleeping", "uninterruptible", "stopped", "zombie", "unknown")
+RUNNER_PROCESS_STATES = ("running", "sleeping", "uninterruptible", "stopped", "zombie", "unknown", "exiting")
 RUNNER_PROCESS_NAMES = frozenset((*PROCESS_NAMES, "other", "unknown", "sample", "Python", "python",
     "swift", "swiftc", "swift-driver", "swift-plugin-server", "clang", "clang++", "ld", "XCBBuildService", "SWBBuildService", "swbuild",
     "SourceKitService", "sourcekit-lsp", "ibtoold", "actool", "assetcatalogd", "codesign", "xcrun", "ps",
@@ -157,7 +158,7 @@ def validate_runner_group_members(members):
     valid = members is None or (isinstance(members, list) and len(members) <= MAX_PROCESSES
         and all(isinstance(member, dict) and set(member) == {"name", "parent", "state"}
             and all(isinstance(member[key], str) and public_runner_process_name(member[key]) == member[key]
-                    for key in ("name", "parent")) and member["state"] in PROCESS_STATES for member in members))
+                    for key in ("name", "parent")) and member["state"] in RUNNER_PROCESS_STATES for member in members))
     require(valid, "runner group: invalid projection")
 
 

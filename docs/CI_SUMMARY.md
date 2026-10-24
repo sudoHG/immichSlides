@@ -330,7 +330,8 @@ and unknown cost for an unfinished sampler. A cleanup retry neither refunds nor
 double-charges that reservation. If publishing that cost fails too, inherited
 Xcode accounting is made unavailable so the next case cannot reclaim it.
 The subprocess deadline does not include PID inspection, raw-file reduction,
-worker-owned kill/reap (up to another 0.1 second) or temporary-directory cleanup; their actual
+worker-owned kill/reap (up to another 0.2 seconds: 0.1 second waiting for the lock
+plus a 0.1-second reap floor) or temporary-directory cleanup; their actual
 wall cost is charged too, so host descheduling or cleanup can exceed the reservation.
 `sample` briefly suspends the App at each sample and consumes CPU for symbolication,
 so collection can perturb a running case even though verdict rules and deadlines
@@ -866,6 +867,9 @@ Both `continue_watch` and `app_hang_stack` are copied into
 `environment_limit.resources` in the 90-day yellow history and validated again by
 later readers. Their archived validation may only be loosened, never tightened;
 otherwise a previously accepted night could become unreadable or red.
+The `runner_group_*` fields belong to summary-level `events`, not `case_resources`,
+and are not copied into `environment_limit.resources`; that 90-day rule does not
+apply to them.
 
 On a strict runner process-group cleanup failure, the tracer takes one additional
 `ps` read (three-second timeout, 2 MiB parse limit after reading) and retains at most 64 live members in
@@ -874,8 +878,9 @@ the event is restricted to `xcode/unknown/after-reap`. Executable and parent nam
 are public tool basenames from a fixed allowlist (plus versioned Python names),
 unknown names become `other`, absent parents become `unknown`, and an adopted
 parent is reported as `launchd`. The allowlist includes locally verified Xcode 27
-`SWBBuildService`, `XCBBuildService` and `swbuild` basenames. Process states
-use a closed vocabulary, including `exiting` when macOS reports the `E` flag.
+`SWBBuildService`, `XCBBuildService` and `swbuild` basenames. Survivor states
+use their own closed vocabulary, including `exiting` when macOS reports the `E` flag;
+the ordinary sampler's `processes[].state` vocabulary remains unchanged.
 Paths, arguments, PIDs and device identifiers
 are discarded; zombies and other process groups are excluded. A failed probe is
 null, distinct from an empty observed group. A member can exit between the last

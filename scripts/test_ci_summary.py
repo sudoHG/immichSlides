@@ -1062,6 +1062,10 @@ class SummaryContractTests(unittest.TestCase):
         event["runner_group_members"] = [{"name": "SWBBuildService", "parent": "launchd", "state": "exiting"}]
         event["runner_group_truncated"] = False
         self.assertEqual(summary, ci_summary.parse_summary(summary))
+        changed = copy.deepcopy(summary)
+        changed["bounded_diagnostics"]["events"][0]["sample"]["processes"][0]["state"] = "exiting"
+        with self.assertRaisesRegex(ci_summary.ContractError, "^bounded diagnostic process: invalid state$"):
+            ci_summary.parse_summary(changed)
         event["runner_group_members"] = None
         self.assertEqual(summary, ci_summary.parse_summary(summary))
         self.assertIn("Runner cleanup survivors: unavailable", ci_summary.render_markdown(summary))
