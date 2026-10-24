@@ -46,7 +46,8 @@ def public_stack_symbol(value):
 
 
 def validate_app_hang_stack(stack):
-    valid = isinstance(stack, dict) and set(stack) == {"status", "sample_count", "frames"}
+    valid = (isinstance(stack, dict) and {"status", "sample_count", "frames"} <= set(stack)
+             and set(stack) <= {"status", "sample_count", "frames", "hint"})
     if valid:
         frames = stack["frames"]
         valid = (stack["status"] in ("captured", "failure", "timeout", "cancelled")
@@ -58,9 +59,24 @@ def validate_app_hang_stack(stack):
                     and frame["module"] in APP_HANG_MODULES
                     and type(frame["samples"]) is int and 1 <= frame["samples"] <= MAX_INTEGER for frame in frames)
         valid = valid and (stack["status"] == "captured" or (not frames and stack["sample_count"] == 0))
+        hint = stack.get("hint", [])
+        valid = valid and isinstance(hint, list) and len(hint) <= 3
+        if valid:
+            valid = all(type(index) is int and 0 <= index < len(frames) for index in hint) and len(set(hint)) == len(hint)
     if valid:
         valid = len(json.dumps(stack, separators=(",", ":")).encode()) <= MAX_APP_HANG_STACK_BYTES
     require(valid, "app hang stack: invalid projection")
+
+
+def render_app_hang_hint(stack):
+    frames = stack["frames"]
+    if "hint" in stack:
+        selected = [frames[index] for index in stack["hint"]]
+    else:
+        # Older projections have no call-path relationship; show one frame without inventing a chain.
+        selected = ([frame for frame in frames if frame["module"] == "immichSlides"] or frames)[:1]
+    hint = " ← ".join("`" + frame["symbol"] + "`" for frame in selected) or stack["status"]
+    return f"app-hang-stack: {hint} ({stack['sample_count']} samples)"
 
 
 def exact_fields(value, names, where):
@@ -221,9 +237,4 @@ def render_receipt(receipt):
             f"max load 1m={measured(case['load_1m_max'])}; peak app cpu={measured(case['app_cpu_percent_peak'])}%; "
             f"sampler wall/cpu={measured(case['sampler_wall_seconds'])}/{measured(case['sampler_cpu_seconds'])}s; "
             f"failure samples={len(case['failure_samples'])}; truncated={'yes' if case['truncated'] else 'no'}.\n")
-        stack = case.get("app_hang_stack")
-        if stack is not None:
-            names = [frame["symbol"] for frame in stack["frames"][:3]]
-            hint = " ← ".join(names) if names else stack["status"]
-            rendered += f"app-hang-stack: {hint} ({stack['sample_count']} samples)\n"
     return rendered

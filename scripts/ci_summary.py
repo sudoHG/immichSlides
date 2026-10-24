@@ -421,7 +421,17 @@ def render_markdown(payload):
         message = "; ".join(detail for attempt in entry["attempts"]
                             for detail in (attempt["reason"], attempt["message"]) if detail)
         outcome = "failed (environment-limited; yellow)" if "environment_limit" in entry else entry["outcome"]
-        lines.append(f"| {markdown_text(entry['identity']['key'])} | {outcome} | {entry['duration_seconds']:.3f} | {markdown_text(message)} |")
+        hints = []
+        if payload.get("strict_case_evidence"):
+            from ci_bounded_diagnostics import render_app_hang_hint
+            hints = [render_app_hang_hint(resource["app_hang_stack"])
+                for case in payload["strict_case_evidence"] if case["identity"] == entry["identity"]
+                for resource in case[BOUNDED_DIAGNOSTICS_FIELD].get("case_resources", []) if "app_hang_stack" in resource]
+        label = entry["identity"]["key"]
+        if hints:
+            label += " (" + ", ".join(f"{key}={value}" for key, value in sorted(entry["identity"]["dimensions"].items())) + ")"
+        detail = "; ".join(part for part in [markdown_text(message), *hints] if part)
+        lines.append(f"| {markdown_text(label)} | {outcome} | {entry['duration_seconds']:.3f} | {detail} |")
     for entry in population["deselected"]:
         lines.append(f"| {markdown_text(entry['identity']['key'])} | deselected | — | {markdown_text(entry['reason'])}; owned by {markdown_text(entry['owning_tier'])} |")
     if any("environment_limit" in entry for entry in population["observed"]):

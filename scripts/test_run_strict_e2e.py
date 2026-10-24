@@ -4037,7 +4037,8 @@ raise SystemExit(65)
         for environment, cpu, force, expected in (({}, 1, True, 1), ({}, 90, False, 0),
                 ({"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted"}, 85, False, 1),
                 ({"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted"}, 1, True, 0),
-                ({"CI": "true"}, 1, True, 0), ({"RUNNER_ENVIRONMENT": "self-hosted"}, 1, True, 0)):
+                ({"CI": "true"}, 1, True, 0),
+                ({"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "self-hosted"}, 90, True, 0)):
             clock = [0.0]
             waits = [False] * 8 + [True]
             def tick(seconds):
@@ -4049,7 +4050,7 @@ raise SystemExit(65)
                 if app_processes is not None:
                     app_processes.append((123, cpu))
                 return {**dict.fromkeys(resources.RESOURCE_CATEGORIES, 0), "app": cpu}
-            def capture(pid, stopped):
+            def capture(pid, stopped, **_kwargs):
                 # Active capture cost is charged; it does not consume host-read ticks.
                 clock[0] += 2
                 return {"status": "captured", "sample_count": 10,
@@ -4089,8 +4090,6 @@ raise SystemExit(65)
                 clock = [0.0]
                 commands = []
                 stopped = threading.Event()
-                if mode == "cancelled":
-                    stopped.set()
                 def spawn(command, **kwargs):
                     commands.append(command)
                     Path(command[-1]).write_text(raw)
@@ -4099,13 +4098,17 @@ raise SystemExit(65)
                     return process
                 def wait(timeout):
                     clock[0] += timeout
+                    if mode == "cancelled" and not stopped.is_set():
+                        stopped.set()
+                        raise subprocess.TimeoutExpired("sample", timeout)
                     if mode == "timeout":
                         raise subprocess.TimeoutExpired("sample", timeout)
                     return 1 if mode == "failure" else 0
                 process = mock.Mock(wait=wait, poll=lambda: None if mode in ("timeout", "cancelled") else 0)
                 with mock.patch.object(resources.subprocess, "Popen", side_effect=spawn), \
+                        mock.patch.object(resources, "app_on_device", return_value=True), \
                         mock.patch.object(resources.time, "monotonic", side_effect=lambda: clock[0]):
-                    result = resources.capture_main_thread(123, stopped)
+                    result = resources.capture_main_thread(123, stopped, device="device")
                 self.assertEqual("captured" if mode == "ok" else mode if mode != "spawn" else "failure", result["status"])
                 for command in commands:
                     self.assertEqual(["/usr/bin/sample", "123", "1", "10", "-file"], command[:-1])
@@ -4122,6 +4125,147 @@ raise SystemExit(65)
                 probe.observe(123, 90, elapsed, remaining_seconds=20)
             self.assertEqual(1, recorder.app_hang_capture_attempts)
             self.assertEqual("failure", probe.result["status"])
+
+        for belongs in (False, None):
+            with self.subTest(belongs=belongs), mock.patch.object(resources, "app_on_device", return_value=belongs), \
+                    mock.patch.object(resources.subprocess, "Popen") as spawn:
+                self.assertEqual("failure", resources.capture_main_thread(123, threading.Event(), device="device")["status"])
+                spawn.assert_not_called()
+
+    def test_debug_view_frames_and_callee_first_hint_survive_outer_frames(self):
+        import strict_e2e_resource_diagnostics as resources
+        raw = "Call graph:\n    100 Thread_42 DispatchQueue_1: com.apple.main-thread (serial)\n"
+        for index in range(40):
+            raw += " " * (6 + 2 * index) + f"100 outer{index}  (in SwiftUI) + 1 [0x123]\n"
+        raw += (" " * 86 + "99 -[_UIHostingView layoutSubviews]  (in UIKitCore) + 1 [0x123]\n"
+                + " " * 88 + "98 NavigationSplitView.body  (in SwiftUI) + 1 [0x123]\n"
+                + " " * 90 + "97 Thread_work  (in SwiftUI) + 1 [0x123]\n"
+                + " " * 92 + "96 SettingsViewIOS.body.getter  (in immichSlides.debug.dylib) + 1 [0x123]\n"
+                + " " * 94 + "90 SettingsModel.compute  (in immichSlides.debug.dylib) + 1 [0x123]\n"
+                + " " * 94 + "95 privatehost.local  (in immichSlides.debug.dylib) + 1 [0x123]\n"
+                + " " * 94 + "95 OtherView.body  (in Other.debug.dylib) + 1 [0x123]\n")
+        stack = resources.reduce_main_thread_sample(raw)
+        app = [frame for frame in stack["frames"] if frame["module"] == "immichSlides"]
+        self.assertEqual(["SettingsViewIOS.body.getter", "SettingsModel.compute"], [frame["symbol"] for frame in app])
+        self.assertEqual(["SettingsViewIOS.body.getter", "Thread_work", "NavigationSplitView.body"],
+                         [stack["frames"][index]["symbol"] for index in stack["hint"]])
+        self.assertLessEqual(len(stack["frames"]), 30)
+        self.assertNotIn("OtherView", json.dumps(stack))
+        self.assertNotIn("privatehost", json.dumps(stack))
+        system = resources.reduce_main_thread_sample(raw.replace("immichSlides.debug.dylib", "unknown"))
+        self.assertEqual("Thread_work", system["frames"][system["hint"][0]]["symbol"])
+
+    def test_tracer_binds_stack_hint_to_case_identity_without_changing_outcome(self):
+        from test_ci_summary import bounded_diagnostics_receipt
+        ledger = bounded_diagnostics_receipt(resources=True)
+        resource = ledger["case_resources"][0]
+        resource.update(first_failure_elapsed_seconds=None, failure_samples=[])
+        resource["app_hang_stack"] = {"status": "captured", "sample_count": 20, "hint": [0, 1, 2],
+            "frames": [{"symbol": "SettingsViewIOS.body", "module": "immichSlides", "samples": 20},
+                       {"symbol": "NavigationSplitView", "module": "SwiftUI", "samples": 20},
+                       {"symbol": "_UIHostingView.layoutSubviews", "module": "UIKitCore", "samples": 20}]}
+        with tempfile.TemporaryDirectory() as raw:
+            code, records, _, summary = self._produce_validator_records(Path(raw), None,
+                runner_exit=0, receipt_suite=None, bounded_diagnostics=ledger,
+                case=dict(platform="ios", device="iphone", configuration="Debug", suite="smoke", scenario="normal", fixture="b"))
+            self.assertEqual(0, code)
+            self.assertEqual("passed", summary["population"]["observed"][0]["outcome"])
+            hints = [line for line in (records / "summary.md").read_text().splitlines() if "app-hang-stack:" in line]
+            self.assertEqual(1, len(hints))
+            for detail in ("smoke", "device=iphone", "fixture=b", "configuration=Debug",
+                    "`SettingsViewIOS.body` ← `NavigationSplitView` ← `_UIHostingView.layoutSubviews`"):
+                self.assertIn(detail, hints[0])
+
+    def test_sampler_uses_fast_process_ticks_only_during_an_eligible_high_cpu_span(self):
+        import ci_execution_diagnostics as diagnostics
+        import strict_e2e_resource_diagnostics as resources
+        from types import SimpleNamespace
+        for kind, expected in (("rise", [2, 12, 14, 16, 18, 20, 30, 40]),
+                ("dip", [2, 4, 14, 16, 18, 20, 22, 32, 42]),
+                ("case-used", [2, 12, 22, 32, 42]), ("job-used", [2, 12, 22, 32, 42])):
+            clock, reads = [0.0], []
+            def tick(seconds):
+                clock[0] += seconds
+                return clock[0] >= 44
+            event = SimpleNamespace(wait=tick, set=lambda: None, is_set=lambda: False)
+            def ps(device, timeout, *, app_processes):
+                reads.append(clock[0])
+                cpu = (0 if clock[0] == 2 else 85) if kind == "rise" else (84 if clock[0] == 4 else 85)
+                app_processes.append((123, cpu))
+                return dict(app=cpu, simulator_daemons=0, test_tools=0, other=0)
+            recorder = diagnostics.Recorder()
+            if kind == "job-used":
+                recorder.app_hang_capture_attempts = 3
+            with self.subTest(kind=kind), \
+                    mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted"}, clear=True), \
+                    mock.patch.object(resources.threading, "Thread", side_effect=lambda **kw: SimpleNamespace(start=kw["target"], join=lambda timeout: None)), \
+                    mock.patch.object(resources, "HostProbe", return_value=SimpleNamespace(sample=lambda: {"idle_percent": 30, "load_1m": 4}, close=lambda: None, spent=0, request_count=1)), \
+                    mock.patch.object(resources, "process_sample", side_effect=ps), \
+                    mock.patch.object(resources, "capture_main_thread", return_value={"status": "timeout", "sample_count": 0, "frames": []}), \
+                    mock.patch.object(resources.time, "monotonic", side_effect=lambda: clock[0]), \
+                    mock.patch.object(resources.time, "time", side_effect=lambda: 100 + clock[0]), \
+                    mock.patch.object(resources.time, "perf_counter", return_value=0):
+                sampler = resources.CaseSampler(recorder, "device", app_hang_case_state={"attempted": kind == "case-used"})
+                sampler.stopped = sampler.hang.stopped = event
+                sampler.start().stop()
+                self.assertEqual(expected, reads)
+
+    def test_capture_reservation_and_unfinished_worker_share_the_stop_budget(self):
+        import ci_execution_diagnostics as diagnostics
+        import strict_e2e_resource_diagnostics as resources
+        from types import SimpleNamespace
+        clock, reads, joins = [0.0], [], []
+        def tick(seconds):
+            clock[0] += seconds
+            return clock[0] >= 16
+        event = SimpleNamespace(wait=tick, set=lambda: None, is_set=lambda: False)
+        def ps(device, timeout, *, app_processes):
+            reads.append(clock[0])
+            clock[0] += 0.4
+            app_processes.append((123, 90))
+            return dict(app=90, simulator_daemons=0, test_tools=0, other=0)
+        def thread(*, target, daemon):
+            def join(timeout):
+                joins.append(timeout)
+                clock[0] += min(timeout, 0.7) if target.__name__ == "_run" else timeout
+            return SimpleNamespace(start=target if target.__name__ == "_run" else lambda: None, join=join)
+        recorder = diagnostics.Recorder()
+        recorder.process_sampler_wall_seconds = 176.6
+        with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(resources.threading, "Thread", side_effect=thread), \
+                mock.patch.object(resources, "HostProbe", return_value=SimpleNamespace(sample=lambda: {"idle_percent": 30, "load_1m": 4}, close=lambda: None, spent=0, request_count=1)), \
+                mock.patch.object(resources, "process_sample", side_effect=ps), \
+                mock.patch.object(resources.time, "monotonic", side_effect=lambda: clock[0]), \
+                mock.patch.object(resources.time, "time", side_effect=lambda: 100 + clock[0]), \
+                mock.patch.object(resources.time, "perf_counter", side_effect=lambda: clock[0]):
+            sampler = resources.CaseSampler(recorder, "device", force_app_hang_capture=True)
+            sampler.stopped = sampler.hang.stopped = event
+            sampler.start()
+            before_stop = clock[0]
+            sampler.stop()
+            self.assertLessEqual(clock[0] - before_stop, resources.STOP_TIMEOUT_SECONDS + 1e-8)
+            self.assertLess(joins[1], 0.11, "capture join must use only the shared stop deadline remainder")
+        self.assertEqual([2], reads, "in-flight capture reservation must also reduce the ps allowance")
+        self.assertAlmostEqual(180, recorder.process_sampler_wall_seconds, places=6)
+        self.assertAlmostEqual(3.4, recorder.case_resources[0]["sampler_wall_seconds"], places=6)
+
+    def test_bad_stack_drops_only_the_stack_and_preserves_failure_samples(self):
+        import ci_execution_diagnostics as diagnostics
+        import strict_e2e_resource_diagnostics as resources
+        with mock.patch.dict(os.environ, {}, clear=True), \
+                mock.patch.object(resources.time, "monotonic", side_effect=[0, 4, 4, 4]), \
+                mock.patch.object(resources.time, "time", side_effect=[100, 104]):
+            sampler = resources.CaseSampler(diagnostics.Recorder(), "device", force_app_hang_capture=True)
+            sampler.finished = True
+            sampler.samples = [{"elapsed_seconds": 2, "idle_percent": 0, "load_1m": 4,
+                "cpu_percent": dict.fromkeys(resources.RESOURCE_CATEGORIES)}]
+            sampler.hang.result = {"status": "captured", "sample_count": 2,
+                "frames": [{"module": "private", "symbol": "bad", "samples": 2}]}
+            sampler.stop()
+            sampler.bind_failure(102)
+        case = sampler.recorder.receipt()["case_resources"][0]
+        self.assertNotIn("app_hang_stack", case)
+        self.assertEqual([2], [sample["elapsed_seconds"] for sample in case["failure_samples"]])
+        self.assertEqual(0, case["failure_samples"][0]["idle_percent"])
 
     def test_main_thread_reduction_ranks_frames_redacts_and_caps_json(self):
         import strict_e2e_resource_diagnostics as resources
@@ -4142,10 +4286,12 @@ raise SystemExit(65)
                 f"Binary Images:\n {private_home}/secret\n")
         result = resources.reduce_main_thread_sample(raw)
         self.assertEqual((100, 30), (result["sample_count"], len(result["frames"])))
-        self.assertEqual(["_UIHostingView.layoutSubviews", "SettingsViewIOS.body.getter", "NavigationSplitView.body.getter"],
+        self.assertEqual(["SettingsViewIOS.body.getter", "_UIHostingView.layoutSubviews", "NavigationSplitView.body.getter"],
                          [frame["symbol"] for frame in result["frames"][:3]])
-        self.assertEqual(sorted((frame["samples"] for frame in result["frames"]), reverse=True),
-                         [frame["samples"] for frame in result["frames"]])
+        for module in ("immichSlides", None):
+            group = [frame["samples"] for frame in result["frames"] if
+                (frame["module"] == module if module is not None else frame["module"] != "immichSlides")]
+            self.assertEqual(sorted(group, reverse=True), group)
         encoded = json.dumps(result)
         for private in ("private", "/Users", "https", "12345678", "0x"):
             self.assertNotIn(private, encoded)

@@ -163,7 +163,7 @@ and unknown measurements remain null.
 | `sampler_wall_seconds`, `sampler_cpu_seconds` | Host-read plus process-snapshot collection wall time 0–86,400 and collector plus child-process CPU time 0–10^12 seconds, or null; interval sleeping is excluded; periodic sampling has the bounded allowances described below |
 | `first_failure_elapsed_seconds` | Offset from this case's sampling origin, 0–case duration, or null if no failure is bound; absence never proves a passing case |
 | `failure_samples` | At most six samples, no more than `sample_count`, strictly increasing by `elapsed_seconds`, within both the case duration and ±5 seconds of the first failure; empty when the failure time is unavailable |
-| `app_hang_stack` (optional) | At most 4,096 compact JSON bytes: `status` (`captured`, `failure`, `timeout`, `cancelled`), `sample_count` (main-thread samples), and `frames` (at most 30 objects containing only `symbol`, allowlisted `module`, and inclusive `samples` count); non-captured states have zero samples and no frames |
+| `app_hang_stack` (optional) | At most 4,096 compact JSON bytes: `status` (`captured`, `failure`, `timeout`, `cancelled`), `sample_count` (main-thread samples), and `frames` (at most 30 objects containing only `symbol`, allowlisted `module`, and inclusive `samples` count); optional `hint` contains at most three distinct frame indices in observed callee-to-caller order; non-captured states have zero samples and no frames |
 
 Each failure sample has exactly `elapsed_seconds` (0–86,400), `idle_percent`
 (0–100 or null), `load_1m` (0–10^6 or null), and `cpu_percent`. The latter has
@@ -253,8 +253,11 @@ or relabelled as a two-second measurement. A failed worker start permits another
 start on the next planned request. Host costs now
 contribute to `sampler_wall_seconds`; older receipts reporting zero when process
 snapshots were disabled did not measure host cost.
-Process snapshots normally run at most once per ten seconds; hosted strict hang
-diagnostics use the existing two-second ticks instead. Both have a separate
+Process snapshots normally run at most once per ten seconds. After a hosted App
+reading of at least 85%, they use two-second ticks only while this case and job
+still have a capture allowance and enough budget to reserve a capture. A low or
+missing App reading, a capture attempt, or exhausted allowance restores ten-second
+process ticks; independent idle/load ticks do not change. Process snapshots share a separate
 180-second active-wall allowance shared across
 the job ledger. A private `process_sampler_wall_seconds` balance carries only
 completed process-snapshot and App stack capture cost across serial case processes; host reads remain
@@ -299,12 +302,19 @@ over 4.5 seconds reset that span. These are `ps` CPU estimates, not proof that t
 main thread itself was busy. Only one unambiguous App process on the assigned
 simulator is eligible. A background `/usr/bin/sample PID 1 10` (one second,
 10 ms sampling interval, leaving room for symbolication) has a three-second
-hard deadline, is cancelled on case exit, and never blocks the idle/load worker.
+subprocess deadline, is cancelled on case exit, and never blocks the idle/load worker.
 No test or case deadline changes. At most three attempts per job (including
 failures) share the existing 180-second process-sampler allowance; three seconds
 are reserved before each launch and the completed active wall cost is charged to
 both the private balance and public `sampler_wall_seconds`. Unfinished work
 retains its full reservation. The existing stop-wait bound is not extended.
+The subprocess deadline does not include PID inspection, raw-file reduction,
+kill/reap (up to another 0.1 second) or temporary-directory cleanup; their actual
+wall cost is charged too, so host descheduling or cleanup can exceed the reservation.
+`sample` briefly suspends the App at each sample and consumes CPU for symbolication,
+so collection can perturb a running case even though verdict rules and deadlines
+do not change. Legitimate high CPU during launch or other work can consume the
+case/job allowance before a later hang. The trigger is not a hang diagnosis.
 
 The internal ledger carries `app_hang_capture_attempts`; reservation forfeits all
 remaining attempts until the serial child finishes saving its balance. Missing
@@ -312,13 +322,26 @@ old or invalid accounting grants no fresh capture allowance. No raw sample is
 published: its mode-0700 temporary directory is outside evidence and is removed
 on success, failure, cancellation and timeout. The reducer ignores headers,
 addresses, binary images and other threads, retains only identifier-shaped
-symbols from allowlisted modules, rejects paths, URLs, domain-like symbols and
-UDIDs, then ranks inclusive frame counts (recursive occurrences can add counts)
-and trims the projection to 30 frames / 4 KiB. Unrecognized symbols are omitted.
+symbols from allowlisted modules, and rejects paths, URLs, UDIDs and selected
+domain-like suffixes. The suffix filter is not a general hostname detector;
+the module allowlist, symbol-position parsing and restrictive identifier grammar
+are the privacy boundary. Only the exact App debug module `immichSlides.debug.dylib`
+is mapped to `immichSlides`; symbol filtering is unchanged. PID executable name
+and assigned-device membership are checked again immediately before `sample`.
+App frames and the selected observed call path take priority over outer framework
+wrappers within the 30-frame / 4 KiB cap; remaining frames rank by inclusive sample
+count and depth (recursive occurrences can add counts). A view body from the App
+is preferred for the hint, otherwise another App frame or the deepest frame with
+at least 80% of the highest count. Unrecognized symbols are omitted.
 The enclosing case's resource sequence links the JSON to its identity using the
-existing case manifest; Markdown adds `app-hang-stack: ... (N samples)` next to
-that resource entry. The hint lists ranked frames, not a reconstructed causal
-chain. Missing symbols or unsuccessful capture are diagnostic gaps only.
+existing case manifest. The tracer retains that validated case/receipt join in
+`strict_case_evidence` for stack-bearing cases independently of yellow eligibility;
+Markdown adds `app-hang-stack: ... (N samples)` in that case's table row alongside
+its complete dimensions. Symbols use code formatting and arrows point toward the
+callee on the left. Older stack projections without `hint` show one frame without
+inventing a path. An invalid producer stack is dropped independently, preserving
+the case's numeric measurements and `failure_samples`. Missing symbols or
+unsuccessful capture are diagnostic gaps only.
 
 `run_strict_e2e.py --local-force-app-hang-capture` exercises the capture on the
 first identified App CPU read, including idle CPU. It is ignored whenever `CI`,
@@ -758,6 +781,17 @@ PR reaches main still uses the old trusted base and is not a safe substitute.
 The same sequence applies to `bounded_diagnostics.case_resources` and
 `first_failure.native_activity_seconds`: merge reader support before opening the
 producer activation PR. Historical records without either optional field remain valid.
+
+A scoped exception permits the optional App hang-stack projection and its reader
+to ship together. The trusted base gate/UI publisher's supported producers in
+`ci_publish_git.py` do not consume strict-tracer or P2-review diagnostic artifacts;
+candidate tracer checks use their producer checkout's reader, nightly aggregation
+uses the run checkout, and the trusted reporter checks out `main`, which contains
+the optional reader before a main producer can emit this field. The extension does
+not activate a field in required gate/UI records. Old nights and old stack projections remain accepted.
+This exception relies on that consumer boundary: introducing the field into a
+base-read publication path or reading it with an older revision requires a separate
+reader rollout first. The PR must document this transition analysis.
 
 ### Prepared hosted strict environment limits
 
