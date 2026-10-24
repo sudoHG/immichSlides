@@ -919,9 +919,9 @@ exactly the two reviewed `mode-departure` entries. Unknown versions
 remain red. No original receipt, raw failure, threshold, deadline, wait or retry changes.
 
 Policy v4 follows the same reader-first rollout with an unchanged proof shape.
-The reader accepts v4 while the producer still emits v3. Producer activation
-requires a separate PR based on the merged reader; a stacked draft alone does
-not establish trusted-base acceptance. Older readers reject v4 even
+The producer now emits v4 for all new proofs. Reader support was introduced
+separately before activation; trusted acceptance requires a base containing that
+reader, and a stacked draft alone does not establish it. Older readers reject v4 even
 for existing UI waits and album settling. Retained v1/v2/v3 interpretations stay
 unchanged, and unknown or noninteger versions stay red.
 
