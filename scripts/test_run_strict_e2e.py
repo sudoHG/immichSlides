@@ -2921,14 +2921,18 @@ class StrictCITracerTests(unittest.TestCase):
                     self.assertEqual([], missing)
                     self.assertEqual(observed["environment_limit"], methods[0]["environment_limit"])
 
-    def test_activated_mode_departure_emits_yellow_without_promoting_the_raw_failure(self):
+    def test_activated_mode_waits_emit_yellow_without_promoting_the_raw_failure(self):
         import contextlib
         from test_ci_summary import hosted_mode_departure_summary
-        for phase in ("mode_selection", "playback_entry"):
+        for phase, step, element in (
+                *((phase, "mode-departure", "mode.continue.button") for phase in ("mode_selection", "playback_entry")),
+                *(("mode_selection", "save-password-prompt", element)
+                  for element in ("mode.random.button", "mode.filtered.button"))):
             seed, _ = hosted_mode_departure_summary(phase)
             row = seed["population"]["observed"][0]
+            row["first_failure"].update(step=step, element=element)
             ledger = seed["strict_case_evidence"][0]["bounded_diagnostics"]
-            with self.subTest(phase=phase), tempfile.TemporaryDirectory() as raw:
+            with self.subTest(phase=phase, step=step, element=element), tempfile.TemporaryDirectory() as raw:
                 output = io.StringIO()
                 with contextlib.redirect_stdout(output):
                     code, _, _, summary = self._produce_validator_records(Path(raw), None,
@@ -2939,7 +2943,7 @@ class StrictCITracerTests(unittest.TestCase):
                 observed = summary["population"]["observed"][0]
                 self.assertEqual(("failed", "failed", 65),
                     (summary["status"], observed["outcome"], observed["attempts"][0]["exit_code"]))
-                self.assertEqual(3, observed["environment_limit"]["policy_version"])
+                self.assertEqual(4, observed["environment_limit"]["policy_version"])
                 self.assertIn("::warning title=Environment-limited strict timing::", output.getvalue())
 
     def test_mode_departure_producer_rechecks_hosting_scope_and_starvation(self):
