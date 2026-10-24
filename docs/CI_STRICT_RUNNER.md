@@ -334,7 +334,7 @@ as the stable history anchor. The single Pause, four-second pause readback,
 history-count precondition and capture-time pixel/manifest proof remain unchanged.
 
 `UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE=1` enables the Debug manifest probes.
-Probe-only launches are `album-empty`, `journey-b`, `tvos-flow`, `tvos-person`, `late-image`, `ios-lifecycle-first-wake`,
+Probe-only launches are `album-empty`, `filter-person`, `journey-b`, `tvos-flow`, `tvos-person`, `late-image`, `ios-lifecycle-first-wake`,
 and `AccessLifecycleIOSUITests.prepareLaunch`, including its cold relaunches and
 `run_access_lifecycle_ios.py`'s `testAccessProtectionSettingsAndLifecycle`.
 Only iOS `album-empty` sets the real playback interval to 30 seconds through `IOSDriver`
@@ -365,7 +365,7 @@ an unconfirmed slope. No preparatory Next is issued.
 Pause preparation. Its first-capture race remains a follow-up blocked on the Swift
 multi-photo identity false negative; it does not gain a Swift identity-reader dependency.
 Product timing and film-like Pause semantics remain unchanged.
-For Debug `album-empty`, the existing 8 s Pause-preparation window must prove a
+For Debug `album-empty` and `filter-person`, the existing 8 s Pause-preparation window must prove a
 stable complete scene and an actionable Play/Pause target together before the
 single Pause. Live hittability is checked before the final stable window snapshot;
 `album-pause` evidence records that snapshot's request/return and the Pause tap's
@@ -377,10 +377,20 @@ one PNG, two full-resolution decoded color frames must match exactly, with the
 second screenshot requested at least 0.6 s after the first returns. A mismatch
 replaces the comparison baseline and samples again only within that same deadline;
 timeout fails instead of publishing an unsettled frame. The identical probe-free
-pixel check also runs for Release `album-empty` (not in the nightly matrix; NOT_RUN)
-and all `filter-album` captures,
+pixel check also runs for Release `album-empty` and `filter-person` (neither in the
+nightly matrix; NOT_RUN locally) and all `filter-album` captures,
 with the same 0.8 s minimum settle and 4.8 s total budget. The public photo-identity
 validator remains mandatory: identical pixels alone cannot prove a valid scene.
+For `filter-person`, this replaces a fixed 0.8 s wait followed by up to 4 s of
+control reveal with a 0.8 s minimum settle and up to 4 s of scene/pixel observation.
+The 4.8 s ceiling is unchanged; the window allocation and required evidence differ.
+Release `filter-person` uses ordinary Pause and the probe-free pixel check, with
+controls revealed before the capture window. Debug `filter-person` retains the
+default 5 s playback interval and reserves no remaining-interval headroom between
+the stable check and Pause. A slow check plus tap can therefore enter the next
+transition; a frozen transition fails red as `control_action/control_state`.
+The stricter Pause-preparation wait's yellow-eligibility change is documented
+beside the allowlist in [CI summary](CI_SUMMARY.md#prepared-hosted-strict-environment-limits).
 For `filter-album`, widening its former 0.8 s fixed wait to at most 4.8 s is an
 approved relaxation of a test-only wait, not a product contract. Controls are
 revealed once before starting the 0.8 s settle floor and the following 4 s pixel

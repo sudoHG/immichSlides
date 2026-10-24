@@ -1004,6 +1004,8 @@ own private bundle, `official-tests-<session>.json`, `official-summary-<session>
 or quarantine record with the same suffix. `official-summary.json` remains the suite aggregate;
 the case manifest records each session export's hash. A later session failure preserves all
 attempted sessions, including earlier passes, without claiming the suite passed.
+Its Debug and Release capture paths, window allocation and residual timing limits are described
+in the [strict runner capture contract](CI_STRICT_RUNNER.md).
 
 Run the standalone access-protection flows with:
 

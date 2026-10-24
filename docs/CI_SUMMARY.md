@@ -1191,6 +1191,16 @@ the same starvation proof; the pause-window T±2 and midpoint contract assertion
 themselves remain excluded (coordinator ruling, 2026-10-24, under Hogan's approved
 policy).
 
+Debug `filter-person` tightens Pause-preparation classification. Its former
+`IOSDriver.pause` control-availability timeout could be environment-limited as
+`control_action/hidden_controls` at `query-element` or `reveal-controls` on
+`slideshow.control.playPause.button`, subject to the full existing proof. The
+stable-scene preparation timeout now reports `control_action/timing_window` at
+`wait-scene` and always stays red. The coordinator accepted this tightening,
+subject to Hogan's override; the allowlists and policy versions are unchanged.
+The [strict runner capture contract](CI_STRICT_RUNNER.md) also describes the
+remaining stable-check-to-Pause race at the unchanged default 5 s interval.
+
 IOSDriver Next preserves its pre-wake preparation remainder by excluding the
 measured canvas-wake cost. A readiness timeout can therefore now reach an actual
 `query-element` wait on `slideshow.control.next.button`, with a positive expired
