@@ -60,7 +60,7 @@ extension StrictE2EFilterIOSUITests {
         evidencePrefix: String
     ) throws {
         let input = try requireStrictE2EInput()
-        let app = try launchStrictE2EApp()
+        let app = try launchStrictE2EApp(recordSceneSequence: true)
         defer { app.terminateForFailureEvidence() }
         try completeFirstBootToModeSelection(app: app, input: input, evidencePrefix: evidencePrefix)
         enterFilterSummary(app: app)
@@ -68,8 +68,9 @@ extension StrictE2EFilterIOSUITests {
         selectPerson(app: app, personID: personID, isSoloOnly: isSoloOnly)
         try returnFromPersonFilterToSummary(app: app)
         startFilteredPlayback(app: app)
-        pausePlaybackIfNeeded(app: app)
-        _ = capturePlaybackPNG(app: app, name: screenshotName)
+        // Pause freezes fades too; establish a complete scene before taking membership evidence.
+        guard pauseStableAlbumPlaybackIfNeeded(app: app) else { return }
+        _ = try captureStableAlbumPlaybackPNG(app: app, name: screenshotName)
         try writePersonResultsJSON()
     }
 

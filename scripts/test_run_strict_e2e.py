@@ -1213,6 +1213,19 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
 
 
 class FailureDiagnosticsTests(unittest.TestCase):
+    def test_filter_validator_identity_rejections_are_classified_and_stay_red(self):
+        from ci_failure_diagnostics import classify_messages, environment_timing, unknown_diagnostics
+
+        message = ("Unrecognizable input cannot count as passing: status=UNRECOGNIZABLE mark=None; "
+                   "screenshot person-conflict-normal-1.png")
+        classification = classify_messages([message])
+        self.assertEqual(classification, {"failure_phase": "visible_scene_capture", "failure_class": "scene_identity"})
+        self.assertFalse(environment_timing(
+            dict(source="validator", step="capture-frame", element="app-window", scene_status="MATCH",
+                 surface="playback", control_bar="visible", wait_elapsed_seconds=5, deadline_seconds=2),
+            classification["failure_phase"], classification["failure_class"]))
+        self.assertEqual(classify_messages([message, "unreviewed failure"]), unknown_diagnostics())
+
     def test_mode_navigation_markers_preserve_environment_policy_boundaries(self):
         source = (REPO_ROOT / "immichSlidesUITests/UITestSupport.swift").read_text()
         navigation = source.split("private func navigateMode(", 1)[1].split("\n    private func poll(", 1)[0]

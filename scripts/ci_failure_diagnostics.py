@@ -1020,6 +1020,7 @@ PREFIX_RULES = (
     ("Playback must start with exactly one retained history entry.", "history_navigation", "control_state"),
     ("After two Next taps, Previous must be enabled.", "history_navigation", "control_state"),
     ("Visual ID failed ", "visible_scene_capture", "scene_identity"),
+    ("Unrecognizable input cannot count as passing:", "visible_scene_capture", "scene_identity"),
     ("After a pause of at least 10 seconds, autoplay must not resume on its own.", "paused_hold", "control_state"),
     ("After injecting the public fixture, the app must reach the mode page.", "mode_selection", "navigation"),
     ("After returning to the playback page, the control bar must be revealed again.", "settings_navigation", "hidden_controls"),
