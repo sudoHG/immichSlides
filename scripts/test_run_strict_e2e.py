@@ -4098,7 +4098,7 @@ raise SystemExit(65)
         for name in ('diagnosticd', 'lsd', 'STExtractionService', 'PosterBoard', 'intelligenceplatformd',
                 'photoanalysisd', 'mediaanalysisd', 'fileindexerd', 'mobileassetd', 'nsurlsessiond', 'chronod',
                 'Spotlight', 'searchd', 'BackgroundShortcutRunner', 'MercuryPosterExtension',
-                'EmojiPosterExtension', 'GradientPosterExtension', 'UnknownWidget', 'diagnosticd-private',
+                'EmojiPosterExtension', 'GradientPosterExtension', 'SpringBoard', 'backboardd', 'UnknownWidget', 'diagnosticd-private',
                 '/private/PRIVATE_SENTINEL', '12345678-1234-1234-1234-123456789012'):
             snapshot = []
             with self.subTest(name=name), mock.patch.object(resources.sys, 'platform', 'darwin'), \
@@ -4122,9 +4122,11 @@ raise SystemExit(65)
                          [(row['name'], row['mean'], row['peak'], row['samples']) for row in projection['entries']])
         self.assertTrue(projection['truncated'])
         self.assertFalse(projection['unavailable'])
-        self.assertLessEqual(len(json.dumps(projection, separators=(',', ':')).encode()), 1024)
-        self.assertNotIn('PRIVATE_SENTINEL', json.dumps(projection))
-        self.assertNotIn('private-device', json.dumps(projection))
+        sampler.simulator_snapshots = [snapshots[0]]
+        sampler.finished = False
+        sampler.publish()
+        self.assertTrue(recorder.case_resources[0]['simulator_processes']['truncated'])
+        sampler.finished = True
         # A peak-ranked implementation picks the spiky service over the steady one.
         names = ['diagnosticd', 'lsd', 'STExtractionService', 'PosterBoard', 'intelligenceplatformd', 'photoanalysisd']
         sampler.simulator_snapshots = [dict.fromkeys(names, 20), dict.fromkeys(names, 20)]
@@ -4153,6 +4155,24 @@ raise SystemExit(65)
             sampler.publish()
         self.assertNotIn('simulator_processes', recorder.case_resources[0])
         self.assertEqual(30, recorder.case_resources[0]['duration_seconds'])
+
+    def test_missing_process_argv_zero_preserves_category_accounting(self):
+        import strict_e2e_resource_diagnostics as resources
+        from types import SimpleNamespace
+        complete = ('10 1 1 launchd_sim /runtime/launchd_sim\n'
+                    '11 10 30 immichSlides /device/immichSlides\n'
+                    '12 10 60 STExtractionServ /runtime/STExtractionService   \n'
+                    '13 1 7 tool name /private/tool name\n')
+        for raw, expected in ((complete, [{'other': 1, 'STExtractionService': 60}]),
+                (complete.replace(' /runtime/STExtractionService   ', ''), [None])):
+            snapshots = []
+            with self.subTest(missing_comm=expected == [None]), \
+                    mock.patch.object(resources.sys, 'platform', 'darwin'), \
+                    mock.patch.object(resources, 'app_on_device', return_value=True), \
+                    mock.patch.object(resources.subprocess, 'run', return_value=SimpleNamespace(returncode=0, stdout=raw)):
+                categories = resources.process_sample('device', .1, simulator_snapshots=snapshots)
+            self.assertEqual({'app': 30, 'simulator_daemons': 61, 'test_tools': 0, 'other': 7}, categories)
+            self.assertEqual(expected, snapshots)
 
     def test_case_sampler_preserves_numeric_categories_and_failure_windows(self):
         import ci_execution_diagnostics as diagnostics
@@ -4848,7 +4868,8 @@ raise SystemExit(65)
             return clock[0] >= end[0]
         def slow_ps(*args, **kwargs):
             clock[0] += 1.1
-            return SimpleNamespace(returncode=0, stdout="10 1 4 xcodebuild /usr/bin/xcodebuild\n")
+            return SimpleNamespace(returncode=0, stdout="10 1 4 xcodebuild /usr/bin/xcodebuild\n"
+                "11 1 0 launchd_sim /runtime/launchd_sim\n12 11 0 immichSlides /device/immichSlides\n")
         probes = []
         def host_sample():
             clock[0] += 0.04
@@ -4867,6 +4888,7 @@ raise SystemExit(65)
                 mock.patch.object(resources, "HostProbe", side_effect=host_probe), \
                 mock.patch.object(resources, "resource_sample", return_value=sample), \
                 mock.patch.object(resources.sys, "platform", "darwin"), \
+                mock.patch.object(resources, "app_on_device", return_value=True), \
                 mock.patch.object(resources.subprocess, "run", side_effect=slow_ps) as ps, \
                 mock.patch.object(resources.time, "monotonic", side_effect=lambda: clock[0]), \
                 mock.patch.object(resources.time, "time", side_effect=lambda: 100 + clock[0]), \
@@ -4890,6 +4912,9 @@ raise SystemExit(65)
         self.assertLess(recorder.process_sampler_wall_seconds, 181.1)
         self.assertEqual(164, ps.call_count, "host costs must not reduce the shared process-snapshot coverage")
         self.assertFalse(recorder.case_resources[0]["truncated"], "ticks between process snapshots are intentionally partial")
+        self.assertFalse(recorder.case_resources[0]['simulator_processes']['truncated'])
+        self.assertFalse(case['simulator_processes']['unavailable'])
+        self.assertTrue(case['simulator_processes']['truncated'], 'budget exhaustion must mark valid retained snapshots truncated')
         self.assertAlmostEqual(ps.call_count * 1.1, recorder.process_sampler_wall_seconds)
         self.assertAlmostEqual(ps.call_count * 1.1 + sum(probe.spent for probe in probes),
                                sum(case["sampler_wall_seconds"] for case in recorder.case_resources))

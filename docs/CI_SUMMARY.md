@@ -180,15 +180,21 @@ The separate [prepared environment-limit proof](#prepared-hosted-strict-environm
 can classify a failed hosted timing observation only when its full criteria are met.
 Summary Markdown displays per-case sample counts, idle minimum/median, maximum
 load, peak App CPU, sampler costs and truncation; nearby samples remain in JSON.
-Failed strict case rows also show one compact `sim-top: name mean%/peak%, ...`
-line, including unavailable or truncated status. The optional projection does not
-participate in verdicts, yellow eligibility, retries, deadlines or scheduling.
+Failed strict case rows also show compact `sim-top: name mean%/peak%, ...`
+lines, one per sampled invocation, including unavailable or truncated status.
+The optional projection does not participate in verdicts, yellow eligibility,
+retries, deadlines or scheduling.
 
 `simulator_processes` consumes the existing process snapshots and cadence, within
 the same 180-second job pool; it adds no child processes, threads or root query.
-The same `ps` call adds `comm` (executable path, never argv) because Darwin's
-existing `ucomm` accounting name truncates long basenames. Paths are reduced in
-memory to the enum above; existing category accounting still uses `ucomm`.
+The same `ps -ww` call adds `comm`, which reads argv[0] (usually the executable
+path), because Darwin's existing `ucomm` accounting name truncates long basenames.
+Only in memory, the stripped argv[0] basename is compared with the enum below;
+no other argv or process environment is read. `-ww` prevents terminal-width
+truncation, including without a tty. Category accounting retains its short-name
+rules and reads the first whitespace-delimited `ucomm` token when `comm` is present.
+A missing `comm` makes only the simulator projection unavailable, preserving the
+snapshot's category accounting.
 The already device-verified App's `launchd_sim` ancestor identifies the assigned
 tree in that snapshot. A missing, inaccessible or ambiguous root makes that
 snapshot unavailable; it never falls back to other simulator trees. In particular,
@@ -200,11 +206,13 @@ App, XCTest, testmanagerd and xcodebuild entries are excluded before aggregation
 The fixed basename enum is `diagnosticd`, `lsd`, `STExtractionService`, `PosterBoard`,
 `intelligenceplatformd`, `photoanalysisd`, `mediaanalysisd`, `fileindexerd`,
 `mobileassetd`, `nsurlsessiond`, `chronod`, `Spotlight`, `searchd`,
-`BackgroundShortcutRunner`, `MercuryPosterExtension`, `EmojiPosterExtension`, and
-`GradientPosterExtension`. These are explicit system services and extensions
-identified in the local iOS/iPadOS/tvOS first-boot investigation: diagnostics and
+`BackgroundShortcutRunner`, `MercuryPosterExtension`, `EmojiPosterExtension`,
+`GradientPosterExtension`, `SpringBoard`, and `backboardd`. These are explicit
+system services and extensions identified in the local iOS/iPadOS/tvOS first-boot investigation: diagnostics and
 registration, streaming extraction and assets, analysis/indexing, and wallpaper /
-widget activity. No wildcard matches or arbitrary basenames are published;
+widget activity, plus the SpringBoard/backboardd system UI and event services
+observed among the local iPhone/iPad and tvOS CPU leaders. No wildcard matches or
+arbitrary basenames are published;
 unidentified MobileAsset workers and extensions remain `other`.
 Multiple instances of one name are summed per snapshot. Select at most five
 names by their CPU mean across valid snapshots, breaking ties by the enum order
@@ -250,9 +258,11 @@ ledger, use those same sequence values to join back to the enclosing case.
 Host idle is a delta of Mach CPU ticks; category CPU is the macOS `ps` short-term
 percentage estimate, with one core = 100%. These have different averaging windows
 and need not sum to the same instantaneous host utilization. The collector reads
-only PID, parent PID, CPU and short executable names in private memory, inspects
-candidate App executable paths to distinguish the selected simulator, then
-discards every PID/name/path. It never requests argv or process environments.
+PID, parent PID, CPU, short accounting names and, for the simulator projection,
+`comm` (argv[0], usually the executable path) into private memory. It compares the
+stripped argv[0] basename with the allowlist and separately inspects candidate
+App executable paths to distinguish the selected simulator, then discards the
+table's PIDs, names and paths. No other argv or process environment is read.
 Unknown App ownership or a failed process snapshot makes category CPU unavailable.
 The first host read primes the counters. Idle is null when successive successful
 reads are less than one second apart, including a quick read after a late worker;

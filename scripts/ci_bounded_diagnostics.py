@@ -43,7 +43,7 @@ RESOURCE_CATEGORIES = ("app", "simulator_daemons", "test_tools", "other")
 SIMULATOR_PROCESS_NAMES = ("diagnosticd", "lsd", "STExtractionService", "PosterBoard",
     "intelligenceplatformd", "photoanalysisd", "mediaanalysisd", "fileindexerd", "mobileassetd",
     "nsurlsessiond", "chronod", "Spotlight", "searchd", "BackgroundShortcutRunner",
-    "MercuryPosterExtension", "EmojiPosterExtension", "GradientPosterExtension")
+    "MercuryPosterExtension", "EmojiPosterExtension", "GradientPosterExtension", "SpringBoard", "backboardd")
 MAX_SIMULATOR_PROCESS_BYTES = 1024
 MAX_APP_HANG_STACK_BYTES = 4096
 MAX_CONTINUE_WATCH_BYTES = 8192

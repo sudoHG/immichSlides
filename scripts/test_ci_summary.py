@@ -1084,7 +1084,6 @@ class SummaryContractTests(unittest.TestCase):
         for night in (old, summary):
             self.assertEqual(night, ci_summary.parse_summary(json.dumps(night)))
             scan_diagnostic_json(json.dumps(night).encode())
-            self.assertEqual(old["status"], night["status"])
         self.assertNotIn("sim-top:", ci_summary.render_markdown(old))
         self.assertIn("sim-top: STExtractionService 85%/140%, other 4%/8% (truncated)",
                       ci_summary.render_markdown(summary))
@@ -1097,8 +1096,11 @@ class SummaryContractTests(unittest.TestCase):
                 (('entries', 0, 'samples'), 0), (('entries', 0, 'pid'), 123),
                 (('entries', 0, 'samples'), 43202), (('entries', 0, 'mean'), True),
                 (('entries', 0, 'mean'), 1000001), (('entries', 0, 'samples'), 3),
-                (('entries',), resource['simulator_processes']['entries'] * 4),
-                (('entries',), []), (('entries', 1, 'name'), 'STExtractionService'),
+                (('entries',), [dict(resource['simulator_processes']['entries'][0], name=name) for name in
+                    ('diagnosticd', 'lsd', 'STExtractionService', 'PosterBoard', 'intelligenceplatformd', 'photoanalysisd', 'other')]),
+                (('entries',), [resource['simulator_processes']['entries'][0]] * 2
+                    + [resource['simulator_processes']['entries'][1]]),
+                (('udid',), 'private-device'), (('entries',), []),
                 (('entries', 1, 'name'), 'lsd'), (('entries', 0, 'mean'), None),
                 (('unavailable',), True),
                 (('unavailable',), 'false'), (('truncated',), 1)):

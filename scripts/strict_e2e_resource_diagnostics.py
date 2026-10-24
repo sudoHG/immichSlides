@@ -434,9 +434,10 @@ def process_categories(raw, device, *, identify_app=None, app_processes=None, si
     if len(raw.encode()) > MAX_PROCESS_TABLE_BYTES:
         return dict.fromkeys(RESOURCE_CATEGORIES)
     rows = {}
+    projection_complete = True
     for line in raw.splitlines():
-        parts = line.split(None, 4 if executable_names else 3)
-        if len(parts) != (5 if executable_names else 4) or len(rows) >= MAX_PROCESS_ROWS:
+        parts = line.split(None, 3)
+        if len(parts) != 4 or len(rows) >= MAX_PROCESS_ROWS:
             return dict.fromkeys(RESOURCE_CATEGORIES)
         try:
             pid, parent, cpu = int(parts[0]), int(parts[1]), float(parts[2])
@@ -445,7 +446,14 @@ def process_categories(raw, device, *, identify_app=None, app_processes=None, si
         if pid <= 0 or parent < 0 or finite(cpu, MAX_PROCESS_CPU_PERCENT) is None or pid in rows:
             return dict.fromkeys(RESOURCE_CATEGORIES)
         name = parts[3].strip()
-        rows[pid] = (parent, cpu, name, Path(parts[4]).name if executable_names else name)
+        basename = name
+        if executable_names:
+            accounting = parts[3].split(None, 1)
+            name = accounting[0]
+            argv_zero = accounting[1].strip() if len(accounting) == 2 else ""
+            basename = Path(argv_zero).name if argv_zero else None
+            projection_complete &= basename is not None
+        rows[pid] = (parent, cpu, name, basename)
     totals = dict.fromkeys(RESOURCE_CATEGORIES, 0.0)
     unknown_app = False
     found_app = False
@@ -482,7 +490,7 @@ def process_categories(raw, device, *, identify_app=None, app_processes=None, si
         totals[category] += cpu
     if not rows:
         return dict.fromkeys(RESOURCE_CATEGORIES)
-    if simulator_snapshots is not None and len(simulator_roots) == 1:
+    if simulator_snapshots is not None and projection_complete and len(simulator_roots) == 1:
         simulator_root = next(iter(simulator_roots))
         snapshot = {"other": 0.0}
         for pid, (_, cpu, accounting_name, name) in rows.items():
@@ -520,9 +528,9 @@ def process_sample(device, timeout, *, app_processes=None, simulator_snapshots=N
     snapshots = []
     if sys.platform == "darwin":
         try:
-            # ucomm truncates long names on Darwin; comm supplies the executable path, never argv.
+            # comm reads argv[0] (usually a path) only in memory; no other argv or environment is read.
             columns = "pid=,ppid=,%cpu=,ucomm=" + (",comm=" if simulator_snapshots is not None else "")
-            completed = subprocess.run(["/bin/ps", "-A", "-o", columns],
+            completed = subprocess.run(["/bin/ps", "-A", "-ww", "-o", columns],
                 capture_output=True, text=True, check=False, timeout=timeout)
             if completed.returncode == 0:
                 categories = process_categories(completed.stdout, device, app_processes=app_processes,
