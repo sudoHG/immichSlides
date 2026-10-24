@@ -1066,6 +1066,8 @@ class SummaryContractTests(unittest.TestCase):
         self.assertEqual(legacy, ci_summary.parse_summary(legacy))
         self.assertNotIn("rescue=rejected", ci_summary.render_markdown(legacy))
         projection = resource["continue_watch"]
+        projection.update(judge="early", rescue_ran=False, rescue_stage="not_run")
+        self.assertIn("judge=early, rescue=not-run/not_run", ci_summary.render_markdown(summary))
         projection.update(judge="late", rescue_ran=True, rescue_stage="span",
                           single_photo_mode_verified=False, control_bar_wake_skipped=True)
         for mark in ("A1+A2", "A1+A2+A3+A4"):
