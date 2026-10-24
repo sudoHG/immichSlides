@@ -4848,7 +4848,7 @@ raise SystemExit(65)
             return clock[0] >= end[0]
         def slow_ps(*args, **kwargs):
             clock[0] += 1.1
-            return SimpleNamespace(returncode=0, stdout="10 1 4 xcodebuild\n")
+            return SimpleNamespace(returncode=0, stdout="10 1 4 xcodebuild /usr/bin/xcodebuild\n")
         probes = []
         def host_sample():
             clock[0] += 0.04
