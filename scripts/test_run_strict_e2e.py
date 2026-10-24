@@ -4272,6 +4272,9 @@ raise SystemExit(65)
         popen = subprocess.Popen
         entered, closing, closed, resume = (threading.Event() for _ in range(4))
         children, failures, held = [], [], []
+        child = popen([sys.executable, "-c", "import time; time.sleep(60)"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        children.append(child)
         class ObservedLock:
             def __init__(self):
                 self.lock = threading.Lock()
@@ -4293,8 +4296,8 @@ raise SystemExit(65)
             # no child before Popen returns, then the worker cannot clean it up.
             if not held[0] and not closed.wait(5):
                 raise RuntimeError("unlocked close did not finish")
-            child = popen([sys.executable, "-c", "import time; time.sleep(60)"], **kwargs)
-            children.append(child)
+            # Pay the real spawn cost before the shutdown deadline; this seam
+            # controls only when the pending Popen publishes its owned child.
             wait = child.wait
             def delayed_wait(timeout=None):
                 if threading.current_thread() is sampler.hang.worker and not resume.wait(5):
@@ -4321,7 +4324,6 @@ raise SystemExit(65)
                 closer.start()
                 self.assertTrue(closed.wait(5), "case stop must finish after the pending launch")
                 self.assertEqual([], failures)
-                self.assertTrue(children, "pending Popen must finish before close can return")
                 self.assertIsNotNone(children[0].returncode, "close must reap the child created by the pending Popen")
             finally:
                 resume.set()
@@ -5696,7 +5698,7 @@ finally:
             with self.subTest(interrupted=interrupted), tempfile.TemporaryDirectory() as raw:
                 root = Path(raw)
                 marker = root / "group"
-                code = "import os,pathlib,subprocess,sys,time; subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)']); print('CommandError: fixture failure',flush=True); pathlib.Path(sys.argv[1]).write_text(str(os.getpgrp())); time.sleep(60)"
+                code = "import os,pathlib,subprocess,sys,time; subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)']); print('CommandError: fixture failure',flush=True); marker=pathlib.Path(sys.argv[1]); pending=marker.with_suffix('.pending'); pending.write_text(str(os.getpgrp())); pending.replace(marker); time.sleep(60)"
                 command = [sys.executable, "-c", code, str(marker)]
 
                 def start(*args, **kwargs):
