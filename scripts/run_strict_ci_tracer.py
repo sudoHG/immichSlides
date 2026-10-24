@@ -35,6 +35,8 @@ from strict_e2e_runner_support import (IOS_LIFECYCLE_PAUSE_SUITE, SIMULATOR_READ
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = ROOT / "scripts/strict-tracer.json"
 SIMULATOR_PREPARATION_HARD_TIMEOUT_SECONDS = SIMULATOR_PREPARATION_TIMEOUT_SECONDS + 180
+RUNNER_MEMBER_PROBE_TIMEOUT_SECONDS = 0.5
+MAX_RUNNER_PROCESS_TABLE_BYTES = 2 * 1024 * 1024
 BUILD_OPERATIONS = re.compile(r"^(?:SwiftCompile|SwiftEmitModule|CompileC|Ld |CompileAssetCatalog|CodeSign |ProcessInfoPlistFile )", re.MULTILINE)
 
 
@@ -151,8 +153,8 @@ def runner_group_members(group_id):
     """A failure-only ps projection: no arguments, paths, PIDs or arbitrary names survive."""
     try:
         table = subprocess.check_output(["ps", "-axo", "pid=,ppid=,pgid=,stat=,comm="],
-            text=True, stderr=subprocess.DEVNULL, timeout=0.5)
-        if len(table.encode()) > 2 * 1024 * 1024:
+            text=True, stderr=subprocess.DEVNULL, timeout=RUNNER_MEMBER_PROBE_TIMEOUT_SECONDS)
+        if len(table.encode()) > MAX_RUNNER_PROCESS_TABLE_BYTES:
             return None
         rows = [line.split(None, 4) for line in table.splitlines()]
         rows = {row[0]: row for row in rows if len(row) == 5 and all(value.isdecimal() for value in row[:3])}

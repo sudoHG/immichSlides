@@ -4165,17 +4165,20 @@ raise SystemExit(65)
     def test_case_stop_reports_launch_and_reap_deadlines_without_claiming_shutdown(self):
         import strict_e2e_resource_diagnostics as resources
         import ci_execution_diagnostics as diagnostics
-        for blocked in ("launch", "reap"):
+        for blocked in ("launch", "reap", "signal"):
             with self.subTest(blocked=blocked), mock.patch.dict(os.environ, {}, clear=True):
                 sampler = resources.CaseSampler(diagnostics.Recorder(), "device", force_app_hang_capture=True)
                 owner = sampler.hang.capture_process
                 if blocked == "launch":
                     owner.lock.acquire()
                     message = "App hang capture launch or reap did not finish before shutdown"
-                else:
+                elif blocked == "reap":
                     owner.process = mock.Mock(returncode=None,
                         wait=mock.Mock(side_effect=subprocess.TimeoutExpired("sample", 0.1)))
                     message = "App hang capture did not reap after SIGKILL"
+                else:
+                    owner.process = mock.Mock(returncode=None, kill=mock.Mock(side_effect=OSError("PRIVATE_SENTINEL")))
+                    message = "App hang capture could not be killed and reaped"
                 try:
                     with self.assertRaisesRegex(resources.CaptureCleanupError, message):
                         sampler.stop()
@@ -4185,6 +4188,7 @@ raise SystemExit(65)
                         owner.lock.release()
                     else:
                         owner.process.wait.side_effect = None
+                        owner.process.kill.side_effect = None
                     sampler.stop()
 
     def test_app_hang_capture_bounds_transport_and_discards_raw_on_every_exit(self):

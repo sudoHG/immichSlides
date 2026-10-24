@@ -165,6 +165,8 @@ class CaptureProcess:
                 except subprocess.TimeoutExpired:
                     raise CaptureCleanupError("App hang capture did not reap after SIGKILL") from None
                 self.process = None
+        except (OSError, subprocess.SubprocessError):
+            raise CaptureCleanupError("App hang capture could not be killed and reaped") from None
         finally:
             self.lock.release()
 
