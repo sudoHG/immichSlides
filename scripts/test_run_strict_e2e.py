@@ -4143,7 +4143,9 @@ raise SystemExit(65)
                 + " " * 92 + "96 SettingsViewIOS.body.getter  (in immichSlides.debug.dylib) + 1 [0x123]\n"
                 + " " * 94 + "90 SettingsModel.compute  (in immichSlides.debug.dylib) + 1 [0x123]\n"
                 + " " * 94 + "95 privatehost.local  (in immichSlides.debug.dylib) + 1 [0x123]\n"
-                + " " * 94 + "95 OtherView.body  (in Other.debug.dylib) + 1 [0x123]\n")
+                + " " * 94 + "95 OtherView.body  (in Other.debug.dylib) + 1 [0x123]\n"
+                + "    100 Thread_43: private queue\n"
+                + "      100 WorkerView.body  (in immichSlides.debug.dylib) + 1 [0x123]\n")
         stack = resources.reduce_main_thread_sample(raw)
         app = [frame for frame in stack["frames"] if frame["module"] == "immichSlides"]
         self.assertEqual(["SettingsViewIOS.body.getter", "SettingsModel.compute"], [frame["symbol"] for frame in app])

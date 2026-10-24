@@ -57,7 +57,7 @@ def reduce_main_thread_sample(raw):
     in_main = False
     counts, depths, nodes, ancestors = {}, {}, [], []
     for line in raw.splitlines():
-        header = re.fullmatch(r"\s*(\d+) Thread_\d+(?:\s+(?!\s*\(in ).*)?", line)
+        header = re.fullmatch(r"\s*(\d+) Thread_\d+(?:[ :](?!\s*\(in ).*)?", line)
         if header is not None:
             if in_main:
                 break
