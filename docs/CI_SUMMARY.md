@@ -150,7 +150,7 @@ issue decisions do not consume the measurements.
 The reader also accepts `case_resources`, an array of at most 64 case measurements.
 Strict producers emit it for each actual Xcode case invocation, including an
 existing listed retry. Fixture UI producers do not sample continuously. Each entry has
-exactly the following fields. All numbers are finite, booleans are not numbers,
+the following required fields and optional `app_hang_stack`. All numbers are finite, booleans are not numbers,
 and unknown measurements remain null.
 
 | Fields | Bounds and meaning |
@@ -163,6 +163,7 @@ and unknown measurements remain null.
 | `sampler_wall_seconds`, `sampler_cpu_seconds` | Host-read plus process-snapshot collection wall time 0–86,400 and collector plus child-process CPU time 0–10^12 seconds, or null; interval sleeping is excluded; periodic sampling has the bounded allowances described below |
 | `first_failure_elapsed_seconds` | Offset from this case's sampling origin, 0–case duration, or null if no failure is bound; absence never proves a passing case |
 | `failure_samples` | At most six samples, no more than `sample_count`, strictly increasing by `elapsed_seconds`, within both the case duration and ±5 seconds of the first failure; empty when the failure time is unavailable |
+| `app_hang_stack` (optional) | At most 4,096 compact JSON bytes: `status` (`captured`, `failure`, `timeout`, `cancelled`), `sample_count` (main-thread samples), and `frames` (at most 30 objects containing only `symbol`, allowlisted `module`, and inclusive `samples` count); non-captured states have zero samples and no frames |
 
 Each failure sample has exactly `elapsed_seconds` (0–86,400), `idle_percent`
 (0–100 or null), `load_1m` (0–10^6 or null), and `cpu_percent`. The latter has
@@ -170,7 +171,7 @@ exactly `app`, `simulator_daemons`, `test_tools`, and `other`, each 0–10^6 or 
 These categories are disjoint: the App under test; simulator system daemons
 descended from `launchd_sim`; XCTest, testmanagerd and xcodebuild tools; and all
 remaining host processes. App and test-tool membership takes precedence over
-simulator ancestry. No executable names, PIDs, paths, arguments or activity
+simulator ancestry. Apart from the optional stack's symbol/module names, no executable names, PIDs, paths, arguments or activity
 titles are published. Measurements with unavailable membership must remain null.
 Sampling limitations, including missing intervals, do not alter a test result.
 The separate [prepared environment-limit proof](#prepared-hosted-strict-environment-limits)
@@ -252,10 +253,11 @@ or relabelled as a two-second measurement. A failed worker start permits another
 start on the next planned request. Host costs now
 contribute to `sampler_wall_seconds`; older receipts reporting zero when process
 snapshots were disabled did not measure host cost.
-Process snapshots run at most once per ten seconds and have a separate
+Process snapshots normally run at most once per ten seconds; hosted strict hang
+diagnostics use the existing two-second ticks instead. Both have a separate
 180-second active-wall allowance shared across
 the job ledger. A private `process_sampler_wall_seconds` balance carries only
-completed process-snapshot cost across serial case processes; host reads remain
+completed process-snapshot and App stack capture cost across serial case processes; host reads remain
 included in the public `sampler_wall_seconds` total without reducing this pool.
 Old ledgers without this balance conservatively charge all persisted
 `sampler_wall_seconds` costs; an unknown predecessor cost exhausts the allowance.
@@ -276,7 +278,8 @@ Combined charging could spend 100 seconds on host reads and leave only about 80�
 Separate accounting preserves the full process allowance without raising it; the
 per-job sampling bound is 180 + 10 × N seconds for N ≤ 64 sampled invocations
 (280 seconds for the current longest shard).
-The receipt schema, historical receipt acceptance and verdict rules are unchanged.
+The optional stack projection is additive in schema version 1. Old nights without
+it remain readable; verdict and environment-limit eligibility rules are unchanged.
 The per-case host cap can independently stop idle/load collection earlier; neither
 allowance guarantees failure-window coverage through a 600-second invocation.
 Ticks without a scheduled process snapshot have null categories and do not mark
@@ -287,6 +290,39 @@ unavailable and prevents successor sampling from reclaiming its allowance.
 isolated from other runner children; isolated cost measurements include the
 collector and `ps` child via process resource usage. Collection ends when Xcode
 returns; no extra wait is added to obtain future failure-window samples.
+
+Hosted strict cases (including all their sessions or listed attempts together)
+can retain one App main-thread stack when the same identified
+simulator App PID has at least 85% CPU (one core = 100%) at consecutive process
+reads spanning at least eight seconds. Missing/low reads, PID changes, or gaps
+over 4.5 seconds reset that span. These are `ps` CPU estimates, not proof that the
+main thread itself was busy. Only one unambiguous App process on the assigned
+simulator is eligible. A background `/usr/bin/sample PID 2` has a three-second
+hard deadline, is cancelled on case exit, and never blocks the idle/load worker.
+No test or case deadline changes. At most three attempts per job (including
+failures) share the existing 180-second process-sampler allowance; three seconds
+are reserved before each launch and the completed active wall cost is charged to
+both the private balance and public `sampler_wall_seconds`. Unfinished work
+retains its full reservation. The existing stop-wait bound is not extended.
+
+The internal ledger carries `app_hang_capture_attempts`; reservation forfeits all
+remaining attempts until the serial child finishes saving its balance. Missing
+old or invalid accounting grants no fresh capture allowance. No raw sample is
+published: its mode-0700 temporary directory is outside evidence and is removed
+on success, failure, cancellation and timeout. The reducer ignores headers,
+addresses, binary images and other threads, retains only identifier-shaped
+symbols from allowlisted modules, rejects paths, URLs, domain-like symbols and
+UDIDs, then ranks inclusive frame counts (recursive occurrences can add counts)
+and trims the projection to 30 frames / 4 KiB. Unrecognized symbols are omitted.
+The enclosing case's resource sequence links the JSON to its identity using the
+existing case manifest; Markdown adds `app-hang-stack: ... (N samples)` next to
+that resource entry. The hint lists ranked frames, not a reconstructed causal
+chain. Missing symbols or unsuccessful capture are diagnostic gaps only.
+
+`run_strict_e2e.py --local-force-app-hang-capture` exercises the capture on the
+first identified App CPU read, including idle CPU. It is ignored whenever `CI`,
+`GITHUB_ACTIONS` or `RUNNER_ENVIRONMENT` is set, so hosted runs cannot use this
+local threshold override. It affects only diagnostics, never the App or XCTest.
 The failure timestamp is bound after XCTest returns, so historical category CPU
 cannot be freshly sampled at the failure time; only actual periodic snapshots
 within the existing five-second window are published, with no backfilled values.

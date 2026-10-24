@@ -3978,6 +3978,181 @@ raise SystemExit(65)
                 unavailable = resources.resource_sample(SimpleNamespace(idle=lambda: None), "device", 0.1)
             self.assertTrue(all(value is None for value in unavailable["cpu_percent"].values()))
 
+    def test_app_hang_requires_continuous_same_process_cpu_and_respects_job_and_case_caps(self):
+        import threading
+        import ci_execution_diagnostics as diagnostics
+        import strict_e2e_resource_diagnostics as resources
+        from types import SimpleNamespace
+        stack = {"status": "captured", "sample_count": 20,
+                 "frames": [{"symbol": "SettingsViewIOS.body", "module": "immichSlides", "samples": 20}]}
+        recorder = diagnostics.Recorder()
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(resources, "capture_main_thread", return_value=stack) as capture, \
+                mock.patch.object(resources.threading, "Thread", side_effect=lambda **kw: SimpleNamespace(
+                    start=kw["target"], join=lambda timeout: None)):
+            for case in range(4):
+                case_state = {}
+                probe = resources.AppHangCapture(recorder, threading.Event(), case_state=case_state)
+                # A dip, missing read, changed PID or descheduling gap breaks continuity.
+                for rows in ([(10, 90, 0), (10, 84, 2), (10, 90, 4), (10, 90, 8)],
+                             [(10, 90, 10), (None, None, 12), (10, 90, 14), (10, 90, 18)],
+                             [(10, 90, 20), (11, 90, 22), (11, 90, 24), (11, 90, 26)],
+                             [(10, 90, 30), (10, 90, 38)]):
+                    for pid, cpu, elapsed in rows:
+                        probe.observe(pid, cpu, elapsed, remaining_seconds=20)
+                    self.assertIsNone(probe.result)
+                probe.observe(None, None, 39, remaining_seconds=20)
+                for elapsed in (40, 42, 44, 46, 48, 50, 52):
+                    probe.observe(10, 85, elapsed, remaining_seconds=20)
+                    self.assertEqual(min(case + (elapsed >= 48), 3), capture.call_count)
+                self.assertEqual(min(case + 1, 3), capture.call_count)
+                self.assertEqual(stack if case < 3 else None, probe.result)
+                successor = resources.AppHangCapture(recorder, threading.Event(), case_state=case_state)
+                for elapsed in range(0, 12, 2):
+                    successor.observe(10, 90, elapsed, remaining_seconds=20)
+                self.assertEqual(min(case + 1, 3), capture.call_count, "a second invocation cannot recapture the same case")
+                recorder.save(Path(directory) / "ledger.json")
+                recorder = diagnostics.Recorder()
+                recorder.load(Path(directory) / "ledger.json")
+            self.assertEqual(3, recorder.app_hang_capture_attempts)
+            ledger_path = Path(directory) / "ledger.json"
+            ledger = json.loads(ledger_path.read_text())
+            ledger.pop("app_hang_capture_attempts")
+            ledger_path.write_text(json.dumps(ledger))
+            old_recorder = diagnostics.Recorder()
+            old_recorder.load(ledger_path)
+            self.assertEqual(3, old_recorder.app_hang_capture_attempts, "old accounting cannot grant a fresh job allowance")
+        for remaining in (0, 2.9):
+            with self.subTest(remaining=remaining), mock.patch.object(resources, "capture_main_thread") as capture:
+                probe = resources.AppHangCapture(diagnostics.Recorder(), threading.Event())
+                for elapsed in range(0, 12, 2):
+                    probe.observe(10, 90, elapsed, remaining_seconds=remaining)
+                capture.assert_not_called()
+
+    def test_hosted_sampler_charges_capture_keeps_host_ticks_and_ignores_local_force_in_ci(self):
+        import threading
+        import ci_execution_diagnostics as diagnostics
+        import strict_e2e_resource_diagnostics as resources
+        from types import SimpleNamespace
+        for environment, cpu, force, expected in (({}, 1, True, 1), ({}, 90, False, 0),
+                ({"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted"}, 85, False, 1),
+                ({"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted"}, 1, True, 0),
+                ({"CI": "true"}, 1, True, 0), ({"RUNNER_ENVIRONMENT": "self-hosted"}, 1, True, 0)):
+            clock = [0.0]
+            waits = [False] * 8 + [True]
+            def tick(seconds):
+                clock[0] += seconds
+                return waits.pop(0)
+            event = SimpleNamespace(wait=tick, set=lambda: None, is_set=lambda: False)
+            sample = {"idle_percent": 25, "load_1m": 4, "cpu_percent": dict.fromkeys(resources.RESOURCE_CATEGORIES)}
+            def process_sample(device, timeout, *, app_processes=None):
+                if app_processes is not None:
+                    app_processes.append((123, cpu))
+                return {**dict.fromkeys(resources.RESOURCE_CATEGORIES, 0), "app": cpu}
+            def capture(pid, stopped):
+                # Active capture cost is charged; it does not consume host-read ticks.
+                clock[0] += 2
+                return {"status": "captured", "sample_count": 10,
+                    "frames": [{"symbol": "SettingsViewIOS.body", "module": "immichSlides", "samples": 10}]}
+            recorder = diagnostics.Recorder()
+            with self.subTest(environment=environment, cpu=cpu, force=force), \
+                    mock.patch.dict(os.environ, environment, clear=True), \
+                    mock.patch.object(resources.threading, "Thread", side_effect=lambda **kw: SimpleNamespace(start=kw["target"], join=lambda timeout: None)), \
+                    mock.patch.object(resources, "HostProbe", return_value=SimpleNamespace(sample=lambda: sample, close=lambda: None, spent=0, request_count=1)), \
+                    mock.patch.object(resources, "process_sample", side_effect=process_sample), \
+                    mock.patch.object(resources, "capture_main_thread", side_effect=capture) as captures, \
+                    mock.patch.object(resources.time, "monotonic", side_effect=lambda: clock[0]), \
+                    mock.patch.object(resources.time, "time", side_effect=lambda: 100 + clock[0]), \
+                    mock.patch.object(resources.time, "perf_counter", side_effect=lambda: clock[0]):
+                sampler = resources.CaseSampler(recorder, "device", force_app_hang_capture=force)
+                sampler.stopped = event
+                if sampler.hang is not None:
+                    sampler.hang.stopped = event
+                sampler.start().stop()
+                self.assertEqual(expected, captures.call_count)
+                self.assertEqual(8, recorder.case_resources[0]["sample_count"])
+                self.assertEqual(expected * 2, recorder.process_sampler_wall_seconds)
+                self.assertEqual(expected * 2, recorder.case_resources[0]["sampler_wall_seconds"])
+                self.assertEqual(bool(expected), "app_hang_stack" in recorder.case_resources[0])
+
+    def test_app_hang_capture_bounds_transport_and_discards_raw_on_every_exit(self):
+        import threading
+        import strict_e2e_resource_diagnostics as resources
+        from types import SimpleNamespace
+        private_home = Path("/", "Users", "private-user")
+        raw = (f"Process: private-user [123]\nPath: {private_home}/private-host.local\nCall graph:\n"
+               "    20 Thread_42 DispatchQueue_1: com.apple.main-thread (serial)\n"
+               "      20 -[_UIHostingView layoutSubviews]  (in UIKitCore) + 16 [0x123]\n"
+               "        19 SettingsViewIOS.body.getter  (in immichSlides) + 8 [0x234]\n")
+        for mode in ("ok", "failure", "timeout", "cancelled", "spawn"):
+            with self.subTest(mode=mode):
+                clock = [0.0]
+                commands = []
+                stopped = threading.Event()
+                if mode == "cancelled":
+                    stopped.set()
+                def spawn(command, **kwargs):
+                    commands.append(command)
+                    Path(command[-1]).write_text(raw)
+                    if mode == "spawn":
+                        raise OSError("PRIVATE_SENTINEL")
+                    return process
+                def wait(timeout):
+                    clock[0] += timeout
+                    if mode == "timeout":
+                        raise subprocess.TimeoutExpired("sample", timeout)
+                    return 1 if mode == "failure" else 0
+                process = mock.Mock(wait=wait, poll=lambda: None if mode in ("timeout", "cancelled") else 0)
+                with mock.patch.object(resources.subprocess, "Popen", side_effect=spawn), \
+                        mock.patch.object(resources.time, "monotonic", side_effect=lambda: clock[0]):
+                    result = resources.capture_main_thread(123, stopped)
+                self.assertEqual("captured" if mode == "ok" else mode if mode != "spawn" else "failure", result["status"])
+                for command in commands:
+                    self.assertEqual(["/usr/bin/sample", "123", "2", "-file"], command[:-1])
+                    self.assertFalse(Path(command[-1]).exists())
+                self.assertNotIn("PRIVATE_SENTINEL", json.dumps(result))
+                if mode in ("timeout", "cancelled") and commands:
+                    process.kill.assert_called_once()
+                self.assertLessEqual(clock[0], 3.1)
+        # A failed attempt consumes its case/job slot too.
+        recorder = __import__("ci_execution_diagnostics").Recorder()
+        with mock.patch.object(resources.threading, "Thread", side_effect=RuntimeError("PRIVATE_SENTINEL")):
+            probe = resources.AppHangCapture(recorder, threading.Event())
+            for elapsed in range(0, 22, 2):
+                probe.observe(123, 90, elapsed, remaining_seconds=20)
+            self.assertEqual(1, recorder.app_hang_capture_attempts)
+            self.assertEqual("failure", probe.result["status"])
+
+    def test_main_thread_reduction_ranks_frames_redacts_and_caps_json(self):
+        import strict_e2e_resource_diagnostics as resources
+        raw = ("Process: private-user [123]\nCall graph:\n"
+               "    100 Thread_42 DispatchQueue_1: com.apple.main-thread (serial)\n"
+               "      100 -[_UIHostingView layoutSubviews]  (in UIKitCore) + 16 [0x123]\n"
+               "        90 SettingsViewIOS.body.getter  (in immichSlides) + 8 [0x234]\n"
+               "          80 NavigationSplitView.body.getter  (in SwiftUI) + 2 [0x345]\n")
+        private_home = Path("/", "Users", "private-user")
+        for symbol, module in ((str(private_home / "secret"), "immichSlides"),
+                               ("privatehost.local", "SwiftUI"), ("https://private.invalid/key", "UIKitCore"),
+                               ("12345678-1234-1234-1234-123456789abc", "SwiftUI"),
+                               ("safe", str(private_home / "module"))):
+            raw += f"            70 {symbol}  (in {module}) + 8 [0x456]\n"
+        for index in range(45):
+            raw += f"            {60-index} View{index}.body  (in SwiftUI) + 8 [0x456]\n"
+        raw += ("    999 Thread_43\n      999 private_worker  (in immichSlides) + 8 [0x567]\n"
+                f"Binary Images:\n {private_home}/secret\n")
+        result = resources.reduce_main_thread_sample(raw)
+        self.assertEqual((100, 30), (result["sample_count"], len(result["frames"])))
+        self.assertEqual(["_UIHostingView.layoutSubviews", "SettingsViewIOS.body.getter", "NavigationSplitView.body.getter"],
+                         [frame["symbol"] for frame in result["frames"][:3]])
+        self.assertEqual(sorted((frame["samples"] for frame in result["frames"]), reverse=True),
+                         [frame["samples"] for frame in result["frames"]])
+        encoded = json.dumps(result)
+        for private in ("private", "/Users", "https", "12345678", "0x"):
+            self.assertNotIn(private, encoded)
+        long = raw.replace("View", "V" * 150)
+        self.assertLessEqual(len(json.dumps(resources.reduce_main_thread_sample(long), separators=(",", ":")).encode()), 4096)
+        self.assertEqual([], resources.reduce_main_thread_sample("Call graph:\n    2 Thread_43\n") ["frames"])
+
     def test_slow_process_snapshots_preserve_late_samples_across_a_long_shard(self):
         import ci_execution_diagnostics as diagnostics
         import strict_e2e_resource_diagnostics as resources
@@ -4649,7 +4824,11 @@ raise SystemExit(65)
                                  ("process_sampler_wall_seconds", float("inf")),
                                  ("process_sampler_wall_seconds", -1),
                                  ("process_sampler_wall_seconds", True),
-                                 ("process_sampler_wall_seconds", "0")):
+                                 ("process_sampler_wall_seconds", "0"),
+                                 ("app_hang_capture_attempts", -1),
+                                 ("app_hang_capture_attempts", 4),
+                                 ("app_hang_capture_attempts", True),
+                                 ("app_hang_capture_attempts", "0")):
                 with self.subTest(field=field, value=value):
                     path.write_text(json.dumps({**ledger, field: value}))
                     invalid_reader = diagnostics.Recorder()

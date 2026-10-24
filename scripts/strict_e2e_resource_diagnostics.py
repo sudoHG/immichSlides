@@ -1,4 +1,4 @@
-"""Bounded numeric-only strict E2E contention measurements; never a test verdict."""
+"""Bounded strict E2E contention measurements and public stacks; never a test verdict."""
 
 from __future__ import annotations
 
@@ -13,12 +13,15 @@ import subprocess
 import sys
 import threading
 import time
+import tempfile
 from datetime import datetime
+from pathlib import Path
 from threading import Event, Thread
 
 from ci_bounded_diagnostics import (MAX_DIAGNOSTIC_SECONDS,
     MAX_LOAD_AVERAGE, MAX_PROCESS_CPU_PERCENT, MAX_RESOURCE_CASES, MAX_RESOURCE_SAMPLES,
-    RESOURCE_CATEGORIES, validate_case_resources)
+    RESOURCE_CATEGORIES, validate_case_resources, APP_HANG_MODULES, MAX_APP_HANG_STACK_BYTES,
+    MAX_INTEGER, public_stack_symbol)
 from ci_execution_diagnostics import finite
 from ci_failure_diagnostics import NATIVE_ACTIVITY_FIELDS, public_first_failure
 
@@ -40,6 +43,150 @@ NATIVE_JOB_BUDGET_SECONDS = 20
 CLOCK_DRIFT_TOLERANCE_SECONDS = 0.5
 # Matches the runner's default xcodebuild deadline; callers pass the invocation's actual deadline.
 DEFAULT_DURATION_LIMIT_SECONDS = 300
+APP_HANG_CPU_PERCENT = 85
+APP_HANG_SUSTAINED_SECONDS = 8
+APP_HANG_MAX_GAP_SECONDS = 4.5
+APP_HANG_JOB_CAP = 3
+APP_HANG_TIMEOUT_SECONDS = 3
+MAX_RAW_SAMPLE_BYTES = 2 * 1024 * 1024
+
+
+def reduce_main_thread_sample(raw):
+    """Project only ranked main-thread symbols; discard sample headers and binary images."""
+    result = {"status": "captured", "sample_count": 0, "frames": []}
+    in_main = False
+    counts = {}
+    for line in raw.splitlines():
+        if "Thread_" in line:
+            if in_main:
+                break
+            header = re.fullmatch(r"\s*(\d+) Thread_\d+.*com\.apple\.main-thread.*", line)
+            if header:
+                result["sample_count"] = min(MAX_INTEGER, int(header[1]))
+                in_main = True
+            continue
+        if not in_main:
+            continue
+        if line and not line[0].isspace():
+            break
+        frame = re.fullmatch(r"\s*[+|!: ]*\s*(\d+) (.*?)  \(in ([^)]+)\).*", line)
+        if frame is None or frame[3] not in APP_HANG_MODULES:
+            continue
+        symbol = frame[2]
+        if any(character in symbol for character in ('/', '\\', '@', '"', "'")):
+            continue
+        objc = re.fullmatch(r"[-+]\[([A-Za-z_][A-Za-z0-9_]*) ([A-Za-z_][A-Za-z0-9_:]*)\]", symbol)
+        if objc:
+            symbol = objc[1] + "." + objc[2].replace(":", "_")
+        else:
+            # Demangled generic arguments and closure descriptions are not public identifiers.
+            while re.search(r"<[^<>]*>", symbol):
+                symbol = re.sub(r"<[^<>]*>", "", symbol)
+            symbol = symbol.split(" in ")[-1].split("(")[0].strip().split(" ")[-1]
+        if not public_stack_symbol(symbol):
+            continue
+        key = symbol, frame[3]
+        counts[key] = min(MAX_INTEGER, counts.get(key, 0) + int(frame[1]))
+    for (symbol, module), count in sorted(counts.items(), key=lambda item: -item[1])[:30]:
+        if count <= 0:
+            continue
+        result["frames"].append({"symbol": symbol, "module": module, "samples": count})
+        if len(json.dumps(result, separators=(",", ":")).encode()) > MAX_APP_HANG_STACK_BYTES:
+            result["frames"].pop()
+            break
+    return result
+
+
+def capture_main_thread(pid, stopped):
+    """Keep raw output in a private temporary directory, never in an evidence tree."""
+    result = {"status": "failure", "sample_count": 0, "frames": []}
+    process = None
+    deadline = time.monotonic() + APP_HANG_TIMEOUT_SECONDS
+    try:
+        with tempfile.TemporaryDirectory(prefix="strict-app-hang-") as directory:
+            path = Path(directory) / "sample.txt"
+            try:
+                if stopped.is_set():
+                    return {**result, "status": "cancelled"}
+                process = subprocess.Popen(["/usr/bin/sample", str(pid), "2", "-file", str(path)],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                while True:
+                    if stopped.is_set():
+                        return {**result, "status": "cancelled"}
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        return {**result, "status": "timeout"}
+                    try:
+                        code = process.wait(timeout=min(0.05, remaining))
+                        break
+                    except subprocess.TimeoutExpired:
+                        continue
+                if code == 0 and path.stat().st_size <= MAX_RAW_SAMPLE_BYTES:
+                    raw = path.read_bytes()[:MAX_RAW_SAMPLE_BYTES + 1]
+                    if len(raw) <= MAX_RAW_SAMPLE_BYTES and time.monotonic() < deadline:
+                        return reduce_main_thread_sample(raw.decode("utf-8", errors="replace"))
+            finally:
+                if process is not None and process.poll() is None:
+                    process.kill()
+                    try:
+                        process.wait(timeout=0.1)
+                    except subprocess.SubprocessError:
+                        pass
+    except (OSError, ValueError, TypeError, subprocess.SubprocessError):
+        pass
+    return result
+
+
+class AppHangCapture:
+    """One prepaid background capture, with a durable job-wide attempt cap."""
+
+    def __init__(self, recorder, stopped, *, forced=False, case_state=None):
+        self.recorder, self.stopped, self.forced = recorder, stopped, forced
+        self.case_state = {} if case_state is None else case_state
+        self.previous = None
+        self.since = None
+        self.attempted = False
+        self.result = None
+        self.worker = None
+        self.charge = 0.0
+        self.wall_seconds = None
+
+    def observe(self, pid, cpu, elapsed, *, remaining_seconds):
+        if self.attempted or self.case_state.get("attempted", False) or self.stopped.is_set():
+            return
+        threshold = 0 if self.forced else APP_HANG_CPU_PERCENT
+        if pid is None or cpu is None or cpu < threshold:
+            self.previous, self.since = None, None
+            return
+        if self.previous is None or self.previous[0] != pid or not 0 < elapsed - self.previous[1] <= APP_HANG_MAX_GAP_SECONDS:
+            self.since = elapsed
+        self.previous = pid, elapsed
+        if elapsed - self.since < (0 if self.forced else APP_HANG_SUSTAINED_SECONDS):
+            return
+        if self.recorder.app_hang_capture_attempts >= APP_HANG_JOB_CAP or remaining_seconds < APP_HANG_TIMEOUT_SECONDS:
+            return
+        self.attempted = True
+        self.case_state["attempted"] = True
+        self.recorder.app_hang_capture_attempts += 1
+        self.charge = APP_HANG_TIMEOUT_SECONDS
+        def collect():
+            started = time.perf_counter()
+            try:
+                self.result = capture_main_thread(pid, self.stopped)
+            except (OSError, ValueError, TypeError, RuntimeError, subprocess.SubprocessError):
+                self.result = {"status": "failure", "sample_count": 0, "frames": []}
+            finally:
+                self.wall_seconds = time.perf_counter() - started
+        try:
+            self.worker = threading.Thread(target=collect, daemon=True)
+            self.worker.start()
+        except (OSError, RuntimeError):
+            self.result = {"status": "failure", "sample_count": 0, "frames": []}
+            self.wall_seconds = 0.0
+
+    @property
+    def cost(self):
+        return self.charge if self.wall_seconds is None else self.wall_seconds
 
 
 class NativeActivityBudget:
@@ -135,7 +282,7 @@ def app_on_device(pid, device):
     return ("/Devices/" + device + "/") in buffer.value.decode("utf-8", errors="replace")
 
 
-def process_categories(raw, device, *, identify_app=None):
+def process_categories(raw, device, *, identify_app=None, app_processes=None):
     identify_app = app_on_device if identify_app is None else identify_app
     if len(raw.encode()) > MAX_PROCESS_TABLE_BYTES:
         return dict.fromkeys(RESOURCE_CATEGORIES)
@@ -162,6 +309,8 @@ def process_categories(raw, device, *, identify_app=None):
             if belongs:
                 found_app = True
                 category = "app"
+                if app_processes is not None:
+                    app_processes.append((pid, cpu))
         elif name == "xcodebuild" or name.startswith(("xctest", "testmanagerd", "immichSlidesUIT")):
             category = "test_tools"
         if category == "other":
@@ -194,14 +343,14 @@ def resource_sample(host_cpu, device, timeout):
     return {"idle_percent": idle, "load_1m": load, "cpu_percent": categories}
 
 
-def process_sample(device, timeout):
+def process_sample(device, timeout, *, app_processes=None):
     categories = dict.fromkeys(RESOURCE_CATEGORIES)
     if sys.platform == "darwin":
         try:
             completed = subprocess.run(["/bin/ps", "-A", "-o", "pid=,ppid=,%cpu=,ucomm="],
                 capture_output=True, text=True, check=False, timeout=timeout)
             if completed.returncode == 0:
-                categories = process_categories(completed.stdout, device)
+                categories = process_categories(completed.stdout, device, app_processes=app_processes)
         except (OSError, ValueError, subprocess.SubprocessError):
             pass
     return categories
@@ -291,7 +440,8 @@ class HostProbe:
 class CaseSampler:
     """Share a bounded sampling allowance across cases, independently of test waits."""
 
-    def __init__(self, recorder, device, *, duration_limit_seconds=DEFAULT_DURATION_LIMIT_SECONDS):
+    def __init__(self, recorder, device, *, duration_limit_seconds=DEFAULT_DURATION_LIMIT_SECONDS,
+                 force_app_hang_capture=False, app_hang_case_state=None):
         self.recorder = recorder
         self.device = device
         self.sequence = recorder.next_sequence() if recorder is not None else 0
@@ -311,6 +461,11 @@ class CaseSampler:
         self.closed = False
         self.clock_stable = False
         self.duration_limit = min(MAX_DIAGNOSTIC_SECONDS, duration_limit_seconds)
+        hosted = os.environ.get("GITHUB_ACTIONS") == "true" and os.environ.get("RUNNER_ENVIRONMENT") == "github-hosted"
+        # Local opt-in is ignored in any CI environment, including a hosted metadata mismatch.
+        forced = force_app_hang_capture and not any(os.environ.get(key) for key in ("CI", "GITHUB_ACTIONS", "RUNNER_ENVIRONMENT"))
+        self.hang = AppHangCapture(recorder, self.stopped, forced=forced,
+            case_state=app_hang_case_state) if recorder is not None and (hosted or forced) else None
 
     def start(self):
         if self.recorder is None or len(self.recorder.case_resources) >= MAX_RESOURCE_CASES:
@@ -366,17 +521,27 @@ class CaseSampler:
                 sample = dict(sample)
                 sample["cpu_percent"] = dict.fromkeys(RESOURCE_CATEGORIES)
                 if not self.stopped.is_set() and time.monotonic() >= next_process:
-                    remaining = self.reserved - self.spent
+                    remaining = self.reserved - self.spent - (self.hang.charge if self.hang is not None else 0)
                     if remaining > SAMPLE_COMMAND_TIMEOUT_SECONDS:
                         started = time.perf_counter()
-                        sample["cpu_percent"] = process_sample(self.device, min(SAMPLE_COMMAND_TIMEOUT_SECONDS, remaining))
+                        if self.hang is None:
+                            sample["cpu_percent"] = process_sample(self.device, min(SAMPLE_COMMAND_TIMEOUT_SECONDS, remaining))
+                        else:
+                            processes = []
+                            sample["cpu_percent"] = process_sample(self.device, min(SAMPLE_COMMAND_TIMEOUT_SECONDS, remaining),
+                                app_processes=processes)
                         self.spent += time.perf_counter() - started
                         self.truncated |= any(value is None for key, value in sample["cpu_percent"].items() if key != "app")
+                        if self.hang is not None:
+                            pid, cpu = processes[0] if len(processes) == 1 and sample["cpu_percent"]["app"] is not None else (None, None)
+                            self.hang.observe(pid, cpu, time.monotonic() - self.origin,
+                                remaining_seconds=self.reserved - self.spent)
                     else:
                         self.truncated = True
-                    next_process += PROCESS_SAMPLE_INTERVAL_SECONDS
+                    process_interval = SAMPLE_INTERVAL_SECONDS if self.hang is not None else PROCESS_SAMPLE_INTERVAL_SECONDS
+                    next_process += process_interval
                     if next_process <= time.monotonic():
-                        next_process = time.monotonic() + PROCESS_SAMPLE_INTERVAL_SECONDS
+                        next_process = time.monotonic() + process_interval
                 # The App is legitimately absent before launch, across relaunches and after exit; only a
                 # missing host or non-App category means the sample itself was limited.
                 self.truncated |= sample["idle_percent"] is None or sample["load_1m"] is None
@@ -425,8 +590,13 @@ class CaseSampler:
         self.clock_stable = abs((time.time() - self.epoch) - elapsed) <= CLOCK_DRIFT_TOLERANCE_SECONDS
         self.duration = min(MAX_DIAGNOSTIC_SECONDS, max(0, elapsed))
         self.stopped.set()
+        stop_deadline = time.monotonic() + STOP_TIMEOUT_SECONDS if self.hang is not None else None
         if self.thread is not None:
             self.thread.join(STOP_TIMEOUT_SECONDS)
+        if self.hang is not None:
+            if self.hang.worker is not None:
+                self.hang.worker.join(max(0, stop_deadline - time.monotonic()))
+            self.spent += self.hang.cost
         if self.recorder is not None:
             if self.thread is not None and not self.finished:
                 self.truncated = True
@@ -454,6 +624,8 @@ class CaseSampler:
             "idle_percent_median": statistics.median(idle) if idle else None, "load_1m_max": max(load) if load else None,
             "app_cpu_percent_peak": max(app) if app else None, "sampler_wall_seconds": self.spent + self.host_spent if self.finished else None,
             "sampler_cpu_seconds": None, "first_failure_elapsed_seconds": self.first_failure, "failure_samples": near[:6]}
+        if self.hang is not None and self.hang.result is not None:
+            case["app_hang_stack"] = self.hang.result
         try:
             validate_case_resources([case])
         except (ValueError, TypeError, KeyError):
