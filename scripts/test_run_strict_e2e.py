@@ -5811,6 +5811,9 @@ def delayed_reduce(raw):
 resources.subprocess.Popen=spawn
 resources.app_on_device=lambda *args: True
 resources.reduce_main_thread_sample=delayed_reduce
+# This subprocess exercises local opt-in, independently of the host-check CI environment.
+for key in ("CI","GITHUB_ACTIONS","RUNNER_ENVIRONMENT"):
+    os.environ.pop(key,None)
 sampler=resources.CaseSampler(diagnostics.Recorder(),"device",force_app_hang_capture=True)
 sampler.hang.observe(123,1,0,remaining_seconds=20)
 assert entered.wait(5), "capture must reach private-file reduction"
@@ -5820,17 +5823,22 @@ try:
 finally:
     resume.set()
 '''
-        with tempfile.TemporaryDirectory() as raw:
-            root = Path(raw)
-            marker = root / "capture.json"
-            try:
-                self.assertEqual(0, tracer.run_runner([sys.executable, "-B", "-c", code, str(SCRIPT_DIR), str(marker)],
-                    root, root / "runner.log", timeout_seconds=10))
-                retained = json.loads(marker.read_text())
-                self.assertFalse(Path(retained["directory"]).exists(), "runner exit must finish private raw-file cleanup")
-            finally:
-                if marker.exists():
-                    shutil.rmtree(json.loads(marker.read_text())["directory"], ignore_errors=True)
+        for environment in ({}, {"CI": "true"},
+                {"CI": "true", "GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted"}):
+            with self.subTest(environment=environment), mock.patch.dict(os.environ, environment, clear=True), \
+                    tempfile.TemporaryDirectory() as raw:
+                root = Path(raw)
+                marker = root / "capture.json"
+                log = root / "runner.log"
+                try:
+                    code_result = tracer.run_runner([sys.executable, "-B", "-c", code, str(SCRIPT_DIR), str(marker)],
+                        root, log, timeout_seconds=10)
+                    self.assertEqual(0, code_result, log.read_text())
+                    retained = json.loads(marker.read_text())
+                    self.assertFalse(Path(retained["directory"]).exists(), "runner exit must finish private raw-file cleanup")
+                finally:
+                    if marker.exists():
+                        shutil.rmtree(json.loads(marker.read_text())["directory"], ignore_errors=True)
 
     def test_runner_timeout_or_cancellation_stops_its_descendants(self):
         import contextlib
