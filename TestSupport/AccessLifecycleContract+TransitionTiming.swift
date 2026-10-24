@@ -17,13 +17,14 @@ extension AccessLifecycleContract {
             case noAnchor = "no_anchor"
             case noDim = "no_dim"
             case noProof = "no_proof"
+            case missingPixels = "missing_pixels"
             case windowEarly = "window_early"
             case windowLate = "window_late"
             case fourSecond = "four_second"
         }
 
         fileprivate(set) var judgeStep: JudgeStep = .notEvaluated
-        fileprivate(set) var rescueRan = false
+        fileprivate(set) var didRunRescue = false
         fileprivate(set) var rescueStage: RescueStage = .notRun
         fileprivate(set) var anchorIndex: Int?
         fileprivate(set) var dimIndex: Int?
@@ -39,7 +40,7 @@ extension AccessLifecycleContract {
 
         fileprivate func reset() {
             judgeStep = .notEvaluated
-            rescueRan = false
+            didRunRescue = false
             rescueStage = .notRun
             anchorIndex = nil
             dimIndex = nil
@@ -205,7 +206,7 @@ extension AccessLifecycleContract {
         continueMark: String, baselineLuma: Double, samples: [ContinueWatchSample], stable: ContinueWatchSample,
         intervalSeconds: TimeInterval, policy: TVOSFadeRescuePolicy, observation: TVOSPauseTimingObservation?
     ) -> TVOSFadeRescue? {
-        observation?.rescueRan = true
+        observation?.didRunRescue = true
         observation?.rescueStage = .ineligible
         guard policy.isSinglePhotoModeVerified, continueMark == policy.requiredMark,
             policy.plateauHighlightLuma == Int(UInt8.max),
@@ -240,7 +241,9 @@ extension AccessLifecycleContract {
             let sample = samples[index]
             guard sample.requestElapsed <= stable.requestElapsed else { break }
             guard let photo = pixels(sample), let highlight = photo.highlightLuma else {
-                observation?.rescueStage = .ineligible
+                if anchorIndex != nil {
+                    observation?.rescueStage = .missingPixels
+                }
                 anchorIndex = nil
                 dimIndex = nil
                 continue

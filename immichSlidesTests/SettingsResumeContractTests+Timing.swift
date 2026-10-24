@@ -771,7 +771,7 @@ extension SettingsResumeContractTests {
             }
             XCTAssertEqual(outcome(observation), outcome(nil), file: file, line: line)
             XCTAssertEqual(observation.judgeStep, judge, file: file, line: line)
-            XCTAssertEqual(observation.rescueRan, ran, file: file, line: line)
+            XCTAssertEqual(observation.didRunRescue, ran, file: file, line: line)
             XCTAssertEqual(observation.rescueStage, stage, file: file, line: line)
             XCTAssertEqual(observation.indices, indices, file: file, line: line)
         }
@@ -790,6 +790,32 @@ extension SettingsResumeContractTests {
         check(
             earlyFadeWithFrozenDimSamples(), mark: "A5", baseline: 0.53, interval: 12,
             judge: .early, ran: false, stage: .notRun)
+        check(
+            [watchSample(request: 0, mark: "A1"), watchSample(request: 7, mark: "A2")],
+            judge: .early, ran: false, stage: .notRun)
+        let defects: [(String, Observation.RescueStage, [String: Int])] = [
+            ("calibration", .noAnchor, ["anchor": 40]),
+            ("gap", .continuity, ["anchor": 40]),
+            ("nil_pixels", .missingPixels, ["anchor": 40, "dim": 41])
+        ]
+        for (mutation, stage, indices) in defects {
+            var samples = rescued
+            let target = mutation == "calibration" ? 4 : (mutation == "gap" ? 40 : 42)
+            let sample = samples[target]
+            samples[target] = rescueSample(
+                request: sample.requestElapsed, mark: sample.mark, status: sample.status, luma: sample.meanLuma,
+                highlight: mutation == "calibration" ? 254 : sample.photoPixels?.highlightLuma,
+                core: sample.photoPixels?.whiteCoreFraction,
+                returnLag: mutation == "gap" ? 0.05 : 0.24, hasPixels: mutation != "nil_pixels")
+            check(samples, policy: tvosRescuePolicy(), judge: .late, ran: true, stage: stage, indices: indices)
+        }
+        let noPlateau = rescued.map { sample in
+            rescueSample(
+                request: sample.requestElapsed, mark: sample.mark, status: sample.status, luma: sample.meanLuma,
+                highlight: sample.photoPixels?.highlightLuma == 255 ? 254 : sample.photoPixels?.highlightLuma,
+                core: sample.photoPixels?.whiteCoreFraction)
+        }
+        check(noPlateau, policy: tvosRescuePolicy(), judge: .late, ran: true, stage: .noAnchor)
 
         var noDim = rescued
         noDim[41] = rescueSample(request: 10.25, luma: 0.455, highlight: 255, core: 0.064)
@@ -805,6 +831,12 @@ extension SettingsResumeContractTests {
             indices: ["anchor": 40, "dim": 41])
         var recovered = tvosRescueSamples(proofStatus: "MATCH")
         recovered[43] = rescueSample(request: 10.75, luma: 0.4, highlight: 213)
+        check(
+            recovered, policy: tvosRescuePolicy(), judge: .late, ran: true, stage: .recovery,
+            indices: fullCandidate)
+        recovered[44] = rescueSample(
+            request: 11, mark: "UNRECOGNIZABLE", status: "UNRECOGNIZABLE", luma: 0.3,
+            highlight: 160, hasPixels: false)
         check(
             recovered, policy: tvosRescuePolicy(), judge: .late, ran: true, stage: .recovery,
             indices: fullCandidate)

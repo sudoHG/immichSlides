@@ -727,7 +727,7 @@ extension AccessLifecycleTVOSUITests {
                         "baseline_luma": baselineLuma.map { $0 as Any } ?? NSNull(),
                         "single_photo_mode_verified": isSinglePhotoModeVerified,
                         "judge": timingObservation.judgeStep.rawValue,
-                        "rescue_ran": timingObservation.rescueRan,
+                        "rescue_ran": timingObservation.didRunRescue,
                         "rescue_stage": timingObservation.rescueStage.rawValue,
                         "rescue_indices": timingObservation.indices,
                         "rescue_interval": rescue.map {

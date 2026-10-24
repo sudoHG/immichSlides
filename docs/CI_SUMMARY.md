@@ -365,17 +365,23 @@ and `truncated` expose omitted frames; `indices` retains recorded anchor/dim/pro
 indices only when their frames survived the cap. `wake` is issued/returned seconds
 or null. Optional `judge` records the original judge's step (`passed`, `early`,
 `late`, `no_transition_start`, `no_stable_new_photo`, `four_second`, `other`, or
-`not_evaluated`). `rescue_ran` and `rescue_stage` distinguish an unattempted rescue
-from `ineligible`, `no_anchor`, `no_dim`, `no_proof`, `span`, `continuity`, `recovery`,
+`not_evaluated`). `early` also covers scene-check failures before T−2, including
+BLACK, UNRECOGNIZABLE or TRANSITION frames and a different public mark.
+`rescue_ran` and `rescue_stage` distinguish an unattempted rescue
+from `ineligible`, `no_anchor`, `no_dim`, `no_proof`, `missing_pixels`, `span`, `continuity`, `recovery`,
 `window_early`, `window_late`, `four_second`, or `passed`. The sealed, passive
 observation object cannot run a callback or return a decision to the judge.
 Indices describe the last examined candidate, including failed window, recovery
 and four-second checks; a later anchor replaces its earlier candidate indices.
+Missing pixels interrupt an active candidate with `missing_pixels`; without an
+active candidate they do not overwrite the previous candidate's rejection stage.
 `single_photo_mode_verified` and `control_bar_wake_skipped` preserve the observed
-eligibility and wake context. Old source files use `not_recorded` enums and null
-booleans; old projections without these optional fields remain valid. The legacy
-`rescue` field remains accepted, including its ambiguous `rejected` value, but is
-not used to infer whether a rescue ran.
+eligibility and wake context. Source files predating the observation hook use
+`not_recorded` for `judge`/`rescue_stage` and null for `rescue_ran`; their existing
+`single_photo_mode_verified` and `control_bar_wake_skipped` booleans are preserved.
+A missing boolean measurement is null. Projections without these optional fields
+remain valid. No legacy `rescue` outcome field is published or accepted; it was
+removed before the first main producer, so no archived night depends on it.
 Nothing recomputes the verdict. An invalid projection is dropped independently
 of resource samples and hang stacks. Source reads are capped at 2 MiB, symlinks
 are refused, and no free text, notes, paths, URLs, device IDs or names are retained.

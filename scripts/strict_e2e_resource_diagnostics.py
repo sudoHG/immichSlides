@@ -95,7 +95,7 @@ def attach_continue_watch(receipt, evidence_dir, *, platform, suite, result, seq
                 rounded(frame.get("photo_white_core_fraction")), sample.get("controls")])
         wake = raw.get("control_bar_wake")
         projection = {"total_frames": len(frames), "truncated": len(rows) < len(frames), "frames": rows,
-            "indices": raw.get("rescue_indices", {}), "rescue": raw.get("rescue_outcome", "not_recorded"),
+            "indices": raw.get("rescue_indices", {}),
             "judge": raw.get("judge", "not_recorded"), "rescue_ran": raw.get("rescue_ran"),
             "rescue_stage": raw.get("rescue_stage", "not_recorded"),
             "single_photo_mode_verified": raw.get("single_photo_mode_verified"),

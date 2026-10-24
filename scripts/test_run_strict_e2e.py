@@ -2507,11 +2507,18 @@ class StrictCITracerTests(unittest.TestCase):
                         self.assertEqual([0, .02, .04, "MATCH", "A1", .654, 251, .123, False], projection["frames"][0])
                         self.assertEqual({"anchor": 1, "dim": 2, "proof": 3}, projection["indices"])
                         self.assertEqual([8.123, 8.4], projection["wake"])
-                        self.assertEqual("rejected", projection["rescue"])
+                        self.assertNotIn("rescue", projection)
                         self.assertEqual(("late", True, "span", False, True), tuple(projection[key] for key in
                             ("judge", "rescue_ran", "rescue_stage", "single_photo_mode_verified", "control_bar_wake_skipped")))
                         self.assertNotIn("private", encoded)
                         self.assertNotIn("00000000", encoded)
+            older_source = {key: value for key, value in raw.items() if key not in ("judge", "rescue_ran", "rescue_stage")}
+            path.write_text(json.dumps(older_source))
+            receipt = bounded_diagnostics_receipt(resources=True)
+            attach_continue_watch(receipt, evidence, platform="tvos", suite="tvos-lifecycle-pause", result="FAILED", sequence=4)
+            self.assertEqual(("not_recorded", None, "not_recorded", False, True), tuple(
+                receipt["case_resources"][0]["continue_watch"][key] for key in
+                ("judge", "rescue_ran", "rescue_stage", "single_photo_mode_verified", "control_bar_wake_skipped")))
             for mark in ("A1+A2", "A1+A2+A3+A4"):
                 changed = json.loads(json.dumps(raw))
                 changed["samples"][0]["mark"] = mark
@@ -4323,7 +4330,7 @@ raise SystemExit(65)
         ledger = bounded_diagnostics_receipt(resources=True)
         ledger["case_resources"][0]["continue_watch"] = {"total_frames": 1, "truncated": False,
             "frames": [[0, .01, .02, "MATCH", "A1", .7, 255, .1, False]],
-            "indices": {}, "rescue": "not_evaluated", "wake": None}
+            "indices": {}, "wake": None}
         with tempfile.TemporaryDirectory() as directory:
             code, records, _, summary = self._produce_validator_records(Path(directory), None,
                 runner_exit=65, receipt_suite=None, bounded_diagnostics=ledger,

@@ -37,11 +37,10 @@ MAX_APP_HANG_STACK_BYTES = 4096
 MAX_CONTINUE_WATCH_BYTES = 8192
 MAX_CONTINUE_WATCH_FRAMES = 80
 CONTINUE_WATCH_STATUSES = (None, "MATCH", "TRANSITION", "BLACK", "BLANK", "UNRECOGNIZABLE")
-CONTINUE_WATCH_RESCUES = ("not_recorded", "not_evaluated", "rejected", "original_pass", "rescued")
 CONTINUE_WATCH_JUDGES = ("not_recorded", "not_evaluated", "passed", "early", "late", "no_transition_start",
                          "no_stable_new_photo", "four_second", "other")
 CONTINUE_WATCH_RESCUE_STAGES = ("not_recorded", "not_run", "passed", "ineligible", "no_anchor", "no_dim",
-                              "no_proof", "span", "continuity", "window_early", "window_late", "four_second", "recovery")
+                              "no_proof", "missing_pixels", "span", "continuity", "window_early", "window_late", "four_second", "recovery")
 APP_HANG_MODULES = frozenset(("immichSlides", "SwiftUI", "SwiftUICore", "UIKitCore", "UIKit", "AttributeGraph",
     "CoreFoundation", "Foundation", "QuartzCore", "CoreGraphics", "GraphicsServices", "dyld", "libdyld.dylib",
     "libswiftCore.dylib", "libswift_Concurrency.dylib", "libsystem_kernel.dylib", "libsystem_pthread.dylib",
@@ -57,7 +56,7 @@ def public_stack_symbol(value):
 def validate_continue_watch(value):
     def numeric(item, ceiling=MAX_DIAGNOSTIC_SECONDS):
         return type(item) in (int, float) and 0 <= item <= ceiling
-    required = {"total_frames", "truncated", "frames", "indices", "rescue", "wake"}
+    required = {"total_frames", "truncated", "frames", "indices", "wake"}
     optional = {"judge", "rescue_ran", "rescue_stage", "single_photo_mode_verified", "control_bar_wake_skipped"}
     valid = isinstance(value, dict) and required <= set(value) <= required | optional
     if valid:
@@ -66,7 +65,6 @@ def validate_continue_watch(value):
             and type(value["truncated"]) is bool and isinstance(frames, list)
             and len(frames) <= min(MAX_CONTINUE_WATCH_FRAMES, value["total_frames"])
             and value["truncated"] == (len(frames) < value["total_frames"])
-            and isinstance(value["rescue"], str) and value["rescue"] in CONTINUE_WATCH_RESCUES
             and isinstance(indices, dict) and set(indices) <= {"anchor", "dim", "proof"}
             and all(type(index) is int and 0 <= index < len(frames) for index in indices.values())
             and (wake is None or (isinstance(wake, list) and len(wake) == 2

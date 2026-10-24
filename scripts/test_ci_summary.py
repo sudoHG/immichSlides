@@ -1052,7 +1052,7 @@ class SummaryContractTests(unittest.TestCase):
                        [.3, .34, .35, "TRANSITION", "A1", .5, 240, .01, False],
                        [1.2, 1.26, 1.29, "MATCH", "A2", .4, 200, .01, False],
                        [1.3, 1.31, 1.32, "MATCH", "A1", .3, 253, .01, False]],
-            "indices": {}, "rescue": "not_recorded", "wake": None}
+            "indices": {}, "wake": None}
         for night in (old, summary):
             self.assertEqual(night, ci_summary.parse_summary(json.dumps(night)))
             scan_diagnostic_json(json.dumps(night).encode())
@@ -1061,10 +1061,6 @@ class SummaryContractTests(unittest.TestCase):
         self.assertIn("continue-watch: frames=5/5, median request interval=0.15s, dim MATCH=1, "
                       "judge=not_recorded, rescue=unknown/not_recorded",
                       ci_summary.render_markdown(summary))
-        legacy = copy.deepcopy(summary)
-        legacy["strict_case_evidence"][0]["bounded_diagnostics"]["case_resources"][0]["continue_watch"]["rescue"] = "rejected"
-        self.assertEqual(legacy, ci_summary.parse_summary(legacy))
-        self.assertNotIn("rescue=rejected", ci_summary.render_markdown(legacy))
         projection = resource["continue_watch"]
         projection.update(judge="early", rescue_ran=False, rescue_stage="not_run")
         self.assertIn("judge=early, rescue=not-run/not_run", ci_summary.render_markdown(summary))
@@ -1074,8 +1070,11 @@ class SummaryContractTests(unittest.TestCase):
             projection["frames"][3][4] = mark
             self.assertEqual(summary, ci_summary.parse_summary(summary))
         self.assertIn("judge=late, rescue=ran/span", ci_summary.render_markdown(summary))
+        projection["rescue_stage"] = "missing_pixels"
+        self.assertEqual(summary, ci_summary.parse_summary(summary))
+        self.assertIn("rescue=ran/missing_pixels", ci_summary.render_markdown(summary))
         for field, defect in (("total_frames", True),
-                ("truncated", "yes"), ("rescue", "/Users/private-name"), ("wake", [0, float("inf")]),
+                ("truncated", "yes"), ("rescue", "rejected"), ("wake", [0, float("inf")]),
                 ("indices", {"anchor": 5}), ("indices", {"private-name": 0}),
                 ("judge", "private-name"), ("rescue_stage", "https://private-host.local"),
                 ("rescue_ran", 1), ("single_photo_mode_verified", "private-name"),
