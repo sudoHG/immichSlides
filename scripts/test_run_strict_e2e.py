@@ -4075,6 +4075,15 @@ raise SystemExit(65)
         import ci_execution_diagnostics as diagnostics
         import strict_e2e_resource_diagnostics as resources
         from types import SimpleNamespace
+        def process_table(raw):
+            rows = []
+            for line in raw.splitlines():
+                fields = line.split(None, 3)
+                if len(fields) != 4:
+                    return raw
+                pid, parent, cpu, name = fields
+                rows.append(f'{pid} {parent} {cpu} {name[:16]} /private/private-device/{name}')
+            return '\n'.join(rows)
         rows = ('10 1 1 launchd_sim\n11 10 20 STExtractionService\n12 10 40 STExtractionService\n'
                 '13 10 12 diagnosticd\n14 10 500 immichSlides\n15 10 600 testmanagerd_sim\n'
                 '16 10 30 PRIVATE_SENTINEL\n20 1 1 launchd_sim\n21 20 900 diagnosticd\n'
@@ -4082,7 +4091,7 @@ raise SystemExit(65)
         snapshots = []
         with mock.patch.object(resources.sys, 'platform', 'darwin'), \
                 mock.patch.object(resources, 'app_on_device', side_effect=lambda pid, device: pid == 14), \
-                mock.patch.object(resources.subprocess, 'run', return_value=SimpleNamespace(returncode=0, stdout=rows)) as ps:
+                mock.patch.object(resources.subprocess, 'run', return_value=SimpleNamespace(returncode=0, stdout=process_table(rows))) as ps:
             resources.process_sample('private-device', .1, simulator_snapshots=snapshots)
             self.assertEqual(1, ps.call_count, 'projection must reuse the existing ps invocation')
         self.assertEqual({'STExtractionService': 60, 'diagnosticd': 12, 'photoanalysisd': 10, 'other': 31}, snapshots[0])
@@ -4090,14 +4099,14 @@ raise SystemExit(65)
                 'photoanalysisd', 'mediaanalysisd', 'fileindexerd', 'mobileassetd', 'nsurlsessiond', 'chronod',
                 'Spotlight', 'searchd', 'BackgroundShortcutRunner', 'MercuryPosterExtension',
                 'EmojiPosterExtension', 'GradientPosterExtension', 'UnknownWidget', 'diagnosticd-private',
-                '/private/diagnosticd', '12345678-1234-1234-1234-123456789012'):
+                '/private/PRIVATE_SENTINEL', '12345678-1234-1234-1234-123456789012'):
             snapshot = []
             with self.subTest(name=name), mock.patch.object(resources.sys, 'platform', 'darwin'), \
                     mock.patch.object(resources, 'app_on_device', return_value=True), \
                     mock.patch.object(resources.subprocess, 'run', return_value=SimpleNamespace(returncode=0,
-                        stdout=f'10 1 0 launchd_sim\n11 10 1 immichSlides\n12 10 7 {name}\n')):
+                        stdout=process_table(f'10 1 0 launchd_sim\n11 10 1 immichSlides\n12 10 7 {name}\n'))):
                 resources.process_sample('private-device', .1, simulator_snapshots=snapshot)
-            expected = 'other' if name in ('UnknownWidget', 'diagnosticd-private', '/private/diagnosticd',
+            expected = 'other' if name in ('UnknownWidget', 'diagnosticd-private', '/private/PRIVATE_SENTINEL',
                 '12345678-1234-1234-1234-123456789012') else name
             self.assertEqual({**{'other': 0}, expected: 7}, snapshot[0])
         recorder = diagnostics.Recorder()
@@ -4133,7 +4142,7 @@ raise SystemExit(65)
             missing = []
             with self.subTest(belongs=belongs), mock.patch.object(resources.sys, 'platform', 'darwin'), \
                     mock.patch.object(resources, 'app_on_device', return_value=belongs), \
-                    mock.patch.object(resources.subprocess, 'run', return_value=SimpleNamespace(returncode=0, stdout=raw)):
+                    mock.patch.object(resources.subprocess, 'run', return_value=SimpleNamespace(returncode=0, stdout=process_table(raw))):
                 resources.process_sample('private-device', .1, simulator_snapshots=missing)
             self.assertEqual([None], missing)
         sampler.simulator_snapshots = [None]

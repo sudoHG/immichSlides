@@ -186,6 +186,9 @@ participate in verdicts, yellow eligibility, retries, deadlines or scheduling.
 
 `simulator_processes` consumes the existing process snapshots and cadence, within
 the same 180-second job pool; it adds no child processes, threads or root query.
+The same `ps` call adds `comm` (executable path, never argv) because Darwin's
+existing `ucomm` accounting name truncates long basenames. Paths are reduced in
+memory to the enum above; existing category accounting still uses `ucomm`.
 The already device-verified App's `launchd_sim` ancestor identifies the assigned
 tree in that snapshot. A missing, inaccessible or ambiguous root makes that
 snapshot unavailable; it never falls back to other simulator trees. In particular,

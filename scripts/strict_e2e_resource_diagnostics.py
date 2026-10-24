@@ -428,14 +428,15 @@ def app_on_device(pid, device):
     return ("/Devices/" + device + "/") in path and Path(path).name == "immichSlides"
 
 
-def process_categories(raw, device, *, identify_app=None, app_processes=None, simulator_snapshots=None):
+def process_categories(raw, device, *, identify_app=None, app_processes=None, simulator_snapshots=None,
+                       executable_names=False):
     identify_app = app_on_device if identify_app is None else identify_app
     if len(raw.encode()) > MAX_PROCESS_TABLE_BYTES:
         return dict.fromkeys(RESOURCE_CATEGORIES)
     rows = {}
     for line in raw.splitlines():
-        parts = line.split(None, 3)
-        if len(parts) != 4 or len(rows) >= MAX_PROCESS_ROWS:
+        parts = line.split(None, 4 if executable_names else 3)
+        if len(parts) != (5 if executable_names else 4) or len(rows) >= MAX_PROCESS_ROWS:
             return dict.fromkeys(RESOURCE_CATEGORIES)
         try:
             pid, parent, cpu = int(parts[0]), int(parts[1]), float(parts[2])
@@ -443,12 +444,13 @@ def process_categories(raw, device, *, identify_app=None, app_processes=None, si
             return dict.fromkeys(RESOURCE_CATEGORIES)
         if pid <= 0 or parent < 0 or finite(cpu, MAX_PROCESS_CPU_PERCENT) is None or pid in rows:
             return dict.fromkeys(RESOURCE_CATEGORIES)
-        rows[pid] = (parent, cpu, parts[3].strip())
+        name = parts[3].strip()
+        rows[pid] = (parent, cpu, name, Path(parts[4]).name if executable_names else name)
     totals = dict.fromkeys(RESOURCE_CATEGORIES, 0.0)
     unknown_app = False
     found_app = False
     simulator_roots = set()
-    for pid, (parent, cpu, name) in rows.items():
+    for pid, (parent, cpu, name, _) in rows.items():
         category = "other"
         if name == "immichSlides":
             belongs = identify_app(pid, device)
@@ -472,7 +474,7 @@ def process_categories(raw, device, *, identify_app=None, app_processes=None, si
             seen, ancestor = set(), pid
             while ancestor in rows and ancestor not in seen:
                 seen.add(ancestor)
-                next_parent, _, ancestor_name = rows[ancestor]
+                next_parent, _, ancestor_name, _ = rows[ancestor]
                 if ancestor_name == "launchd_sim":
                     category = "simulator_daemons"
                     break
@@ -483,8 +485,8 @@ def process_categories(raw, device, *, identify_app=None, app_processes=None, si
     if simulator_snapshots is not None and len(simulator_roots) == 1:
         simulator_root = next(iter(simulator_roots))
         snapshot = {"other": 0.0}
-        for pid, (_, cpu, name) in rows.items():
-            if name == "immichSlides" or name == "xcodebuild" or name.startswith(("xctest", "testmanagerd", "immichSlidesUIT")):
+        for pid, (_, cpu, accounting_name, name) in rows.items():
+            if accounting_name == "immichSlides" or accounting_name == "xcodebuild" or accounting_name.startswith(("xctest", "testmanagerd", "immichSlidesUIT")):
                 continue
             seen, ancestor = set(), pid
             while ancestor in rows and ancestor not in seen and ancestor != simulator_root:
@@ -518,11 +520,14 @@ def process_sample(device, timeout, *, app_processes=None, simulator_snapshots=N
     snapshots = []
     if sys.platform == "darwin":
         try:
-            completed = subprocess.run(["/bin/ps", "-A", "-o", "pid=,ppid=,%cpu=,ucomm="],
+            # ucomm truncates long names on Darwin; comm supplies the executable path, never argv.
+            columns = "pid=,ppid=,%cpu=,ucomm=" + (",comm=" if simulator_snapshots is not None else "")
+            completed = subprocess.run(["/bin/ps", "-A", "-o", columns],
                 capture_output=True, text=True, check=False, timeout=timeout)
             if completed.returncode == 0:
                 categories = process_categories(completed.stdout, device, app_processes=app_processes,
-                    simulator_snapshots=snapshots if simulator_snapshots is not None else None)
+                    simulator_snapshots=snapshots if simulator_snapshots is not None else None,
+                    executable_names=simulator_snapshots is not None)
         except (OSError, ValueError, subprocess.SubprocessError):
             pass
     if simulator_snapshots is not None:
