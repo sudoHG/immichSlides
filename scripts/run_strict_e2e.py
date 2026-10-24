@@ -1349,6 +1349,11 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                         and event["sample"] is not None]
                     receipt["case_resources"] = [case for case in receipt.get("case_resources", [])
                                                   if case["sequence"] in sequences]
+                    from strict_e2e_resource_diagnostics import attach_continue_watch
+                    sampler = resource_samplers.get(bundle)
+                    if sampler is not None:
+                        attach_continue_watch(receipt, arguments.evidence_dir, platform=arguments.platform,
+                            suite=arguments.suite, result=case_manifest.get("result"), sequence=sampler.sequence)
                     case_manifest["bounded_diagnostics"] = receipt
                 if bundle == result_bundle_path:
                     case_manifest["official_tests_sha256"] = digest

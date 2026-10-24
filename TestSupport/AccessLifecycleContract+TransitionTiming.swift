@@ -1,6 +1,53 @@
 import Foundation
 
 extension AccessLifecycleContract {
+    // A sealed, passive sink: no executable callback, throwing method or decision returned to the judge.
+    final class TVOSPauseTimingObservation {
+        enum JudgeStep: String {
+            case notEvaluated = "not_evaluated"
+            case passed, early, late, other
+            case noTransitionStart = "no_transition_start"
+            case noStableNewPhoto = "no_stable_new_photo"
+            case fourSecond = "four_second"
+        }
+
+        enum RescueStage: String {
+            case notRun = "not_run"
+            case passed, ineligible, span, continuity, recovery
+            case noAnchor = "no_anchor"
+            case noDim = "no_dim"
+            case noProof = "no_proof"
+            case missingPixels = "missing_pixels"
+            case windowEarly = "window_early"
+            case windowLate = "window_late"
+            case fourSecond = "four_second"
+        }
+
+        fileprivate(set) var judgeStep: JudgeStep = .notEvaluated
+        fileprivate(set) var didRunRescue = false
+        fileprivate(set) var rescueStage: RescueStage = .notRun
+        fileprivate(set) var anchorIndex: Int?
+        fileprivate(set) var dimIndex: Int?
+        fileprivate(set) var proofIndex: Int?
+
+        var indices: [String: Int] {
+            var indices: [String: Int] = [:]
+            indices["anchor"] = anchorIndex
+            indices["dim"] = dimIndex
+            indices["proof"] = proofIndex
+            return indices
+        }
+
+        fileprivate func reset() {
+            judgeStep = .notEvaluated
+            didRunRescue = false
+            rescueStage = .notRun
+            anchorIndex = nil
+            dimIndex = nil
+            proofIndex = nil
+        }
+    }
+
     static func assertIPhonePauseTimingEvidence(
         continueMark: String,
         baselineLuma: Double?,
@@ -38,37 +85,45 @@ extension AccessLifecycleContract {
         baselineLuma: Double,
         samples: [ContinueWatchSample],
         intervalSeconds: TimeInterval,
-        rescuePolicy: TVOSFadeRescuePolicy? = nil
+        rescuePolicy: TVOSFadeRescuePolicy? = nil,
+        observation: TVOSPauseTimingObservation? = nil
     ) throws -> (start: ContinueWatchSample, stable: ContinueWatchSample, rescue: TVOSFadeRescue?) {
+        observation?.reset()
         do {
             do {
                 let original = try originalTVOSPauseTimingEvidence(
                     continueMark: continueMark, baselineLuma: baselineLuma, samples: samples,
-                    intervalSeconds: intervalSeconds)
+                    intervalSeconds: intervalSeconds, observation: observation)
                 return (original.start, original.stable, nil)
             } catch let AssertionError.automaticPhotoChangeLate(message) {
                 // Existing passes, early failures and four-second failures retain the original computation.
+                observation?.rescueStage = .ineligible
                 guard let rescuePolicy,
                     let stable = firstStableNewImage(continueMark: continueMark, samples: samples),
                     let rescue = tvosFadeRescue(
                         continueMark: continueMark, baselineLuma: baselineLuma, samples: samples,
-                        stable: stable, intervalSeconds: intervalSeconds, policy: rescuePolicy)
+                        stable: stable, intervalSeconds: intervalSeconds, policy: rescuePolicy, observation: observation
+                    )
                 else { throw AssertionError.automaticPhotoChangeLate(message) }
                 let earliest = intervalSeconds - continueCaptureSlackSeconds
                 let latest = intervalSeconds + continueCaptureSlackSeconds
                 if rescue.anchor.requestElapsed + timingToleranceSeconds < earliest {
+                    observation?.rescueStage = .windowEarly
                     try assertContinueAutoAdvanceInWindow(
                         continueMark: continueMark, laterMark: stable.mark,
                         elapsedSeconds: rescue.anchor.requestElapsed, intervalSeconds: intervalSeconds)
                 }
                 if rescue.proof.returnElapsed > latest + timingToleranceSeconds {
+                    observation?.rescueStage = .windowLate
                     try assertContinueAutoAdvanceInWindow(
                         continueMark: continueMark, laterMark: stable.mark,
                         elapsedSeconds: rescue.proof.returnElapsed, intervalSeconds: intervalSeconds)
                 }
+                observation?.rescueStage = .fourSecond
                 try assertStableImageWithinTransitionDeadline(
                     start: rescue.anchor, stable: stable,
                     failureMessage: "tvOS new photo must be stably identifiable within 4 s of transition start")
+                observation?.rescueStage = .passed
                 return (rescue.anchor, stable, rescue)
             }
         } catch let AssertionError.automaticPhotoChangeLate(message) {
@@ -77,7 +132,8 @@ extension AccessLifecycleContract {
     }
 
     private static func originalTVOSPauseTimingEvidence(
-        continueMark: String, baselineLuma: Double, samples: [ContinueWatchSample], intervalSeconds: TimeInterval
+        continueMark: String, baselineLuma: Double, samples: [ContinueWatchSample], intervalSeconds: TimeInterval,
+        observation: TVOSPauseTimingObservation?
     ) throws -> (start: ContinueWatchSample, stable: ContinueWatchSample) {
         guard intervalSeconds.isFinite, intervalSeconds > 0,
             baselineLuma.isFinite, baselineLuma > minimumBaselineLuminance,
@@ -90,16 +146,19 @@ extension AccessLifecycleContract {
                     && (index == 0 || sample.requestElapsed >= samples[index - 1].returnElapsed)
             })
         else {
+            observation?.judgeStep = .other
             throw AssertionError.message(
                 "tvOS pause-continue evidence is invalid; invalid timing or original photo brightness evidence"
             )
         }
+        observation?.judgeStep = .early
         try assertSamplesStayOnSceneBeforeAdvanceWindow(
             continueMark: continueMark,
             samples: samples.map { (elapsed: $0.requestElapsed, mark: $0.mark) },
             intervalSeconds: intervalSeconds
         )
         guard let stable = firstStableNewImage(continueMark: continueMark, samples: samples) else {
+            observation?.judgeStep = .noStableNewPhoto
             throw AssertionError.message(
                 "After about a full T, it must switch to the next scene; no stable new public photo was confirmed")
         }
@@ -123,24 +182,32 @@ extension AccessLifecycleContract {
             return hasSustainedDimming(from: index, continueMark: continueMark, threshold: threshold, samples: samples)
         }
         guard let startIndex else {
+            observation?.judgeStep = .noTransitionStart
             throw AssertionError.message("tvOS pause-continue evidence is invalid; no transition start was detected")
         }
         let start = samples[startIndex]
+        observation?.judgeStep =
+            start.requestElapsed > intervalSeconds + continueCaptureSlackSeconds
+            ? .late : (start.requestElapsed < intervalSeconds - continueCaptureSlackSeconds ? .early : .other)
         try assertContinueAutoAdvanceInWindow(
             continueMark: continueMark, laterMark: stable.mark,
             elapsedSeconds: start.requestElapsed, intervalSeconds: intervalSeconds
         )
+        observation?.judgeStep = .fourSecond
         try assertStableImageWithinTransitionDeadline(
             start: start, stable: stable,
             failureMessage: "tvOS new photo must be stably identifiable within 4 s of transition start"
         )
+        observation?.judgeStep = .passed
         return (start, stable)
     }
 
     private static func tvosFadeRescue(
         continueMark: String, baselineLuma: Double, samples: [ContinueWatchSample], stable: ContinueWatchSample,
-        intervalSeconds: TimeInterval, policy: TVOSFadeRescuePolicy
+        intervalSeconds: TimeInterval, policy: TVOSFadeRescuePolicy, observation: TVOSPauseTimingObservation?
     ) -> TVOSFadeRescue? {
+        observation?.didRunRescue = true
+        observation?.rescueStage = .ineligible
         guard policy.isSinglePhotoModeVerified, continueMark == policy.requiredMark,
             policy.plateauHighlightLuma == Int(UInt8.max),
             policy.minimumDimHighlightDrop > 0, policy.proofHighlightRatio > 0, policy.proofHighlightRatio < 1,
@@ -169,10 +236,14 @@ extension AccessLifecycleContract {
             dimIndex = nil
             ambiguousFrameCount = 0
         }
+        observation?.rescueStage = .noAnchor
         for index in samples.indices {
             let sample = samples[index]
             guard sample.requestElapsed <= stable.requestElapsed else { break }
             guard let photo = pixels(sample), let highlight = photo.highlightLuma else {
+                if anchorIndex != nil {
+                    observation?.rescueStage = .missingPixels
+                }
                 anchorIndex = nil
                 dimIndex = nil
                 continue
@@ -180,6 +251,9 @@ extension AccessLifecycleContract {
             if sample.status == "MATCH", sample.mark == continueMark,
                 highlight == policy.plateauHighlightLuma
             {
+                observation?.anchorIndex = index
+                observation?.dimIndex = nil
+                observation?.proofIndex = nil
                 // Every earlier same-state A1 frame must independently confirm the calibration maximum.
                 let prior = samples[...index].filter {
                     $0.status == "MATCH" && $0.mark == continueMark
@@ -190,8 +264,10 @@ extension AccessLifecycleContract {
                     let core = photo.whiteCoreFraction, core >= policy.minimumWhiteCoreFraction
                 {
                     anchorIndex = index
+                    observation?.rescueStage = .noDim
                 } else {
                     anchorIndex = nil
+                    observation?.rescueStage = .noAnchor
                 }
                 dimIndex = nil
                 ambiguousFrameCount = 0
@@ -201,6 +277,12 @@ extension AccessLifecycleContract {
             let anchor = samples[anchorIndex]
             let previous = samples[index - 1]
             let gap = sample.requestElapsed - previous.returnElapsed
+            observation?.rescueStage =
+                sample.requestElapsed - anchor.requestElapsed > policy.maximumAnchorToProofRequestSeconds
+                    + timingToleranceSeconds
+                    || sample.returnElapsed - anchor.requestElapsed > policy.maximumAnchorToProofReturnSeconds
+                        + timingToleranceSeconds
+                ? .span : .continuity
             guard sample.isControlBarVisible == anchor.isControlBarVisible,
                 gap >= 0, gap <= newStableMarkPollInterval + timingToleranceSeconds,
                 sample.requestElapsed - anchor.requestElapsed
@@ -213,6 +295,7 @@ extension AccessLifecycleContract {
                 continue
             }
             if dimIndex == nil {
+                observation?.rescueStage = .noDim
                 guard sample.status == "MATCH", sample.mark == continueMark,
                     sample.meanLuma <= previous.meanLuma
                 else {
@@ -224,6 +307,8 @@ extension AccessLifecycleContract {
                     sample.meanLuma < anchor.meanLuma - luminanceTolerance
                 {
                     dimIndex = index
+                    observation?.dimIndex = index
+                    observation?.rescueStage = .noProof
                 } else if drop > 0, drop < policy.minimumDimHighlightDrop, ambiguousFrameCount == 0 {
                     ambiguousFrameCount += 1
                 } else {
@@ -231,6 +316,7 @@ extension AccessLifecycleContract {
                 }
                 continue
             }
+            observation?.rescueStage = .noProof
             guard let dimIndex,
                 (sample.status == "MATCH" && sample.mark == continueMark)
                     || (sample.status == "UNRECOGNIZABLE" && sample.mark == "UNRECOGNIZABLE"),
@@ -243,6 +329,8 @@ extension AccessLifecycleContract {
             guard anchor.meanLuma - sample.meanLuma >= policy.minimumMeanDrop,
                 Double(highlight) < Double(policy.plateauHighlightLuma) * policy.proofHighlightRatio
             else { continue }
+            observation?.proofIndex = index
+            observation?.rescueStage = .recovery
             var didLoseOldIdentity = sample.status != "MATCH"
             var previousOldHighlight = highlight
             let recovered = samples.dropFirst(index + 1).prefix {
@@ -261,6 +349,7 @@ extension AccessLifecycleContract {
                     || laterHighlight > previousOldHighlight
             }
             if !recovered {
+                observation?.rescueStage = .passed
                 return TVOSFadeRescue(anchor: anchor, dim: samples[dimIndex], proof: sample)
             }
             discardCandidate()

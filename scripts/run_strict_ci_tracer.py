@@ -450,7 +450,8 @@ def main(argv=None):
         for phase in results:
             receipt = phase.get("bounded_diagnostics", {})
             if (identity_key(phase["identity"]) not in bound
-                    and any("app_hang_stack" in case for case in receipt.get("case_resources", []))):
+                    and any("app_hang_stack" in case or "continue_watch" in case
+                            for case in receipt.get("case_resources", []))):
                 summary.setdefault("strict_case_evidence", []).append({"identity": phase["identity"],
                     "bounded_diagnostics": receipt})
                 bound.add(identity_key(phase["identity"]))

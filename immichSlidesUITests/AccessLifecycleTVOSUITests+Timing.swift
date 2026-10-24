@@ -719,12 +719,17 @@ extension AccessLifecycleTVOSUITests {
         var baselineLuma: Double?
         var photoPixels: [AccessLifecycleContract.TVOSPhotoPixels?] = []
         var rescue: AccessLifecycleContract.TVOSFadeRescue?
+        let timingObservation = AccessLifecycleContract.TVOSPauseTimingObservation()
         defer {
             do {
                 try StrictE2EVisualEvidence.writeRequiredJSON(
                     [
                         "baseline_luma": baselineLuma.map { $0 as Any } ?? NSNull(),
                         "single_photo_mode_verified": isSinglePhotoModeVerified,
+                        "judge": timingObservation.judgeStep.rawValue,
+                        "rescue_ran": timingObservation.didRunRescue,
+                        "rescue_stage": timingObservation.rescueStage.rawValue,
+                        "rescue_indices": timingObservation.indices,
                         "rescue_interval": rescue.map {
                             ["lower": $0.anchor.requestElapsed, "upper": $0.proof.returnElapsed]
                         } as Any? ?? NSNull(),
@@ -829,7 +834,8 @@ extension AccessLifecycleTVOSUITests {
             }
             let evidence = try AccessLifecycleContract.assertTVOSPauseTimingEvidence(
                 continueMark: continueMark, baselineLuma: baselineLuma, samples: samples, intervalSeconds: interval,
-                rescuePolicy: TVOSContinuePhotoCapture.policy(isSinglePhoto: isSinglePhotoModeVerified)
+                rescuePolicy: TVOSContinuePhotoCapture.policy(isSinglePhoto: isSinglePhotoModeVerified),
+                observation: timingObservation
             )
             rescue = evidence.rescue
             if let rescue {
