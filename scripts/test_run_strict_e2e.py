@@ -344,6 +344,26 @@ from run_strict_e2e_test_p2_cases import StrictE2EP2RunnerTestsCases
 import run_strict_e2e as strict_runner
 
 class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
+    def test_runner_publishes_continue_watch_from_failed_case_evidence_only(self):
+        raw = {"frames": [{"request": 0, "captured": .1, "returned": .2, "photo_decoded_mean_luma": .6}],
+               "samples": [], "control_bar_wake": None}
+        for exit_code in (0, 65):
+            with self.subTest(exit_code=exit_code), tempfile.TemporaryDirectory() as directory:
+                evidence = Path(directory) / "evidence"
+                def write_watch(_environment, _number):
+                    (evidence / "continue-watch-diagnostic.json").write_text(json.dumps(raw))
+                code, _, stderr, _ = self._run_p2_main(evidence, suite="tvos-lifecycle-pause",
+                    platform="tvos", model="Apple TV 4K", xcodebuild_exit=exit_code,
+                    late_image_attempt=write_watch)
+                self.assertEqual(exit_code, code, stderr)
+                manifest = json.loads((evidence / "case-manifest.json").read_text())
+                resources = manifest["bounded_diagnostics"]["case_resources"]
+                self.assertEqual(1, len(resources))
+                self.assertEqual(exit_code == 65, "continue_watch" in resources[0])
+                if exit_code:
+                    self.assertEqual([[0, .1, .2, None, None, .6, None, None, None]],
+                                     resources[0]["continue_watch"]["frames"])
+
     def test_service_failure_exposes_private_startup_phase_for_either_server(self):
         import contextlib
         import strict_e2e_runner_support as support
@@ -2447,6 +2467,66 @@ class FailureDiagnosticsTests(unittest.TestCase):
 
 
 class StrictCITracerTests(unittest.TestCase):
+    def test_continue_watch_publication_is_failed_case_only_bounded_and_redacted(self):
+        from strict_e2e_resource_diagnostics import attach_continue_watch
+        from test_ci_summary import bounded_diagnostics_receipt
+        raw = {"frames": [{"request": i / 10, "captured": i / 10 + .02,
+            "returned": i / 10 + .04, "photo_q95": 251,
+            "photo_white_core_fraction": .123456789} for i in range(120)],
+            "samples": [{"request": i / 10, "returned": i / 10 + .04, "status": "MATCH",
+                "mark": "A1", "luma": .654321987, "controls": False,
+                "identity_notes": ["https://private-host.local/Users/private-name"]} for i in range(120)],
+            "control_bar_wake": {"issued": 8.1234567, "returned": 8.4},
+            "rescue_outcome": "rejected", "rescue_indices": {"anchor": 1, "dim": 2, "proof": 3},
+            "private": "00000000-1111-2222-3333-444444444444"}
+        with tempfile.TemporaryDirectory() as directory:
+            evidence = Path(directory)
+            path = evidence / "continue-watch-diagnostic.json"
+            path.write_text(json.dumps(raw))
+            for platform, suite, result, expected in (("tvos", "tvos-lifecycle-pause", "FAILED", True),
+                    ("ios", "tvos-lifecycle-pause", "FAILED", False),
+                    ("tvos", "tvos-lifecycle-control", "FAILED", False),
+                    ("tvos", "tvos-lifecycle-pause", "PASSED", False),
+                    ("tvos", "tvos-lifecycle-pause", "RUNNING", False)):
+                receipt = bounded_diagnostics_receipt(resources=True)
+                with self.subTest(platform=platform, suite=suite, result=result):
+                    attach_continue_watch(receipt, evidence, platform=platform, suite=suite, result=result, sequence=4)
+                    case = receipt["case_resources"][0]
+                    self.assertEqual(expected, "continue_watch" in case)
+                    if expected:
+                        projection = case["continue_watch"]
+                        encoded = json.dumps(projection, separators=(",", ":"))
+                        self.assertLessEqual(len(encoded.encode()), 8192)
+                        self.assertEqual(80, len(projection["frames"]))
+                        self.assertTrue(projection["truncated"])
+                        self.assertEqual(120, projection["total_frames"])
+                        self.assertEqual([0, .02, .04, "MATCH", "A1", .654, 251, .123, False], projection["frames"][0])
+                        self.assertEqual({"anchor": 1, "dim": 2, "proof": 3}, projection["indices"])
+                        self.assertEqual([8.123, 8.4], projection["wake"])
+                        self.assertEqual("rejected", projection["rescue"])
+                        self.assertNotIn("private", encoded)
+                        self.assertNotIn("00000000", encoded)
+            for field, defect in (("mark", "https://private-host.local"), ("status", "private-name"),
+                                  ("luma", float("nan")), ("controls", "private-name")):
+                changed = json.loads(json.dumps(raw))
+                changed["samples"][0][field] = defect
+                path.write_text(json.dumps(changed))
+                receipt = bounded_diagnostics_receipt(resources=True)
+                before = json.loads(json.dumps(receipt))
+                with self.subTest(field=field):
+                    attach_continue_watch(receipt, evidence, platform="tvos", suite="tvos-lifecycle-pause",
+                                          result="FAILED", sequence=4)
+                    self.assertEqual(before, receipt, "invalid projection must not erase other measurements")
+            for defect in (json.dumps(dict(raw, ignored="x" * (2 * 1024 * 1024))).encode(),
+                           b"{}", b"{", b'{"frames":[{}],"samples":[null]}'):
+                path.write_bytes(defect)
+                receipt = bounded_diagnostics_receipt(resources=True)
+                before = json.loads(json.dumps(receipt))
+                with self.subTest(defect_bytes=len(defect)):
+                    attach_continue_watch(receipt, evidence, platform="tvos", suite="tvos-lifecycle-pause",
+                                          result="FAILED", sequence=4)
+                    self.assertEqual(before, receipt)
+
     def test_submitted_boot_settles_during_cold_build_and_gates_every_warm_case(self):
         import ci_execution_diagnostics as diagnostics
         import run_strict_ci_tracer as tracer
@@ -4199,6 +4279,23 @@ raise SystemExit(65)
             for detail in ("smoke", "device=iphone", "fixture=b", "configuration=Debug",
                     "`SettingsViewIOS.body` ← `NavigationSplitView` ← `_UIHostingView.layoutSubviews` (4/20 samples)"):
                 self.assertIn(detail, hints[0])
+
+    def test_tracer_binds_continue_watch_to_failed_case_without_yellow_evidence(self):
+        from test_ci_summary import bounded_diagnostics_receipt
+        ledger = bounded_diagnostics_receipt(resources=True)
+        ledger["case_resources"][0]["continue_watch"] = {"total_frames": 1, "truncated": False,
+            "frames": [[0, .01, .02, "MATCH", "A1", .7, 255, .1, False]],
+            "indices": {}, "rescue": "not_evaluated", "wake": None}
+        with tempfile.TemporaryDirectory() as directory:
+            code, records, _, summary = self._produce_validator_records(Path(directory), None,
+                runner_exit=65, receipt_suite=None, bounded_diagnostics=ledger,
+                case=dict(platform="tvos", device="tv", configuration="Release", suite="tvos-lifecycle-pause",
+                          scenario="normal", fixture="a"))
+            self.assertNotEqual(0, code)
+            self.assertEqual("failed", summary["population"]["observed"][0]["outcome"])
+            self.assertNotIn("environment_limit", summary["population"]["observed"][0])
+            self.assertEqual(ledger, summary["strict_case_evidence"][0]["bounded_diagnostics"])
+            self.assertIn("continue-watch: frames=1/1", (records / "summary.md").read_text())
 
     def test_sampler_uses_fast_process_ticks_only_during_an_eligible_high_cpu_span(self):
         import ci_execution_diagnostics as diagnostics

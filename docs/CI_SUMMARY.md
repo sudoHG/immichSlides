@@ -351,11 +351,12 @@ inventing a path. An invalid producer stack is dropped independently, preserving
 the case's numeric measurements and `failure_samples`. Missing symbols or
 unsuccessful capture are diagnostic gaps only.
 
-After reader-first producer activation, the failed tvOS Continue watch projection is read from the case-owned
+The failed tvOS Continue watch projection is read from the case-owned
 `continue-watch-diagnostic.json` in the evidence directory after XCTest and the
 official exports finish. The raw file is never added to hosted artifacts.
 `frames` contains compact arrays in this order: request, captured, returned
-(seconds since Continue), status, public mark, mean luma (0–1), photo q95
+(seconds since Continue), status, public mark, mean luma (0–1, decoded photo mean
+when unclassified), photo q95
 (0–255), white-core fraction (0–1), controls visible. Only A1–A8 marks and the
 existing public identity statuses are accepted; missing classification or pixel
 measurements are null. Classification can stop before capture does. `total_frames`
@@ -369,7 +370,7 @@ of resource samples and hang stacks. Source reads are capped at 2 MiB, symlinks
 are refused, and no free text, notes, paths, URLs, device IDs or names are retained.
 The tracer preserves the case/receipt join independently of yellow eligibility.
 The case row adds `continue-watch: frames=N/total, median gap=…s, dim MATCH=k,
-rescue=…`; gap is the next request minus the prior return over retained frames,
+rescue=…`; gap is the next request minus the prior request over retained frames,
 and dim MATCH counts MATCH frames with photo q95 below 255. These are observations,
 not a replay of the rescue or timing judge. Historical nights without the field
 retain their original readability and verdicts.
@@ -813,7 +814,7 @@ The same sequence applies to `bounded_diagnostics.case_resources` and
 `first_failure.native_activity_seconds`: merge reader support before opening the
 producer activation PR. Historical records without either optional field remain valid.
 
-A scoped exception permits the optional App hang-stack projection and its reader
+A scoped exception permits the optional App hang-stack and Continue watch projections and their readers
 to ship together. The trusted base gate/UI publisher's supported producers in
 `ci_publish_git.py` do not consume strict-tracer or P2-review diagnostic artifacts;
 candidate tracer checks use their producer checkout's reader, nightly aggregation

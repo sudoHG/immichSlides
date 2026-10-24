@@ -22,6 +22,8 @@ from ci_bounded_diagnostics import (MAX_DIAGNOSTIC_SECONDS,
     MAX_LOAD_AVERAGE, MAX_PROCESS_CPU_PERCENT, MAX_RESOURCE_CASES, MAX_RESOURCE_SAMPLES,
     RESOURCE_CATEGORIES, validate_case_resources, APP_HANG_MODULES, MAX_APP_HANG_STACK_BYTES,
     MAX_INTEGER, public_stack_symbol, validate_app_hang_stack)
+from ci_bounded_diagnostics import (MAX_CONTINUE_WATCH_BYTES, MAX_CONTINUE_WATCH_FRAMES,
+                                    CONTINUE_WATCH_STATUSES, validate_continue_watch)
 from ci_execution_diagnostics import finite
 from ci_failure_diagnostics import NATIVE_ACTIVITY_FIELDS, public_first_failure
 
@@ -49,6 +51,65 @@ APP_HANG_MAX_GAP_SECONDS = 4.5
 APP_HANG_JOB_CAP = 3
 APP_HANG_TIMEOUT_SECONDS = 3
 MAX_RAW_SAMPLE_BYTES = 2 * 1024 * 1024
+
+
+def attach_continue_watch(receipt, evidence_dir, *, platform, suite, result, sequence):
+    """Read only the failed case's numeric evidence; never publish its raw JSON or notes."""
+    if platform != "tvos" or suite != "tvos-lifecycle-pause" or result != "FAILED":
+        return
+    try:
+        cases = [case for case in receipt.get("case_resources", []) if case["sequence"] == sequence]
+        if len(cases) != 1:
+            return
+        path = evidence_dir / "continue-watch-diagnostic.json"
+        if path.is_symlink():
+            return
+        with path.open("rb") as source:
+            encoded = source.read(MAX_RAW_SAMPLE_BYTES + 1)
+        if len(encoded) > MAX_RAW_SAMPLE_BYTES:
+            return
+        raw = json.loads(encoded)
+        frames, samples = raw["frames"], raw["samples"]
+        if not isinstance(frames, list) or not isinstance(samples, list):
+            return
+        def rounded(value):
+            if value is None:
+                return None
+            if type(value) not in (int, float) or not math.isfinite(value):
+                raise ValueError("invalid numeric measurement")
+            return round(value, 3)
+        rows = []
+        for index, frame in enumerate(frames[:MAX_CONTINUE_WATCH_FRAMES]):
+            # Classification stops at the first stable image; later captured frames remain unclassified.
+            sample = samples[index] if index < len(samples) else {}
+            if not isinstance(frame, dict) or not isinstance(sample, dict):
+                return
+            if sample and (sample["request"] != frame["request"] or sample["returned"] != frame["returned"]):
+                return
+            mark = sample.get("mark")
+            if mark in CONTINUE_WATCH_STATUSES:
+                mark = None
+            rows.append([*(rounded(frame[key]) for key in ("request", "captured", "returned")),
+                sample.get("status"), mark, rounded(sample.get("luma", frame.get("photo_decoded_mean_luma"))),
+                rounded(frame.get("photo_q95")),
+                rounded(frame.get("photo_white_core_fraction")), sample.get("controls")])
+        wake = raw.get("control_bar_wake")
+        projection = {"total_frames": len(frames), "truncated": len(rows) < len(frames), "frames": rows,
+            "indices": raw.get("rescue_indices", {}), "rescue": raw.get("rescue_outcome", "not_recorded"),
+            "wake": [rounded(wake[key]) for key in ("issued", "returned")] if wake is not None else None}
+        # Validate before trimming so malformed optional metadata is never laundered by the cap.
+        indices = projection["indices"]
+        if not isinstance(indices, dict) or set(indices) - {"anchor", "dim", "proof"} or any(
+                type(index) is not int or not 0 <= index < len(frames) for index in indices.values()):
+            return
+        while len(json.dumps(projection, separators=(",", ":")).encode()) > MAX_CONTINUE_WATCH_BYTES and rows:
+            rows.pop()
+        projection["truncated"] = len(rows) < len(frames)
+        projection["indices"] = {key: index for key, index in indices.items() if index < len(rows)}
+        validate_continue_watch(projection)
+        cases[0]["continue_watch"] = projection
+    except (OSError, ValueError, TypeError, KeyError, OverflowError):
+        pass  # Optional malformed evidence cannot discard the other diagnostics or alter the case verdict.
 
 
 def reduce_main_thread_sample(raw):

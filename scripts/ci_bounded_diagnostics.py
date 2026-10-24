@@ -86,8 +86,8 @@ def validate_continue_watch(value):
 
 def render_continue_watch(value):
     frames = value["frames"]
-    gaps = [right[0] - left[2] for left, right in zip(frames, frames[1:])]
-    gap = f"{statistics.median(gaps):g}s" if gaps else "unavailable"
+    gaps = [right[0] - left[0] for left, right in zip(frames, frames[1:])]
+    gap = f"{round(statistics.median(gaps), 3):g}s" if gaps else "unavailable"
     dim = sum(frame[3] == "MATCH" and frame[6] is not None and frame[6] < 255 for frame in frames)
     return (f"continue-watch: frames={len(frames)}/{value['total_frames']}, median gap={gap}, "
             f"dim MATCH={dim}, rescue={value['rescue']}")

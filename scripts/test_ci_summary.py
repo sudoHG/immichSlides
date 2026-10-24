@@ -1055,7 +1055,7 @@ class SummaryContractTests(unittest.TestCase):
             scan_diagnostic_json(json.dumps(night).encode())
             self.assertEqual("failed", night["status"])
         self.assertNotIn("continue-watch:", ci_summary.render_markdown(old))
-        self.assertIn("continue-watch: frames=2/2, median gap=0.08s, dim MATCH=1, rescue=not_recorded",
+        self.assertIn("continue-watch: frames=2/2, median gap=0.1s, dim MATCH=1, rescue=not_recorded",
                       ci_summary.render_markdown(summary))
         for field, defect in (("frames", [[0] * 9] * 81), ("total_frames", True),
                 ("truncated", "yes"), ("rescue", "/Users/private-name"), ("wake", [0, float("inf")]),
