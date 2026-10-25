@@ -323,7 +323,10 @@ struct IOSDriver: PlaybackDriver {
         action.deductedTapSeconds.append(contentsOf: action.timing.tapDurationsSeconds)
         let outcomeDeadline = deadline.addingTimeInterval(action.deductedTapSeconds.reduce(.zero, +))
         let opened = Wait.until(timeout: max(.zero, outcomeDeadline.timeIntervalSinceNow)) {
-            guard Date() < outcomeDeadline else { return false }
+            guard Date() < outcomeDeadline,
+                dismissPlaybackPasswordPrompt(until: outcomeDeadline, isAwaitingSettingsOutcome: true),
+                Date() < outcomeDeadline
+            else { return false }
             let verifyStartedAt = Date()
             defer { action.timing.verifySeconds += Date().timeIntervalSince(verifyStartedAt) }
             let observation = action.observe(app: app, identifier: "slideshow.control.settings.button")
@@ -459,6 +462,16 @@ struct IOSDriver: PlaybackDriver {
         }
     }
 
+    private func dismissPlaybackPasswordPrompt(
+        until deadline: Date, isAwaitingSettingsOutcome: Bool = false
+    ) -> Bool {
+        IOSFirstBootNavigation(app: app).dismissPasswordPrompt(until: deadline) {
+            print(
+                "IOSDriver password prompt: declineReturned=true; awaitingSettingsOutcome=\(isAwaitingSettingsOutcome); returnedAt=\(ProcessInfo.processInfo.systemUptime)"
+            )
+        }
+    }
+
     private func prepareControl(
         _ identifier: String, until originalDeadline: Date, action: inout ControlAction,
         shouldDismissPasswordPrompt: Bool = false, alsoRequiring additionalIdentifiers: [String] = [],
@@ -469,7 +482,7 @@ struct IOSDriver: PlaybackDriver {
         defer { FirstFailureContext.endWait() }
         while Date() < deadline {
             if shouldDismissPasswordPrompt {
-                guard IOSFirstBootNavigation(app: app).dismissPasswordPrompt(until: deadline), Date() < deadline else {
+                guard dismissPlaybackPasswordPrompt(until: deadline), Date() < deadline else {
                     return nil
                 }
             }

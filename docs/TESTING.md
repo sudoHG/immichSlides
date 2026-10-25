@@ -385,6 +385,23 @@ and outcome changes from `d` to `d+W+C`:
 | Strict Filter album: `prepareAlbumCapturePlayback` via `applyPlaybackSettings` | `t0+23` | `t0+23+W` / `t0+23+W+C` | Album interval confirmation starts after Settings returns and keeps its own deadline. |
 | AccessLifecycle: `openSettingsFromSlideshow` with permitted PIN entry | Caller deadline `d=t0+15` | `d+W` / `d+W+C` | Settings readback/configuration precedes lifecycle timing; PIN handling remains explicit. |
 
+Settings preparation and outcome observation share `IOSDriver.dismissPlaybackPasswordPrompt`,
+which delegates to the exact first-boot prompt observer and decline action described above.
+The system credential prompt can arrive during the native Settings tap, after preparation
+has already proved the control actionable. Every outcome poll therefore checks and declines
+that exact prompt before reading Settings or the explicitly permitted PIN entry. The helper
+logs each returned decline with its system uptime and whether the Settings outcome is pending;
+the existing prompt log separately confirms disappearance. A decline is never a Settings
+success, and a Settings tap intercepted by the prompt is never resent.
+
+For every caller in the table, the adjusted preparation and outcome deadlines are identical
+before and after this late-prompt handling: `d+W` and `d+W+C`. Prompt queries, live checks,
+polling, Not Now tap time and disappearance confirmation consume the remaining allowance;
+none adds a deduction or restarts a wait. A native decline can return after the deadline,
+but neither that return nor a later successor snapshot can pass. Other mode-navigation and
+standalone prompt callers keep their existing budgets. The preparation wrapper adds only
+the returned-decline log; Pause, Next and reveal-only callers retain their existing behavior.
+
 The outcome field becomes true only after the wait accepts an observation within its window.
 Verify time includes its snapshot time; no extra diagnostic snapshot runs after
 timeout. Playback History Settings uses the explicit bounded refresh, without

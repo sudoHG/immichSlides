@@ -1288,6 +1288,32 @@ change. Restarted waits retain only their non-tap remainder, never a fresh full
 allowance. The coordinator accepted both availability-wait paths under Hogan's
 pure-availability-wait policy, as with #593, #596 and #607.
 
+Late Save Password handling during IOSDriver Settings outcome observation uses the same
+absolute deadline and the existing exact-prompt decline action. All query, reveal and Settings
+tap receipt marks stay at their existing call sites. Only a real Not Now tap marks
+`save-password-prompt` at its observed identifier (or `unknown`); its returned action timing
+replaces the prior action timing exactly as it does in first-boot handling. A subsequent
+Settings snapshot uses the existing `query-element` mark. No receipt field, prefix,
+allowlist or policy version changes. See the [per-caller budgets](TESTING.md#3-assertions).
+
+This handling has two conditional eligibility changes in every retained policy v1/v2/v3/v4:
+
+- A `settings_navigation/navigation` failure formerly hidden by the prompt with surface
+  `unknown` stays red until a real decline and disappearance expose recognizable playback.
+  If Settings is still absent and the original positive outcome wait fully expires at
+  `query-element` on `slideshow.control.settings.button`, it can now be yellow-eligible,
+  subject to every existing hosted-scope, surface, scene and starvation requirement.
+- A failure that previously retained an allowlisted Settings `query-element` or `select`
+  with playback evidence can instead stop at the actual `save-password-prompt` mark when
+  disappearance is unconfirmed at the deadline. That mark is not allowlisted for Settings
+  in any retained policy, so this direction removes eligibility. The mode-only v4 entries
+  do not apply to Settings or to an observed decline identifier.
+
+Both directions retain the raw failed verdict. Settings preparation failures, opaque or
+unrecognizable surfaces, BLACK/BLANK scenes, and unrelated callers gain no eligibility.
+Declining a prompt is not proof that the original Settings tap navigated successfully;
+that tap is never retried, and the original successor assertion still decides the result.
+
 Accepted residual risk: Settings and rotation deductions include XCTest's pre-
 and post-event waits for the App to idle and can absorb about 60 seconds of App
 non-idleness per tap when readiness later succeeds. This does not establish
