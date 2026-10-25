@@ -1768,7 +1768,8 @@ class FailureDiagnosticsTests(unittest.TestCase):
                 elif prefix == "Must be paused after the midpoint.":
                     assertion_source = (root / source).read_text()
                     self.assertIn('message: "' + prefix, assertion_source)
-                    self.assertRegex(assertion_source, r'XCTAssertTrue\(\s*waitForPlayPauseState\([^\n]+\), message\)')
+                    self.assertRegex(assertion_source,
+                        r'XCTAssertTrue\(\s*waitForPlayPauseState\([^\n]+\), message,\s*file: file, line: line\)')
                     message_start = assertion_source.index('waitForPlayPauseState(app: app, expected: expected')
                 elif (source, prefix, phase, kind) in capture_cases or "AccessLifecycle" in source:
                     assertion_source = (root / source).read_text()
