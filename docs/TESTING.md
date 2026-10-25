@@ -391,16 +391,27 @@ The system credential prompt can arrive during the native Settings tap, after pr
 has already proved the control actionable. Every outcome poll therefore checks and declines
 that exact prompt before reading Settings or the explicitly permitted PIN entry. The helper
 logs each returned decline with its system uptime and whether the Settings outcome is pending;
-the existing prompt log separately confirms disappearance. A decline is never a Settings
-success, and a Settings tap intercepted by the prompt is never resent.
+the existing prompt log separately confirms disappearance. A decline is never a Settings success.
+If the prompt swallowed the original Settings tap, exactly one recovery send is permitted only
+after a real post-tap decline, confirmed disappearance, no Settings or permitted PIN outcome,
+and a newly captured recognizable public playback photo. Recovery then prepares a fresh,
+live-hittable Settings control with no Settings navigation or PIN evidence. Without that proof,
+or after one recovery preparation attempt, no recovery send is permitted. A prompt handled
+before the original Settings tap does not authorize recovery. Diagnostics retain the post-tap
+decline count, disappearance, recovery attempt/issue, public playback mark and second-tap duration.
 
 For every caller in the table, the adjusted preparation and outcome deadlines are identical
-before and after this late-prompt handling: `d+W` and `d+W+C`. Prompt queries, live checks,
-polling, Not Now tap time and disappearance confirmation consume the remaining allowance;
-none adds a deduction or restarts a wait. A native decline can return after the deadline,
-but neither that return nor a later successor snapshot can pass. Other mode-navigation and
-standalone prompt callers keep their existing budgets. The preparation wrapper adds only
-the returned-decline log; Pause, Next and reveal-only callers retain their existing behavior.
+before and after this late-prompt handling: `d+W` and `D=d+W+C`, where `W` and `C` belong
+only to the original preparation and Settings tap. Prompt queries, live checks, polling,
+Not Now tap time, disappearance confirmation, playback proof capture/classification, the
+recovery wake and the second Settings tap all consume the remaining constant `D`; none adds
+a deduction or restarts a wait. Recovery preparation suppresses its nested receipt wait so
+the outer outcome clock remains active, while every other `prepareControl` caller retains
+the original wait recording. Recovery gets at most one fresh preparation wake. A native tap
+can return after the deadline, but neither that return nor a later successor snapshot can pass.
+Other mode-navigation and standalone prompt callers keep their existing budgets. The initial
+preparation wrapper adds only the returned-decline log; Pause, Next and reveal-only callers
+retain their existing behavior. Outcome verification timing includes the recovery work.
 
 The outcome field becomes true only after the wait accepts an observation within its window.
 Verify time includes its snapshot time; no extra diagnostic snapshot runs after

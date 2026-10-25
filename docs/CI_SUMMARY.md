@@ -1290,13 +1290,20 @@ pure-availability-wait policy, as with #593, #596 and #607.
 
 Late Save Password handling during IOSDriver Settings outcome observation uses the same
 absolute deadline and the existing exact-prompt decline action. All query, reveal and Settings
-tap receipt marks stay at their existing call sites. Only a real Not Now tap marks
+tap receipt marks stay at their existing call sites. A real Not Now tap marks
 `save-password-prompt` at its observed identifier (or `unknown`); its returned action timing
 replaces the prior action timing exactly as it does in first-boot handling. A subsequent
 Settings snapshot uses the existing `query-element` mark. No receipt field, prefix,
 allowlist or policy version changes. See the [per-caller budgets](TESTING.md#3-assertions).
 
-This handling has two conditional eligibility changes in every retained policy v1/v2/v3/v4:
+After a proven post-tap decline and disappearance, Settings can be sent once more only
+with a fresh recognizable public playback frame, no Settings or permitted PIN outcome,
+and fresh control readiness. Recovery uses the same existing query/reveal/select marks;
+its playback proof uses the existing `capture-frame` mark. The original constant outcome
+deadline includes all recovery work, including the second tap; recovery preparation does
+not replace that wait's receipt clock. A pre-tap decline never authorizes recovery.
+
+This handling has these conditional eligibility changes in every retained policy v1/v2/v3/v4:
 
 - A `settings_navigation/navigation` failure formerly hidden by the prompt with surface
   `unknown` stays red until a real decline and disappearance expose recognizable playback.
@@ -1308,11 +1315,17 @@ This handling has two conditional eligibility changes in every retained policy v
   disappearance is unconfirmed at the deadline. That mark is not allowlisted for Settings
   in any retained policy, so this direction removes eligibility. The mode-only v4 entries
   do not apply to Settings or to an observed decline identifier.
+- Recovery can also stop at `capture-frame` / `app-window` while proving playback, or at
+  `reveal-controls` on the Settings button if its wake consumes the remaining deadline.
+  Neither is allowlisted for `settings_navigation/navigation`, so a previously eligible
+  Settings query/select wait becomes red. A recovery preparation or post-send observation
+  that instead expires at the existing Settings query/select mark can be eligible only
+  with real recognizable playback and all the same hosted/deadline/starvation proofs.
 
 Both directions retain the raw failed verdict. Settings preparation failures, opaque or
 unrecognizable surfaces, BLACK/BLANK scenes, and unrelated callers gain no eligibility.
-Declining a prompt is not proof that the original Settings tap navigated successfully;
-that tap is never retried, and the original successor assertion still decides the result.
+Declining a prompt or issuing recovery is not proof of successful navigation. No second
+recovery is permitted, and the original successor assertion still decides the result.
 
 Accepted residual risk: Settings and rotation deductions include XCTest's pre-
 and post-event waits for the App to idle and can absorb about 60 seconds of App
