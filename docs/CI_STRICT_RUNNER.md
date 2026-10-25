@@ -714,6 +714,26 @@ pending responses. Onboarding requests are served normally before arming.
 The frozen manifest's legacy delay metadata stays
 unchanged for hash compatibility and no longer schedules responses.
 
+While a hold is active, another asset's preview/fullsize response waits until
+the real monotonic clock has crossed the held request's start millisecond before
+sending its bytes. A faster response can otherwise finish in that same logged
+millisecond, leaving the unchanged strict timeline unable to prove start-before-completion.
+The server polls that absolute clock boundary in one-millisecond intervals;
+it never increments a timestamp or treats equal timestamps as ordered. Host
+scheduling can delay a wake beyond one interval. Thumbnails, unarmed/released
+generations and other scenarios keep their existing response paths.
+
+| Caller or response | Before | After |
+| --- | --- | --- |
+| iOS `late-image` | Existing control/readiness budgets; 1.5-second settling window from confirmed delivery return | Same clocks and budgets; no deduction for the fixture wait |
+| tvOS `late-image` | Existing control/readiness budgets; 2.5-second settling window from confirmed delivery return | Same clocks and budgets; no deduction for the fixture wait |
+| Held preview/fullsize response | Explicit release; existing 15-second App timeout and 90-second fixture cap | Unchanged |
+| Other preview/fullsize response during an active hold | Immediate send | Send after the actual held-start millisecond has elapsed |
+| Thumbnails, other scenarios, unarmed/released generations and non-image routes | Existing response behavior | Unchanged |
+
+The request-order validator, fixture image bytes, manifest hashes, retries,
+failure classifications and environment/yellow eligibility are unchanged.
+
 Both platform tests pause playback before Next, verify two committed history
 advances and a complete stable rendered scene with fallible snapshot probes,
 then capture `ooo-current-scene`. They explicitly release the hold, poll for

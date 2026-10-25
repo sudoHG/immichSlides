@@ -18,6 +18,7 @@ import zlib
 from contextlib import redirect_stderr, redirect_stdout
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 
@@ -768,6 +769,43 @@ class StrictE2EServerContractTests(unittest.TestCase):
             ],
         )
         self.assertLess(events[2][2], events[3][2])
+
+    def test_out_of_order_response_proves_strict_start_order_within_one_clock_tick(self) -> None:
+        for size, newer_request_clock in (
+            ("preview", 0.0), ("fullsize", 0.0), ("preview", 0.001), ("fullsize", 0.001)
+        ):
+            with self.subTest(size=size, newer_request_clock=newer_request_clock):
+                clock = [0.0]
+                fixture_time = SimpleNamespace(
+                    monotonic=lambda: clock[0], sleep=lambda seconds: clock.__setitem__(0, clock[0] + seconds)
+                )
+                logs = io.StringIO()
+                with mock.patch.object(strict_e2e_server, "time", fixture_time):
+                    with RunningServer(scenario="out-of-order", log_stream=logs) as server:
+                        server.request("/test/late-image", method="POST", body={"action": "arm"})
+                        with ThreadPoolExecutor(max_workers=1) as executor:
+                            old_request = executor.submit(
+                                server.request, f"/assets/asset-a-4/thumbnail?size={size}", timeout=10
+                            )
+                            try:
+                                wait_for_request_started(logs, asset_id="asset-a-4", size=size)
+                                clock[0] = newer_request_clock
+                                new_status, _, _ = server.request(f"/assets/asset-a-2/thumbnail?size={size}")
+                                self.assertEqual(new_status, 200)
+                                self.assertFalse(old_request.done(), "The newer response must arrive before release.")
+                            finally:
+                                clock[0] += 0.01
+                                server.request("/test/late-image", method="POST", body={"action": "release"})
+                                old_request.result(timeout=10)
+                events = logged_request_events(logs.getvalue(), size=size)
+                old_start = next(elapsed for kind, asset, elapsed in events if kind == "started" and asset == "asset-a-4")
+                new_completion = next(
+                    elapsed for kind, asset, elapsed in events if kind == "completed" and asset == "asset-a-2"
+                )
+                self.assertLess(
+                    old_start, new_completion,
+                    "The public timeline must prove that the held request starts strictly before the newer response.",
+                )
 
     def test_late_image_hold_expiry_stays_failed_in_its_generation(self) -> None:
         log_stream = io.StringIO()
