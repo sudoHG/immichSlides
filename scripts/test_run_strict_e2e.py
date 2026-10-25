@@ -600,8 +600,8 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                 self.assertEqual(0, code, stderr)
                 self.assertEqual(submitted, calls["prepare"].call_args.kwargs.get("boot_submitted", False))
                 calls["prepare"].assert_called_once()
-                    self.assertEqual([mock.call(P2_UDID, platform="ios", boot_submitted=True)] * resets,
-                                     calls["reset"].call_args_list)
+                self.assertEqual([mock.call(P2_UDID, platform="ios", boot_submitted=True)] * resets,
+                                 calls["reset"].call_args_list)
 
     def test_strict_retry_configures_independent_spools_and_disables_a_failed_reconfiguration(self):
         from ci_failure_diagnostics import configure_first_failure_attempt
