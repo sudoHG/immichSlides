@@ -1495,6 +1495,16 @@ class FailureDiagnosticsTests(unittest.TestCase):
             ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "iPhone pause-continue evidence is invalid;", "continue_timing", "evidence_capture"),
             ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "tvOS new photo must be stably identifiable within 4 s of transition start", "continue_timing", "scene_identity"),
             ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "iPhone new photo must be stably identifiable within 4 s of transition start", "continue_timing", "scene_identity"),
+            ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "iPad pause-continue lacks valid timing or original photo brightness evidence", "continue_timing", "evidence_capture"),
+            ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "iPad pause-continue is missing verifiable old-photo and transition samples", "continue_timing", "evidence_capture"),
+            ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "iPad pause-continue samples contain invalid timing or brightness", "continue_timing", "evidence_capture"),
+            ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "iPad pause-continue samples are out of order or have a gap", "continue_timing", "evidence_capture"),
+            ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "iPad pause-continue: no transition start via sustained dimming or new photo", "continue_timing", "scene_identity"),
+            ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "A continuous, reliable screenshot of the previous photo must precede the iPad transition start;", "continue_timing", "evidence_capture"),
+            ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "iPad transition: conservative screenshot range must lie fully within T±2 s", "continue_timing", "timing_window"),
+            ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "iPad must keep identifying a different new photo for at least 1 second", "continue_timing", "scene_identity"),
+            ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "iPad new photo must be stably identifiable within 4 s of transition start", "continue_timing", "scene_identity"),
+            ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "Record until a new photo is identifiable, not until the T+2 identity timeout", "continue_timing", "evidence_capture"),
             ("TestSupport/AccessLifecycleContract.swift", "All black must not count as a pass", "unknown", "scene_identity"),
             ("TestSupport/AccessLifecycleContract.swift", "Blank must not count as a pass", "unknown", "scene_identity"),
             ("TestSupport/AccessLifecycleContract.swift", "Unrecognizable input must not count as a pass", "unknown", "scene_identity"),
@@ -1824,6 +1834,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
             'failed: caught error: "Fixture image response control timed out"',
             'failed: caught error: "message(\\"' + "Can\\'t check EXIF: photo status PRIVATE_SENTINEL" + '\\")"',
             'failed: caught error: "message(\\"' + "Do not use click return time to hide the action\\'s elapsed time" + '\\")"',
+            'failed - message("Missing settings evidence")',
         ):
             with self.subTest(message=message):
                 self.assertEqual(classify_messages([message]), unknown_diagnostics())
@@ -2157,6 +2168,47 @@ class FailureDiagnosticsTests(unittest.TestCase):
                 "message": {"_value": "private warning text"}}]}}}
         self.assertEqual(legacy_diagnostics(payload), {"Flow/testFailure": {
             "failure_phase": "interval_setup", "failure_class": "interval_readback"}})
+
+    def test_ios_pause_throw_sites_have_reviewed_message_prefixes(self):
+        from ci_failure_diagnostics import PREFIX_RULES
+        root = Path(__file__).resolve().parent.parent
+        scopes = {
+            "immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift": None,
+            "immichSlidesUITests/AccessLifecycleIOSUITests+Settings.swift": {"setIntervalFromUI"},
+            "TestSupport/AccessLifecycleContract.swift": {"assertIdentitySource", "assertNoForcedDisplayMode", "assertPresentMark"},
+            "TestSupport/AccessLifecycleContract+Controls.swift": {
+                "assertProgressProbeNotUsed", "assertPauseUsesVisibleIdentity", "assertPausedHoldWithoutAdvance",
+                "assertHoldSampleUnchanged", "assertIOSIntervalReachedRequested", "assertPlayPauseNotRetappedBecauseMissing",
+                "assertConfirmPlayPauseWakesCanvasBeforeWait", "assertContinueClockStartsAtPress",
+            },
+            "TestSupport/AccessLifecycleContract+TransitionTiming.swift": {
+                "assertContinueEarlyStillSameScene", "assertSamplesStayOnSceneBeforeAdvanceWindow",
+                "assertClickTimesRecordedSeparately", "assertWindowUsesRequestElapsed", "assertIPadPauseTimingEvidence",
+                "assertIdentifiableNewImagePresent", "assertRecordingDidNotStopAtIdentityTimeout",
+                "assertIPhonePauseTimingEvidence",
+            },
+        }
+        count = 0
+        for path, owners in scopes.items():
+            source = (root / path).read_text()
+            for match in re.finditer(r'throw (?:AccessLifecycleContract\.)?AssertionError\.message\(\s*"([^"\n]*)"', source):
+                owner = list(re.finditer(r'\bfunc\s+(\w+)\s*\(', source[:match.start()]))[-1].group(1)
+                if owners is not None and owner not in owners:
+                    continue
+                # Strict callers always use the issued origin and didUseReturnedAsOrigin=false.
+                if owner == "assertClickTimesRecordedSeparately" and match.group(1) == "Do not use click return time to hide the action's elapsed time":
+                    continue
+                # The preceding invalid-interval assertion throws before this fallback can execute.
+                if owner == "setIntervalFromUI" and match.group(1) == "Missing settings evidence":
+                    continue
+                count += 1
+                with self.subTest(path=path, owner=owner, message=match.group(1)):
+                    self.assertTrue(any(match.group(1).startswith(prefix) for prefix, _, _ in PREFIX_RULES),
+                                    "thrown lifecycle failure has no reviewed reader prefix")
+        self.assertGreater(count, 0)
+        # This helper throws its caller's message rather than a literal at the throw site.
+        timing = (root / "TestSupport/AccessLifecycleContract+TransitionTiming.swift").read_text()
+        self.assertIn('failureMessage: "iPad new photo must be stably identifiable within 4 s of transition start"', timing)
 
     def test_reviewed_prefixes_map_private_values_and_unmatched_messages_stay_unknown(self):
         from ci_failure_diagnostics import classify_messages, PREFIX_RULES, unknown_diagnostics
