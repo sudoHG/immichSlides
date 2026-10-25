@@ -182,19 +182,27 @@ locations omit the field. Summaries render `failed at path:line` beside the full
 case identity; multiple locations do not establish the first failure. Readers
 drop only an invalid `failure_locations` projection and retain the enclosing
 case resources, outcome and environment-limit proof. Old nights need no field.
-Evidence redaction scans remain strict: validation runs on a copy, and any dropped
-projection makes the scan fail rather than permitting the original evidence bytes.
+Evidence redaction scans remain strict: `bounded_diagnostics` and
+`environment_limit` envelopes are validated on a copy, and any dropped projection
+makes the scan fail rather than permitting the original evidence bytes.
 
 These are XCTest's recorded issue locations, which do not always identify the
 underlying failing condition. A helper without `file`/`line` forwarding records
 its own assertion body. The iOS lifecycle stable-capture helpers and connection
 alert helper forward default `#filePath`/`#line` through their wrappers to `XCTFail`,
-so those issues identify the caller supplied to the helper. With the pinned
+so those issues identify the caller supplied to the helper. `IOSDriver.openSettings`
+forwards to its internal `XCTFail` and `XCTAssertTrue`; the lifecycle
+`openSettingsFromSlideshow`, `readFourSettingsFromRealUI` and
+`configureTimingPlaybackSettings` wrappers pass that coordinate through.
+`confirmPlayPauseState` forwards to its state-readback assertion. With the pinned
 Xcode 27.0 toolchain, a controlled direct
 `throw AccessLifecycleContract.AssertionError.message(...)` inside the iOS
 lifecycle test recorded the throw statement itself, alongside two distinct
 forwarded helper caller locations. This does not establish attribution for
-errors thrown through other wrappers. The error message never supplies a location.
+errors thrown through other wrappers. The lifecycle tests use
+`FirstFailureEvidence.preservingThrownFailure`, which rethrows the original error:
+a recorded location such as `UITestSupport.swift:25` may identify that rethrow
+wrapper instead of the original throw statement. The error message never supplies a location.
 
 Each failure sample has exactly `elapsed_seconds` (0–86,400), `idle_percent`
 (0–100 or null), `load_1m` (0–10^6 or null), and `cpu_percent`. The latter has

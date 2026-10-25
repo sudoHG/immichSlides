@@ -29,7 +29,7 @@ from ci_bounded_diagnostics import SIMULATOR_PROCESS_NAMES, validate_simulator_p
 from ci_bounded_diagnostics import PAUSE_WINDOW_ASSERTION_PREFIXES
 from ci_bounded_diagnostics import MAX_FAILURE_LOCATIONS, public_failure_locations
 from ci_execution_diagnostics import finite
-from ci_failure_diagnostics import NATIVE_ACTIVITY_FIELDS, public_first_failure
+from ci_failure_diagnostics import NATIVE_ACTIVITY_FIELDS, public_first_failure, legacy_failure_summaries
 
 SAMPLE_INTERVAL_SECONDS = 2
 PROCESS_SAMPLE_INTERVAL_SECONDS = 10
@@ -147,8 +147,6 @@ def attach_failure_locations(root, failed_nodes, *, recorder, sequence, repo_roo
             prefixes = {root_path + "/"}
             if root_path.startswith("/private/"):
                 prefixes.add(root_path.removeprefix("/private") + "/")
-            elif root_path.startswith("/var/"):
-                prefixes.add("/private" + root_path + "/")
             # Reject foreign roots before filesystem resolution, including automounted paths.
             if not any(path.startswith(prefix) for prefix in prefixes):
                 return None
@@ -159,7 +157,6 @@ def attach_failure_locations(root, failed_nodes, *, recorder, sequence, repo_roo
                 line = int(line) + 1  # Legacy document fragments are zero-based.
             projection = [{"path": path, "line": line}]
             return projection[0] if public_failure_locations(projection) is not None else None
-        from ci_failure_diagnostics import legacy_failure_summaries
         for row in legacy_failure_summaries(root):
             name = scalar(row.get("testCaseName"))
             if not isinstance(name, str) or name.removesuffix("()").replace(".", "/") not in names:

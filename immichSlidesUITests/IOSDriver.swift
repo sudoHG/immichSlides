@@ -299,7 +299,10 @@ struct IOSDriver: PlaybackDriver {
     }
 
     @discardableResult
-    func openSettings(until originalDeadline: Date? = nil, shouldAllowPINEntry: Bool = false) -> Bool {
+    func openSettings(
+        until originalDeadline: Date? = nil, shouldAllowPINEntry: Bool = false,
+        file: StaticString = #filePath, line: UInt = #line
+    ) -> Bool {
         // A first-boot credential sheet can arrive after mode departure; share the old 15 + 8 = 23 s budget.
         let deadline =
             originalDeadline
@@ -313,7 +316,7 @@ struct IOSDriver: PlaybackDriver {
                 "slideshow.control.settings.button", until: deadline, action: &action, shouldDismissPasswordPrompt: true
             )
         else {
-            XCTFail("Playback page must provide the settings entry. (\(action.diagnostic))")
+            XCTFail("Playback page must provide the settings entry. (\(action.diagnostic))", file: file, line: line)
             return false
         }
         activateControl(before, action: &action)
@@ -326,7 +329,8 @@ struct IOSDriver: PlaybackDriver {
             let hasPINEntry = shouldAllowPINEntry && observation?.snapshots["pinEntry.close.button"] != nil
             return (action.timing.hasSettingsOutcome || hasPINEntry) && Date() < deadline
         }
-        XCTAssertTrue(opened, "Tapping settings must open the settings page. (\(action.diagnostic))")
+        XCTAssertTrue(
+            opened, "Tapping settings must open the settings page. (\(action.diagnostic))", file: file, line: line)
         print("IOSDriver Settings: successorObserved=\(opened), \(action.diagnostic)")
         return opened
     }

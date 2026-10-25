@@ -1368,7 +1368,7 @@ def scan_diagnostic_json(data):
             value[key] = child
         bounded_seen |= BOUNDED_DIAGNOSTICS_FIELD in value
         first_failure_seen |= FIRST_FAILURE_FIELD in value or ENVIRONMENT_LIMIT_FIELD in value
-        checked = deepcopy(value)
+        checked = deepcopy(value) if BOUNDED_DIAGNOSTICS_FIELD in value or ENVIRONMENT_LIMIT_FIELD in value else value
         validate_diagnostic_fields(checked)
         if checked != value:
             raise ValueError("failure locations: invalid projection")
