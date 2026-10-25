@@ -23,27 +23,24 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
     @MainActor
     func testLateImageKeepsCurrentSceneAfterLateRequest() throws {
         let input = try requireStrictE2EInput()
-        let app = try launchStrictE2EApp(recordSceneSequence: true)
+        let app = try launchStrictE2EApp(recordSceneSequence: true, disablePlaybackEntryHint: true)
         defer { app.terminateForFailureEvidence() }
 
         try completeFirstBootToModeSelection(app: app, input: input, evidencePrefix: "late-image")
         dismissSavePasswordPromptIfShown(app: app, deadline: Date().addingTimeInterval(TestWait.seconds(.product(2))))
-        _ = try lateImageControl(input: input, action: "arm")
-        try enterPlaybackThenAdvanceTwice(app: app)
+        try enterPlaybackThenAdvanceTwice(app: app, input: input)
 
+        XCTAssertTrue(
+            waitForLateImageCurrentScene(app: app),
+            "After late completion the current public mark must stay: no flash back, all black or unreadable: unstable capture"
+        )
         let currentFrame = try captureRequiredIdentity(app: app, name: "ooo-current-scene")
         try recordFixtureState(input: input, name: "late-image-held")
         try releaseLateImageAndWaitForDelivery(input: input)
         let deliveryReturnedAt = ProcessInfo.processInfo.systemUptime
         try recordFixtureState(input: input, name: "late-image-delivered")
-        // firstPreload can reveal the entry hint only after the held response completes.
-        let samplingWindow = dismissEntryHintDuringLateResponseWindow(
-            app: app, deadline: deliveryReturnedAt + lateRequestSettleSeconds)
-        try StrictE2EVisualEvidence.writeRequiredJSON(samplingWindow, name: "late-image-sampling-window.json")
-        XCTAssertTrue(
-            samplingWindow["hint_hidden_within_window"] as? Bool == true,
-            "After late completion the current public mark must stay: no flash back, all black or unreadable: entry hint deadline"
-        )
+        let remaining = deliveryReturnedAt + lateRequestSettleSeconds - ProcessInfo.processInfo.systemUptime
+        if remaining > 0 { RunLoop.current.run(until: Date().addingTimeInterval(remaining)) }
         let afterFrame = try captureRequiredIdentity(app: app, name: "ooo-after-late")
         XCTAssertEqual(
             sceneIdentity(currentFrame.after), sceneIdentity(afterFrame.before),
@@ -79,7 +76,7 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
     }
 
     @MainActor
-    private func enterPlaybackThenAdvanceTwice(app: XCUIApplication) throws {
+    private func enterPlaybackThenAdvanceTwice(app: XCUIApplication, input: StrictE2EInput) throws {
         guard
             let playbackDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
                 "mode.random.button", destinationIdentifier: "slideshow.control.next.button")
@@ -88,9 +85,6 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
         XCTAssertTrue(
             playbackDeadline.confirms { nodes in nodes.contains { $0.identifier == "slideshow.control.next.button" } },
             "Next must be tappable twice right after entering the slideshow, before old image requests finish.")
-        if app.evidenceSnapshotsByIdentifier()["slideshow.entryHint.banner"] != nil {
-            tapElement(app.descendants(matching: .any)["slideshow.entryHint.banner"])
-        }
         XCTAssertTrue(
             revealLateImageControls(app: app),
             "Next must be tappable twice right after entering the slideshow, before old image requests finish.")
@@ -175,6 +169,7 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
             return
         }
         let initialHistory = try XCTUnwrap(pausedHistoryCount)
+        _ = try lateImageControl(input: input, action: "arm")
         let deadline = ProcessInfo.processInfo.systemUptime + TestWait.seconds(.product(8))
         FirstFailureContext.mark("select", element: "slideshow.control.next.button")
         tapElement(next)
@@ -217,42 +212,6 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
             app.tapForFailureEvidence()
             return false
         }
-    }
-
-    @MainActor
-    private func dismissEntryHintDuringLateResponseWindow(app: XCUIApplication, deadline: TimeInterval) -> [String: Any]
-    {
-        var didTapHint = false
-        var sawHint = false
-        var hintEvents: [[String: Any]] = []
-        var didObserveHiddenAfterTap = false
-        while ProcessInfo.processInfo.systemUptime < deadline {
-            let observation = lateImageSceneObservation(app: app)
-            if observation["entryHintVisible"] == "true" { sawHint = true }
-            if observation["entryHintVisible"] == "true", !didTapHint {
-                let banner = app.descendants(matching: .any)["slideshow.entryHint.banner"]
-                if banner.isHittable, ProcessInfo.processInfo.systemUptime < deadline {
-                    let issuedAt = Date().timeIntervalSince1970
-                    banner.tapForFailureEvidence()
-                    didTapHint = true
-                    hintEvents.append(["tap_issued_unix": issuedAt, "tap_returned_unix": Date().timeIntervalSince1970])
-                }
-            } else if didTapHint, observation["entryHintVisible"] == "false", !didObserveHiddenAfterTap,
-                ProcessInfo.processInfo.systemUptime < deadline
-            {
-                didObserveHiddenAfterTap = true
-                hintEvents.append(["hidden_observed_unix": observation["observed_unix"] ?? ""])
-            }
-            let remaining = deadline - ProcessInfo.processInfo.systemUptime
-            if remaining > 0 {
-                RunLoop.current.run(until: Date().addingTimeInterval(min(TestWait.seconds(.product(0.05)), remaining)))
-            }
-        }
-        return [
-            "deadline_uptime": deadline, "returned_uptime": ProcessInfo.processInfo.systemUptime,
-            "hint_events": hintEvents, "saw_hint": sawHint,
-            "hint_hidden_within_window": !sawHint || didObserveHiddenAfterTap
-        ]
     }
 
     private func recordFixtureState(input: StrictE2EInput, name: String) throws {

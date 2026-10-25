@@ -334,7 +334,7 @@ as the stable history anchor. The single Pause, four-second pause readback,
 history-count precondition and capture-time pixel/manifest proof remain unchanged.
 
 `UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE=1` enables the Debug manifest probes.
-Probe-only launches are `album-empty`, `filter-person`, `journey-b`, `tvos-flow`, `tvos-person`, `late-image`, `ios-lifecycle-first-wake`,
+Probe-only launches are `album-empty`, `filter-person`, `journey-b`, `tvos-flow`, `tvos-person`, `ios-lifecycle-first-wake`,
 and `AccessLifecycleIOSUITests.prepareLaunch`, including its cold relaunches and
 `run_access_lifecycle_ios.py`'s `testAccessProtectionSettingsAndLifecycle`.
 Only iOS `album-empty` sets the real playback interval to 30 seconds through `IOSDriver`
@@ -736,17 +736,24 @@ generations and other scenarios keep their existing response paths.
 The request-order validator, fixture image bytes, manifest hashes, retries,
 failure classifications and environment/yellow eligibility are unchanged.
 
-Both platform tests pause playback before Next, verify two committed history
-advances and a complete stable rendered scene with fallible snapshot probes,
-then capture `ooo-current-scene`. They explicitly release the hold, poll for
+Both platform tests enter playback and pause before arming, then arm immediately
+before the first Next. They verify two committed history advances and a complete
+stable rendered scene with fallible snapshot probes. Before the single judged
+`ooo-current-scene` capture, a 60-second hang guard waits for two identical PNG
+observations with recognizable public identity and the same paused, stable scene
+references across both observations. This preparation does not retry either
+judged capture or the flow; a readiness timeout fails. They explicitly release the hold, poll for
 zero pending responses and at least one successful socket write/flush with no
 disconnects, retain the existing 1.5-second iOS / 2.5-second tvOS settling window,
 and capture `ooo-after-late`. Delivery means the fixture finished writing the
 response; it does not claim that the app displayed or decoded the image. Before
 writing a held response, a non-blocking socket peek rejects an already-closed
 peer, including an empty read, and records a disconnect instead of delivery.
-The UI polls retain fixed product budgets. The read-only scene probe is the
-only added app launch key; no private XCTest quiescence API is used.
+The UI polls retain fixed product budgets. Both late-image tests add the read-only
+scene probe and the existing Debug `UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT=1` launch
+key. The entry hint is unrelated to the superseded-response proof; the iOS test
+does not spend its post-delivery window dismissing it. No private XCTest
+quiescence API is used.
 
 Each hold records its generation, `hold_started_elapsed_ms` and
 `released_elapsed_ms`. Its effective duration must be less than 15,000 ms:

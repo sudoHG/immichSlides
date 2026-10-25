@@ -66,6 +66,50 @@ extension XCTestCase {
     }
 
     @MainActor
+    func waitForLateImageCurrentScene(app: XCUIApplication) -> Bool {
+        // The model can settle before the compositor. Readiness is separate from the one judged capture.
+        let deadline = ProcessInfo.processInfo.systemUptime + 60
+        FirstFailureContext.beginWait(seconds: 60)
+        defer { FirstFailureContext.endWait() }
+        var previousPNG: Data?
+        var previousReferences: [String]?
+        while ProcessInfo.processInfo.systemUptime < deadline {
+            let before = strictSceneFrameObservation(app: app)
+            let png = app.screenshotForFailureEvidence().pngRepresentation
+            let after = strictSceneFrameObservation(app: app)
+            let beforeRender = SharedSceneEvidenceManifest.parseKeyValueFields(before["render"] ?? "")
+            let afterRender = SharedSceneEvidenceManifest.parseKeyValueFields(after["render"] ?? "")
+            let beforeManifest = SharedSceneEvidenceManifest.parseKeyValueFields(before["manifest"] ?? "")
+            let afterManifest = SharedSceneEvidenceManifest.parseKeyValueFields(after["manifest"] ?? "")
+            let references = [
+                beforeRender["layerIDs"] ?? "", beforeRender["historyCount"] ?? "",
+                beforeManifest["ledgerSceneAssets"] ?? "", beforeManifest["scenePublishTimestamp"] ?? ""
+            ]
+            let afterReferences = [
+                afterRender["layerIDs"] ?? "", afterRender["historyCount"] ?? "",
+                afterManifest["ledgerSceneAssets"] ?? "", afterManifest["scenePublishTimestamp"] ?? ""
+            ]
+            if [before, after].allSatisfy(StrictE2ESceneCapture.isStableWindow),
+                beforeRender["playbackPaused"] == "true", afterRender["playbackPaused"] == "true",
+                references.allSatisfy({ !$0.isEmpty }), references == afterReferences,
+                StrictE2EPhotoIdentity.captureIdentity(png: png).status == .match
+            {
+                if previousReferences == references, previousPNG == png { return true }
+                previousReferences = references
+                previousPNG = png
+            } else {
+                previousReferences = nil
+                previousPNG = nil
+            }
+            let remaining = deadline - ProcessInfo.processInfo.systemUptime
+            if remaining > 0 {
+                RunLoop.current.run(until: Date().addingTimeInterval(min(0.1, remaining)))
+            }
+        }
+        return false
+    }
+
+    @MainActor
     func waitForLateImageScene(app: XCUIApplication, historyCount: Int, deadline: TimeInterval) -> Bool {
         FirstFailureContext.beginWait(seconds: max(.zero, deadline - ProcessInfo.processInfo.systemUptime))
         defer {

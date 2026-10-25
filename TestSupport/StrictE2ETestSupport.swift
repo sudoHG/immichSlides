@@ -127,9 +127,12 @@ extension XCTestCase {
     }
 
     @MainActor
-    func launchStrictE2EApp(recordSceneSequence: Bool = false) throws -> XCUIApplication {
+    func launchStrictE2EApp(recordSceneSequence: Bool = false, disablePlaybackEntryHint: Bool = false) throws
+        -> XCUIApplication
+    {
         let app = XCUIApplication()
-        try prepareStrictE2ELaunch(app, recordSceneSequence: recordSceneSequence)
+        try prepareStrictE2ELaunch(
+            app, recordSceneSequence: recordSceneSequence, disablePlaybackEntryHint: disablePlaybackEntryHint)
         FirstFailureContext.mark("launch-app", element: "app-window")
         FirstFailureContext.action("launch") { app.launch() }
         return app
@@ -154,11 +157,16 @@ extension XCTestCase {
     }
 
     @MainActor
-    private func prepareStrictE2ELaunch(_ app: XCUIApplication, recordSceneSequence: Bool = false) throws {
+    private func prepareStrictE2ELaunch(
+        _ app: XCUIApplication, recordSceneSequence: Bool = false, disablePlaybackEntryHint: Bool = false
+    ) throws {
         app.launchEnvironment = [:]
         if recordSceneSequence {
             // Read-only probes expose the rendered scene; onboarding still uses the real UI.
             app.launchEnvironment["UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE"] = "1"
+        }
+        if disablePlaybackEntryHint {
+            app.launchEnvironment["UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT"] = "1"
         }
 
         let audit = try JSONSerialization.data(

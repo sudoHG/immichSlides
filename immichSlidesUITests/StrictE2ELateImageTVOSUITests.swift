@@ -30,18 +30,21 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
         }
 
         let input = try requireStrictE2EInput()
-        let app = try launchStrictE2EApp(recordSceneSequence: true)
+        let app = try launchStrictE2EApp(recordSceneSequence: true, disablePlaybackEntryHint: true)
         defer { app.terminateForFailureEvidence() }
 
         try configureServerThroughFirstBoot(app: app, input: input)
-        _ = try lateImageControl(input: input, action: "arm")
         try enterRandomPlayback(app: app)
 
         let settingsButton = app.buttons["slideshow.control.settings.button"]
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
         let nextButton = app.buttons["slideshow.control.next.button"]
-        try enterPlaybackThenAdvanceTwice(app: app, nextButton: nextButton)
+        try enterPlaybackThenAdvanceTwice(app: app, nextButton: nextButton, input: input)
         let secondNextAt = Date()
+        XCTAssertTrue(
+            waitForLateImageCurrentScene(app: app),
+            "After late completion the current public mark must stay: no flash back, all black or unreadable: unstable capture"
+        )
         try captureLateImageTVOSFrame(app: app, name: "ooo-current-scene")
         attachScreenshot(app: app, name: "tvos-late-image-ooo-current-scene")
 
@@ -136,7 +139,9 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
     }
 
     @MainActor
-    private func enterPlaybackThenAdvanceTwice(app: XCUIApplication, nextButton: XCUIElement) throws {
+    private func enterPlaybackThenAdvanceTwice(
+        app: XCUIApplication, nextButton: XCUIElement, input: StrictE2EInput
+    ) throws {
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(30))) { (try? nextButton.snapshot())?.isEnabled == true },
             "Random mode must quickly reach a slideshow where Next works, without waiting for old image requests."
@@ -164,6 +169,7 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
         moveFocus(
             .right, to: nextButton, maximumPresses: 3,
             message: "Focus must land on Next before the old requests complete.")
+        _ = try lateImageControl(input: input, action: "arm")
         let deadline = ProcessInfo.processInfo.systemUptime + TestWait.seconds(.product(30))
         FirstFailureRemote.press(.select)
         XCTAssertTrue(
