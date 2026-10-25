@@ -776,7 +776,10 @@ extension AccessLifecycleTVOSUITests {
                 let request = Date().timeIntervalSince(continueAt)
                 let screenshot = XCUIScreen.main.screenshotForFailureEvidence()
                 let captured = Date().timeIntervalSince(continueAt)
-                let shouldReadControlBar = controlBarWake == nil && isControlBarWakeSkipped == false
+                let shouldReadControlBar =
+                    controlBarWake == nil && isControlBarWakeSkipped == false
+                    && (!hasObservedVisibleControls
+                        || captured >= interval - AccessLifecycleContract.continueCaptureSlackSeconds)
                 var visible: Bool?
                 if shouldReadControlBar {
                     let probeRequest = Date().timeIntervalSince(continueAt)

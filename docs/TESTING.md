@@ -677,8 +677,10 @@ applies to iPad, whose own stable-photo requirement is one second. The shared
 predicate vetoes that recovery, including iPad's two-dim-frame flicker case.
 The tvOS Continue collector captures full-resolution screenshots from
 `XCUIScreen.main` without an application lookup. It retains dense capture through
-the original absolute deadline and classifies photo identity afterwards. Before
-reading each full PNG, a local adapter crops the calibrated Settings rectangle
+the original absolute deadline and classifies photo identity afterwards. A local
+adapter first confirms visible controls, then probes only from T−2 until the
+single wake or its deadline; it does not tax every earlier capture. Before
+reading those full PNGs, it crops the calibrated Settings rectangle
 from that screenshot's CGImage and feeds the lossless crop to the unchanged
 control-bar reader. Calibration uses the same rectangle and reader thresholds.
 The current crop result is consumed immediately; it cannot wait behind the next
