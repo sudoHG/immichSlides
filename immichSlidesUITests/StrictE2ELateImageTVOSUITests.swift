@@ -39,7 +39,12 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
         let settingsButton = app.buttons["slideshow.control.settings.button"]
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
         let nextButton = app.buttons["slideshow.control.next.button"]
-        try enterPlaybackThenAdvanceTwice(app: app, nextButton: nextButton, input: input)
+        try enterPlaybackThenAdvanceTwice(app: app, nextButton: nextButton)
+        try preparePausedColdLaunch(app: app)
+        _ = try lateImageControl(input: input, action: "arm")
+        FirstFailureContext.mark("launch-app", element: "app-window")
+        FirstFailureContext.action("launch") { app.launch() }
+        try enterPlaybackThenAdvanceTwice(app: app, nextButton: nextButton, isColdRelaunch: true)
         let secondNextAt = Date()
         XCTAssertTrue(
             waitForLateImageCurrentScene(app: app),
@@ -140,7 +145,7 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
 
     @MainActor
     private func enterPlaybackThenAdvanceTwice(
-        app: XCUIApplication, nextButton: XCUIElement, input: StrictE2EInput
+        app: XCUIApplication, nextButton: XCUIElement, isColdRelaunch: Bool = false
     ) throws {
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(30))) { (try? nextButton.snapshot())?.isEnabled == true },
@@ -153,7 +158,13 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
             message: "Before advancing, Play/Pause must be focusable.")
         let render = SharedSceneEvidenceManifest.parseKeyValueFields(
             strictSceneFrameObservation(app: app)["render"] ?? "")
-        if render["playbackPaused"] != "true" { FirstFailureRemote.press(.select) }
+        if isColdRelaunch {
+            XCTAssertEqual(
+                render["playbackPaused"], "true",
+                "Random mode must quickly reach a slideshow where Next works, without waiting for old image requests.")
+        } else if render["playbackPaused"] != "true" {
+            FirstFailureRemote.press(.select)
+        }
         var pausedHistoryCount: Int?
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(4))) {
@@ -169,7 +180,6 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
         moveFocus(
             .right, to: nextButton, maximumPresses: 3,
             message: "Focus must land on Next before the old requests complete.")
-        _ = try lateImageControl(input: input, action: "arm")
         let deadline = ProcessInfo.processInfo.systemUptime + TestWait.seconds(.product(30))
         FirstFailureRemote.press(.select)
         XCTAssertTrue(
@@ -183,6 +193,38 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
         XCTAssertTrue(
             waitForLateImageScene(app: app, historyCount: initialHistory + 2, deadline: deadline),
             "Random mode must quickly reach a slideshow where Next works, without waiting for old image requests.")
+    }
+
+    @MainActor
+    private func preparePausedColdLaunch(app: XCUIApplication) throws {
+        ensureControlBarVisible(app: app)
+        moveFocus(
+            .left, to: app.buttons["slideshow.control.settings.button"], maximumPresses: 3,
+            message: "Before advancing, Play/Pause must be focusable.")
+        FirstFailureRemote.press(.select)
+        let playback = app.buttons["settings.item.playback"]
+        XCTAssertTrue(
+            playback.waitForPublicElement("settings.item.playback", timeout: TestWait.seconds(.product(5))),
+            "Before advancing, Play/Pause must be focusable.")
+        moveFocus(.up, to: playback, maximumPresses: 4, message: "Before advancing, Play/Pause must be focusable.")
+        FirstFailureRemote.press(.select)
+        let autoPlay = app.buttons["settings.playback.autoPlay.link"]
+        XCTAssertTrue(
+            autoPlay.waitForPublicElement("settings.playback.autoPlay.link", timeout: TestWait.seconds(.product(5))),
+            "Before advancing, Play/Pause must be focusable.")
+        moveFocus(.up, to: autoPlay, maximumPresses: 4, message: "Before advancing, Play/Pause must be focusable.")
+        FirstFailureRemote.press(.select)
+        let off = app.buttons["settings.playback.autoPlay.off.button"]
+        XCTAssertTrue(
+            off.waitForPublicElement("settings.playback.autoPlay.off.button", timeout: TestWait.seconds(.product(5))),
+            "Before advancing, Play/Pause must be focusable.")
+        moveFocus(.down, to: off, maximumPresses: 2, message: "Before advancing, Play/Pause must be focusable.")
+        FirstFailureRemote.press(.select)
+        let driver = TVDriver(app: app)
+        driver.returnToPlayback()
+        try driver.clearDiskCache(onCachePage: {})
+        // A cold process plus the real cache clear prevents prefetched photos from satisfying the race.
+        app.terminateForFailureEvidence()
     }
 
     @MainActor

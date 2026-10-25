@@ -736,8 +736,12 @@ generations and other scenarios keep their existing response paths.
 The request-order validator, fixture image bytes, manifest hashes, retries,
 failure classifications and environment/yellow eligibility are unchanged.
 
-Both platform tests enter playback and pause before arming, then arm immediately
-before the first Next. They verify two committed history advances and a complete
+Both platform tests finish an unarmed preparation through the normal first-boot
+and playback UI, disable Autoplay in Settings, clear the disk cache through its
+confirmation alert, and terminate the app. They then arm immediately before a
+configured cold launch into paused playback. Clearing disk and process memory
+prevents pre-arm prefetched photos from satisfying the current-scene race.
+They verify two committed history advances and a complete
 stable rendered scene with fallible snapshot probes. Before the single judged
 `ooo-current-scene` capture, a 60-second hang guard waits for two identical PNG
 observations with recognizable public identity and the same paused, stable scene
