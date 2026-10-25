@@ -677,10 +677,16 @@ applies to iPad, whose own stable-photo requirement is one second. The shared
 predicate vetoes that recovery, including iPad's two-dim-frame flicker case.
 The tvOS Continue collector captures full-resolution screenshots from
 `XCUIScreen.main` without an application lookup. It retains dense capture through
-the original absolute deadline and classifies photo identity afterwards. A serial
-background probe reads the calibrated Settings pixels, with at most one pending
-decode; the capture loop only submits PNG data and reads a locked observation.
-It never waits for decoding between captures, including across T−2. After observing
+the original absolute deadline and classifies photo identity afterwards. Before
+reading each full PNG, a local adapter crops the calibrated Settings rectangle
+from that screenshot's CGImage and feeds the lossless crop to the unchanged
+control-bar reader. Calibration uses the same rectangle and reader thresholds.
+The current crop result is consumed immediately; it cannot wait behind the next
+full screenshot as the former asynchronous PNG probe did. Offline classification
+still uses the original full PNG. The diagnostic records each crop probe's frame
+index, visibility, request and return for comparison with the original reader's
+sample and for measurement of the capture-path cost. A missing crop result cannot
+prove auto-hide. After observing
 visible controls followed by auto-hide, it sends at most one Up, only when its
 request falls in [T−2, T−0.8], to restore the original visible control state. A
 request before T−2 fails a test-timing precondition and stays red; after T−0.8,
@@ -689,8 +695,9 @@ main's hidden-state comparison: hidden-state frames are compared with the
 visible-state baseline, so the effect direction depends on the unmeasured
 luminance difference between those states. It can delay or lose the onset
 (a loosening direction for the four-second rule) or reject a bright anchor (a
-false failure). Skips are not rare: Up requests have landed 135–325 ms before
-T−0.8. Only the lower bound is guarded; if the App's auto-hide moved later, the
+false failure). A screenshot or crop read that returns after T−0.8 still skips
+the wake; eliminating the extra asynchronous frame does not guarantee a timely
+observation on every host. Only the lower bound is guarded; if the App's auto-hide moved later, the
 hide could fall inside the fade and every run would skip the wake silently.
 The `skipped` flag is also set when the deadline passes without any observed
 auto-hide, so it does not distinguish "too late" from "not needed". This depends on the App's `PlaybackViewMetrics.controlBarAutoHideDelaySeconds`
