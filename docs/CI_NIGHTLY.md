@@ -528,6 +528,23 @@ The coordinator accepts the same risk as for Next, without a new cap or threshol
 The mode observation log and failure detail retain each deducted duration and
 their total, including Continue; see [the caller formulas](TESTING.md#3-assertions).
 
+Settings entry and rotation stable observation also exclude only their measured
+native wake/Settings/refresh tap durations, with per-tap and total deductions in
+logs and failure details. The same accepted risk applies: XCTest can absorb about
+60 seconds of App non-idleness per tap, without proving host-only responsibility.
+Settings can now reach a positive expired outcome wait instead of a zero-budget
+failure, restoring potential yellow eligibility relative to #607. A wake that
+formerly exhausted preparation as red `settings_navigation/hidden_controls` can
+also admit the Settings tap and then fail at the existing allowlisted
+`settings_navigation/navigation` query. Both paths require all existing
+surface/hosting/starvation proofs. Unknown surfaces, failures that still stop in
+Settings preparation and rotation/layout failures remain red. Playback rotation's
+30-second bound still includes all tap and observation time;
+no validator, allowlist, policy version or product bound changes.
+Layout capture has only invocation caps, and repeated tap deductions can reach
+those caps without a `first_failure` receipt; that remains red. See the
+[capture formulas and full residual risk](TESTING.md#running-controlled-integration-and-end-to-end-tests).
+
 Accepted residual risk (v3/v4 mode departure): Continue tapped but no navigation,
 an unhandled non-password alert over the mode page, and load-only navigation bugs
 produce receipts identical to a slow departure. With every required proof field,

@@ -828,6 +828,17 @@ in `action_duration_seconds`. Later actions can replace that single-action field
 the mode observation log and failure detail retain each deducted tap duration and
 their total, including Continue.
 
+IOSDriver Settings and rotation stable captures also exclude their measured native
+tap time. After each preparation deduction, `deadline_seconds` records only the
+remaining observation allowance and `wait_elapsed_seconds` measures the restarted
+segment. The Settings outcome wait uses its original entry allowance minus all
+spent non-tap work, excluding its wake and Settings tap. Capture logs and failure
+details retain every deduction and their total; the single-action receipt field
+continues to describe only the latest action. The playback-rotation 30-second bound
+still includes all wall time. The [Settings caller formulas](TESTING.md#3-assertions)
+and [rotation caller formulas](TESTING.md#running-controlled-integration-and-end-to-end-tests)
+are authoritative.
+
 An optional `first_failure.gate` carries the album capture gate's last observed
 conditions on its timeout paths only. The First failure line in `summary.md`
 renders its fixed Boolean/null facts and enumerated phase; it contains no raw
@@ -1217,8 +1228,9 @@ midpoint pause and final Continue in `ios-lifecycle-pause`.
 
 The same correction tightens later `settings_navigation/navigation` failures.
 `Tapping settings must open the settings page.` no longer inherits the leaked
-8 s wait: if preparation and the tap exhaust the original entry budget, its own
-outcome wait has a zero deadline and stays red. Less likely,
+8 s wait: its own outcome wait has a zero deadline only when non-tap work exhausts
+the entry budget; the measured wake and Settings tap are returned. That
+zero-budget case stays red. Less likely,
 `Must return to the playback page after settings.` can now retain an earlier
 successful Settings-element wait, or no wait after a later tap, instead of the
 leaked expired wait, and also stays red. Capture/continue/hold failures and the
@@ -1257,6 +1269,38 @@ classification rather than a slow control; the starvation proof still applies. A
 zero-observation failure left at `reveal-controls` would need a sub-millisecond
 positive budget that never enters the readiness loop, and the same deadline and
 starvation proofs still gate it.
+
+IOSDriver Settings preserves the entry remainder after its measured native wake
+and Settings tap. A failure formerly reached with zero remaining outcome budget
+can now produce a positive, fully expired `settings_navigation/navigation` wait at
+`query-element` on `slideshow.control.settings.button`. This changes potential
+yellow eligibility under the existing v1/v2/v3/v4 allowlists, only with the required
+playback surface, hosted scope and starvation proof. Relative to #607, a Settings
+outcome failure whose allowance was exhausted by native taps becomes yellow-eligible
+again. A second red-to-possibly-yellow path starts with a wake that formerly
+exhausted preparation as `settings_navigation/hidden_controls`: returning that
+wake time can admit the Settings tap, followed by an expired allowlisted
+`settings_navigation/navigation` wait at `query-element`. Failures that still stop
+in preparation as `settings_navigation/hidden_controls` remain red, as do
+unknown/unrecognizable surfaces and all rotation/layout-capture or 30-second
+rotation-bound failures. Prefixes, markers, allowlists and policy versions do not
+change. Restarted waits retain only their non-tap remainder, never a fresh full
+allowance. The coordinator accepted both availability-wait paths under Hogan's
+pure-availability-wait policy, as with #593, #596 and #607.
+
+Accepted residual risk: Settings and rotation deductions include XCTest's pre-
+and post-event waits for the App to idle and can absorb about 60 seconds of App
+non-idleness per tap when readiness later succeeds. This does not establish
+host-only responsibility. Each `StableFrame` iteration can deduct up to three taps:
+the first driver wake, explicit refresh and second driver wake. The inner driver's
+3 s readiness deadline is not extended, so long taps can keep readiness false
+while extending the outer capture deadline. Only non-tap work bounds the number of
+iterations; unlike the old single admitted-iteration overrun, several iterations
+can overrun the original wall-clock deadline. The unchanged playback-rotation
+30-second product bound still includes that time and can independently fail.
+`p2-ipad-layout` has no such 30-second outer bound, only the 600 s warm / 1200 s cold
+invocation caps. In the extreme, capture can run to the invocation cap and lose its
+`first_failure` receipt; that timeout or missing receipt stays red. No cap is added.
 
 Missing or ambiguous receipts, samples or case bindings stay red; an old night gains no classification.
 `firstboot_setup/navigation` also includes a confirmed connection-error alert,
