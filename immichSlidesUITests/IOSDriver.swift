@@ -319,6 +319,8 @@ struct IOSDriver: PlaybackDriver {
             return false
         }
         activateControl(before, action: &action)
+        action.firstSettingsTapIssuedAt = action.issuedAt
+        action.firstSettingsTapReturnedAt = action.returnedAt
         // Retain the observation remainder; native tap time includes XCTest's pre- and post-event idle waits.
         action.deductedTapSeconds.append(contentsOf: action.timing.tapDurationsSeconds)
         let outcomeDeadline = deadline.addingTimeInterval(action.deductedTapSeconds.reduce(.zero, +))
@@ -447,6 +449,8 @@ struct IOSDriver: PlaybackDriver {
         var sceneClassificationSeconds: TimeInterval = .zero
         var issuedAt: TimeInterval?
         var returnedAt: TimeInterval?
+        var firstSettingsTapIssuedAt: TimeInterval?
+        var firstSettingsTapReturnedAt: TimeInterval?
         var passwordPromptDeclinesAfterSettingsTap = 0
         var didConfirmPasswordPromptDisappearance = false
         var didAttemptSettingsReissue = false
@@ -462,7 +466,7 @@ struct IOSDriver: PlaybackDriver {
             let actionableToTapSeconds = preparedAt.flatMap { preparedAt in issuedAt.map { $0 - preparedAt } }
             let deductions =
                 timing.shouldVerifySettingsOutcome
-                ? ", deductedTapSeconds=\(deductedTapSeconds), totalDeductedTapSeconds=\(deductedTapSeconds.reduce(.zero, +)), promptDeclinesAfterSettingsTap=\(passwordPromptDeclinesAfterSettingsTap), promptDisappearanceConfirmed=\(didConfirmPasswordPromptDisappearance), settingsReissueAttempted=\(didAttemptSettingsReissue), settingsReissueIssued=\(didIssueSettingsReissue), settingsReissueTapSeconds=\(settingsReissueTapSeconds.map(String.init(describing:)) ?? "none"), settingsReissuePlaybackMark=\(settingsReissuePlaybackMark ?? "none")"
+                ? ", deductedTapSeconds=\(deductedTapSeconds), totalDeductedTapSeconds=\(deductedTapSeconds.reduce(.zero, +)), firstSettingsTapIssuedAt=\(firstSettingsTapIssuedAt.map(String.init(describing:)) ?? "none"), firstSettingsTapReturnedAt=\(firstSettingsTapReturnedAt.map(String.init(describing:)) ?? "none"), promptDeclinesAfterSettingsTap=\(passwordPromptDeclinesAfterSettingsTap), promptDisappearanceConfirmed=\(didConfirmPasswordPromptDisappearance), settingsReissueAttempted=\(didAttemptSettingsReissue), settingsReissueIssued=\(didIssueSettingsReissue), settingsReissueTapSeconds=\(settingsReissueTapSeconds.map(String.init(describing:)) ?? "none"), settingsReissuePlaybackMark=\(settingsReissuePlaybackMark ?? "none")"
                 : ""
             return
                 "\(timing.diagnostic)\(deductions), preparedTarget={\(preparedTarget)}, barVisible=\(isBarVisible), hittable=\(isHittable.map(String.init) ?? "unknown"), wakeIssued=\(didWake), sceneReadSeconds=\(sceneReadSeconds), sceneCaptureSeconds=\(sceneCaptureSeconds), sceneClassificationSeconds=\(sceneClassificationSeconds), actionableToTapSeconds=\(actionableToTapSeconds.map(String.init(describing:)) ?? "none"), tapIssuedAt=\(issuedAt.map(String.init(describing:)) ?? "none"), tapReturnedAt=\(returnedAt.map(String.init(describing:)) ?? "none")"
@@ -505,7 +509,7 @@ struct IOSDriver: PlaybackDriver {
         guard
             let before = prepareControl(
                 "slideshow.control.settings.button", until: deadline, action: &action,
-                shouldRecordWait: false),
+                shouldRecordWait: false, shouldYieldToSettingsOutcome: true),
             !before.hasSettingsNavigationEvidence, !before.hasSettingsOutcome,
             before.snapshots["pinEntry.close.button"] == nil, Date() < deadline
         else { return }
@@ -523,19 +527,29 @@ struct IOSDriver: PlaybackDriver {
         _ identifier: String, until originalDeadline: Date, action: inout ControlAction,
         shouldDismissPasswordPrompt: Bool = false, alsoRequiring additionalIdentifiers: [String] = [],
         shouldRequireHittability: Bool = true, shouldExcludeWakeDuration: Bool = false,
-        shouldRecordWait: Bool = true
+        shouldRecordWait: Bool = true, shouldYieldToSettingsOutcome: Bool = false
     ) -> SlideshowControlBarButtonObservation? {
         var deadline = originalDeadline
         // Recovery preparation must not replace the already-active Settings outcome receipt clock.
         if shouldRecordWait { FirstFailureContext.beginWait(seconds: max(.zero, deadline.timeIntervalSinceNow)) }
         defer { if shouldRecordWait { FirstFailureContext.endWait() } }
         while Date() < deadline {
+            if shouldYieldToSettingsOutcome {
+                guard let prompt = try? IOSFirstBootNavigation(app: app).observe(),
+                    !prompt.hasPasswordPrompt, Date() < deadline
+                else { return nil }
+            }
             if shouldDismissPasswordPrompt {
                 guard dismissPlaybackPasswordPrompt(until: deadline), Date() < deadline else {
                     return nil
                 }
             }
             if let observation = action.observe(app: app, identifier: identifier), Date() < deadline {
+                if shouldYieldToSettingsOutcome,
+                    observation.hasSettingsNavigationEvidence || observation.snapshots["pinEntry.close.button"] != nil
+                {
+                    return nil
+                }
                 action.isBarVisible = hasVisibleControlBar(observation)
                 action.isHittable = nil
                 if observation.isReady, action.isBarVisible,
