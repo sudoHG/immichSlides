@@ -1613,13 +1613,43 @@ the final Next action; a final successor-check `continue` can instead retain 4 s
 The pre-Play `Pause window bright proof must show A2.` check also retains 4 s,
 either from the settled-photo wait or a control reveal. Only the 2 s Play-state
 readback deadline identifies a post-Play check unambiguously. The screenshot context and a
-short elapsed wait alone do not identify the assertion; retain the raw XCTest
-message for exact attribution. `Show EXIF info must be on.` is an
+short elapsed wait alone do not identify the assertion. Strict exports retain the
+fixed assertion families below when the existing official legacy summaries are
+available; historical receipts without them cannot establish exact attribution.
+`Show EXIF info must be on.` is an
 `interval_setup/control_state` precondition, like the autoplay setup check, rather
 than part of the EXIF ownership flow. Both classifications remain red.
 The segmented-control presence and Simplified Chinese label checks use
 `control_state` as the closest existing class; they check presence/copy rather
 than enabled or selected state and do not introduce a new enum.
+
+<a id="pause-window-assertion-families"></a>
+
+The optional `bounded_diagnostics.case_resources[].pause_window_assertions` list
+distinguishes the ten `pause_window/scene_identity` assertion sites without
+publishing raw XCTest messages, interpolated values, asset IDs or probe text.
+It reuses the existing private legacy export, only for the exact failed pause-window
+method and its resource sequence; it performs no additional XCTest query or export.
+The list is a sorted set of observed families, not an ordered failure timeline or a
+claim about which assertion failed first. Other failure messages in that method
+map to `unmapped`; missing summaries omit the field. The existing phase/class,
+first-failure receipt, raw outcome and yellow eligibility are unchanged.
+The [reader-first consumer boundary](CI_SUMMARY.md#reader-first-evolution) permits
+this strict-only producer and reader to ship together, preserving old nights.
+
+| Family | Assertion site |
+| --- | --- |
+| `successor-order` | A2 successor is A4/A5 or Fixture 5 |
+| `successor-a3` | A2 successor cannot be identified as A3 |
+| `restored-a2` | Previous did not restore A2 |
+| `find-a2` | A2 search exhausted |
+| `bright-a2` | Pre-Play bright pixels do not prove A2 |
+| `late-a3` | Paused midpoint shows complete A3 |
+| `frozen-probe` | Paused identity, opacity or motion changed |
+| `frozen-pixels` | Paused photo pixels changed |
+| `visible-pixels` | Midpoint lacks visible photo pixels |
+| `outgoing-a2` | Midpoint identifies a transition or another photo |
+| `unmapped` | Another failure in the same method; no raw text retained |
 
 New enum meanings and why the previous vocabulary cannot express them:
 

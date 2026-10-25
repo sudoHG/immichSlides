@@ -1144,6 +1144,35 @@ class SummaryContractTests(unittest.TestCase):
             with self.subTest(path=path), self.assertRaisesRegex(ci_summary.ContractError, "^app hang stack: invalid projection$"):
                 ci_summary.parse_summary(changed)
 
+    def test_pause_window_assertions_are_closed_optional_and_do_not_change_eligibility(self):
+        from ci_failure_diagnostics import environment_limit_evidence, scan_diagnostic_json
+        summary, resource = hosted_timeout_summary()
+        old = copy.deepcopy(summary)
+        row = summary["population"]["observed"][0]
+        before = environment_limit_evidence(summary, row, [resource], runner_hosted=True)
+        self.assertIsNotNone(before)
+        resource["pause_window_assertions"] = ["bright-a2", "restored-a2", "unmapped"]
+        self.assertEqual(summary, ci_summary.parse_summary(json.dumps(summary)))
+        scan_diagnostic_json(json.dumps(summary).encode())
+        self.assertEqual("failed", summary["status"])
+        after = environment_limit_evidence(summary, row, [resource], runner_hosted=True)
+        self.assertIsNotNone(after)
+        self.assertEqual(before["failure"], after["failure"])
+        self.assertNotIn("pause-window assertions:", ci_summary.render_markdown(old))
+        self.assertIn("pause-window assertions: bright-a2, restored-a2, unmapped", ci_summary.render_markdown(summary))
+        # Identity failures stay red even with otherwise eligible resource/timing evidence.
+        for entry in (row, row["attempts"][0]):
+            entry.update(failure_phase="pause_window", failure_class="scene_identity")
+        self.assertIsNone(environment_limit_evidence(summary, row, [resource], runner_hosted=True))
+        for defect in (None, [], "bright-a2", {}, [True], [[]], ["PRIVATE_SENTINEL"], ["bright-a2", "bright-a2"]):
+            changed = copy.deepcopy(summary)
+            changed["strict_case_evidence"][0]["bounded_diagnostics"]["case_resources"][0]["pause_window_assertions"] = defect
+            with self.subTest(defect=defect):
+                with self.assertRaisesRegex(ci_summary.ContractError,
+                        "^pause window assertions: invalid families$") as error:
+                    ci_summary.parse_summary(changed)
+                self.assertNotIn("PRIVATE_SENTINEL", str(error.exception))
+
     def test_optional_continue_watch_round_trips_and_old_nights_keep_their_verdict(self):
         from ci_failure_diagnostics import scan_diagnostic_json
         summary, resource = hosted_timeout_summary()

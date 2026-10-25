@@ -25,6 +25,7 @@ from ci_bounded_diagnostics import (MAX_DIAGNOSTIC_SECONDS,
 from ci_bounded_diagnostics import (MAX_CONTINUE_WATCH_BYTES, MAX_CONTINUE_WATCH_FRAMES,
                                     CONTINUE_WATCH_STATUSES, validate_continue_watch)
 from ci_bounded_diagnostics import SIMULATOR_PROCESS_NAMES, validate_simulator_processes
+from ci_bounded_diagnostics import PAUSE_WINDOW_ASSERTION_PREFIXES
 from ci_execution_diagnostics import finite
 from ci_failure_diagnostics import NATIVE_ACTIVITY_FIELDS, public_first_failure
 
@@ -117,6 +118,32 @@ def attach_continue_watch(receipt, evidence_dir, *, platform, suite, result, seq
         cases[0]["continue_watch"] = projection
     except (OSError, ValueError, TypeError, KeyError, OverflowError):
         pass  # Optional malformed evidence cannot discard the other diagnostics or alter the case verdict.
+
+
+def attach_pause_window_assertions(root, failed_nodes, *, recorder, sequence):
+    """Reuse the strict export's private messages; retain only fixed, unordered families."""
+    name = "StrictE2EFirstBatchIOSUITests/testSinglePhotoOutgoingPauseWindowCapture"
+    try:
+        if recorder is None or len([node for node in failed_nodes if node.get("result") == "Failed"
+                and node.get("nodeIdentifier", "").removesuffix("()") == name]) != 1:
+            return
+        cases = [case for case in recorder.case_resources if case["sequence"] == sequence]
+        if len(cases) != 1:
+            return
+        from ci_failure_diagnostics import legacy_failure_messages, normalized_xctest_failure
+        messages = legacy_failure_messages(root).get(name, [])
+        if not messages:
+            return
+        families = set()
+        for message in messages:
+            text = normalized_xctest_failure(message)
+            families.add(next((family for family, prefix in PAUSE_WINDOW_ASSERTION_PREFIXES
+                               if text is not None and text.startswith(prefix)), "unmapped"))
+        projection = sorted(families)
+        validate_case_resources([{**cases[0], "pause_window_assertions": projection}])
+        cases[0]["pause_window_assertions"] = projection
+    except (ValueError, TypeError, KeyError, AttributeError):
+        pass  # Missing optional diagnostics must not replace the original failure or numeric evidence.
 
 
 def reduce_main_thread_sample(raw):

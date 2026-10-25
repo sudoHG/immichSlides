@@ -48,6 +48,20 @@ MAX_SIMULATOR_PROCESS_BYTES = 1024
 MAX_APP_HANG_STACK_BYTES = 4096
 MAX_CONTINUE_WATCH_BYTES = 8192
 MAX_CONTINUE_WATCH_FRAMES = 80
+# Archived in environment_limit.resources; keep accepted family names readable on old nights.
+PAUSE_WINDOW_ASSERTION_PREFIXES = (
+    ("successor-order", "PRECONDITION_FAIL: order became A2→"),
+    ("successor-a3", "PRECONDITION_FAIL: A2 successor is not A3 ("),
+    ("restored-a2", "PRECONDITION_FAIL: not the large-text A2 after returning."),
+    ("find-a2", "PRECONDITION_FAIL: could not identify the large-text A2 using Next."),
+    ("bright-a2", "Pause window bright proof must show A2."),
+    ("late-a3", "visual_verdict=LATE: a complete A3 is visible after pause."),
+    ("frozen-probe", "The paused pause-window probe identity must not change."),
+    ("frozen-pixels", "Paused pause-window frames must be pixel-identical."),
+    ("visible-pixels", "Pause window midpoint must contain visible photo pixels."),
+    ("outgoing-a2", "Target window shows the wrong image; cannot count as SUCCESS."),
+)
+PAUSE_WINDOW_ASSERTION_FAMILIES = frozenset({family for family, _ in PAUSE_WINDOW_ASSERTION_PREFIXES} | {"unmapped"})
 CONTINUE_WATCH_STATUSES = (None, "MATCH", "TRANSITION", "BLACK", "BLANK", "UNRECOGNIZABLE")
 CONTINUE_WATCH_JUDGES = ("not_recorded", "not_evaluated", "passed", "early", "late", "no_transition_start",
                          "no_stable_new_photo", "four_second", "other")
@@ -315,6 +329,12 @@ def validate_case_resources(cases):
         if isinstance(case, dict) and "simulator_processes" in case:
             fields.add("simulator_processes")
             validate_simulator_processes(case["simulator_processes"])
+        if isinstance(case, dict) and "pause_window_assertions" in case:
+            fields.add("pause_window_assertions")
+            families = case["pause_window_assertions"]
+            require(isinstance(families, list) and 0 < len(families) <= len(PAUSE_WINDOW_ASSERTION_FAMILIES)
+                and all(isinstance(family, str) and family in PAUSE_WINDOW_ASSERTION_FAMILIES for family in families)
+                and len(families) == len(set(families)), "pause window assertions: invalid families")
         exact_fields(case, fields, "case resources")
         number(case["sequence"], MAX_INTEGER, "case resources sequence", integral=True)
         require(case["sequence"] not in sequences, "case resources: duplicate sequence")
