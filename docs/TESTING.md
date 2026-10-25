@@ -380,8 +380,9 @@ and outcome changes from `d` to `d+W+C`:
 | --- | --- | --- | --- |
 | Cache clear and iPad cache smoke: `applyPlaybackSettings`, `clearDiskCache` | `t0+23` | `t0+23+W` / `t0+23+W+C` | Cache completion and capture checks start later and keep their own budgets. |
 | ReduceMotion and EXIF: `applyPlaybackSettings` | `t0+23` | `t0+23+W` / `t0+23+W+C` | Motion recording and EXIF readback keep their own budgets. |
-| Rotation layout and playback: `applyPlaybackSettings` | `t0+23` | `t0+23+W` / `t0+23+W+C` | Settings completes before the unchanged 30-second playback-rotation origin. |
+| Rotation layout and playback: `applyPlaybackSettings` | `t0+23` | `t0+23+W` / `t0+23+W+C` | Settings precedes capture; playback rotation starts its unchanged 30-second clock later. |
 | ScenePresentation image-failure recovery: `applyPlaybackSettings`, `clearDiskCache` | `t0+23` | `t0+23+W` / `t0+23+W+C` | Recovery assertions keep their existing origin and budgets. |
+| Strict Filter album: `prepareAlbumCapturePlayback` via `applyPlaybackSettings` | `t0+23` | `t0+23+W` / `t0+23+W+C` | Album interval confirmation starts after Settings returns and keeps its own deadline. |
 | AccessLifecycle: `openSettingsFromSlideshow` with permitted PIN entry | Caller deadline `d=t0+15` | `d+W` / `d+W+C` | Settings readback/configuration precedes lifecycle timing; PIN handling remains explicit. |
 
 The outcome field becomes true only after the wait accepts an observation within its window.
@@ -684,10 +685,10 @@ later, potentially to the first identified new photo. The frozen-frame remedy
 requires three capture intervals totaling at most 1.0 s plus tolerance (about
 0.334 s on average); at 4K it often cannot apply. These bounds are not conservative
 for early fades: rejecting their dimming evidence can hide an early start behind
-a later new photo, or reject an in-window start as late. The control-bar state must remain
-unchanged from the anchor through that decrease, with every gap between screenshot
-return and the next request no greater than the existing 0.1-second poll cadence
-plus its tolerance. Pinned 4K TV capture measured
+a later new photo, or reject an in-window start as late. The control-bar state must
+remain unchanged from the anchor through that decrease, with every gap between a
+frame's recorded `returned` time and the next request no greater than the existing
+0.1-second poll cadence plus its tolerance. Pinned 4K TV capture measured
 0.309-second median and 0.453-second maximum request cadence: requiring three
 already-dim MATCH frames can outlast the identifiable portion of the designed
 1.0-second outgoing fade. That original predicate retains at least three observations
@@ -699,26 +700,50 @@ applies to iPad, whose own stable-photo requirement is one second. The shared
 predicate vetoes that recovery, including iPad's two-dim-frame flicker case.
 The tvOS Continue collector captures full-resolution screenshots from
 `XCUIScreen.main` without an application lookup. It retains dense capture through
-the original absolute deadline and classifies photo identity afterwards. A serial
-background probe reads the calibrated Settings pixels, with at most one pending
-decode; the capture loop only submits PNG data and reads a locked observation.
-It never waits for decoding between captures, including across T−2. After observing
-visible controls followed by auto-hide, it sends at most one Up, only when its
-request falls in [T−2, T−0.8], to restore the original visible control state. A
-request before T−2 fails a test-timing precondition and stays red; after T−0.8,
-the wake is skipped and capture continues unchanged. A skipped wake returns to
-main's hidden-state comparison: hidden-state frames are compared with the
-visible-state baseline, so the effect direction depends on the unmeasured
+the original absolute deadline and classifies photo identity afterwards. A local
+adapter first confirms visible controls, then probes only from T−2 until the
+single wake or its deadline; it does not tax every earlier capture. Before reading
+those full PNGs, it crops the calibrated Settings rectangle from that screenshot's
+CGImage and feeds the lossless crop to the unchanged control-bar reader.
+Calibration uses the same rectangle and reader thresholds.
+The current crop result is consumed immediately; it cannot wait behind the next
+full screenshot as the former asynchronous PNG probe did. Offline classification
+still uses the original full PNG. The diagnostic records each crop probe's frame
+index, visibility, request and return for comparison with the original reader's
+sample and for measurement of the capture-path cost. Crop probing occurs between
+`captured` and `returned`, so its cost counts in that frame's span rather than in
+the 0.101-second gap. Locally it took a median 45.751 ms and maximum 48.134 ms,
+only on initial visibility confirmation (frame 0 in these runs) and in the wake
+window; hosted probe cost is unmeasured. This added span cannot itself create a
+T±2 false pass: it can only admit decline chains after T−2, or at initial
+confirmation, where an admitted chain can only make the onset earlier.
+
+A missing crop result cannot prove auto-hide. After observing visible controls
+followed by auto-hide, it sends at most one Up, only when its request falls in
+[T−2, T−0.8], to restore the original visible control state. Window gating
+guarantees the T−2 lower bound; an earlier auto-hide no longer causes a runtime
+failure. Host configuration checks instead pin the product auto-hide delay at
+8 seconds and this flow's requested interval at 10 seconds, so changing either
+still fails checks. After T−0.8, the wake is skipped and capture continues
+unchanged. A skipped wake returns to main's hidden-state comparison:
+hidden-state frames are compared with the visible-state baseline, so the effect direction depends on the unmeasured
 luminance difference between those states. It can delay or lose the onset
 (a loosening direction for the four-second rule) or reject a bright anchor (a
-false failure). Skips are not rare: Up requests have landed 135–325 ms before
-T−0.8. Only the lower bound is guarded; if the App's auto-hide moved later, the
-hide could fall inside the fade and every run would skip the wake silently.
+false failure). A screenshot or crop read that returns after T−0.8 still skips
+the wake; eliminating the extra asynchronous frame does not guarantee a timely
+observation on every host. In hosted run 40134453780 the first hidden frame
+returned at 9.414 seconds, already beyond the 9.2-second wake deadline and
+unrescuable by this change. In run 40102889537 it returned at 9.111 seconds,
+leaving about 89 ms for the total probe delay accumulated in the wake window
+before that frame's decision, including probes of earlier in-window frames
+(one probe took about 46–48 ms locally). Hosted
+summaries omit `control_bar_probes`; their probe cost has not been measured.
+This is not evidence that the six-of-seven nightly failure is fixed.
+
 The `skipped` flag is also set when the deadline passes without any observed
-auto-hide, so it does not distinguish "too late" from "not needed". This depends on the App's `PlaybackViewMetrics.controlBarAutoHideDelaySeconds`
-being 8 seconds: Continue resets that timer, and 8 seconds equals T−2 for this
-flow's T=10 seconds. The explicit lower guard prevents a changed auto-hide delay
-or interval from silently moving the press gap into the early-evidence window.
+auto-hide, so it does not distinguish "too late" from "not needed". Continue resets
+the App's `PlaybackViewMetrics.controlBarAutoHideDelaySeconds` timer; the pinned
+8 seconds equals T−2 for this flow's pinned T=10 seconds.
 Up does not toggle playback or reset the Continue origin: control visibility triggers
 `updateFutureProtectionSnapshot`, which can discard the prepared next scene,
 invalidate a pending transition and re-plan it. This can delay a switch and cause
@@ -900,7 +925,7 @@ allowance; queries, polling, screenshot capture and pixel analysis remain charge
 The driver reports its measured wakes directly, independently of receipt enablement,
 without a UI query. Every deduction appears in `deductedTapSeconds` and
 `totalDeductedTapSeconds` in capture logs and failure details. The inner driver's
-3-second readiness checks retain their original deadlines. Rotation logs still
+3-second readiness checks retain their original deadlines. Playback-rotation logs still
 measure all elapsed time, including every tap, against the 30-second natural-switch
 bound; the original start timestamp and bound are unchanged.
 Every saved candidate still requires all three controls to be
@@ -909,21 +934,30 @@ frame pair. Other stable-frame callers report no tap deductions and retain their
 Failures retain the `visible_scene_capture` / `timing_window` or rotation-capture
 classification; this does not introduce yellow eligibility.
 
-Let `t0` be capture entry, `tr` rotation issue and `W` the sum of that capture's
+Let `t0` be capture entry, `tr` rotation issue and `R` the sum of that capture's
 returned helper-wake/refresh tap durations. The shared stable-frame callers are:
 
 | Caller | Old stable deadline | New stable deadline | Product boundary |
 | --- | --- | --- | --- |
-| iPad multi-photo layout: landscape and portrait `captureStable` | `t0+10` | `t0+10+W` | Orientation setup and multi-photo selection precede capture, as before. |
-| Playback rotation: initial portrait `captureStable` | `t0+10` | `t0+10+W` | The whole sequence remains strictly below 30 seconds from the original Next request. |
-| Playback rotation: landscape and final portrait `captureStable` | `tr+10` | `tr+10+W` | Window settling and stable observation still share 10 active seconds; every wall-clock second also consumes the unchanged 30-second bound. |
+| iPad multi-photo layout: landscape and portrait `captureStable` | `t0+10` | `t0+10+R` | Orientation setup and multi-photo selection precede capture. No 30-second outer bound; only the 600 s warm / 1200 s cold invocation caps apply. |
+| Playback rotation: initial portrait `captureStable` | `t0+10` | `t0+10+R` | The whole sequence remains strictly below 30 seconds from the original Next request. |
+| Playback rotation: landscape and final portrait `captureStable` | `tr+10` | `tr+10+R` | Window settling and stable observation still share 10 active seconds; every wall-clock second also consumes the unchanged 30-second bound. |
 | Orientation self-check: direct `StableFrame.wait` | `tr+10` | `tr+10` | No deduction callback. |
 | ReduceMotion segments: direct `StableFrame.wait` | `t0+10` | `t0+10` | No deduction callback; recording holds are unchanged. |
 
 These exclusions can absorb about 60 seconds of App non-idleness inside each
 XCTest tap when the outcome later arrives within the remaining allowance. This is
-not proof that the time was outside the App's responsibility. No cap is added;
-the playback-rotation 30-second bound still rejects such an overlong sequence.
+not proof that the time was outside the App's responsibility. Each `StableFrame`
+iteration can deduct up to three native taps: the first driver wake, explicit
+refresh and second driver wake. The inner 3-second readiness check is not extended;
+long taps can therefore leave readiness false while extending the outer capture
+deadline. Only non-tap work bounds the iteration count, so the original wall-clock
+deadline can be exceeded across several iterations rather than just one admitted
+iteration. No cap is added. The playback-rotation 30-second bound still rejects
+an overlong completed sequence, but `p2-ipad-layout` has no such outer bound.
+In the extreme, its capture can reach the 600 s warm / 1200 s cold invocation cap
+and lose the `first_failure` receipt; an invocation timeout or missing receipt
+still stays red.
 See the [environment-limit contract](CI_SUMMARY.md#prepared-hosted-strict-environment-limits)
 for the Settings receipt eligibility change and unchanged red rotation failures.
 

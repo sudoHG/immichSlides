@@ -150,7 +150,8 @@ issue decisions do not consume the measurements.
 The reader also accepts `case_resources`, an array of at most 64 case measurements.
 Strict producers emit it for each actual Xcode case invocation, including an
 existing listed retry. Fixture UI producers do not sample continuously. Each entry has
-the following required fields and optional `app_hang_stack`, `continue_watch` and `simulator_processes`. All numbers are finite, booleans are not numbers,
+the following required fields and optional `app_hang_stack`, `continue_watch`,
+`simulator_processes` and `pause_window_assertions`. All numbers are finite, booleans are not numbers,
 and unknown measurements remain null.
 
 | Fields | Bounds and meaning |
@@ -166,6 +167,7 @@ and unknown measurements remain null.
 | `app_hang_stack` (optional) | At most 4,096 compact JSON bytes: `status` (`captured`, `failure`, `timeout`, `cancelled`), `sample_count` (main-thread samples), and `frames` (at most 30 objects containing only `symbol`, allowlisted `module`, and inclusive `samples` count); optional `hint` contains at most three distinct frame indices in observed callee-to-caller order; non-captured states have zero samples and no frames |
 | `continue_watch` (optional) | Failed `tvos-lifecycle-pause` only; at most 8,192 compact JSON bytes and the first 80 frames, rounded to three decimals; see the numeric projection below |
 | `simulator_processes` (optional) | At most 1,024 compact JSON bytes: `entries` (at most five named entries followed by `other`), boolean `unavailable` and `truncated`; each entry contains only allowlisted `name`, `mean` / `peak` CPU percentages (0–10^6, or null when unavailable), and integer `samples` (0–43,201 valid snapshots) |
+| `pause_window_assertions` (optional) | Nonempty list of at most 11 distinct fixed families from the failed pause-window method's existing official legacy export; no assertion text or observed values. See the [family definitions](CI_STRICT_RUNNER.md#pause-window-assertion-families). |
 
 Each failure sample has exactly `elapsed_seconds` (0–86,400), `idle_percent`
 (0–100 or null), `load_1m` (0–10^6 or null), and `cpu_percent`. The latter has
@@ -832,8 +834,10 @@ remaining observation allowance and `wait_elapsed_seconds` measures the restarte
 segment. The Settings outcome wait uses its original entry allowance minus all
 spent non-tap work, excluding its wake and Settings tap. Capture logs and failure
 details retain every deduction and their total; the single-action receipt field
-continues to describe only the latest action. The rotation 30-second bound still
-includes all wall time. [Caller formulas](TESTING.md#3-assertions) are authoritative.
+continues to describe only the latest action. The playback-rotation 30-second bound
+still includes all wall time. The [Settings caller formulas](TESTING.md#3-assertions)
+and [rotation caller formulas](TESTING.md#running-controlled-integration-and-end-to-end-tests)
+are authoritative.
 
 An optional `first_failure.gate` carries the album capture gate's last observed
 conditions on its timeout paths only. The First failure line in `summary.md`
@@ -920,7 +924,7 @@ The same sequence applies to `bounded_diagnostics.case_resources` and
 `first_failure.native_activity_seconds`: merge reader support before opening the
 producer activation PR. Historical records without either optional field remain valid.
 
-A scoped exception permits the optional App hang-stack, Continue watch and simulator-process projections,
+A scoped exception permits the optional App hang-stack, Continue watch, simulator-process and pause-window assertion projections,
 strict runner cleanup member event and their readers
 to ship together. The trusted base gate/UI publisher's supported producers in
 `ci_publish_git.py` do not consume strict-tracer or P2-review diagnostic artifacts;
@@ -931,7 +935,14 @@ not activate a field in required gate/UI records. Old nights and old stack proje
 This exception relies on that consumer boundary: introducing the field into a
 base-read publication path or reading it with an older revision requires a separate
 reader rollout first. The PR must document this transition analysis.
-`continue_watch`, `app_hang_stack` and `simulator_processes` are copied into
+`pause_window_assertions` is emitted only through the strict resource sampler for
+the exact failed `StrictE2EFirstBatchIOSUITests/testSinglePhotoOutgoingPauseWindowCapture`
+official method and its existing resource sequence. Generic UI exports have no strict
+sampler, and `first_failure` and gate/UI records gain no field. Its producer reuses
+the already-read legacy failure summaries; missing summaries or ambiguous case
+binding omit the projection. The candidate/run/main reader sequence above therefore
+also applies to this extension. It never participates in environment-limit eligibility.
+`continue_watch`, `app_hang_stack`, `simulator_processes` and `pause_window_assertions` are copied into
 `environment_limit.resources` in the 90-day yellow history and validated again by
 later readers. Their archived validation may only be loosened, never tightened;
 otherwise a previously accepted night could become unreadable or red.
@@ -1200,6 +1211,35 @@ the same starvation proof; the pause-window T±2 and midpoint contract assertion
 themselves remain excluded (coordinator ruling, 2026-10-24, under Hogan's approved
 policy).
 
+The iOS lifecycle Play/Pause receipt correction (#607) also changes potential
+yellow eligibility in both directions without changing the waits themselves.
+`Play/pause must be hittable.` and `Play/pause must be hittable before continuing.`
+now report the finished 2 s readiness wait as `control_action/hidden_controls` at
+`query-element` on `slideshow.control.playPause.button`. Previously, the leaked
+outer wait reported the appearance time plus about 2 s against an 8 s deadline;
+when the first button observation took less than about 6 s, that wait was not
+expired and the failure stayed red. The completed readiness wait can now satisfy
+the existing exhausted-wait condition and become yellow under the full hosted
+starvation proof. In Release, `control_bar` is `unknown` because the probe is
+DEBUG-only, so the visible-control-bar exclusion does not reject these failures.
+This affects all five calls through `confirmPlayPauseState` and
+`pressContinueStartingClock`: the initial pause, setup pause, midpoint Play,
+midpoint pause and final Continue in `ios-lifecycle-pause`.
+
+The same correction tightens later `settings_navigation/navigation` failures.
+`Tapping settings must open the settings page.` no longer inherits the leaked
+8 s wait: its own outcome wait has a zero deadline only when non-tap work exhausts
+the entry budget; the measured wake and Settings tap are returned. That
+zero-budget case stays red. Less likely,
+`Must return to the playback page after settings.` can now retain an earlier
+successful Settings-element wait, or no wait after a later tap, instead of the
+leaked expired wait, and also stays red. Capture/continue/hold failures and the
+historical `unknown/unknown` capture receipts remain red. The new calibration
+prefix is `visible_scene_capture/evidence_capture` and remains outside the
+allowlist. Allowlists and policy versions are unchanged. The coordinator accepted
+this widening under Hogan's approved policy that pure UI-availability waits may
+be yellow on proven-starved hosts, as with the pause-window readiness wait above.
+
 Debug `filter-person` tightens Pause-preparation classification. Its former
 `IOSDriver.pause` control-availability timeout could be environment-limited as
 `control_action/hidden_controls` at `query-element` or `reveal-controls` on
@@ -1235,17 +1275,32 @@ and Settings tap. A failure formerly reached with zero remaining outcome budget
 can now produce a positive, fully expired `settings_navigation/navigation` wait at
 `query-element` on `slideshow.control.settings.button`. This changes potential
 yellow eligibility under the existing v1/v2/v3/v4 allowlists, only with the required
-playback surface, hosted scope and starvation proof. Prefixes, markers, allowlists
-and policy versions do not change. Settings preparation failures classified as
-`settings_navigation/hidden_controls`, unknown/unrecognizable surfaces and all
-rotation-capture or 30-second rotation-bound failures remain red. Restarted waits
-retain only their non-tap remainder, never a fresh full allowance.
+playback surface, hosted scope and starvation proof. Relative to #607, a Settings
+outcome failure whose allowance was exhausted by native taps becomes yellow-eligible
+again. A second red-to-possibly-yellow path starts with a wake that formerly
+exhausted preparation as `settings_navigation/hidden_controls`: returning that
+wake time can admit the Settings tap, followed by an expired allowlisted
+`settings_navigation/navigation` wait at `query-element`. Failures that still stop
+in preparation as `settings_navigation/hidden_controls` remain red, as do
+unknown/unrecognizable surfaces and all rotation/layout-capture or 30-second
+rotation-bound failures. Prefixes, markers, allowlists and policy versions do not
+change. Restarted waits retain only their non-tap remainder, never a fresh full
+allowance. The coordinator accepted both availability-wait paths under Hogan's
+pure-availability-wait policy, as with #593, #596 and #607.
 
 Accepted residual risk: Settings and rotation deductions include XCTest's pre-
 and post-event waits for the App to idle and can absorb about 60 seconds of App
 non-idleness per tap when readiness later succeeds. This does not establish
-host-only responsibility, and no new cap is introduced. The unchanged rotation
+host-only responsibility. Each `StableFrame` iteration can deduct up to three taps:
+the first driver wake, explicit refresh and second driver wake. The inner driver's
+3 s readiness deadline is not extended, so long taps can keep readiness false
+while extending the outer capture deadline. Only non-tap work bounds the number of
+iterations; unlike the old single admitted-iteration overrun, several iterations
+can overrun the original wall-clock deadline. The unchanged playback-rotation
 30-second product bound still includes that time and can independently fail.
+`p2-ipad-layout` has no such 30-second outer bound, only the 600 s warm / 1200 s cold
+invocation caps. In the extreme, capture can run to the invocation cap and lose its
+`first_failure` receipt; that timeout or missing receipt stays red. No cap is added.
 
 Missing or ambiguous receipts, samples or case bindings stay red; an old night gains no classification.
 `firstboot_setup/navigation` also includes a confirmed connection-error alert,

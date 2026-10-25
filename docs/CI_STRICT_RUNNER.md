@@ -1534,6 +1534,29 @@ These labels locate a check; they do not establish a product or infrastructure
 root cause. No assertion text, observed value, path, identifier or frame is
 added to public records by the mapper.
 
+iOS lifecycle Play/Pause preparation closes its appearance receipt wait before
+starting its existing readiness wait. Both still use their original durations;
+the final defer closes the current wait instead of leaving the appearance wait
+active during later captures. A historical `capture-frame` receipt with an 8 s
+deadline can therefore describe a leaked preparation wait, not the duration of
+one screenshot call. Completed state-readback waits remain completed. This changes
+potential environment-limit eligibility in both directions: the two Play/Pause
+hittability failures can now report the completed 2 s readiness wait and qualify
+as UI-availability failures under the existing starvation proof, while later
+Settings failures no longer inherit the leaked 8 s wait. The exact messages,
+Release probe limitation and coordinator acceptance are documented beside the
+[environment-limit policy](CI_SUMMARY.md#prepared-hosted-strict-environment-limits).
+XCTest pass/fail outcomes, allowlists and policy versions are unchanged.
+
+The control-bar calibration prints each phase before its UI call or classification,
+so an XCTest abort that skips defer still leaves the phase-start line. Each call
+emits at most five phase lines, one screenshot duration and one total duration,
+without extra UI calls. These diagnostics are visible only in local xcodebuild
+stdout; hosted summaries do not retain that log. Its Settings-crop unwrap has an explicit
+`visible_scene_capture/evidence_capture` prefix, which remains red under the
+existing environment-limit policy. This identifies future calibration failures;
+it does not attribute historical unknown messages to that assertion.
+
 The shared export defaults to byte-preserving output without diagnostics. Only
 strict and UI callers opt in with `enrich_failure_diagnostics=True`; unit and
 lifecycle consumers retain the original tests/summary exports and budgets.
@@ -1613,13 +1636,43 @@ the final Next action; a final successor-check `continue` can instead retain 4 s
 The pre-Play `Pause window bright proof must show A2.` check also retains 4 s,
 either from the settled-photo wait or a control reveal. Only the 2 s Play-state
 readback deadline identifies a post-Play check unambiguously. The screenshot context and a
-short elapsed wait alone do not identify the assertion; retain the raw XCTest
-message for exact attribution. `Show EXIF info must be on.` is an
+short elapsed wait alone do not identify the assertion. Strict exports retain the
+fixed assertion families below when the existing official legacy summaries are
+available; historical receipts without them cannot establish exact attribution.
+`Show EXIF info must be on.` is an
 `interval_setup/control_state` precondition, like the autoplay setup check, rather
 than part of the EXIF ownership flow. Both classifications remain red.
 The segmented-control presence and Simplified Chinese label checks use
 `control_state` as the closest existing class; they check presence/copy rather
 than enabled or selected state and do not introduce a new enum.
+
+<a id="pause-window-assertion-families"></a>
+
+The optional `bounded_diagnostics.case_resources[].pause_window_assertions` list
+distinguishes the ten `pause_window/scene_identity` assertion sites without
+publishing raw XCTest messages, interpolated values, asset IDs or probe text.
+It reuses the existing private legacy export, only for the exact failed pause-window
+method and its resource sequence; it performs no additional XCTest query or export.
+The list is a sorted set of observed families, not an ordered failure timeline or a
+claim about which assertion failed first. Other failure messages in that method
+map to `unmapped`; missing summaries omit the field. The existing phase/class,
+first-failure receipt, raw outcome and yellow eligibility are unchanged.
+The [reader-first consumer boundary](CI_SUMMARY.md#reader-first-evolution) permits
+this strict-only producer and reader to ship together, preserving old nights.
+
+| Family | Assertion site |
+| --- | --- |
+| `successor-order` | A2 successor is A4/A5 or Fixture 5 |
+| `successor-a3` | A2 successor cannot be identified as A3 |
+| `restored-a2` | Previous did not restore A2 |
+| `find-a2` | A2 search exhausted |
+| `bright-a2` | Pre-Play bright pixels do not prove A2 |
+| `late-a3` | Paused midpoint shows complete A3 |
+| `frozen-probe` | Paused identity, opacity or motion changed or missing |
+| `frozen-pixels` | Paused photo pixels changed or missing |
+| `visible-pixels` | Midpoint lacks visible photo pixels |
+| `outgoing-a2` | Midpoint identifies a transition or another photo |
+| `unmapped` | Another failure in the same method; no raw text retained |
 
 New enum meanings and why the previous vocabulary cannot express them:
 
@@ -1687,6 +1740,7 @@ New enum meanings and why the previous vocabulary cannot express them:
 | `The iPad transition criterion is missing the original photo luma before Continue` | `continue_timing` | `evidence_capture` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift) |
 | `Next-photo stable confirmation does not match the current raw screenshot` | `visible_scene_capture` | `evidence_capture` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift) |
 | `Next photo did not form a stable new MATCH within ` | `visible_scene_capture` | `scene_identity` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift) |
+| `Control-bar calibration must recognize the visible Settings crop.` | `visible_scene_capture` | `evidence_capture` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift); Settings-crop reference unwrap |
 | `Screenshot cannot be used as identity;` | `visible_scene_capture` | `scene_identity` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift) |
 | `Must be able to return from settings to the playback page.` | `settings_navigation` | `navigation` | [AccessLifecycleIOSUITests+Navigation.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Navigation.swift) |
 | `The settings list must provide the playback settings entry` | `settings_navigation` | `navigation` | [AccessLifecycleIOSUITests+Navigation.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Navigation.swift) |

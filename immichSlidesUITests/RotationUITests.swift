@@ -204,6 +204,7 @@ final class RotationUITests: XCTestCase {
         var refreshDurationsSeconds: [TimeInterval] = []
         var helperWakeDurationsSeconds: [TimeInterval] = []
         var deductedTapSeconds: [TimeInterval] = []
+        // Direct wake timing is always available, even when FirstFailureContext receipts are disabled.
         defer {
             print(
                 "Rotation capture controls: name=\(name), refreshCount=\(refreshDurationsSeconds.count), refreshDurationsSeconds=\(refreshDurationsSeconds), helperWakeTimingAvailable=true, helperWakeDurationsSeconds=\(helperWakeDurationsSeconds), deductedTapSeconds=\(deductedTapSeconds), totalDeductedTapSeconds=\(deductedTapSeconds.reduce(.zero, +))"

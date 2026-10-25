@@ -269,7 +269,7 @@ def export_private_result_bundle(
                 collect_first_failure_spool(directory, selectors, failed,
                     first_failure_images or evidence_dir / ("first-failure" + suffix))
             if resource_sampler is not None:
-                from strict_e2e_resource_diagnostics import collect_native_activity
+                from strict_e2e_resource_diagnostics import collect_native_activity, attach_pause_window_assertions
                 try:
                     collect_native_activity(bundle, legacy_root, failed, resource_sampler,
                         recorder=active(), timeout=min(2.0, export_timeout_seconds))
@@ -278,6 +278,8 @@ def export_private_result_bundle(
                     if recorder is not None:
                         recorder.unavailable.add("xcode")
                         recorder.truncate("worker-unavailable")
+                # Native collection can republish the resource; attach afterward so it cannot erase these families.
+                attach_pause_window_assertions(legacy_root, failed, recorder=active(), sequence=resource_sampler.sequence)
             exported = (json.dumps(payload, sort_keys=True) + "\n").encode()
     (evidence_dir / f"official-tests{suffix}.json").write_bytes(exported)
     summary_path = evidence_dir / f"official-summary{suffix}.json"
