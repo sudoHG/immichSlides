@@ -768,6 +768,7 @@ class StrictE2ERunnerTestsCasesConfiguration:
             ("ios", 0, 0, "1\n", "Simulator password AutoFill readback failed"),
             ("ios", 0, 0, "", "Simulator password AutoFill readback failed"),
             ("tvos", 1, 1, "1\n", None),
+            ("iOS", 0, 0, "0\n", "Unsupported simulator platform"),
         ):
             with self.subTest(platform=platform, write_exit=write_exit, read_exit=read_exit, readback=readback):
                 calls = []
@@ -776,20 +777,37 @@ class StrictE2ERunnerTestsCasesConfiguration:
                     calls.append((argv, kwargs["deadline"]))
                     operation = argv[5] if argv[2] == "spawn" else None
                     code = write_exit if operation == "write" else read_exit if operation == "read" else 0
-                    return subprocess.CompletedProcess(argv, code, readback if operation == "read" else "", "")
+                    stderr = f"{operation} fixture diagnostic\n" if operation else ""
+                    return subprocess.CompletedProcess(argv, code, readback if operation == "read" else "", stderr)
 
-                with mock.patch.object(support, "prepare_simulator", return_value=(None, "")), \
+                with mock.patch.object(support, "prepare_simulator", return_value=(None, "")) as prepare, \
                      mock.patch.object(support, "simulator_app_container", return_value=None), \
                      mock.patch.object(support, "simulator_command", side_effect=command), \
                      mock.patch.object(support.time, "sleep"):
                     if error:
-                        with self.assertRaisesRegex(CommandError, error):
+                        with self.assertRaisesRegex(CommandError, error) as raised:
                             reset_simulator_app("SIM-UDID", platform=platform)
+                        if platform == "ios":
+                            if write_exit:
+                                self.assertIn(f"password_autofill_write_exit={write_exit}; stderr='write fixture diagnostic'",
+                                              str(raised.exception))
+                            else:
+                                self.assertIn(f"password_autofill_read_exit={read_exit}; stderr='read fixture diagnostic'; "
+                                              f"value={readback.strip()!r}", str(raised.exception))
                     else:
                         reset_simulator_app("SIM-UDID", platform=platform)
+                    if platform not in ("ios", "tvos"):
+                        prepare.assert_not_called()
+                        self.assertEqual(calls, [])
                 commands = [argv for argv, _ in calls]
                 preference_calls = [argv for argv in commands if argv[2] == "spawn"]
                 self.assertEqual(bool(preference_calls), platform == "ios")
+                if platform == "ios" and error is None:
+                    self.assertEqual(len(preference_calls), 2)
+                    self.assertEqual(preference_calls[0], ["xcrun", "simctl", "spawn", "SIM-UDID", "defaults",
+                                                           "write", "com.apple.WebUI", "AutoFillPasswords", "-bool", "NO"])
+                    self.assertEqual(preference_calls[1], ["xcrun", "simctl", "spawn", "SIM-UDID", "defaults",
+                                                           "read", "com.apple.WebUI", "AutoFillPasswords"])
                 if preference_calls:
                     self.assertLess(next(i for i, argv in enumerate(commands) if argv[2] == "privacy"),
                                     next(i for i, argv in enumerate(commands) if argv[2] == "spawn"))

@@ -4,6 +4,9 @@
 Xcode version/build/path, simulator versions/builds/runtime identifiers, device types,
 Python, Python packages and zstd. Consumers must compare exact versions and fail when a
 pin is unavailable; they must not select the latest installed version as a fallback.
+After changing the iOS runtime pin, repeat the Settings preference diff and prompt
+matrix required by [Shared simulator reset](CI_STRICT_RUNNER.md#shared-simulator-reset);
+a `readback=0` preference value alone does not prove the new OS honours the key.
 
 The Xcode and simulator pins match the [hosted Vision probe](https://github.com/sudoHG/immichSlides/actions/runs/37592421181).
 Python 3.9.6 and Pillow 11.3.0 match the contributor verification baseline. The workflow

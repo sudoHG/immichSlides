@@ -796,6 +796,8 @@ def prepare_simulator(simulator_udid: str, bundle_id: str = "com.331works.immich
 
 def reset_simulator_app(simulator_udid: str, bundle_id: str = "com.331works.immichSlides", *,
                         platform: str, boot_submitted: bool = False) -> str:
+    if platform not in ("ios", "tvos"):
+        raise CommandError(f"Unsupported simulator platform {platform!r}; expected 'ios' or 'tvos'.")
     # The fixed sleep waits for simctl to release the container lock; a second uninstall failure must stop the run.
     report = lambda line: print(line, flush=True)
     container, preparation_log = prepare_simulator(simulator_udid, bundle_id, report=report, boot_submitted=boot_submitted)
@@ -852,14 +854,17 @@ def reset_simulator_app(simulator_udid: str, bundle_id: str = "com.331works.immi
             [*preference, "write", "com.apple.WebUI", "AutoFillPasswords", "-bool", "NO"],
             "simulator-password-autofill-disable", deadline=deadline,
         )
+        lines.append(f"password_autofill_write_exit={disabled.returncode}; stderr={disabled.stderr.strip()!r}")
         if disabled.returncode != 0:
-            raise CommandError("Simulator password AutoFill disable failed; cannot continue with isolated state.")
+            raise CommandError("Simulator password AutoFill disable failed; cannot continue with isolated state.\n" + "\n".join(lines))
         readback = simulator_command(
             [*preference, "read", "com.apple.WebUI", "AutoFillPasswords"],
             "simulator-password-autofill-readback", deadline=deadline,
         )
+        lines.append(f"password_autofill_read_exit={readback.returncode}; stderr={readback.stderr.strip()!r}; "
+                     f"value={readback.stdout.strip()!r}")
         if readback.returncode != 0 or readback.stdout.strip() != "0":
-            raise CommandError("Simulator password AutoFill readback failed; cannot continue with isolated state.")
+            raise CommandError("Simulator password AutoFill readback failed; cannot continue with isolated state.\n" + "\n".join(lines))
         lines.append("password_autofill=disabled; domain=com.apple.WebUI; key=AutoFillPasswords; readback=0")
         report(lines[-1])
     lines.append(f"simulator-reset: elapsed={time.monotonic() - started:.1f}s; total budget={SIMULATOR_RESET_TIMEOUT_SECONDS}s")

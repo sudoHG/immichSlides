@@ -1018,13 +1018,17 @@ Exhausting that budget fails as `simulator-readiness-timeout`, before any reset
 mutation; a warm device returns on its first valid response. Uninstall and the
 remaining reset steps are still mandatory before Xcode may install the app. A reset error fails the case.
 
-Each reset caller supplies its platform. After keychain and privacy reset, iOS
+Each reset caller supplies `ios` or `tvos`; other values fail before simulator
+preparation. After keychain and privacy reset, iOS
 fixture simulators disable Password AutoFill with
 `simctl spawn UDID defaults write com.apple.WebUI AutoFillPasswords -bool NO`
 and require a successful `defaults read` returning `0` before the app runs.
 This is the preference changed by Settings > General > AutoFill & Passwords >
 AutoFill Passwords and Passkeys on the pinned iOS 27 runtime, confirmed by a
-before/after preference diff and the Settings toggle's readback. Both commands
+before/after preference diff and the Settings toggle's readback. After an iOS
+runtime pin change, repeat the Settings preference diff and the before/after
+prompt matrix on the pinned iPhone and iPad: `readback=0` alone does not prove
+that the new OS honours this key. Both commands
 consume the existing 120-second reset budget, with the same per-command cap;
 a failed write or unreadable/enabled value fails preparation. Strict, fixture UI,
 standalone access-lifecycle and listed-retry resets all apply this policy.
@@ -1129,7 +1133,8 @@ separate from reset and unchanged XCTest deadlines. Reliability may therefore
 cost as much as the earlier 3–9-minute enumeration bootstrap; hosted re-probing
 must establish the actual critical-path cost.
 
-Use dedicated simulators: keychain/privacy reset applies to the whole device.
+Use dedicated simulators: keychain/privacy reset applies to the whole device,
+and iOS Password AutoFill stays disabled on that simulator; it is not restored.
 Server/UI test variables in direct,
 `TEST_RUNNER_` and `SIMCTL_CHILD_` forms are filtered. Strict fixture inputs are
 passed explicitly; real server configuration is never used.
