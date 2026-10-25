@@ -1604,6 +1604,19 @@ and `cannot serve as identity:`; unrelated screenshot evidence remains unmatched
 The two simulator-only preconditions retain `unknown/unknown`: they do not report
 missing captured frames.
 
+The iPad lifecycle pause judge's thrown timing, brightness, continuity and identity
+failures use the fixed prefixes below. They remain red under every environment-limit
+policy: none of their phase/class pairs is an eligible availability wait. The shared
+`Missing settings evidence` message keeps an `unknown` phase because it also serves
+settings persistence and readback, but identifies missing evidence. Unreviewed or
+conflicting messages still produce `unknown/unknown`; no raw message is published.
+Only the clock-origin sentence also recognizes the one- and two-backslash apostrophe
+forms retained by XCTest exports; other escaped messages remain unreviewed.
+A wrapper source line does not identify the throwing helper. Also, the first-failure
+timeline retains a completed wait until another action or wait begins: a later
+`capture-frame` marker does not make `wait_elapsed_seconds` a screenshot duration.
+The capture request/return fields must supply that measurement when available.
+
 Recognizing previously unknown tvOS assertions also makes the following combinations
 newly eligible for yellow under the existing device-agnostic environment-limit policy.
 This is a classification effect, even though the allowlist and verdict logic are
@@ -1738,6 +1751,18 @@ New enum meanings and why the previous vocabulary cannot express them:
 | `Auto advance came before T-2;` | `continue_timing` | `timing_window` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift) |
 | `A black screen with no new photo cannot pass automatically` | `continue_timing` | `scene_identity` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift) |
 | `The iPad transition criterion is missing the original photo luma before Continue` | `continue_timing` | `evidence_capture` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift) |
+| `iPad pause-continue lacks valid timing or original photo brightness evidence` | `continue_timing` | `evidence_capture` | [AccessLifecycleContract+TransitionTiming.swift](../TestSupport/AccessLifecycleContract+TransitionTiming.swift) |
+| `iPad pause-continue is missing verifiable old-photo and transition samples` | `continue_timing` | `evidence_capture` | [AccessLifecycleContract+TransitionTiming.swift](../TestSupport/AccessLifecycleContract+TransitionTiming.swift) |
+| `iPad pause-continue samples contain invalid timing or brightness` | `continue_timing` | `evidence_capture` | [AccessLifecycleContract+TransitionTiming.swift](../TestSupport/AccessLifecycleContract+TransitionTiming.swift) |
+| `iPad pause-continue samples are out of order or have a gap` | `continue_timing` | `evidence_capture` | [AccessLifecycleContract+TransitionTiming.swift](../TestSupport/AccessLifecycleContract+TransitionTiming.swift) |
+| `iPad pause-continue: no transition start via sustained dimming or new photo` | `continue_timing` | `scene_identity` | [AccessLifecycleContract+TransitionTiming.swift](../TestSupport/AccessLifecycleContract+TransitionTiming.swift) |
+| `A continuous, reliable screenshot of the previous photo must precede the iPad transition start;` | `continue_timing` | `evidence_capture` | [AccessLifecycleContract+TransitionTiming.swift](../TestSupport/AccessLifecycleContract+TransitionTiming.swift) |
+| `iPad transition: conservative screenshot range must lie fully within T±2 s` | `continue_timing` | `timing_window` | [AccessLifecycleContract+TransitionTiming.swift](../TestSupport/AccessLifecycleContract+TransitionTiming.swift) |
+| `iPad must keep identifying a different new photo for at least 1 second` | `continue_timing` | `scene_identity` | [AccessLifecycleContract+TransitionTiming.swift](../TestSupport/AccessLifecycleContract+TransitionTiming.swift) |
+| `iPad new photo must be stably identifiable within 4 s of transition start` | `continue_timing` | `scene_identity` | [AccessLifecycleContract+TransitionTiming.swift](../TestSupport/AccessLifecycleContract+TransitionTiming.swift) |
+| `Record until a new photo is identifiable, not until the T+2 identity timeout` | `continue_timing` | `evidence_capture` | [AccessLifecycleContract+TransitionTiming.swift](../TestSupport/AccessLifecycleContract+TransitionTiming.swift) |
+| `Do not use click return time to hide the action's elapsed time` | `continue_timing` | `timing_window` | [AccessLifecycleContract+TransitionTiming.swift](../TestSupport/AccessLifecycleContract+TransitionTiming.swift) |
+| `Missing settings evidence` | `unknown` | `evidence_capture` | [Lifecycle settings](../immichSlidesUITests/AccessLifecycleIOSUITests+Settings.swift), [contract](../TestSupport/AccessLifecycleContract.swift) and [controls](../TestSupport/AccessLifecycleContract+Controls.swift) |
 | `Next-photo stable confirmation does not match the current raw screenshot` | `visible_scene_capture` | `evidence_capture` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift) |
 | `Next photo did not form a stable new MATCH within ` | `visible_scene_capture` | `scene_identity` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift) |
 | `Control-bar calibration must recognize the visible Settings crop.` | `visible_scene_capture` | `evidence_capture` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift); Settings-crop reference unwrap |
