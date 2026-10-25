@@ -395,7 +395,7 @@ extension AccessLifecycleIOSUITests {
     func openSettingsFromSlideshow(
         app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line
     ) {
-        // Read the successor inside the original entry deadline before callers query settings items.
+        // Read the successor within the entry observation allowance before callers query settings items.
         let deadline = Date().addingTimeInterval(TestWait.seconds(.product(15)))
         IOSDriver(app: app).openSettings(until: deadline, shouldAllowPINEntry: true, file: file, line: line)
     }

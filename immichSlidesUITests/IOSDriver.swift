@@ -313,21 +313,26 @@ struct IOSDriver: PlaybackDriver {
         action.timing.shouldVerifySettingsOutcome = true
         guard
             let before = prepareControl(
-                "slideshow.control.settings.button", until: deadline, action: &action, shouldDismissPasswordPrompt: true
+                "slideshow.control.settings.button", until: deadline, action: &action,
+                shouldDismissPasswordPrompt: true,
+                shouldExcludeWakeDuration: true
             )
         else {
             XCTFail("Playback page must provide the settings entry. (\(action.diagnostic))", file: file, line: line)
             return false
         }
         activateControl(before, action: &action)
-        let opened = Wait.until(timeout: max(.zero, deadline.timeIntervalSinceNow)) {
-            guard Date() < deadline else { return false }
+        // Retain the observation remainder; native tap time includes XCTest's pre- and post-event idle waits.
+        action.deductedTapSeconds.append(contentsOf: action.timing.tapDurationsSeconds)
+        let outcomeDeadline = deadline.addingTimeInterval(action.deductedTapSeconds.reduce(.zero, +))
+        let opened = Wait.until(timeout: max(.zero, outcomeDeadline.timeIntervalSinceNow)) {
+            guard Date() < outcomeDeadline else { return false }
             let verifyStartedAt = Date()
             defer { action.timing.verifySeconds += Date().timeIntervalSince(verifyStartedAt) }
             let observation = action.observe(app: app, identifier: "slideshow.control.settings.button")
             action.timing.hasSettingsOutcome = observation?.hasSettingsOutcome == true
             let hasPINEntry = shouldAllowPINEntry && observation?.snapshots["pinEntry.close.button"] != nil
-            return (action.timing.hasSettingsOutcome || hasPINEntry) && Date() < deadline
+            return (action.timing.hasSettingsOutcome || hasPINEntry) && Date() < outcomeDeadline
         }
         XCTAssertTrue(
             opened, "Tapping settings must open the settings page. (\(action.diagnostic))", file: file, line: line)
@@ -410,16 +415,19 @@ struct IOSDriver: PlaybackDriver {
 
     // For orientation steady-state evidence: wake the control bar if it is hidden, then require play / next /
     // settings to all be tappable.
-    func revealUsableControls() -> Bool {
+    func revealUsableControls(recordWake: ((TimeInterval) -> Void)? = nil) -> Bool {
         let deadline = Date().addingTimeInterval(UITestSupportWaitTiming.shortInteractionTimeoutSeconds)
         var action = ControlAction()
-        return prepareControl(
+        let prepared = prepareControl(
             "slideshow.control.playPause.button", until: deadline, action: &action,
-            alsoRequiring: ["slideshow.control.next.button", "slideshow.control.settings.button"]) != nil
+            alsoRequiring: ["slideshow.control.next.button", "slideshow.control.settings.button"])
+        action.timing.revealDurationsSeconds.forEach { recordWake?($0) }
+        return prepared != nil
     }
 
     private struct ControlAction {
         var timing = SlideshowControlBarTiming()
+        var deductedTapSeconds: [TimeInterval] = []
         var didWake = false
         var isHittable: Bool?
         var isBarVisible = false
@@ -437,8 +445,12 @@ struct IOSDriver: PlaybackDriver {
 
         var diagnostic: String {
             let actionableToTapSeconds = preparedAt.flatMap { preparedAt in issuedAt.map { $0 - preparedAt } }
+            let deductions =
+                timing.shouldVerifySettingsOutcome
+                ? ", deductedTapSeconds=\(deductedTapSeconds), totalDeductedTapSeconds=\(deductedTapSeconds.reduce(.zero, +))"
+                : ""
             return
-                "\(timing.diagnostic), preparedTarget={\(preparedTarget)}, barVisible=\(isBarVisible), hittable=\(isHittable.map(String.init) ?? "unknown"), wakeIssued=\(didWake), sceneReadSeconds=\(sceneReadSeconds), sceneCaptureSeconds=\(sceneCaptureSeconds), sceneClassificationSeconds=\(sceneClassificationSeconds), actionableToTapSeconds=\(actionableToTapSeconds.map(String.init(describing:)) ?? "none"), tapIssuedAt=\(issuedAt.map(String.init(describing:)) ?? "none"), tapReturnedAt=\(returnedAt.map(String.init(describing:)) ?? "none")"
+                "\(timing.diagnostic)\(deductions), preparedTarget={\(preparedTarget)}, barVisible=\(isBarVisible), hittable=\(isHittable.map(String.init) ?? "unknown"), wakeIssued=\(didWake), sceneReadSeconds=\(sceneReadSeconds), sceneCaptureSeconds=\(sceneCaptureSeconds), sceneClassificationSeconds=\(sceneClassificationSeconds), actionableToTapSeconds=\(actionableToTapSeconds.map(String.init(describing:)) ?? "none"), tapIssuedAt=\(issuedAt.map(String.init(describing:)) ?? "none"), tapReturnedAt=\(returnedAt.map(String.init(describing:)) ?? "none")"
         }
     }
 
@@ -452,10 +464,11 @@ struct IOSDriver: PlaybackDriver {
     }
 
     private func prepareControl(
-        _ identifier: String, until deadline: Date, action: inout ControlAction,
+        _ identifier: String, until originalDeadline: Date, action: inout ControlAction,
         shouldDismissPasswordPrompt: Bool = false, alsoRequiring additionalIdentifiers: [String] = [],
-        shouldRequireHittability: Bool = true
+        shouldRequireHittability: Bool = true, shouldExcludeWakeDuration: Bool = false
     ) -> SlideshowControlBarButtonObservation? {
+        var deadline = originalDeadline
         FirstFailureContext.beginWait(seconds: max(.zero, deadline.timeIntervalSinceNow))
         defer { FirstFailureContext.endWait() }
         while Date() < deadline {
@@ -501,6 +514,12 @@ struct IOSDriver: PlaybackDriver {
                     let duration = Date().timeIntervalSince(revealStartedAt)
                     action.timing.revealSeconds += duration
                     action.timing.revealDurationsSeconds.append(duration)
+                    if shouldExcludeWakeDuration {
+                        action.deductedTapSeconds.append(duration)
+                        deadline.addTimeInterval(duration)
+                        FirstFailureContext.endWait()
+                        FirstFailureContext.beginWait(seconds: max(.zero, deadline.timeIntervalSinceNow))
+                    }
                 }
             }
             guard Date() < deadline else { break }
