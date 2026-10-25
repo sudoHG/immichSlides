@@ -1534,6 +1534,29 @@ These labels locate a check; they do not establish a product or infrastructure
 root cause. No assertion text, observed value, path, identifier or frame is
 added to public records by the mapper.
 
+iOS lifecycle Play/Pause preparation closes its appearance receipt wait before
+starting its existing readiness wait. Both still use their original durations;
+the final defer closes the current wait instead of leaving the appearance wait
+active during later captures. A historical `capture-frame` receipt with an 8 s
+deadline can therefore describe a leaked preparation wait, not the duration of
+one screenshot call. Completed state-readback waits remain completed. This changes
+potential environment-limit eligibility in both directions: the two Play/Pause
+hittability failures can now report the completed 2 s readiness wait and qualify
+as UI-availability failures under the existing starvation proof, while later
+Settings failures no longer inherit the leaked 8 s wait. The exact messages,
+Release probe limitation and coordinator acceptance are documented beside the
+[environment-limit policy](CI_SUMMARY.md#prepared-hosted-strict-environment-limits).
+XCTest pass/fail outcomes, allowlists and policy versions are unchanged.
+
+The control-bar calibration prints each phase before its UI call or classification,
+so an XCTest abort that skips defer still leaves the phase-start line. Each call
+emits at most five phase lines, one screenshot duration and one total duration,
+without extra UI calls. These diagnostics are visible only in local xcodebuild
+stdout; hosted summaries do not retain that log. Its Settings-crop unwrap has an explicit
+`visible_scene_capture/evidence_capture` prefix, which remains red under the
+existing environment-limit policy. This identifies future calibration failures;
+it does not attribute historical unknown messages to that assertion.
+
 The shared export defaults to byte-preserving output without diagnostics. Only
 strict and UI callers opt in with `enrich_failure_diagnostics=True`; unit and
 lifecycle consumers retain the original tests/summary exports and budgets.
@@ -1687,6 +1710,7 @@ New enum meanings and why the previous vocabulary cannot express them:
 | `The iPad transition criterion is missing the original photo luma before Continue` | `continue_timing` | `evidence_capture` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift) |
 | `Next-photo stable confirmation does not match the current raw screenshot` | `visible_scene_capture` | `evidence_capture` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift) |
 | `Next photo did not form a stable new MATCH within ` | `visible_scene_capture` | `scene_identity` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift) |
+| `Control-bar calibration must recognize the visible Settings crop.` | `visible_scene_capture` | `evidence_capture` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift); Settings-crop reference unwrap |
 | `Screenshot cannot be used as identity;` | `visible_scene_capture` | `scene_identity` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift) |
 | `Must be able to return from settings to the playback page.` | `settings_navigation` | `navigation` | [AccessLifecycleIOSUITests+Navigation.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Navigation.swift) |
 | `The settings list must provide the playback settings entry` | `settings_navigation` | `navigation` | [AccessLifecycleIOSUITests+Navigation.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Navigation.swift) |

@@ -66,6 +66,7 @@ extension AccessLifecycleIOSUITests {
                     let end = Date().addingTimeInterval(TestWait.seconds(.product(2)))
                     readinessDeadline = end
                     deadline = end
+                    FirstFailureContext.endWait()
                     FirstFailureContext.beginWait(seconds: TestWait.seconds(.product(2)))
                 }
                 // Snapshot geometry is readiness evidence; the single tap's state readback proves its effect.
@@ -802,8 +803,16 @@ extension AccessLifecycleIOSUITests {
 
     @MainActor
     func captureControlBarReference(app: XCUIApplication) throws -> StrictE2EPhotoIdentity.ControlBarReference {
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        defer {
+            print(
+                "Lifecycle control-bar calibration: elapsedSeconds=\(ProcessInfo.processInfo.systemUptime - startedAt)"
+            )
+        }
+        print("Lifecycle control-bar calibration: phase=settings-snapshot")
         let settings = app.buttons["slideshow.control.settings.button"]
         let frame = try settings.snapshot().frame
+        print("Lifecycle control-bar calibration: phase=window-frame")
         let bounds = app.frame
         let normalizedRect = CGRect(
             x: (frame.minX - bounds.minX) / bounds.width,
@@ -811,15 +820,23 @@ extension AccessLifecycleIOSUITests {
             width: frame.width / bounds.width,
             height: frame.height / bounds.height
         )
+        print("Lifecycle control-bar calibration: phase=screenshot")
+        let captureStartedAt = ProcessInfo.processInfo.systemUptime
         let png = app.screenshot().pngRepresentation
+        print(
+            "Lifecycle control-bar calibration: screenshotSeconds=\(ProcessInfo.processInfo.systemUptime - captureStartedAt)"
+        )
+        print("Lifecycle control-bar calibration: phase=settings-hittability")
         guard settings.isHittable else {
             throw AccessLifecycleContract.AssertionError.message(
                 "Playback page should show the settings button: control-bar calibration requires Settings to remain hittable after the screenshot"
             )
         }
+        print("Lifecycle control-bar calibration: phase=reference-classification")
         return try XCTUnwrap(
             StrictE2EPhotoIdentity.ControlBarReference(
-                png: png, normalizedRect: normalizedRect)
+                png: png, normalizedRect: normalizedRect),
+            "Control-bar calibration must recognize the visible Settings crop."
         )
     }
 

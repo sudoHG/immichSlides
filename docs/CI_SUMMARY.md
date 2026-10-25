@@ -1191,6 +1191,34 @@ the same starvation proof; the pause-window T±2 and midpoint contract assertion
 themselves remain excluded (coordinator ruling, 2026-10-24, under Hogan's approved
 policy).
 
+The iOS lifecycle Play/Pause receipt correction (#607) also changes potential
+yellow eligibility in both directions without changing the waits themselves.
+`Play/pause must be hittable.` and `Play/pause must be hittable before continuing.`
+now report the finished 2 s readiness wait as `control_action/hidden_controls` at
+`query-element` on `slideshow.control.playPause.button`. Previously, the leaked
+outer wait reported the appearance time plus about 2 s against an 8 s deadline;
+when the first button observation took less than about 6 s, that wait was not
+expired and the failure stayed red. The completed readiness wait can now satisfy
+the existing exhausted-wait condition and become yellow under the full hosted
+starvation proof. In Release, `control_bar` is `unknown` because the probe is
+DEBUG-only, so the visible-control-bar exclusion does not reject these failures.
+This affects all five calls through `confirmPlayPauseState` and
+`pressContinueStartingClock`: the initial pause, setup pause, midpoint Play,
+midpoint pause and final Continue in `ios-lifecycle-pause`.
+
+The same correction tightens later `settings_navigation/navigation` failures.
+`Tapping settings must open the settings page.` no longer inherits the leaked
+8 s wait: if preparation and the tap exhaust the original entry budget, its own
+outcome wait has a zero deadline and stays red. Less likely,
+`Must return to the playback page after settings.` can now retain an earlier
+successful Settings-element wait, or no wait after a later tap, instead of the
+leaked expired wait, and also stays red. Capture/continue/hold failures and the
+historical `unknown/unknown` capture receipts remain red. The new calibration
+prefix is `visible_scene_capture/evidence_capture` and remains outside the
+allowlist. Allowlists and policy versions are unchanged. The coordinator accepted
+this widening under Hogan's approved policy that pure UI-availability waits may
+be yellow on proven-starved hosts, as with the pause-window readiness wait above.
+
 Debug `filter-person` tightens Pause-preparation classification. Its former
 `IOSDriver.pause` control-availability timeout could be environment-limited as
 `control_action/hidden_controls` at `query-element` or `reveal-controls` on

@@ -1213,6 +1213,19 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
 
 
 class FailureDiagnosticsTests(unittest.TestCase):
+    def test_pause_readiness_replaces_its_receipt_wait_before_starting_the_next(self):
+        source = (REPO_ROOT / "immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift").read_text()
+        preparation = source.split("func preparePlayPause(", 1)[1].split("func tapPreparedPlayPause(", 1)[0]
+        readiness = preparation.split("if readinessDeadline == nil {", 1)[1].split("\n                }", 1)[0]
+        # Unbalanced waits can make later settings_navigation receipts look like expired availability waits.
+        self.assertEqual(preparation.count("FirstFailureContext.beginWait("),
+                         preparation.count("FirstFailureContext.endWait()"),
+                         "Play/pause receipt waits must balance within preparePlayPause")
+        self.assertRegex(readiness, r'FirstFailureContext\.endWait\(\)\s+'
+                         r'FirstFailureContext\.beginWait\(seconds:')
+        self.assertRegex(preparation, r'FirstFailureContext\.beginWait\(seconds: [^\n]+\)\s+'
+                         r'defer \{ FirstFailureContext\.endWait\(\) \}')
+
     def test_mode_navigation_markers_preserve_environment_policy_boundaries(self):
         source = (REPO_ROOT / "immichSlidesUITests/UITestSupport.swift").read_text()
         navigation = source.split("private func navigateMode(", 1)[1].split("\n    private func poll(", 1)[0]
@@ -1452,6 +1465,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
             ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "A black screen with no new photo cannot pass automatically", "continue_timing", "scene_identity"),
             ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "The iPad transition criterion is missing the original photo luma before Continue", "continue_timing", "evidence_capture"),
             ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "Next-photo stable confirmation does not match the current raw screenshot", "visible_scene_capture", "evidence_capture"),
+            ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "Control-bar calibration must recognize the visible Settings crop.", "visible_scene_capture", "evidence_capture"),
             ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "Next photo did not form a stable new MATCH within ", "visible_scene_capture", "scene_identity"),
             ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "Screenshot cannot be used as identity;", "visible_scene_capture", "scene_identity"),
             ("immichSlidesUITests/AccessLifecycleIOSUITests+Navigation.swift", "Must be able to return from settings to the playback page.", "settings_navigation", "navigation"),
@@ -1741,6 +1755,8 @@ class FailureDiagnosticsTests(unittest.TestCase):
                     wrappers = ("XCTAssertGreaterThan failed: (PRIVATE_SENTINEL) - ",)
                 elif prefix == "After the change, a still frame taken mid-transition must not pass":
                     wrappers = ("XCTAssertNotEqual failed: (PRIVATE_SENTINEL) - ",)
+                elif prefix == "Control-bar calibration must recognize the visible Settings crop.":
+                    wrappers = ('XCTUnwrap failed: expected non-nil value of type "ControlBarReference" - ',)
                 else:
                     wrappers = ("XCTAssertTrue failed - ",)
                 if prefix == "EXIF does not match the photo: mark=":
@@ -1762,7 +1778,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
                 else:
                     assertion_source = None
                 if assertion_source is not None:
-                    emitters = list(re.finditer(r'(XCTAssert\w+|XCTFail|throw Failure|throw (?:AccessLifecycleContract\.)?AssertionError\.message)\s*\(',
+                    emitters = list(re.finditer(r'(XCTAssert\w+|XCTUnwrap|XCTFail|throw Failure|throw (?:AccessLifecycleContract\.)?AssertionError\.message)\s*\(',
                                                assertion_source[:message_start]))
                     if wrappers[0].startswith('failed: caught error: "message('):
                         expected_emitter = ("throw AccessLifecycleContract.AssertionError.message"
