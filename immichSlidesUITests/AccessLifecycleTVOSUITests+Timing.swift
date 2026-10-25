@@ -1,8 +1,9 @@
 import XCTest
 import ImageIO
-import UIKit
 
 #if os(tvOS)
+import UIKit
+
 // These metrics are derived offline from one decoded PNG, independently of public-photo identity.
 private enum TVOSContinuePhotoCapture {
     static let requiredMark = "A1"
@@ -122,7 +123,7 @@ private enum TVOSContinuePhotoCapture {
     }
 }
 
-// Reuse the original reader on a lossless Settings crop without decoding a full PNG on the capture path.
+// Reuse the original reader on a lossless Settings crop without asking it to decode the full PNG again.
 struct TVOSContinueControlBarReference {
     private let fullFrameReference: StrictE2EPhotoIdentity.ControlBarReference
     private let croppedFrameReference: StrictE2EPhotoIdentity.ControlBarReference
@@ -714,7 +715,7 @@ extension AccessLifecycleTVOSUITests {
         var controlBarWake: (issued: TimeInterval, returned: TimeInterval)?
         var isControlBarWakeSkipped = false
         var hasObservedVisibleControls = false
-        var controlBarProbes: [(index: Int, request: TimeInterval, returned: TimeInterval, visible: Bool?)] = []
+        var controlBarProbes: [(index: Int, request: TimeInterval, returned: TimeInterval, isVisible: Bool?)] = []
         var samples: [AccessLifecycleContract.ContinueWatchSample] = []
         var earlyMark = ""
         var earlyElapsed: TimeInterval = TestWait.seconds(.product(0))
@@ -743,7 +744,7 @@ extension AccessLifecycleTVOSUITests {
                         "control_bar_probes": controlBarProbes.map {
                             [
                                 "frame_index": $0.index, "request": $0.request, "returned": $0.returned,
-                                "visible": $0.visible.map { $0 as Any } ?? NSNull()
+                                "visible": $0.isVisible.map { $0 as Any } ?? NSNull()
                             ] as [String: Any]
                         },
                         "frames": capturedFrames.enumerated().map { index, frame in
@@ -780,25 +781,25 @@ extension AccessLifecycleTVOSUITests {
                     controlBarWake == nil && isControlBarWakeSkipped == false
                     && (!hasObservedVisibleControls
                         || captured >= interval - AccessLifecycleContract.continueCaptureSlackSeconds)
-                var visible: Bool?
+                var isVisible: Bool?
                 if shouldReadControlBar {
                     let probeRequest = Date().timeIntervalSince(continueAt)
-                    visible = autoreleasepool {
+                    isVisible = autoreleasepool {
                         screenshot.image.cgImage.flatMap { controlBarReference.isVisible(image: $0) }
                     }
                     controlBarProbes.append(
-                        (capturedFrames.count, probeRequest, Date().timeIntervalSince(continueAt), visible))
+                        (capturedFrames.count, probeRequest, Date().timeIntervalSince(continueAt), isVisible))
                 }
                 let png = screenshot.pngRepresentation
                 let returned = Date().timeIntervalSince(continueAt)
                 capturedFrames.append((request, captured, returned, png))
                 if shouldReadControlBar {
-                    if visible == true { hasObservedVisibleControls = true }
+                    if isVisible == true { hasObservedVisibleControls = true }
                     let issued = Date().timeIntervalSince(continueAt)
                     if issued > wakeDeadline {
                         // Skipping returns to main's hidden-state comparison; its direction is unmeasured.
                         isControlBarWakeSkipped = true
-                    } else if visible == false, hasObservedVisibleControls {
+                    } else if isVisible == false, hasObservedVisibleControls {
                         // The App's 8 s auto-hide equals T-2 only while this flow requests T=10 s.
                         guard issued >= interval - AccessLifecycleContract.continueCaptureSlackSeconds else {
                             throw AccessLifecycleContract.AssertionError.message(

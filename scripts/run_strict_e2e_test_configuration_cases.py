@@ -93,6 +93,27 @@ class StrictE2ERunnerTestsCasesConfiguration:
         self.assertIsNotNone(capture_delay, "UI capture auto-hide declaration must be readable")
         self.assertEqual(int(product_delay[1]), int(capture_delay[1]), "Hidden-control capture must track the product auto-hide delay")
 
+    def test_tvos_continue_wake_window_pins_auto_hide_delay_and_requested_interval(self):
+        # Window gating no longer observes early auto-hide; keep that regression signal in host checks.
+        for path, declaration, expected, message in (
+            (
+                "immichSlides/tvOS/Core/SlideShowViewTV.swift",
+                r"static let controlBarAutoHideDelaySeconds: Int = (\d+)",
+                8,
+                "tvOS Continue wake window requires the product auto-hide delay to remain 8 seconds",
+            ),
+            (
+                "TestSupport/AccessLifecycleContract+Controls.swift",
+                r"static let tvOSRequestedIntervalSeconds = Int\(TestWait.seconds\(\.product\((\d+)\)\)\)",
+                10,
+                "tvOS Continue wake window requires the requested interval to remain 10 seconds",
+            ),
+        ):
+            with self.subTest(path=path):
+                value = re.search(declaration, (REPO_ROOT / path).read_text())
+                self.assertIsNotNone(value, message)
+                self.assertEqual(int(value[1]), expected, message)
+
     def test_inline_mode_rejects_explicit_warm_timeout_options(self):
         import contextlib
         for option in ("--cold-timeout-seconds", "--warm-timeout-seconds"):
