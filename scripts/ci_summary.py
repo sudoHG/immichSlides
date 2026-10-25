@@ -438,6 +438,10 @@ def render_markdown(payload):
                 hints += ["pause-window assertions: " + ", ".join(resource["pause_window_assertions"])
                     for case in payload["strict_case_evidence"] if case["identity"] == entry["identity"]
                     for resource in case[BOUNDED_DIAGNOSTICS_FIELD].get("case_resources", []) if "pause_window_assertions" in resource]
+                hints += ["failed at " + ", ".join(f"{location['path']}:{location['line']}"
+                                                  for location in resource["failure_locations"])
+                    for case in payload["strict_case_evidence"] if case["identity"] == entry["identity"]
+                    for resource in case[BOUNDED_DIAGNOSTICS_FIELD].get("case_resources", []) if "failure_locations" in resource]
         label = entry["identity"]["key"]
         if hints:
             label += " (" + ", ".join(f"{key}={value}" for key, value in sorted(entry["identity"]["dimensions"].items())) + ")"

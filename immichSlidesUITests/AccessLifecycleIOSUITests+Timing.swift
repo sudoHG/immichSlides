@@ -111,7 +111,8 @@ extension AccessLifecycleIOSUITests {
         app: XCUIApplication,
         expected: String,
         shouldTapIfNeeded: Bool,
-        message: String
+        message: String,
+        file: StaticString = #filePath, line: UInt = #line
     ) throws -> Date {
         let observation = try preparePlayPause(app: app)
         var returnedAt = Date()
@@ -119,7 +120,8 @@ extension AccessLifecycleIOSUITests {
             returnedAt = try tapPreparedPlayPause(observation).returned
         }
         XCTAssertTrue(
-            waitForPlayPauseState(app: app, expected: expected, timeout: TestWait.seconds(.product(4))), message)
+            waitForPlayPauseState(app: app, expected: expected, timeout: TestWait.seconds(.product(4))), message,
+            file: file, line: line)
         return returnedAt
     }
 
@@ -154,8 +156,10 @@ extension AccessLifecycleIOSUITests {
     }
 
     @MainActor
-    func readFourSettingsFromRealUI(app: XCUIApplication) throws -> [String: Any] {
-        openSettingsFromSlideshow(app: app)
+    func readFourSettingsFromRealUI(
+        app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line
+    ) throws -> [String: Any] {
+        openSettingsFromSlideshow(app: app, file: file, line: line)
         requests.append("settings.open")
         try assertNarrowEntryHasNoPin(app: app)
         return try readPlaybackSettings(app: app, shouldAllowPinUnlock: false)
@@ -233,9 +237,10 @@ extension AccessLifecycleIOSUITests {
     @MainActor
     func configureTimingPlaybackSettings(
         app: XCUIApplication,
-        isAutoPlayEnabled: Bool
+        isAutoPlayEnabled: Bool,
+        file: StaticString = #filePath, line: UInt = #line
     ) throws -> Int {
-        openSettingsFromSlideshow(app: app)
+        openSettingsFromSlideshow(app: app, file: file, line: line)
         requests.append("settings.open")
         try assertNarrowEntryHasNoPin(app: app)
         openPlaybackSettings(app: app)

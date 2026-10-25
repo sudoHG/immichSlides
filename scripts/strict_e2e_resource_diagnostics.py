@@ -17,6 +17,7 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 from threading import Event, Thread
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from ci_bounded_diagnostics import (MAX_DIAGNOSTIC_SECONDS,
     MAX_LOAD_AVERAGE, MAX_PROCESS_CPU_PERCENT, MAX_RESOURCE_CASES, MAX_RESOURCE_SAMPLES,
@@ -26,8 +27,9 @@ from ci_bounded_diagnostics import (MAX_CONTINUE_WATCH_BYTES, MAX_CONTINUE_WATCH
                                     CONTINUE_WATCH_STATUSES, validate_continue_watch)
 from ci_bounded_diagnostics import SIMULATOR_PROCESS_NAMES, validate_simulator_processes
 from ci_bounded_diagnostics import PAUSE_WINDOW_ASSERTION_PREFIXES
+from ci_bounded_diagnostics import MAX_FAILURE_LOCATIONS, public_failure_locations
 from ci_execution_diagnostics import finite
-from ci_failure_diagnostics import NATIVE_ACTIVITY_FIELDS, public_first_failure
+from ci_failure_diagnostics import NATIVE_ACTIVITY_FIELDS, public_first_failure, legacy_failure_summaries
 
 SAMPLE_INTERVAL_SECONDS = 2
 PROCESS_SAMPLE_INTERVAL_SECONDS = 10
@@ -118,6 +120,59 @@ def attach_continue_watch(receipt, evidence_dir, *, platform, suite, result, seq
         cases[0]["continue_watch"] = projection
     except (OSError, ValueError, TypeError, KeyError, OverflowError):
         pass  # Optional malformed evidence cannot discard the other diagnostics or alter the case verdict.
+
+
+def attach_failure_locations(root, failed_nodes, *, recorder, sequence, repo_root):
+    """Project existing official failure locations into public source coordinates, without messages."""
+    try:
+        if recorder is None:
+            return
+        cases = [case for case in recorder.case_resources if case["sequence"] == sequence]
+        names = {node["nodeIdentifier"].removesuffix("()") for node in failed_nodes}
+        if len(cases) != 1 or not names:
+            return
+        locations = []
+        def scalar(value):
+            return value.get("_value") if isinstance(value, dict) else value
+        def location(row):
+            document = row.get("documentLocationInCreatingWorkspace")
+            url = scalar(document.get("url")) if isinstance(document, dict) else None
+            if not isinstance(url, str):
+                return None
+            parsed = urlsplit(url)
+            if parsed.scheme != "file" or parsed.netloc or parsed.query:
+                return None
+            path = unquote(parsed.path)
+            root_path = repo_root.as_posix().rstrip("/")
+            prefixes = {root_path + "/"}
+            if root_path.startswith("/private/"):
+                prefixes.add(root_path.removeprefix("/private") + "/")
+            # Reject foreign roots before filesystem resolution, including automounted paths.
+            if not any(path.startswith(prefix) for prefix in prefixes):
+                return None
+            path = Path(path).resolve().relative_to(repo_root.resolve()).as_posix()
+            lines = parse_qs(parsed.fragment).get("StartingLineNumber", [])
+            line = lines[0] if len(lines) == 1 else None
+            if isinstance(line, str) and re.fullmatch(r"[0-9]{1,7}", line):
+                line = int(line) + 1  # Legacy document fragments are zero-based.
+            projection = [{"path": path, "line": line}]
+            return projection[0] if public_failure_locations(projection) is not None else None
+        for row in legacy_failure_summaries(root):
+            name = scalar(row.get("testCaseName"))
+            if not isinstance(name, str) or name.removesuffix("()").replace(".", "/") not in names:
+                continue
+            try:
+                entry = location(row)
+            except (OSError, ValueError, TypeError, AttributeError, RuntimeError):
+                continue
+            if entry is not None and entry not in locations:
+                locations.append(entry)
+                if len(locations) == MAX_FAILURE_LOCATIONS:
+                    break
+        if locations:
+            cases[0]["failure_locations"] = locations
+    except (ValueError, TypeError, KeyError, AttributeError):
+        pass  # Availability must not replace the official failure or its existing resource evidence.
 
 
 def attach_pause_window_assertions(root, failed_nodes, *, recorder, sequence):

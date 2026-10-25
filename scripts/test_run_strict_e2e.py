@@ -1732,6 +1732,17 @@ class FailureDiagnosticsTests(unittest.TestCase):
                     self.assertRegex((root / source).read_text(),
                                      r'\("' + re.escape(prefix.split()[0]) + '",')
                     self.assertRegex((root / source).read_text(), r'captureStable\(\s*target.name,')
+                elif source.endswith("/IOSDriver.swift") and prefix in (
+                    "Playback page must provide the settings entry.", "Tapping settings must open the settings page."
+                ):
+                    assertion = (r'XCTFail\('
+                                 if prefix.startswith("Playback page") else r'XCTAssertTrue\(\s*opened,\s*')
+                    self.assertRegex((root / source).read_text(),
+                                     assertion + '"' + re.escape(prefix) + r'[^"\n]*",\s*file: file, line: line\)')
+                    if prefix.startswith("Tapping settings"):
+                        self.assertRegex((root / "immichSlidesUITests/AccessLifecycleIOSUITests+Navigation.swift").read_text(),
+                                         r'IOSDriver\(app: app\)\.openSettings\(\s*until: deadline,\s*'
+                                         r'shouldAllowPINEntry: true,\s*file: file, line: line\)')
                 else:
                     self.assertIn('"' + prefix, (root / source).read_text())
                 expected = {"failure_phase": phase, "failure_class": kind}
@@ -1768,7 +1779,8 @@ class FailureDiagnosticsTests(unittest.TestCase):
                 elif prefix == "Must be paused after the midpoint.":
                     assertion_source = (root / source).read_text()
                     self.assertIn('message: "' + prefix, assertion_source)
-                    self.assertRegex(assertion_source, r'XCTAssertTrue\(\s*waitForPlayPauseState\([^\n]+\), message\)')
+                    self.assertRegex(assertion_source,
+                        r'XCTAssertTrue\(\s*waitForPlayPauseState\([^\n]+\), message,\s*file: file, line: line\)')
                     message_start = assertion_source.index('waitForPlayPauseState(app: app, expected: expected')
                 elif (source, prefix, phase, kind) in capture_cases or "AccessLifecycle" in source:
                     assertion_source = (root / source).read_text()
@@ -2242,6 +2254,91 @@ class FailureDiagnosticsTests(unittest.TestCase):
                     self.assertNotIn("PRIVATE_SENTINEL", exported)
                     self.assertEqual("Failed", json.loads(exported)["testNodes"][0]["result"])
 
+    def test_failure_locations_export_normalizes_filters_caps_and_binds_only_failed_strict_cases(self):
+        import copy
+        from types import SimpleNamespace
+        from urllib.parse import quote, urlsplit
+        import ci_execution_diagnostics as diagnostics
+        from test_ci_summary import bounded_diagnostics_receipt
+        name = "AccessLifecycleIOSUITests/testPause"
+        path = "immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift"
+        root = strict_runner.REPO_ROOT.as_posix()
+        url = f"file://{root}/{path}#EndingLineNumber=812&StartingLineNumber=811"
+        location = {"path": path, "line": 812}
+        def document(value):
+            return {"documentLocationInCreatingWorkspace": {"url": {"_value": value}}}
+        cases = [
+            ("document", [document(url)], [location]),
+            ("document-first-line", [document(url.replace("StartingLineNumber=811", "StartingLineNumber=0"))],
+                [{"path": path, "line": 1}]),
+            ("duplicate-line", [document(url + "&StartingLineNumber=42")], None),
+            ("missing-line", [document(url.split("#")[0])], None),
+            ("mixed", [document("file:///tmp/outside.swift#StartingLineNumber=811")] * 3 +
+                [document(url)], [location]),
+            ("private-alias", [document(url)], [location]),
+            ("encoded-root", [document(url)], [location]),
+            ("cap", [document(url.replace("StartingLineNumber=811", f"StartingLineNumber={line - 1}"))
+                     for line in (1, 1, 2, 3, 4)],
+                [{"path": path, "line": line} for line in (1, 2, 3)]),
+        ]
+        for unsafe in (f"file://PRIVATE_SENTINEL{root}/{path}#StartingLineNumber=812",
+                url.replace("file:", "https:", 1),
+                url.replace("#", "?PRIVATE_SENTINEL#")):
+            cases.append(("reject-url", [document(unsafe)], None))
+        for unsafe in (f"/tmp/outside/{path}", "/" + f"Users/PRIVATE_SENTINEL/{path}",
+                "/net/PRIVATE_SENTINEL/" + path,
+                "/" + "x" * (len(root) - 1) + "/" + path,
+                root + "/immichSlides/Shared/Secret.swift", root + "/../" + path):
+            cases.append(("reject-path" if unsafe.startswith(root + "/") else "reject-root",
+                          [document(f"file://{unsafe}#StartingLineNumber=811")], None))
+        cases += [(variant, [document(url)], None) for variant in
+                  ("passed", "other-method", "missing-case", "no-sampler", "missing-location")]
+        for variant, rows, expected in cases:
+            with self.subTest(variant=variant, rows=rows), tempfile.TemporaryDirectory() as raw:
+                evidence = Path(raw)
+                repo_root = strict_runner.REPO_ROOT
+                if variant in {"encoded-root", "private-alias"}:
+                    repo_root = evidence.resolve() / "代码"
+                    repo_root.mkdir()
+                    source = repo_root.as_posix()
+                    if variant == "private-alias":
+                        source = source.removeprefix("/private")
+                    rows = [document("file://" + quote(source + "/" + path) + "#StartingLineNumber=811")]
+                payload = {"testNodes": [{"nodeType": "Test Case", "nodeIdentifier": name + "()",
+                    "result": "Passed" if variant == "passed" else "Failed"}]}
+                legacy_name = "Other.testPause()" if variant == "other-method" else name.replace("/", ".") + "()"
+                legacy = {"issues": {"testFailureSummaries": {"_values": [dict(
+                    {} if variant == "missing-location" else row,
+                    testCaseName={"_value": legacy_name}, message={"_value": "PRIVATE_SENTINEL"}) for row in rows]}}}
+                original = bounded_diagnostics_receipt(resources=True)["case_resources"][0]
+                def export(command, **_kwargs):
+                    return subprocess.CompletedProcess(command, 0,
+                        json.dumps(legacy if "--legacy" in command else payload).encode(), b"")
+                def publish_native(*_args, recorder, **_kwargs):
+                    recorder.case_resources[0] = copy.deepcopy(original)
+                with diagnostics.session() as recorder, \
+                        mock.patch.object(strict_runner, "REPO_ROOT", repo_root), \
+                        mock.patch("run_strict_e2e.subprocess.run", side_effect=export) as query, \
+                        mock.patch("strict_e2e_resource_diagnostics.urlsplit", wraps=urlsplit) as parse_url, \
+                        mock.patch("strict_e2e_resource_diagnostics.Path", wraps=Path) as filesystem_path, \
+                        mock.patch("run_strict_e2e.read_official_test_results_summary",
+                            return_value=TestResultsSummary(1, 0, 1, 0, "Failed")), \
+                        mock.patch("strict_e2e_resource_diagnostics.collect_native_activity", side_effect=publish_native):
+                    recorder.case_resources = [copy.deepcopy(original)]
+                    sampler = None if variant == "no-sampler" else SimpleNamespace(
+                        sequence=original["sequence"] + (variant == "missing-case"))
+                    strict_runner.export_private_result_bundle(evidence / "private.xcresult", evidence, [],
+                        enrich_failure_diagnostics=True, resource_sampler=sampler)
+                    resource = recorder.receipt()["case_resources"][0]
+                self.assertEqual(expected, resource.pop("failure_locations", None))
+                self.assertEqual(original, resource)
+                self.assertEqual(1 if variant == "passed" else 2, query.call_count)
+                if variant == "cap":
+                    self.assertEqual(4, parse_url.call_count, "Do not parse locations after the three-entry cap")
+                if variant == "reject-root":
+                    filesystem_path.assert_not_called()
+                self.assertNotIn("PRIVATE_SENTINEL", json.dumps(resource))
+
     def test_native_dates_accept_legacy_offsets_colon_offsets_and_utc(self):
         from strict_e2e_resource_diagnostics import native_time
         for value in ("2021-03-03T14:43:24.000+0100", "2021-03-03T14:43:24.000+01:00",
@@ -2370,6 +2467,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
 
     def test_scanner_accepts_enums_and_rejects_free_text_even_without_credentials(self):
         from ci_failure_diagnostics import FAILURE_PHASES, FAILURE_CLASSES
+        from test_ci_summary import bounded_diagnostics_receipt
         with tempfile.TemporaryDirectory() as raw:
             evidence = Path(raw)
             path = evidence / "record.json"
@@ -2390,6 +2488,17 @@ class FailureDiagnosticsTests(unittest.TestCase):
                     path.write_text(raw_json)
                     with self.assertRaises(CommandError):
                         strict_runner.write_sensitive_scan(evidence, ["PRIVATE_SENTINEL"])
+            for projection in (
+                    [{"path": "/" + "Users/PRIVATE_SENTINEL/TestSupport/Timing.swift", "line": 1}],
+                    [{"path": "file://PRIVATE_SENTINEL/TestSupport/Timing.swift", "line": 1}],
+                    [{"path": "TestSupport/Timing.swift", "line": 1, "message": "PRIVATE_SENTINEL"}]):
+                receipt = bounded_diagnostics_receipt(resources=True)
+                receipt["case_resources"][0]["failure_locations"] = projection
+                path.write_text(json.dumps({"bounded_diagnostics": receipt}))
+                with self.subTest(projection=projection), self.assertRaisesRegex(CommandError,
+                        "^The evidence redaction scan found API Key values or invalid public failure diagnostics: record.json$"):
+                    strict_runner.write_sensitive_scan(evidence, [])
+                self.assertEqual("FAIL", json.loads((evidence / "sensitive-scan.json").read_text())["result"])
 
     def test_scanner_checks_validator_receipts_including_duplicate_and_malformed_json(self):
         message = "unreadable public glyph slot; slot 1 (horizontal); screenshot person-normal.png"
@@ -4820,25 +4929,29 @@ raise SystemExit(65)
             self.assertEqual(ledger, summary["strict_case_evidence"][0]["bounded_diagnostics"])
             self.assertIn("continue-watch: frames=1/1", (records / "summary.md").read_text())
 
-    def test_tracer_keeps_pause_window_assertions_bound_to_the_failed_case(self):
+    def test_tracer_keeps_optional_failure_projections_bound_to_the_failed_case(self):
         from test_ci_summary import bounded_diagnostics_receipt
-        ledger = bounded_diagnostics_receipt(resources=True)
-        ledger["case_resources"][0]["pause_window_assertions"] = ["restored-a2"]
-        with tempfile.TemporaryDirectory() as directory:
-            code, records, _, summary = self._produce_validator_records(Path(directory), None,
-                runner_exit=65, receipt_suite=None, bounded_diagnostics=ledger,
-                case=dict(platform="ios", device="ipad", configuration="Debug", suite="pause-window",
-                          scenario="normal", fixture="b"))
-            self.assertNotEqual(0, code)
-            failed = summary["population"]["observed"][0]
-            self.assertEqual("failed", failed["outcome"])
-            self.assertNotIn("environment_limit", failed)
-            self.assertIn("strict_case_evidence", summary)
-            self.assertEqual(failed["identity"], summary["strict_case_evidence"][0]["identity"])
-            self.assertEqual(ledger, summary["strict_case_evidence"][0]["bounded_diagnostics"])
-            rendered = (records / "summary.md").read_text()
-            self.assertIn("pause-window assertions: restored-a2", rendered)
-            self.assertIn("device=ipad", rendered)
+        for field, projection, hint in (
+                ("pause_window_assertions", ["restored-a2"], "pause-window assertions: restored-a2"),
+                ("failure_locations", [{"path": "immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "line": 812}],
+                 "failed at immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift:812")):
+            ledger = bounded_diagnostics_receipt(resources=True)
+            ledger["case_resources"][0][field] = projection
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as directory:
+                code, records, _, summary = self._produce_validator_records(Path(directory), None,
+                    runner_exit=65, receipt_suite=None, bounded_diagnostics=ledger,
+                    case=dict(platform="ios", device="ipad", configuration="Debug", suite="pause-window",
+                              scenario="normal", fixture="b"))
+                self.assertNotEqual(0, code)
+                failed = summary["population"]["observed"][0]
+                self.assertEqual("failed", failed["outcome"])
+                self.assertNotIn("environment_limit", failed)
+                self.assertIn("strict_case_evidence", summary)
+                self.assertEqual(failed["identity"], summary["strict_case_evidence"][0]["identity"])
+                self.assertEqual(ledger, summary["strict_case_evidence"][0]["bounded_diagnostics"])
+                rendered = (records / "summary.md").read_text()
+                self.assertIn(hint, rendered)
+                self.assertIn("device=ipad", rendered)
 
     def test_sampler_uses_fast_process_ticks_only_during_an_eligible_high_cpu_span(self):
         import ci_execution_diagnostics as diagnostics

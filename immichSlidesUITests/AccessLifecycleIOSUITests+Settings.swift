@@ -363,7 +363,9 @@ extension AccessLifecycleIOSUITests {
     }
 
     @MainActor
-    func pauseNextPlayFromZero(app: XCUIApplication, progress: inout [String: Any]) throws {
+    func pauseNextPlayFromZero(
+        app: XCUIApplication, progress: inout [String: Any], file: StaticString = #filePath, line: UInt = #line
+    ) throws {
         revealPlaybackControls(app: app)
         let playPause = app.buttons["slideshow.control.playPause.button"]
         XCTAssertTrue(
@@ -379,7 +381,8 @@ extension AccessLifecycleIOSUITests {
                 expectedPaused: false) != nil
         }
         guard isPlayingStableScene else {
-            try failStableSceneCapture("Pause precondition requires a playing stable scene before the deadline")
+            try failStableSceneCapture(
+                "Pause precondition requires a playing stable scene before the deadline", file: file, line: line)
         }
         if playPauseState(playPause) != "play" {
             tapElement(playPause)
@@ -497,7 +500,9 @@ extension AccessLifecycleIOSUITests {
     }
 
     @MainActor
-    func captureWakeMark(app: XCUIApplication, name: String, deadline: Date) throws -> (mark: String, png: Data) {
+    func captureWakeMark(
+        app: XCUIApplication, name: String, deadline: Date, file: StaticString = #filePath, line: UInt = #line
+    ) throws -> (mark: String, png: Data) {
         try AccessLifecycleContract.assertIdentitySource("public_fixture_photo_mark")
         if !shouldRequireStableSceneCaptures {
             let png = try captureRequiredPNG(app: app, name: name)
@@ -505,7 +510,8 @@ extension AccessLifecycleIOSUITests {
             let mark = contractMark(identity)
             if mark == "BLACK" || mark == "BLANK" || mark == "UNRECOGNIZABLE" || mark.isEmpty {
                 XCTFail(
-                    "Screenshot \(name) cannot be used as identity: \(identity.status.rawValue)/\(identity.mark ?? "nil")"
+                    "Screenshot \(name) cannot be used as identity: \(identity.status.rawValue)/\(identity.mark ?? "nil")",
+                    file: file, line: line
                 )
             }
             return (mark, png)
@@ -516,7 +522,8 @@ extension AccessLifecycleIOSUITests {
                 deadline: deadline)
         else {
             try failStableSceneCapture(
-                "Screenshot \(name) cannot be used as identity: no complete stable capture window")
+                "Screenshot \(name) cannot be used as identity: no complete stable capture window", file: file,
+                line: line)
         }
         return (capture.mark, capture.png)
     }

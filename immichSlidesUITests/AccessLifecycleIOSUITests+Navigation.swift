@@ -107,8 +107,10 @@ extension AccessLifecycleIOSUITests {
         return nil
     }
 
-    func failStableSceneCapture(_ message: String) throws -> Never {
-        XCTFail(message)
+    func failStableSceneCapture(
+        _ message: String, file: StaticString = #filePath, line: UInt = #line
+    ) throws -> Never {
+        XCTFail(message, file: file, line: line)
         throw AccessLifecycleContract.AssertionError.message(message)
     }
 
@@ -191,7 +193,8 @@ extension AccessLifecycleIOSUITests {
 
     @MainActor
     func captureRequiredMark(
-        app: XCUIApplication, name: String, requiresSmartFillManifest: Bool = true, expectedPaused: Bool? = nil
+        app: XCUIApplication, name: String, requiresSmartFillManifest: Bool = true, expectedPaused: Bool? = nil,
+        file: StaticString = #filePath, line: UInt = #line
     ) throws -> SceneCapture {
         try AccessLifecycleContract.assertIdentitySource("public_fixture_photo_mark")
         let deadline = Date().addingTimeInterval(TestWait.seconds(.product(4)))
@@ -201,7 +204,8 @@ extension AccessLifecycleIOSUITests {
                 expectedPaused: expectedPaused)
         else {
             try failStableSceneCapture(
-                "Screenshot \(name) cannot be used as identity: no complete stable capture window")
+                "Screenshot \(name) cannot be used as identity: no complete stable capture window", file: file,
+                line: line)
         }
         return capture
     }
@@ -210,10 +214,11 @@ extension AccessLifecycleIOSUITests {
     func captureNewStableMark(
         app: XCUIApplication,
         name: String,
-        timeout: TimeInterval
+        timeout: TimeInterval,
+        file: StaticString = #filePath, line: UInt = #line
     ) throws -> (mark: String, png: Data) {
         if shouldRequireStableSceneCaptures {
-            return try captureNewStableSceneMark(app: app, name: name, timeout: timeout)
+            return try captureNewStableSceneMark(app: app, name: name, timeout: timeout, file: file, line: line)
         }
         try AccessLifecycleContract.assertIdentitySource("public_fixture_photo_mark")
         let initialPNG = app.screenshotForFailureEvidence().pngRepresentation
@@ -261,7 +266,7 @@ extension AccessLifecycleIOSUITests {
 
     @MainActor
     private func captureNewStableSceneMark(
-        app: XCUIApplication, name: String, timeout: TimeInterval
+        app: XCUIApplication, name: String, timeout: TimeInterval, file: StaticString, line: UInt
     ) throws -> (mark: String, png: Data) {
         try AccessLifecycleContract.assertIdentitySource("public_fixture_photo_mark")
         let deadline = Date().addingTimeInterval(timeout)
@@ -270,7 +275,7 @@ extension AccessLifecycleIOSUITests {
                 app: app, name: name, deadline: deadline, shouldPersist: false)
         else {
             try failStableSceneCapture(
-                "No new stable frame appeared before going to the background")
+                "No new stable frame appeared before going to the background", file: file, line: line)
         }
         let initialMark = initial.mark
         while true {
@@ -318,7 +323,7 @@ extension AccessLifecycleIOSUITests {
             }
         }
         try failStableSceneCapture(
-            "No new stable frame appeared before going to the background")
+            "No new stable frame appeared before going to the background", file: file, line: line)
     }
 
     @MainActor
@@ -387,10 +392,12 @@ extension AccessLifecycleIOSUITests {
     }
 
     @MainActor
-    func openSettingsFromSlideshow(app: XCUIApplication) {
+    func openSettingsFromSlideshow(
+        app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line
+    ) {
         // Read the successor within the entry observation allowance before callers query settings items.
         let deadline = Date().addingTimeInterval(TestWait.seconds(.product(15)))
-        IOSDriver(app: app).openSettings(until: deadline, shouldAllowPINEntry: true)
+        IOSDriver(app: app).openSettings(until: deadline, shouldAllowPINEntry: true, file: file, line: line)
     }
 
     @MainActor
@@ -643,7 +650,10 @@ extension AccessLifecycleIOSUITests {
     }
 
     @MainActor
-    func waitForSaveEnabled(app: XCUIApplication, saveButton: XCUIElement, timeout: TimeInterval) -> Bool {
+    func waitForSaveEnabled(
+        app: XCUIApplication, saveButton: XCUIElement, timeout: TimeInterval,
+        file: StaticString = #filePath, line: UInt = #line
+    ) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             acceptLocalNetworkPermissionIfNeeded()
@@ -653,7 +663,7 @@ extension AccessLifecycleIOSUITests {
             if alert.exists {
                 // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
                 let details = alert.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: " | ")
-                XCTFail("Connection test showed a failure alert: \(alert.label) | \(details)")
+                XCTFail("Connection test showed a failure alert: \(alert.label) | \(details)", file: file, line: line)
                 return false
             }
             RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.2))))
