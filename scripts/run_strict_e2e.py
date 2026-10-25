@@ -278,6 +278,7 @@ def export_private_result_bundle(
                     if recorder is not None:
                         recorder.unavailable.add("xcode")
                         recorder.truncate("worker-unavailable")
+                # Native collection can republish the resource; attach afterward so it cannot erase these families.
                 attach_pause_window_assertions(legacy_root, failed, recorder=active(), sequence=resource_sampler.sequence)
             exported = (json.dumps(payload, sort_keys=True) + "\n").encode()
     (evidence_dir / f"official-tests{suffix}.json").write_bytes(exported)

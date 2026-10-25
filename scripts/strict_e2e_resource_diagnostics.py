@@ -122,18 +122,17 @@ def attach_continue_watch(receipt, evidence_dir, *, platform, suite, result, seq
 
 def attach_pause_window_assertions(root, failed_nodes, *, recorder, sequence):
     """Reuse the strict export's private messages; retain only fixed, unordered families."""
-    name = "StrictE2EFirstBatchIOSUITests/testSinglePhotoOutgoingPauseWindowCapture"
+    from strict_e2e_runner_support import IOS_FIRST_BATCH_SUITES
+    name = IOS_FIRST_BATCH_SUITES["pause-window"].split("/", 1)[1]
     try:
-        if recorder is None or len([node for node in failed_nodes if node.get("result") == "Failed"
-                and node.get("nodeIdentifier", "").removesuffix("()") == name]) != 1:
+        if recorder is None or len([node for node in failed_nodes
+                if node.get("nodeIdentifier", "").removesuffix("()") == name]) != 1:
             return
         cases = [case for case in recorder.case_resources if case["sequence"] == sequence]
         if len(cases) != 1:
             return
         from ci_failure_diagnostics import legacy_failure_messages, normalized_xctest_failure
         messages = legacy_failure_messages(root).get(name, [])
-        if not messages:
-            return
         families = set()
         for message in messages:
             text = normalized_xctest_failure(message)

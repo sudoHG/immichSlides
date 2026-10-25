@@ -2180,15 +2180,14 @@ class FailureDiagnosticsTests(unittest.TestCase):
         )
         name = "StrictE2EFirstBatchIOSUITests/testSinglePhotoOutgoingPauseWindowCapture"
         for index, (message, family) in enumerate(cases):
-            for variant in ("failed", "passed", "other-method", "missing-case", "mixed", "missing-messages",
-                            "unmapped", "warnings", "other-legacy-method", "duplicate-method"):
+            for variant in ("failed", "other-method", "missing-case", "mixed", "missing-messages",
+                            "unmapped", "other-legacy-method", "duplicate-method"):
                 if index and variant != "failed":
                     continue
                 with self.subTest(family=family, variant=variant), tempfile.TemporaryDirectory() as raw:
                     evidence = Path(raw)
                     selected = "Other/testFailure" if variant == "other-method" else name
-                    result = "Passed" if variant == "passed" else "Failed"
-                    payload = {"testNodes": [{"nodeType": "Test Case", "nodeIdentifier": selected + "()", "result": result}]}
+                    payload = {"testNodes": [{"nodeType": "Test Case", "nodeIdentifier": selected + "()", "result": "Failed"}]}
                     if variant == "duplicate-method":
                         payload["testNodes"] *= 2
                     messages = [message + " PRIVATE_SENTINEL"]
@@ -2199,18 +2198,20 @@ class FailureDiagnosticsTests(unittest.TestCase):
                     if variant == "missing-messages":
                         messages = []
                     legacy_name = "Other/testFailure" if variant == "other-legacy-method" else name
-                    legacy = {"issues": {"testWarningSummaries" if variant == "warnings" else "testFailureSummaries": {"_values": [
+                    legacy = {"issues": {"testFailureSummaries": {"_values": [
                         {"testCaseName": {"_value": legacy_name.replace("/", ".") + "()"},
                          "message": {"_value": "XCTAssertTrue failed - " + value}} for value in messages]}}}
                     original = bounded_diagnostics_receipt(resources=True)["case_resources"][0]
                     def export(command, **_kwargs):
                         body = legacy if "--legacy" in command else payload
                         return subprocess.CompletedProcess(command, 0, json.dumps(body).encode(), b"")
+                    def publish_native_resource(*_args, recorder, **_kwargs):
+                        recorder.case_resources[0] = copy.deepcopy(original)
                     with diagnostics.session() as recorder, \
                             mock.patch("run_strict_e2e.subprocess.run", side_effect=export), \
                             mock.patch("run_strict_e2e.read_official_test_results_summary",
-                                return_value=TestResultsSummary(1, int(result == "Passed"), int(result == "Failed"), 0, result)), \
-                            mock.patch("strict_e2e_resource_diagnostics.collect_native_activity"):
+                                return_value=TestResultsSummary(1, 0, 1, 0, "Failed")), \
+                            mock.patch("strict_e2e_resource_diagnostics.collect_native_activity", side_effect=publish_native_resource):
                         recorder.case_resources = [copy.deepcopy(original)]
                         sampler = SimpleNamespace(sequence=original["sequence"] + (variant == "missing-case"))
                         strict_runner.export_private_result_bundle(evidence / "private.xcresult", evidence, ["PRIVATE_SENTINEL"],
@@ -2223,7 +2224,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
                     self.assertEqual(original, resource)
                     exported = (evidence / "official-tests.json").read_text()
                     self.assertNotIn("PRIVATE_SENTINEL", exported)
-                    self.assertEqual(result, json.loads(exported)["testNodes"][0]["result"])
+                    self.assertEqual("Failed", json.loads(exported)["testNodes"][0]["result"])
 
     def test_native_dates_accept_legacy_offsets_colon_offsets_and_utc(self):
         from strict_e2e_resource_diagnostics import native_time

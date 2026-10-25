@@ -1645,8 +1645,8 @@ this strict-only producer and reader to ship together, preserving old nights.
 | `find-a2` | A2 search exhausted |
 | `bright-a2` | Pre-Play bright pixels do not prove A2 |
 | `late-a3` | Paused midpoint shows complete A3 |
-| `frozen-probe` | Paused identity, opacity or motion changed |
-| `frozen-pixels` | Paused photo pixels changed |
+| `frozen-probe` | Paused identity, opacity or motion changed or missing |
+| `frozen-pixels` | Paused photo pixels changed or missing |
 | `visible-pixels` | Midpoint lacks visible photo pixels |
 | `outgoing-a2` | Midpoint identifies a transition or another photo |
 | `unmapped` | Another failure in the same method; no raw text retained |

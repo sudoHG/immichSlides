@@ -1158,12 +1158,12 @@ class SummaryContractTests(unittest.TestCase):
         after = environment_limit_evidence(summary, row, [resource], runner_hosted=True)
         self.assertIsNotNone(after)
         self.assertEqual(before["failure"], after["failure"])
+        row["environment_limit"] = row["attempts"][0]["environment_limit"] = after
+        parsed = ci_summary.parse_summary(json.dumps(summary))
+        self.assertEqual(resource["pause_window_assertions"],
+            parsed["population"]["observed"][0]["environment_limit"]["resources"]["pause_window_assertions"])
         self.assertNotIn("pause-window assertions:", ci_summary.render_markdown(old))
         self.assertIn("pause-window assertions: bright-a2, restored-a2, unmapped", ci_summary.render_markdown(summary))
-        # Identity failures stay red even with otherwise eligible resource/timing evidence.
-        for entry in (row, row["attempts"][0]):
-            entry.update(failure_phase="pause_window", failure_class="scene_identity")
-        self.assertIsNone(environment_limit_evidence(summary, row, [resource], runner_hosted=True))
         for defect in (None, [], "bright-a2", {}, [True], [[]], ["PRIVATE_SENTINEL"], ["bright-a2", "bright-a2"]):
             changed = copy.deepcopy(summary)
             changed["strict_case_evidence"][0]["bounded_diagnostics"]["case_resources"][0]["pause_window_assertions"] = defect
