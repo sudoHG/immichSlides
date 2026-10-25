@@ -1495,6 +1495,16 @@ class FailureDiagnosticsTests(unittest.TestCase):
             ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "iPhone pause-continue evidence is invalid;", "continue_timing", "evidence_capture"),
             ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "tvOS new photo must be stably identifiable within 4 s of transition start", "continue_timing", "scene_identity"),
             ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "iPhone new photo must be stably identifiable within 4 s of transition start", "continue_timing", "scene_identity"),
+            ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "iPad pause-continue lacks valid timing or original photo brightness evidence", "continue_timing", "evidence_capture"),
+            ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "iPad pause-continue is missing verifiable old-photo and transition samples", "continue_timing", "evidence_capture"),
+            ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "iPad pause-continue samples contain invalid timing or brightness", "continue_timing", "evidence_capture"),
+            ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "iPad pause-continue samples are out of order or have a gap", "continue_timing", "evidence_capture"),
+            ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "iPad pause-continue: no transition start via sustained dimming or new photo", "continue_timing", "scene_identity"),
+            ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "A continuous, reliable screenshot of the previous photo must precede the iPad transition start;", "continue_timing", "evidence_capture"),
+            ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "iPad transition: conservative screenshot range must lie fully within T±2 s", "continue_timing", "timing_window"),
+            ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "iPad must keep identifying a different new photo for at least 1 second", "continue_timing", "scene_identity"),
+            ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "iPad new photo must be stably identifiable within 4 s of transition start", "continue_timing", "scene_identity"),
+            ("TestSupport/AccessLifecycleContract+TransitionTiming.swift", "Record until a new photo is identifiable, not until the T+2 identity timeout", "continue_timing", "evidence_capture"),
             ("TestSupport/AccessLifecycleContract.swift", "All black must not count as a pass", "unknown", "scene_identity"),
             ("TestSupport/AccessLifecycleContract.swift", "Blank must not count as a pass", "unknown", "scene_identity"),
             ("TestSupport/AccessLifecycleContract.swift", "Unrecognizable input must not count as a pass", "unknown", "scene_identity"),
@@ -1823,6 +1833,8 @@ class FailureDiagnosticsTests(unittest.TestCase):
             'failed: caught error: "Failure(message: \\"Fixture image response control timed out\\")"',
             'failed: caught error: "Fixture image response control timed out"',
             'failed: caught error: "message(\\"' + "Can\\'t check EXIF: photo status PRIVATE_SENTINEL" + '\\")"',
+            'failed: caught error: "message(\\"' + "Do not use click return time to hide the action\\'s elapsed time" + '\\")"',
+            'failed - message("Missing settings evidence")',
         ):
             with self.subTest(message=message):
                 self.assertEqual(classify_messages([message]), unknown_diagnostics())
@@ -2157,47 +2169,6 @@ class FailureDiagnosticsTests(unittest.TestCase):
         self.assertEqual(legacy_diagnostics(payload), {"Flow/testFailure": {
             "failure_phase": "interval_setup", "failure_class": "interval_readback"}})
 
-    def test_ios_pause_thrown_failures_classify_without_environment_eligibility(self):
-        from ci_failure_diagnostics import (
-            environment_timing, legacy_diagnostics, unknown_diagnostics, unavailable_first_failure,
-        )
-        cases = (
-            ("iPad pause-continue lacks valid timing or original photo brightness evidence", "evidence_capture"),
-            ("iPad pause-continue is missing verifiable old-photo and transition samples", "evidence_capture"),
-            ("iPad pause-continue samples contain invalid timing or brightness", "evidence_capture"),
-            ("iPad pause-continue samples are out of order or have a gap", "evidence_capture"),
-            ("iPad pause-continue: no transition start via sustained dimming or new photo", "scene_identity"),
-            ("A continuous, reliable screenshot of the previous photo must precede the iPad transition start;", "evidence_capture"),
-            ("iPad transition: conservative screenshot range must lie fully within T±2 s", "timing_window"),
-            ("iPad must keep identifying a different new photo for at least 1 second", "scene_identity"),
-            ("iPad new photo must be stably identifiable within 4 s of transition start", "scene_identity"),
-            ("Record until a new photo is identifiable, not until the T+2 identity timeout", "evidence_capture"),
-            ("Do not use click return time to hide the action's elapsed time", "timing_window"),
-            ("Do not use click return time to hide the action\\'s elapsed time", "timing_window"),
-            ("Do not use click return time to hide the action\\\\'s elapsed time", "timing_window"),
-            ("Missing settings evidence", "evidence_capture"),
-        )
-        method = "AccessLifecycleIOSUITests/testPauseNextContinueVisibleTiming"
-        receipt = unavailable_first_failure("xctest")
-        receipt.update(step="capture-frame", element="app-window")
-        receipt["state"].update(app="running-foreground", surface="playback", scene_status="MATCH")
-        # Even a completed wait on a starved host cannot turn these proof failures yellow.
-        receipt["timing"].update(wait_elapsed_seconds=4, deadline_seconds=4)
-        for prefix, kind in cases:
-            phase = "unknown" if prefix == "Missing settings evidence" else "continue_timing"
-            with self.subTest(prefix=prefix):
-                message = 'failed: caught error: "message(\\"' + prefix + ' PRIVATE_SENTINEL /private/path\\")"'
-                row = {"testCaseName": {"_value": method.replace("/", ".") + "()"},
-                       "message": {"_value": message}}
-                payload = {"issues": {"testFailureSummaries": {"_values": [row]}}}
-                self.assertEqual(legacy_diagnostics(payload),
-                                 {method: {"failure_phase": phase, "failure_class": kind}})
-                for version in (1, 2, 3, 4):
-                    self.assertFalse(environment_timing(receipt | receipt["state"] | receipt["timing"],
-                                                       phase, kind, policy_version=version))
-                row["message"]["_value"] = "unreviewed PRIVATE_SENTINEL"
-                self.assertEqual(legacy_diagnostics(payload), {method: unknown_diagnostics()})
-
     def test_ios_pause_throw_sites_have_reviewed_message_prefixes(self):
         from ci_failure_diagnostics import PREFIX_RULES
         root = Path(__file__).resolve().parent.parent
@@ -2214,6 +2185,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
                 "assertContinueEarlyStillSameScene", "assertSamplesStayOnSceneBeforeAdvanceWindow",
                 "assertClickTimesRecordedSeparately", "assertWindowUsesRequestElapsed", "assertIPadPauseTimingEvidence",
                 "assertIdentifiableNewImagePresent", "assertRecordingDidNotStopAtIdentityTimeout",
+                "assertIPhonePauseTimingEvidence",
             },
         }
         count = 0
@@ -2222,6 +2194,12 @@ class FailureDiagnosticsTests(unittest.TestCase):
             for match in re.finditer(r'throw (?:AccessLifecycleContract\.)?AssertionError\.message\(\s*"([^"\n]*)"', source):
                 owner = list(re.finditer(r'\bfunc\s+(\w+)\s*\(', source[:match.start()]))[-1].group(1)
                 if owners is not None and owner not in owners:
+                    continue
+                # Strict callers always use the issued origin and didUseReturnedAsOrigin=false.
+                if owner == "assertClickTimesRecordedSeparately" and match.group(1) == "Do not use click return time to hide the action's elapsed time":
+                    continue
+                # The preceding invalid-interval assertion throws before this fallback can execute.
+                if owner == "setIntervalFromUI" and match.group(1) == "Missing settings evidence":
                     continue
                 count += 1
                 with self.subTest(path=path, owner=owner, message=match.group(1)):
