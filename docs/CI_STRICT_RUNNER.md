@@ -715,9 +715,11 @@ The frozen manifest's legacy delay metadata stays
 unchanged for hash compatibility and no longer schedules responses.
 
 While a hold is active, another asset's preview/fullsize response waits until
-the real monotonic clock has crossed the held request's start millisecond before
-sending its bytes. A faster response can otherwise finish in that same logged
-millisecond, leaving the unchanged strict timeline unable to prove start-before-completion.
+the real monotonic clock has crossed the first held request's start millisecond
+(`hold_started_elapsed_ms`) before sending its bytes. This covers the judge's
+requirement that any one size proves the strict order. A faster response can
+otherwise finish in that same logged millisecond, leaving the unchanged strict
+timeline unable to prove start-before-completion.
 The server polls that absolute clock boundary in one-millisecond intervals;
 it never increments a timestamp or treats equal timestamps as ordered. Host
 scheduling can delay a wake beyond one interval. Thumbnails, unarmed/released

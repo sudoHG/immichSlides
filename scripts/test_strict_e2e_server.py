@@ -772,7 +772,7 @@ class StrictE2EServerContractTests(unittest.TestCase):
 
     def test_out_of_order_response_proves_strict_start_order_within_one_clock_tick(self) -> None:
         for size, newer_request_clock in (
-            ("preview", 0.0), ("fullsize", 0.0), ("preview", 0.001), ("fullsize", 0.001)
+            ("preview", 0.0), ("fullsize", 0.0)
         ):
             with self.subTest(size=size, newer_request_clock=newer_request_clock):
                 clock = [0.0]

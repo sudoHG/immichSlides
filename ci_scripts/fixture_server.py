@@ -37,6 +37,7 @@ MAX_REQUEST_BODY_BYTES = 64 * 1024
 REQUEST_BODY_TIMEOUT_SECONDS = 5
 LATE_IMAGE_MAX_HOLD_SECONDS = 90
 LATE_IMAGE_RESET_TIMEOUT_SECONDS = 5
+TIMELINE_TIMESTAMP_TICK_SECONDS = 0.001
 # Preserve the frozen fixture manifest; response scheduling no longer uses this metadata.
 LEGACY_FIXTURE_DELAY_MS = 1600
 REQUIRED_SEARCH_VALUES = {
@@ -508,6 +509,16 @@ class StrictE2ERequestHandler(BaseHTTPRequestHandler):
                         fixture_asset_id=asset["id"], size=size,
                     )
                     return
+                if held is None and size in {"preview", "fullsize"}:
+                    with self.server.late_image_condition:
+                        state = self.server.late_image
+                        held_start_ms = (
+                            state["hold_started_elapsed_ms"] if state["armed"] and not state["released"] else None
+                        )
+                    # The strict timeline must prove order even when both responses fit in one millisecond.
+                    if held_start_ms is not None:
+                        while int((time.monotonic() - self.server.started_at) * 1000) <= held_start_ms:
+                            time.sleep(TIMELINE_TIMESTAMP_TICK_SECONDS)
                 delivered = self._image(
                     self.server.fixture["images"][asset["id"]],
                     fixture_asset_id=asset["id"],
