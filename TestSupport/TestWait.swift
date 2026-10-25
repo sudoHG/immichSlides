@@ -173,7 +173,7 @@ enum TestWait {
     final class HangGuard {
         private let deadline: TimeInterval
         private let now: () -> TimeInterval
-        private let pause: (TimeInterval) -> Void
+        private let pauseForPolling: (TimeInterval) -> Void
 
         fileprivate init(
             timeoutSeconds: TimeInterval, now: @escaping () -> TimeInterval,
@@ -181,7 +181,7 @@ enum TestWait {
         ) {
             precondition(timeoutSeconds.isFinite && timeoutSeconds >= 0)
             self.now = now
-            self.pause = pause
+            self.pauseForPolling = pause
             deadline = now() + timeoutSeconds
         }
 
@@ -211,10 +211,10 @@ enum TestWait {
             func probe(_ condition: () -> Bool) -> Bool { query(condition) == true }
 
             /// A query started in time may return satisfied late. Only an issued action grants one extra read.
-            func query<Value>(_ observation: () -> Value) -> Value? {
+            func query<Value>(_ takeNavigationObservation: () -> Value) -> Value? {
                 guard guardWait.remainingSeconds > 0 || hasPostActionObservation else { return nil }
                 hasPostActionObservation = false
-                return observation()
+                return takeNavigationObservation()
             }
 
             func until(
@@ -227,7 +227,7 @@ enum TestWait {
                     if isSatisfied { return true }
                     let remaining = guardWait.remainingSeconds
                     guard remaining > 0 else { return false }
-                    guardWait.pause(min(pollIntervalSeconds, remaining))
+                    guardWait.pauseForPolling(min(pollIntervalSeconds, remaining))
                 }
                 return false
             }
