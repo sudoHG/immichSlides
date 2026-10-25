@@ -1732,6 +1732,17 @@ class FailureDiagnosticsTests(unittest.TestCase):
                     self.assertRegex((root / source).read_text(),
                                      r'\("' + re.escape(prefix.split()[0]) + '",')
                     self.assertRegex((root / source).read_text(), r'captureStable\(\s*target.name,')
+                elif source.endswith("/IOSDriver.swift") and prefix in (
+                    "Playback page must provide the settings entry.", "Tapping settings must open the settings page."
+                ):
+                    assertion = (r'XCTFail\('
+                                 if prefix.startswith("Playback page") else r'XCTAssertTrue\(\s*opened,\s*')
+                    self.assertRegex((root / source).read_text(),
+                                     assertion + '"' + re.escape(prefix) + r'[^"\n]*",\s*file: file, line: line\)')
+                    if prefix.startswith("Tapping settings"):
+                        self.assertRegex((root / "immichSlidesUITests/AccessLifecycleIOSUITests+Navigation.swift").read_text(),
+                                         r'IOSDriver\(app: app\)\.openSettings\(\s*until: deadline,\s*'
+                                         r'shouldAllowPINEntry: true,\s*file: file, line: line\)')
                 else:
                     self.assertIn('"' + prefix, (root / source).read_text())
                 expected = {"failure_phase": phase, "failure_class": kind}

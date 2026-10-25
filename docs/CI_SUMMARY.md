@@ -199,7 +199,9 @@ Xcode 27.0 toolchain, a controlled direct
 `throw AccessLifecycleContract.AssertionError.message(...)` inside the iOS
 lifecycle test recorded the throw statement itself, alongside two distinct
 forwarded helper caller locations. This does not establish attribution for
-errors thrown through other wrappers. The lifecycle tests use
+errors thrown through other wrappers. Callers such as `IOSDriver.applyPlaybackSettings`
+and `clearDiskCache` use `openSettings`' defaults, so their Settings failures
+identify those call sites. The pause-next-continue lifecycle tests use
 `FirstFailureEvidence.preservingThrownFailure`, which rethrows the original error:
 a recorded location such as `UITestSupport.swift:25` may identify that rethrow
 wrapper instead of the original throw statement. The error message never supplies a location.
