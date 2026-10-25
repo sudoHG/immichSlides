@@ -1539,12 +1539,20 @@ starting its existing readiness wait. Both still use their original durations;
 the final defer closes the current wait instead of leaving the appearance wait
 active during later captures. A historical `capture-frame` receipt with an 8 s
 deadline can therefore describe a leaked preparation wait, not the duration of
-one screenshot call. Completed state-readback waits remain completed. This can
-remove false exhausted-wait evidence from environment-limit eligibility; it
-does not add an eligible combination or change a test verdict.
+one screenshot call. Completed state-readback waits remain completed. This changes
+potential environment-limit eligibility in both directions: the two Play/Pause
+hittability failures can now report the completed 2 s readiness wait and qualify
+as UI-availability failures under the existing starvation proof, while later
+Settings failures no longer inherit the leaked 8 s wait. The exact messages,
+Release probe limitation and coordinator acceptance are documented beside the
+[environment-limit policy](CI_SUMMARY.md#prepared-hosted-strict-environment-limits).
+XCTest pass/fail outcomes, allowlists and policy versions are unchanged.
 
-The control-bar calibration logs its last phase, total elapsed time and screenshot
-duration without extra UI calls. Its Settings-crop unwrap now has an explicit
+The control-bar calibration prints each phase before its UI call or classification,
+so an XCTest abort that skips defer still leaves the phase-start line. Each call
+emits at most five phase lines, one screenshot duration and one total duration,
+without extra UI calls. These diagnostics are visible only in local xcodebuild
+stdout; hosted summaries do not retain that log. Its Settings-crop unwrap has an explicit
 `visible_scene_capture/evidence_capture` prefix, which remains red under the
 existing environment-limit policy. This identifies future calibration failures;
 it does not attribute historical unknown messages to that assertion.

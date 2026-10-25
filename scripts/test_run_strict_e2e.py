@@ -1217,7 +1217,10 @@ class FailureDiagnosticsTests(unittest.TestCase):
         source = (REPO_ROOT / "immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift").read_text()
         preparation = source.split("func preparePlayPause(", 1)[1].split("func tapPreparedPlayPause(", 1)[0]
         readiness = preparation.split("if readinessDeadline == nil {", 1)[1].split("\n                }", 1)[0]
-        # A leaked outer wait can make a later capture falsely look like an exhausted availability wait.
+        # Unbalanced waits can make later settings_navigation receipts look like expired availability waits.
+        self.assertEqual(preparation.count("FirstFailureContext.beginWait("),
+                         preparation.count("FirstFailureContext.endWait()"),
+                         "Play/pause receipt waits must balance within preparePlayPause")
         self.assertRegex(readiness, r'FirstFailureContext\.endWait\(\)\s+'
                          r'FirstFailureContext\.beginWait\(seconds:')
 
@@ -1397,7 +1400,6 @@ class FailureDiagnosticsTests(unittest.TestCase):
             ("immichSlidesUITests/RotationUITests.swift", "rotation-portrait-stable did not stabilize within the ", "rotation_portrait_capture", "timing_window"),
             ("immichSlidesUITests/RotationUITests.swift", "layout-landscape-multi did not stabilize within the ", "visible_scene_capture", "timing_window"),
             ("immichSlidesUITests/RotationUITests.swift", "layout-portrait-multi did not stabilize within the ", "visible_scene_capture", "timing_window"),
-            ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "Control-bar calibration must recognize the visible Settings crop.", "visible_scene_capture", "evidence_capture"),
             ("immichSlidesUITests/RotationUITests.swift", "Could not recognize a public photo on screen within ", "visible_scene_capture", "scene_identity"),
             ("immichSlidesUITests/RotationUITests.swift", "The public photo on screen did not change after next;", "history_navigation", "scene_identity"),
             ("immichSlidesUITests/RotationUITests.swift", "Before rotating, the play button value must be pause (playing),", "control_action", "control_state"),
@@ -1461,6 +1463,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
             ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "A black screen with no new photo cannot pass automatically", "continue_timing", "scene_identity"),
             ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "The iPad transition criterion is missing the original photo luma before Continue", "continue_timing", "evidence_capture"),
             ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "Next-photo stable confirmation does not match the current raw screenshot", "visible_scene_capture", "evidence_capture"),
+            ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "Control-bar calibration must recognize the visible Settings crop.", "visible_scene_capture", "evidence_capture"),
             ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "Next photo did not form a stable new MATCH within ", "visible_scene_capture", "scene_identity"),
             ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "Screenshot cannot be used as identity;", "visible_scene_capture", "scene_identity"),
             ("immichSlidesUITests/AccessLifecycleIOSUITests+Navigation.swift", "Must be able to return from settings to the playback page.", "settings_navigation", "navigation"),
