@@ -203,32 +203,25 @@ final class RotationUITests: XCTestCase {
     ) throws {
         var refreshDurationsSeconds: [TimeInterval] = []
         var helperWakeDurationsSeconds: [TimeInterval] = []
+        var deductedTapSeconds: [TimeInterval] = []
         defer {
             print(
-                "Rotation capture controls: name=\(name), refreshCount=\(refreshDurationsSeconds.count), refreshDurationsSeconds=\(refreshDurationsSeconds), helperWakeTimingAvailable=\(FirstFailureContext.isEnabled), helperWakeDurationsSeconds=\(helperWakeDurationsSeconds)"
+                "Rotation capture controls: name=\(name), refreshCount=\(refreshDurationsSeconds.count), refreshDurationsSeconds=\(refreshDurationsSeconds), helperWakeTimingAvailable=true, helperWakeDurationsSeconds=\(helperWakeDurationsSeconds), deductedTapSeconds=\(deductedTapSeconds), totalDeductedTapSeconds=\(deductedTapSeconds.reduce(.zero, +))"
             )
         }
-        // Read the existing action receipt without querying the UI again or changing the driver's behavior.
+        // Report the driver's measured wake directly; diagnostics being disabled must not change the clock.
         func controlsAreReady() -> Bool {
-            let startedAt = ProcessInfo.processInfo.systemUptime
-            let isReady = driver.revealUsableControls()
-            let observedAt = ProcessInfo.processInfo.systemUptime
-            let context = FirstFailureContext.snapshot()
-            let timing = context.timeline.timing(at: observedAt)
-            if context.timeline.action == "tap",
-                let ageSeconds = timing["since_action_issued_seconds"] as? TimeInterval,
-                observedAt - ageSeconds >= startedAt,
-                let durationSeconds = timing["action_duration_seconds"] as? TimeInterval
-            {
+            return driver.revealUsableControls { durationSeconds in
                 helperWakeDurationsSeconds.append(durationSeconds)
+                deductedTapSeconds.append(durationSeconds)
             }
-            return isReady
         }
         let timeout = deadline?.timeIntervalSinceNow ?? Timing.stableFrameTimeout
         let frame = StableFrame.wait(
             in: driver.app,
             orientation: orientation,
             timeout: timeout,
+            deductedTapSeconds: { deductedTapSeconds },
             prepare: {
                 if controlsAreReady() { return true }
                 // Refresh once after failure; the second readiness check starts after this wake returns.
@@ -241,6 +234,7 @@ final class RotationUITests: XCTestCase {
                 driver.app.coordinate(withNormalizedOffset: controlRevealPoint).tapForFailureEvidence()
                 let wakeSeconds = ProcessInfo.processInfo.systemUptime - wakeStartedAt
                 refreshDurationsSeconds.append(wakeSeconds)
+                deductedTapSeconds.append(wakeSeconds)
                 print("Rotation control refresh: name=\(name), seconds=\(wakeSeconds)")
                 return controlsAreReady()
             },
@@ -249,7 +243,7 @@ final class RotationUITests: XCTestCase {
         guard frame.isStable else {
             try evidence.reject(name, png: frame.png)
             throw Failure(
-                "\(name) did not stabilize within the \(Int(Timing.stableFrameTimeout))-second stable wait: \(frame.detail)"
+                "\(name) did not stabilize within the \(Int(Timing.stableFrameTimeout))-second stable wait: \(frame.detail) (deductedTapSeconds=\(deductedTapSeconds), totalDeductedTapSeconds=\(deductedTapSeconds.reduce(.zero, +)))"
             )
         }
         try evidence.record(name, png: frame.png, capturedAt: frame.capturedAt, orientation: orientation)

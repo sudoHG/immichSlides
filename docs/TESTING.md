@@ -362,6 +362,28 @@ The same diagnostic is printed on every return from readiness, refresh and actio
 local XCTest activity logs can compare event latency without additional queries.
 IOSDriver wake and tap paths append each measured duration to the same lists
 as their aggregate timing fields.
+`IOSDriver.openSettings` excludes only its measured canvas wake and Settings tap
+from the existing entry allowance. Preparation snapshots, prompt handling, live
+hittability checks, polling and outcome snapshots still consume that allowance;
+a tap never renews it. Both pre- and post-snapshot checks use the adjusted deadline,
+so a late Settings or permitted PIN snapshot still fails. Settings diagnostics retain
+each deduction in `deductedTapSeconds` and their `totalDeductedTapSeconds`; these
+include XCTest's pre- and post-event idle waits, not proven host-only overhead.
+No other `prepareControl` caller opts into this exclusion: Pause, Next,
+`revealControls` and `revealUsableControls` retain their existing clocks.
+
+For entry time `t0`, original absolute deadline `d`, native canvas-wake duration
+`W` and native Settings-tap duration `C`, preparation changes from `d` to `d+W`,
+and outcome changes from `d` to `d+W+C`:
+
+| Settings caller | Original entry deadline | Adjusted preparation / outcome deadline | Timing boundary |
+| --- | --- | --- | --- |
+| Cache clear and iPad cache smoke: `applyPlaybackSettings`, `clearDiskCache` | `t0+23` | `t0+23+W` / `t0+23+W+C` | Cache completion and capture checks start later and keep their own budgets. |
+| ReduceMotion and EXIF: `applyPlaybackSettings` | `t0+23` | `t0+23+W` / `t0+23+W+C` | Motion recording and EXIF readback keep their own budgets. |
+| Rotation layout and playback: `applyPlaybackSettings` | `t0+23` | `t0+23+W` / `t0+23+W+C` | Settings completes before the unchanged 30-second playback-rotation origin. |
+| ScenePresentation image-failure recovery: `applyPlaybackSettings`, `clearDiskCache` | `t0+23` | `t0+23+W` / `t0+23+W+C` | Recovery assertions keep their existing origin and budgets. |
+| AccessLifecycle: `openSettingsFromSlideshow` with permitted PIN entry | Caller deadline `d=t0+15` | `d+W` / `d+W+C` | Settings readback/configuration precedes lifecycle timing; PIN handling remains explicit. |
+
 The outcome field becomes true only after the wait accepts an observation within its window.
 Verify time includes its snapshot time; no extra diagnostic snapshot runs after
 timeout. Playback History Settings uses the explicit bounded refresh, without
@@ -850,7 +872,7 @@ unchanged. The combined runner uses Debug, where the measured-progress probes ex
 
 `p2-ipad-layout` checks the multi-photo identity of each frame used by its stable
 pair, instead of taking a separate scene-check screenshot before the saved frame.
-Control readiness, orientation, the 10-second budget, the 0.5-second pair spacing
+Control readiness, orientation, the 10-second observation allowance, the 0.5-second pair spacing
 and the pixel-difference limit remain unchanged. Thrown failures are recorded
 before app termination. Stable-frame diagnostics separate control preparation,
 screenshot capture and pixel analysis without additional UI reads. IOSDriver Next
@@ -872,14 +894,38 @@ once and checks readiness once more, starting the second check after the wake
 returns with a freshly reset auto-hide timer. This does not guarantee that the
 timer cannot expire during a slow native interaction. Both checks and the refresh
 run inside an iteration the existing stable-frame loop admits; like the existing
-check, they are not cut off at its deadline. Per-capture logs record explicit
-refreshes and driver wakes from existing action receipts; rotation logs record
-elapsed time against the unchanged natural-switch bound.
+check, they are not cut off at its deadline. Only the measured native helper-wake
+and explicit-refresh tap durations are excluded from the enclosing stable-frame
+allowance; queries, polling, screenshot capture and pixel analysis remain charged.
+The driver reports its measured wakes directly, independently of receipt enablement,
+without a UI query. Every deduction appears in `deductedTapSeconds` and
+`totalDeductedTapSeconds` in capture logs and failure details. The inner driver's
+3-second readiness checks retain their original deadlines. Rotation logs still
+measure all elapsed time, including every tap, against the 30-second natural-switch
+bound; the original start timestamp and bound are unchanged.
 Every saved candidate still requires all three controls to be
 hittable, the requested orientation and public photo identity, and the stable
-frame pair. The shared driver and other callers retain their existing behavior.
+frame pair. Other stable-frame callers report no tap deductions and retain their deadlines.
 Failures retain the `visible_scene_capture` / `timing_window` or rotation-capture
 classification; this does not introduce yellow eligibility.
+
+Let `t0` be capture entry, `tr` rotation issue and `W` the sum of that capture's
+returned helper-wake/refresh tap durations. The shared stable-frame callers are:
+
+| Caller | Old stable deadline | New stable deadline | Product boundary |
+| --- | --- | --- | --- |
+| iPad multi-photo layout: landscape and portrait `captureStable` | `t0+10` | `t0+10+W` | Orientation setup and multi-photo selection precede capture, as before. |
+| Playback rotation: initial portrait `captureStable` | `t0+10` | `t0+10+W` | The whole sequence remains strictly below 30 seconds from the original Next request. |
+| Playback rotation: landscape and final portrait `captureStable` | `tr+10` | `tr+10+W` | Window settling and stable observation still share 10 active seconds; every wall-clock second also consumes the unchanged 30-second bound. |
+| Orientation self-check: direct `StableFrame.wait` | `tr+10` | `tr+10` | No deduction callback. |
+| ReduceMotion segments: direct `StableFrame.wait` | `t0+10` | `t0+10` | No deduction callback; recording holds are unchanged. |
+
+These exclusions can absorb about 60 seconds of App non-idleness inside each
+XCTest tap when the outcome later arrives within the remaining allowance. This is
+not proof that the time was outside the App's responsibility. No cap is added;
+the playback-rotation 30-second bound still rejects such an overlong sequence.
+See the [environment-limit contract](CI_SUMMARY.md#prepared-hosted-strict-environment-limits)
+for the Settings receipt eligibility change and unchanged red rotation failures.
 
 Run serially within a checkout because the runner manages temporary test configuration. Use a new evidence directory outside the repository for each run. The runner prepares the fixture and app state, reads official test statistics, checks result contracts and cleans up. Zero selected tests, skipped strict tests, missing evidence or an unknown image are failures. A successful contract check does not replace human visual review; inspect the current run's original screenshots. The separate [iPad host tool](../scripts/ipad-pause-host-testing.md) remains diagnostic tooling and does not replace an XCTest result.
 

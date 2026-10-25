@@ -826,6 +826,15 @@ in `action_duration_seconds`. Later actions can replace that single-action field
 the mode observation log and failure detail retain each deducted tap duration and
 their total, including Continue.
 
+IOSDriver Settings and rotation stable captures also exclude their measured native
+tap time. After each preparation deduction, `deadline_seconds` records only the
+remaining observation allowance and `wait_elapsed_seconds` measures the restarted
+segment. The Settings outcome wait uses its original entry allowance minus all
+spent non-tap work, excluding its wake and Settings tap. Capture logs and failure
+details retain every deduction and their total; the single-action receipt field
+continues to describe only the latest action. The rotation 30-second bound still
+includes all wall time. [Caller formulas](TESTING.md#3-assertions) are authoritative.
+
 An optional `first_failure.gate` carries the album capture gate's last observed
 conditions on its timeout paths only. The First failure line in `summary.md`
 renders its fixed Boolean/null facts and enumerated phase; it contains no raw
@@ -1220,6 +1229,23 @@ classification rather than a slow control; the starvation proof still applies. A
 zero-observation failure left at `reveal-controls` would need a sub-millisecond
 positive budget that never enters the readiness loop, and the same deadline and
 starvation proofs still gate it.
+
+IOSDriver Settings preserves the entry remainder after its measured native wake
+and Settings tap. A failure formerly reached with zero remaining outcome budget
+can now produce a positive, fully expired `settings_navigation/navigation` wait at
+`query-element` on `slideshow.control.settings.button`. This changes potential
+yellow eligibility under the existing v1/v2/v3/v4 allowlists, only with the required
+playback surface, hosted scope and starvation proof. Prefixes, markers, allowlists
+and policy versions do not change. Settings preparation failures classified as
+`settings_navigation/hidden_controls`, unknown/unrecognizable surfaces and all
+rotation-capture or 30-second rotation-bound failures remain red. Restarted waits
+retain only their non-tap remainder, never a fresh full allowance.
+
+Accepted residual risk: Settings and rotation deductions include XCTest's pre-
+and post-event waits for the App to idle and can absorb about 60 seconds of App
+non-idleness per tap when readiness later succeeds. This does not establish
+host-only responsibility, and no new cap is introduced. The unchanged rotation
+30-second product bound still includes that time and can independently fail.
 
 Missing or ambiguous receipts, samples or case bindings stay red; an old night gains no classification.
 `firstboot_setup/navigation` also includes a confirmed connection-error alert,

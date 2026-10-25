@@ -1483,10 +1483,11 @@ struct StableFrame {
         in app: XCUIApplication,
         orientation: StepOrientation,
         timeout: TimeInterval = Timing.stableFrameTimeout,
+        deductedTapSeconds: () -> [TimeInterval] = { [] },
         prepare: () -> Bool = { true },
         accept: (Data) -> Bool
     ) -> StableFrame {
-        let deadline = Date().addingTimeInterval(timeout)
+        var deadline = Date().addingTimeInterval(timeout)
         FirstFailureContext.mark("capture-frame", element: "app-window")
         FirstFailureContext.beginWait(seconds: max(.zero, timeout))
         defer { FirstFailureContext.endWait() }
@@ -1495,9 +1496,10 @@ struct StableFrame {
         var captureSeconds: TimeInterval = .zero
         var analysisSeconds: TimeInterval = .zero
         var iterations = 0
+        var totalDeductedTapSeconds: TimeInterval = .zero
         defer {
             print(
-                "Stable frame wait: orientation=\(orientation.rawValue), iterations=\(iterations), timeoutSeconds=\(timeout), prepareSeconds=\(prepareSeconds), captureSeconds=\(captureSeconds), analysisSeconds=\(analysisSeconds), totalSeconds=\(ProcessInfo.processInfo.systemUptime - startedAt)"
+                "Stable frame wait: orientation=\(orientation.rawValue), iterations=\(iterations), timeoutSeconds=\(timeout), prepareSeconds=\(prepareSeconds), captureSeconds=\(captureSeconds), analysisSeconds=\(analysisSeconds), deductedTapSeconds=\(deductedTapSeconds()), totalDeductedTapSeconds=\(totalDeductedTapSeconds), totalSeconds=\(ProcessInfo.processInfo.systemUptime - startedAt)"
             )
         }
         var previous: Data?
@@ -1507,6 +1509,15 @@ struct StableFrame {
             let window = app.frame.size
             let isPrepared = orientation.matches(window) && prepare()
             prepareSeconds += ProcessInfo.processInfo.systemUptime - prepareStartedAt
+            // Only returned preparation taps are excluded; queries, captures and analysis retain their cost.
+            let measuredTapSeconds = deductedTapSeconds().reduce(.zero, +)
+            let newlyDeductedTapSeconds = measuredTapSeconds - totalDeductedTapSeconds
+            if newlyDeductedTapSeconds > .zero {
+                deadline.addTimeInterval(newlyDeductedTapSeconds)
+                totalDeductedTapSeconds = measuredTapSeconds
+                FirstFailureContext.endWait()
+                FirstFailureContext.beginWait(seconds: max(.zero, deadline.timeIntervalSinceNow))
+            }
             let capturedAt = Date()
             let captureStartedAt = ProcessInfo.processInfo.systemUptime
             let png = uprightScreenPNG()
