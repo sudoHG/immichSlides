@@ -68,8 +68,9 @@ extension XCTestCase {
     @MainActor
     func waitForLateImageCurrentScene(app: XCUIApplication) -> Bool {
         // The model can settle before the compositor. Readiness is separate from the one judged capture.
-        let deadline = ProcessInfo.processInfo.systemUptime + 60
-        FirstFailureContext.beginWait(seconds: 60)
+        let timeout = TestWait.seconds(.infrastructure(60))
+        let deadline = ProcessInfo.processInfo.systemUptime + timeout
+        FirstFailureContext.beginWait(seconds: timeout)
         defer { FirstFailureContext.endWait() }
         var previousPNG: Data?
         var previousReferences: [String]?
@@ -103,7 +104,7 @@ extension XCTestCase {
             }
             let remaining = deadline - ProcessInfo.processInfo.systemUptime
             if remaining > 0 {
-                RunLoop.current.run(until: Date().addingTimeInterval(min(0.1, remaining)))
+                RunLoop.current.run(until: Date().addingTimeInterval(min(TestWait.seconds(.product(0.1)), remaining)))
             }
         }
         return false
