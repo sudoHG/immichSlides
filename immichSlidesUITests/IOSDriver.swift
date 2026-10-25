@@ -48,13 +48,10 @@ struct IOSDriver: PlaybackDriver {
             "A successful save must lead to mode selection.")
         guard
             let playbackDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
-                "mode.random.button", destinationIdentifier: "slideshow.control.settings.button",
-                selectionTimeout: UITestSupportWaitTiming.readbackTimeoutSeconds
-                    + UITestSupportWaitTiming.elementAppearanceTimeoutSeconds,
-                departureTimeout: UITestSupportWaitTiming.playbackStartupTimeoutSeconds)
+                "mode.random.button", destinationIdentifier: "slideshow.control.settings.button")
         else { return }
         XCTAssertTrue(
-            waitForPlaybackControls(timeout: max(.zero, playbackDeadline.timeIntervalSinceNow)),
+            playbackDeadline.confirmsHittability(of: "slideshow.control.settings.button"),
             "Random mode must reach the playback page.")
     }
 
@@ -300,39 +297,30 @@ struct IOSDriver: PlaybackDriver {
 
     @discardableResult
     func openSettings(
-        until originalDeadline: Date? = nil, shouldAllowPINEntry: Bool = false,
+        shouldAllowPINEntry: Bool = false,
         file: StaticString = #filePath, line: UInt = #line
     ) -> Bool {
-        // A first-boot credential sheet can arrive after mode departure; share the old 15 + 8 = 23 s budget.
-        let deadline =
-            originalDeadline
-            ?? Date().addingTimeInterval(
-                UITestSupportWaitTiming.connectionTimeoutSeconds
-                    + UITestSupportWaitTiming.controlAppearanceTimeoutSeconds)
+        let guardWait = TestWait.hangGuard()
+        let target = guardWait.transaction()
+        FirstFailureContext.beginWait(seconds: guardWait.remainingSeconds)
+        defer { FirstFailureContext.endWait() }
         var action = ControlAction()
         action.timing.shouldVerifySettingsOutcome = true
         guard
             let before = prepareControl(
-                "slideshow.control.settings.button", until: deadline, action: &action,
-                shouldDismissPasswordPrompt: true,
-                shouldExcludeWakeDuration: true
-            )
+                "slideshow.control.settings.button", guardWait: guardWait, action: &action),
+            target.perform("tap", { activateControl(before, action: &action) })
         else {
             XCTFail("Playback page must provide the settings entry. (\(action.diagnostic))", file: file, line: line)
             return false
         }
-        activateControl(before, action: &action)
-        // Retain the observation remainder; native tap time includes XCTest's pre- and post-event idle waits.
-        action.deductedTapSeconds.append(contentsOf: action.timing.tapDurationsSeconds)
-        let outcomeDeadline = deadline.addingTimeInterval(action.deductedTapSeconds.reduce(.zero, +))
-        let opened = Wait.until(timeout: max(.zero, outcomeDeadline.timeIntervalSinceNow)) {
-            guard Date() < outcomeDeadline else { return false }
+        let opened = target.until {
             let verifyStartedAt = Date()
             defer { action.timing.verifySeconds += Date().timeIntervalSince(verifyStartedAt) }
             let observation = action.observe(app: app, identifier: "slideshow.control.settings.button")
             action.timing.hasSettingsOutcome = observation?.hasSettingsOutcome == true
             let hasPINEntry = shouldAllowPINEntry && observation?.snapshots["pinEntry.close.button"] != nil
-            return (action.timing.hasSettingsOutcome || hasPINEntry) && Date() < outcomeDeadline
+            return action.timing.hasSettingsOutcome || hasPINEntry
         }
         XCTAssertTrue(
             opened, "Tapping settings must open the settings page. (\(action.diagnostic))", file: file, line: line)
@@ -427,7 +415,6 @@ struct IOSDriver: PlaybackDriver {
 
     private struct ControlAction {
         var timing = SlideshowControlBarTiming()
-        var deductedTapSeconds: [TimeInterval] = []
         var didWake = false
         var isHittable: Bool?
         var isBarVisible = false
@@ -445,12 +432,8 @@ struct IOSDriver: PlaybackDriver {
 
         var diagnostic: String {
             let actionableToTapSeconds = preparedAt.flatMap { preparedAt in issuedAt.map { $0 - preparedAt } }
-            let deductions =
-                timing.shouldVerifySettingsOutcome
-                ? ", deductedTapSeconds=\(deductedTapSeconds), totalDeductedTapSeconds=\(deductedTapSeconds.reduce(.zero, +))"
-                : ""
             return
-                "\(timing.diagnostic)\(deductions), preparedTarget={\(preparedTarget)}, barVisible=\(isBarVisible), hittable=\(isHittable.map(String.init) ?? "unknown"), wakeIssued=\(didWake), sceneReadSeconds=\(sceneReadSeconds), sceneCaptureSeconds=\(sceneCaptureSeconds), sceneClassificationSeconds=\(sceneClassificationSeconds), actionableToTapSeconds=\(actionableToTapSeconds.map(String.init(describing:)) ?? "none"), tapIssuedAt=\(issuedAt.map(String.init(describing:)) ?? "none"), tapReturnedAt=\(returnedAt.map(String.init(describing:)) ?? "none")"
+                "\(timing.diagnostic), preparedTarget={\(preparedTarget)}, barVisible=\(isBarVisible), hittable=\(isHittable.map(String.init) ?? "unknown"), wakeIssued=\(didWake), sceneReadSeconds=\(sceneReadSeconds), sceneCaptureSeconds=\(sceneCaptureSeconds), sceneClassificationSeconds=\(sceneClassificationSeconds), actionableToTapSeconds=\(actionableToTapSeconds.map(String.init(describing:)) ?? "none"), tapIssuedAt=\(issuedAt.map(String.init(describing:)) ?? "none"), tapReturnedAt=\(returnedAt.map(String.init(describing:)) ?? "none")"
         }
     }
 
@@ -464,11 +447,57 @@ struct IOSDriver: PlaybackDriver {
     }
 
     private func prepareControl(
+        _ identifier: String, guardWait: TestWait.HangGuard, action: inout ControlAction
+    ) -> SlideshowControlBarButtonObservation? {
+        let preparation = guardWait.transaction()
+        let prompt = guardWait.transaction()
+        let wake = guardWait.transaction()
+        var observing = preparation
+        let navigation = IOSFirstBootNavigation(app: app)
+        while guardWait.remainingSeconds > 0 {
+            guard navigation.dismissPasswordPrompt(guardWait: guardWait, transaction: prompt) else {
+                RunLoop.current.run(
+                    until: Date().addingTimeInterval(
+                        min(UITestSupportWaitTiming.identityPollSeconds, guardWait.remainingSeconds)))
+                continue
+            }
+            guard let captured = observing.query({ action.observe(app: app, identifier: identifier) })
+            else { return nil }
+            if let observation = captured {
+                action.isBarVisible = hasVisibleControlBar(observation)
+                if observation.isReady, action.isBarVisible {
+                    action.isHittable = observing.query { observation.windowElement.buttons[identifier].isHittable }
+                    if action.isHittable == true {
+                        action.preparedTarget = observation.diagnostic
+                        action.preparedAt = ProcessInfo.processInfo.systemUptime
+                        return observation
+                    }
+                }
+                if !action.didWake, !observation.hasSettingsNavigationEvidence {
+                    action.didWake = wake.perform("tap") {
+                        FirstFailureContext.mark("reveal-controls", element: identifier)
+                        let startedAt = ProcessInfo.processInfo.systemUptime
+                        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tapForFailureEvidence()
+                        let duration = ProcessInfo.processInfo.systemUptime - startedAt
+                        action.timing.revealSeconds += duration
+                        action.timing.revealDurationsSeconds.append(duration)
+                    }
+                    if action.didWake { observing = wake }
+                }
+            }
+            RunLoop.current.run(
+                until: Date().addingTimeInterval(
+                    min(UITestSupportWaitTiming.identityPollSeconds, guardWait.remainingSeconds)))
+        }
+        return nil
+    }
+
+    private func prepareControl(
         _ identifier: String, until originalDeadline: Date, action: inout ControlAction,
         shouldDismissPasswordPrompt: Bool = false, alsoRequiring additionalIdentifiers: [String] = [],
-        shouldRequireHittability: Bool = true, shouldExcludeWakeDuration: Bool = false
+        shouldRequireHittability: Bool = true
     ) -> SlideshowControlBarButtonObservation? {
-        var deadline = originalDeadline
+        let deadline = originalDeadline
         FirstFailureContext.beginWait(seconds: max(.zero, deadline.timeIntervalSinceNow))
         defer { FirstFailureContext.endWait() }
         while Date() < deadline {
@@ -514,12 +543,6 @@ struct IOSDriver: PlaybackDriver {
                     let duration = Date().timeIntervalSince(revealStartedAt)
                     action.timing.revealSeconds += duration
                     action.timing.revealDurationsSeconds.append(duration)
-                    if shouldExcludeWakeDuration {
-                        action.deductedTapSeconds.append(duration)
-                        deadline.addTimeInterval(duration)
-                        FirstFailureContext.endWait()
-                        FirstFailureContext.beginWait(seconds: max(.zero, deadline.timeIntervalSinceNow))
-                    }
                 }
             }
             guard Date() < deadline else { break }

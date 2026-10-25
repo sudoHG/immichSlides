@@ -82,14 +82,11 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
     private func enterPlaybackThenAdvanceTwice(app: XCUIApplication) throws {
         guard
             let playbackDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
-                "mode.random.button", destinationIdentifier: "slideshow.control.next.button",
-                selectionTimeout: TestWait.seconds(.product(8)) + TestWait.seconds(.product(2)),
-                departureTimeout: TestWait.seconds(.product(8)))
+                "mode.random.button", destinationIdentifier: "slideshow.control.next.button")
         else { return }
         let next = app.buttons["slideshow.control.next.button"]
         XCTAssertTrue(
-            next.waitForPublicElement(
-                "slideshow.control.next.button", timeout: max(.zero, playbackDeadline.timeIntervalSinceNow)),
+            playbackDeadline.confirms { nodes in nodes.contains { $0.identifier == "slideshow.control.next.button" } },
             "Next must be tappable twice right after entering the slideshow, before old image requests finish.")
         if app.evidenceSnapshotsByIdentifier()["slideshow.entryHint.banner"] != nil {
             tapElement(app.descendants(matching: .any)["slideshow.entryHint.banner"])
@@ -115,7 +112,7 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
         var hasPromptObstacle = false
         var promptChecks: [[String: Any]] = []
         let waitDeadline = Date().addingTimeInterval(TestWait.seconds(.product(2)))
-        let promptDeadline = min(waitDeadline, playbackDeadline)
+        let promptDeadline = min(waitDeadline, playbackDeadline.deadline)
         let isPauseReady = waitUntil(timeout: max(.zero, waitDeadline.timeIntervalSinceNow)) {
             let startedAt = Date().timeIntervalSince1970
             var didDeclineThisRound = false
@@ -160,7 +157,7 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
         try StrictE2EVisualEvidence.writeRequiredJSON(
             [
                 "wait_deadline_unix": waitDeadline.timeIntervalSince1970,
-                "departure_deadline_unix": playbackDeadline.timeIntervalSince1970,
+                "departure_deadline_unix": playbackDeadline.deadline.timeIntervalSince1970,
                 "prompt_deadline_unix": promptDeadline.timeIntervalSince1970,
                 "prompt_declined": didDeclinePrompt, "prompt_observed": didObservePrompt,
                 "prompt_checks": promptChecks, "pause_ready": isPauseReady, "play_pause_tap": playPauseTap

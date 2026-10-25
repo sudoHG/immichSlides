@@ -21,13 +21,16 @@ extension AccessLifecycleIOSUITests {
         tapElement(saveButton)
         guard
             let playbackDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
-                "mode.random.button", destinationIdentifier: "slideshow.control.settings.button",
-                selectionTimeout: TestWait.seconds(.product(15)) + TestWait.seconds(.product(2))
-                    + TestWait.seconds(.product(5)),
-                departureTimeout: TestWait.seconds(.product(30)))
+                "mode.random.button", destinationIdentifier: "slideshow.control.settings.button")
         else { return }
         XCTAssertTrue(
-            waitForPlaybackControls(app: app, timeout: max(.zero, playbackDeadline.timeIntervalSinceNow)),
+            playbackDeadline.confirms { nodes in
+                AccessLifecycleContract.hasPlaybackPageArrived(
+                    isSettingsPresent: nodes.contains { $0.identifier == "slideshow.control.settings.button" },
+                    isNextPresent: nodes.contains { $0.identifier == "slideshow.control.next.button" },
+                    isPlayPausePresent: nodes.contains { $0.identifier == "slideshow.control.playPause.button" },
+                    isHintPresent: nodes.contains { $0.identifier == "slideshow.entryHint.banner" })
+            },
             "Random mode must reach the playback page.")
     }
 

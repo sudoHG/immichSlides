@@ -53,15 +53,11 @@ extension StrictE2EFilterIOSUITests {
     func chooseOnboardingModeAndContinue(
         app: XCUIApplication,
         identifier: String
-    ) -> Date? {
+    ) -> IOSFirstBootNavigation.ModeDeparture? {
         IOSFirstBootNavigation(app: app).selectModeAndContinue(
             identifier,
             destinationIdentifier: identifier == "mode.filtered.button"
-                ? "filterSummary.startPlayback.button" : "slideshow.control.settings.button",
-            selectionTimeout: TestWait.seconds(.product(8)) + TestWait.seconds(.product(2))
-                + TestWait.seconds(.product(4)) + TestWait.seconds(.product(4))
-                + TestWait.seconds(.product(4)),
-            departureTimeout: TestWait.seconds(.product(28)))
+                ? "filterSummary.startPlayback.button" : "slideshow.control.settings.button")
     }
 
     @MainActor

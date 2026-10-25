@@ -164,6 +164,20 @@ It matches the same receiver passed as a complete argument (optionally labeled o
 when the true branch starts with a call, including calls nested inside it; passing another element,
 a derived property or a snapshot is outside this rule.
 Snapshots expose enabled state, not hittability, so pause-stage evidence uses `*_enabled` keys.
+
+For navigation without a product response limit, create `TestWait.hangGuard()` once
+before appearance/preparation and share it with nested steps. Its unscaled 60-second
+monotonic deadline is never refreshed. Each `transaction()` permits one action;
+`perform` refuses a second action or an action issued after the deadline.
+`until` accepts a satisfied observation started before expiry even if it returns
+late. An action issued before expiry permits exactly one subsequent observation,
+including after expiry; an unsatisfied or failed observation cannot pass. Otherwise
+no query starts after expiry. Use `probe` for optional branches: it takes one fresh
+observation and never polls or sleeps. Do not create guards inside polling loops,
+put waits in probes or use a full guard to choose an optional branch; the convention
+checker rejects these patterns. Product waits and complete evidence windows retain
+their existing semantics, cadence and budgets.
+
 For iOS first-boot paths that type and save server credentials, use
 `IOSFirstBootNavigation` in `UITestSupport`, including the interactive visual-audit
 pack. Use `selectMode` for selection-only screenshots and `selectModeAndContinue`
@@ -214,63 +228,43 @@ it. Mode cards, Not Now and Continue all require live hittability; a non-hittabl
 card waits for a fresh observation, without a coordinate tap that can invoke
 XCTest's generic interruption handler. Read selection from the unique mode card's
 snapshot `isSelected` trait, rather than a generic system-symbol identifier.
-Confirm the prompt is absent and the intended mode is selected before issuing
-one Continue; record its issue and return separately, then start the existing departure
-duration at tap return and prove mode disappeared and the caller's exact destination
-identifier appeared before that deadline. Callers name only their own destination; the shared observer does not
-reference unrelated playback or filter surfaces. A returned,
-hittable Continue without a post-Continue prompt that leaves mode visible is a navigation failure,
-including a possible App defect; do not resend Continue or retry the flow.
-Callers use the returned absolute deadline for the remaining destination wait;
-snapshot errors re-observe within that same budget and never authorize a tap.
-When replacing independent credential-entry card and Continue waits with one
-selection cap, preserve their sum, the first-attempt hittability/selected-state
-readbacks and any existing prompt allowance. Do not
-borrow repeated-tap or whole-flow retry budgets. Mode-card and exact Not Now taps
-exclude their measured tap duration, including XCTest's pre- and post-event waits
-for the App or prompt host to idle, from the active mode-navigation clock.
-This is not proof that the excluded time is outside the App's responsibility.
-Query, live-check, polling and previous observation time still consume that
-same selection or departure allowance; a tap never renews the allowance. Record
-the action separately and resume the wait with its remaining duration. Reject
-snapshots that return after the adjusted deadline. Standalone prompt dismissal
-and visibility helpers keep their callers' original absolute deadlines.
-The outer receipt markers retain the target card until Continue is issued, then
-use `mode.continue.button`, preserving the environment-policy boundaries. The tap
-itself still marks its actual target. Keep the selection wait active during Continue
-and end it only after the tap returns, before beginning the departure wait.
+Confirm the intended mode is selected and unobstructed before issuing one Continue.
+`selectModeAndContinue` starts one unscaled 60-second monotonic guard before preparation.
+The card, exact Not Now and Continue each have one fixed single-action child transaction;
+all share the root deadline. Neither a prompt nor a returned tap refreshes it.
+No target is tapped again. Every native query in the composite window/alert observer
+checks admission independently. A final in-flight satisfied observation is accepted late;
+an action returning after expiry gets one snapshot of the retained App window, with no
+new window enumeration, alert search or action. The destination must still be explicit,
+mode must be absent and the captured window must have no modal obstacle. Unknown never passes.
 
-Let `t0` be navigation entry, `tc` Continue issue, `C` its measured tap duration,
-`A` the sum of pre-Continue card/Not Now taps, and `B` the sum of post-Continue
-Not Now taps. For selection/departure allowances `S`/`D`, the old deadlines were
-`t0+S` / `tc+D`; the new deadlines are `t0+S+A` / `tc+C+D+B`.
-All callers reuse the returned deadline for their subsequent wait:
+The returned `ModeDeparture` retains the satisfying snapshot and the same guard.
+`confirms` first evaluates that immutable evidence and admits any necessary fresh snapshot
+only before the root deadline. `confirmsHittability` retains the driver's live-hittability
+requirement under that guard. It cannot infer hittability from a visible frame.
+Standalone prompt dismissal/visibility and selection-only screenshot paths retain their
+existing clocks; selection-only still excludes measured card/Not Now taps.
 
-| Caller | S / D seconds | Old selection / departure deadline | New selection / departure deadline | Returned deadline use and product-timing boundary |
-| --- | --- | --- | --- | --- |
-| journey-b filtered | 14 / 20 | `t0+14` / `tc+20` | `t0+14+A` / `tc+C+20+B` | Filter summary; not a product-duration measurement. journey-a cold relaunch bypasses this helper. |
-| journey-b random, pause-stage, single-photo | 14 / 30 | `t0+14` / `tc+30` | `t0+14+A` / `tc+C+30+B` | Playback controls; pause-window T±2 starts at the later Play action. |
-| Strict Filter | 22 / 28 | `t0+22` / `tc+28` | `t0+22+A` / `tc+C+28+B` | Summary; restores the pre-consolidation post-click 8 s + 20 s origin. |
-| Late-image | 10 / 8 | `t0+10` / `tc+8` | `t0+10+A` / `tc+C+8+B` | Next readiness and `promptDeadline`; the immediate-Next origin shifts by `C+B`, but the test explicitly releases the old image response rather than using a fixed delivery clock. |
-| Access lifecycle | 22 / 30 | `t0+22` / `tc+30` | `t0+22+A` / `tc+C+30+B` | Playback controls; not a product-duration measurement. |
-| `IOSDriver.launchToPlayback` (cache smoke, ReduceMotion, EXIF, Rotation, ScenePresentation) | 7 / 30 | `t0+7` / `tc+30` | `t0+7+A` / `tc+C+30+B` | Playback controls; not a product-duration measurement. |
-| Interactive visual audit | 5 / 8 | `t0+5` / `tc+8` | `t0+5+A` / `tc+C+8+B` | Filter album button; not a product-duration measurement. |
-| Visual-audit selection-only calls | 5 / none | `t0+5` / none | `t0+5+A` / none | Selected-state screenshots, no Continue. |
+In the old deadlines below, `t0` is entry, `tc` Continue issue, `A` pre-Continue
+card/Not Now time, `C` Continue time and `B` post-Continue Not Now time.
 
-The coordinator accepts the same residual risk as the Next timing repair:
-XCTest idle waits can absorb about 60 seconds of App non-idleness per tap if the
-destination is then reached within its allowance. Each tap contributes separately;
-no new cap or threshold is introduced. `First-boot mode observations:` and failure
-details record `deductedTapSeconds` for every returned navigation tap, including
-Continue, and `totalDeductedTapSeconds` (`A+C+B`). These diagnostics issue no extra
-UI queries. The [environment-limit contract](CI_SUMMARY.md#prepared-hosted-strict-environment-limits)
-describes the corresponding v3/v4 yellow risk; unchanged duration values do not
-imply an unchanged wall-clock deadline.
+| Caller | Previous selection / departure deadline | Current deadline | Product-timing boundary |
+| --- | --- | --- | --- |
+| journey-b filtered | `t0+14+A` / `tc+C+20+B` | `t0+60`, shared through summary confirmation | No product measurement; cold journey-a bypasses this helper. |
+| journey-b random, pause-stage, single-photo | `t0+14+A` / `tc+C+30+B` | `t0+60`, shared through controls confirmation | Pause-window T±2 still starts at the later Play action. |
+| Strict Filter, including display-policy entry | `t0+22+A` / `tc+C+28+B` | `t0+60`, shared through summary confirmation | No change to display-policy or membership assertions. |
+| Late-image | `t0+10+A` / `tc+C+8+B` | `t0+60`, shared through Next readiness | Prompt deadline remains the minimum of its existing 2-second window and this deadline; hold/release and image windows are unchanged. |
+| Access lifecycle | `t0+22+A` / `tc+C+30+B` | `t0+60`, shared through controls confirmation | Lifecycle timing starts later and keeps its own origin. |
+| `IOSDriver.launchToPlayback` | `t0+7+A` / `tc+C+30+B` | `t0+60`, shared through controls confirmation | Cache, motion, EXIF and rotation measurements remain separate. |
+| Interactive visual audit | `t0+5+A` / `tc+C+8+B` | `t0+60`, shared through album-button confirmation | No product measurement. |
+| Visual-audit selection-only | `t0+5+A` | Unchanged | No Continue. |
 
-The strict Filter departure cap is 28 seconds, preserving the original fixed
-8-second post-Continue wait plus the 20-second summary wait as one absolute budget.
-A successful prompt-visibility observation remains evidence even after the retry
-deadline; callers that act must independently check their action deadline.
+Mode diagnostics record `nativeTapSeconds` without subtracting them from the guard.
+The outer failure marker remains the target card until Continue, then
+`mode-departure` / `mode.continue.button`. The existing failure prefixes and
+[v3/v4 environment readers](CI_SUMMARY.md#prepared-hosted-strict-environment-limits)
+are unchanged; fewer bounded navigation timeouts can therefore reach yellow, but
+a remaining qualifying failure is still subject to the same fail-closed policy.
 Mode-navigation failures append bounded observation counts/durations, snapshot match
 counts and selection traits, previously queried live hittability, and closed modal
 source/stage/tap-guard enums. Unknown values stay unknown. The latest observation is
@@ -362,28 +356,28 @@ The same diagnostic is printed on every return from readiness, refresh and actio
 local XCTest activity logs can compare event latency without additional queries.
 IOSDriver wake and tap paths append each measured duration to the same lists
 as their aggregate timing fields.
-`IOSDriver.openSettings` excludes only its measured canvas wake and Settings tap
-from the existing entry allowance. Preparation snapshots, prompt handling, live
-hittability checks, polling and outcome snapshots still consume that allowance;
-a tap never renews it. Both pre- and post-snapshot checks use the adjusted deadline,
-so a late Settings or permitted PIN snapshot still fails. Settings diagnostics retain
-each deduction in `deductedTapSeconds` and their `totalDeductedTapSeconds`; these
-include XCTest's pre- and post-event idle waits, not proven host-only overhead.
-No other `prepareControl` caller opts into this exclusion: Pause, Next,
-`revealControls` and `revealUsableControls` retain their existing clocks.
+`IOSDriver.openSettings` now starts one 60-second monotonic guard before prompt
+handling and control preparation. Exact Not Now, optional canvas wake and Settings
+each permit one action under that same root deadline. The optional prompt branch
+uses a non-polling probe. A returned Settings action permits one outcome snapshot
+after expiry; only an actual Settings surface or explicitly permitted PIN entry passes.
+Native wake/tap duration lists remain diagnostic and no longer extend this path.
+Pause, Next, `revealControls`, `revealUsableControls` and rotation stable-frame
+deductions retain their existing clocks.
 
-For entry time `t0`, original absolute deadline `d`, native canvas-wake duration
-`W` and native Settings-tap duration `C`, preparation changes from `d` to `d+W`,
-and outcome changes from `d` to `d+W+C`:
-
-| Settings caller | Original entry deadline | Adjusted preparation / outcome deadline | Timing boundary |
+| Settings caller | Previous preparation / outcome deadline | Current deadline | Timing boundary |
 | --- | --- | --- | --- |
-| Cache clear and iPad cache smoke: `applyPlaybackSettings`, `clearDiskCache` | `t0+23` | `t0+23+W` / `t0+23+W+C` | Cache completion and capture checks start later and keep their own budgets. |
-| ReduceMotion and EXIF: `applyPlaybackSettings` | `t0+23` | `t0+23+W` / `t0+23+W+C` | Motion recording and EXIF readback keep their own budgets. |
-| Rotation layout and playback: `applyPlaybackSettings` | `t0+23` | `t0+23+W` / `t0+23+W+C` | Settings precedes capture; playback rotation starts its unchanged 30-second clock later. |
-| ScenePresentation image-failure recovery: `applyPlaybackSettings`, `clearDiskCache` | `t0+23` | `t0+23+W` / `t0+23+W+C` | Recovery assertions keep their existing origin and budgets. |
-| Strict Filter album: `prepareAlbumCapturePlayback` via `applyPlaybackSettings` | `t0+23` | `t0+23+W` / `t0+23+W+C` | Album interval confirmation starts after Settings returns and keeps its own deadline. |
-| AccessLifecycle: `openSettingsFromSlideshow` with permitted PIN entry | Caller deadline `d=t0+15` | `d+W` / `d+W+C` | Settings readback/configuration precedes lifecycle timing; PIN handling remains explicit. |
+| Cache, ReduceMotion, EXIF, Rotation, image-failure recovery and strict album capture | `t0+23+W` / `t0+23+W+C` | `t0+60`, shared through outcome | Existing cache, motion, EXIF, recovery, album and rotation windows remain unchanged. |
+| AccessLifecycle with permitted PIN entry | `t0+15+W` / `t0+15+W+C` | `t0+60`, shared through outcome | Subsequent PIN behavior and lifecycle timing remain unchanged. |
+
+The other migrated readiness hotspots use the same unscaled guard: album/person
+filter entry changes from a tap followed by serial 12 + 2-second marker waits to
+one 60-second preparation/action/outcome transaction; initial current-asset readiness
+changes from 20 infrastructure seconds (or 8 product seconds in single-photo setup)
+to 60 seconds. Explicit current-asset change/readback timeouts remain unchanged.
+The tvOS publication-summary waiter changes its caller-supplied 3/10-second readiness
+caps to 60 seconds; publication advancement and optional complete stable-scene predicates
+remain identical, as do the surrounding autoplay and screenshot measurement windows.
 
 The outcome field becomes true only after the wait accepts an observation within its window.
 Verify time includes its snapshot time; no extra diagnostic snapshot runs after

@@ -164,9 +164,8 @@ extension StrictE2EFilterIOSUITests {
     func enterFilterSummary(app: XCUIApplication) {
         guard let summaryDeadline = chooseOnboardingModeAndContinue(app: app, identifier: "mode.filtered.button")
         else { return }
-        let reached = waitUntil(timeout: max(.zero, summaryDeadline.timeIntervalSinceNow)) {
-            app.buttons["filterSummary.album.button"].exists
-                || app.descendants(matching: .any)["filterSummary.album.button"].exists
+        let reached = summaryDeadline.confirms { nodes in
+            nodes.contains { $0.identifier == "filterSummary.album.button" }
         }
         if reached {
             attachStrictE2EScreenshot(app: app, name: "filter-summary-\(currentDeviceTag())")
@@ -208,24 +207,45 @@ extension StrictE2EFilterIOSUITests {
 
     @MainActor
     func openAlbumFilter(app: XCUIApplication) {
-        tapElement(app.buttons["filterSummary.album.button"])
-        XCTAssertTrue(
-            app.buttons["albumFilter.back.button"].waitForFailureEvidence(timeout: TestWait.seconds(.product(12)))
-                || app.buttons["albumFilter.selectAll.button"].waitForFailureEvidence(
-                    timeout: TestWait.seconds(.product(2))),
-            "Album filter page must open"
-        )
+        openFilterPage(app: app, kind: "album")
     }
 
     @MainActor
     func openPersonFilter(app: XCUIApplication) {
-        tapElement(app.buttons["filterSummary.person.button"])
-        XCTAssertTrue(
-            app.buttons["personFilter.back.button"].waitForFailureEvidence(timeout: TestWait.seconds(.product(12)))
-                || app.buttons["personFilter.selectAll.button"].waitForFailureEvidence(
-                    timeout: TestWait.seconds(.product(2))),
-            "Person filter page must open"
-        )
+        openFilterPage(app: app, kind: "person")
+    }
+
+    @MainActor
+    private func openFilterPage(app: XCUIApplication, kind: String) {
+        let guardWait = TestWait.hangGuard()
+        let transaction = guardWait.transaction()
+        let entryIdentifier = "filterSummary.\(kind).button"
+        var targetFrame: CGRect?
+        let prepared = transaction.until {
+            let snapshots = app.evidenceSnapshotsByIdentifier()
+            guard let target = snapshots[entryIdentifier], target.isEnabled, !target.frame.isEmpty else { return false }
+            targetFrame = target.frame
+            return true
+        }
+        guard prepared, let targetFrame,
+            transaction.perform(
+                "tap",
+                {
+                    FirstFailureContext.mark("select", element: entryIdentifier)
+                    print("Filter navigation action issued: entry=\(entryIdentifier)")
+                    app.coordinate(withNormalizedOffset: .zero).withOffset(
+                        CGVector(dx: targetFrame.midX, dy: targetFrame.midY)
+                    ).tapForFailureEvidence()
+                })
+        else {
+            XCTFail(kind == "album" ? "Album filter page must open" : "Person filter page must open")
+            return
+        }
+        let opened = transaction.until {
+            let snapshots = app.evidenceSnapshotsByIdentifier()
+            return snapshots["\(kind)Filter.back.button"] != nil || snapshots["\(kind)Filter.selectAll.button"] != nil
+        }
+        XCTAssertTrue(opened, kind == "album" ? "Album filter page must open" : "Person filter page must open")
     }
 
     @MainActor

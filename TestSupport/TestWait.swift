@@ -157,6 +157,83 @@ enum FirstFailureContext {
 
 /// Test-target-only budgets. Product deadlines and observation windows always use their base duration.
 enum TestWait {
+    /// Navigation has no product response limit. All steps share this unscaled monotonic deadline.
+    @MainActor
+    static func hangGuard(
+        timeoutSeconds: TimeInterval = 60,
+        nowForTesting: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+        pauseForTesting: @escaping (TimeInterval) -> Void = {
+            RunLoop.current.run(until: Date().addingTimeInterval($0))
+        }
+    ) -> HangGuard {
+        HangGuard(timeoutSeconds: timeoutSeconds, now: nowForTesting, pause: pauseForTesting)
+    }
+
+    @MainActor
+    final class HangGuard {
+        private let deadline: TimeInterval
+        private let now: () -> TimeInterval
+        private let pause: (TimeInterval) -> Void
+
+        fileprivate init(
+            timeoutSeconds: TimeInterval, now: @escaping () -> TimeInterval,
+            pause: @escaping (TimeInterval) -> Void
+        ) {
+            precondition(timeoutSeconds.isFinite && timeoutSeconds >= 0)
+            self.now = now
+            self.pause = pause
+            deadline = now() + timeoutSeconds
+        }
+
+        var remainingSeconds: TimeInterval { max(.zero, deadline - now()) }
+
+        /// Child steps can issue different necessary actions, but cannot refresh the navigation deadline.
+        func transaction() -> Transaction { Transaction(guardWait: self) }
+
+        @MainActor
+        final class Transaction {
+            private let guardWait: HangGuard
+            private var didIssueAction = false
+            private var hasPostActionObservation = false
+
+            fileprivate init(guardWait: HangGuard) { self.guardWait = guardWait }
+
+            @discardableResult
+            func perform(_ name: String, _ action: () -> Void) -> Bool {
+                guard !didIssueAction, guardWait.remainingSeconds > 0 else { return false }
+                didIssueAction = true
+                FirstFailureContext.action(name, action)
+                hasPostActionObservation = true
+                return true
+            }
+
+            /// One fresh observation for optional branches; absence never consumes the full guard.
+            func probe(_ condition: () -> Bool) -> Bool { query(condition) == true }
+
+            /// A query started in time may return satisfied late. Only an issued action grants one extra read.
+            func query<Value>(_ observation: () -> Value) -> Value? {
+                guard guardWait.remainingSeconds > 0 || hasPostActionObservation else { return nil }
+                hasPostActionObservation = false
+                return observation()
+            }
+
+            func until(
+                pollIntervalSeconds: TimeInterval = TestWait.defaultPollIntervalSeconds, _ condition: () -> Bool
+            ) -> Bool {
+                precondition(pollIntervalSeconds.isFinite && pollIntervalSeconds > 0)
+                FirstFailureContext.beginWait(seconds: guardWait.remainingSeconds)
+                defer { FirstFailureContext.endWait() }
+                while let isSatisfied = query(condition) {
+                    if isSatisfied { return true }
+                    let remaining = guardWait.remainingSeconds
+                    guard remaining > 0 else { return false }
+                    guardWait.pause(min(pollIntervalSeconds, remaining))
+                }
+                return false
+            }
+        }
+    }
+
     enum Budget {
         case infrastructure(TimeInterval)
         case product(TimeInterval)

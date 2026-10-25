@@ -35,7 +35,7 @@ final class PlaybackHistoryIOSUITests: XCTestCase {
         defer { app.terminateForFailureEvidence() }
         startRandomPlaybackFromModeSelection(app: app)
 
-        let initialAssetID = try waitForCurrentAssetID(app: app, timeout: TestWait.seconds(.infrastructure(20)))
+        let initialAssetID = try waitForCurrentAssetID(app: app)
         attachScreenshot(app: app, name: "history-01-initial-\(currentDeviceTag())")
 
         app.tapSlideshowControlBarButton(identifier: "slideshow.control.next.button")
@@ -349,6 +349,7 @@ extension PlaybackHistoryIOSUITests {
         return app
     }
 
+    @MainActor
     func runManualLifecycleContract(mode: ManualLifecycleMode) throws {
         let app = try launchConfiguredManualLifecycleAppAtModeSelection(mode: mode)
         defer {

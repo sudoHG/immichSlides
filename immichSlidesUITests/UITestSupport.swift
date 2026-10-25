@@ -448,6 +448,7 @@ extension XCUIApplication {
 #endif
 
 #if os(iOS)
+@MainActor
 struct IOSFirstBootNavigation {
     let app: XCUIApplication
 
@@ -490,7 +491,7 @@ struct IOSFirstBootNavigation {
         var lastObsSeconds: TimeInterval = .zero
         var maxObsSeconds: TimeInterval = .zero
         var observationSeconds: [TimeInterval] = []
-        var deductedTapSeconds: [TimeInterval] = []
+        var nativeTapSeconds: [TimeInterval] = []
         var targetMatches: Int?
         var targetSelected: Bool?
         var descendantSelected: Bool?
@@ -561,12 +562,11 @@ struct IOSFirstBootNavigation {
             let last = String(format: "%.3f", lastObsSeconds)
             let maximum = String(format: "%.3f", maxObsSeconds)
             let durations = observationSeconds.map { String(format: "%.3f", $0) }.joined(separator: ",")
-            let deducted = deductedTapSeconds.map { String(format: "%.3f", $0) }.joined(separator: ",")
-            let totalDeducted = String(format: "%.3f", deductedTapSeconds.reduce(.zero, +))
+            let taps = nativeTapSeconds.map { String(format: "%.3f", $0) }.joined(separator: ",")
             return "observations=\(observations), fastPathObservations=\(fastPathObservations), "
                 + "earlyAlertHits=\(earlyAlertHits), terminalAlertHits=\(terminalAlertHits), "
                 + "observationSeconds=[\(durations)], "
-                + "deductedTapSeconds=[\(deducted)], totalDeductedTapSeconds=\(totalDeducted), "
+                + "nativeTapSeconds=[\(taps)], "
                 + "lastObsSeconds=\(last), maxObsSeconds=\(maximum), targetMatches=\(modeDiagnosticCount(targetMatches)), "
                 + "targetSelected=\(modeDiagnosticBoolean(targetSelected)), descendantSelected=\(modeDiagnosticBoolean(descendantSelected)), "
                 + "continueMatches=\(modeDiagnosticCount(continueMatches)), continueEnabled=\(modeDiagnosticBoolean(continueEnabled)), "
@@ -610,9 +610,10 @@ struct IOSFirstBootNavigation {
 
     func observe(
         modeIdentifier: String? = nil, destinationIdentifier: String? = nil,
-        diagnostics: ModeNavigationDiagnostics? = nil
+        diagnostics: ModeNavigationDiagnostics? = nil,
+        transaction: TestWait.HangGuard.Transaction? = nil
     ) throws -> Observation {
-        let ownWindows = try windowObservations(host: app)
+        let ownWindows = try windowObservations(host: app, transaction: transaction)
         let own =
             ownWindows.first(where: { window in
                 window.isModePage || destinationIdentifier.map { window.hasDestination($0) } == true
@@ -622,7 +623,8 @@ struct IOSFirstBootNavigation {
         if !ownPrompts.isEmpty { return combine(own, prompts: ownPrompts, windows: ownWindows) }
         if let modeIdentifier, own.isModePage,
             !ownWindows.contains(where: { $0.hasPromptClue || $0.hasModalObstacle }),
-            modeControlsAreHittable(own, modeIdentifier: modeIdentifier, diagnostics: diagnostics)
+            modeControlsAreHittable(
+                own, modeIdentifier: modeIdentifier, diagnostics: diagnostics, transaction: transaction)
         {
             diagnostics?.fastPathObservations = min(4096, (diagnostics?.fastPathObservations ?? 0) + 1)
             return combine(own, prompts: [], windows: ownWindows)
@@ -631,7 +633,7 @@ struct IOSFirstBootNavigation {
         // Runner idiom limits this shortcut to the proven iPad alert host; iPhone keeps SpringBoard first.
         if UIDevice.current.userInterfaceIdiom == .pad {
             diagnostics?.stage = .alertsQuery
-            if let modal = try appAlertObservation() {
+            if let modal = try appAlertObservation(transaction: transaction) {
                 windows.append(modal)
                 if modal.hasPasswordPrompt, modal.decline != nil {
                     diagnostics?.earlyAlertHits = min(4096, (diagnostics?.earlyAlertHits ?? 0) + 1)
@@ -641,14 +643,14 @@ struct IOSFirstBootNavigation {
         }
         let system = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         diagnostics?.stage = .springboardWindows
-        let systemWindows = try windowObservations(host: system, isSpringboard: true)
+        let systemWindows = try windowObservations(host: system, isSpringboard: true, transaction: transaction)
         windows.append(contentsOf: systemWindows)
         let systemPrompts = systemWindows.filter(\.hasPasswordPrompt)
         diagnostics?.captureModeDiagnosticSnapshot(combine(own, prompts: [], windows: windows))
         if !systemPrompts.isEmpty { return combine(own, prompts: systemPrompts, windows: windows) }
         // A late remote alert can become queryable only after the system-window observations.
         diagnostics?.stage = .alertsQuery
-        if let modal = try appAlertObservation() {
+        if let modal = try appAlertObservation(transaction: transaction) {
             windows.append(modal)
             if modal.hasPasswordPrompt, modal.decline != nil {
                 diagnostics?.terminalAlertHits = min(4096, (diagnostics?.terminalAlertHits ?? 0) + 1)
@@ -658,12 +660,23 @@ struct IOSFirstBootNavigation {
         return combine(own, prompts: [], windows: windows)
     }
 
-    private func appAlertObservation() throws -> Observation? {
-        let alerts = app.alerts.allElementsBoundByIndex
+    private func navigationQuery<Value>(
+        _ transaction: TestWait.HangGuard.Transaction?, _ operation: () throws -> Value
+    ) throws -> Value {
+        guard let transaction else { return try operation() }
+        guard let captured = transaction.query({ Result(catching: operation) }) else {
+            throw NSError(domain: "IOSFirstBootNavigation", code: 3)
+        }
+        return try captured.get()
+    }
+
+    private func appAlertObservation(transaction: TestWait.HangGuard.Transaction? = nil) throws -> Observation? {
+        let alerts = try navigationQuery(transaction) { app.alerts.allElementsBoundByIndex }
         guard alerts.count <= 1 else { throw NSError(domain: "IOSFirstBootNavigation", code: 2) }
         guard let alert = alerts.first else { return nil }
         return observation(
-            window: try alert.snapshot(), element: alert, host: app, windowIndex: .zero, isPromptAlert: true)
+            window: try navigationQuery(transaction) { try alert.snapshot() }, element: alert, host: app,
+            windowIndex: .zero, isPromptAlert: true)
     }
 
     private func combine(_ own: Observation, prompts: [Observation], windows: [Observation]) -> Observation {
@@ -681,7 +694,8 @@ struct IOSFirstBootNavigation {
     }
 
     private func modeControlsAreHittable(
-        _ observation: Observation, modeIdentifier: String, diagnostics: ModeNavigationDiagnostics?
+        _ observation: Observation, modeIdentifier: String, diagnostics: ModeNavigationDiagnostics?,
+        transaction: TestWait.HangGuard.Transaction? = nil
     ) -> Bool {
         diagnostics?.stage = .fastPath
         // A blocked mode surface still needs the complete remote credential-prompt search.
@@ -693,20 +707,23 @@ struct IOSFirstBootNavigation {
             let target = observation.windowElement.buttons.matching(
                 NSPredicate(format: "identifier == %@ AND label == %@", button.identifier, button.label)
             ).firstMatch
-            let isHittable = target.isHittable
+            guard let isHittable = try? navigationQuery(transaction, { target.isHittable }) else { return false }
             diagnostics?.captureModeDiagnosticHittability(identifier: identifier, value: isHittable)
             guard isHittable else { return false }
         }
         return true
     }
 
-    private func windowObservations(host: XCUIApplication, isSpringboard: Bool = false) throws -> [Observation] {
+    private func windowObservations(
+        host: XCUIApplication, isSpringboard: Bool = false, transaction: TestWait.HangGuard.Transaction? = nil
+    ) throws -> [Observation] {
         // App snapshots can omit the main window; keep each real window's title/action and tap index paired.
-        let windows = host.windows.allElementsBoundByIndex
+        let windows = try navigationQuery(transaction) { host.windows.allElementsBoundByIndex }
         guard !windows.isEmpty else { throw NSError(domain: "IOSFirstBootNavigation", code: 1) }
         return try windows.enumerated().map { index, window in
             observation(
-                window: try window.snapshot(), element: window, host: host, windowIndex: index,
+                window: try navigationQuery(transaction) { try window.snapshot() }, element: window, host: host,
+                windowIndex: index,
                 isSpringboard: isSpringboard)
         }
     }
@@ -767,6 +784,7 @@ struct IOSFirstBootNavigation {
     private func tap(
         _ node: XCUIElementSnapshot, observation: Observation, deadline: Date, step: String,
         diagnostics: ModeNavigationDiagnostics? = nil,
+        transaction: TestWait.HangGuard.Transaction? = nil,
         willTap: () -> Void = {}, didTap: (TimeInterval) -> Void = { _ in }
     ) -> Bool {
         let isDecline = step == "save-password-prompt"
@@ -784,7 +802,9 @@ struct IOSFirstBootNavigation {
             diagnostics?.tapGuard = .deadline
             return false
         }
-        if isDecline && observation.isPromptAlert && host.alerts.count != 1 {
+        if isDecline && observation.isPromptAlert
+            && (try? navigationQuery(transaction, { host.alerts.count })) != 1
+        {
             diagnostics?.tapGuard = .alertCount
             return false
         }
@@ -792,25 +812,27 @@ struct IOSFirstBootNavigation {
         // ui-label-lookup: Bind the live action to both attributes of the observed button, including an empty ID.
         let matches = container.buttons.matching(
             NSPredicate(format: "identifier == %@ AND label == %@", node.identifier, node.label))
-        let matchCount = matches.count
+        guard let matchCount = try? navigationQuery(transaction, { matches.count }) else { return false }
         diagnostics?.tapMatches = min(4096, matchCount)
         guard matchCount == 1 else {
             diagnostics?.tapGuard = .liveCount
             return false
         }
         let target = matches.element(boundBy: .zero)
-        let liveLabel = target.label
+        guard let liveLabel = try? navigationQuery(transaction, { target.label }) else { return false }
         guard liveLabel == node.label else {
             diagnostics?.tapGuard = .liveLabel
             return false
         }
-        guard target.frame == node.frame else {
+        guard (try? navigationQuery(transaction, { target.frame })) == node.frame else {
             diagnostics?.tapGuard = .liveFrame
             return false
         }
-        let isHittable = target.isHittable
+        guard let isHittable = try? navigationQuery(transaction, { target.isHittable }) else { return false }
         diagnostics?.captureModeDiagnosticHittability(identifier: node.identifier, value: isHittable)
-        if isDecline && observation.isPromptAlert && host.alerts.count != 1 {
+        if isDecline && observation.isPromptAlert
+            && (try? navigationQuery(transaction, { host.alerts.count })) != 1
+        {
             diagnostics?.tapGuard = .alertCount
             return false
         }
@@ -822,18 +844,25 @@ struct IOSFirstBootNavigation {
             diagnostics?.tapGuard = .deadline
             return false
         }
-        diagnostics?.tapGuard = .issued
-        FirstFailureContext.mark(step, element: node.identifier.isEmpty ? "unknown" : node.identifier)
-        willTap()
-        if step == "save-password-prompt" {
-            print(
-                "Exact Save Password prompt observed; Not Now issued; source=\(observation.promptSource); liveLabel=\(liveLabel)"
-            )
+        let action = {
+            diagnostics?.tapGuard = .issued
+            FirstFailureContext.mark(step, element: node.identifier.isEmpty ? "unknown" : node.identifier)
+            willTap()
+            if step == "save-password-prompt" {
+                print(
+                    "Exact Save Password prompt observed; Not Now issued; source=\(observation.promptSource); liveLabel=\(liveLabel)"
+                )
+            }
+            target.tap()
         }
         let actionStartedAt = ProcessInfo.processInfo.systemUptime
-        FirstFailureContext.action("tap") { target.tap() }
+        if let transaction {
+            guard transaction.perform("tap", action) else { return false }
+        } else {
+            FirstFailureContext.action("tap", action)
+        }
         let actionSeconds = ProcessInfo.processInfo.systemUptime - actionStartedAt
-        diagnostics?.deductedTapSeconds.append(actionSeconds)
+        diagnostics?.nativeTapSeconds.append(actionSeconds)
         didTap(actionSeconds)
         print("First-boot mode action returned: step=\(step); actionSeconds=\(actionSeconds)")
         if step == "save-password-prompt" {
@@ -875,71 +904,215 @@ struct IOSFirstBootNavigation {
         return true
     }
 
+    func dismissPasswordPrompt(
+        guardWait: TestWait.HangGuard, transaction: TestWait.HangGuard.Transaction
+    ) -> Bool {
+        var current: Observation?
+        _ = transaction.probe {
+            current = try? observe(transaction: transaction); return current != nil
+        }
+        guard let initial = current else { return false }
+        if !initial.hasPasswordPrompt { return !initial.hasModalObstacle }
+        guard let decline = initial.decline,
+            tap(
+                decline, observation: initial,
+                deadline: Date().addingTimeInterval(guardWait.remainingSeconds), step: "save-password-prompt",
+                transaction: transaction)
+        else { return false }
+        return transaction.until {
+            // Preparation cannot authorize another action after expiry, even if decline returns late.
+            guard guardWait.remainingSeconds > 0, let observed = try? observe(transaction: transaction) else {
+                return false
+            }
+            return !observed.hasPasswordPrompt && !observed.hasModalObstacle
+        }
+    }
+
     @discardableResult
     func selectMode(
         _ identifier: String, timeout: TimeInterval, file: StaticString = #filePath, line: UInt = #line
     ) -> Bool {
         navigateMode(
-            identifier, destinationIdentifier: nil, selectionTimeout: timeout, departureTimeout: nil,
+            identifier, selectionTimeout: timeout,
             file: file, line: line) != nil
     }
 
     @discardableResult
     func selectModeAndContinue(
         _ identifier: String, destinationIdentifier: String,
-        selectionTimeout: TimeInterval, departureTimeout: TimeInterval,
         file: StaticString = #filePath, line: UInt = #line
-    ) -> Date? {
-        navigateMode(
-            identifier, destinationIdentifier: destinationIdentifier, selectionTimeout: selectionTimeout,
-            departureTimeout: departureTimeout, file: file, line: line)
+    ) -> ModeDeparture? {
+        let guardWait = TestWait.hangGuard()
+        let deadline = Date().addingTimeInterval(guardWait.remainingSeconds)
+        let card = guardWait.transaction()
+        let proceed = guardWait.transaction()
+        let declinePrompt = guardWait.transaction()
+        var observing = card
+        var lastObservation: Observation?
+        var didSelect = false
+        var didDecline = false
+        var didConfirmPromptGone = false
+        var didSeePromptAfterContinue = false
+        var didContinue = false
+        var didReadLastSnapshot = false
+        var step = "mode-card"
+        var lastErrorCode: Int?
+        let diagnostics = ModeNavigationDiagnostics(targetIdentifier: identifier)
+        FirstFailureContext.beginWait(seconds: guardWait.remainingSeconds)
+        FirstFailureContext.mark(step, element: identifier)
+        defer {
+            FirstFailureContext.endWait()
+            print("First-boot mode observations: \(diagnostics.modeDiagnosticMessage)")
+        }
+        while let captured = observing.query({ () -> Result<Observation, Error> in
+            diagnostics.beginModeDiagnosticObservation()
+            let startedAt = ProcessInfo.processInfo.systemUptime
+            defer { diagnostics.finishModeDiagnosticObservation(since: startedAt) }
+            return Result {
+                if guardWait.remainingSeconds <= 0, let previous = lastObservation {
+                    // A late action grants one native snapshot, not another window/alert search.
+                    return observation(
+                        window: try previous.windowElement.snapshot(), element: previous.windowElement,
+                        host: app, windowIndex: previous.windowIndex)
+                }
+                return try observe(
+                    modeIdentifier: didContinue ? nil : identifier,
+                    destinationIdentifier: destinationIdentifier, diagnostics: diagnostics, transaction: observing)
+            }
+        }) {
+            guard case .success(let current) = captured else {
+                didReadLastSnapshot = false
+                if case .failure(let error) = captured { lastErrorCode = (error as NSError).code }
+                poll(until: deadline)
+                continue
+            }
+            lastObservation = current
+            didReadLastSnapshot = true
+            diagnostics.captureModeDiagnosticSnapshot(current)
+            diagnostics.stage = .complete
+            if current.hasPasswordPrompt {
+                step = "save-password-prompt"
+                didSeePromptAfterContinue = didSeePromptAfterContinue || didContinue
+                didConfirmPromptGone = false
+                if !didDecline, let decline = current.decline {
+                    didDecline = tap(
+                        decline, observation: current, deadline: deadline, step: "save-password-prompt",
+                        diagnostics: diagnostics, transaction: declinePrompt)
+                    if didDecline { observing = declinePrompt }
+                }
+            } else {
+                if didDecline, !didConfirmPromptGone {
+                    didConfirmPromptGone = true
+                    print("Exact Save Password prompt disappearance confirmed")
+                }
+                if didContinue {
+                    step = "mode-departure"
+                    if !current.hasModalObstacle, !current.isModePage, current.hasDestination(destinationIdentifier) {
+                        FirstFailureContext.mark("unknown")
+                        print(
+                            "First-boot mode departure confirmed; Continue issued=true returned=true; passwordPromptDismissed=\(didConfirmPromptGone)"
+                        )
+                        return ModeDeparture(guardWait: guardWait, deadline: deadline, observation: current)
+                    }
+                } else if current.isModeCardSelected(identifier), !current.hasModalObstacle {
+                    step = "mode-continue"
+                    if let button = current.button("mode.continue.button") {
+                        didContinue = tap(
+                            button, observation: current, deadline: deadline, step: "mode-continue",
+                            diagnostics: diagnostics, transaction: proceed,
+                            willTap: { print("First-boot Continue issued=true; targetModeSelected=true") })
+                        if didContinue {
+                            observing = proceed
+                            step = "mode-departure"
+                        }
+                    }
+                } else if !didSelect, let button = current.button(identifier) {
+                    step = "mode-card"
+                    didSelect = tap(
+                        button, observation: current, deadline: deadline, step: "mode-card",
+                        diagnostics: diagnostics, transaction: card)
+                }
+            }
+            FirstFailureContext.mark(
+                step,
+                element: didContinue ? "mode.continue.button" : identifier)
+            poll(until: deadline)
+        }
+        let detail =
+            "Continue issued=\(didContinue) returned=\(didContinue), passwordDeclineReturned=\(didDecline), passwordPromptDismissed=\(didConfirmPromptGone), lastSnapshotSucceeded=\(didReadLastSnapshot), lastSnapshotError=\(lastErrorCode.map(String.init) ?? "none"), \(diagnostics.modeDiagnosticMessage)"
+        if didContinue, !didSeePromptAfterContinue, didReadLastSnapshot,
+            lastObservation?.isModePage == true, lastObservation?.hasPasswordPrompt == false
+        {
+            XCTFail(
+                "Mode departure failed after one hittable Continue without a password prompt; possible App navigation defect (\(detail))",
+                file: file, line: line)
+        } else {
+            XCTFail(
+                "First-boot mode navigation must dismiss the exact password prompt, select the target and finish within its deadline (\(detail))",
+                file: file, line: line)
+        }
+        return nil
+    }
+
+    @MainActor
+    struct ModeDeparture {
+        let guardWait: TestWait.HangGuard
+        let deadline: Date
+        let observation: Observation
+
+        func confirmsHittability(of identifier: String) -> Bool {
+            guardWait.transaction().until { observation.windowElement.buttons[identifier].isHittable }
+        }
+
+        /// Reuse the successful observation; extra readiness checks share its deadline.
+        func confirms(_ condition: ([XCUIElementSnapshot]) -> Bool) -> Bool {
+            if condition(observation.nodes) { return true }
+            return guardWait.transaction().until {
+                guard let snapshot = try? observation.windowElement.snapshot() else { return false }
+                var pending = [snapshot]
+                var nodes: [XCUIElementSnapshot] = []
+                while let node = pending.popLast() {
+                    nodes.append(node)
+                    pending.append(contentsOf: node.children)
+                }
+                return condition(nodes)
+            }
+        }
     }
 
     private func navigateMode(
-        _ identifier: String, destinationIdentifier: String?,
-        selectionTimeout: TimeInterval, departureTimeout: TimeInterval?,
+        _ identifier: String, selectionTimeout: TimeInterval,
         file: StaticString, line: UInt
     ) -> Date? {
         var selectionDeadline = Date().addingTimeInterval(selectionTimeout)
         var didSelect = false
         var didDecline = false
         var didSeePrompt = false
-        var didSeePromptAfterContinue = false
         var didConfirmPromptGone = false
         var promptSource = "not-observed"
-        var didIssueContinue = false
-        var didReturnContinue = false
         var lastSnapshotError: Int?
         var lastModePage: Bool?
         var didReadLastSnapshot = false
-        var didObserveAfterContinue = false
-        var departureDeadline: Date?
         var step = "mode-card"
         let diagnostics = ModeNavigationDiagnostics(targetIdentifier: identifier)
-        // Tap time includes XCTest's pre- and post-event waits for the App to idle.
+        // Selection-only evidence keeps its existing budget; departure uses the separate shared guard.
         func accountForModeTap(_ seconds: TimeInterval) {
-            if let end = departureDeadline {
-                departureDeadline = end.addingTimeInterval(seconds)
-            } else {
-                selectionDeadline.addTimeInterval(seconds)
-            }
+            selectionDeadline.addTimeInterval(seconds)
             FirstFailureContext.endWait()
             FirstFailureContext.beginWait(
-                seconds: max(.zero, (departureDeadline ?? selectionDeadline).timeIntervalSinceNow))
+                seconds: max(.zero, selectionDeadline.timeIntervalSinceNow))
         }
         defer { print("First-boot mode observations: \(diagnostics.modeDiagnosticMessage)") }
         FirstFailureContext.beginWait(seconds: selectionTimeout)
         defer { FirstFailureContext.endWait() }
-        while Date() < (departureDeadline ?? selectionDeadline) {
-            let deadline = departureDeadline ?? selectionDeadline
-            FirstFailureContext.mark(step, element: didIssueContinue ? "mode.continue.button" : identifier)
+        while Date() < selectionDeadline {
+            let deadline = selectionDeadline
+            FirstFailureContext.mark(step, element: identifier)
             let observation: Observation
             diagnostics.beginModeDiagnosticObservation()
             let observationStartedAt = ProcessInfo.processInfo.systemUptime
             do {
-                observation = try observe(
-                    modeIdentifier: didIssueContinue ? nil : identifier,
-                    destinationIdentifier: destinationIdentifier, diagnostics: diagnostics)
+                observation = try observe(modeIdentifier: identifier, diagnostics: diagnostics)
             } catch {
                 diagnostics.finishModeDiagnosticObservation(since: observationStartedAt)
                 lastSnapshotError = (error as NSError).code
@@ -953,10 +1126,8 @@ struct IOSFirstBootNavigation {
             guard Date() < deadline else { break }
             didReadLastSnapshot = true
             lastModePage = observation.isModePage
-            if didIssueContinue { didObserveAfterContinue = true }
             if observation.hasPasswordPrompt {
                 didSeePrompt = true
-                if didIssueContinue { didSeePromptAfterContinue = true }
                 didConfirmPromptGone = false
                 promptSource = observation.promptSource
                 step = "save-password-prompt"
@@ -965,70 +1136,33 @@ struct IOSFirstBootNavigation {
                         decline, observation: observation, deadline: deadline, step: "save-password-prompt",
                         diagnostics: diagnostics, didTap: accountForModeTap)
                     didDecline = didDecline || returned
-                    if returned && !didIssueContinue { didSelect = false }
+                    if returned { didSelect = false }
                 }
-                poll(until: departureDeadline ?? selectionDeadline)
+                poll(until: selectionDeadline)
                 continue
             }
             if didDecline && !didConfirmPromptGone {
                 didConfirmPromptGone = true
                 print("Exact Save Password prompt disappearance confirmed")
             }
-            step = didIssueContinue ? "mode-departure" : "mode-card"
-            if didIssueContinue {
-                if !observation.isModePage && destinationIdentifier.map({ observation.hasDestination($0) }) == true {
-                    // A later assertion must not inherit a completed mode-page wait's eligibility.
-                    FirstFailureContext.mark("unknown")
-                    print(
-                        "First-boot mode departure confirmed; Continue issued=true returned=\(didReturnContinue); passwordPromptDismissed=\(didConfirmPromptGone); promptSource=\(promptSource)"
-                    )
-                    return departureDeadline
-                }
-            } else if observation.isModeCardSelected(identifier) && !observation.hasModalObstacle {
-                guard let departureTimeout else {
-                    FirstFailureContext.mark("unknown")
-                    print("First-boot target mode selection confirmed; Continue issued=false")
-                    return selectionDeadline
-                }
-                step = "mode-continue"
-                if let button = observation.button("mode.continue.button") {
-                    if tap(
-                        button, observation: observation, deadline: deadline, step: step, diagnostics: diagnostics,
-                        willTap: {
-                            didIssueContinue = true
-                            print("First-boot Continue issued=true; targetModeSelected=true")
-                        })
-                    {
-                        didReturnContinue = true
-                        let end = Date().addingTimeInterval(departureTimeout)
-                        departureDeadline = end
-                        step = "mode-departure"
-                        FirstFailureContext.endWait()
-                        FirstFailureContext.beginWait(seconds: departureTimeout)
-                        print("First-boot Continue issued=true returned=true; targetModeSelected=true")
-                    }
-                }
-            } else if !didIssueContinue && !didSelect, let button = observation.button(identifier) {
+            step = "mode-card"
+            if observation.isModeCardSelected(identifier) && !observation.hasModalObstacle {
+                FirstFailureContext.mark("unknown")
+                print("First-boot target mode selection confirmed; Continue issued=false")
+                return selectionDeadline
+            } else if !didSelect, let button = observation.button(identifier) {
                 didSelect = tap(
                     button, observation: observation, deadline: deadline, step: step, diagnostics: diagnostics,
                     didTap: accountForModeTap)
             }
-            poll(until: departureDeadline ?? selectionDeadline)
+            poll(until: selectionDeadline)
         }
-        FirstFailureContext.mark(step, element: didIssueContinue ? "mode.continue.button" : identifier)
+        FirstFailureContext.mark(step, element: identifier)
         let detail =
-            "step=\(step), Continue issued=\(didIssueContinue) returned=\(didReturnContinue), passwordPromptObserved=\(didSeePrompt), postContinuePromptObserved=\(didSeePromptAfterContinue), passwordDeclineReturned=\(didDecline), passwordPromptDismissed=\(didConfirmPromptGone), promptSource=\(promptSource), modePage=\(lastModePage.map(String.init) ?? "unknown"), postContinueSnapshotObserved=\(didObserveAfterContinue), lastSnapshotSucceeded=\(didReadLastSnapshot), lastSnapshotError=\(lastSnapshotError.map(String.init) ?? "none"), \(diagnostics.modeDiagnosticMessage)"
-        if didIssueContinue && !didSeePromptAfterContinue && didReadLastSnapshot && didObserveAfterContinue
-            && lastModePage == true
-        {
-            XCTFail(
-                "Mode departure failed after one hittable Continue without a password prompt; possible App navigation defect (\(detail))",
-                file: file, line: line)
-        } else {
-            XCTFail(
-                "First-boot mode navigation must dismiss the exact password prompt, select the target and finish within its deadline (\(detail))",
-                file: file, line: line)
-        }
+            "step=\(step), Continue issued=false returned=false, passwordPromptObserved=\(didSeePrompt), passwordDeclineReturned=\(didDecline), passwordPromptDismissed=\(didConfirmPromptGone), promptSource=\(promptSource), modePage=\(lastModePage.map(String.init) ?? "unknown"), lastSnapshotSucceeded=\(didReadLastSnapshot), lastSnapshotError=\(lastSnapshotError.map(String.init) ?? "none"), \(diagnostics.modeDiagnosticMessage)"
+        XCTFail(
+            "First-boot mode navigation must dismiss the exact password prompt, select the target and finish within its deadline (\(detail))",
+            file: file, line: line)
         return nil
     }
 

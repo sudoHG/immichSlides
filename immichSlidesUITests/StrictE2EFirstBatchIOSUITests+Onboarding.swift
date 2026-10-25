@@ -168,16 +168,12 @@ extension StrictE2EFirstBatchIOSUITests {
     @MainActor
     func chooseOnboardingModeAndContinue(
         app: XCUIApplication,
-        identifier: String,
-        departureTimeout: TimeInterval = TestWait.seconds(.product(30))
-    ) -> Date? {
+        identifier: String
+    ) -> IOSFirstBootNavigation.ModeDeparture? {
         IOSFirstBootNavigation(app: app).selectModeAndContinue(
             identifier,
             destinationIdentifier: identifier == "mode.filtered.button"
-                ? "filterSummary.startPlayback.button" : "slideshow.control.settings.button",
-            selectionTimeout: TestWait.seconds(.product(8)) + TestWait.seconds(.product(2))
-                + TestWait.seconds(.product(2)) + TestWait.seconds(.product(2)),
-            departureTimeout: departureTimeout)
+                ? "filterSummary.startPlayback.button" : "slideshow.control.settings.button")
     }
 }
 
@@ -190,11 +186,11 @@ extension StrictE2EOnboardingIOS {
 
 extension StrictE2EFirstBatchIOSUITests {
     @MainActor
-    func waitForFilterSummary(app: XCUIApplication, deadline: Date) {
-        let reached = waitUntil(timeout: max(.zero, deadline.timeIntervalSinceNow)) {
-            app.buttons["filterSummary.album.button"].exists
-                || app.descendants(matching: .any)["filterSummary.album.button"].exists
-                || app.staticTexts["filterSummary.page.title"].exists
+    func waitForFilterSummary(app: XCUIApplication, deadline: IOSFirstBootNavigation.ModeDeparture) {
+        let reached = deadline.confirms { nodes in
+            nodes.contains {
+                $0.identifier == "filterSummary.album.button" || $0.identifier == "filterSummary.page.title"
+            }
         }
         if reached { return }
         attachStrictE2EScreenshot(app: app, name: "journey-b-filter-missing-\(currentDeviceTag())")

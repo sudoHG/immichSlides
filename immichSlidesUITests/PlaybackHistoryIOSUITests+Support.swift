@@ -428,12 +428,13 @@ extension PlaybackHistoryIOSUITests {
         }
     }
 
+    @MainActor
     func sceneIdentity(app: XCUIApplication, mode: ManualLifecycleMode) throws -> String {
         if mode == .smartFill {
             return try waitForCompleteVisibleSmartFillScene(app: app, timeout: TestWait.seconds(.product(8)))
                 .sceneIdentity
         }
-        return try waitForCurrentAssetID(app: app, timeout: TestWait.seconds(.product(8)))
+        return try waitForCurrentAssetID(app: app)
     }
 
     func waitForSceneIdentityChange(app: XCUIApplication, mode: ManualLifecycleMode, from oldValue: String) throws
@@ -520,25 +521,30 @@ extension PlaybackHistoryIOSUITests {
         )
     }
 
-    func waitForCurrentAssetID(app: XCUIApplication, timeout: TimeInterval) throws -> String {
+    @MainActor
+    func waitForCurrentAssetID(app: XCUIApplication, timeout: TimeInterval? = nil) throws -> String {
         var observedAssetID: String?
         var snapshotFailureCount = 0
         var lastSnapshotFailure: String?
         var lastSnapshotFailureCode: Int?
-        guard
-            waitUntil(
-                timeout: timeout,
-                condition: {
-                    observedAssetID = self.currentAssetID(
-                        app: app,
-                        onSnapshotFailure: { error in
-                            snapshotFailureCount += 1
-                            lastSnapshotFailure = error.localizedDescription
-                            lastSnapshotFailureCode = (error as NSError).code
-                        })
-                    return observedAssetID != nil
+        let condition = {
+            observedAssetID = self.currentAssetID(
+                app: app,
+                onSnapshotFailure: { error in
+                    snapshotFailureCount += 1
+                    lastSnapshotFailure = error.localizedDescription
+                    lastSnapshotFailureCode = (error as NSError).code
                 })
-        else {
+            return observedAssetID != nil
+        }
+        let didObserve: Bool
+        if let timeout {
+            didObserve = waitUntil(timeout: timeout, condition: condition)
+        } else {
+            let guardWait = TestWait.hangGuard()
+            didObserve = guardWait.transaction().until(condition)
+        }
+        guard didObserve else {
             let hierarchy = app.debugDescription
             let probeDiagnostic: [String]
             do {
@@ -592,6 +598,7 @@ extension PlaybackHistoryIOSUITests {
         return assetID
     }
 
+    @MainActor
     func waitForCurrentAssetIDChange(app: XCUIApplication, from oldValue: String, timeout: TimeInterval) throws
         -> String
     {
