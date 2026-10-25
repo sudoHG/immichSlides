@@ -1223,6 +1223,8 @@ class FailureDiagnosticsTests(unittest.TestCase):
                          "Play/pause receipt waits must balance within preparePlayPause")
         self.assertRegex(readiness, r'FirstFailureContext\.endWait\(\)\s+'
                          r'FirstFailureContext\.beginWait\(seconds:')
+        self.assertRegex(preparation, r'FirstFailureContext\.beginWait\(seconds: [^\n]+\)\s+'
+                         r'defer \{ FirstFailureContext\.endWait\(\) \}')
 
     def test_mode_navigation_markers_preserve_environment_policy_boundaries(self):
         source = (REPO_ROOT / "immichSlidesUITests/UITestSupport.swift").read_text()
