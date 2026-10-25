@@ -2242,6 +2242,86 @@ class FailureDiagnosticsTests(unittest.TestCase):
                     self.assertNotIn("PRIVATE_SENTINEL", exported)
                     self.assertEqual("Failed", json.loads(exported)["testNodes"][0]["result"])
 
+    def test_failure_locations_export_normalizes_filters_caps_and_binds_only_failed_strict_cases(self):
+        import copy
+        from types import SimpleNamespace
+        import ci_execution_diagnostics as diagnostics
+        from test_ci_summary import bounded_diagnostics_receipt
+        name = "AccessLifecycleIOSUITests/testPause"
+        path = "immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift"
+        root = strict_runner.REPO_ROOT.as_posix()
+        url = f"file://{root}/{path}#EndingLineNumber=812&StartingLineNumber=811"
+        location = {"path": path, "line": 812}
+        cases = [
+            ("document", [{"documentLocationInCreatingWorkspace": {"url": {"_value": url}}}], [location]),
+            ("document-first-line", [{"documentLocationInCreatingWorkspace": {"url": {
+                "_value": url.replace("StartingLineNumber=811", "StartingLineNumber=0")}}}],
+                [{"path": path, "line": 1}]),
+            ("document-last-line", [{"documentLocationInCreatingWorkspace": {"url": {
+                "_value": url.replace("StartingLineNumber=811", "StartingLineNumber=999999")}}}],
+                [{"path": path, "line": 1000000}]),
+            ("document-overflow", [{"documentLocationInCreatingWorkspace": {"url": {
+                "_value": url.replace("StartingLineNumber=811", "StartingLineNumber=1000000")}}}], None),
+            ("mixed", [{"file": "/tmp/outside.swift", "line": 812}] * 3 +
+                [{"documentLocationInCreatingWorkspace": {"url": {"_value": url}}}], [location]),
+            ("file", [{"fileName": {"_value": f"{root}/TestSupport/Timing.swift"},
+                        "lineNumber": {"_value": "9"}}], [{"path": "TestSupport/Timing.swift", "line": 9}]),
+            ("relative", [{"file": "immichSlidesTests/Nested/Timing.swift", "line": 1}],
+                [{"path": "immichSlidesTests/Nested/Timing.swift", "line": 1}]),
+            ("checkout-alias", [{"file": path, "line": 812}], [location]),
+            ("cap", [{"file": path, "line": line} for line in (1, 1, 2, 3, 4)],
+                [{"path": path, "line": line} for line in (1, 2, 3)]),
+        ]
+        for unsafe in (f"file://PRIVATE_SENTINEL{root}/{path}#StartingLineNumber=812",
+                url.replace("file:", "https:", 1),
+                url.replace("#", "?PRIVATE_SENTINEL#")):
+            cases.append(("reject-url", [{"documentLocationInCreatingWorkspace": {"url": {"_value": unsafe}}}], None))
+        for unsafe in (f"/tmp/outside/{path}", "/" + f"Users/PRIVATE_SENTINEL/{path}",
+                "/" + "x" * (len(root) - 1) + "/" + path,
+                f"file://PRIVATE_SENTINEL{root}/{path}#StartingLineNumber=812",
+                "immichSlides/Shared/Secret.swift", "../" + path, root + "/../" + path,
+                "TestSupport/../Secret.swift", "TestSupport/%2e%2e/Secret.swift",
+                "TestSupport/PRIVATE_SENTINEL@host.swift", "TestSupport/" + "a" * 240 + ".swift"):
+            cases.append(("reject-path", [{"file": unsafe, "line": 812}], None))
+        for line in (0, -1, True, 1.5, "812x", 1000001):
+            cases.append(("reject-line", [{"file": path, "line": line}], None))
+        cases += [(variant, [{"file": path, "line": 812}], None) for variant in
+                  ("passed", "other-method", "missing-case", "no-sampler", "missing-location")]
+        for variant, rows, expected in cases:
+            with self.subTest(variant=variant, rows=rows), tempfile.TemporaryDirectory() as raw:
+                evidence = Path(raw)
+                if variant == "checkout-alias":
+                    alias = evidence / "checkout"
+                    alias.symlink_to(strict_runner.REPO_ROOT, target_is_directory=True)
+                    rows = [{"file": f"{alias}/{path}", "line": 812}]
+                payload = {"testNodes": [{"nodeType": "Test Case", "nodeIdentifier": name + "()",
+                    "result": "Passed" if variant == "passed" else "Failed"}]}
+                legacy_name = "Other.testPause()" if variant == "other-method" else name.replace("/", ".") + "()"
+                legacy = {"issues": {"testFailureSummaries": {"_values": [dict(
+                    {} if variant == "missing-location" else row,
+                    testCaseName={"_value": legacy_name}, message={"_value": "PRIVATE_SENTINEL"}) for row in rows]}}}
+                original = bounded_diagnostics_receipt(resources=True)["case_resources"][0]
+                def export(command, **_kwargs):
+                    return subprocess.CompletedProcess(command, 0,
+                        json.dumps(legacy if "--legacy" in command else payload).encode(), b"")
+                def publish_native(*_args, recorder, **_kwargs):
+                    recorder.case_resources[0] = copy.deepcopy(original)
+                with diagnostics.session() as recorder, \
+                        mock.patch("run_strict_e2e.subprocess.run", side_effect=export) as query, \
+                        mock.patch("run_strict_e2e.read_official_test_results_summary",
+                            return_value=TestResultsSummary(1, 0, 1, 0, "Failed")), \
+                        mock.patch("strict_e2e_resource_diagnostics.collect_native_activity", side_effect=publish_native):
+                    recorder.case_resources = [copy.deepcopy(original)]
+                    sampler = None if variant == "no-sampler" else SimpleNamespace(
+                        sequence=original["sequence"] + (variant == "missing-case"))
+                    strict_runner.export_private_result_bundle(evidence / "private.xcresult", evidence, [],
+                        enrich_failure_diagnostics=True, resource_sampler=sampler)
+                    resource = recorder.receipt()["case_resources"][0]
+                self.assertEqual(expected, resource.pop("failure_locations", None))
+                self.assertEqual(original, resource)
+                self.assertEqual(1 if variant == "passed" else 2, query.call_count)
+                self.assertNotIn("PRIVATE_SENTINEL", json.dumps(resource))
+
     def test_native_dates_accept_legacy_offsets_colon_offsets_and_utc(self):
         from strict_e2e_resource_diagnostics import native_time
         for value in ("2021-03-03T14:43:24.000+0100", "2021-03-03T14:43:24.000+01:00",
@@ -4822,23 +4902,27 @@ raise SystemExit(65)
 
     def test_tracer_keeps_pause_window_assertions_bound_to_the_failed_case(self):
         from test_ci_summary import bounded_diagnostics_receipt
-        ledger = bounded_diagnostics_receipt(resources=True)
-        ledger["case_resources"][0]["pause_window_assertions"] = ["restored-a2"]
-        with tempfile.TemporaryDirectory() as directory:
-            code, records, _, summary = self._produce_validator_records(Path(directory), None,
-                runner_exit=65, receipt_suite=None, bounded_diagnostics=ledger,
-                case=dict(platform="ios", device="ipad", configuration="Debug", suite="pause-window",
-                          scenario="normal", fixture="b"))
-            self.assertNotEqual(0, code)
-            failed = summary["population"]["observed"][0]
-            self.assertEqual("failed", failed["outcome"])
-            self.assertNotIn("environment_limit", failed)
-            self.assertIn("strict_case_evidence", summary)
-            self.assertEqual(failed["identity"], summary["strict_case_evidence"][0]["identity"])
-            self.assertEqual(ledger, summary["strict_case_evidence"][0]["bounded_diagnostics"])
-            rendered = (records / "summary.md").read_text()
-            self.assertIn("pause-window assertions: restored-a2", rendered)
-            self.assertIn("device=ipad", rendered)
+        for field, projection, hint in (
+                ("pause_window_assertions", ["restored-a2"], "pause-window assertions: restored-a2"),
+                ("failure_locations", [{"path": "immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "line": 812}],
+                 "failed at immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift:812")):
+            ledger = bounded_diagnostics_receipt(resources=True)
+            ledger["case_resources"][0][field] = projection
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as directory:
+                code, records, _, summary = self._produce_validator_records(Path(directory), None,
+                    runner_exit=65, receipt_suite=None, bounded_diagnostics=ledger,
+                    case=dict(platform="ios", device="ipad", configuration="Debug", suite="pause-window",
+                              scenario="normal", fixture="b"))
+                self.assertNotEqual(0, code)
+                failed = summary["population"]["observed"][0]
+                self.assertEqual("failed", failed["outcome"])
+                self.assertNotIn("environment_limit", failed)
+                self.assertIn("strict_case_evidence", summary)
+                self.assertEqual(failed["identity"], summary["strict_case_evidence"][0]["identity"])
+                self.assertEqual(ledger, summary["strict_case_evidence"][0]["bounded_diagnostics"])
+                rendered = (records / "summary.md").read_text()
+                self.assertIn(hint, rendered)
+                self.assertIn("device=ipad", rendered)
 
     def test_sampler_uses_fast_process_ticks_only_during_an_eligible_high_cpu_span(self):
         import ci_execution_diagnostics as diagnostics

@@ -1173,6 +1173,52 @@ class SummaryContractTests(unittest.TestCase):
                     ci_summary.parse_summary(changed)
                 self.assertNotIn("PRIVATE_SENTINEL", str(error.exception))
 
+    def test_failure_locations_round_trip_old_nights_and_drop_only_invalid_projection(self):
+        from ci_failure_diagnostics import environment_limit_evidence, scan_diagnostic_json
+        summary, resource = hosted_timeout_summary()
+        old = copy.deepcopy(summary)
+        row = summary["population"]["observed"][0]
+        before = environment_limit_evidence(summary, row, [resource], runner_hosted=True)
+        locations = [{"path": "immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "line": 812},
+                     {"path": "TestSupport/Nested/Timing.swift", "line": 1},
+                     {"path": "immichSlidesTests/" + "a" * (240 - len("immichSlidesTests/") - len(".swift")) + ".swift",
+                      "line": 1000000}]
+        resource["failure_locations"] = locations
+        after = environment_limit_evidence(summary, row, [resource], runner_hosted=True)
+        self.assertIsNotNone(before)
+        self.assertIsNotNone(after)
+        self.assertEqual(before["failure"], after["failure"])
+        row["environment_limit"] = row["attempts"][0]["environment_limit"] = after
+        self.assertEqual(summary, ci_summary.parse_summary(json.dumps(summary)))
+        scan_diagnostic_json(json.dumps(summary).encode())
+        self.assertEqual(old, ci_summary.parse_summary(json.dumps(old)))
+        self.assertNotIn("failed at", ci_summary.render_markdown(old))
+        self.assertIn("failed at immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift:812",
+                      ci_summary.render_markdown(summary))
+        defects = [None, [], {}, locations * 2, [dict(locations[0], message="PRIVATE_SENTINEL")]]
+        defects += [[{"path": path, "line": 812}] for path in (
+            "/tmp/immichSlidesUITests/Timing.swift", "/" + "Users/PRIVATE_SENTINEL/TestSupport/Timing.swift",
+            "file://PRIVATE_SENTINEL/TestSupport/Timing.swift", "TestSupport/../Timing.swift",
+            "immichSlides/Timing.swift", "TestSupport/" + "a" * 240 + ".swift", "TestSupport/Timing.txt")]
+        defects += [[dict(locations[0], line=line)] for line in (0, -1, True, 1.5, "812", 1000001)]
+        for defect in defects:
+            changed = copy.deepcopy(summary)
+            target = changed["strict_case_evidence"][0]["bounded_diagnostics"]["case_resources"][0]
+            target["failure_locations"] = defect
+            # Retained yellow proofs use the same optional reader as the case resource.
+            for entry in [changed["population"]["observed"][0], changed["population"]["observed"][0]["attempts"][0]]:
+                entry["environment_limit"]["resources"]["failure_locations"] = defect
+            expected = copy.deepcopy(changed)
+            expected["strict_case_evidence"][0]["bounded_diagnostics"]["case_resources"][0].pop("failure_locations")
+            for entry in [expected["population"]["observed"][0], expected["population"]["observed"][0]["attempts"][0]]:
+                entry["environment_limit"]["resources"].pop("failure_locations", None)
+            with self.subTest(defect=defect):
+                try:
+                    parsed = ci_summary.parse_summary(json.dumps(changed))
+                except ci_summary.ContractError as error:
+                    self.fail(f"Invalid optional location discarded enclosing evidence: {error}")
+                self.assertEqual(expected, parsed)
+
     def test_optional_continue_watch_round_trips_and_old_nights_keep_their_verdict(self):
         from ci_failure_diagnostics import scan_diagnostic_json
         summary, resource = hosted_timeout_summary()

@@ -16,6 +16,11 @@ MAX_PROCESS_CPU_PERCENT = 10**6
 MAX_LOAD_AVERAGE = 10**6
 MAX_CPU_PERCENT = 100
 MAX_INTEGER = 2**31 - 1
+MAX_FAILURE_LOCATIONS = 3
+MAX_FAILURE_LOCATION_LINE = 1000000
+MAX_FAILURE_LOCATION_PATH = 240
+FAILURE_LOCATION_PATH = re.compile(
+    r"(?:immichSlidesUITests|immichSlidesTests|TestSupport)/(?:[A-Za-z0-9_-]+/)*[A-Za-z0-9_+-]+\.swift")
 MAX_PROCESSES = 64
 MAX_PROCESS_COUNT = 65536
 PHASES = {
@@ -313,6 +318,17 @@ def render_simulator_processes(value):
     return text + (" (truncated)" if value["truncated"] else "")
 
 
+def public_failure_locations(value):
+    """Drop only a malformed optional projection; retained nights keep their original verdict."""
+    if (isinstance(value, list) and 0 < len(value) <= MAX_FAILURE_LOCATIONS
+            and all(isinstance(row, dict) and set(row) == {"path", "line"}
+                and isinstance(row["path"], str) and len(row["path"]) <= MAX_FAILURE_LOCATION_PATH
+                and FAILURE_LOCATION_PATH.fullmatch(row["path"]) is not None
+                and type(row["line"]) is int and 1 <= row["line"] <= MAX_FAILURE_LOCATION_LINE for row in value)):
+        return value
+    return None
+
+
 def validate_case_resources(cases):
     require(isinstance(cases, list) and len(cases) <= MAX_RESOURCE_CASES, "case resources: invalid case count")
     sequences = set()
@@ -320,6 +336,11 @@ def validate_case_resources(cases):
         fields = {"sequence", "duration_seconds", "sample_interval_seconds", "sample_count", "truncated",
             "idle_percent_min", "idle_percent_median", "load_1m_max", "app_cpu_percent_peak", "sampler_wall_seconds",
             "sampler_cpu_seconds", "first_failure_elapsed_seconds", "failure_samples"}
+        if isinstance(case, dict) and "failure_locations" in case:
+            if public_failure_locations(case["failure_locations"]) is None:
+                case.pop("failure_locations")
+            else:
+                fields.add("failure_locations")
         if isinstance(case, dict) and "app_hang_stack" in case:
             fields.add("app_hang_stack")
             validate_app_hang_stack(case["app_hang_stack"])

@@ -151,7 +151,7 @@ The reader also accepts `case_resources`, an array of at most 64 case measuremen
 Strict producers emit it for each actual Xcode case invocation, including an
 existing listed retry. Fixture UI producers do not sample continuously. Each entry has
 the following required fields and optional `app_hang_stack`, `continue_watch`,
-`simulator_processes` and `pause_window_assertions`. All numbers are finite, booleans are not numbers,
+`simulator_processes`, `pause_window_assertions` and `failure_locations`. All numbers are finite, booleans are not numbers,
 and unknown measurements remain null.
 
 | Fields | Bounds and meaning |
@@ -168,6 +168,19 @@ and unknown measurements remain null.
 | `continue_watch` (optional) | Failed `tvos-lifecycle-pause` only; at most 8,192 compact JSON bytes and the first 80 frames, rounded to three decimals; see the numeric projection below |
 | `simulator_processes` (optional) | At most 1,024 compact JSON bytes: `entries` (at most five named entries followed by `other`), boolean `unavailable` and `truncated`; each entry contains only allowlisted `name`, `mean` / `peak` CPU percentages (0–10^6, or null when unavailable), and integer `samples` (0–43,201 valid snapshots) |
 | `pause_window_assertions` (optional) | Nonempty list of at most 11 distinct fixed families from the failed pause-window method's existing official legacy export; no assertion text or observed values. See the [family definitions](CI_STRICT_RUNNER.md#pause-window-assertion-families). |
+| `failure_locations` (optional) | Failed strict cases only: at most three distinct `{path, line}` objects from the already-read legacy failure summaries, bound to the failed official method and resource sequence. `path` is at most 240 ASCII characters, rooted at `immichSlidesUITests/`, `immichSlidesTests/` or `TestSupport/`, with optional directories and a `.swift` filename; components contain letters, digits, underscores or hyphens, and filenames may also contain `+`. `line` is an integer 1–1,000,000. No assertion message is retained. |
+
+Failure document URLs must use `file:` without a host or query; their
+zero-based `StartingLineNumber` fragment is converted to the published one-based
+line. Legacy file/line pairs already use one-based lines and are also
+accepted. Absolute input paths must resolve inside the executing checkout's root;
+checkout aliases such as `/var` and `/private/var` normalize to that same root,
+and only the relative suffix is retained. Other absolute roots, home paths outside that root,
+traversal components, hosted URLs and non-allowlisted paths are omitted. Missing
+locations omit the field. Summaries render `failed at path:line` beside the full
+case identity; multiple locations do not establish the first failure. Readers
+drop only an invalid `failure_locations` projection and retain the enclosing
+case resources, outcome and environment-limit proof. Old nights need no field.
 
 Each failure sample has exactly `elapsed_seconds` (0–86,400), `idle_percent`
 (0–100 or null), `load_1m` (0–10^6 or null), and `cpu_percent`. The latter has
@@ -913,7 +926,7 @@ The same sequence applies to `bounded_diagnostics.case_resources` and
 `first_failure.native_activity_seconds`: merge reader support before opening the
 producer activation PR. Historical records without either optional field remain valid.
 
-A scoped exception permits the optional App hang-stack, Continue watch, simulator-process and pause-window assertion projections,
+A scoped exception permits the optional App hang-stack, Continue watch, simulator-process, pause-window assertion and failure-location projections,
 strict runner cleanup member event and their readers
 to ship together. The trusted base gate/UI publisher's supported producers in
 `ci_publish_git.py` do not consume strict-tracer or P2-review diagnostic artifacts;
@@ -931,10 +944,18 @@ sampler, and `first_failure` and gate/UI records gain no field. Its producer reu
 the already-read legacy failure summaries; missing summaries or ambiguous case
 binding omit the projection. The candidate/run/main reader sequence above therefore
 also applies to this extension. It never participates in environment-limit eligibility.
-`continue_watch`, `app_hang_stack`, `simulator_processes` and `pause_window_assertions` are copied into
+`failure_locations` uses that same strict-sampler-only consumer boundary and the
+already-read legacy export, for any failed strict method; generic UI exports,
+`first_failure` and required gate/UI records gain no field or extra export call.
+The candidate/run/main reader sequence therefore permits reader and producer in
+one PR. Any future base-read publication requires a reader-first rollout.
+`continue_watch`, `app_hang_stack`, `simulator_processes`, `pause_window_assertions` and `failure_locations` are copied into
 `environment_limit.resources` in the 90-day yellow history and validated again by
 later readers. Their archived validation may only be loosened, never tightened;
 otherwise a previously accepted night could become unreadable or red.
+For `failure_locations`, preserve the accepted path grammar, path/entry caps and
+positive line range; future archived readers may only broaden acceptance. Invalid
+projections continue to be dropped alone, including inside retained yellow proofs.
 For `simulator_processes`, this freezes acceptance of its current names, nullable
 unavailable form, fields, numeric/sample bounds and byte/entry caps: future
 readers may only broaden acceptance. A stricter successor producer needs a new
