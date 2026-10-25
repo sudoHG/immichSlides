@@ -703,7 +703,7 @@ class StrictE2ERunnerTestsCasesConfiguration:
         calls.clear()
         with mock.patch("run_strict_e2e.subprocess.run", side_effect=fake_run), mock.patch("run_strict_e2e.time.sleep"):
             with self.assertRaises(CommandError) as raised:
-                reset_simulator_app("SIM-UDID")
+                reset_simulator_app("SIM-UDID", platform="tvos")
         self.assertNotIsInstance(raised.exception, InfrastructureTimeout)
         self.assertEqual(sum(command[2] == "get_app_container" for command in calls), 1)
         self.assertFalse(any(command[2] in ("terminate", "uninstall", "keychain", "privacy") for command in calls))
@@ -738,7 +738,7 @@ class StrictE2ERunnerTestsCasesConfiguration:
             "run_strict_e2e.time.sleep"
         ):
             with self.assertRaises(CommandError) as raised:
-                reset_simulator_app("SIM-UDID")
+                reset_simulator_app("SIM-UDID", platform="tvos")
         self.assertIn("Second uninstall failed", str(raised.exception))
         self.assertIn("uninstall_retry_exit=149", str(raised.exception))
 
@@ -756,8 +756,44 @@ class StrictE2ERunnerTestsCasesConfiguration:
 
                 with mock.patch("run_strict_e2e.subprocess.run", side_effect=fake_run), mock.patch("run_strict_e2e.time.sleep"):
                     with self.assertRaises(CommandError):
-                        reset_simulator_app("SIM-UDID")
+                        reset_simulator_app("SIM-UDID", platform="tvos")
                 self.assertIn(["xcrun", "simctl", failed_step, "SIM-UDID", "reset", *(["all"] if failed_step == "privacy" else [])], calls)
+
+    def test_ios_reset_requires_disabled_password_autofill_after_isolation(self) -> None:
+        import strict_e2e_runner_support as support
+        for platform, write_exit, read_exit, readback, error in (
+            ("ios", 0, 0, "0\n", None),
+            ("ios", 1, 0, "0\n", "Simulator password AutoFill disable failed"),
+            ("ios", 0, 1, "0\n", "Simulator password AutoFill readback failed"),
+            ("ios", 0, 0, "1\n", "Simulator password AutoFill readback failed"),
+            ("ios", 0, 0, "", "Simulator password AutoFill readback failed"),
+            ("tvos", 1, 1, "1\n", None),
+        ):
+            with self.subTest(platform=platform, write_exit=write_exit, read_exit=read_exit, readback=readback):
+                calls = []
+
+                def command(argv, phase, **kwargs):
+                    calls.append((argv, kwargs["deadline"]))
+                    operation = argv[5] if argv[2] == "spawn" else None
+                    code = write_exit if operation == "write" else read_exit if operation == "read" else 0
+                    return subprocess.CompletedProcess(argv, code, readback if operation == "read" else "", "")
+
+                with mock.patch.object(support, "prepare_simulator", return_value=(None, "")), \
+                     mock.patch.object(support, "simulator_app_container", return_value=None), \
+                     mock.patch.object(support, "simulator_command", side_effect=command), \
+                     mock.patch.object(support.time, "sleep"):
+                    if error:
+                        with self.assertRaisesRegex(CommandError, error):
+                            reset_simulator_app("SIM-UDID", platform=platform)
+                    else:
+                        reset_simulator_app("SIM-UDID", platform=platform)
+                commands = [argv for argv, _ in calls]
+                preference_calls = [argv for argv in commands if argv[2] == "spawn"]
+                self.assertEqual(bool(preference_calls), platform == "ios")
+                if preference_calls:
+                    self.assertLess(next(i for i, argv in enumerate(commands) if argv[2] == "privacy"),
+                                    next(i for i, argv in enumerate(commands) if argv[2] == "spawn"))
+                    self.assertEqual(len({deadline for _, deadline in calls}), 1)
 
     def test_warm_products_and_per_case_environment_cannot_silently_change(self) -> None:
         import plistlib
@@ -823,7 +859,7 @@ class StrictE2ERunnerTestsCasesConfiguration:
             "run_strict_e2e.time.sleep"
         ):
             with self.assertRaises(CommandError) as raised:
-                reset_simulator_app("SIM-UDID")
+                reset_simulator_app("SIM-UDID", platform="tvos")
         self.assertIn("Simulator boot failed", str(raised.exception))
 
         calls: list[list[str]] = []
@@ -846,7 +882,7 @@ class StrictE2ERunnerTestsCasesConfiguration:
         with mock.patch("run_strict_e2e.subprocess.run", side_effect=already_booted), mock.patch(
             "run_strict_e2e.time.sleep"
         ):
-            log = reset_simulator_app("SIM-UDID")
+            log = reset_simulator_app("SIM-UDID", platform="tvos")
         self.assertIn("app_container=absent", log)
         self.assertIn("boot_exit=149", log)
 
@@ -878,7 +914,7 @@ class StrictE2ERunnerTestsCasesConfiguration:
         with mock.patch("run_strict_e2e.subprocess.run", side_effect=slow_boot), mock.patch(
             "run_strict_e2e.time.monotonic", side_effect=lambda: clock[0]
         ), mock.patch("run_strict_e2e.time.sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)):
-            log = reset_simulator_app("SIM-UDID")
+            log = reset_simulator_app("SIM-UDID", platform="tvos")
         self.assertIn("app_container=absent", log)
         self.assertGreater(budgets["bootstatus"], 120)
         self.assertEqual(budgets["terminate"], 60)

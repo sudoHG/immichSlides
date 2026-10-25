@@ -613,7 +613,7 @@ class FixtureCoverageTests(unittest.TestCase):
                     stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
                     stack.enter_context(contextlib.redirect_stderr(stderr))
                     code = runner.main(argv, simulator_prepared=shape == "complete")
-                    runner.reset_simulator_app.assert_called_once_with("target", boot_submitted=True)
+                    runner.reset_simulator_app.assert_called_once_with("target", platform="ios", boot_submitted=True)
                     runner.wait_for_service.assert_called_once_with(work / "ready.json", unittest.mock.ANY,
                                                                     startup_log=work / "service.log",
                                                                     fixture_build_timeout_seconds=runner.SERVICE_FIXTURE_BUILD_TIMEOUT_SECONDS,

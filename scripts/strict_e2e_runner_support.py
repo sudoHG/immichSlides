@@ -795,7 +795,7 @@ def prepare_simulator(simulator_udid: str, bundle_id: str = "com.331works.immich
 
 
 def reset_simulator_app(simulator_udid: str, bundle_id: str = "com.331works.immichSlides", *,
-                        boot_submitted: bool = False) -> str:
+                        platform: str, boot_submitted: bool = False) -> str:
     # The fixed sleep waits for simctl to release the container lock; a second uninstall failure must stop the run.
     report = lambda line: print(line, flush=True)
     container, preparation_log = prepare_simulator(simulator_udid, bundle_id, report=report, boot_submitted=boot_submitted)
@@ -845,6 +845,23 @@ def reset_simulator_app(simulator_udid: str, bundle_id: str = "com.331works.immi
         lines.append(f"{step}_reset_exit={completed.returncode}")
         if completed.returncode != 0:
             raise CommandError(f"Simulator {step} reset failed; cannot continue with isolated state.\n" + "\n".join(lines))
+    if platform == "ios":
+        # Matches Settings > General > AutoFill & Passwords on dedicated fixture simulators.
+        preference = ["xcrun", "simctl", "spawn", simulator_udid, "defaults"]
+        disabled = simulator_command(
+            [*preference, "write", "com.apple.WebUI", "AutoFillPasswords", "-bool", "NO"],
+            "simulator-password-autofill-disable", deadline=deadline,
+        )
+        if disabled.returncode != 0:
+            raise CommandError("Simulator password AutoFill disable failed; cannot continue with isolated state.")
+        readback = simulator_command(
+            [*preference, "read", "com.apple.WebUI", "AutoFillPasswords"],
+            "simulator-password-autofill-readback", deadline=deadline,
+        )
+        if readback.returncode != 0 or readback.stdout.strip() != "0":
+            raise CommandError("Simulator password AutoFill readback failed; cannot continue with isolated state.")
+        lines.append("password_autofill=disabled; domain=com.apple.WebUI; key=AutoFillPasswords; readback=0")
+        report(lines[-1])
     lines.append(f"simulator-reset: elapsed={time.monotonic() - started:.1f}s; total budget={SIMULATOR_RESET_TIMEOUT_SECONDS}s")
     report(lines[-1])
     return "\n".join(lines) + "\n"

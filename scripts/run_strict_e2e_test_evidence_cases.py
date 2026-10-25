@@ -128,7 +128,7 @@ class StrictE2ERunnerTestsCasesEvidence:
                 with mock.patch("run_strict_e2e.subprocess.run", side_effect=fake_run), mock.patch(
                     "run_strict_e2e.time.sleep"
                 ) as sleep, mock.patch("run_strict_e2e.time.monotonic", side_effect=lambda: clock[0]):
-                    log = reset_simulator_app("SIM-UDID")
+                    log = reset_simulator_app("SIM-UDID", platform="tvos")
 
                 self.assertIn("simulator_id=SIM-UDID", log)
                 self.assertIn("uninstall_exit=149", log)
@@ -163,7 +163,7 @@ class StrictE2ERunnerTestsCasesEvidence:
             "run_strict_e2e.time.sleep"
         ):
             with self.assertRaises(CommandError) as raised:
-                reset_simulator_app("SIM-UDID")
+                reset_simulator_app("SIM-UDID", platform="tvos")
         self.assertIn("App container is still accessible after uninstall", str(raised.exception))
 
 

@@ -286,7 +286,7 @@ def main(
         host, port = wait_for_service(ready_path, service_process)
         server_url = f"http://{host}:{port}/api"
         simulator_udid = destination_udid(arguments.destination)
-        reset_log = reset_simulator_app(simulator_udid)
+        reset_log = reset_simulator_app(simulator_udid, platform="ios")
         (arguments.evidence_dir / "simulator-reset.log").write_text(reset_log, encoding="utf-8")
         command = build_test_command(
             destination=arguments.destination,

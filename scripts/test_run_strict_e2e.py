@@ -915,7 +915,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                 ), mock.patch("strict_e2e_runner_support.time.monotonic", side_effect=lambda: clock[0]), mock.patch(
                     "builtins.print"
                 ) as report, self.assertRaises(CommandError) as raised:
-                    reset_simulator_app("SIM-UDID")
+                    reset_simulator_app("SIM-UDID", platform="tvos")
                 self.assertEqual(raised.exception.entry["code"], phase + "-timeout")
                 self.assertNotIn("private-test-input", str(raised.exception))
                 if step == "get_app_container":
@@ -935,7 +935,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
         with mock.patch("strict_e2e_runner_support.subprocess.run", side_effect=cold), mock.patch(
             "strict_e2e_runner_support.time.monotonic", side_effect=lambda: clock[0]
         ), mock.patch("builtins.print"), self.assertRaises(CommandError):
-            reset_simulator_app("SIM-UDID")
+            reset_simulator_app("SIM-UDID", platform="tvos")
         self.assertEqual(clock[0], 600)
         self.assertFalse(set(calls) & {"terminate", "uninstall", "keychain", "privacy"})
         from strict_e2e_runner_support import prepare_simulator
@@ -958,7 +958,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
         with mock.patch("strict_e2e_runner_support.subprocess.run", side_effect=submitted), mock.patch(
             "strict_e2e_runner_support.time.monotonic", side_effect=lambda: clock[0]
         ), mock.patch("strict_e2e_runner_support.time.sleep"), mock.patch("builtins.print"):
-            reset_simulator_app("SIM-UDID", boot_submitted=True)
+            reset_simulator_app("SIM-UDID", platform="tvos", boot_submitted=True)
         self.assertEqual(calls, ["bootstatus", "get_app_container", "uninstall", "get_app_container", "keychain", "privacy"])
         with tempfile.TemporaryDirectory() as raw:
             bundle = Path(raw) / "result.xcresult"

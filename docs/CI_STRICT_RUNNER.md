@@ -1018,6 +1018,25 @@ Exhausting that budget fails as `simulator-readiness-timeout`, before any reset
 mutation; a warm device returns on its first valid response. Uninstall and the
 remaining reset steps are still mandatory before Xcode may install the app. A reset error fails the case.
 
+Each reset caller supplies its platform. After keychain and privacy reset, iOS
+fixture simulators disable Password AutoFill with
+`simctl spawn UDID defaults write com.apple.WebUI AutoFillPasswords -bool NO`
+and require a successful `defaults read` returning `0` before the app runs.
+This is the preference changed by Settings > General > AutoFill & Passwords >
+AutoFill Passwords and Passkeys on the pinned iOS 27 runtime, confirmed by a
+before/after preference diff and the Settings toggle's readback. Both commands
+consume the existing 120-second reset budget, with the same per-command cap;
+a failed write or unreadable/enabled value fails preparation. Strict, fixture UI,
+standalone access-lifecycle and listed-retry resets all apply this policy.
+The app's secure field, login flow and exact-prompt decline safety net are unchanged.
+No fixture credential is saved in Passwords. Erasing a device removes its settings;
+the next shared reset reapplies this one before installation. These are disposable,
+dedicated simulators, never personal devices or the host's preferences.
+tvOS keeps its existing environment: Apple's documented
+[Password AutoFill workflow](https://support.apple.com/en-ca/guide/security/sec8839a8de2/web)
+requests credentials from a nearby iPhone or iPad; this change does not establish
+or disable an equivalent local Save Password prompt on tvOS.
+
 UI consumers run this gate before identity/archive checks, simulator inventory
 and fixture server startup/health checks. Standalone fixture and strict runners
 also gate before simulator lookups and fixture health checks; resets use the same

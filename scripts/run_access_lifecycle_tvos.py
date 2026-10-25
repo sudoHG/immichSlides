@@ -685,7 +685,7 @@ def main(
         host, port = wait_for_service(ready_path, service_process)
         server_url = f"http://{host}:{port}/api"
 
-        reset_log = reset_simulator_app(simulator_udid)
+        reset_log = reset_simulator_app(simulator_udid, platform="tvos")
         (arguments.evidence_dir / "simulator-reset.log").write_text(reset_log, encoding="utf-8")
 
         environment = make_test_environment(

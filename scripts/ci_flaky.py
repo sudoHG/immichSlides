@@ -545,7 +545,7 @@ def run_ui(args):
         require((device_class == "tv") == (args.platform == "tvos"), "UI platform does not match target simulator")
         def reset():
             with (output / "app-reset.log").open("a") as log:
-                log.write(reset_simulator_app(udid))
+                log.write(reset_simulator_app(udid, platform=args.platform))
         reset()
         bundle = prepare_private_result_bundle_path("ui-flaky")
         command = ["xcodebuild", "test-without-building", "-xctestrun", str(args.xctestrun.resolve()),
