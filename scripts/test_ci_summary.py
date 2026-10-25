@@ -1218,6 +1218,8 @@ class SummaryContractTests(unittest.TestCase):
                 except ci_summary.ContractError as error:
                     self.fail(f"Invalid optional location discarded enclosing evidence: {error}")
                 self.assertEqual(expected, parsed)
+                with self.assertRaisesRegex(ValueError, "^failure locations: invalid projection$"):
+                    scan_diagnostic_json(json.dumps(changed).encode())
 
     def test_optional_continue_watch_round_trips_and_old_nights_keep_their_verdict(self):
         from ci_failure_diagnostics import scan_diagnostic_json

@@ -128,7 +128,7 @@ def attach_failure_locations(root, failed_nodes, *, recorder, sequence, repo_roo
         if recorder is None:
             return
         cases = [case for case in recorder.case_resources if case["sequence"] == sequence]
-        names = {node["nodeIdentifier"].removesuffix("()") for node in failed_nodes if node.get("result") == "Failed"}
+        names = {node["nodeIdentifier"].removesuffix("()") for node in failed_nodes}
         if len(cases) != 1 or not names:
             return
         locations = []
@@ -136,55 +136,42 @@ def attach_failure_locations(root, failed_nodes, *, recorder, sequence, repo_roo
             return value.get("_value") if isinstance(value, dict) else value
         def location(row):
             document = row.get("documentLocationInCreatingWorkspace")
-            if isinstance(document, dict):
-                url = scalar(document.get("url"))
-                if not isinstance(url, str):
-                    return None
-                parsed = urlsplit(url)
-                if parsed.scheme != "file" or parsed.netloc or parsed.query:
-                    return None
-                path = unquote(parsed.path)
-                lines = parse_qs(parsed.fragment).get("StartingLineNumber", [])
-                line = lines[0] if len(lines) == 1 else None
-            else:
-                path = scalar(row.get("fileName", row.get("file")))
-                line = scalar(row.get("lineNumber", row.get("line")))
-                if not isinstance(path, str):
-                    return None
-                path = unquote(path)
-            if ".." in path.split("/"):
+            url = scalar(document.get("url")) if isinstance(document, dict) else None
+            if not isinstance(url, str):
                 return None
-            if path.startswith("/"):
-                # Xcode can retain /var while Python resolves the checkout under /private/var.
-                path = Path(path).resolve().relative_to(repo_root.resolve()).as_posix()
+            parsed = urlsplit(url)
+            if parsed.scheme != "file" or parsed.netloc or parsed.query:
+                return None
+            path = unquote(parsed.path)
+            root_path = repo_root.as_posix().rstrip("/")
+            prefixes = {root_path + "/"}
+            if root_path.startswith("/private/"):
+                prefixes.add(root_path.removeprefix("/private") + "/")
+            elif root_path.startswith("/var/"):
+                prefixes.add("/private" + root_path + "/")
+            # Reject foreign roots before filesystem resolution, including automounted paths.
+            if not any(path.startswith(prefix) for prefix in prefixes):
+                return None
+            path = Path(path).resolve().relative_to(repo_root.resolve()).as_posix()
+            lines = parse_qs(parsed.fragment).get("StartingLineNumber", [])
+            line = lines[0] if len(lines) == 1 else None
             if isinstance(line, str) and re.fullmatch(r"[0-9]{1,7}", line):
-                line = int(line)
-            if isinstance(document, dict) and type(line) is int:
-                line += 1  # Legacy document fragments are zero-based; file/line pairs are already one-based.
+                line = int(line) + 1  # Legacy document fragments are zero-based.
             projection = [{"path": path, "line": line}]
             return projection[0] if public_failure_locations(projection) is not None else None
-        def visit(value):
-            if isinstance(value, dict):
-                summaries = value.get("testFailureSummaries")
-                rows = summaries.get("_values", []) if isinstance(summaries, dict) else []
-                for row in rows if isinstance(rows, list) else []:
-                    if not isinstance(row, dict):
-                        continue
-                    name = scalar(row.get("testCaseName"))
-                    if not isinstance(name, str) or name.removesuffix("()").replace(".", "/") not in names:
-                        continue
-                    try:
-                        entry = location(row)
-                    except (OSError, ValueError, TypeError, AttributeError, RuntimeError):
-                        continue
-                    if entry is not None and entry not in locations and len(locations) < MAX_FAILURE_LOCATIONS:
-                        locations.append(entry)
-                for child in value.values():
-                    visit(child)
-            elif isinstance(value, list):
-                for child in value:
-                    visit(child)
-        visit(root)
+        from ci_failure_diagnostics import legacy_failure_summaries
+        for row in legacy_failure_summaries(root):
+            name = scalar(row.get("testCaseName"))
+            if not isinstance(name, str) or name.removesuffix("()").replace(".", "/") not in names:
+                continue
+            try:
+                entry = location(row)
+            except (OSError, ValueError, TypeError, AttributeError, RuntimeError):
+                continue
+            if entry is not None and entry not in locations:
+                locations.append(entry)
+                if len(locations) == MAX_FAILURE_LOCATIONS:
+                    break
         if locations:
             cases[0]["failure_locations"] = locations
     except (ValueError, TypeError, KeyError, AttributeError):

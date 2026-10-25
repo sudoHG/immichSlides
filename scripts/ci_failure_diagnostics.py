@@ -5,6 +5,7 @@ import math
 import re
 from contextlib import contextmanager
 from contextvars import ContextVar
+from copy import deepcopy
 
 from ci_summary import BOUNDED_DIAGNOSTICS_FIELD
 
@@ -1276,27 +1277,28 @@ def classify_messages(messages):
     return {"failure_phase": phase, "failure_class": kind}
 
 
+def legacy_failure_summaries(value):
+    """Iterate existing official summaries; callers retain only their own public projection."""
+    if isinstance(value, dict):
+        summaries = value.get("testFailureSummaries")
+        rows = summaries.get("_values", []) if isinstance(summaries, dict) else []
+        yield from (row for row in rows if isinstance(row, dict)) if isinstance(rows, list) else ()
+        for child in value.values():
+            yield from legacy_failure_summaries(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from legacy_failure_summaries(child)
+
+
 def legacy_failure_messages(payload):
     """Read only official failure summaries; raw values remain private to their caller."""
     messages = {}
-    def visit(value):
-        if isinstance(value, dict):
-            summaries = value.get("testFailureSummaries")
-            rows = summaries.get("_values", []) if isinstance(summaries, dict) else []
-            for row in rows if isinstance(rows, list) else []:
-                if not isinstance(row, dict):
-                    continue
-                name = row.get("testCaseName", {}).get("_value") if isinstance(row.get("testCaseName"), dict) else None
-                if isinstance(name, str):
-                    key = name.removesuffix("()").replace(".", "/")
-                    raw = row.get("message")
-                    messages.setdefault(key, []).append(raw.get("_value") if isinstance(raw, dict) else None)
-            for child in value.values():
-                visit(child)
-        elif isinstance(value, list):
-            for child in value:
-                visit(child)
-    visit(payload)
+    for row in legacy_failure_summaries(payload):
+        name = row.get("testCaseName", {}).get("_value") if isinstance(row.get("testCaseName"), dict) else None
+        if isinstance(name, str):
+            key = name.removesuffix("()").replace(".", "/")
+            raw = row.get("message")
+            messages.setdefault(key, []).append(raw.get("_value") if isinstance(raw, dict) else None)
     return messages
 
 
@@ -1366,7 +1368,10 @@ def scan_diagnostic_json(data):
             value[key] = child
         bounded_seen |= BOUNDED_DIAGNOSTICS_FIELD in value
         first_failure_seen |= FIRST_FAILURE_FIELD in value or ENVIRONMENT_LIMIT_FIELD in value
-        validate_diagnostic_fields(value)
+        checked = deepcopy(value)
+        validate_diagnostic_fields(checked)
+        if checked != value:
+            raise ValueError("failure locations: invalid projection")
         return value
     try:
         json.loads(data, object_pairs_hook=object_pairs)

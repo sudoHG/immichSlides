@@ -168,19 +168,33 @@ and unknown measurements remain null.
 | `continue_watch` (optional) | Failed `tvos-lifecycle-pause` only; at most 8,192 compact JSON bytes and the first 80 frames, rounded to three decimals; see the numeric projection below |
 | `simulator_processes` (optional) | At most 1,024 compact JSON bytes: `entries` (at most five named entries followed by `other`), boolean `unavailable` and `truncated`; each entry contains only allowlisted `name`, `mean` / `peak` CPU percentages (0–10^6, or null when unavailable), and integer `samples` (0–43,201 valid snapshots) |
 | `pause_window_assertions` (optional) | Nonempty list of at most 11 distinct fixed families from the failed pause-window method's existing official legacy export; no assertion text or observed values. See the [family definitions](CI_STRICT_RUNNER.md#pause-window-assertion-families). |
-| `failure_locations` (optional) | Failed strict cases only: at most three distinct `{path, line}` objects from the already-read legacy failure summaries, bound to the failed official method and resource sequence. `path` is at most 240 ASCII characters, rooted at `immichSlidesUITests/`, `immichSlidesTests/` or `TestSupport/`, with optional directories and a `.swift` filename; components contain letters, digits, underscores or hyphens, and filenames may also contain `+`. `line` is an integer 1–1,000,000. No assertion message is retained. |
+| `failure_locations` (optional) | Failed strict cases only: at most three distinct XCTest-recorded issue locations, projected as `{path, line}` from the already-read legacy failure summaries and bound to the failed official method and resource sequence. `path` is at most 240 ASCII characters, rooted at `immichSlidesUITests/`, `immichSlidesTests/` or `TestSupport/`, with optional directories and a `.swift` filename; components contain letters, digits, underscores or hyphens, and filenames may also contain `+`. `line` is an integer 1–1,000,000. No assertion message is retained. |
 
 Failure document URLs must use `file:` without a host or query; their
 zero-based `StartingLineNumber` fragment is converted to the published one-based
-line. Legacy file/line pairs already use one-based lines and are also
-accepted. Absolute input paths must resolve inside the executing checkout's root;
+line. Only this observed document URL shape is consumed. Absolute input paths
+must begin with the executing checkout's literal root or its `/private` alias
+before any filesystem resolution, and must then resolve inside that root;
 checkout aliases such as `/var` and `/private/var` normalize to that same root,
 and only the relative suffix is retained. Other absolute roots, home paths outside that root,
-traversal components, hosted URLs and non-allowlisted paths are omitted. Missing
+traversal outside the checkout, hosted URLs and non-allowlisted paths are omitted. Missing
 locations omit the field. Summaries render `failed at path:line` beside the full
 case identity; multiple locations do not establish the first failure. Readers
 drop only an invalid `failure_locations` projection and retain the enclosing
 case resources, outcome and environment-limit proof. Old nights need no field.
+Evidence redaction scans remain strict: validation runs on a copy, and any dropped
+projection makes the scan fail rather than permitting the original evidence bytes.
+
+These are XCTest's recorded issue locations, which do not always identify the
+underlying failing condition. A helper without `file`/`line` forwarding records
+its own assertion body. The iOS lifecycle stable-capture helpers and connection
+alert helper forward default `#filePath`/`#line` through their wrappers to `XCTFail`,
+so those issues identify the caller supplied to the helper. With the pinned
+Xcode 27.0 toolchain, a controlled direct
+`throw AccessLifecycleContract.AssertionError.message(...)` inside the iOS
+lifecycle test recorded the throw statement itself, alongside two distinct
+forwarded helper caller locations. This does not establish attribution for
+errors thrown through other wrappers. The error message never supplies a location.
 
 Each failure sample has exactly `elapsed_seconds` (0–86,400), `idle_percent`
 (0–100 or null), `load_1m` (0–10^6 or null), and `cpu_percent`. The latter has
