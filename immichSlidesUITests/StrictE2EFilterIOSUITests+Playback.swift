@@ -232,10 +232,16 @@ extension StrictE2EFilterIOSUITests {
                 "tap",
                 {
                     FirstFailureContext.mark("select", element: entryIdentifier)
-                    print("Filter navigation action issued: entry=\(entryIdentifier)")
+                    let startedAt = ProcessInfo.processInfo.systemUptime
+                    print(
+                        "Filter navigation action issued: entry=\(entryIdentifier); unixSeconds=\(Date().timeIntervalSince1970)"
+                    )
                     app.coordinate(withNormalizedOffset: .zero).withOffset(
                         CGVector(dx: targetFrame.midX, dy: targetFrame.midY)
                     ).tapForFailureEvidence()
+                    print(
+                        "Filter navigation action returned: entry=\(entryIdentifier); unixSeconds=\(Date().timeIntervalSince1970); actionSeconds=\(ProcessInfo.processInfo.systemUptime - startedAt)"
+                    )
                 })
         else {
             XCTFail(kind == "album" ? "Album filter page must open" : "Person filter page must open")

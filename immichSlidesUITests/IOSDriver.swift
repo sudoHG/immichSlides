@@ -51,7 +51,7 @@ struct IOSDriver: PlaybackDriver {
                 "mode.random.button", destinationIdentifier: "slideshow.control.settings.button")
         else { return }
         XCTAssertTrue(
-            playbackDeadline.confirmsHittability(of: "slideshow.control.settings.button"),
+            waitForPlaybackControls(playbackDeadline),
             "Random mode must reach the playback page.")
     }
 
@@ -600,17 +600,57 @@ struct IOSDriver: PlaybackDriver {
             shouldDismissPasswordPrompt: shouldDismissPasswordPrompt)
     }
 
-    private func waitForPlaybackControls(timeout: TimeInterval) -> Bool {
-        FirstFailureContext.mark("query-element", element: "slideshow.control.settings.button")
-        let deadline = Date().addingTimeInterval(timeout)
-        return Wait.until(timeout: timeout) {
-            dismissSavePasswordPrompt(deadline: deadline)
-            let banner = app.descendants(matching: .any).matching(identifier: "slideshow.entryHint.banner").firstMatch
-            if banner.exists { tap(banner) }
-            if app.buttons["slideshow.control.settings.button"].isHittable { return true }
-            revealControls(until: deadline, shouldDismissPasswordPrompt: true)
-            return app.buttons["slideshow.control.settings.button"].isHittable
+    private func waitForPlaybackControls(_ departure: IOSFirstBootNavigation.ModeDeparture) -> Bool {
+        let guardWait = departure.guardWait
+        let hint = guardWait.transaction()
+        let readiness = guardWait.transaction()
+        let wake = guardWait.transaction()
+        let navigation = IOSFirstBootNavigation(app: app)
+        let identifier = "slideshow.control.settings.button"
+        let settings = departure.observation.windowElement.buttons[identifier]
+        let readSettingsHittability = {
+            FirstFailureContext.mark("query-element", element: identifier)
+            return settings.isHittable
         }
+        FirstFailureContext.mark("query-element", element: identifier)
+        FirstFailureContext.beginWait(seconds: guardWait.remainingSeconds)
+        defer { FirstFailureContext.endWait() }
+        guard navigation.dismissPasswordPrompt(guardWait: guardWait, transaction: departure.passwordPromptTransaction)
+        else { return false }
+        let banner = app.descendants(matching: .any).matching(identifier: "slideshow.entryHint.banner").firstMatch
+        if hint.probe({ banner.exists }) {
+            guard let isHittable = hint.query({ banner.isHittable }),
+                hint.perform(
+                    "tap",
+                    {
+                        if isHittable {
+                            banner.tapForFailureEvidence()
+                        } else {
+                            banner.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tapForFailureEvidence()
+                        }
+                    })
+            else { return false }
+            if hint.probe(readSettingsHittability) { return true }
+        } else if readiness.probe(readSettingsHittability) {
+            return true
+        }
+        guard navigation.dismissPasswordPrompt(guardWait: guardWait, transaction: departure.passwordPromptTransaction)
+        else { return false }
+        if readiness.probe(readSettingsHittability) { return true }
+        guard
+            wake.perform(
+                "tap",
+                {
+                    FirstFailureContext.mark("reveal-controls", element: identifier)
+                    let startedAt = ProcessInfo.processInfo.systemUptime
+                    app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)).tapForFailureEvidence()
+                    print(
+                        "Playback entry wake returned: actionSeconds=\(ProcessInfo.processInfo.systemUptime - startedAt)"
+                    )
+                })
+        else { return false }
+        // A late wake can finish readiness with its one direct live observation.
+        return wake.until(readSettingsHittability)
     }
 
     private func waitForSaveEnabled(_ save: XCUIElement) -> Bool {
@@ -630,10 +670,6 @@ struct IOSDriver: PlaybackDriver {
             }
             return save.exists && save.isEnabled
         }
-    }
-
-    private func dismissSavePasswordPrompt(deadline: Date) {
-        _ = IOSFirstBootNavigation(app: app).dismissPasswordPrompt(until: deadline)
     }
 
     private func replaceText(in field: XCUIElement, with value: String) {

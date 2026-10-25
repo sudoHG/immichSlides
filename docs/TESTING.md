@@ -240,8 +240,14 @@ mode must be absent and the captured window must have no modal obstacle. Unknown
 
 The returned `ModeDeparture` retains the satisfying snapshot and the same guard.
 `confirms` first evaluates that immutable evidence and admits any necessary fresh snapshot
-only before the root deadline. `confirmsHittability` retains the driver's live-hittability
-requirement under that guard. It cannot infer hittability from a visible frame.
+only before the root deadline. The driver's `waitForPlaybackControls` retains live
+hittability, optional entry-hint dismissal and one canvas wake under that guard.
+Hint dismissal and wake each have one fixed action transaction; the exact password
+prompt reuses the transaction from mode navigation, so it cannot be declined again.
+A late hint or wake tap gets one direct live-hittability query, with no further action.
+Prompt dismissal must still establish that the exact modal is gone; an expired guard
+cannot authorize fresh queries for both modal absence and subsequent live hittability.
+It cannot infer hittability from a visible frame.
 Standalone prompt dismissal/visibility and selection-only screenshot paths retain their
 existing clocks; selection-only still excludes measured card/Not Now taps.
 

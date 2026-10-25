@@ -1012,7 +1012,9 @@ struct IOSFirstBootNavigation {
                         print(
                             "First-boot mode departure confirmed; Continue issued=true returned=true; passwordPromptDismissed=\(didConfirmPromptGone)"
                         )
-                        return ModeDeparture(guardWait: guardWait, deadline: deadline, observation: current)
+                        return ModeDeparture(
+                            guardWait: guardWait, deadline: deadline, observation: current,
+                            passwordPromptTransaction: declinePrompt)
                     }
                 } else if current.isModeCardSelected(identifier), !current.hasModalObstacle {
                     step = "mode-continue"
@@ -1059,10 +1061,7 @@ struct IOSFirstBootNavigation {
         let guardWait: TestWait.HangGuard
         let deadline: Date
         let observation: Observation
-
-        func confirmsHittability(of identifier: String) -> Bool {
-            guardWait.transaction().until { observation.windowElement.buttons[identifier].isHittable }
-        }
+        let passwordPromptTransaction: TestWait.HangGuard.Transaction
 
         /// Reuse the successful observation; extra readiness checks share its deadline.
         func confirms(_ condition: ([XCUIElementSnapshot]) -> Bool) -> Bool {
