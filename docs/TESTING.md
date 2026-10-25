@@ -692,7 +692,8 @@ sample and for measurement of the capture-path cost. Crop probing occurs between
 the 0.101-second gap. Locally it took a median 45.751 ms and maximum 48.134 ms,
 only on initial visibility confirmation (frame 0 in these runs) and in the wake
 window; hosted probe cost is unmeasured. This added span cannot itself create a
-T±2 false pass: it can only admit decline chains after T−2.
+T±2 false pass: it can only admit decline chains after T−2, or at initial
+confirmation, where an admitted chain can only make the onset earlier.
 
 A missing crop result cannot prove auto-hide. After observing visible controls
 followed by auto-hide, it sends at most one Up, only when its request falls in
@@ -702,8 +703,7 @@ failure. Host configuration checks instead pin the product auto-hide delay at
 8 seconds and this flow's requested interval at 10 seconds, so changing either
 still fails checks. After T−0.8, the wake is skipped and capture continues
 unchanged. A skipped wake returns to main's hidden-state comparison:
-hidden-state frames are compared with the
-visible-state baseline, so the effect direction depends on the unmeasured
+hidden-state frames are compared with the visible-state baseline, so the effect direction depends on the unmeasured
 luminance difference between those states. It can delay or lose the onset
 (a loosening direction for the four-second rule) or reject a bright anchor (a
 false failure). A screenshot or crop read that returns after T−0.8 still skips
@@ -711,7 +711,9 @@ the wake; eliminating the extra asynchronous frame does not guarantee a timely
 observation on every host. In hosted run 40134453780 the first hidden frame
 returned at 9.414 seconds, already beyond the 9.2-second wake deadline and
 unrescuable by this change. In run 40102889537 it returned at 9.111 seconds,
-leaving about 89 ms for a hosted crop probe (about 46–48 ms locally). Hosted
+leaving about 89 ms for the total probe delay accumulated in the wake window
+before that frame's decision, including probes of earlier in-window frames
+(one probe took about 46–48 ms locally). Hosted
 summaries omit `control_bar_probes`; their probe cost has not been measured.
 This is not evidence that the six-of-seven nightly failure is fixed.
 
