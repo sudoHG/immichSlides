@@ -166,8 +166,8 @@ final class RotationUITests: XCTestCase {
         try StrictE2EVisualEvidence.writeRequiredJSON(readback, name: "selfcheck-orientation.json")
     }
 
-    // Returns the deadline of this stable wait: the window settling and the stable frame share the 10 seconds after the
-    // rotation starts. If the orientation API has no effect, fail right away and leave the state for inspection.
+    // Window settling and stable capture share 10 observation seconds from rotation issue; capture excludes only
+    // measured native wake taps. If the orientation API has no effect, fail and leave the state for inspection.
     @MainActor
     @discardableResult
     private func rotate(_ app: XCUIApplication, to device: UIDeviceOrientation, expecting orientation: StepOrientation)

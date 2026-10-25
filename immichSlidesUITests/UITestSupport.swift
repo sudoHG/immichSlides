@@ -1320,8 +1320,8 @@ enum Timing {
     static let clearCompletionTimeout: TimeInterval = TestWait.seconds(.product(15))
     static let focusSettle: TimeInterval = TestWait.seconds(.product(0.16))
     static let poll: TimeInterval = TestWait.seconds(.product(0.1))
-    // Orientation steady state: capture only when two frames 0.5 seconds apart show no layout jump. Wait at most
-    // 10 seconds per attempt; on timeout keep the scene as it is.
+    // Orientation steady state: require two frames 0.5 seconds apart without a layout jump. The 10-second observation
+    // allowance excludes only caller-reported native taps; on timeout keep the scene as it is.
     static let stableFramePair: TimeInterval = TestWait.seconds(.product(0.5))
     static let stableFrameTimeout: TimeInterval = TestWait.seconds(.product(10))
 }
