@@ -662,10 +662,10 @@ later, potentially to the first identified new photo. The frozen-frame remedy
 requires three capture intervals totaling at most 1.0 s plus tolerance (about
 0.334 s on average); at 4K it often cannot apply. These bounds are not conservative
 for early fades: rejecting their dimming evidence can hide an early start behind
-a later new photo, or reject an in-window start as late. The control-bar state must remain
-unchanged from the anchor through that decrease, with every gap between screenshot
-return and the next request no greater than the existing 0.1-second poll cadence
-plus its tolerance. Pinned 4K TV capture measured
+a later new photo, or reject an in-window start as late. The control-bar state must
+remain unchanged from the anchor through that decrease, with every gap between a
+frame's recorded `returned` time and the next request no greater than the existing
+0.1-second poll cadence plus its tolerance. Pinned 4K TV capture measured
 0.309-second median and 0.453-second maximum request cadence: requiring three
 already-dim MATCH frames can outlast the identifiable portion of the designed
 1.0-second outgoing fade. That original predicate retains at least three observations
@@ -677,26 +677,50 @@ applies to iPad, whose own stable-photo requirement is one second. The shared
 predicate vetoes that recovery, including iPad's two-dim-frame flicker case.
 The tvOS Continue collector captures full-resolution screenshots from
 `XCUIScreen.main` without an application lookup. It retains dense capture through
-the original absolute deadline and classifies photo identity afterwards. A serial
-background probe reads the calibrated Settings pixels, with at most one pending
-decode; the capture loop only submits PNG data and reads a locked observation.
-It never waits for decoding between captures, including across T−2. After observing
-visible controls followed by auto-hide, it sends at most one Up, only when its
-request falls in [T−2, T−0.8], to restore the original visible control state. A
-request before T−2 fails a test-timing precondition and stays red; after T−0.8,
-the wake is skipped and capture continues unchanged. A skipped wake returns to
-main's hidden-state comparison: hidden-state frames are compared with the
-visible-state baseline, so the effect direction depends on the unmeasured
+the original absolute deadline and classifies photo identity afterwards. A local
+adapter first confirms visible controls, then probes only from T−2 until the
+single wake or its deadline; it does not tax every earlier capture. Before reading
+those full PNGs, it crops the calibrated Settings rectangle from that screenshot's
+CGImage and feeds the lossless crop to the unchanged control-bar reader.
+Calibration uses the same rectangle and reader thresholds.
+The current crop result is consumed immediately; it cannot wait behind the next
+full screenshot as the former asynchronous PNG probe did. Offline classification
+still uses the original full PNG. The diagnostic records each crop probe's frame
+index, visibility, request and return for comparison with the original reader's
+sample and for measurement of the capture-path cost. Crop probing occurs between
+`captured` and `returned`, so its cost counts in that frame's span rather than in
+the 0.101-second gap. Locally it took a median 45.751 ms and maximum 48.134 ms,
+only on initial visibility confirmation (frame 0 in these runs) and in the wake
+window; hosted probe cost is unmeasured. This added span cannot itself create a
+T±2 false pass: it can only admit decline chains after T−2, or at initial
+confirmation, where an admitted chain can only make the onset earlier.
+
+A missing crop result cannot prove auto-hide. After observing visible controls
+followed by auto-hide, it sends at most one Up, only when its request falls in
+[T−2, T−0.8], to restore the original visible control state. Window gating
+guarantees the T−2 lower bound; an earlier auto-hide no longer causes a runtime
+failure. Host configuration checks instead pin the product auto-hide delay at
+8 seconds and this flow's requested interval at 10 seconds, so changing either
+still fails checks. After T−0.8, the wake is skipped and capture continues
+unchanged. A skipped wake returns to main's hidden-state comparison:
+hidden-state frames are compared with the visible-state baseline, so the effect direction depends on the unmeasured
 luminance difference between those states. It can delay or lose the onset
 (a loosening direction for the four-second rule) or reject a bright anchor (a
-false failure). Skips are not rare: Up requests have landed 135–325 ms before
-T−0.8. Only the lower bound is guarded; if the App's auto-hide moved later, the
-hide could fall inside the fade and every run would skip the wake silently.
+false failure). A screenshot or crop read that returns after T−0.8 still skips
+the wake; eliminating the extra asynchronous frame does not guarantee a timely
+observation on every host. In hosted run 40134453780 the first hidden frame
+returned at 9.414 seconds, already beyond the 9.2-second wake deadline and
+unrescuable by this change. In run 40102889537 it returned at 9.111 seconds,
+leaving about 89 ms for the total probe delay accumulated in the wake window
+before that frame's decision, including probes of earlier in-window frames
+(one probe took about 46–48 ms locally). Hosted
+summaries omit `control_bar_probes`; their probe cost has not been measured.
+This is not evidence that the six-of-seven nightly failure is fixed.
+
 The `skipped` flag is also set when the deadline passes without any observed
-auto-hide, so it does not distinguish "too late" from "not needed". This depends on the App's `PlaybackViewMetrics.controlBarAutoHideDelaySeconds`
-being 8 seconds: Continue resets that timer, and 8 seconds equals T−2 for this
-flow's T=10 seconds. The explicit lower guard prevents a changed auto-hide delay
-or interval from silently moving the press gap into the early-evidence window.
+auto-hide, so it does not distinguish "too late" from "not needed". Continue resets
+the App's `PlaybackViewMetrics.controlBarAutoHideDelaySeconds` timer; the pinned
+8 seconds equals T−2 for this flow's pinned T=10 seconds.
 Up does not toggle playback or reset the Continue origin: control visibility triggers
 `updateFutureProtectionSnapshot`, which can discard the prepared next scene,
 invalidate a pending transition and re-plan it. This can delay a switch and cause

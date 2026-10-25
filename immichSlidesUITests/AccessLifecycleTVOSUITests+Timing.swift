@@ -2,6 +2,8 @@ import XCTest
 import ImageIO
 
 #if os(tvOS)
+import UIKit
+
 // These metrics are derived offline from one decoded PNG, independently of public-photo identity.
 private enum TVOSContinuePhotoCapture {
     static let requiredMark = "A1"
@@ -121,41 +123,41 @@ private enum TVOSContinuePhotoCapture {
     }
 }
 
-// Pixel decoding stays off the capture cadence; only the bounded observation state shares this lock.
-private final class TVOSControlBarProbe: @unchecked Sendable {
-    private let queue = DispatchQueue(label: "immichSlides.tests.controlBarProbe")
-    private let lock = NSLock()
-    private let reference: StrictE2EPhotoIdentity.ControlBarReference
-    private var hasPendingProbe = false
-    private var hasObservedVisible = false
-    private var hasObservedAutoHide = false
+// Reuse the original reader on a lossless Settings crop without asking it to decode the full PNG again.
+struct TVOSContinueControlBarReference {
+    private let fullFrameReference: StrictE2EPhotoIdentity.ControlBarReference
+    private let croppedFrameReference: StrictE2EPhotoIdentity.ControlBarReference
 
-    init(reference: StrictE2EPhotoIdentity.ControlBarReference) {
-        self.reference = reference
+    init?(png: Data, normalizedRect: CGRect) {
+        guard let fullFrame = StrictE2EPhotoIdentity.ControlBarReference(png: png, normalizedRect: normalizedRect),
+            let source = CGImageSourceCreateWithData(png as CFData, nil),
+            let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
+            let croppedPNG = Self.croppedPNG(image: image, normalizedRect: normalizedRect),
+            let croppedFrame = StrictE2EPhotoIdentity.ControlBarReference(
+                png: croppedPNG, normalizedRect: CGRect(x: 0, y: 0, width: 1, height: 1))
+        else { return nil }
+        fullFrameReference = fullFrame
+        croppedFrameReference = croppedFrame
     }
 
-    var didObserveAutoHide: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return hasObservedAutoHide
+    func isVisible(png: Data) -> Bool? {
+        fullFrameReference.isVisible(png: png)
     }
 
-    func submit(png: Data) {
-        lock.lock()
-        guard hasPendingProbe == false, hasObservedAutoHide == false else {
-            lock.unlock()
-            return
+    func isVisible(image: CGImage) -> Bool? {
+        guard let png = Self.croppedPNG(image: image, normalizedRect: fullFrameReference.normalizedRect) else {
+            return nil
         }
-        hasPendingProbe = true
-        lock.unlock()
-        queue.async { [self] in
-            let isVisible = reference.isVisible(png: png)
-            lock.lock()
-            defer { lock.unlock() }
-            hasPendingProbe = false
-            if isVisible == true { hasObservedVisible = true }
-            if isVisible == false, hasObservedVisible { hasObservedAutoHide = true }
-        }
+        return croppedFrameReference.isVisible(png: png)
+    }
+
+    private static func croppedPNG(image: CGImage, normalizedRect: CGRect) -> Data? {
+        let rect = CGRect(
+            x: normalizedRect.minX * CGFloat(image.width), y: normalizedRect.minY * CGFloat(image.height),
+            width: normalizedRect.width * CGFloat(image.width), height: normalizedRect.height * CGFloat(image.height)
+        ).integral
+        guard let crop = image.cropping(to: rect) else { return nil }
+        return UIImage(cgImage: crop).pngData()
     }
 }
 
@@ -701,7 +703,7 @@ extension AccessLifecycleTVOSUITests {
         continueAt: Date,
         continueMark: String,
         interval: TimeInterval,
-        controlBarReference: StrictE2EPhotoIdentity.ControlBarReference,
+        controlBarReference: TVOSContinueControlBarReference,
         isSinglePhotoModeVerified: Bool
     ) throws -> TVOSContinueWatchResult {
         let captureUntil = AccessLifecycleContract.continueWatchDenseCaptureDeadline(intervalSeconds: interval)
@@ -712,7 +714,8 @@ extension AccessLifecycleTVOSUITests {
         var capturedFrames: [(request: TimeInterval, captured: TimeInterval, returned: TimeInterval, png: Data)] = []
         var controlBarWake: (issued: TimeInterval, returned: TimeInterval)?
         var isControlBarWakeSkipped = false
-        let controlBarProbe = TVOSControlBarProbe(reference: controlBarReference)
+        var hasObservedVisibleControls = false
+        var controlBarProbes: [(index: Int, request: TimeInterval, returned: TimeInterval, isVisible: Bool?)] = []
         var samples: [AccessLifecycleContract.ContinueWatchSample] = []
         var earlyMark = ""
         var earlyElapsed: TimeInterval = TestWait.seconds(.product(0))
@@ -738,6 +741,12 @@ extension AccessLifecycleTVOSUITests {
                         } ?? NSNull(),
                         "control_bar_wake_skipped": isControlBarWakeSkipped,
                         "control_bar_wake_deadline": wakeDeadline,
+                        "control_bar_probes": controlBarProbes.map {
+                            [
+                                "frame_index": $0.index, "request": $0.request, "returned": $0.returned,
+                                "visible": $0.isVisible.map { $0 as Any } ?? NSNull()
+                            ] as [String: Any]
+                        },
                         "frames": capturedFrames.enumerated().map { index, frame in
                             let pixels = index < photoPixels.count ? photoPixels[index] : nil
                             return [
@@ -768,18 +777,29 @@ extension AccessLifecycleTVOSUITests {
                 let request = Date().timeIntervalSince(continueAt)
                 let screenshot = XCUIScreen.main.screenshotForFailureEvidence()
                 let captured = Date().timeIntervalSince(continueAt)
+                let shouldReadControlBar =
+                    controlBarWake == nil && isControlBarWakeSkipped == false
+                    && (!hasObservedVisibleControls
+                        || captured >= interval - AccessLifecycleContract.continueCaptureSlackSeconds)
+                var isVisible: Bool?
+                if shouldReadControlBar {
+                    let probeRequest = Date().timeIntervalSince(continueAt)
+                    isVisible = autoreleasepool {
+                        screenshot.image.cgImage.flatMap { controlBarReference.isVisible(image: $0) }
+                    }
+                    controlBarProbes.append(
+                        (capturedFrames.count, probeRequest, Date().timeIntervalSince(continueAt), isVisible))
+                }
                 let png = screenshot.pngRepresentation
                 let returned = Date().timeIntervalSince(continueAt)
                 capturedFrames.append((request, captured, returned, png))
-                if controlBarWake == nil, isControlBarWakeSkipped == false {
-                    // Never wait for PNG decoding between captures, including across T-2.
-                    controlBarProbe.submit(png: png)
-                    let didObserveAutoHide = controlBarProbe.didObserveAutoHide
+                if shouldReadControlBar {
+                    if isVisible == true { hasObservedVisibleControls = true }
                     let issued = Date().timeIntervalSince(continueAt)
                     if issued > wakeDeadline {
                         // Skipping returns to main's hidden-state comparison; its direction is unmeasured.
                         isControlBarWakeSkipped = true
-                    } else if didObserveAutoHide {
+                    } else if isVisible == false, hasObservedVisibleControls {
                         // The App's 8 s auto-hide equals T-2 only while this flow requests T=10 s.
                         guard issued >= interval - AccessLifecycleContract.continueCaptureSlackSeconds else {
                             throw AccessLifecycleContract.AssertionError.message(
@@ -868,7 +888,7 @@ extension AccessLifecycleTVOSUITests {
 
     @MainActor
     private func captureTVOSControlBarReference(app: XCUIApplication) throws
-        -> StrictE2EPhotoIdentity.ControlBarReference
+        -> TVOSContinueControlBarReference
     {
         let settings = app.buttons["slideshow.control.settings.button"]
         let frame = try settings.snapshot().frame
@@ -883,7 +903,7 @@ extension AccessLifecycleTVOSUITests {
                 "Playback page should show the settings button: control-bar calibration requires Settings to remain hittable after the screenshot"
             )
         }
-        return try XCTUnwrap(StrictE2EPhotoIdentity.ControlBarReference(png: png, normalizedRect: normalizedRect))
+        return try XCTUnwrap(TVOSContinueControlBarReference(png: png, normalizedRect: normalizedRect))
     }
 
     @MainActor
