@@ -948,6 +948,7 @@ PREFIX_RULES = (
     ("The iPad transition criterion is missing the original photo luma before Continue", "continue_timing", "evidence_capture"),
     ("Next-photo stable confirmation does not match the current raw screenshot", "visible_scene_capture", "evidence_capture"),
     ("Next photo did not form a stable new MATCH within ", "visible_scene_capture", "scene_identity"),
+    ("Control-bar calibration must recognize the visible Settings crop.", "visible_scene_capture", "evidence_capture"),
     ("Screenshot cannot be used as identity;", "visible_scene_capture", "scene_identity"),
     ("Must be able to return from settings to the playback page.", "settings_navigation", "navigation"),
     ("The settings list must provide the playback settings entry", "settings_navigation", "navigation"),
