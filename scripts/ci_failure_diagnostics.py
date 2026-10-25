@@ -1244,20 +1244,28 @@ def unknown_diagnostics():
     return {"failure_phase": "unknown", "failure_class": "unknown"}
 
 
+def normalized_xctest_failure(message):
+    """Private intermediate for fixed-prefix readers; never publish the returned text."""
+    if not isinstance(message, str):
+        return None
+    # Only unwrap the known Swift error types; arbitrary error descriptions stay private.
+    text = re.sub(r"^(?:failed - |XCT(?:Assert\w+|Unwrap) failed(?:\:.*?)? - )", "", message)
+    for wrapper in ('failed: caught error: "message(\\"', 'failed: caught error: "message("',
+                    'message(\\"', 'message("',
+                    'failed: caught error: "Failure(message: \\"', 'failed: caught error: "Failure(message: "',
+                    'Failure(message: \\"', 'Failure(message: "'):
+        if text.startswith(wrapper):
+            text = text[len(wrapper):]
+            break
+    return text
+
+
 def classify_messages(messages):
     matches = set()
     for message in messages:
-        if not isinstance(message, str):
+        text = normalized_xctest_failure(message)
+        if text is None:
             return unknown_diagnostics()
-        # Only unwrap the known Swift error types; arbitrary error descriptions stay private.
-        text = re.sub(r"^(?:failed - |XCT(?:Assert\w+|Unwrap) failed(?:\:.*?)? - )", "", message)
-        for wrapper in ('failed: caught error: "message(\\"', 'failed: caught error: "message("',
-                        'message(\\"', 'message("',
-                        'failed: caught error: "Failure(message: \\"', 'failed: caught error: "Failure(message: "',
-                        'Failure(message: \\"', 'Failure(message: "'):
-            if text.startswith(wrapper):
-                text = text[len(wrapper):]
-                break
         match = next(((phase, kind) for prefix, phase, kind in PREFIX_RULES if text.startswith(prefix)), None)
         if match is None:
             return unknown_diagnostics()
@@ -1268,7 +1276,8 @@ def classify_messages(messages):
     return {"failure_phase": phase, "failure_class": kind}
 
 
-def legacy_diagnostics(payload):
+def legacy_failure_messages(payload):
+    """Read only official failure summaries; raw values remain private to their caller."""
     messages = {}
     def visit(value):
         if isinstance(value, dict):
@@ -1288,7 +1297,11 @@ def legacy_diagnostics(payload):
             for child in value:
                 visit(child)
     visit(payload)
-    return {key: classify_messages(values) for key, values in messages.items()}
+    return messages
+
+
+def legacy_diagnostics(payload):
+    return {key: classify_messages(values) for key, values in legacy_failure_messages(payload).items()}
 
 
 def test_node_diagnostics(payload):

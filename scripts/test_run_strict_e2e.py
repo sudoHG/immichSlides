@@ -2172,6 +2172,76 @@ class FailureDiagnosticsTests(unittest.TestCase):
             {"failure_phase": "background_return", "failure_class": "process_lifetime"},
         )
 
+    def test_pause_window_export_retains_assertion_families_without_raw_messages(self):
+        import copy
+        from types import SimpleNamespace
+        import ci_execution_diagnostics as diagnostics
+        from ci_bounded_diagnostics import PAUSE_WINDOW_ASSERTION_PREFIXES
+        from ci_failure_diagnostics import PREFIX_RULES
+        from test_ci_summary import bounded_diagnostics_receipt
+        self.assertEqual({prefix for prefix, phase, kind in PREFIX_RULES
+                          if (phase, kind) == ("pause_window", "scene_identity")},
+                         {prefix for _, prefix in PAUSE_WINDOW_ASSERTION_PREFIXES})
+        cases = (
+            ("PRECONDITION_FAIL: order became A2→A5, not A2→A3.", "successor-order"),
+            ("PRECONDITION_FAIL: A2 successor is not A3 (unknown).", "successor-a3"),
+            ("PRECONDITION_FAIL: not the large-text A2 after returning.", "restored-a2"),
+            ("PRECONDITION_FAIL: could not identify the large-text A2 using Next.", "find-a2"),
+            ("Pause window bright proof must show A2.", "bright-a2"),
+            ("visual_verdict=LATE: a complete A3 is visible after pause.", "late-a3"),
+            ("The paused pause-window probe identity must not change.", "frozen-probe"),
+            ("Paused pause-window frames must be pixel-identical.", "frozen-pixels"),
+            ("Pause window midpoint must contain visible photo pixels.", "visible-pixels"),
+            ("Target window shows the wrong image; cannot count as SUCCESS.", "outgoing-a2"),
+        )
+        name = "StrictE2EFirstBatchIOSUITests/testSinglePhotoOutgoingPauseWindowCapture"
+        for index, (message, family) in enumerate(cases):
+            for variant in ("failed", "other-method", "missing-case", "mixed", "missing-messages",
+                            "unmapped", "other-legacy-method", "duplicate-method"):
+                if index and variant != "failed":
+                    continue
+                with self.subTest(family=family, variant=variant), tempfile.TemporaryDirectory() as raw:
+                    evidence = Path(raw)
+                    selected = "Other/testFailure" if variant == "other-method" else name
+                    payload = {"testNodes": [{"nodeType": "Test Case", "nodeIdentifier": selected + "()", "result": "Failed"}]}
+                    if variant == "duplicate-method":
+                        payload["testNodes"] *= 2
+                    messages = [message + " PRIVATE_SENTINEL"]
+                    if variant == "mixed":
+                        messages += [messages[0], "PRIVATE_SENTINEL unrelated failure"]
+                    if variant == "unmapped":
+                        messages = ["PRIVATE_SENTINEL unrelated failure"]
+                    if variant == "missing-messages":
+                        messages = []
+                    legacy_name = "Other/testFailure" if variant == "other-legacy-method" else name
+                    legacy = {"issues": {"testFailureSummaries": {"_values": [
+                        {"testCaseName": {"_value": legacy_name.replace("/", ".") + "()"},
+                         "message": {"_value": "XCTAssertTrue failed - " + value}} for value in messages]}}}
+                    original = bounded_diagnostics_receipt(resources=True)["case_resources"][0]
+                    def export(command, **_kwargs):
+                        body = legacy if "--legacy" in command else payload
+                        return subprocess.CompletedProcess(command, 0, json.dumps(body).encode(), b"")
+                    def publish_native_resource(*_args, recorder, **_kwargs):
+                        recorder.case_resources[0] = copy.deepcopy(original)
+                    with diagnostics.session() as recorder, \
+                            mock.patch("run_strict_e2e.subprocess.run", side_effect=export), \
+                            mock.patch("run_strict_e2e.read_official_test_results_summary",
+                                return_value=TestResultsSummary(1, 0, 1, 0, "Failed")), \
+                            mock.patch("strict_e2e_resource_diagnostics.collect_native_activity", side_effect=publish_native_resource):
+                        recorder.case_resources = [copy.deepcopy(original)]
+                        sampler = SimpleNamespace(sequence=original["sequence"] + (variant == "missing-case"))
+                        strict_runner.export_private_result_bundle(evidence / "private.xcresult", evidence, ["PRIVATE_SENTINEL"],
+                            enrich_failure_diagnostics=True, resource_sampler=sampler)
+                        resource = recorder.receipt()["case_resources"][0]
+                    actual = resource.pop("pause_window_assertions", None)
+                    expected = (sorted([family, "unmapped"]) if variant == "mixed" else
+                                ["unmapped"] if variant == "unmapped" else [family] if variant == "failed" else None)
+                    self.assertEqual(expected, actual)
+                    self.assertEqual(original, resource)
+                    exported = (evidence / "official-tests.json").read_text()
+                    self.assertNotIn("PRIVATE_SENTINEL", exported)
+                    self.assertEqual("Failed", json.loads(exported)["testNodes"][0]["result"])
+
     def test_native_dates_accept_legacy_offsets_colon_offsets_and_utc(self):
         from strict_e2e_resource_diagnostics import native_time
         for value in ("2021-03-03T14:43:24.000+0100", "2021-03-03T14:43:24.000+01:00",
@@ -4749,6 +4819,26 @@ raise SystemExit(65)
             self.assertNotIn("environment_limit", summary["population"]["observed"][0])
             self.assertEqual(ledger, summary["strict_case_evidence"][0]["bounded_diagnostics"])
             self.assertIn("continue-watch: frames=1/1", (records / "summary.md").read_text())
+
+    def test_tracer_keeps_pause_window_assertions_bound_to_the_failed_case(self):
+        from test_ci_summary import bounded_diagnostics_receipt
+        ledger = bounded_diagnostics_receipt(resources=True)
+        ledger["case_resources"][0]["pause_window_assertions"] = ["restored-a2"]
+        with tempfile.TemporaryDirectory() as directory:
+            code, records, _, summary = self._produce_validator_records(Path(directory), None,
+                runner_exit=65, receipt_suite=None, bounded_diagnostics=ledger,
+                case=dict(platform="ios", device="ipad", configuration="Debug", suite="pause-window",
+                          scenario="normal", fixture="b"))
+            self.assertNotEqual(0, code)
+            failed = summary["population"]["observed"][0]
+            self.assertEqual("failed", failed["outcome"])
+            self.assertNotIn("environment_limit", failed)
+            self.assertIn("strict_case_evidence", summary)
+            self.assertEqual(failed["identity"], summary["strict_case_evidence"][0]["identity"])
+            self.assertEqual(ledger, summary["strict_case_evidence"][0]["bounded_diagnostics"])
+            rendered = (records / "summary.md").read_text()
+            self.assertIn("pause-window assertions: restored-a2", rendered)
+            self.assertIn("device=ipad", rendered)
 
     def test_sampler_uses_fast_process_ticks_only_during_an_eligible_high_cpu_span(self):
         import ci_execution_diagnostics as diagnostics

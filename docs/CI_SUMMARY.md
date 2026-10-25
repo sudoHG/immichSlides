@@ -150,7 +150,8 @@ issue decisions do not consume the measurements.
 The reader also accepts `case_resources`, an array of at most 64 case measurements.
 Strict producers emit it for each actual Xcode case invocation, including an
 existing listed retry. Fixture UI producers do not sample continuously. Each entry has
-the following required fields and optional `app_hang_stack`, `continue_watch` and `simulator_processes`. All numbers are finite, booleans are not numbers,
+the following required fields and optional `app_hang_stack`, `continue_watch`,
+`simulator_processes` and `pause_window_assertions`. All numbers are finite, booleans are not numbers,
 and unknown measurements remain null.
 
 | Fields | Bounds and meaning |
@@ -166,6 +167,7 @@ and unknown measurements remain null.
 | `app_hang_stack` (optional) | At most 4,096 compact JSON bytes: `status` (`captured`, `failure`, `timeout`, `cancelled`), `sample_count` (main-thread samples), and `frames` (at most 30 objects containing only `symbol`, allowlisted `module`, and inclusive `samples` count); optional `hint` contains at most three distinct frame indices in observed callee-to-caller order; non-captured states have zero samples and no frames |
 | `continue_watch` (optional) | Failed `tvos-lifecycle-pause` only; at most 8,192 compact JSON bytes and the first 80 frames, rounded to three decimals; see the numeric projection below |
 | `simulator_processes` (optional) | At most 1,024 compact JSON bytes: `entries` (at most five named entries followed by `other`), boolean `unavailable` and `truncated`; each entry contains only allowlisted `name`, `mean` / `peak` CPU percentages (0–10^6, or null when unavailable), and integer `samples` (0–43,201 valid snapshots) |
+| `pause_window_assertions` (optional) | Nonempty list of at most 11 distinct fixed families from the failed pause-window method's existing official legacy export; no assertion text or observed values. See the [family definitions](CI_STRICT_RUNNER.md#pause-window-assertion-families). |
 
 Each failure sample has exactly `elapsed_seconds` (0–86,400), `idle_percent`
 (0–100 or null), `load_1m` (0–10^6 or null), and `cpu_percent`. The latter has
@@ -911,7 +913,7 @@ The same sequence applies to `bounded_diagnostics.case_resources` and
 `first_failure.native_activity_seconds`: merge reader support before opening the
 producer activation PR. Historical records without either optional field remain valid.
 
-A scoped exception permits the optional App hang-stack, Continue watch and simulator-process projections,
+A scoped exception permits the optional App hang-stack, Continue watch, simulator-process and pause-window assertion projections,
 strict runner cleanup member event and their readers
 to ship together. The trusted base gate/UI publisher's supported producers in
 `ci_publish_git.py` do not consume strict-tracer or P2-review diagnostic artifacts;
@@ -922,7 +924,14 @@ not activate a field in required gate/UI records. Old nights and old stack proje
 This exception relies on that consumer boundary: introducing the field into a
 base-read publication path or reading it with an older revision requires a separate
 reader rollout first. The PR must document this transition analysis.
-`continue_watch`, `app_hang_stack` and `simulator_processes` are copied into
+`pause_window_assertions` is emitted only through the strict resource sampler for
+the exact failed `StrictE2EFirstBatchIOSUITests/testSinglePhotoOutgoingPauseWindowCapture`
+official method and its existing resource sequence. Generic UI exports have no strict
+sampler, and `first_failure` and gate/UI records gain no field. Its producer reuses
+the already-read legacy failure summaries; missing summaries or ambiguous case
+binding omit the projection. The candidate/run/main reader sequence above therefore
+also applies to this extension. It never participates in environment-limit eligibility.
+`continue_watch`, `app_hang_stack`, `simulator_processes` and `pause_window_assertions` are copied into
 `environment_limit.resources` in the 90-day yellow history and validated again by
 later readers. Their archived validation may only be loosened, never tightened;
 otherwise a previously accepted night could become unreadable or red.
