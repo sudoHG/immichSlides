@@ -772,6 +772,11 @@ deadline: actual fixture hold start plus 13 seconds, reserving two seconds of th
 unchanged 15-second App download timeout for release and delivery. The arm request's
 local issue time anchors the fixture elapsed clock conservatively; time before
 hold start, including a launch stall before the first image request, is excluded.
+After launch returns, synchronizing the first selected-asset request has a separate
+fixed five-second `.product` wait. If no held request appears within that wait,
+`Late image fixture control failed: no held response after cold launch` fails as
+`late_image/fixture_response`; this pre-hold readiness cap does not extend or renew
+the held transaction deadline.
 Every held-window wait is clamped to that deadline, including controls, pause,
 Next, focus, screenshot readiness and fixture control. It is never an infrastructure
 wait or a navigation hang guard. Native XCTest operations cannot be interrupted;
@@ -780,7 +785,9 @@ their return is checked before any later action or success assertion.
 uptimes and duration, including native actions, queries and screenshots.
 Exhaustion fails immediately at the next interruptible boundary with
 `Held response budget exhausted before release:` (`late_image/timing_window`),
-an invalid run that remains red under environment policy v1–v4. Preparation has
+an invalid run that remains red under environment policy v1–v4. Its suffix reports
+the longest recorded step's test-owned name and seconds inside the held window,
+clipping any pre-hold part of cold launch and omitting private inputs. Preparation has
 separate messages under `late_image` or `cold_relaunch/control_state`; neither
 phase appears in the environment timing allowlists. No new reader enums or summary
 schema are introduced, and old summaries remain readable.

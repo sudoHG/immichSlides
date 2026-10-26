@@ -34,7 +34,18 @@ final class StrictE2ELateImageHold {
     func check() throws {
         if releasedAt == nil, let deadline, ProcessInfo.processInfo.systemUptime >= deadline {
             try writeEvidence()
-            XCTFail("Held response budget exhausted before release: invalid late-image run")
+            // Summarize only test-owned step names and time spent after the hold began.
+            let longest = steps.compactMap { step -> (name: String, seconds: TimeInterval)? in
+                guard let heldStartedAt, let name = step["name"] as? String,
+                    let started = step["started_uptime"] as? TimeInterval,
+                    let returned = step["returned_uptime"] as? TimeInterval
+                else { return nil }
+                let seconds = returned - max(started, heldStartedAt)
+                return seconds > 0 ? (name, seconds) : nil
+            }.max { $0.seconds < $1.seconds }
+            let summary = longest.map { "\($0.name) (\(String(format: "%.3f", $0.seconds))s)" } ?? "none (0.000s)"
+            XCTFail(
+                "Held response budget exhausted before release: invalid late-image run; longest held step=\(summary)")
             throw StrictE2ELateImageError.heldBudget
         }
     }
