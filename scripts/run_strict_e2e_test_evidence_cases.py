@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from strict_e2e_photo_identity import public_asset_reference
+
 from run_strict_e2e_test_fixtures import (
     CASE_E2E_IDS,
     CommandError,
@@ -686,7 +688,7 @@ class StrictE2ERunnerTestsCasesEvidence:
             write_fixture_artifacts(evidence, "a")
             (evidence / "runner-server-url.txt").write_text("http://127.0.0.1:9/api\n", encoding="utf-8")
             (evidence / "late-image-initial-scene.json").write_text(json.dumps({
-                "before_first_next": {"manifest": "ledgerSceneAssets=asset-a-1"},
+                "before_first_next": {"manifest": "ledgerSceneAssets=" + public_asset_reference("asset-a-1")},
                 "fixture": {"asset_id": "asset-a-1"},
             }), encoding="utf-8")
             report = require_visual_identity(evidence, "late-image")

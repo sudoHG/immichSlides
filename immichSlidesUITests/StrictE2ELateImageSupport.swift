@@ -97,7 +97,7 @@ extension XCTestCase {
     @MainActor
     func lateImageControl(
         input: StrictE2EInput, action: String? = nil, timeout: TimeInterval? = nil,
-        hold: StrictE2ELateImageHold? = nil
+        hold: StrictE2ELateImageHold? = nil, selectInitialAsset: Bool = false
     ) throws -> [String:
         Any]
     {
@@ -109,7 +109,9 @@ extension XCTestCase {
         if let action {
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = try JSONSerialization.data(withJSONObject: ["action": action])
+            var body: [String: Any] = ["action": action]
+            if selectInitialAsset { body["selection"] = "initial-primary" }
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
         }
         let semaphore = DispatchSemaphore(value: 0)
         var payload: Data?
@@ -138,7 +140,9 @@ extension XCTestCase {
     @MainActor
     func armLateImageHold(input: StrictE2EInput) throws -> StrictE2ELateImageHold {
         let issuedAt = ProcessInfo.processInfo.systemUptime
-        let state = try lateImageControl(input: input, action: "arm")
+        let state = try lateImageControl(input: input, action: "arm", selectInitialAsset: true)
+        _ = try XCTUnwrap(
+            state["selected_asset_id"] as? String, "Late image fixture control failed: selection was not acknowledged")
         return try StrictE2ELateImageHold(armedAt: issuedAt, state: state)
     }
 
@@ -285,7 +289,9 @@ extension XCTestCase {
         let manifest = SharedSceneEvidenceManifest.parseKeyValueFields(observation["manifest"] ?? "")
         let assets = (manifest["ledgerSceneAssets"] ?? "").split(separator: ",").map(String.init)
         XCTAssertTrue(
-            (state["asset_id"] as? String).map { assets.contains($0) } == true,
+            (state["asset_id"] as? String).map {
+                assets.contains("asset-" + SmartFillRuntimeEvidenceSupport.stableHash($0))
+            } == true,
             "Late image held asset must belong to the cold-launch scene before the first Next.")
     }
 }

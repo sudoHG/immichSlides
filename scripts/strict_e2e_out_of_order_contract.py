@@ -11,7 +11,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from strict_e2e_filter_contract import FROZEN_FIXTURE_SHA256
-from strict_e2e_photo_identity import MARKS, PhotoIdentity
+from strict_e2e_photo_identity import MARKS, PhotoIdentity, public_asset_reference
 from strict_e2e_server import PUBLIC_API_KEY, fixture_manifest
 from access_lifecycle_contract import capture_identity
 
@@ -197,11 +197,11 @@ def evaluate_out_of_order_identity(evidence_dir: Path) -> dict[str, Any]:
     try:
         initial = json.loads(initial_path.read_text(encoding="utf-8"))
         manifest = initial["before_first_next"]["manifest"]
-        assets = dict(field.split("=", 1) for field in manifest.split() if "=" in field)["ledgerSceneAssets"].split(",")
+        assets = dict(field.strip().split("=", 1) for field in manifest.split(";") if "=" in field)["ledgerSceneAssets"].split(",")
         observed_held = initial["fixture"]["asset_id"]
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
         raise OutOfOrderContractError("Invalid cold-launch scene evidence before the first Next") from error
-    if delayed != observed_held or delayed not in assets:
+    if delayed != observed_held or public_asset_reference(delayed) not in assets:
         raise OutOfOrderContractError("Held asset must belong to the cold-launch scene before the first Next")
     held_label = next(asset["label"] for asset in fixture_manifest(fixture_set)["assets"] if asset["id"] == delayed)
     for identity, scene in ((current, "current"), (after_late, "after")):
@@ -263,8 +263,11 @@ def _held_request_inputs(log_text: str, *, fixture_set: str) -> tuple[str, str, 
     generation = max(state["generation"] for _, state in entries)
     current_entries = [(index, state) for index, state in entries if state["generation"] == generation]
     records = [state for _, state in current_entries]
+    selected = records[0].get("selected_asset_id")
+    if selected is not None and selected != fixture_manifest(fixture_set)["assets"][0]["id"]:
+        raise OutOfOrderContractError("Unsupported late image asset selection")
     for position, state in enumerate(records):
-        if set(state) != expected_keys or any(
+        if set(state) not in (expected_keys, expected_keys | {"selected_asset_id"}) or any(
             type(state[key]) is not bool for key in ("armed", "released", "expired")
         ) or any(type(state[key]) is not int or state[key] < 0
                  for key in ("armed_elapsed_ms", "pending", "delivered", "disconnected")) or any(
@@ -276,7 +279,7 @@ def _held_request_inputs(log_text: str, *, fixture_set: str) -> tuple[str, str, 
             raise OutOfOrderContractError("Malformed late image hold record")
         if not state["armed"] or state["expired"]:
             raise OutOfOrderContractError("Late image hold was not armed or expired")
-        if position and (state["armed_elapsed_ms"] != records[0]["armed_elapsed_ms"] or any(
+        if position and (state.get("selected_asset_id") != selected or state["armed_elapsed_ms"] != records[0]["armed_elapsed_ms"] or any(
             records[position - 1][key] is not None and state[key] != records[position - 1][key]
             for key in ("asset_id", "hold_started_elapsed_ms", "released_elapsed_ms")
         )):
@@ -296,16 +299,18 @@ def _held_request_inputs(log_text: str, *, fixture_set: str) -> tuple[str, str, 
         not final["released"] or final["pending"] != 0 or final["delivered"] < 1 or final["disconnected"] != 0
     ):
         raise OutOfOrderContractError("Late image hold has no confirmed release and delivery")
-    if starts[0].asset_id != final["asset_id"] or starts[0].elapsed_ms < initial["armed_elapsed_ms"]:
-        raise OutOfOrderContractError("Held asset was not the first image requested after arming")
+    eligible_starts = [event for event in starts if selected is None or event.asset_id == selected]
+    if not eligible_starts or eligible_starts[0].asset_id != final["asset_id"] or eligible_starts[0].elapsed_ms < initial["armed_elapsed_ms"]:
+        raise OutOfOrderContractError("Held asset was not the first eligible image requested after arming")
     hold_started, released = final["hold_started_elapsed_ms"], final["released_elapsed_ms"]
     if hold_started is None or released is None:
         raise OutOfOrderContractError("Missing late image hold timestamps")
-    if hold_started != starts[0].elapsed_ms or released < hold_started:
+    if hold_started != eligible_starts[0].elapsed_ms or released < hold_started:
         raise OutOfOrderContractError("Invalid late image hold timestamps")
     if released - hold_started >= APP_IMAGE_DOWNLOAD_TIMEOUT_MS:
         raise OutOfOrderContractError("Invalid run: late image hold reached the app's 15-second image download timeout")
-    immediate = next((event.asset_id for event in starts if event.asset_id != final["asset_id"]), None)
+    held_index = starts.index(eligible_starts[0])
+    immediate = next((event.asset_id for event in starts[held_index + 1:] if event.asset_id != final["asset_id"]), None)
     if immediate is None:
         raise OutOfOrderContractError("Missing newer image request after arming")
     return final["asset_id"], immediate, initial["armed_elapsed_ms"], "\n".join(lines[current_entries[0][0]:])

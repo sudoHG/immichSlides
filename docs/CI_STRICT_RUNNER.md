@@ -710,10 +710,21 @@ File-read failures remain I/O errors. tvOS reports retain their existing fields.
 
 The `late-image` suite arms `/api/test/late-image` after normal first-boot setup.
 Only loopback clients with the existing public fixture key can use this control,
-and only in the `out-of-order` scenario. The server chooses the first preview or
+and only in the `out-of-order` scenario. The cold-launch case posts
+`{"action":"arm","selection":"initial-primary"}` to select the first asset in
+the frozen fixture (A1 or B1). The server holds its first real preview or
 fullsize request after arming, by serialized request order, and holds responses
 for that asset until the test posts `{"action":"release"}`. Thumbnails and other
-assets remain available. Each `{"action":"arm"}` starts a numbered generation;
+assets remain available, including prefetches that arrive before the selected
+asset. `selected_asset_id` records that choice; the actual `asset_id` and hold
+start stay unset until the selected request arrives. A plain legacy
+`{"action":"arm"}` still selects the first image request, and its logs remain
+readable. The selector contract rejects any explicit selection other than the
+fixture's initial primary asset and requires the first eligible request's real
+start timestamp. Its newer comparison request comes after that selected start
+record, excluding unrelated pre-hold prefetches. The strict ordering judge itself
+is unchanged: the held request must start before the comparison completes and
+finish after it. Each arm starts a numbered generation;
 a new generation is allowed only after the previous one is released and has no
 pending responses. Onboarding requests are served normally before arming.
 The frozen manifest's legacy delay metadata stays

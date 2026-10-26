@@ -26,7 +26,7 @@ from strict_e2e_out_of_order_contract import (  # noqa: E402
     audit_runner_inputs,
     evaluate_out_of_order_identity,
 )
-from strict_e2e_photo_identity import classify_screenshot  # noqa: E402
+from strict_e2e_photo_identity import classify_screenshot, public_asset_reference  # noqa: E402
 from access_lifecycle_contract import capture_identity  # noqa: E402
 from strict_e2e_server import (  # noqa: E402
     PUBLIC_API_KEY,
@@ -221,7 +221,7 @@ def _write_identity_evidence(
     selected = [json.loads(line.removeprefix("late_image_hold "))["asset_id"]
                 for line in log_text.splitlines() if line.startswith("late_image_hold ")][-1]
     (evidence / "late-image-initial-scene.json").write_text(json.dumps({
-        "before_first_next": {"manifest": f"ledgerSceneAssets={selected}"},
+        "before_first_next": {"manifest": f"version=smart-fill-planner-v2;ledgerSceneAssets={public_asset_reference(selected)};publishReason=initial"},
         "fixture": {"asset_id": selected},
     }), encoding="utf-8")
     (evidence / "redacted-request.log").write_text(log_text, encoding="utf-8")
@@ -256,7 +256,7 @@ class OutOfOrderTimelineTests(unittest.TestCase):
                     path.write_text("{}", encoding="utf-8")
                 else:
                     payload = json.loads(path.read_text())
-                    payload["before_first_next"]["manifest"] = "ledgerSceneAssets=asset-a-2"
+                    payload["before_first_next"]["manifest"] = "ledgerSceneAssets=" + public_asset_reference("asset-a-2")
                     path.write_text(json.dumps(payload), encoding="utf-8")
                 with self.assertRaisesRegex(OutOfOrderContractError, "^" + message):
                     evaluate_out_of_order_identity(evidence)
@@ -340,14 +340,21 @@ class OutOfOrderTimelineTests(unittest.TestCase):
 
 class OutOfOrderIdentityTests(unittest.TestCase):
     def test_evaluate_uses_actual_first_requested_asset_in_both_fixture_sets(self) -> None:
-        for fixture_set in ("a", "b"):
-            with self.subTest(fixture=fixture_set), tempfile.TemporaryDirectory() as directory:
+        for fixture_set, selection in ((fixture, mode) for fixture in ("a", "b") for mode in (None, "initial-primary")):
+            with self.subTest(fixture=fixture_set, selection=selection), tempfile.TemporaryDirectory() as directory:
                 log_stream = io.StringIO()
                 with RunningServer(scenario="out-of-order", fixture_set=fixture_set, log_stream=log_stream) as server:
-                    server.request("/test/late-image", method="POST", body={"action": "arm"})
+                    body = {"action": "arm"}
+                    if selection is not None:
+                        body["selection"] = selection
+                    armed = json.loads(server.request("/test/late-image", method="POST", body=body)[2])
+                    old_number = 1 if selection else 4
+                    if selection:
+                        self.assertEqual(armed["selected_asset_id"], f"asset-{fixture_set}-1")
+                        self.assertEqual(server.request(f"/assets/asset-{fixture_set}-5/thumbnail?size=preview")[0], 200)
                     with ThreadPoolExecutor(max_workers=1) as executor:
-                        old = executor.submit(server.request, f"/assets/asset-{fixture_set}-4/thumbnail?size=preview")
-                        wait_for_request_started(log_stream, asset_id=f"asset-{fixture_set}-4", size="preview")
+                        old = executor.submit(server.request, f"/assets/asset-{fixture_set}-{old_number}/thumbnail?size=preview")
+                        wait_for_request_started(log_stream, asset_id=f"asset-{fixture_set}-{old_number}", size="preview")
                         server.request(f"/assets/asset-{fixture_set}-2/thumbnail?size=preview")
                         time.sleep(0.01)
                         server.request("/test/late-image", method="POST", body={"action": "release"})
@@ -357,6 +364,22 @@ class OutOfOrderIdentityTests(unittest.TestCase):
                 _write_identity_evidence(evidence, current=scene, after_late=scene,
                                          log_text=log_stream.getvalue(), fixture_set=fixture_set)
                 self.assertEqual(evaluate_out_of_order_identity(evidence)["verdict"], "PASS")
+                if selection:
+                    for change, message in (("unsupported", "Unsupported late image asset selection"),
+                                            ("changed", "Late image hold changed its request selection")):
+                        changed = []
+                        for line in log_stream.getvalue().splitlines():
+                            if line.startswith("late_image_hold "):
+                                state = json.loads(line.removeprefix("late_image_hold "))
+                                if change == "unsupported":
+                                    state["selected_asset_id"] = f"asset-{fixture_set}-2"
+                                elif state["asset_id"] is not None:
+                                    state["selected_asset_id"] = None
+                                line = "late_image_hold " + json.dumps(state)
+                            changed.append(line)
+                        (evidence / "redacted-request.log").write_text("\n".join(changed))
+                        with self.assertRaisesRegex(OutOfOrderContractError, "^" + message):
+                            evaluate_out_of_order_identity(evidence)
 
     def test_held_asset_inside_current_scene_cannot_pass(self) -> None:
         log_text = _capture_out_of_order_log("preview").replace("asset-a-1", "asset-a-4")
@@ -497,7 +520,7 @@ class OutOfOrderNegativeTests(unittest.TestCase):
             evidence = Path(directory)
             _write_identity_evidence(evidence, current=_fixture_png("A3"), after_late=_fixture_png("A3"),
                                      log_text="\n".join(lines))
-            with self.assertRaisesRegex(OutOfOrderContractError, "Held asset was not the first image requested"):
+            with self.assertRaisesRegex(OutOfOrderContractError, "Held asset was not the first eligible image requested"):
                 evaluate_out_of_order_identity(evidence)
 
     def test_hold_must_finish_before_the_app_image_download_timeout(self) -> None:
