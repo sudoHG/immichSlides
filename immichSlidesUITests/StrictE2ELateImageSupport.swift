@@ -59,6 +59,20 @@ final class StrictE2ELateImageHold {
         return value
     }
 
+    func waitUntil(_ name: String, maximum: TimeInterval, condition: () -> Bool) throws -> Bool {
+        let deadline = ProcessInfo.processInfo.systemUptime + (try remaining(maximum: maximum))
+        while ProcessInfo.processInfo.systemUptime < deadline {
+            if try perform(name, condition) { return ProcessInfo.processInfo.systemUptime < deadline }
+            let remainingSeconds = deadline - ProcessInfo.processInfo.systemUptime
+            if remainingSeconds > 0 {
+                RunLoop.current.run(
+                    until: Date().addingTimeInterval(min(TestWait.seconds(.product(0.05)), remainingSeconds)))
+            }
+        }
+        try check()
+        return false
+    }
+
     private func recordStep(_ name: String, started: TimeInterval) throws {
         let returned = ProcessInfo.processInfo.systemUptime
         steps.append([

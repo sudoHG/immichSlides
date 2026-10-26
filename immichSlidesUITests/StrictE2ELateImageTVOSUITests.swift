@@ -148,10 +148,8 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
     private func advanceColdPlaybackTwice(
         app: XCUIApplication, nextButton: XCUIElement, input: StrictE2EInput, hold: StrictE2ELateImageHold
     ) throws {
-        let ready = try hold.perform("next-control-readiness") {
-            waitUntil(timeout: try hold.remaining(maximum: TestWait.seconds(.product(30)))) {
-                (try? nextButton.snapshot())?.isEnabled == true
-            }
+        let ready = try hold.waitUntil("next-control-readiness", maximum: TestWait.seconds(.product(30))) {
+            (try? nextButton.snapshot())?.isEnabled == true
         }
         XCTAssertTrue(
             ready,
@@ -162,16 +160,14 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
         }
         XCTAssertTrue(controlsReady, "An arrow key must be able to wake the playback control bar.")
         var pausedHistoryCount: Int?
-        let pauseReady = try hold.perform("cold-pause-readiness") {
-            waitUntil(timeout: try hold.remaining(maximum: TestWait.seconds(.product(4)))) {
-                let observation = self.strictSceneFrameObservation(app: app)
-                let render = SharedSceneEvidenceManifest.parseKeyValueFields(observation["render"] ?? "")
-                guard render["playbackPaused"] == "true", let count = Int(render["historyCount"] ?? "") else {
-                    return false
-                }
-                pausedHistoryCount = count
-                return true
+        let pauseReady = try hold.waitUntil("cold-pause-readiness", maximum: TestWait.seconds(.product(4))) {
+            let observation = self.strictSceneFrameObservation(app: app)
+            let render = SharedSceneEvidenceManifest.parseKeyValueFields(observation["render"] ?? "")
+            guard render["playbackPaused"] == "true", let count = Int(render["historyCount"] ?? "") else {
+                return false
             }
+            pausedHistoryCount = count
+            return true
         }
         XCTAssertTrue(
             pauseReady, "Late image cold launch must restore paused playback.")
@@ -365,10 +361,10 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
     private func waitUntil(timeout: TimeInterval, condition: () -> Bool) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            if condition() { return Date() < deadline }
+            if condition() { return true }
             RunLoop.current.run(until: Date().addingTimeInterval(Timing.focusPollingSeconds))
         }
-        return false
+        return condition()
     }
 
     @MainActor
