@@ -772,7 +772,13 @@ Before the single judged
 `ooo-current-scene` capture, readiness waits for two identical PNG
 observations with recognizable public identity and the same paused, stable scene
 references across both observations. Each readiness iteration checks AX stability
-before requesting a screenshot. The whole held transaction has one unscaled
+before requesting a screenshot. Readiness and the iOS judged identity use the
+pre-fallback reader consumed by the Python out-of-order validator. The general
+Swift reader's `strict-multi-slot` fallback cannot qualify this capture: its
+measured system-chrome exclusions can accept a Home Indicator that the host
+reader counts as a foreign photo palette. Readiness waits within the existing
+budget for a frame the host contract can recognize; a persistent collision still
+fails. The whole held transaction has one unscaled
 deadline: actual fixture hold start plus 13 seconds, reserving two seconds of the
 unchanged 15-second App download timeout for release and delivery. The arm request's
 local issue time anchors the fixture elapsed clock conservatively; time before

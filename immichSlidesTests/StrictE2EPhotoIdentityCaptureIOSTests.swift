@@ -149,6 +149,10 @@ struct StrictE2EPhotoIdentityCaptureIOSTests {
             if let notes = item.capture.notes {
                 #expect(identity.notes == notes, "\(item.name)")
             }
+            let outOfOrder = StrictE2EPhotoIdentity.captureIdentityForOutOfOrderValidator(png: png)
+            let expectedOutOfOrder = item.swiftLegacy ?? item.capture
+            #expect(outOfOrder.status.rawValue == expectedOutOfOrder.status, "\(item.name)")
+            #expect(outOfOrder.mark == expectedOutOfOrder.mark, "\(item.name)")
             if let candidates = item.completeSceneCandidates {
                 #expect(StrictE2EPhotoIdentity.completeSceneCandidates(png: png) == candidates, "\(item.name)")
             }
@@ -165,6 +169,7 @@ struct StrictE2EPhotoIdentityCaptureIOSTests {
         let glyphOffsetY: Int?
         let bottomLabel: String?
         let capture: CaptureExpectation
+        let swiftLegacy: CaptureExpectation?
         let completeSceneCandidates: [String]?
     }
 

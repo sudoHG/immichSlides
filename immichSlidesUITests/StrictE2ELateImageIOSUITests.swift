@@ -250,7 +250,9 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
             } && sceneIdentity(before) == sceneIdentity(after),
             "After late completion the current public mark must stay: no flash back, all black or unreadable: unstable capture"
         )
-        return CapturedScene(identity: StrictE2EPhotoIdentity.captureIdentity(png: png), before: before, after: after)
+        return CapturedScene(
+            identity: StrictE2EPhotoIdentity.captureIdentityForOutOfOrderValidator(png: png), before: before,
+            after: after)
     }
 }
 #endif

@@ -260,7 +260,7 @@ extension XCTestCase {
             if [before, after].allSatisfy(StrictE2ESceneCapture.isStableWindow),
                 beforeRender["playbackPaused"] == "true", afterRender["playbackPaused"] == "true",
                 references.allSatisfy({ !$0.isEmpty }), references == afterReferences,
-                StrictE2EPhotoIdentity.captureIdentity(png: png).status == .match
+                StrictE2EPhotoIdentity.captureIdentityForOutOfOrderValidator(png: png).status == .match
             {
                 if previousReferences == references, previousPNG == png { return true }
                 previousReferences = references

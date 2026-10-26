@@ -848,6 +848,11 @@ enum StrictE2EPhotoIdentity {
         return regions
     }
 
+    static func captureIdentityForOutOfOrderValidator(png: Data) -> Result {
+        // The host out-of-order validator grants no strict-slot system-chrome exclusion.
+        legacyCaptureIdentity(png: png)
+    }
+
     static func captureIdentity(png: Data) -> Result {
         let legacy = legacyCaptureIdentity(png: png)
         guard legacy.status == .transition else { return legacy }
