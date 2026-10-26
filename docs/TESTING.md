@@ -280,7 +280,10 @@ card/Not Now time, `C` Continue time and `B` post-Continue Not Now time.
 Mode diagnostics record `nativeTapSeconds`. Guarded Continue navigation does not
 subtract those durations; selection-only navigation still refunds card/Not Now time.
 The outer failure marker remains the target card until Continue, then
-`mode-departure` / `mode.continue.button`. The existing failure prefixes and
+`mode-departure` / `mode.continue.button`. The issued flag is set immediately before
+the native tap and tracked separately from its return. Each composite observation
+and the final timeout re-mark the step and element without restarting the shared wait.
+The existing failure prefixes and
 [v3/v4 environment readers](CI_SUMMARY.md#prepared-hosted-strict-environment-limits)
 are unchanged; fewer bounded navigation timeouts can therefore reach yellow, but
 a remaining qualifying failure is still subject to the same fail-closed policy.

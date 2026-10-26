@@ -953,18 +953,19 @@ struct IOSFirstBootNavigation {
         var didDecline = false
         var didConfirmPromptGone = false
         var didSeePromptAfterContinue = false
-        var didContinue = false
+        var didIssueContinue = false
+        var didReturnContinue = false
         var didReadLastSnapshot = false
         var step = "mode-card"
         var lastErrorCode: Int?
         let diagnostics = ModeNavigationDiagnostics(targetIdentifier: identifier)
         FirstFailureContext.beginWait(seconds: guardWait.remainingSeconds)
-        FirstFailureContext.mark(step, element: identifier)
         defer {
             FirstFailureContext.endWait()
             print("First-boot mode observations: \(diagnostics.modeDiagnosticMessage)")
         }
         while let captured = observing.query({ () -> Result<Observation, Error> in
+            FirstFailureContext.mark(step, element: didIssueContinue ? "mode.continue.button" : identifier)
             diagnostics.beginModeDiagnosticObservation()
             let startedAt = ProcessInfo.processInfo.systemUptime
             defer { diagnostics.finishModeDiagnosticObservation(since: startedAt) }
@@ -975,7 +976,7 @@ struct IOSFirstBootNavigation {
                         destinationIdentifier: destinationIdentifier, diagnostics: diagnostics)
                 }
                 return try observe(
-                    modeIdentifier: didContinue ? nil : identifier,
+                    modeIdentifier: didReturnContinue ? nil : identifier,
                     destinationIdentifier: destinationIdentifier, diagnostics: diagnostics, transaction: observing)
             }
         }) {
@@ -991,7 +992,7 @@ struct IOSFirstBootNavigation {
             diagnostics.stage = .complete
             if current.hasPasswordPrompt {
                 step = "save-password-prompt"
-                didSeePromptAfterContinue = didSeePromptAfterContinue || didContinue
+                didSeePromptAfterContinue = didSeePromptAfterContinue || didReturnContinue
                 didConfirmPromptGone = false
                 if !didDecline, let decline = current.decline {
                     didDecline = tap(
@@ -1004,7 +1005,7 @@ struct IOSFirstBootNavigation {
                     didConfirmPromptGone = true
                     print("Exact Save Password prompt disappearance confirmed")
                 }
-                if didContinue {
+                if didReturnContinue {
                     step = "mode-departure"
                     if !current.hasModalObstacle, !current.isModePage, current.hasDestination(destinationIdentifier) {
                         FirstFailureContext.mark("unknown")
@@ -1018,11 +1019,14 @@ struct IOSFirstBootNavigation {
                 } else if current.isModeCardSelected(identifier), !current.hasModalObstacle {
                     step = "mode-continue"
                     if let button = current.button("mode.continue.button") {
-                        didContinue = tap(
+                        didReturnContinue = tap(
                             button, observation: current, deadline: deadline, step: "mode-continue",
                             diagnostics: diagnostics, transaction: proceed,
-                            willTap: { print("First-boot Continue issued=true; targetModeSelected=true") })
-                        if didContinue {
+                            willTap: {
+                                didIssueContinue = true
+                                print("First-boot Continue issued=true; targetModeSelected=true")
+                            })
+                        if didReturnContinue {
                             observing = proceed
                             step = "mode-departure"
                         }
@@ -1034,14 +1038,12 @@ struct IOSFirstBootNavigation {
                         diagnostics: diagnostics, transaction: card)
                 }
             }
-            FirstFailureContext.mark(
-                step,
-                element: didContinue ? "mode.continue.button" : identifier)
             poll(until: deadline)
         }
+        FirstFailureContext.mark(step, element: didIssueContinue ? "mode.continue.button" : identifier)
         let detail =
-            "Continue issued=\(didContinue) returned=\(didContinue), passwordDeclineReturned=\(didDecline), passwordPromptDismissed=\(didConfirmPromptGone), lastSnapshotSucceeded=\(didReadLastSnapshot), lastSnapshotError=\(lastErrorCode.map(String.init) ?? "none"), \(diagnostics.modeDiagnosticMessage)"
-        if didContinue, !didSeePromptAfterContinue, didReadLastSnapshot,
+            "Continue issued=\(didIssueContinue) returned=\(didReturnContinue), passwordDeclineReturned=\(didDecline), passwordPromptDismissed=\(didConfirmPromptGone), lastSnapshotSucceeded=\(didReadLastSnapshot), lastSnapshotError=\(lastErrorCode.map(String.init) ?? "none"), \(diagnostics.modeDiagnosticMessage)"
+        if didReturnContinue, !didSeePromptAfterContinue, didReadLastSnapshot,
             lastObservation?.isModePage == true, lastObservation?.hasPasswordPrompt == false
         {
             XCTFail(

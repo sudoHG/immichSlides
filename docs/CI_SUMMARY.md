@@ -1124,10 +1124,12 @@ Policy v4 preserves every v3 entry and adds exactly the two `save-password-promp
 keys above. The motivating [nightly 39969370437](https://github.com/sudoHG/immichSlides/actions/runs/39969370437),
 shard `iphone-immichSlides-iOS-debug-0`, fixture A `album-empty`, reports
 `mode_selection/navigation`, `mode.filtered.button`, surface `mode`, wait 23.41 s
-against a 22 s deadline. `IOSFirstBootNavigation.navigateMode` sets the step as
-soon as it observes the prompt, then re-marks that step and the target card at
-each loop iteration and at timeout; a decline need not have been issued.
-No Swift receipt change is needed. Eligibility still requires the existing hosted marker, a full
+against a 22 s deadline. `IOSFirstBootNavigation.navigateMode` and
+`selectModeAndContinue` set the step as soon as they observe the prompt, then re-mark
+that step at each observation and at timeout; a decline need not have been issued.
+The element remains the target card until Continue is issued, then becomes
+`mode.continue.button`; issuance is recorded before the native tap, separately from return.
+Eligibility still requires the existing hosted marker, a full
 deadline and low-idle samples strictly before and after the failure, each at most
 5% idle. Other elements, surfaces, phase/class pairs and missing evidence stay red.
 Retained v1/v2/v3 receipts never gain this exception; no old night is reclassified.
