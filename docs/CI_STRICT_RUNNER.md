@@ -138,10 +138,15 @@ same-palette A2 blurred background beside B2; both also passed before single-pho
 qualification was introduced.
 Evidence used to reject a side partner, an out-of-album photo or an old nonempty
 pool uses the ungated hue reader, so qualification cannot hide visible defects.
-Synthetic coverage includes A1/A2 and B1/B2 at iPhone, iPad and tvOS dimensions,
-both orientations, and motion scales 1.00/1.10. Background-only geometry controls
-must remain nonmatches; duplicate controls retain their original hue status and
-do not count as independent rejection coverage.
+The shared Python/Swift candidate corpus keeps small portrait-fit controls for
+A1/A2 and B1/B2, plus six representative fits generated at device dimensions and
+sampled to 480px with NEAREST: A2 on iPad portrait (1640x2360) and landscape
+(2360x1640), A1 on iPhone landscape (2532x1170), and B2 on tvOS landscape
+(3840x2160), all without overlays at motion scale 1.00; A2 and B2 on iPad portrait
+at scale 1.10 retain blurred side margins while the foreground overflows vertically.
+These representatives cover the iPad A2 foreground that occupies only 81% of the
+portrait width, rather than the complete geometry/photo/motion cross-product.
+Background-only rejection remains covered by A1/B1 and the native A2 TV-bar case.
 For original 3840x2160 tvOS captures, sharp-foreground continuity and texture
 checks ignore the scanner-approved shared color/glyph rectangle
 (1256,1436)-(2580,1925). At 1920x1080 the rectangle is (628,718)-(1290,963):

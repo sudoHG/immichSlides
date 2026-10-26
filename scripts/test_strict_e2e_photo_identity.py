@@ -451,12 +451,15 @@ class FrameGlyphBoundaryTests(unittest.TestCase):
                 with self.subTest(fixture=fixture_set, index=index):
                     source = _fixture_data(fixture_set)["images"][f"asset-{fixture_set}-{index}"]
                     image = Image.open(io.BytesIO(source)).convert("RGB")
-                    frame = _png(image.resize((image.width * 12, image.height * 12)))
+                    # The added palettes need native scaling; old palettes are
+                    # comparison controls, with native geometry covered separately.
+                    frame = (_png(image.resize((image.width * 12, image.height * 12)))
+                             if fixture_set == "b" and index >= 6 else source)
                     photos = public_frame_photos_from_bytes(frame)
                     self.assertEqual([(photo.letter, photo.mark) for photo in photos],
                                      [(fixture_set.upper(), f"A{index}")])
-                    self.assertEqual((classify_screenshot(frame).status, classify_screenshot(frame).mark),
-                                     ("MATCH", f"A{index}"))
+                    identity = classify_screenshot(frame)
+                    self.assertEqual((identity.status, identity.mark), ("MATCH", f"A{index}"))
                     if fixture_set == "b" and index in (6, 7, 8):
                         for canvas in ((1170, 2532), (1640, 2360), (3840, 2160)):
                             with self.subTest(fitted=index, canvas=canvas):
@@ -473,13 +476,23 @@ class FrameGlyphBoundaryTests(unittest.TestCase):
                 for horizontal in (False, True):
                     with self.subTest(added=added, existing=existing, horizontal=horizontal):
                         order = (added, existing) if horizontal else (existing, added)
-                        photos = public_frame_photos_from_bytes(self._pair("b", *order, horizontal=horizontal))
+                        # Palette coexistence needs both glyphs, not native overlay geometry.
+                        canvas = (160, 90) if horizontal else (120, 180)
+                        photos = public_frame_photos_from_bytes(self._pair("b", *order, horizontal=horizontal,
+                                                                        canvas=canvas))
                         self.assertEqual([(photo.letter, photo.mark) for photo in photos],
                                          [("B", f"A{index}") for index in order])
                         if existing <= 5:
                             with self.assertRaisesRegex(IdentityAssertionError, r"^mixed public glyphs; 2 slots \((?:horizontal|vertical)\)$"):
                                 public_frame_photos_from_bytes(self._pair("b", added, existing,
-                                                                         horizontal=horizontal, second_fixture="a"))
+                                                                         horizontal=horizontal, second_fixture="a",
+                                                                         canvas=canvas))
+        # Keep 4K downsampling and raw edge bands covered for every added palette.
+        for added, existing in ((6, 1), (7, 2), (8, 3)):
+            with self.subTest(native_4k_pair=(added, existing)):
+                photos = public_frame_photos_from_bytes(self._pair("b", added, existing, horizontal=True))
+                self.assertEqual([(photo.letter, photo.mark) for photo in photos],
+                                 [("B", f"A{added}"), ("B", f"A{existing}")])
         for name, (_, _, colors) in PUBLIC_APP_CHROME_SAMPLES.items():
             with self.subTest(real_app_chrome=name):
                 chrome = Image.new("RGB", (320, len(colors) * 10))
@@ -496,10 +509,8 @@ class FrameGlyphBoundaryTests(unittest.TestCase):
             self.assertEqual([(photo.letter, photo.mark) for photo in photos], [("B", "A6"), ("B", "A3")])
         for asset_id, source in _fixture_data("c")["images"].items():
             with self.subTest(foreign=asset_id):
-                image = Image.open(io.BytesIO(source)).convert("RGB")
-                frame = image.resize((image.width * 12, image.height * 12))
                 with self.assertRaisesRegex(IdentityAssertionError, "^(?:no public glyph|unreadable public glyph)"):
-                    public_frame_photos_from_bytes(_png(frame))
+                    public_frame_photos_from_bytes(source)
 
     def test_scene_judgement_converts_a_second_clear_background_photo_to_identity_failure(self) -> None:
         photo = Image.open(io.BytesIO(_fixture_png("A1"))).convert("RGB")
@@ -680,8 +691,8 @@ class FrameGlyphBoundaryTests(unittest.TestCase):
     @staticmethod
     def _pair(fixture_set: str, first: int, second: int, *, horizontal: bool,
               seam: int | None = None, second_fixture: str | None = None,
-              unreadable_slot: int | None = None) -> bytes:
-        size = (3840, 2160) if horizontal else (1640, 2360)
+              unreadable_slot: int | None = None, canvas: tuple[int, int] | None = None) -> bytes:
+        size = canvas or ((3840, 2160) if horizontal else (1640, 2360))
         boundary = seam or (size[0] // 2 if horizontal else size[1] // 2)
         boxes = ((0, 0, boundary, size[1]), (boundary, 0, size[0], size[1])) if horizontal else (
             (0, 0, size[0], boundary), (0, boundary, size[0], size[1]))

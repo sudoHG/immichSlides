@@ -963,7 +963,8 @@ class DisplayPolicyNegativeTests(unittest.TestCase):
             axis = "horizontal" if horizontal else "vertical"
             for slot in (1, 2):
                 cases.append((f"unread slot {slot} {axis}", FrameGlyphBoundaryTests._pair(
-                    "b", 3, 2, horizontal=horizontal, unreadable_slot=slot),
+                    "b", 3, 2, horizontal=horizontal, unreadable_slot=slot,
+                    canvas=(160, 90) if horizontal else (120, 180)),
                     rf"^unreadable public glyph slot; slot {slot} \({axis}\)$"))
         for name, frame, message in cases:
             with self.subTest(defect=name), tempfile.TemporaryDirectory() as raw:
