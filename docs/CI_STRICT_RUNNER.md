@@ -1022,15 +1022,23 @@ Each reset caller supplies `ios` or `tvos`; other values fail before simulator
 preparation. After keychain and privacy reset, iOS
 fixture simulators disable Password AutoFill with
 `simctl spawn UDID defaults write com.apple.WebUI AutoFillPasswords -bool NO`
-and require a successful `defaults read` returning `0` before the app runs.
+and require the device's persisted preference to be boolean `false` before the app runs.
+The runner resolves that exact UDID's absolute `dataPath` through `simctl list devices --json`,
+then verifies `Library/Preferences/com.apple.WebUI.plist` on the host with
+`plutil -extract AutoFillPasswords raw -expect bool -o -`. It does not start a second
+device process for `defaults read`: that spawn exhausted the remaining shared reset
+budget on a starved hosted iPad. Missing/ambiguous device paths, a failed write,
+missing/unreadable/wrongly typed or enabled preferences, and deadline overruns all fail preparation.
 This is the preference changed by Settings > General > AutoFill & Passwords >
 AutoFill Passwords and Passkeys on the pinned iOS 27 runtime, confirmed by a
 before/after preference diff and the Settings toggle's readback. After an iOS
 runtime pin change, repeat the Settings preference diff and the before/after
-prompt matrix on the pinned iPhone and iPad: `readback=0` alone does not prove
-that the new OS honours this key. Both commands
-consume the existing 120-second reset budget, with the same per-command cap;
-a failed write or unreadable/enabled value fails preparation. Strict, fixture UI,
+prompt matrix on the pinned iPhone and iPad: a persisted boolean `false` alone does not prove
+that the new OS honours this key. The entire preference step shares at most 60 seconds,
+clamped to what remains of the existing 120-second reset deadline; it creates no new
+reset or case allowance. Device lookup, write and host verification each consume that
+same preference deadline. Logs report their elapsed times, the total preference duration,
+its actual budget and the remaining reset time, including failures. Strict, fixture UI,
 standalone access-lifecycle and listed-retry resets all apply this policy.
 The app's secure field, login flow and exact-prompt decline safety net are unchanged.
 No fixture credential is saved in Passwords. Erasing a device removes its settings;

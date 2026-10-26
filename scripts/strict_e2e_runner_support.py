@@ -794,6 +794,60 @@ def prepare_simulator(simulator_udid: str, bundle_id: str = "com.331works.immich
     return container, "\n".join(lines) + "\n"
 
 
+def _disable_password_autofill(simulator_udid: str, reset_deadline: float, report: Callable[[str], None]) -> list[str]:
+    started = time.monotonic()
+    deadline = min(reset_deadline, started + SIMULATOR_COMMAND_TIMEOUT_SECONDS)
+    budget = max(0, deadline - started)
+    lines, outcome = [], "failed"
+
+    def command(argv: list[str], step: str):
+        step_started = time.monotonic()
+        try:
+            return simulator_command(argv, "simulator-password-autofill-" + step, deadline=deadline)
+        finally:
+            line = f"password-autofill-{step}: elapsed={time.monotonic() - step_started:.3f}s"
+            lines.append(line)
+            report(line)
+
+    try:
+        inventory = command(["xcrun", "simctl", "list", "devices", "--json"], "device")
+        if inventory.returncode:
+            raise CommandError(f"Simulator password AutoFill device lookup failed (exit {inventory.returncode}); "
+                               f"stderr={inventory.stderr.strip()!r}.")
+        try:
+            devices = [entry for entries in json.loads(inventory.stdout)["devices"].values() for entry in entries
+                       if entry.get("udid") == simulator_udid]
+        except (ValueError, KeyError, TypeError, AttributeError) as error:
+            raise CommandError("Simulator password AutoFill device lookup returned invalid JSON.") from error
+        if (len(devices) != 1 or not isinstance(devices[0].get("dataPath"), str)
+                or not Path(devices[0]["dataPath"]).is_absolute()):
+            raise CommandError("Simulator password AutoFill device lookup did not identify one absolute data path.")
+        preference = Path(devices[0]["dataPath"]) / "Library/Preferences/com.apple.WebUI.plist"
+        disabled = command(["xcrun", "simctl", "spawn", simulator_udid, "defaults", "write",
+                            "com.apple.WebUI", "AutoFillPasswords", "-bool", "NO"], "disable")
+        lines.append(f"password_autofill_write_exit={disabled.returncode}; stderr={disabled.stderr.strip()!r}")
+        if disabled.returncode:
+            raise CommandError("Simulator password AutoFill disable failed; cannot continue with isolated state.\n" + "\n".join(lines))
+        # Read the persisted boolean on the host; a second device spawn can exhaust a starved reset.
+        readback = command(["/usr/bin/plutil", "-extract", "AutoFillPasswords", "raw", "-expect", "bool",
+                            "-o", "-", str(preference)], "readback")
+        lines.append(f"password_autofill_read_exit={readback.returncode}; stderr={readback.stderr.strip()!r}; "
+                     f"value={readback.stdout.strip()!r}")
+        if readback.returncode or readback.stdout.strip() != "false":
+            raise CommandError("Simulator password AutoFill readback failed; cannot continue with isolated state.\n" + "\n".join(lines))
+        if time.monotonic() >= deadline:
+            raise InfrastructureTimeout("simulator-password-autofill", budget)
+        lines.append("password_autofill=disabled; domain=com.apple.WebUI; key=AutoFillPasswords; readback=false; verifier=host-plutil")
+        report(lines[-1])
+        outcome = "passed"
+    finally:
+        line = (f"password-autofill: {outcome}; elapsed={time.monotonic() - started:.3f}s; budget={budget:.3f}s; "
+                f"reset_remaining={max(0, reset_deadline - time.monotonic()):.3f}s")
+        lines.append(line)
+        report(line)
+    return lines
+
+
 def reset_simulator_app(simulator_udid: str, bundle_id: str = "com.331works.immichSlides", *,
                         platform: str, boot_submitted: bool = False) -> str:
     if platform not in ("ios", "tvos"):
@@ -848,25 +902,7 @@ def reset_simulator_app(simulator_udid: str, bundle_id: str = "com.331works.immi
         if completed.returncode != 0:
             raise CommandError(f"Simulator {step} reset failed; cannot continue with isolated state.\n" + "\n".join(lines))
     if platform == "ios":
-        # Matches Settings > General > AutoFill & Passwords on dedicated fixture simulators.
-        preference = ["xcrun", "simctl", "spawn", simulator_udid, "defaults"]
-        disabled = simulator_command(
-            [*preference, "write", "com.apple.WebUI", "AutoFillPasswords", "-bool", "NO"],
-            "simulator-password-autofill-disable", deadline=deadline,
-        )
-        lines.append(f"password_autofill_write_exit={disabled.returncode}; stderr={disabled.stderr.strip()!r}")
-        if disabled.returncode != 0:
-            raise CommandError("Simulator password AutoFill disable failed; cannot continue with isolated state.\n" + "\n".join(lines))
-        readback = simulator_command(
-            [*preference, "read", "com.apple.WebUI", "AutoFillPasswords"],
-            "simulator-password-autofill-readback", deadline=deadline,
-        )
-        lines.append(f"password_autofill_read_exit={readback.returncode}; stderr={readback.stderr.strip()!r}; "
-                     f"value={readback.stdout.strip()!r}")
-        if readback.returncode != 0 or readback.stdout.strip() != "0":
-            raise CommandError("Simulator password AutoFill readback failed; cannot continue with isolated state.\n" + "\n".join(lines))
-        lines.append("password_autofill=disabled; domain=com.apple.WebUI; key=AutoFillPasswords; readback=0")
-        report(lines[-1])
+        lines.extend(_disable_password_autofill(simulator_udid, deadline, report))
     lines.append(f"simulator-reset: elapsed={time.monotonic() - started:.1f}s; total budget={SIMULATOR_RESET_TIMEOUT_SECONDS}s")
     report(lines[-1])
     return "\n".join(lines) + "\n"

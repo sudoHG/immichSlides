@@ -761,57 +761,99 @@ class StrictE2ERunnerTestsCasesConfiguration:
 
     def test_ios_reset_requires_disabled_password_autofill_after_isolation(self) -> None:
         import strict_e2e_runner_support as support
-        for platform, write_exit, read_exit, readback, error in (
-            ("ios", 0, 0, "0\n", None),
-            ("ios", 1, 0, "0\n", "Simulator password AutoFill disable failed"),
-            ("ios", 0, 1, "0\n", "Simulator password AutoFill readback failed"),
-            ("ios", 0, 0, "1\n", "Simulator password AutoFill readback failed"),
-            ("ios", 0, 0, "", "Simulator password AutoFill readback failed"),
-            ("tvos", 1, 1, "1\n", None),
-            ("iOS", 0, 0, "0\n", "Unsupported simulator platform"),
-        ):
-            with self.subTest(platform=platform, write_exit=write_exit, read_exit=read_exit, readback=readback):
+        inventory = json.dumps({"devices": {"runtime": [{"udid": "SIM-UDID", "dataPath": "/task-data/SIM-UDID"}]}})
+        cases = [
+            {}, {"prior": 90},
+            {"write_exit": 1, "error": "Simulator password AutoFill disable failed"},
+            {"read_exit": 1, "error": "Simulator password AutoFill readback failed"},
+            {"readback": "true\n", "error": "Simulator password AutoFill readback failed"},
+            {"readback": "0\n", "error": "Simulator password AutoFill readback failed"},
+            {"readback": "", "error": "Simulator password AutoFill readback failed"},
+            {"stored_type": "string", "error": "Simulator password AutoFill readback failed"},
+            {"device_exit": 1, "error": "Simulator password AutoFill device lookup failed"},
+            {"inventory": "invalid", "error": "Simulator password AutoFill device lookup returned invalid JSON"},
+            {"inventory": '{"devices": {}}', "error": "Simulator password AutoFill device lookup did not identify one absolute data path"},
+            {"inventory": inventory.replace("SIM-UDID", "OTHER"),
+             "error": "Simulator password AutoFill device lookup did not identify one absolute data path"},
+            {"inventory": inventory.replace('/task-data/', 'relative/'),
+             "error": "Simulator password AutoFill device lookup did not identify one absolute data path"},
+            {"write_seconds": 61, "error": "simulator-password-autofill-disable timed out after 58.0s"},
+            {"prior": 90, "write_seconds": 31, "error": "simulator-password-autofill-disable timed out after 28.0s"},
+            {"read_seconds": 61, "error": "simulator-password-autofill-readback timed out after 55.0s"},
+            {"read_seconds": 61, "late_return": True,
+             "error": "simulator-password-autofill timed out after 60.0s"},
+            {"prior": 120, "error": "simulator-password-autofill-device timed out after 0.0s"},
+            {"platform": "tvos"},
+            {"platform": "iOS", "error": "Unsupported simulator platform"},
+        ]
+        for case in cases:
+            with self.subTest(case=case):
+                platform, error = case.get("platform", "ios"), case.get("error")
+                clock = [100.0]
                 calls = []
 
-                def command(argv, phase, **kwargs):
-                    calls.append((argv, kwargs["deadline"]))
-                    operation = argv[5] if argv[2] == "spawn" else None
-                    code = write_exit if operation == "write" else read_exit if operation == "read" else 0
-                    stderr = f"{operation} fixture diagnostic\n" if operation else ""
-                    return subprocess.CompletedProcess(argv, code, readback if operation == "read" else "", stderr)
+                def command(argv, **kwargs):
+                    calls.append((argv, kwargs["timeout"]))
+                    if argv[0] == "/usr/bin/plutil":
+                        step, duration = "read", case.get("read_seconds", 1)
+                        stdout = case.get("readback", "false\n")
+                    elif argv[2] == "list":
+                        step, duration = "device", 2
+                        stdout = case.get("inventory", inventory)
+                    elif argv[2] == "spawn":
+                        step, duration, stdout = "write", case.get("write_seconds", 3), ""
+                    else:
+                        if argv[2] == "privacy":
+                            clock[0] += case.get("prior", 0)
+                        return subprocess.CompletedProcess(argv, 0, "", "")
+                    if duration > kwargs["timeout"] and not case.get("late_return"):
+                        clock[0] += kwargs["timeout"]
+                        raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+                    clock[0] += duration
+                    exit_code = case.get(step + "_exit", 0)
+                    if step == "read" and case.get("stored_type") == "string" and "bool" in argv:
+                        exit_code = 1
+                    return subprocess.CompletedProcess(argv, exit_code, stdout,
+                                                       step + " fixture diagnostic\n")
 
                 with mock.patch.object(support, "prepare_simulator", return_value=(None, "")) as prepare, \
                      mock.patch.object(support, "simulator_app_container", return_value=None), \
-                     mock.patch.object(support, "simulator_command", side_effect=command), \
+                     mock.patch.object(support.subprocess, "run", side_effect=command), \
+                     mock.patch.object(support.time, "monotonic", side_effect=lambda: clock[0]), \
                      mock.patch.object(support.time, "sleep"):
                     if error:
-                        with self.assertRaisesRegex(CommandError, error) as raised:
+                        with self.assertRaisesRegex(CommandError, re.escape(error)) as raised:
                             reset_simulator_app("SIM-UDID", platform=platform)
-                        if platform == "ios":
-                            if write_exit:
-                                self.assertIn(f"password_autofill_write_exit={write_exit}; stderr='write fixture diagnostic'",
-                                              str(raised.exception))
-                            else:
-                                self.assertIn(f"password_autofill_read_exit={read_exit}; stderr='read fixture diagnostic'; "
-                                              f"value={readback.strip()!r}", str(raised.exception))
+                        if case.get("write_exit"):
+                            self.assertIn("password_autofill_write_exit=1; stderr='write fixture diagnostic'", str(raised.exception))
+                        if "read_exit" in case or "readback" in case:
+                            self.assertIn(f"password_autofill_read_exit={case.get('read_exit', 0)}; "
+                                          f"stderr='read fixture diagnostic'; value={case.get('readback', 'false').strip()!r}",
+                                          str(raised.exception))
                     else:
-                        reset_simulator_app("SIM-UDID", platform=platform)
+                        log = reset_simulator_app("SIM-UDID", platform=platform)
+                        if platform == "ios":
+                            self.assertIn("password_autofill=disabled;", log)
+                            self.assertIn("password-autofill: passed; elapsed=6.000s;", log)
                     if platform not in ("ios", "tvos"):
                         prepare.assert_not_called()
                         self.assertEqual(calls, [])
                 commands = [argv for argv, _ in calls]
                 preference_calls = [argv for argv in commands if argv[2] == "spawn"]
-                self.assertEqual(bool(preference_calls), platform == "ios")
+                self.assertEqual(bool(preference_calls), platform == "ios" and case.get("prior", 0) < 120
+                                 and not any(k in case for k in ("device_exit", "inventory")))
                 if platform == "ios" and error is None:
-                    self.assertEqual(len(preference_calls), 2)
-                    self.assertEqual(preference_calls[0], ["xcrun", "simctl", "spawn", "SIM-UDID", "defaults",
-                                                           "write", "com.apple.WebUI", "AutoFillPasswords", "-bool", "NO"])
-                    self.assertEqual(preference_calls[1], ["xcrun", "simctl", "spawn", "SIM-UDID", "defaults",
-                                                           "read", "com.apple.WebUI", "AutoFillPasswords"])
+                    self.assertEqual(preference_calls, [["xcrun", "simctl", "spawn", "SIM-UDID", "defaults",
+                                                        "write", "com.apple.WebUI", "AutoFillPasswords", "-bool", "NO"]])
+                    self.assertEqual(commands[-1], ["/usr/bin/plutil", "-extract", "AutoFillPasswords", "raw",
+                                                   "-expect", "bool", "-o", "-",
+                                                   "/task-data/SIM-UDID/Library/Preferences/com.apple.WebUI.plist"])
+                    budget = min(support.SIMULATOR_COMMAND_TIMEOUT_SECONDS,
+                                 support.SIMULATOR_RESET_TIMEOUT_SECONDS - case.get("prior", 0))
+                    self.assertEqual([timeout for _, timeout in calls[-3:]], [budget, budget - 2, budget - 5])
                 if preference_calls:
                     self.assertLess(next(i for i, argv in enumerate(commands) if argv[2] == "privacy"),
                                     next(i for i, argv in enumerate(commands) if argv[2] == "spawn"))
-                    self.assertEqual(len({deadline for _, deadline in calls}), 1)
 
     def test_warm_products_and_per_case_environment_cannot_silently_change(self) -> None:
         import plistlib
