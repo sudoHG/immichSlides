@@ -385,6 +385,44 @@ and outcome changes from `d` to `d+W+C`:
 | Strict Filter album: `prepareAlbumCapturePlayback` via `applyPlaybackSettings` | `t0+23` | `t0+23+W` / `t0+23+W+C` | Album interval confirmation starts after Settings returns and keeps its own deadline. |
 | AccessLifecycle: `openSettingsFromSlideshow` with permitted PIN entry | Caller deadline `d=t0+15` | `d+W` / `d+W+C` | Settings readback/configuration precedes lifecycle timing; PIN handling remains explicit. |
 
+Settings preparation and outcome observation share `IOSDriver.dismissPlaybackPasswordPrompt`,
+which delegates to the exact first-boot prompt observer and decline action described above.
+The system credential prompt can arrive during the native Settings tap, after preparation
+has already proved the control actionable. Every outcome poll therefore checks and declines
+that exact prompt before reading Settings or the explicitly permitted PIN entry. The helper
+logs each returned decline with its system uptime and whether the Settings outcome is pending;
+the existing prompt log separately confirms disappearance. A decline is never a Settings success.
+If the prompt swallowed the original Settings tap, at most one recovery send is permitted only
+after a real post-tap decline, confirmed disappearance, no Settings or permitted PIN outcome,
+and a newly captured recognizable public playback photo. Recovery then prepares a fresh,
+live-hittable Settings control with no Settings navigation or PIN evidence. Without that proof,
+or after one recovery preparation attempt, no recovery send is permitted. A prompt handled
+before the original Settings tap does not authorize recovery. Diagnostics retain the post-tap
+decline count, disappearance, recovery attempt/issue, public playback mark, second-tap duration
+and the original Settings tap's separate issue/return timestamps. During recovery preparation,
+an exact password prompt, Settings navigation evidence or `pinEntry.close.button` returns
+immediately to the outer outcome loop without sending recovery. A failed prompt observation
+also yields. The attempt remains consumed, with no second preparation attempt or renewed wait.
+
+For every caller in the table, the adjusted preparation and outcome deadlines are identical
+before and after this late-prompt handling: `d+W` and `D=d+W+C`, where `W` and `C` belong
+only to the original preparation and Settings tap. Prompt queries, live checks, polling,
+Not Now tap time, disappearance confirmation, playback proof capture/classification, the
+recovery wake and the second Settings tap all consume the remaining constant `D`; none adds
+a deduction or restarts a wait. Recovery preparation suppresses its nested receipt wait so
+the outer outcome clock remains active, while every other `prepareControl` caller retains
+the original wait recording. Recovery gets at most one fresh preparation wake. A native tap
+can return after the deadline, but neither that return nor a later successor snapshot can pass.
+Other mode-navigation and standalone prompt callers keep their existing budgets. The initial
+preparation wrapper adds only the returned-decline log; Pause and Next retain their existing
+behavior. `revealControls(shouldDismissPasswordPrompt: true)` also uses that wrapper and can
+log a returned decline, with unchanged behavior and budgets. Outcome verification timing
+includes the recovery work. Without a prompt, Settings keeps the same taps, marks and deadlines
+as main, but every outcome poll adds a full prompt `observe()` before reading Settings.
+That query cost consumes the same deadline. Repeated observer errors or a password title
+without a unique decline can prevent the Settings read until timeout, causing a false red;
+the additional observation cannot turn an unsuccessful navigation into a pass.
+
 The outcome field becomes true only after the wait accepts an observation within its window.
 Verify time includes its snapshot time; no extra diagnostic snapshot runs after
 timeout. Playback History Settings uses the explicit bounded refresh, without
