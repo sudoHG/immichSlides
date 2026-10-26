@@ -647,16 +647,25 @@ extension FilterSummaryIOSVisualUITests {
             startPlaybackButton.isEnabled, "The 'Start Playback' button on the filter summary page should be enabled")
         let guardWait = TestWait.hangGuard()
         let start = guardWait.transaction()
+        var timing = SlideshowControlBarTiming()
+        var playbackEntryDiagnostic = "start-action"
         XCTAssertTrue(
-            start.perform("tap", { startPlaybackButton.tapForFailureEvidence() })
+            start.perform(
+                "tap",
+                {
+                    startPlaybackButton.tapForFailureEvidence()
+                    playbackEntryDiagnostic = "playback-arrival"
+                })
                 && start.until {
-                    (try? app.slideshowControlBarButtonObservation(identifier: "slideshow.control.settings.button"))?
+                    timing.observe(app: app, identifier: "slideshow.control.settings.button")?
                         .hasPlaybackMarker == true
                 },
-            "After starting playback, the playback page should open and show the control bar")
+            "After starting playback, the playback page should open and show the control bar (phase=\(playbackEntryDiagnostic), \(timing.diagnostic))"
+        )
         XCTAssertTrue(
-            refreshPlaybackControlsForNavigation(app: app, guardWait: guardWait),
-            "Playback page should show the play/pause button")
+            refreshPlaybackControlsForNavigation(
+                app: app, guardWait: guardWait, timing: &timing, diagnostic: &playbackEntryDiagnostic),
+            "Playback page should show the play/pause button (phase=\(playbackEntryDiagnostic), \(timing.diagnostic))")
 
         RunLoop.current.run(
             until: Date().addingTimeInterval(FilterSummaryIOSVisualUITestsWaitTiming.playbackEntrySettleSeconds))
