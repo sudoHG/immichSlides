@@ -346,9 +346,28 @@ def single_photo_candidate_cases():
             cases.append(("background-only-B1", background,
                           ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
 
-    # Fit acceptance already covers A/B checker/stripe textures and wide/tall
-    # originals above. The former geometry x photo x motion grid resized every
-    # input to 480px, so it exercised those same rules without native overlays.
+    # These shapes reach different foreground bounds after the reader's 480px
+    # sampling. Keep representative unmasked fits and motion overflow, including
+    # the iPad A2 foreground that spans only 81% of the portrait frame's width.
+    geometry_cases = (
+        ("a", "ipad-portrait", (1640, 2360), 2, 1.00),
+        ("a", "ipad-landscape", (2360, 1640), 2, 1.00),
+        ("a", "iphone-landscape", (2532, 1170), 1, 1.00),
+        ("b", "tvos-landscape", (3840, 2160), 2, 1.00),
+        ("a", "ipad-portrait", (1640, 2360), 2, 1.10),
+        ("b", "ipad-portrait", (1640, 2360), 2, 1.10),
+    )
+    for fixture_set, geometry, size, index, motion_scale in geometry_cases:
+        photo = Image.open(io.BytesIO(_fixture_data(fixture_set)["images"][f"asset-{fixture_set}-{index}"])).convert("RGB")
+        scene = ImageOps.fit(photo, size).filter(ImageFilter.GaussianBlur(48))
+        fitted = ImageOps.contain(photo, size)
+        foreground = fitted.resize((round(fitted.width * motion_scale), round(fitted.height * motion_scale)),
+                                  Image.Resampling.LANCZOS)
+        scene.paste(foreground, ((scene.width - foreground.width) // 2, (scene.height - foreground.height) // 2))
+        scene = scene.resize((480, round(scene.height * 480 / scene.width)), Image.Resampling.NEAREST)
+        cases.append((f"geometry-fit-{fixture_set.upper()}{index}-{geometry}-motion-{motion_scale:.2f}",
+                      scene, ("MATCH", f"A{index}"), ("MATCH", f"A{index}")))
+
     # Keep native dimensions: an approved overlay must never be inferred from
     # aspect ratio or carried into an arbitrary cropped/resized input.
     from strict_e2e_photo_identity import PUBLIC_SCENE_GEOMETRIES

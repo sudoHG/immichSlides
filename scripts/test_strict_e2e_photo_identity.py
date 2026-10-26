@@ -487,6 +487,12 @@ class FrameGlyphBoundaryTests(unittest.TestCase):
                                 public_frame_photos_from_bytes(self._pair("b", added, existing,
                                                                          horizontal=horizontal, second_fixture="a",
                                                                          canvas=canvas))
+        # Keep 4K downsampling and raw edge bands covered for every added palette.
+        for added, existing in ((6, 1), (7, 2), (8, 3)):
+            with self.subTest(native_4k_pair=(added, existing)):
+                photos = public_frame_photos_from_bytes(self._pair("b", added, existing, horizontal=True))
+                self.assertEqual([(photo.letter, photo.mark) for photo in photos],
+                                 [("B", f"A{added}"), ("B", f"A{existing}")])
         for name, (_, _, colors) in PUBLIC_APP_CHROME_SAMPLES.items():
             with self.subTest(real_app_chrome=name):
                 chrome = Image.new("RGB", (320, len(colors) * 10))
