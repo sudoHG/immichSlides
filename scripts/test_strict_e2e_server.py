@@ -79,7 +79,9 @@ class RunningServer:
             timeout_seconds=0.2,
             log_stream=log_stream,
         )
-        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        # shutdown() waits for this administrative poll; requests have their own deadlines.
+        self.thread = threading.Thread(target=self.server.serve_forever,
+                                       kwargs={"poll_interval": 0.01}, daemon=True)
 
     def __enter__(self) -> "RunningServer":
         self.thread.start()

@@ -196,9 +196,8 @@ def single_photo_region_frame(kind: str, defect: str | None = None) -> Image.Ima
 def single_photo_candidate_cases():
     """Public fit controls and named candidate/region regressions.
 
-    Background-only A2/B2, tagged background A1, gray-chrome backgrounds and
-    geometry background variants duplicate missing-foreground rejection. They
-    are geometry/profile controls, not independent branch coverage.
+    Each rejection changes one candidate rule. Native overlay and viewport
+    cases stay at recorded dimensions; ordinary fit/texture cases stay small.
     """
     import base64
     # Public Display P3 metadata changes no encoded RGB samples in these inputs.
@@ -225,12 +224,8 @@ def single_photo_candidate_cases():
         tagged = scene.copy()
         tagged.info["icc_profile"] = display_p3
         cases.append((f"profile-tagged-fit-A{index}", tagged, ("MATCH", f"A{index}"), ("MATCH", f"A{index}")))
-        cases.append((f"background-only-A{index}", background,
-                      ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
         if index == 1:
-            tagged_background = background.copy()
-            tagged_background.info["icc_profile"] = display_p3
-            cases.append(("profile-tagged-background-A1", tagged_background,
+            cases.append(("background-only-A1", background,
                           ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
     side_by_side = Image.open(io.BytesIO(_side_by_side(
         _fixture_data("a")["images"]["asset-a-1"], _fixture_data("a")["images"]["asset-a-2"]
@@ -347,61 +342,13 @@ def single_photo_candidate_cases():
         scene = background.copy()
         scene.paste(fitted, ((scene.width - fitted.width) // 2, (scene.height - fitted.height) // 2))
         cases.append((f"portrait-fit-B{index}", scene, ("MATCH", f"A{index}"), ("MATCH", f"A{index}")))
-        cases.append((f"background-only-B{index}", background,
-                      ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
-        chrome = background.copy()
-        chrome.paste((180, 180, 180), (0, 955, 480, 1005))
-        cases.append((f"background-and-gray-UI-B{index}", chrome,
-                      ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
+        if index == 1:
+            cases.append(("background-only-B1", background,
+                          ("UNRECOGNIZABLE", None), ("UNRECOGNIZABLE", None)))
 
-    # Repeat the same fit and background-only checks over recorded device geometries.
-    # Background-only rows are geometry duplicates of the same missing-foreground branch.
-    screen_geometries = {
-        "iphone-portrait": (1170, 2532),
-        "iphone-landscape": (2532, 1170),
-        "ipad-portrait": (1640, 2360),
-        "ipad-landscape": (2360, 1640),
-        "tvos-landscape": (3840, 2160),
-        "tvos-portrait": (2160, 3840),
-    }
-    for fixture_set in ("a", "b"):
-        for index in (1, 2):
-            photo = Image.open(io.BytesIO(_fixture_data(fixture_set)["images"][f"asset-{fixture_set}-{index}"])).convert("RGB")
-            label = f"{'A' if fixture_set == 'a' else 'B'}{index}"
-            logical_mark = f"A{index}"
-            for geometry, size in screen_geometries.items():
-                background = ImageOps.fit(photo, size).filter(ImageFilter.GaussianBlur(48))
-                for motion_scale in (1.00, 1.10):
-                    fitted = ImageOps.contain(photo, size)
-                    scaled_size = (
-                        max(1, round(fitted.width * motion_scale)),
-                        max(1, round(fitted.height * motion_scale)),
-                    )
-                    foreground = fitted.resize(scaled_size, Image.Resampling.LANCZOS)
-                    scene = background.copy()
-                    scene.paste(
-                        foreground,
-                        ((scene.width - foreground.width) // 2, (scene.height - foreground.height) // 2),
-                    )
-                    if scene.width > 480:
-                        reduced_height = max(1, round(scene.height * 480 / scene.width))
-                        scene = scene.resize((480, reduced_height), Image.Resampling.NEAREST)
-                    cases.append((
-                        f"geometry-fit-{label}-{geometry}-motion-{motion_scale:.2f}", scene,
-                        ("MATCH", logical_mark), ("MATCH", logical_mark),
-                    ))
-
-                background_only = background
-                if background_only.width > 480:
-                    reduced_height = max(1, round(background_only.height * 480 / background_only.width))
-                    background_only = background_only.resize((480, reduced_height), Image.Resampling.NEAREST)
-                # Duplicate geometry checks preserve the original language-specific
-                # ambiguity verdict; neither TRANSITION nor UNKNOWN confirms a photo.
-                background_status = "UNRECOGNIZABLE" if (label, geometry) == ("A2", "tvos-landscape") else "NOT_MATCH"
-                cases.append((
-                    f"geometry-background-only-{label}-{geometry}-duplicate", background_only,
-                    (background_status, None), (background_status, None),
-                ))
+    # Fit acceptance already covers A/B checker/stripe textures and wide/tall
+    # originals above. The former geometry x photo x motion grid resized every
+    # input to 480px, so it exercised those same rules without native overlays.
     # Keep native dimensions: an approved overlay must never be inferred from
     # aspect ratio or carried into an arbitrary cropped/resized input.
     from strict_e2e_photo_identity import PUBLIC_SCENE_GEOMETRIES
