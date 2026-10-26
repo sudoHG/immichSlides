@@ -123,11 +123,16 @@ struct StrictE2EPhotoIdentityCaptureIOSTests {
     }
 
     @Test
-    func `shared public frames have the same Swift and Python verdicts`() throws {
+    func `shared public frames keep strict slot parity and the known capture divergences`() throws {
         let url = try #require(
             Bundle(for: FixtureBundle.self).url(
                 forResource: "public-photo-identity-cases", withExtension: "json", subdirectory: "Fixtures"))
         let cases = try JSONDecoder().decode([ParityCase].self, from: Data(contentsOf: url))
+        // Track the pre-existing synthetic gap exactly; added and resolved divergences both need review.
+        let knownDivergences: Set<String> = [
+            "stacked-checker", "stacked-following-checker", "stacked-foreign", "stacked-mixed"
+        ]
+        var observedDivergences: Set<String> = []
         for item in cases {
             let png = try renderPNG(width: item.size[0], height: item.size[1]) { context in
                 for slot in item.slots {
@@ -153,10 +158,18 @@ struct StrictE2EPhotoIdentityCaptureIOSTests {
             let expectedOutOfOrder = item.swiftLegacy ?? item.capture
             #expect(outOfOrder.status.rawValue == expectedOutOfOrder.status, "\(item.name)")
             #expect(outOfOrder.mark == expectedOutOfOrder.mark, "\(item.name)")
+            if outOfOrder.status == .match,
+                item.pythonCapture.status != "MATCH" || outOfOrder.mark != item.pythonCapture.mark
+            {
+                observedDivergences.insert(item.name)
+            }
             if let candidates = item.completeSceneCandidates {
                 #expect(StrictE2EPhotoIdentity.completeSceneCandidates(png: png) == candidates, "\(item.name)")
             }
         }
+        #expect(
+            observedDivergences == knownDivergences,
+            "Swift/Python capture divergences must remain exactly the documented synthetic stacked gap")
     }
 
     private final class FixtureBundle {}
@@ -170,6 +183,7 @@ struct StrictE2EPhotoIdentityCaptureIOSTests {
         let bottomLabel: String?
         let capture: CaptureExpectation
         let swiftLegacy: CaptureExpectation?
+        let pythonCapture: CaptureExpectation
         let completeSceneCandidates: [String]?
     }
 

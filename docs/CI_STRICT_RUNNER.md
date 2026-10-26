@@ -232,8 +232,16 @@ The shared `immichSlidesTests/Fixtures/public-photo-identity-cases.json` table
 constructs the same checker cells, glyph origins and defect boxes in the Swift
 reader suite and `scripts/test_strict_e2e_photo_identity.py`; the table compares
 Swift's strict fallback entry with Python `public_frame_photos_from_bytes`.
-Each row also records the observed Swift legacy result and independently asserts
-the additive `captureIdentity` verdict; strict rejection does not override legacy
+Each row also asserts the Swift pre-fallback reader's status/mark against
+`swiftLegacy` and independently asserts the additive Swift `captureIdentity`
+verdict. Python asserts its independent `capture_identity` result against
+`pythonCapture`. The Swift test records any pre-fallback MATCH that Python does not
+accept with the same mark, and asserts that this set is exactly `stacked-checker`,
+`stacked-following-checker`, `stacked-foreign` and `stacked-mixed`. These four synthetic
+stacked composites remain a pre-existing reader gap not closed by this change:
+Swift accepts A2 while Python returns TRANSITION. Any added or resolved divergence
+fails the exact-set assertion. Full capture-reader equivalence does not hold.
+Strict rejection does not override legacy
 MATCH, and strict proof cannot supply complete-scene inheritance candidates.
 Native sizes and all parity rows remain
 intact; the Python test draws and caches identical 48-pixel background rectangles
@@ -772,13 +780,23 @@ Before the single judged
 `ooo-current-scene` capture, readiness waits for two identical PNG
 observations with recognizable public identity and the same paused, stable scene
 references across both observations. Each readiness iteration checks AX stability
-before requesting a screenshot. Readiness and the iOS judged identity use the
-pre-fallback reader consumed by the Python out-of-order validator. The general
+before requesting a screenshot. Readiness and both iOS judged captures
+(`ooo-current-scene` and `ooo-after-late`) use the Swift pre-fallback reader that
+corresponds to Python's independent `access_lifecycle_contract.capture_identity`.
+Full equivalence is not required for a safe readiness gate: every Swift acceptance
+must also be a Python acceptance of the same mark. The four known synthetic stacked
+composites above remain exceptions to that one-way condition; this change does not
+close that pre-existing reader gap. The general
 Swift reader's `strict-multi-slot` fallback cannot qualify this capture: its
 measured system-chrome exclusions can accept a Home Indicator that the host
-reader counts as a foreign photo palette. Readiness waits within the existing
-budget for a frame the host contract can recognize; a persistent collision still
-fails. The whole held transaction has one unscaled
+reader counts as a foreign photo palette. Both retained real iPad failure runs had
+`notes=["strict-multi-slot"]` for both judged frames, proving legacy rejection before
+the general reader's fallback accepted them; the new pre-fallback gate rejects
+those real Home Indicator frames. Readiness waits within the existing
+budget for a frame its Swift reader can recognize; the host judges captures
+independently. A persistent iPad Home Indicator
+collision fails at the held deadline as `late_image/timing_window` and remains red.
+This does not establish a lower failure rate. The whole held transaction has one unscaled
 deadline: actual fixture hold start plus 13 seconds, reserving two seconds of the
 unchanged 15-second App download timeout for release and delivery. The arm request's
 local issue time anchors the fixture elapsed clock conservatively; time before
@@ -798,7 +816,9 @@ Exhaustion fails immediately at the next interruptible boundary with
 `Held response budget exhausted before release:` (`late_image/timing_window`),
 an invalid run that remains red under environment policy v1–v4. Its suffix reports
 the longest recorded step's test-owned name and seconds inside the held window,
-clipping any pre-hold part of cold launch and omitting private inputs. Preparation has
+clipping any pre-hold part of cold launch and omitting private inputs. It also reports
+the last current-readiness reader status and notes, or `unavailable` if no identity
+was read. Preparation has
 separate messages under `late_image` or `cold_relaunch/control_state`; neither
 phase appears in the environment timing allowlists. No new reader enums or summary
 schema are introduced, and old summaries remain readable.
