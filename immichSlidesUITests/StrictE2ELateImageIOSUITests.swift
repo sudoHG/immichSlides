@@ -28,20 +28,22 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
 
         try completeFirstBootToModeSelection(app: app, input: input, evidencePrefix: "late-image")
         dismissSavePasswordPromptIfShown(app: app, deadline: Date().addingTimeInterval(TestWait.seconds(.product(2))))
-        try enterPlaybackThenAdvanceTwice(app: app)
+        try enterUnarmedPlayback(app: app)
         try preparePausedColdLaunch(app: app)
-        _ = try lateImageControl(input: input, action: "arm")
+        let hold = try armLateImageHold(input: input)
         FirstFailureContext.mark("launch-app", element: "app-window")
-        FirstFailureContext.action("launch") { app.launch() }
-        try enterPlaybackThenAdvanceTwice(app: app, isColdRelaunch: true)
+        try hold.perform("cold-launch") { FirstFailureContext.action("launch") { app.launch() } }
+        try synchronizeLateImageHold(input: input, hold: hold)
+        try advanceColdPlaybackTwice(app: app, input: input, hold: hold)
 
         XCTAssertTrue(
-            waitForLateImageCurrentScene(app: app),
+            try waitForLateImageCurrentScene(app: app, hold: hold),
             "After late completion the current public mark must stay: no flash back, all black or unreadable: unstable capture"
         )
-        let currentFrame = try captureRequiredIdentity(app: app, name: "ooo-current-scene")
-        try recordFixtureState(input: input, name: "late-image-held")
-        try releaseLateImageAndWaitForDelivery(input: input)
+        let currentFrame = try hold.perform("judged-current-capture") {
+            try captureRequiredIdentity(app: app, name: "ooo-current-scene", hold: hold)
+        }
+        try releaseLateImageAndWaitForDelivery(input: input, hold: hold)
         let deliveryReturnedAt = ProcessInfo.processInfo.systemUptime
         try recordFixtureState(input: input, name: "late-image-delivered")
         let remaining = deliveryReturnedAt + lateRequestSettleSeconds - ProcessInfo.processInfo.systemUptime
@@ -81,127 +83,57 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
     }
 
     @MainActor
-    private func enterPlaybackThenAdvanceTwice(app: XCUIApplication, isColdRelaunch: Bool = false) throws {
-        let playbackDeadline: Date
-        if isColdRelaunch {
-            playbackDeadline = Date().addingTimeInterval(TestWait.seconds(.product(8)))
-        } else {
-            guard
-                let enteredDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
-                    "mode.random.button", destinationIdentifier: "slideshow.control.next.button")
-            else { return }
-            playbackDeadline = enteredDeadline.deadline
-        }
-        let next = app.buttons["slideshow.control.next.button"]
+    private func enterUnarmedPlayback(app: XCUIApplication) throws {
+        guard
+            let departure = IOSFirstBootNavigation(app: app).selectModeAndContinue(
+                "mode.random.button", destinationIdentifier: "slideshow.control.next.button")
+        else { return }
         XCTAssertTrue(
-            next.waitForPublicElement(
-                "slideshow.control.next.button", timeout: max(.zero, playbackDeadline.timeIntervalSinceNow)),
-            "Next must be tappable twice right after entering the slideshow, before old image requests finish.")
+            departure.confirms { nodes in nodes.contains { $0.identifier == "slideshow.control.next.button" } },
+            "Late image preparation must enter playback before opening Settings.")
+    }
+
+    @MainActor
+    private func advanceColdPlaybackTwice(app: XCUIApplication, input: StrictE2EInput, hold: StrictE2ELateImageHold)
+        throws
+    {
         XCTAssertTrue(
-            revealLateImageControls(app: app),
+            try revealLateImageControls(app: app, hold: hold),
             "Next must be tappable twice right after entering the slideshow, before old image requests finish.")
-        let playPause = app.buttons["slideshow.control.playPause.button"]
-        let observedPlayPauseState = (try? playPause.snapshot()).map({ playPauseState($0) })
-        var playPauseTap: [String: Any] = ["control_state": observedPlayPauseState ?? "unknown", "tap_issued": false]
-        if isColdRelaunch {
-            XCTAssertEqual(
-                observedPlayPauseState, "play",
-                "Next must be tappable twice right after entering the slideshow, before old image requests finish.")
-        } else if observedPlayPauseState != "play" {
-            let probeStartedAt = Date().timeIntervalSince1970
-            let observation = strictSceneFrameObservation(app: app)
-            playPauseTap["scene_probe"] = pauseProbeEvidence(observation, startedAt: probeStartedAt)
-            playPauseTap["tap_issued"] = true
-            playPauseTap["tap_issued_unix"] = Date().timeIntervalSince1970
-            tapElement(playPause)
-            playPauseTap["tap_returned_unix"] = Date().timeIntervalSince1970
+        let observedState = try hold.perform("cold-pause-control") {
+            (try? app.buttons["slideshow.control.playPause.button"].snapshot()).map { playPauseState($0) }
         }
+        XCTAssertEqual(observedState, "play", "Late image cold launch must restore paused playback.")
         var pausedHistoryCount: Int?
-        var didDeclinePrompt = false
-        var didObservePrompt = false
-        var hasPromptObstacle = false
-        var promptChecks: [[String: Any]] = []
-        let waitDeadline = Date().addingTimeInterval(TestWait.seconds(.product(2)))
-        let promptDeadline = min(waitDeadline, playbackDeadline)
-        let isPauseReady = waitUntil(timeout: max(.zero, waitDeadline.timeIntervalSinceNow)) {
-            let startedAt = Date().timeIntervalSince1970
-            var didDeclineThisRound = false
-            let navigation = IOSFirstBootNavigation(app: app)
-            let isPromptGone =
-                isColdRelaunch
-                || navigation.dismissPasswordPrompt(until: promptDeadline) {
-                    didDeclineThisRound = true
-                    didDeclinePrompt = true
-                    didObservePrompt = true
-                    print("Late-image pause-readiness prompt decline returned")
-                }
-            var promptState = "absent"
-            hasPromptObstacle = false
-            if !isPromptGone {
-                // An expired deadline also returns false without a prompt; that alone is not a failure.
-                if let observation = try? navigation.observe() {
-                    hasPromptObstacle = observation.hasPasswordPrompt
-                    didObservePrompt = didObservePrompt || observation.hasPasswordPrompt
-                    promptState = observation.hasPasswordPrompt ? "present" : "absent"
-                } else {
-                    hasPromptObstacle = true
-                    promptState = "unknown"
-                }
-            }
-            var check: [String: Any] = [
-                "started_unix": startedAt, "returned_unix": Date().timeIntervalSince1970,
-                "helper_returned": isPromptGone, "prompt_declined": didDeclineThisRound, "prompt_state": promptState,
-                "probe_read_status": hasPromptObstacle ? "not_read_prompt_obstacle" : "not_read_deadline"
-            ]
-            defer { promptChecks.append(check) }
-            guard !hasPromptObstacle, Date() < waitDeadline else { return false }
-            let probeStartedAt = Date().timeIntervalSince1970
-            let observation = self.strictSceneFrameObservation(app: app)
-            check["probe_read_status"] = "read"
-            check["scene_probe"] = self.pauseProbeEvidence(observation, startedAt: probeStartedAt)
+        let pauseDeadline =
+            ProcessInfo.processInfo.systemUptime + (try hold.remaining(maximum: TestWait.seconds(.product(2))))
+        while ProcessInfo.processInfo.systemUptime < pauseDeadline {
+            let observation = try hold.perform("cold-pause-probe") { strictSceneFrameObservation(app: app) }
             let render = SharedSceneEvidenceManifest.parseKeyValueFields(observation["render"] ?? "")
-            guard render["playbackPaused"] == "true", let count = Int(render["historyCount"] ?? "") else {
-                return false
+            if render["playbackPaused"] == "true", let count = Int(render["historyCount"] ?? "") {
+                pausedHistoryCount = count
+                break
             }
-            pausedHistoryCount = count
-            return true
+            RunLoop.current.run(
+                until: Date().addingTimeInterval(try hold.remaining(maximum: TestWait.seconds(.product(0.05)))))
         }
-        try StrictE2EVisualEvidence.writeRequiredJSON(
-            [
-                "wait_deadline_unix": waitDeadline.timeIntervalSince1970,
-                "departure_deadline_unix": playbackDeadline.timeIntervalSince1970,
-                "prompt_deadline_unix": promptDeadline.timeIntervalSince1970,
-                "prompt_declined": didDeclinePrompt, "prompt_observed": didObservePrompt,
-                "prompt_checks": promptChecks, "pause_ready": isPauseReady, "play_pause_tap": playPauseTap
-            ], name: isColdRelaunch ? "late-image-playback-entry.json" : "late-image-preparation-entry.json")
-        guard isPauseReady else {
-            FirstFailureContext.mark("wait-scene", element: "slideshow.control.playPause.button")
-            if hasPromptObstacle {
-                XCTFail(
-                    "Environment precondition: the system password prompt must be absent before late-image pause readiness."
-                )
-            } else {
-                XCTFail(
-                    "Next must be tappable twice right after entering the slideshow, before old image requests finish.")
-            }
-            return
-        }
-        let initialHistory = try XCTUnwrap(pausedHistoryCount)
-        XCTAssertTrue(
-            revealLateImageControls(app: app),
-            "Next must be tappable twice right after entering the slideshow, before old image requests finish.")
-        let deadline = ProcessInfo.processInfo.systemUptime + TestWait.seconds(.product(8))
+        try hold.check()
+        let initialHistory = try XCTUnwrap(pausedHistoryCount, "Late image cold launch must restore paused playback.")
+        try recordLateImageInitialScene(app: app, input: input, hold: hold)
+        let next = app.buttons["slideshow.control.next.button"]
+        let deadline = min(
+            try XCTUnwrap(hold.deadline), ProcessInfo.processInfo.systemUptime + TestWait.seconds(.product(8)))
         FirstFailureContext.mark("select", element: "slideshow.control.next.button")
-        tapElement(next)
+        try hold.perform("first-next-native") { tapElement(next) }
         XCTAssertTrue(
-            waitForLateImageScene(app: app, historyCount: initialHistory + 1, deadline: deadline),
+            try waitForLateImageScene(app: app, historyCount: initialHistory + 1, deadline: deadline, hold: hold),
             "Next must be tappable twice right after entering the slideshow, before old image requests finish.")
         XCTAssertTrue(
-            revealLateImageControls(app: app),
+            try revealLateImageControls(app: app, hold: hold),
             "Next must be tappable twice right after entering the slideshow, before old image requests finish.")
-        tapElement(next)
+        try hold.perform("second-next-native") { tapElement(next) }
         XCTAssertTrue(
-            waitForLateImageScene(app: app, historyCount: initialHistory + 2, deadline: deadline),
+            try waitForLateImageScene(app: app, historyCount: initialHistory + 2, deadline: deadline, hold: hold),
             "Next must be tappable twice right after entering the slideshow, before old image requests finish.")
     }
 
@@ -216,12 +148,12 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
             let playback = app.buttons["settings.item.playback"]
             XCTAssertTrue(
                 playback.waitForPublicElement("settings.item.playback", timeout: TestWait.seconds(.product(8))),
-                "Next must be tappable twice right after entering the slideshow, before old image requests finish.")
+                "Late image preparation must open Playback Settings.")
             tapElement(playback)
         }
         XCTAssertTrue(
             autoPlay.waitForPublicElement("settings.playback.autoPlay.toggle", timeout: TestWait.seconds(.product(8))),
-            "Next must be tappable twice right after entering the slideshow, before old image requests finish.")
+            "Late image preparation must expose the Autoplay switch.")
         if (try? autoPlay.snapshot()).map({ String(describing: $0.value ?? "") }) != "0" {
             tapElement(autoPlay)
         }
@@ -229,42 +161,32 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
             waitUntil(timeout: TestWait.seconds(.product(8))) {
                 (try? autoPlay.snapshot()).map { String(describing: $0.value ?? "") } == "0"
             },
-            "Next must be tappable twice right after entering the slideshow, before old image requests finish.")
+            "Late image preparation must turn Autoplay off.")
         driver.returnToPlayback()
         try driver.clearDiskCache(onCachePage: {})
         // A cold process plus the real cache clear prevents prefetched photos from satisfying the race.
         app.terminateForFailureEvidence()
     }
 
-    private func pauseProbeEvidence(_ observation: [String: String], startedAt: TimeInterval) -> [String: Any] {
-        let render = SharedSceneEvidenceManifest.parseKeyValueFields(observation["render"] ?? "")
-        let scene = SharedSceneEvidenceManifest.manifestObservation(from: observation["manifest"] ?? "")
-        let layerCount: Any =
-            render["layerIDs"].map { ($0 == "none" ? 0 : $0.split(separator: "|").count) as Any } ?? NSNull()
-        return [
-            "started_unix": startedAt, "returned_unix": Date().timeIntervalSince1970, "raw": observation,
-            "scene_probe_status": render.isEmpty ? "absent_or_unreadable" : "present",
-            "playbackPaused": render["playbackPaused"] ?? "unknown", "phase": render["phase"] ?? "unknown",
-            "scene_status": scene.map { $0.isCompleteVisibleScene ? "complete" : "incomplete" } ?? "unavailable",
-            "layer_count": layerCount
-        ]
+    @MainActor
+    private func revealLateImageControls(app: XCUIApplication, hold: StrictE2ELateImageHold) throws -> Bool {
+        let deadline =
+            ProcessInfo.processInfo.systemUptime + (try hold.remaining(maximum: TestWait.seconds(.product(8))))
+        while ProcessInfo.processInfo.systemUptime < deadline {
+            let snapshots = try hold.perform("controls-snapshot") { app.evidenceSnapshotsByIdentifier() }
+            if let next = snapshots["slideshow.control.next.button"], next.isEnabled {
+                return ProcessInfo.processInfo.systemUptime < deadline
+            }
+            // Configured relaunch never enters credentials, so no Save Password scan belongs here.
+            try hold.perform("controls-wake-native") { app.tapForFailureEvidence() }
+            RunLoop.current.run(
+                until: Date().addingTimeInterval(try hold.remaining(maximum: TestWait.seconds(.product(0.05)))))
+        }
+        try hold.check()
+        return false
     }
 
     @MainActor
-    private func revealLateImageControls(app: XCUIApplication) -> Bool {
-        let deadline = ProcessInfo.processInfo.systemUptime + TestWait.seconds(.product(8))
-        let promptDeadline = Date().addingTimeInterval(TestWait.seconds(.product(8)))
-        return waitUntil(timeout: TestWait.seconds(.product(8))) {
-            guard ProcessInfo.processInfo.systemUptime < deadline else { return false }
-            self.dismissSavePasswordPromptIfShown(app: app, deadline: promptDeadline)
-            if let next = app.evidenceSnapshotsByIdentifier()["slideshow.control.next.button"], next.isEnabled {
-                return ProcessInfo.processInfo.systemUptime < deadline
-            }
-            app.tapForFailureEvidence()
-            return false
-        }
-    }
-
     private func recordFixtureState(input: StrictE2EInput, name: String) throws {
         let state = try lateImageControl(input: input)
         try StrictE2EVisualEvidence.writeRequiredJSON(
@@ -300,12 +222,14 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
     }
 
     @MainActor
-    private func captureRequiredIdentity(app: XCUIApplication, name: String) throws -> CapturedScene {
-        let before = lateImageSceneObservation(app: app)
+    private func captureRequiredIdentity(app: XCUIApplication, name: String, hold: StrictE2ELateImageHold? = nil) throws
+        -> CapturedScene
+    {
+        let before = try captureStep("before-probe", hold: hold) { lateImageSceneObservation(app: app) }
         let captureRequestedAt = Date().timeIntervalSince1970
-        let png = app.screenshotForFailureEvidence().pngRepresentation
+        let png = try captureStep("screenshot", hold: hold) { app.screenshotForFailureEvidence().pngRepresentation }
         let captureReturnedAt = Date().timeIntervalSince1970
-        let after = lateImageSceneObservation(app: app)
+        let after = try captureStep("after-probe", hold: hold) { lateImageSceneObservation(app: app) }
         XCTAssertFalse(png.isEmpty, "The playback screenshot must not be empty: \(name)")
         let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
         attachment.name = name

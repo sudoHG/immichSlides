@@ -685,6 +685,10 @@ class StrictE2ERunnerTestsCasesEvidence:
             )
             write_fixture_artifacts(evidence, "a")
             (evidence / "runner-server-url.txt").write_text("http://127.0.0.1:9/api\n", encoding="utf-8")
+            (evidence / "late-image-initial-scene.json").write_text(json.dumps({
+                "before_first_next": {"manifest": "ledgerSceneAssets=asset-a-1"},
+                "fixture": {"asset_id": "asset-a-1"},
+            }), encoding="utf-8")
             report = require_visual_identity(evidence, "late-image")
             self.assertEqual(report["verdict"], "PASS")
             self.assertEqual(report["mark"], "A3")

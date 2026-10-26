@@ -191,6 +191,18 @@ def evaluate_out_of_order_identity(evidence_dir: Path) -> dict[str, Any]:
 
     fixture_set, observed_hash = _read_fixture_hash(evidence_dir)
     delayed, immediate, window_start_ms, held_log = _held_request_inputs(log_text, fixture_set=fixture_set)
+    initial_path = evidence_dir / "late-image-initial-scene.json"
+    if not initial_path.is_file():
+        raise OutOfOrderContractError("Missing cold-launch scene evidence before the first Next")
+    try:
+        initial = json.loads(initial_path.read_text(encoding="utf-8"))
+        manifest = initial["before_first_next"]["manifest"]
+        assets = dict(field.split("=", 1) for field in manifest.split() if "=" in field)["ledgerSceneAssets"].split(",")
+        observed_held = initial["fixture"]["asset_id"]
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
+        raise OutOfOrderContractError("Invalid cold-launch scene evidence before the first Next") from error
+    if delayed != observed_held or delayed not in assets:
+        raise OutOfOrderContractError("Held asset must belong to the cold-launch scene before the first Next")
     held_label = next(asset["label"] for asset in fixture_manifest(fixture_set)["assets"] if asset["id"] == delayed)
     for identity, scene in ((current, "current"), (after_late, "after")):
         if held_label in str(identity.mark).split("+"):

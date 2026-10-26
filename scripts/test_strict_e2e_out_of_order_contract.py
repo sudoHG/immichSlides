@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import sys
 import tempfile
 import time
@@ -17,6 +18,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 
 from strict_e2e_filter_contract import FROZEN_FIXTURE_SHA256  # noqa: E402
 from strict_e2e_out_of_order_contract import (  # noqa: E402
+    APP_IMAGE_DOWNLOAD_TIMEOUT_MS,
     OUT_OF_ORDER_STEPS,
     OutOfOrderContractError,
     assert_current_scene_holds,
@@ -216,6 +218,12 @@ def _write_identity_evidence(
         log_text = "\n".join(lines) + "\n"
     (evidence / "ooo-current-scene.png").write_bytes(current)
     (evidence / "ooo-after-late.png").write_bytes(after_late)
+    selected = [json.loads(line.removeprefix("late_image_hold "))["asset_id"]
+                for line in log_text.splitlines() if line.startswith("late_image_hold ")][-1]
+    (evidence / "late-image-initial-scene.json").write_text(json.dumps({
+        "before_first_next": {"manifest": f"ledgerSceneAssets={selected}"},
+        "fixture": {"asset_id": selected},
+    }), encoding="utf-8")
     (evidence / "redacted-request.log").write_text(log_text, encoding="utf-8")
     manifest = fixture_manifest(fixture_set)
     (evidence / "fixture-manifest.json").write_text(
@@ -230,6 +238,29 @@ def _write_identity_evidence(
 
 
 class OutOfOrderTimelineTests(unittest.TestCase):
+    def test_initial_scene_evidence_rejects_a_held_prefetch(self) -> None:
+        log_text = _capture_out_of_order_log("preview")
+        for change, message in (
+            ("missing", "Missing cold-launch scene evidence before the first Next"),
+            ("malformed", "Invalid cold-launch scene evidence before the first Next"),
+            ("prefetch", "Held asset must belong to the cold-launch scene before the first Next"),
+        ):
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as directory:
+                evidence = Path(directory)
+                _write_identity_evidence(evidence, current=_fixture_png("A3"), after_late=_fixture_png("A3"), log_text=log_text)
+                self.assertEqual(evaluate_out_of_order_identity(evidence)["verdict"], "PASS")
+                path = evidence / "late-image-initial-scene.json"
+                if change == "missing":
+                    path.unlink()
+                elif change == "malformed":
+                    path.write_text("{}", encoding="utf-8")
+                else:
+                    payload = json.loads(path.read_text())
+                    payload["before_first_next"]["manifest"] = "ledgerSceneAssets=asset-a-2"
+                    path.write_text(json.dumps(payload), encoding="utf-8")
+                with self.assertRaisesRegex(OutOfOrderContractError, "^" + message):
+                    evaluate_out_of_order_identity(evidence)
+
     def test_preview_and_fullsize_logs_prove_old_request_finishes_last(self) -> None:
         self.assertEqual(OUT_OF_ORDER_STEPS, ("ooo-current-scene", "ooo-after-late"))
         for size in ("preview", "fullsize"):
@@ -470,6 +501,10 @@ class OutOfOrderNegativeTests(unittest.TestCase):
                 evaluate_out_of_order_identity(evidence)
 
     def test_hold_must_finish_before_the_app_image_download_timeout(self) -> None:
+        support = (SCRIPT_DIR.parent / "immichSlidesUITests/StrictE2ELateImageSupport.swift").read_text()
+        timeout = re.search(r"downloadTimeoutSeconds: TimeInterval = TestWait.seconds\(\.product\((\d+)\)\)", support)
+        self.assertIsNotNone(timeout)
+        self.assertEqual(int(timeout.group(1)) * 1000, APP_IMAGE_DOWNLOAD_TIMEOUT_MS)
         original = _capture_out_of_order_log("preview").splitlines()
         for duration in (14_999, 15_000, 15_001):
             with self.subTest(duration=duration), tempfile.TemporaryDirectory() as directory:

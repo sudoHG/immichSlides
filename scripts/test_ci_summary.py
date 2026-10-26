@@ -224,6 +224,31 @@ def album_capture_gate_rejections(receipt):
 
 
 class SummaryContractTests(unittest.TestCase):
+    def test_late_image_preparation_and_held_budget_stay_red_in_every_policy(self):
+        from ci_failure_diagnostics import (PREFIX_RULES, FIRST_FAILURE_STEPS, FIRST_FAILURE_ELEMENTS,
+            classify_messages, environment_timing, environment_failure_projection)
+        mappings = [entry for entry in PREFIX_RULES if entry[0].startswith((
+            "Late image preparation", "Late image cold launch", "Held response budget",
+            "Late image held asset", "Late image fixture control"))]
+        for prefix, phase, kind in mappings:
+            diagnostic = classify_messages(["failed - " + prefix])
+            self.assertEqual(diagnostic, {"failure_phase": phase, "failure_class": kind})
+            # Exercise reader rejection even with a foreground App and a fully exhausted wait.
+            failure = environment_failure_projection(first_failure_receipt(native=True))
+            failure.update(surface="playback", wait_elapsed_seconds=25, deadline_seconds=13)
+            for version in (1, 2, 3, 4):
+                for step in FIRST_FAILURE_STEPS:
+                    for element in FIRST_FAILURE_ELEMENTS:
+                        failure.update(step=step, element=element)
+                        self.assertFalse(environment_timing(failure, phase, kind, policy_version=version),
+                                         (prefix, version, step, element))
+            # Summaries retain their old version and failed outcome; no new enum is needed.
+            summary = valid_summary()
+            entry = summary["population"]["observed"][0]
+            entry.update(outcome="failed", **diagnostic)
+            entry["attempts"][0].update(outcome="failed", exit_code=65, **diagnostic)
+            self.assertEqual(ci_summary.parse_summary(summary)["population"]["observed"][0]["outcome"], "failed")
+
     def test_password_prompt_timing_requires_new_policy_and_exact_mode_evidence(self):
         from ci_failure_diagnostics import (ENVIRONMENT_WAIT_STEPS_V3, ENVIRONMENT_WAIT_STEPS_V4,
             environment_limit_evidence, validate_environment_limit)

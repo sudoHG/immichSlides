@@ -271,7 +271,7 @@ card/Not Now time, `C` Continue time and `B` post-Continue Not Now time.
 | journey-b filtered | `t0+14+A` / `tc+C+20+B` | `t0+60`, shared through summary confirmation | No product measurement; cold journey-a bypasses this helper. |
 | journey-b random, pause-stage, single-photo | `t0+14+A` / `tc+C+30+B` | `t0+60`, shared through controls confirmation | Pause-window T±2 still starts at the later Play action. |
 | Strict Filter, including display-policy entry | `t0+22+A` / `tc+C+28+B` | `t0+60`, shared through summary confirmation | No change to display-policy or membership assertions. |
-| Late-image | `t0+10+A` / `tc+C+8+B` | `t0+60`, shared through Next readiness | Prompt deadline remains the minimum of its existing 2-second window and this deadline; hold/release and image windows are unchanged. |
+| Late-image unarmed preparation | `t0+10+A` / `tc+C+8+B` | `t0+60`, shared through playback-entry confirmation | Settings/cache preparation only. The judged cold launch bypasses mode navigation; all held-window waits share the unscaled hold-start + 13 s deadline (15 s App timeout minus 2 s release/delivery margin), never this navigation guard. |
 | Access lifecycle | `t0+22+A` / `tc+C+30+B` | `t0+60`, shared through controls confirmation | Lifecycle timing starts later and keeps its own origin. |
 | `IOSDriver.launchToPlayback` | `t0+7+A` / `tc+C+30+B` | `t0+60`, shared through controls confirmation | Cache, motion, EXIF and rotation measurements remain separate. |
 | Interactive visual audit | `t0+5+A` / `tc+C+8+B` | `t0+60`, shared through album-button confirmation | No product measurement. |
