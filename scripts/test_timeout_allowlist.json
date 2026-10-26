@@ -1,5 +1,11 @@
 [
   {
+    "path": "TestSupport/TestWait.swift",
+    "function": "TestWait.hangGuard",
+    "literal": "timeoutSeconds:TimeInterval=60",
+    "count": 1
+  },
+  {
     "path": "immichSlidesTests/AssetsDownloadManagerBoundaryTests.swift",
     "function": "AssetsDownloadManagerBoundaryTests.active task count changes arrive after the new count is stored",
     "literal": "pollInterval:.milliseconds(10)",

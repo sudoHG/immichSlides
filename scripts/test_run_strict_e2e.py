@@ -1228,15 +1228,24 @@ class FailureDiagnosticsTests(unittest.TestCase):
 
     def test_mode_navigation_markers_preserve_environment_policy_boundaries(self):
         source = (REPO_ROOT / "immichSlidesUITests/UITestSupport.swift").read_text()
-        navigation = source.split("private func navigateMode(", 1)[1].split("\n    private func poll(", 1)[0]
+        selection = source.split("private func navigateMode(", 1)[1].split("\n    private func poll(", 1)[0]
+        elements = re.findall(r"FirstFailureContext\.mark\(\s*step,\s*element:\s*([^)]+)\)", selection)
+        self.assertEqual(["identifier"] * 2, [" ".join(element.split()) for element in elements])
+        navigation = source.split("func selectModeAndContinue(", 1)[1].split("\n    @MainActor\n    struct ModeDeparture", 1)[0]
         # These source markers distinguish unavailable Continue from an issued tap in the public receipt.
-        elements = re.findall(r"FirstFailureContext\.mark\(step,\s*element:\s*([^)]+)\)", navigation)
+        elements = re.findall(r"FirstFailureContext\.mark\(\s*step,\s*element:\s*([^)]+)\)", navigation)
         self.assertEqual(['didIssueContinue ? "mode.continue.button" : identifier'] * 2,
                          [" ".join(element.split()) for element in elements])
         will_tap = navigation.split("willTap: {", 1)[1].split("})", 1)[0]
+        self.assertRegex(will_tap, r'didIssueContinue = true\s+print\(')
         self.assertNotIn("FirstFailureContext.endWait()", will_tap)
-        self.assertRegex(navigation, r'step = "mode-departure"\s+FirstFailureContext\.endWait\(\)\s+'
-                         r'FirstFailureContext\.beginWait\(seconds: departureTimeout\)')
+        self.assertRegex(navigation, r'while let captured = observing\.query\(\{[^\n]*\n\s*'
+                         r'FirstFailureContext\.mark\(')
+        # The shared navigation guard replaces the former per-stage wait without refreshing receipt time.
+        self.assertIn('FirstFailureContext.beginWait(seconds: guardWait.remainingSeconds)', navigation)
+        self.assertEqual(1, navigation.count("FirstFailureContext.beginWait("))
+        self.assertEqual(1, navigation.count("FirstFailureContext.endWait()"))
+        self.assertRegex(navigation, r'defer \{\s*FirstFailureContext\.endWait\(\)')
 
     def test_tvos_timing_preconditions_are_classified_and_stay_red(self):
         from ci_failure_diagnostics import classify_messages, environment_timing, unknown_diagnostics
@@ -1751,7 +1760,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
                                      assertion + '"' + re.escape(prefix) + r'[^"\n]*",\s*file: file, line: line\)')
                     if prefix.startswith("Tapping settings"):
                         self.assertRegex((root / "immichSlidesUITests/AccessLifecycleIOSUITests+Navigation.swift").read_text(),
-                                         r'IOSDriver\(app: app\)\.openSettings\(\s*until: deadline,\s*'
+                                         r'IOSDriver\(app: app\)\.openSettings\(\s*'
                                          r'shouldAllowPINEntry: true,\s*file: file, line: line\)')
                 else:
                     self.assertIn('"' + prefix, (root / source).read_text())

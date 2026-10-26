@@ -466,13 +466,12 @@ final class immichSlidesUITests: XCTestCase {
 
             guard
                 let summaryDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
-                    "mode.filtered.button", destinationIdentifier: "filterSummary.startPlayback.button",
-                    selectionTimeout: immichSlidesUITestsWaitTiming.elementAppearanceTimeoutSeconds,
-                    departureTimeout: immichSlidesUITestsWaitTiming.controlAppearanceTimeoutSeconds)
+                    "mode.filtered.button", destinationIdentifier: "filterSummary.startPlayback.button")
             else { return }
             XCTAssertTrue(
-                app.buttons["filterSummary.album.button"].waitForFailureEvidence(
-                    timeout: max(.zero, summaryDeadline.timeIntervalSinceNow)))
+                summaryDeadline.confirms { nodes in
+                    nodes.contains { $0.identifier == "filterSummary.album.button" && $0.elementType == .button }
+                })
 
             attachScreenshot(
                 app: app,

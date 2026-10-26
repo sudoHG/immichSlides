@@ -63,7 +63,7 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
 
         guard
             let summaryDeadline = chooseOnboardingModeAndContinue(
-                app: app, identifier: "mode.filtered.button", departureTimeout: TestWait.seconds(.product(20)))
+                app: app, identifier: "mode.filtered.button")
         else { return }
         waitForFilterSummary(app: app, deadline: summaryDeadline)
         attachOrientationEvidence(app: app, name: "journey-b-filter-summary")
@@ -72,7 +72,11 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
         guard let playbackDeadline = chooseOnboardingModeAndContinue(app: app, identifier: "mode.random.button")
         else { return }
         XCTAssertTrue(
-            waitForPlaybackControls(app: app, timeout: max(.zero, playbackDeadline.timeIntervalSinceNow)),
+            playbackDeadline.confirms { nodes in
+                nodes.contains {
+                    $0.identifier == "slideshow.control.settings.button" && $0.isEnabled && !$0.frame.isEmpty
+                }
+            },
             "Random mode must reach the playback page.")
         let previous = app.buttons["slideshow.control.previous.button"]
         var initialSnapshots: [String: XCUIElementSnapshot] = [:]
@@ -213,7 +217,11 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
             )
         else { return }
         XCTAssertTrue(
-            waitForPlaybackControls(app: app, timeout: max(.zero, playbackDeadline.timeIntervalSinceNow)),
+            playbackDeadline.confirms { nodes in
+                nodes.contains {
+                    $0.identifier == "slideshow.control.settings.button" && $0.isEnabled && !$0.frame.isEmpty
+                }
+            },
             "Random mode must reach the playback page.")
         dismissPlaybackEntryHintIfNeeded(app: app)
 
@@ -262,7 +270,11 @@ final class StrictE2EFirstBatchIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
             )
         else { return }
         XCTAssertTrue(
-            waitForPlaybackControls(app: app, timeout: max(.zero, playbackDeadline.timeIntervalSinceNow)),
+            playbackDeadline.confirms { nodes in
+                nodes.contains {
+                    $0.identifier == "slideshow.control.settings.button" && $0.isEnabled && !$0.frame.isEmpty
+                }
+            },
             "Random mode must reach the playback page.")
         dismissPlaybackEntryHintIfNeeded(app: app)
         pausePlaybackIfNeeded(app: app)

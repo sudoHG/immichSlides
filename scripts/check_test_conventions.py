@@ -987,8 +987,44 @@ def check_product_wait_factor(path: str, source: str) -> list[Violation]:
                       "production code must not read the test wait factor or use TestWait")
             for match in re.finditer(r"\bTestWait\b|IMMICHSLIDES_TEST_WAIT_FACTOR", code)]
 
+
+def check_navigation_waits(path: str, source: str) -> list[Violation]:
+    """Keep navigation deadlines outside polling and optional branches to one observation."""
+    code = mask_comments(source, mask_strings=True)
+    violations = []
+
+    def reject(index, rule, detail):
+        violations.append(Violation(path, line_of(source, index), rule,
+                                    enclosing_function_name(code, index), detail))
+
+    for match in re.finditer(r"\b(?:while|for|repeat)\b|\bwaitUntil\s*(?=[({])|\.(?:until|observe)\s*(?=[({])", code):
+        opening = find_top_level_brace(code, match.end())
+        if match.group().startswith("waitUntil"):
+            call_opening = code.find("(", match.end())
+            call_closing = find_matching(code, call_opening, "(", ")") if call_opening >= 0 else -1
+            if call_closing >= 0:
+                trailing = re.match(r"\s*\{", code[call_closing + 1:])
+                if trailing is None:
+                    continue
+                opening = call_closing + 1 + trailing.end() - 1
+        closing = find_matching(code, opening, "{", "}") if opening >= 0 else -1
+        if closing >= 0 and re.search(r"\bTestWait\.hangGuard\s*\(", code[opening:closing]):
+            reject(match.start(), "hang-guard-refresh", "create the shared hang guard before polling")
+    for match in re.finditer(r"\bif\s+!?(?!Wait\b|TestWait\b)\w+(?:\.transaction\s*\(\s*\))?\.until\b", code):
+        reject(match.start(), "hang-guard-optional", "optional branches must use a single-observation probe")
+    for match in re.finditer(r"\.probe\s*(?:\(\s*)?\{", code):
+        opening = code.find("{", match.start(), match.end())
+        closing = find_matching(code, opening, "{", "}")
+        if closing >= 0 and re.search(r"\.wait\w*\s*\(|\.(?:until|observe)\s*[({]|\b(?:sleep|usleep)\s*\(|RunLoop\.", code[opening:closing]):
+            reject(match.start(), "hang-guard-probe", "a probe must not poll, sleep or invoke another wait")
+    if path.startswith("immichSlidesUITests/"):
+        for match in re.finditer(r"\bTestWait\.hangGuard\s*\(\s*[^)\s]", code):
+            reject(match.start(), "hang-guard-duration", "UI navigation uses the default unscaled hang guard")
+    return violations
+
+
 CHECKS = (check_forbidden_names, check_display_names, check_swift_testing_names, check_source_text,
-          check_unbounded_waits, check_ui_label_lookups, check_ui_exists_then_reads)
+          check_unbounded_waits, check_ui_label_lookups, check_ui_exists_then_reads, check_navigation_waits)
 
 
 def iter_target_files(root: Path):

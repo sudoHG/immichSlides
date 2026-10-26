@@ -854,7 +854,7 @@ equal its first failing attempt's receipt; an existing listed retry cannot repla
 that first receipt with the retry's state. Preparation receipts belong to
 `not-run` attempts.
 
-Mode-navigation timing field notes: after a card/Not Now tap restarts the wait,
+Current selection-only and legacy refunded mode-navigation timing fields: after a card/Not Now tap restarts the wait,
 `timing.deadline_seconds` is the remaining observation allowance, not the original
 selection/departure duration or total wall time. `wait_elapsed_seconds` measures
 that restarted segment, so a display such as `wait=0.31s / deadline=0.30s` is valid.
@@ -862,10 +862,12 @@ The nonnegative remainder can be zero, which remains ineligible for yellow.
 After Continue returns, the initial departure `deadline_seconds` is the caller's
 full duration `D`; the tap, including XCTest's idle waits, is recorded separately
 in `action_duration_seconds`. Later actions can replace that single-action field;
-the mode observation log and failure detail retain each deducted tap duration and
-their total, including Continue.
+the legacy mode observation log and failure detail retain each deducted tap duration and
+their total, including Continue. Current selection-only logs retain individual card/Not Now
+durations in `nativeTapSeconds`, without a total field. Guarded Continue navigation records
+native durations but does not refund them or restart its deadline.
 
-IOSDriver Settings and rotation stable captures also exclude their measured native
+Legacy IOSDriver Settings and current rotation stable captures exclude their measured native
 tap time. After each preparation deduction, `deadline_seconds` records only the
 remaining observation allowance and `wait_elapsed_seconds` measures the restarted
 segment. The Settings outcome wait uses its original entry allowance minus all
@@ -875,6 +877,16 @@ continues to describe only the latest action. The playback-rotation 30-second bo
 still includes all wall time. The [Settings caller formulas](TESTING.md#3-assertions)
 and [rotation caller formulas](TESTING.md#running-controlled-integration-and-end-to-end-tests)
 are authoritative.
+
+Current mode departure and IOSDriver Settings entry instead share an unscaled
+60-second monotonic navigation guard through preparation, the fixed single-action
+child steps and outcome. Native actions no longer extend those paths. The outer
+wait receipt records that root allowance, while `action_duration_seconds` still
+describes only the last action; it is not a complete native-action total.
+Mode diagnostics retain each native duration without treating it as a deduction.
+In-flight success and the single post-action observation follow the
+[navigation semantics](TESTING.md#3-assertions). Historical receipts and all
+environment readers keep their existing interpretation.
 
 An optional `first_failure.gate` carries the album capture gate's last observed
 conditions on its timeout paths only. The First failure line in `summary.md`
@@ -1112,10 +1124,12 @@ Policy v4 preserves every v3 entry and adds exactly the two `save-password-promp
 keys above. The motivating [nightly 39969370437](https://github.com/sudoHG/immichSlides/actions/runs/39969370437),
 shard `iphone-immichSlides-iOS-debug-0`, fixture A `album-empty`, reports
 `mode_selection/navigation`, `mode.filtered.button`, surface `mode`, wait 23.41 s
-against a 22 s deadline. `IOSFirstBootNavigation.navigateMode` sets the step as
-soon as it observes the prompt, then re-marks that step and the target card at
-each loop iteration and at timeout; a decline need not have been issued.
-No Swift receipt change is needed. Eligibility still requires the existing hosted marker, a full
+against a 22 s deadline. `IOSFirstBootNavigation.navigateMode` and
+`selectModeAndContinue` set the step as soon as they observe the prompt, then re-mark
+that step at each observation and at timeout; a decline need not have been issued.
+The element remains the target card until Continue is issued, then becomes
+`mode.continue.button`; issuance is recorded before the native tap, separately from return.
+Eligibility still requires the existing hosted marker, a full
 deadline and low-idle samples strictly before and after the failure, each at most
 5% idle. Other elements, surfaces, phase/class pairs and missing evidence stay red.
 Retained v1/v2/v3 receipts never gain this exception; no old night is reclassified.
@@ -1153,21 +1167,24 @@ no playback photo is expected there; BLACK/BLANK and unrecognizable playback
 remain excluded. The older iPad and album receipts lack hosted markers and remain
 red: this exception does not supply missing evidence or reclassify old nights.
 
-Mode-navigation clocks exclude measured tap time, including XCTest's pre- and
+Legacy mode-navigation clocks excluded measured tap time, including XCTest's pre- and
 post-event waits for the App or prompt host to idle. Each tap can therefore absorb
 about 60 seconds of App non-idleness if navigation then succeeds within its
 remaining allowance; no evidence attributes that time exclusively to the host.
-The coordinator accepts this risk as for Next; no new cap or threshold is added.
-See the [caller formulas and deducted-time diagnostics](TESTING.md#3-assertions).
+Current mode departure uses the shared 60-second guard described in the
+[caller formulas and native-action diagnostics](TESTING.md#3-assertions).
+Selection-only screenshots and the separate Next/rotation clocks retain their prior behavior.
 
 Accepted residual risk (v3/v4 mode departure): Continue tapped but no navigation,
 an unhandled non-password alert over the mode page, and load-only navigation bugs
 produce receipts identical to a slow departure. With every required proof field,
-they can be yellow once on a CPU-starved night. The departure deadline is now
-always `D` after Continue returns, rather than the pre-tap deadline's remainder
+they can be yellow once on a CPU-starved night. For historical refunded receipts,
+the departure deadline was `D` after Continue returned, rather than the pre-tap deadline's remainder
 `max(0, D-C)` for tap duration `C`. An App that remains non-idle for a long time
 after Continue and then stays on the mode page for `D` seconds can therefore be
-yellow with every required starvation proof. Unrecognizable playback, including
+yellow with every required starvation proof. Current guard failures retain the same
+step/element and policy eligibility, without tap refunds or any reader change.
+Unrecognizable playback, including
 the motivating iPad journey-b receipt, still stays red. A night without starvation is red;
 two consecutive yellow nights escalate to red. Alternating yellow/pass nights
 never auto-escalate, so the coordinator reviews any test that is yellow three or

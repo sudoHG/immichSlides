@@ -12,6 +12,30 @@ def rules(violations):
     return [v.rule for v in violations]
 
 
+class NavigationWaitTests(unittest.TestCase):
+    def test_navigation_waits_reject_refreshed_guards_and_blocking_optional_probes(self):
+        cases = (
+            ('while pending { let wait = TestWait.hangGuard() }', 'hang-guard-refresh'),
+            ('Wait.until(timeout: limit) { TestWait.hangGuard().transaction().probe { ready } }', 'hang-guard-refresh'),
+            ('step.until { let wait = TestWait.hangGuard(); return ready }', 'hang-guard-refresh'),
+            ('waitUntil(timeout: limit) { let wait = TestWait.hangGuard(); return ready }', 'hang-guard-refresh'),
+            ('repeat { let wait = TestWait.hangGuard() } while pending', 'hang-guard-refresh'),
+            ('if step.until { pin != nil } { unlock() }', 'hang-guard-optional'),
+            ('if wait.transaction().until { pin != nil } { unlock() }', 'hang-guard-optional'),
+            ('step.probe { button.waitForExistence(timeout: 60) }', 'hang-guard-probe'),
+            ('step.probe({ step.until { ready } })', 'hang-guard-probe'),
+            ('step.probe { step.until { ready } }', 'hang-guard-probe'),
+            ('let wait = TestWait.hangGuard(timeoutSeconds: 120)', 'hang-guard-duration'),
+        )
+        for source, expected in cases:
+            with self.subTest(source=source):
+                self.assertIn(expected, rules(conv.check_navigation_waits('immichSlidesUITests/Flow.swift', source)))
+        valid = 'let wait = TestWait.hangGuard(); let step = wait.transaction(); if step.probe { pin != nil } { unlock() }; XCTAssertTrue(step.until { ready })'
+        self.assertEqual([], conv.check_navigation_waits('immichSlidesUITests/Flow.swift', valid))
+        valid = 'if let timeout { waitUntil(timeout: timeout, condition: condition) } else { let wait = TestWait.hangGuard() }'
+        self.assertEqual([], conv.check_navigation_waits('immichSlidesUITests/Flow.swift', valid))
+
+
 class ForbiddenNameTests(unittest.TestCase):
     path = "immichSlidesTests/Example.swift"
 

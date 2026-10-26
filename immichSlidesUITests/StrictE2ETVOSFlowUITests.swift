@@ -380,8 +380,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
         FirstFailureRemote.press(.select)
         XCTAssertTrue(
             waitForScenePublicationAdvance(
-                app: app, baseline: historyStart["after"] as? [String: String] ?? [:],
-                timeout: TestWait.seconds(.product(10))),
+                app: app, baseline: historyStart["after"] as? [String: String] ?? [:]),
             "The first next must advance the playback cursor."
         )
         RunLoop.current.run(until: Date().addingTimeInterval(Timing.playbackSceneSettleSeconds))
@@ -402,8 +401,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
         FirstFailureRemote.press(.select)
         XCTAssertTrue(
             waitForScenePublicationAdvance(
-                app: app, baseline: firstNext["after"] as? [String: String] ?? [:],
-                timeout: TestWait.seconds(.product(10))),
+                app: app, baseline: firstNext["after"] as? [String: String] ?? [:]),
             "The second next must advance the playback cursor further."
         )
         RunLoop.current.run(until: Date().addingTimeInterval(Timing.playbackSceneSettleSeconds))
@@ -880,10 +878,9 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
     private func waitForScenePublicationAdvance(
         app: XCUIApplication,
         baseline: [String: String],
-        timeout: TimeInterval,
+        timeout: TimeInterval? = nil,
         requiresStableCaptureWindow: Bool = false
     ) -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
         let baselinePublication = scenePublication(in: baseline)
         let baselineFields = SharedSceneEvidenceManifest.parseKeyValueFields(baseline["manifest"] ?? "")
         let isInitialPublication =
@@ -893,7 +890,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
         var previousObservation: [String: String] = [:]
         var lastObservation: [String: String] = [:]
         var didObserveAdvance = false
-        while Date() < deadline {
+        let observeAdvance = { [self] in
             previousObservation = lastObservation
             lastObservation = strictSceneFrameObservation(app: app)
             // The displayed index saturates at the pool size; repeated photos still publish new timing.
@@ -909,17 +906,32 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
                 didObserveAdvance = true
                 advanceObservation = lastObservation
             }
-            if didObserveAdvance
+            return didObserveAdvance
                 && (!requiresStableCaptureWindow || StrictE2ESceneCapture.isStableWindow(lastObservation))
-                && Date() < deadline
-            {
-                attachStrictSceneObservation(
-                    before: baseline, after: advanceObservation, name: "tvos-scene-publication-advance")
-                attachStrictSceneObservation(
-                    before: previousObservation, after: lastObservation, name: "tvos-resume-capture-window")
-                return true
+        }
+        let didObserve: Bool
+        if let timeout {
+            let deadline = Date().addingTimeInterval(timeout)
+            var satisfied = false
+            while Date() < deadline {
+                if observeAdvance(), Date() < deadline {
+                    satisfied = true
+                    break
+                }
+                RunLoop.current.run(until: Date().addingTimeInterval(Timing.focusPollingSeconds))
             }
-            RunLoop.current.run(until: Date().addingTimeInterval(Timing.focusPollingSeconds))
+            didObserve = satisfied
+        } else {
+            let guardWait = TestWait.hangGuard()
+            didObserve = guardWait.transaction().until(
+                pollIntervalSeconds: Timing.focusPollingSeconds, observeAdvance)
+        }
+        if didObserve {
+            attachStrictSceneObservation(
+                before: baseline, after: advanceObservation, name: "tvos-scene-publication-advance")
+            attachStrictSceneObservation(
+                before: previousObservation, after: lastObservation, name: "tvos-resume-capture-window")
+            return true
         }
         attachStrictSceneObservation(
             before: baseline, after: advanceObservation, name: "tvos-scene-publication-advance")
