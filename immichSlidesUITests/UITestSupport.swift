@@ -969,11 +969,10 @@ struct IOSFirstBootNavigation {
             let startedAt = ProcessInfo.processInfo.systemUptime
             defer { diagnostics.finishModeDiagnosticObservation(since: startedAt) }
             return Result {
-                if guardWait.remainingSeconds <= 0, let previous = lastObservation {
-                    // A late action grants one native snapshot, not another window/alert search.
-                    return observation(
-                        window: try previous.windowElement.snapshot(), element: previous.windowElement,
-                        host: app, windowIndex: previous.windowIndex)
+                if guardWait.remainingSeconds <= 0 {
+                    // The action's one admitted follow-up is the same complete modal-aware observation.
+                    return try observe(
+                        destinationIdentifier: destinationIdentifier, diagnostics: diagnostics)
                 }
                 return try observe(
                     modeIdentifier: didContinue ? nil : identifier,

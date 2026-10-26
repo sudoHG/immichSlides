@@ -19,13 +19,22 @@ extension AccessLifecycleIOSUITests {
             waitForSaveEnabled(app: app, saveButton: saveButton, timeout: TestWait.seconds(.infrastructure(45))),
             "Save must become enabled after a real connection test succeeds.")
         tapElement(saveButton)
+        let navigation = IOSFirstBootNavigation(app: app)
         guard
-            let playbackDeadline = IOSFirstBootNavigation(app: app).selectModeAndContinue(
+            let playbackDeadline = navigation.selectModeAndContinue(
                 "mode.random.button", destinationIdentifier: "slideshow.control.settings.button")
         else { return }
+        let confirmation = playbackDeadline.guardWait.transaction()
         XCTAssertTrue(
-            playbackDeadline.confirms { nodes in
-                AccessLifecycleContract.hasPlaybackPageArrived(
+            confirmation.until {
+                guard
+                    navigation.dismissPasswordPrompt(
+                        guardWait: playbackDeadline.guardWait, transaction: playbackDeadline.passwordPromptTransaction),
+                    let observation = try? navigation.observe(transaction: confirmation),
+                    !observation.hasModalObstacle
+                else { return false }
+                let nodes = observation.nodes
+                return AccessLifecycleContract.hasPlaybackPageArrived(
                     isSettingsPresent: nodes.contains { $0.identifier == "slideshow.control.settings.button" },
                     isNextPresent: nodes.contains { $0.identifier == "slideshow.control.next.button" },
                     isPlayPausePresent: nodes.contains { $0.identifier == "slideshow.control.playPause.button" },

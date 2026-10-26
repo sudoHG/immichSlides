@@ -469,7 +469,9 @@ final class immichSlidesUITests: XCTestCase {
                     "mode.filtered.button", destinationIdentifier: "filterSummary.startPlayback.button")
             else { return }
             XCTAssertTrue(
-                summaryDeadline.confirms { nodes in nodes.contains { $0.identifier == "filterSummary.album.button" } })
+                summaryDeadline.confirms { nodes in
+                    nodes.contains { $0.identifier == "filterSummary.album.button" && $0.elementType == .button }
+                })
 
             attachScreenshot(
                 app: app,

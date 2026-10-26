@@ -615,7 +615,10 @@ struct IOSDriver: PlaybackDriver {
         FirstFailureContext.mark("query-element", element: identifier)
         FirstFailureContext.beginWait(seconds: guardWait.remainingSeconds)
         defer { FirstFailureContext.endWait() }
-        guard navigation.dismissPasswordPrompt(guardWait: guardWait, transaction: departure.passwordPromptTransaction)
+        guard
+            readiness.until({
+                navigation.dismissPasswordPrompt(guardWait: guardWait, transaction: departure.passwordPromptTransaction)
+            })
         else { return false }
         let banner = app.descendants(matching: .any).matching(identifier: "slideshow.entryHint.banner").firstMatch
         if hint.probe({ banner.exists }) {
@@ -634,7 +637,10 @@ struct IOSDriver: PlaybackDriver {
         } else if readiness.probe(readSettingsHittability) {
             return true
         }
-        guard navigation.dismissPasswordPrompt(guardWait: guardWait, transaction: departure.passwordPromptTransaction)
+        guard
+            readiness.until({
+                navigation.dismissPasswordPrompt(guardWait: guardWait, transaction: departure.passwordPromptTransaction)
+            })
         else { return false }
         if readiness.probe(readSettingsHittability) { return true }
         guard

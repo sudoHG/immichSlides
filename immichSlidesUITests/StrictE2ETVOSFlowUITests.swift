@@ -512,7 +512,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
         )
         XCTAssertTrue(
             waitForScenePublicationAdvance(
-                app: app, baseline: autoPlayBaseline),
+                app: app, baseline: autoPlayBaseline, timeout: TestWait.seconds(.product(3))),
             "The index probe must change after a playback action."
         )
         let publicationAfterAutoPlay = scenePublication(in: strictSceneFrameObservation(app: app))
@@ -603,6 +603,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             waitForScenePublicationAdvance(
                 app: app,
                 baseline: pauseHeld["after"] as? [String: String] ?? [:],
+                timeout: TestWait.seconds(.product(3)),
                 requiresStableCaptureWindow: true
             ),
             "After resuming, playback must advance to another photo."
@@ -877,9 +878,9 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
     private func waitForScenePublicationAdvance(
         app: XCUIApplication,
         baseline: [String: String],
+        timeout: TimeInterval? = nil,
         requiresStableCaptureWindow: Bool = false
     ) -> Bool {
-        let guardWait = TestWait.hangGuard()
         let baselinePublication = scenePublication(in: baseline)
         let baselineFields = SharedSceneEvidenceManifest.parseKeyValueFields(baseline["manifest"] ?? "")
         let isInitialPublication =
@@ -889,7 +890,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
         var previousObservation: [String: String] = [:]
         var lastObservation: [String: String] = [:]
         var didObserveAdvance = false
-        let didObserve = guardWait.transaction().until(pollIntervalSeconds: Timing.focusPollingSeconds) {
+        let observeAdvance = { [self] in
             previousObservation = lastObservation
             lastObservation = strictSceneFrameObservation(app: app)
             // The displayed index saturates at the pool size; repeated photos still publish new timing.
@@ -907,6 +908,23 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             }
             return didObserveAdvance
                 && (!requiresStableCaptureWindow || StrictE2ESceneCapture.isStableWindow(lastObservation))
+        }
+        let didObserve: Bool
+        if let timeout {
+            let deadline = Date().addingTimeInterval(timeout)
+            var satisfied = false
+            while Date() < deadline {
+                if observeAdvance(), Date() < deadline {
+                    satisfied = true
+                    break
+                }
+                RunLoop.current.run(until: Date().addingTimeInterval(Timing.focusPollingSeconds))
+            }
+            didObserve = satisfied
+        } else {
+            let guardWait = TestWait.hangGuard()
+            didObserve = guardWait.transaction().until(
+                pollIntervalSeconds: Timing.focusPollingSeconds, observeAdvance)
         }
         if didObserve {
             attachStrictSceneObservation(

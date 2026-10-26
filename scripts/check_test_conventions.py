@@ -997,8 +997,16 @@ def check_navigation_waits(path: str, source: str) -> list[Violation]:
         violations.append(Violation(path, line_of(source, index), rule,
                                     enclosing_function_name(code, index), detail))
 
-    for match in re.finditer(r"\b(?:while|for)\b|\.(?:until|observe)\s*(?=[({])", code):
+    for match in re.finditer(r"\b(?:while|for|repeat)\b|\bwaitUntil\s*(?=[({])|\.(?:until|observe)\s*(?=[({])", code):
         opening = find_top_level_brace(code, match.end())
+        if match.group().startswith("waitUntil"):
+            call_opening = code.find("(", match.end())
+            call_closing = find_matching(code, call_opening, "(", ")") if call_opening >= 0 else -1
+            if call_closing >= 0:
+                trailing = re.match(r"\s*\{", code[call_closing + 1:])
+                if trailing is None:
+                    continue
+                opening = call_closing + 1 + trailing.end() - 1
         closing = find_matching(code, opening, "{", "}") if opening >= 0 else -1
         if closing >= 0 and re.search(r"\bTestWait\.hangGuard\s*\(", code[opening:closing]):
             reject(match.start(), "hang-guard-refresh", "create the shared hang guard before polling")

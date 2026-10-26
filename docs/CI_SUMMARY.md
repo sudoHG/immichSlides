@@ -854,7 +854,7 @@ equal its first failing attempt's receipt; an existing listed retry cannot repla
 that first receipt with the retry's state. Preparation receipts belong to
 `not-run` attempts.
 
-Legacy refunded mode-navigation timing fields: after a card/Not Now tap restarts the wait,
+Current selection-only and legacy refunded mode-navigation timing fields: after a card/Not Now tap restarts the wait,
 `timing.deadline_seconds` is the remaining observation allowance, not the original
 selection/departure duration or total wall time. `wait_elapsed_seconds` measures
 that restarted segment, so a display such as `wait=0.31s / deadline=0.30s` is valid.
@@ -862,8 +862,10 @@ The nonnegative remainder can be zero, which remains ineligible for yellow.
 After Continue returns, the initial departure `deadline_seconds` is the caller's
 full duration `D`; the tap, including XCTest's idle waits, is recorded separately
 in `action_duration_seconds`. Later actions can replace that single-action field;
-the mode observation log and failure detail retain each deducted tap duration and
-their total, including Continue.
+the legacy mode observation log and failure detail retain each deducted tap duration and
+their total, including Continue. Current selection-only logs retain individual card/Not Now
+durations in `nativeTapSeconds`, without a total field. Guarded Continue navigation records
+native durations but does not refund them or restart its deadline.
 
 Legacy IOSDriver Settings and current rotation stable captures exclude their measured native
 tap time. After each preparation deduction, `deadline_seconds` records only the

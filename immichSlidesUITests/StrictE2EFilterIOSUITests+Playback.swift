@@ -220,14 +220,11 @@ extension StrictE2EFilterIOSUITests {
         let guardWait = TestWait.hangGuard()
         let transaction = guardWait.transaction()
         let entryIdentifier = "filterSummary.\(kind).button"
-        var targetFrame: CGRect?
+        let entry = app.buttons[entryIdentifier]
         let prepared = transaction.until {
-            let snapshots = app.evidenceSnapshotsByIdentifier()
-            guard let target = snapshots[entryIdentifier], target.isEnabled, !target.frame.isEmpty else { return false }
-            targetFrame = target.frame
-            return true
+            entry.exists && entry.isHittable
         }
-        guard prepared, let targetFrame,
+        guard prepared,
             transaction.perform(
                 "tap",
                 {
@@ -236,9 +233,7 @@ extension StrictE2EFilterIOSUITests {
                     print(
                         "Filter navigation action issued: entry=\(entryIdentifier); unixSeconds=\(Date().timeIntervalSince1970)"
                     )
-                    app.coordinate(withNormalizedOffset: .zero).withOffset(
-                        CGVector(dx: targetFrame.midX, dy: targetFrame.midY)
-                    ).tapForFailureEvidence()
+                    entry.tapForFailureEvidence()
                     print(
                         "Filter navigation action returned: entry=\(entryIdentifier); unixSeconds=\(Date().timeIntervalSince1970); actionSeconds=\(ProcessInfo.processInfo.systemUptime - startedAt)"
                     )
@@ -248,8 +243,7 @@ extension StrictE2EFilterIOSUITests {
             return
         }
         let opened = transaction.until {
-            let snapshots = app.evidenceSnapshotsByIdentifier()
-            return snapshots["\(kind)Filter.back.button"] != nil || snapshots["\(kind)Filter.selectAll.button"] != nil
+            app.buttons["\(kind)Filter.back.button"].exists || app.buttons["\(kind)Filter.selectAll.button"].exists
         }
         XCTAssertTrue(opened, kind == "album" ? "Album filter page must open" : "Person filter page must open")
     }

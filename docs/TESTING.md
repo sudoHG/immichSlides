@@ -174,8 +174,12 @@ late. An action issued before expiry permits exactly one subsequent observation,
 including after expiry; an unsatisfied or failed observation cannot pass. Otherwise
 no query starts after expiry. Use `probe` for optional branches: it takes one fresh
 observation and never polls or sleeps. Do not create guards inside polling loops,
-put waits in probes or use a full guard to choose an optional branch; the convention
-checker rejects these patterns. Product waits and complete evidence windows retain
+put waits in probes or use a full guard to choose an optional branch. The convention
+checker detects direct guard creation inside `while`, `for`, `repeat`, `waitUntil`,
+`.until` and `.observe` bodies, and waits/sleeps directly inside `.probe` closures.
+Its optional-branch rule matches only `if step.until` and `if step.transaction().until`
+(including negation); `guard`, compound conditions, assigned results and indirect
+helper calls still require review. Product waits and complete evidence windows retain
 their existing semantics, cadence and budgets.
 
 For iOS first-boot paths that type and save server credentials, use
@@ -234,9 +238,11 @@ The card, exact Not Now and Continue each have one fixed single-action child tra
 all share the root deadline. Neither a prompt nor a returned tap refreshes it.
 No target is tapped again. Every native query in the composite window/alert observer
 checks admission independently. A final in-flight satisfied observation is accepted late;
-an action returning after expiry gets one snapshot of the retained App window, with no
-new window enumeration, alert search or action. The destination must still be explicit,
-mode must be absent and the captured window must have no modal obstacle. Unknown never passes.
+an action returning after expiry gets one complete composite observation of App windows,
+SpringBoard windows and alerts, using the normal prompt search. That single admitted
+observation may finish after expiry but cannot authorize another observation or action.
+The destination must still be explicit, mode must be absent and no captured window
+may have a modal obstacle. Unknown never passes.
 
 The returned `ModeDeparture` retains the satisfying snapshot and the same guard.
 `confirms` first evaluates that immutable evidence and admits any necessary fresh snapshot
@@ -244,6 +250,9 @@ only before the root deadline. The driver's `waitForPlaybackControls` retains li
 hittability, optional entry-hint dismissal and one canvas wake under that guard.
 Hint dismissal and wake each have one fixed action transaction; the exact password
 prompt reuses the transaction from mode navigation, so it cannot be declined again.
+Failed composite observations and unexpected modals keep polling within the original
+guard. AccessLifecycle's first-boot arrival confirmation also dismisses the exact
+Save Password prompt under that same guard and single decline transaction.
 A late hint or wake tap gets one direct live-hittability query, with no further action.
 Prompt dismissal must still establish that the exact modal is gone; an expired guard
 cannot authorize fresh queries for both modal absence and subsequent live hittability.
@@ -265,7 +274,8 @@ card/Not Now time, `C` Continue time and `B` post-Continue Not Now time.
 | Interactive visual audit | `t0+5+A` / `tc+C+8+B` | `t0+60`, shared through album-button confirmation | No product measurement. |
 | Visual-audit selection-only | `t0+5+A` | Unchanged | No Continue. |
 
-Mode diagnostics record `nativeTapSeconds` without subtracting them from the guard.
+Mode diagnostics record `nativeTapSeconds`. Guarded Continue navigation does not
+subtract those durations; selection-only navigation still refunds card/Not Now time.
 The outer failure marker remains the target card until Continue, then
 `mode-departure` / `mode.continue.button`. The existing failure prefixes and
 [v3/v4 environment readers](CI_SUMMARY.md#prepared-hosted-strict-environment-limits)
@@ -381,9 +391,11 @@ filter entry changes from a tap followed by serial 12 + 2-second marker waits to
 one 60-second preparation/action/outcome transaction; initial current-asset readiness
 changes from 20 infrastructure seconds (or 8 product seconds in single-photo setup)
 to 60 seconds. Explicit current-asset change/readback timeouts remain unchanged.
-The tvOS publication-summary waiter changes its caller-supplied 3/10-second readiness
-caps to 60 seconds; publication advancement and optional complete stable-scene predicates
-remain identical, as do the surrounding autoplay and screenshot measurement windows.
+The two tvOS Next publication-summary waits change their 10-second readiness caps
+to 60-second guards. Autoplay and resume retain their 3-second product waits after
+the existing 6-second observation, rejecting observations that return after the
+product deadline. Publication advancement and optional complete stable-scene predicates,
+and the surrounding autoplay and screenshot measurement windows, remain identical.
 
 The outcome field becomes true only after the wait accepts an observation within its window.
 Verify time includes its snapshot time; no extra diagnostic snapshot runs after
