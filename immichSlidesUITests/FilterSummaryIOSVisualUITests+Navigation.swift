@@ -29,7 +29,10 @@ extension FilterSummaryIOSVisualUITests {
         // The single wake and its fresh read share the caller's navigation deadline.
         return wake.until {
             guard let observation = timing.observe(app: app, identifier: identifier),
-                observation.hasPlaybackMarker, !observation.hasSettingsNavigationEvidence, observation.isReady
+                observation.hasPlaybackMarker, !observation.hasSettingsNavigationEvidence, observation.isReady,
+                let settings = observation.snapshots["slideshow.control.settings.button"],
+                settings.elementType == .button, settings.isEnabled, !settings.frame.isEmpty,
+                observation.windowFrame.contains(settings.frame)
             else { return false }
             return observation.windowElement.buttons[identifier].isHittable
         }
