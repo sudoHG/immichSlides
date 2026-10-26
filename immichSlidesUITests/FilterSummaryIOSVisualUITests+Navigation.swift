@@ -5,20 +5,84 @@ import XCTest
 extension FilterSummaryIOSVisualUITests {
     @MainActor
     func openSettingsFromSlideShow(app: XCUIApplication) {
-        var diagnostic = ""
-        XCTAssertTrue(
-            waitForSlideshowSettingsButton(
-                app: app, timeout: FilterSummaryIOSVisualUITestsWaitTiming.screenTransitionTimeoutSeconds,
-                onTimeout: { diagnostic = " (\($0))" }),
-            "Playback page should show the settings button\(diagnostic)")
+        XCTAssertTrue(IOSDriver(app: app).openSettings(), "Playback page should show the settings button")
+    }
 
-        app.tapSlideshowControlBarButton(identifier: "slideshow.control.settings.button")
+    @MainActor
+    func refreshPlaybackControlsForNavigation(app: XCUIApplication, guardWait: TestWait.HangGuard) -> Bool {
+        let preparation = guardWait.transaction()
+        let wake = guardWait.transaction()
+        let navigation = IOSFirstBootNavigation(app: app)
+        let identifier = "slideshow.control.playPause.button"
+        var timing = SlideshowControlBarTiming()
+        defer { print("Visual playback navigation: \(timing.diagnostic)") }
+        guard
+            preparation.until({
+                guard let surface = try? navigation.observe(destinationIdentifier: "slideshow.currentAssetId.flag"),
+                    !surface.hasModalObstacle
+                else { return false }
+                guard let observation = timing.observe(app: app, identifier: identifier) else { return false }
+                return observation.hasPlaybackMarker && !observation.hasSettingsNavigationEvidence
+            })
+        else { return false }
+        guard wake.perform("tap", { timing.reveal(app: app) }) else { return false }
+        // The single wake and its fresh read share the caller's navigation deadline.
+        return wake.until {
+            guard let observation = timing.observe(app: app, identifier: identifier),
+                observation.hasPlaybackMarker, !observation.hasSettingsNavigationEvidence, observation.isReady
+            else { return false }
+            return observation.windowElement.buttons[identifier].isHittable
+        }
+    }
 
+    @MainActor
+    func returnToSlideShowFromSettingsRoot(app: XCUIApplication) {
+        let guardWait = TestWait.hangGuard()
+        let preparation = guardWait.transaction()
+        let back = guardWait.transaction()
+        let navigation = IOSFirstBootNavigation(app: app)
+        var observation: IOSFirstBootNavigation.Observation?
+        var backButton: XCUIElement?
+        var hasReadyControls = false
+        func isPlayback(_ observed: IOSFirstBootNavigation.Observation) -> Bool {
+            !observed.hasModalObstacle && observed.hasDestination("slideshow.currentAssetId.flag")
+                && !observed.nodes.contains { $0.identifier.hasPrefix("settings.") }
+        }
+        func observePlayback(_ observed: IOSFirstBootNavigation.Observation) -> Bool {
+            guard isPlayback(observed) else { return false }
+            if let settings = observed.button("slideshow.control.settings.button"), settings.isEnabled,
+                !settings.frame.isEmpty, observed.window.frame.contains(settings.frame)
+            {
+                hasReadyControls = observed.windowElement.buttons[settings.identifier].isHittable
+            }
+            return true
+        }
+        let prepared = preparation.until {
+            guard let observed = try? navigation.observe(destinationIdentifier: "slideshow.currentAssetId.flag"),
+                !observed.hasModalObstacle
+            else { return false }
+            observation = observed
+            if observePlayback(observed) { return true }
+            guard observed.hasDestination("settings.item.playback") else { return false }
+            let buttons = app.navigationBars.buttons.allElementsBoundByIndex.filter { $0.identifier != "ToggleSidebar" }
+            guard buttons.count == 1, let candidate = buttons.first, candidate.isHittable else { return false }
+            backButton = candidate
+            return true
+        }
+        var returned = prepared && observation.map(isPlayback) == true
+        if prepared, !returned, let backButton {
+            returned =
+                back.perform("back", { backButton.tapForFailureEvidence() })
+                && back.until {
+                    guard let observed = try? navigation.observe(destinationIdentifier: "slideshow.currentAssetId.flag")
+                    else { return false }
+                    return observePlayback(observed)
+                }
+        }
+        // Playback arrival survives control auto-hide; one wake restores the control needed by the next assertion.
         XCTAssertTrue(
-            waitForAnySettingsRootEntry(
-                app: app, timeout: FilterSummaryIOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
-            "After opening settings from the playback page, the settings list should be visible"
-        )
+            returned && (hasReadyControls || refreshPlaybackControlsForNavigation(app: app, guardWait: guardWait)),
+            "Could not return from settings to the playback page")
     }
 
     func assertCompactPhoneFilterTopBar(

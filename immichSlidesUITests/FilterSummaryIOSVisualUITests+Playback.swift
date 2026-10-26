@@ -221,7 +221,7 @@ extension FilterSummaryIOSVisualUITests {
         )
 
         openSettingsFromSlideShow(app: app)
-        returnToSlideShowFromSettings(app: app)
+        returnToSlideShowFromSettingsRoot(app: app)
 
         XCTAssertTrue(
             app.buttons["slideshow.control.settings.button"].waitForPublicElement(
