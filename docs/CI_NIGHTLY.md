@@ -520,18 +520,19 @@ decline was issued. A night without starvation is red; the second consecutive
 yellow UTC night escalates to red, bounding consecutive exposure. The existing
 weekly review below still applies. Yellow never counts as pass or recovery.
 
-Mode-navigation clocks exclude measured tap time, including XCTest's pre- and
-post-event waits for the App or prompt host to idle. This can absorb about
-60 seconds of App non-idleness per tap when the destination is then reached
-within its allowance; the time is not proven to be exclusively host overhead.
-The coordinator accepts the same risk as for Next, without a new cap or threshold.
-The mode observation log and failure detail retain each deducted duration and
-their total, including Continue; see [the caller formulas](TESTING.md#3-assertions).
+Guarded mode navigation (selection plus Continue) and the `IOSDriver.openSettings`
+entry each share one unscaled 60-second hang guard per transaction and no longer
+exclude native tap time: XCTest's pre- and post-event idle waits consume that guard.
+Their logs keep the measured durations as diagnostics only (`nativeTapSeconds` for
+mode navigation, `tapDurationsSeconds`/`revealDurationsSeconds` for Settings); see
+[the caller formulas](TESTING.md#3-assertions).
 
-Settings entry and rotation stable observation also exclude only their measured
-native wake/Settings/refresh tap durations, with per-tap and total deductions in
-logs and failure details. The same accepted risk applies: XCTest can absorb about
-60 seconds of App non-idleness per tap, without proving host-only responsibility.
+Selection-only mode navigation and rotation stable observation still exclude only
+their measured native tap durations, with per-tap and total deductions in logs and
+failure details. There XCTest can absorb about 60 seconds of App non-idleness per
+tap without proving host-only responsibility; the coordinator accepts that risk
+without a new cap or threshold.
+
 Settings can now reach a positive expired outcome wait instead of a zero-budget
 failure, restoring potential yellow eligibility relative to #607. A wake that
 formerly exhausted preparation as red `settings_navigation/hidden_controls` can
