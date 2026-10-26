@@ -177,6 +177,9 @@ observation and never polls or sleeps. Do not create guards inside polling loops
 put waits in probes or use a full guard to choose an optional branch. The convention
 checker detects direct guard creation inside `while`, `for`, `repeat`, `waitUntil`,
 `.until` and `.observe` bodies, and waits/sleeps directly inside `.probe` closures.
+For `waitUntil`, `.until` and `.observe`, the guard-creation check scans only trailing
+closures; parenthesized closure arguments such as `readiness.until({ ... })` and
+`waitUntil(timeout: limit, condition: { ... })` require manual review.
 Its optional-branch rule matches only `if step.until` and `if step.transaction().until`
 (including negation); `guard`, compound conditions, assigned results and indirect
 helper calls still require review. Product waits and complete evidence windows retain

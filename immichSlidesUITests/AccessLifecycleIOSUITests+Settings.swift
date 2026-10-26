@@ -30,14 +30,21 @@ extension AccessLifecycleIOSUITests {
                 guard
                     navigation.dismissPasswordPrompt(
                         guardWait: playbackDeadline.guardWait, transaction: playbackDeadline.passwordPromptTransaction),
-                    let observation = try? navigation.observe(transaction: confirmation),
+                    let observation = try? navigation.observe(
+                        destinationIdentifier: "slideshow.control.settings.button", transaction: confirmation),
                     !observation.hasModalObstacle
                 else { return false }
                 let nodes = observation.nodes
                 return AccessLifecycleContract.hasPlaybackPageArrived(
-                    isSettingsPresent: nodes.contains { $0.identifier == "slideshow.control.settings.button" },
-                    isNextPresent: nodes.contains { $0.identifier == "slideshow.control.next.button" },
-                    isPlayPausePresent: nodes.contains { $0.identifier == "slideshow.control.playPause.button" },
+                    isSettingsPresent: nodes.contains {
+                        $0.identifier == "slideshow.control.settings.button" && $0.elementType == .button
+                    },
+                    isNextPresent: nodes.contains {
+                        $0.identifier == "slideshow.control.next.button" && $0.elementType == .button
+                    },
+                    isPlayPausePresent: nodes.contains {
+                        $0.identifier == "slideshow.control.playPause.button" && $0.elementType == .button
+                    },
                     isHintPresent: nodes.contains { $0.identifier == "slideshow.entryHint.banner" })
             },
             "Random mode must reach the playback page.")
