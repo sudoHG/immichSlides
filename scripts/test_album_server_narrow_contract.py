@@ -8,7 +8,6 @@ import json
 import sys
 import tempfile
 import unittest
-from functools import lru_cache
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter
@@ -60,8 +59,6 @@ def _fixture_png(label: str, fixture_set: str = "a") -> bytes:
     return _fixture_data(fixture_set)["images"][f"asset-{fixture_set}-{label[-1]}"]
 
 
-# Share immutable PNG bytes; callers decode independent images before editing.
-@lru_cache(maxsize=64)
 def _side_by_side(left: bytes, right: bytes) -> bytes:
     left_image = Image.open(io.BytesIO(left)).convert("RGB")
     right_image = Image.open(io.BytesIO(right)).convert("RGB")
@@ -95,7 +92,6 @@ def _photo_on_empty_background(background: bytes, photo: bytes) -> bytes:
     return buffer.getvalue()
 
 
-@lru_cache(maxsize=64)
 def _letterbox(png: bytes, canvas: tuple[int, int]) -> bytes:
     image = Image.open(io.BytesIO(png)).convert("RGB")
     canvas_image = Image.new("RGB", canvas, (0, 0, 0))
@@ -139,7 +135,6 @@ def _cover(image: Image.Image, size: tuple[int, int]) -> Image.Image:
     return resized.crop((left, top, left + width, top + height))
 
 
-@lru_cache(maxsize=64)
 def _single_on_own_blur(label: str, screen: tuple[int, int], fixture_set: str = "a") -> bytes:
     """A single photo whose blurred copy must not count as a second photo."""
     image = _fixture_image(label, fixture_set)
@@ -153,12 +148,10 @@ def _single_on_own_blur(label: str, screen: tuple[int, int], fixture_set: str = 
     return _png(canvas)
 
 
-@lru_cache(maxsize=64)
 def _full_screen(label: str, screen: tuple[int, int], fixture_set: str = "a") -> bytes:
     return _png(_cover(_fixture_image(label, fixture_set), screen))
 
 
-@lru_cache(maxsize=64)
 def _stacked_album_frame(fixture_set: str, top_mark: str = "A1", bottom_mark: str = "A3",
                          top_fixture: str | None = None, unreadable_top: bool = False) -> bytes:
     # Scanner-approved Debug iPad album-empty/filter-album captures: 1640x2360,
@@ -189,7 +182,6 @@ def _stacked_album_frame(fixture_set: str, top_mark: str = "A1", bottom_mark: st
     return _png(canvas)
 
 
-@lru_cache(maxsize=64)
 def _with_home_indicator(frame: bytes, footer_patch: str | None = None) -> bytes:
     canvas = Image.open(io.BytesIO(frame)).convert("RGB")
     # Real iPad ink (547,2334)-(1093,2345), iPhone ink (377,2493)-(794,2508).
@@ -202,7 +194,6 @@ def _with_home_indicator(frame: bytes, footer_patch: str | None = None) -> bytes
     return _png(canvas)
 
 
-@lru_cache(maxsize=64)
 def _unmeasured_album_frame(fixture_set: str) -> bytes:
     # Scale the colliding indicator with the photo to exercise a size without a measured box.
     frame = _with_home_indicator(_full_screen("A3", IPHONE_SCREEN, fixture_set))
@@ -210,7 +201,6 @@ def _unmeasured_album_frame(fixture_set: str) -> bytes:
         return _png(image.resize(UNMEASURED_SCREEN, Image.Resampling.BILINEAR))
 
 
-@lru_cache(maxsize=64)
 def _iphone_control_split_frame(fixture_set: str, *, foreign_bottom_half: bool = False,
                                 outside_gap: bool = False) -> bytes:
     # Real 1170x2532 capture: A2/A1 seam y=1824, A1 glyph (151,1893),
