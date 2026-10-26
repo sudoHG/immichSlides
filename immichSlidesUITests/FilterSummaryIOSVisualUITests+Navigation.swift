@@ -67,7 +67,7 @@ extension FilterSummaryIOSVisualUITests {
             observation = observed
             if observePlayback(observed) { return true }
             guard observed.hasDestination("settings.item.playback") else { return false }
-            let buttons = app.navigationBars.buttons.allElementsBoundByIndex.filter { $0.identifier != "ToggleSidebar" }
+            let buttons = app.navigationBars.buttons.matching(identifier: "BackButton").allElementsBoundByIndex
             guard buttons.count == 1, let candidate = buttons.first, candidate.isHittable else { return false }
             backButton = candidate
             return true
