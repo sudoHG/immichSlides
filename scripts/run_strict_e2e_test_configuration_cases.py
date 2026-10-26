@@ -463,8 +463,10 @@ class StrictE2ERunnerTestsCasesConfiguration:
                 write_app_launch_environment_audit(evidence, suite)
                 audit = json.loads((evidence / "app-launch-environment-audit.json").read_text())
                 self.assertEqual(audit["declaration_kind"], "static_swift_launch_keys")
-                self.assertEqual(audit["launch_environment_keys"], [] if suite == "ios-lifecycle-settings"
-                                 else ["UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE"])
+                expected = [] if suite == "ios-lifecycle-settings" else ["UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE"]
+                if suite == "late-image":
+                    expected.append("UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT")
+                self.assertEqual(audit["launch_environment_keys"], sorted(expected))
 
 
     def test_xcodebuild_command_targets_one_platform_smoke_and_independent_outputs(self) -> None:

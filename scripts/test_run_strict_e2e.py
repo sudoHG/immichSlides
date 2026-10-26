@@ -1575,6 +1575,19 @@ class FailureDiagnosticsTests(unittest.TestCase):
             ("TestSupport/StrictE2EPhotoIdentity.swift", "Window missed or required frames missing: ", "pause_window", "evidence_capture"),
             ("immichSlidesUITests/StrictE2ELateImageIOSUITests.swift", "After late completion the current public mark must stay: no flash back, all black or unreadable: ", "late_image", "scene_identity"),
             ("immichSlidesUITests/StrictE2ELateImageIOSUITests.swift", "Next must be tappable twice right after entering the slideshow, before old image requests finish.", "late_image", "navigation"),
+            ("immichSlidesUITests/StrictE2ELateImageSupport.swift", "Held response budget exhausted before release:", "late_image", "timing_window"),
+            ("immichSlidesUITests/StrictE2ELateImageSupport.swift", "Late image held asset must belong to the cold-launch scene before the first Next.", "late_image", "fixture_response"),
+            ("immichSlidesUITests/StrictE2ELateImageIOSUITests.swift", "Late image cold launch must restore paused playback.", "cold_relaunch", "control_state"),
+            ("immichSlidesUITests/StrictE2ELateImageIOSUITests.swift", "Late image preparation must enter playback before opening Settings.", "late_image", "navigation"),
+            ("immichSlidesUITests/StrictE2ELateImageIOSUITests.swift", "Late image preparation must open Playback Settings.", "late_image", "navigation"),
+            ("immichSlidesUITests/StrictE2ELateImageIOSUITests.swift", "Late image preparation must expose the Autoplay switch.", "late_image", "navigation"),
+            ("immichSlidesUITests/StrictE2ELateImageIOSUITests.swift", "Late image preparation must turn Autoplay off.", "late_image", "control_state"),
+            ("immichSlidesUITests/StrictE2ELateImageTVOSUITests.swift", "Late image preparation must focus Settings.", "late_image", "focus"),
+            ("immichSlidesUITests/StrictE2ELateImageTVOSUITests.swift", "Late image preparation must focus Playback Settings.", "late_image", "focus"),
+            ("immichSlidesUITests/StrictE2ELateImageTVOSUITests.swift", "Late image preparation must expose the Autoplay option.", "late_image", "navigation"),
+            ("immichSlidesUITests/StrictE2ELateImageTVOSUITests.swift", "Late image preparation must focus Autoplay.", "late_image", "focus"),
+            ("immichSlidesUITests/StrictE2ELateImageTVOSUITests.swift", "Late image preparation must expose Autoplay Off.", "late_image", "navigation"),
+            ("immichSlidesUITests/StrictE2ELateImageTVOSUITests.swift", "Late image preparation must focus Autoplay Off.", "late_image", "focus"),
             ("immichSlidesUITests/ScenePresentationContractUITests.swift", "The fixture must actually deliver a failing image response", "image_recovery", "fixture_response"),
             ("immichSlidesUITests/ScenePresentationContractUITests.swift", "Fixture control must acknowledge its response mode", "image_recovery", "fixture_response"),
             ("immichSlidesUITests/ExifToggleUITests.swift", "After turning EXIF off, the info card in the upper-right area of the public photo must disappear from the screen.", "exif_ownership", "exif_visibility"),
@@ -1771,6 +1784,10 @@ class FailureDiagnosticsTests(unittest.TestCase):
                                 'failed: caught error: "Failure(message: "', 'Failure(message: \\"')
                 elif prefix in failure_prefixes:
                     wrappers = ("failed - ",)
+                elif prefix == "Held response budget exhausted before release:":
+                    wrappers = ("failed - ",)
+                elif prefix == "Late image cold launch must restore paused playback.":
+                    wrappers = ("XCTAssertEqual failed: (PRIVATE_SENTINEL) - ",)
                 elif prefix in false_prefixes:
                     wrappers = ("XCTAssertFalse failed - ",)
                 elif prefix in equal_prefixes:

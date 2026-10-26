@@ -334,7 +334,7 @@ as the stable history anchor. The single Pause, four-second pause readback,
 history-count precondition and capture-time pixel/manifest proof remain unchanged.
 
 `UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE=1` enables the Debug manifest probes.
-Probe-only launches are `album-empty`, `filter-person`, `journey-b`, `tvos-flow`, `tvos-person`, `late-image`, `ios-lifecycle-first-wake`,
+Probe-only launches are `album-empty`, `filter-person`, `journey-b`, `tvos-flow`, `tvos-person`, `ios-lifecycle-first-wake`,
 and `AccessLifecycleIOSUITests.prepareLaunch`, including its cold relaunches and
 `run_access_lifecycle_ios.py`'s `testAccessProtectionSettingsAndLifecycle`.
 Only iOS `album-empty` sets the real playback interval to 30 seconds through `IOSDriver`
@@ -492,6 +492,11 @@ Other probe-key launches are the configured SmartFill launch helpers in
 `PlaybackHistoryIOSUITests`, `ScenePresentationContractUITests`, and
 `FilterSummaryTVOSVisualUITests.testTVOSSlideShowControlBarButtonsCanActivateOnSelect`.
 They also set other `UI_TEST_*` keys, so their XCTest mode remains enabled.
+The `late-image` case also combines the scene probe with
+`UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT`. That hint key enables XCTest mode: the
+API key can be restored from the UserDefaults XCTest fallback after cold launch,
+and the Info.plist debug server is skipped. This case therefore does not prove
+Keychain-only restoration. Image requests still use the ordinary download path.
 The runner's launch audit is a **static declaration of Swift launch keys**,
 labelled `declaration_kind=static_swift_launch_keys`; it is not read from the app.
 This declaration is not compared with any runtime launch keys. Comparing it
@@ -705,10 +710,21 @@ File-read failures remain I/O errors. tvOS reports retain their existing fields.
 
 The `late-image` suite arms `/api/test/late-image` after normal first-boot setup.
 Only loopback clients with the existing public fixture key can use this control,
-and only in the `out-of-order` scenario. The server chooses the first preview or
+and only in the `out-of-order` scenario. The cold-launch case posts
+`{"action":"arm","selection":"initial-primary"}` to select the first asset in
+the frozen fixture (A1 or B1). The server holds its first real preview or
 fullsize request after arming, by serialized request order, and holds responses
 for that asset until the test posts `{"action":"release"}`. Thumbnails and other
-assets remain available. Each `{"action":"arm"}` starts a numbered generation;
+assets remain available, including prefetches that arrive before the selected
+asset. `selected_asset_id` records that choice; the actual `asset_id` and hold
+start stay unset until the selected request arrives. A plain legacy
+`{"action":"arm"}` still selects the first image request, and its logs remain
+readable. The selector contract rejects any explicit selection other than the
+fixture's initial primary asset and requires the first eligible request's real
+start timestamp. Its newer comparison request comes after that selected start
+record, excluding unrelated pre-hold prefetches. The strict ordering judge itself
+is unchanged: the held request must start before the comparison completes and
+finish after it. Each arm starts a numbered generation;
 a new generation is allowed only after the previous one is released and has no
 pending responses. Onboarding requests are served normally before arming.
 The frozen manifest's legacy delay metadata stays
@@ -727,26 +743,67 @@ generations and other scenarios keep their existing response paths.
 
 | Caller or response | Before | After |
 | --- | --- | --- |
-| iOS `late-image` | Existing control/readiness budgets; 1.5-second settling window from confirmed delivery return | Same clocks and budgets; no deduction for the fixture wait |
-| tvOS `late-image` | Existing control/readiness budgets; 2.5-second settling window from confirmed delivery return | Same clocks and budgets; no deduction for the fixture wait |
+| iOS `late-image` | Independent control/readiness budgets; 1.5-second settling window from confirmed delivery return | One hold-start + 13 s transaction deadline before release; unchanged post-delivery window |
+| tvOS `late-image` | Independent control/readiness budgets; 2.5-second settling window from confirmed delivery return | One hold-start + 13 s transaction deadline before release; unchanged post-delivery window |
 | Held preview/fullsize response | Explicit release; existing 15-second App timeout and 90-second fixture cap | Unchanged |
 | Other preview/fullsize response during an active hold | Immediate send | Send after the actual held-start millisecond has elapsed |
 | Thumbnails, other scenarios, unarmed/released generations and non-image routes | Existing response behavior | Unchanged |
 
-The request-order validator, fixture image bytes, manifest hashes, retries,
-failure classifications and environment/yellow eligibility are unchanged.
+The request-order validator, fixture image bytes, manifest hashes, retries
+and environment/yellow eligibility are unchanged.
 
-Both platform tests pause playback before Next, verify two committed history
-advances and a complete stable rendered scene with fallible snapshot probes,
-then capture `ooo-current-scene`. They explicitly release the hold, poll for
+Both platform tests finish an unarmed preparation through the normal first-boot
+and playback UI, disable Autoplay in Settings, clear the disk cache through its
+confirmation alert, and terminate the app. They then arm immediately before a
+configured cold launch into paused playback. Clearing disk and process memory
+prevents pre-arm prefetched photos from satisfying the current-scene race.
+They verify two committed history advances and a complete
+stable rendered scene with fallible snapshot probes. The unarmed preparation
+does not pause or advance playback. Before the first cold-launch Next,
+`late-image-initial-scene.json` records the scene manifest and held fixture asset;
+both XCTest and the Python verdict require that asset to belong to the initial
+scene, rejecting a held prefetch from a future scene.
+Before the single judged
+`ooo-current-scene` capture, readiness waits for two identical PNG
+observations with recognizable public identity and the same paused, stable scene
+references across both observations. Each readiness iteration checks AX stability
+before requesting a screenshot. The whole held transaction has one unscaled
+deadline: actual fixture hold start plus 13 seconds, reserving two seconds of the
+unchanged 15-second App download timeout for release and delivery. The arm request's
+local issue time anchors the fixture elapsed clock conservatively; time before
+hold start, including a launch stall before the first image request, is excluded.
+After launch returns, synchronizing the first selected-asset request has a separate
+fixed five-second `.product` wait. If no held request appears within that wait,
+`Late image fixture control failed: no held response after cold launch` fails as
+`late_image/fixture_response`; this pre-hold readiness cap does not extend or renew
+the held transaction deadline.
+Every held-window wait is clamped to that deadline, including controls, pause,
+Next, focus, screenshot readiness and fixture control. It is never an infrastructure
+wait or a navigation hang guard. Native XCTest operations cannot be interrupted;
+their return is checked before any later action or success assertion.
+`late-image-held-window.json` records the hold duration and each step's issue/return
+uptimes and duration, including native actions, queries and screenshots.
+Exhaustion fails immediately at the next interruptible boundary with
+`Held response budget exhausted before release:` (`late_image/timing_window`),
+an invalid run that remains red under environment policy v1–v4. Its suffix reports
+the longest recorded step's test-owned name and seconds inside the held window,
+clipping any pre-hold part of cold launch and omitting private inputs. Preparation has
+separate messages under `late_image` or `cold_relaunch/control_state`; neither
+phase appears in the environment timing allowlists. No new reader enums or summary
+schema are introduced, and old summaries remain readable.
+This preparation does not retry either judged capture or the flow.
+They explicitly release the hold, poll for
 zero pending responses and at least one successful socket write/flush with no
 disconnects, retain the existing 1.5-second iOS / 2.5-second tvOS settling window,
 and capture `ooo-after-late`. Delivery means the fixture finished writing the
 response; it does not claim that the app displayed or decoded the image. Before
 writing a held response, a non-blocking socket peek rejects an already-closed
 peer, including an empty read, and records a disconnect instead of delivery.
-The UI polls retain fixed product budgets. The read-only scene probe is the
-only added app launch key; no private XCTest quiescence API is used.
+The UI polls retain fixed product budgets. Both late-image tests add the read-only
+scene probe and the existing Debug `UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT=1` launch
+key. The entry hint is unrelated to the superseded-response proof; the iOS test
+does not spend its post-delivery window dismissing it. No private XCTest
+quiescence API is used.
 
 Each hold records its generation, `hold_started_elapsed_ms` and
 `released_elapsed_ms`. Its effective duration must be less than 15,000 ms:
@@ -1919,6 +1976,20 @@ New enum meanings and why the previous vocabulary cannot express them:
 | `visual_verdict=LATE: a complete A3 is visible after pause.` | `pause_window` | `scene_identity` | [StrictE2EFirstBatchIOSUITests.swift](../immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift) |
 | `After late completion the current public mark must stay: no flash back, all black or unreadable: ` | `late_image` | `scene_identity` | [StrictE2ELateImageIOSUITests.swift](../immichSlidesUITests/StrictE2ELateImageIOSUITests.swift) |
 | `Next must be tappable twice right after entering the slideshow, before old image requests finish.` | `late_image` | `navigation` | [StrictE2ELateImageIOSUITests.swift](../immichSlidesUITests/StrictE2ELateImageIOSUITests.swift) |
+| `Held response budget exhausted before release:` | `late_image` | `timing_window` | [StrictE2ELateImageSupport.swift](../immichSlidesUITests/StrictE2ELateImageSupport.swift) |
+| `Late image held asset must belong to the cold-launch scene before the first Next.` | `late_image` | `fixture_response` | [StrictE2ELateImageSupport.swift](../immichSlidesUITests/StrictE2ELateImageSupport.swift) |
+| `Late image fixture control failed:` | `late_image` | `fixture_response` | [StrictE2ELateImageSupport.swift](../immichSlidesUITests/StrictE2ELateImageSupport.swift) |
+| `Late image cold launch must restore paused playback.` | `cold_relaunch` | `control_state` | [StrictE2ELateImageIOSUITests.swift](../immichSlidesUITests/StrictE2ELateImageIOSUITests.swift), [StrictE2ELateImageTVOSUITests.swift](../immichSlidesUITests/StrictE2ELateImageTVOSUITests.swift) |
+| `Late image preparation must enter playback before opening Settings.` | `late_image` | `navigation` | [StrictE2ELateImageIOSUITests.swift](../immichSlidesUITests/StrictE2ELateImageIOSUITests.swift) |
+| `Late image preparation must open Playback Settings.` | `late_image` | `navigation` | [StrictE2ELateImageIOSUITests.swift](../immichSlidesUITests/StrictE2ELateImageIOSUITests.swift), [StrictE2ELateImageTVOSUITests.swift](../immichSlidesUITests/StrictE2ELateImageTVOSUITests.swift) |
+| `Late image preparation must expose the Autoplay switch.` | `late_image` | `navigation` | [StrictE2ELateImageIOSUITests.swift](../immichSlidesUITests/StrictE2ELateImageIOSUITests.swift) |
+| `Late image preparation must turn Autoplay off.` | `late_image` | `control_state` | [StrictE2ELateImageIOSUITests.swift](../immichSlidesUITests/StrictE2ELateImageIOSUITests.swift) |
+| `Late image preparation must focus Settings.` | `late_image` | `focus` | [StrictE2ELateImageTVOSUITests.swift](../immichSlidesUITests/StrictE2ELateImageTVOSUITests.swift) |
+| `Late image preparation must focus Playback Settings.` | `late_image` | `focus` | [StrictE2ELateImageTVOSUITests.swift](../immichSlidesUITests/StrictE2ELateImageTVOSUITests.swift) |
+| `Late image preparation must expose the Autoplay option.` | `late_image` | `navigation` | [StrictE2ELateImageTVOSUITests.swift](../immichSlidesUITests/StrictE2ELateImageTVOSUITests.swift) |
+| `Late image preparation must focus Autoplay.` | `late_image` | `focus` | [StrictE2ELateImageTVOSUITests.swift](../immichSlidesUITests/StrictE2ELateImageTVOSUITests.swift) |
+| `Late image preparation must expose Autoplay Off.` | `late_image` | `navigation` | [StrictE2ELateImageTVOSUITests.swift](../immichSlidesUITests/StrictE2ELateImageTVOSUITests.swift) |
+| `Late image preparation must focus Autoplay Off.` | `late_image` | `focus` | [StrictE2ELateImageTVOSUITests.swift](../immichSlidesUITests/StrictE2ELateImageTVOSUITests.swift) |
 | `The fixture must actually deliver a failing image response` | `image_recovery` | `fixture_response` | [ScenePresentationContractUITests.swift](../immichSlidesUITests/ScenePresentationContractUITests.swift) |
 | `Fixture control must acknowledge its response mode` | `image_recovery` | `fixture_response` | [ScenePresentationContractUITests.swift](../immichSlidesUITests/ScenePresentationContractUITests.swift) |
 | `After turning EXIF off, the info card in the upper-right area of the public photo must disappear from the screen.` | `exif_ownership` | `exif_visibility` | [ExifToggleUITests.swift](../immichSlidesUITests/ExifToggleUITests.swift) |
@@ -2009,7 +2080,7 @@ New enum meanings and why the previous vocabulary cannot express them:
 | `First-boot form must show Test Connection.` | `firstboot_setup` | `navigation` | [AccessLifecycleTVOSUITests+Settings.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Settings.swift#L29) |
 | `With the real controlled service reachable, the connection test must show as passed.` | `firstboot_setup` | `navigation` | [AccessLifecycleTVOSUITests+Settings.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Settings.swift#L37) |
 | `After connecting, the Save Settings button must show.` | `firstboot_setup` | `navigation` | [AccessLifecycleTVOSUITests+Settings.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Settings.swift#L47) |
-| `After a successful connection, Save Settings must be enabled.` | `firstboot_setup` | `control_state` | [AccessLifecycleTVOSUITests+Settings.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Settings.swift#L48), [StrictE2ELateImageTVOSUITests.swift](../immichSlidesUITests/StrictE2ELateImageTVOSUITests.swift#L224), [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L690), [TVDriver.swift](../immichSlidesUITests/TVDriver.swift#L44) |
+| `After a successful connection, Save Settings must be enabled.` | `firstboot_setup` | `control_state` | [AccessLifecycleTVOSUITests+Settings.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Settings.swift#L48), [StrictE2ELateImageTVOSUITests.swift](../immichSlidesUITests/StrictE2ELateImageTVOSUITests.swift#L282), [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L690), [TVDriver.swift](../immichSlidesUITests/TVDriver.swift#L44) |
 | `After saving settings, mode selection must open.` | `mode_selection` | `navigation` | [AccessLifecycleTVOSUITests+Settings.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Settings.swift#L57) |
 | `Mode selection focus must start on random playback.` | `mode_selection` | `focus` | [AccessLifecycleTVOSUITests+Settings.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Settings.swift#L61) |
 | `After choosing random play, Continue must show.` | `mode_selection` | `navigation` | [AccessLifecycleTVOSUITests+Settings.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Settings.swift#L68) |
@@ -2079,11 +2150,11 @@ New enum meanings and why the previous vocabulary cannot express them:
 | `Once the real controlled service is reachable, the connection-test-passed status must show.` | `firstboot_setup` | `navigation` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L675) |
 | `Select must not accidentally hit the API Key help sheet.` | `firstboot_setup` | `navigation` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L679) |
 | `After a successful connection, the Save Settings button must appear.` | `firstboot_setup` | `navigation` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L688) |
-| `The field must be focused before typing.` | `unknown` | `focus` | [StrictE2EFilterTVOSUITests+Support.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests+Support.swift#L381), [StrictE2ELateImageTVOSUITests.swift](../immichSlidesUITests/StrictE2ELateImageTVOSUITests.swift#L231), [StrictE2ESmokeUITests.swift](../immichSlidesUITests/StrictE2ESmokeUITests.swift#L124), [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L699) |
-| `The system keyboard must show Next or Done.` | `unknown` | `navigation` | [StrictE2EFilterTVOSUITests+Support.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests+Support.swift#L394), [StrictE2ELateImageTVOSUITests.swift](../immichSlidesUITests/StrictE2ELateImageTVOSUITests.swift#L241), [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L709), [TVDriver.swift](../immichSlidesUITests/TVDriver.swift#L266) |
+| `The field must be focused before typing.` | `unknown` | `focus` | [StrictE2EFilterTVOSUITests+Support.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests+Support.swift#L381), [StrictE2ELateImageTVOSUITests.swift](../immichSlidesUITests/StrictE2ELateImageTVOSUITests.swift#L289), [StrictE2ESmokeUITests.swift](../immichSlidesUITests/StrictE2ESmokeUITests.swift#L124), [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L699) |
+| `The system keyboard must show Next or Done.` | `unknown` | `navigation` | [StrictE2EFilterTVOSUITests+Support.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests+Support.swift#L394), [StrictE2ELateImageTVOSUITests.swift](../immichSlidesUITests/StrictE2ELateImageTVOSUITests.swift#L299), [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L709), [TVDriver.swift](../immichSlidesUITests/TVDriver.swift#L266) |
 | `Focus the system keyboard submit button before submitting text.` | `firstboot_setup` | `focus` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L713) |
 | `The server address must be submitted verbatim.` | `firstboot_setup` | `control_state` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L718) |
-| `After submitting text, focus must return to the original field.` | `unknown` | `focus` | [StrictE2EFilterTVOSUITests+Support.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests+Support.swift#L403), [StrictE2ELateImageTVOSUITests.swift](../immichSlidesUITests/StrictE2ELateImageTVOSUITests.swift#L254), [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L722) |
+| `After submitting text, focus must return to the original field.` | `unknown` | `focus` | [StrictE2EFilterTVOSUITests+Support.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests+Support.swift#L403), [StrictE2ELateImageTVOSUITests.swift](../immichSlidesUITests/StrictE2ELateImageTVOSUITests.swift#L312), [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L722) |
 | `An arrow key must wake the playback control bar.` | `hidden_controls` | `hidden_controls` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L828) |
 | `The index probe must change after a playback action. advanceObserved=` | `history_navigation` | `probe_readback` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L903) |
 | `Interval options are missing` | `interval_setup` | `interval_readback` | [AccessLifecycleContract+Controls.swift](../TestSupport/AccessLifecycleContract+Controls.swift#L53) |

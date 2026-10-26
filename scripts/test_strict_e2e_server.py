@@ -833,6 +833,10 @@ class StrictE2EServerContractTests(unittest.TestCase):
         # Fixture hygiene: auth is covered globally; this endpoint is bound to loopback.
         with RunningServer(scenario="out-of-order") as server:
             self.assertEqual(server.request("/test/late-image", method="POST", body={"action": "unknown"})[0], 400)
+            for action, selection in (("arm", "unknown"), ("arm", {}), ("arm", ["initial-primary"]), ("release", "initial-primary")):
+                status, _, payload = server.request("/test/late-image", method="POST", body={"action": action, "selection": selection})
+                self.assertEqual(status, 400)
+                self.assertEqual(json.loads(payload)["error"], "Invalid late image selection")
         with RunningServer() as server:
             self.assertEqual(server.request("/test/late-image", method="POST", body={"action": "arm"})[0], 409)
 

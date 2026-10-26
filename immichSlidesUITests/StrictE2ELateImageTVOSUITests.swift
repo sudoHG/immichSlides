@@ -30,22 +30,31 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
         }
 
         let input = try requireStrictE2EInput()
-        let app = try launchStrictE2EApp(recordSceneSequence: true)
+        let app = try launchStrictE2EApp(recordSceneSequence: true, disablePlaybackEntryHint: true)
         defer { app.terminateForFailureEvidence() }
 
         try configureServerThroughFirstBoot(app: app, input: input)
-        _ = try lateImageControl(input: input, action: "arm")
         try enterRandomPlayback(app: app)
 
         let settingsButton = app.buttons["slideshow.control.settings.button"]
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
         let nextButton = app.buttons["slideshow.control.next.button"]
-        try enterPlaybackThenAdvanceTwice(app: app, nextButton: nextButton)
+        try preparePausedColdLaunch(app: app)
+        let hold = try armLateImageHold(input: input)
+        FirstFailureContext.mark("launch-app", element: "app-window")
+        try hold.perform("cold-launch") { FirstFailureContext.action("launch") { app.launch() } }
+        try synchronizeLateImageHold(input: input, hold: hold)
+        try advanceColdPlaybackTwice(app: app, nextButton: nextButton, input: input, hold: hold)
         let secondNextAt = Date()
-        try captureLateImageTVOSFrame(app: app, name: "ooo-current-scene")
-        attachScreenshot(app: app, name: "tvos-late-image-ooo-current-scene")
+        XCTAssertTrue(
+            try waitForLateImageCurrentScene(app: app, hold: hold),
+            "After late completion the current public mark must stay: no flash back, all black or unreadable: unstable capture"
+        )
+        try hold.perform("judged-current-capture") {
+            try captureLateImageTVOSFrame(app: app, name: "ooo-current-scene", hold: hold)
+        }
 
-        try releaseLateImageAndWaitForDelivery(input: input)
+        try releaseLateImageAndWaitForDelivery(input: input, hold: hold)
         RunLoop.current.run(until: Date().addingTimeInterval(Timing.lateRequestWaitSeconds))
         let afterLateAt = Date()
         try captureLateImageTVOSFrame(app: app, name: "ooo-after-late")
@@ -136,47 +145,96 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
     }
 
     @MainActor
-    private func enterPlaybackThenAdvanceTwice(app: XCUIApplication, nextButton: XCUIElement) throws {
+    private func advanceColdPlaybackTwice(
+        app: XCUIApplication, nextButton: XCUIElement, input: StrictE2EInput, hold: StrictE2ELateImageHold
+    ) throws {
+        let ready = try hold.waitUntil("next-control-readiness", maximum: TestWait.seconds(.product(30))) {
+            (try? nextButton.snapshot())?.isEnabled == true
+        }
         XCTAssertTrue(
-            waitUntil(timeout: TestWait.seconds(.product(30))) { (try? nextButton.snapshot())?.isEnabled == true },
+            ready,
             "Random mode must quickly reach a slideshow where Next works, without waiting for old image requests."
         )
-        let playPause = app.buttons["slideshow.control.playPause.button"]
-        ensureControlBarVisible(app: app)
-        moveFocus(
-            .right, to: playPause, maximumPresses: 3,
-            message: "Before advancing, Play/Pause must be focusable.")
-        let render = SharedSceneEvidenceManifest.parseKeyValueFields(
-            strictSceneFrameObservation(app: app)["render"] ?? "")
-        if render["playbackPaused"] != "true" { FirstFailureRemote.press(.select) }
+        let controlsReady = try hold.perform("controls-refresh-native") {
+            app.refreshTVOSSlideshowControlBar(timeout: try hold.remaining(maximum: TestWait.seconds(.product(5))))
+        }
+        XCTAssertTrue(controlsReady, "An arrow key must be able to wake the playback control bar.")
         var pausedHistoryCount: Int?
+        let pauseReady = try hold.waitUntil("cold-pause-readiness", maximum: TestWait.seconds(.product(4))) {
+            let observation = self.strictSceneFrameObservation(app: app)
+            let render = SharedSceneEvidenceManifest.parseKeyValueFields(observation["render"] ?? "")
+            guard render["playbackPaused"] == "true", let count = Int(render["historyCount"] ?? "") else {
+                return false
+            }
+            pausedHistoryCount = count
+            return true
+        }
         XCTAssertTrue(
-            waitUntil(timeout: TestWait.seconds(.product(4))) {
-                let observation = self.strictSceneFrameObservation(app: app)
-                let render = SharedSceneEvidenceManifest.parseKeyValueFields(observation["render"] ?? "")
-                guard render["playbackPaused"] == "true", let count = Int(render["historyCount"] ?? "") else {
-                    return false
-                }
-                pausedHistoryCount = count
-                return true
-            }, "Random mode must quickly reach a slideshow where Next works, without waiting for old image requests.")
+            pauseReady, "Late image cold launch must restore paused playback.")
         let initialHistory = try XCTUnwrap(pausedHistoryCount)
-        moveFocus(
-            .right, to: nextButton, maximumPresses: 3,
-            message: "Focus must land on Next before the old requests complete.")
-        let deadline = ProcessInfo.processInfo.systemUptime + TestWait.seconds(.product(30))
-        FirstFailureRemote.press(.select)
+        try recordLateImageInitialScene(app: app, input: input, hold: hold)
+        try moveHeldFocus(to: nextButton, hold: hold)
+        let deadline = min(
+            try XCTUnwrap(hold.deadline), ProcessInfo.processInfo.systemUptime + TestWait.seconds(.product(30)))
+        try hold.perform("first-next-native") { FirstFailureRemote.press(.select) }
         XCTAssertTrue(
-            waitForLateImageScene(app: app, historyCount: initialHistory + 1, deadline: deadline),
+            try waitForLateImageScene(app: app, historyCount: initialHistory + 1, deadline: deadline, hold: hold),
             "Random mode must quickly reach a slideshow where Next works, without waiting for old image requests.")
+        let refreshed = try hold.perform("controls-refresh-native") {
+            app.refreshTVOSSlideshowControlBar(timeout: try hold.remaining(maximum: TestWait.seconds(.product(5))))
+        }
+        XCTAssertTrue(refreshed, "An arrow key must be able to wake the playback control bar.")
+        try moveHeldFocus(to: nextButton, hold: hold)
+        try hold.perform("second-next-native") { FirstFailureRemote.press(.select) }
+        XCTAssertTrue(
+            try waitForLateImageScene(app: app, historyCount: initialHistory + 2, deadline: deadline, hold: hold),
+            "Random mode must quickly reach a slideshow where Next works, without waiting for old image requests.")
+    }
+
+    @MainActor
+    private func moveHeldFocus(to element: XCUIElement, hold: StrictE2ELateImageHold) throws {
+        let deadline =
+            ProcessInfo.processInfo.systemUptime + (try hold.remaining(maximum: TestWait.seconds(.product(4))))
+        for _ in 0..<3 where ProcessInfo.processInfo.systemUptime < deadline {
+            if try hold.perform("next-focus-snapshot", { (try? element.snapshot())?.hasFocus == true }) { return }
+            try hold.perform("next-focus-native") { FirstFailureRemote.press(.right) }
+        }
+        let focused = try hold.perform("next-focus-readback") { (try? element.snapshot())?.hasFocus == true }
+        XCTAssertTrue(
+            focused && ProcessInfo.processInfo.systemUptime < deadline,
+            "Focus must land on Next before the old requests complete.")
+    }
+
+    @MainActor
+    private func preparePausedColdLaunch(app: XCUIApplication) throws {
         ensureControlBarVisible(app: app)
         moveFocus(
-            .right, to: nextButton, maximumPresses: 3,
-            message: "Focus must land on Next before the old requests complete.")
+            .left, to: app.buttons["slideshow.control.settings.button"], maximumPresses: 3,
+            message: "Late image preparation must focus Settings.")
         FirstFailureRemote.press(.select)
+        let playback = app.buttons["settings.item.playback"]
         XCTAssertTrue(
-            waitForLateImageScene(app: app, historyCount: initialHistory + 2, deadline: deadline),
-            "Random mode must quickly reach a slideshow where Next works, without waiting for old image requests.")
+            playback.waitForPublicElement("settings.item.playback", timeout: TestWait.seconds(.product(5))),
+            "Late image preparation must open Playback Settings.")
+        moveFocus(.up, to: playback, maximumPresses: 4, message: "Late image preparation must focus Playback Settings.")
+        FirstFailureRemote.press(.select)
+        let autoPlay = app.buttons["settings.playback.autoPlay.link"]
+        XCTAssertTrue(
+            autoPlay.waitForPublicElement("settings.playback.autoPlay.link", timeout: TestWait.seconds(.product(5))),
+            "Late image preparation must expose the Autoplay option.")
+        moveFocus(.up, to: autoPlay, maximumPresses: 4, message: "Late image preparation must focus Autoplay.")
+        FirstFailureRemote.press(.select)
+        let off = app.buttons["settings.playback.autoPlay.off.button"]
+        XCTAssertTrue(
+            off.waitForPublicElement("settings.playback.autoPlay.off.button", timeout: TestWait.seconds(.product(5))),
+            "Late image preparation must expose Autoplay Off.")
+        moveFocus(.down, to: off, maximumPresses: 2, message: "Late image preparation must focus Autoplay Off.")
+        FirstFailureRemote.press(.select)
+        let driver = TVDriver(app: app)
+        driver.returnToPlayback()
+        try driver.clearDiskCache(onCachePage: {})
+        // A cold process plus the real cache clear prevents prefetched photos from satisfying the race.
+        app.terminateForFailureEvidence()
     }
 
     @MainActor
@@ -310,10 +368,12 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
     }
 
     @MainActor
-    private func captureLateImageTVOSFrame(app: XCUIApplication, name: String) throws {
-        let before = strictSceneFrameObservation(app: app)
-        let png = app.screenshotForFailureEvidence().pngRepresentation
-        let after = strictSceneFrameObservation(app: app)
+    private func captureLateImageTVOSFrame(app: XCUIApplication, name: String, hold: StrictE2ELateImageHold? = nil)
+        throws
+    {
+        let before = try captureStep("before-probe", hold: hold) { strictSceneFrameObservation(app: app) }
+        let png = try captureStep("screenshot", hold: hold) { app.screenshotForFailureEvidence().pngRepresentation }
+        let after = try captureStep("after-probe", hold: hold) { strictSceneFrameObservation(app: app) }
         let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
         attachment.name = name
         attachment.lifetime = .keepAlways

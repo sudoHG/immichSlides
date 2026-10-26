@@ -391,7 +391,7 @@ class StrictE2EServer(ThreadingHTTPServer):
     def new_late_image_state(generation: int) -> dict[str, Any]:
         return {
             "generation": generation,
-            "armed": False, "armed_elapsed_ms": None, "asset_id": None,
+            "armed": False, "armed_elapsed_ms": None, "asset_id": None, "selected_asset_id": None,
             "hold_started_elapsed_ms": None, "released_elapsed_ms": None,
             "released": False, "expired": False, "pending": 0, "delivered": 0, "disconnected": 0,
         }
@@ -549,6 +549,10 @@ class StrictE2ERequestHandler(BaseHTTPRequestHandler):
             if not isinstance(action, str) or action not in {"arm", "release", "reset"}:
                 self._error(HTTPStatus.BAD_REQUEST, "Invalid late image action")
                 return
+            selection = body.get("selection")
+            if "selection" in body and (action != "arm" or selection != "initial-primary"):
+                self._error(HTTPStatus.BAD_REQUEST, "Invalid late image selection")
+                return
             with self.server.late_image_condition:
                 state = self.server.late_image
                 if (action == "arm" and state["armed"] and (not state["released"] or state["pending"] != 0)) or (
@@ -562,6 +566,8 @@ class StrictE2ERequestHandler(BaseHTTPRequestHandler):
                     self.server.late_image_deadline = None
                     state["armed"] = True
                     state["armed_elapsed_ms"] = int((time.monotonic() - self.server.started_at) * 1000)
+                    if selection == "initial-primary":
+                        state["selected_asset_id"] = self.server.fixture["assets"][0]["id"]
                 elif state["armed"] and not state["released"]:
                     state["released"] = True
                     state["released_elapsed_ms"] = int((time.monotonic() - self.server.started_at) * 1000)
@@ -724,6 +730,8 @@ class StrictE2ERequestHandler(BaseHTTPRequestHandler):
         if self.server.scenario != "out-of-order" or size not in {"preview", "fullsize"} or (
             not state["armed"] or state["released"]
         ):
+            return None
+        if state["selected_asset_id"] is not None and state["selected_asset_id"] != asset_id:
             return None
         if state["asset_id"] is None:
             state["asset_id"] = asset_id
