@@ -380,7 +380,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         try FirstFailureEvidence.preservingThrownFailure(self) {
             try completeFirstBootToPlayback(app: app, input: input)
             let interval = try configureTimingPlaybackSettings(app: app, isAutoPlayEnabled: true)
-            var preparedResume: SlideshowControlBarButtonObservation?
+            var preparedResume: XCUICoordinate?
             try timeline.exercisePauseContinueTimeline(
                 interval: interval,
                 pause: {
@@ -393,8 +393,15 @@ final class AccessLifecycleIOSUITests: XCTestCase {
                     self.tapElement(app.buttons["slideshow.control.next.button"])
                 },
                 resume: { _ = try self.pressContinueStartingClock(app: app) },
-                prepareFinalResume: { preparedResume = try self.preparePlayPause(app: app, isContinuing: true) },
-                finalResume: { _ = try self.tapPreparedPlayPause(XCTUnwrap(preparedResume)) })
+                prepareFinalResume: {
+                    let observation = try self.preparePlayPause(app: app, isContinuing: true)
+                    let button = try XCTUnwrap(observation.button)
+                    preparedResume = observation.windowElement.coordinate(withNormalizedOffset: .zero).withOffset(
+                        CGVector(
+                            dx: button.frame.midX - observation.windowFrame.minX,
+                            dy: button.frame.midY - observation.windowFrame.minY))
+                },
+                finalResume: { try XCTUnwrap(preparedResume).tapForFailureEvidence() })
         }
     }
     #endif
