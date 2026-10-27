@@ -1128,6 +1128,10 @@ def app_timeline_verdict(evidence_dir: Path) -> str:
 def require_visual_identity(evidence_dir: Path, suite: str, *, fixture_set: str = "a") -> dict[str, object]:
     if suite in TIMELINE_LIFECYCLE_SUITES:
         payload = {"verdict": app_timeline_verdict(evidence_dir), "suite": suite}
+        if payload["verdict"] != "PASS":
+            payload["verdict"] = "FAIL"
+            _write_visual_runner_report(evidence_dir, payload)
+            raise CommandError("App timeline: missing or invalid signed evidence", code=2)
         _write_visual_runner_report(evidence_dir, payload)
         return payload
     if suite == IOS_LIFECYCLE_PAUSE_SUITE:

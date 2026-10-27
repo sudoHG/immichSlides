@@ -154,6 +154,11 @@ class StrictE2ERunnerTests(StrictE2ERunnerTestsCasesConfiguration, StrictE2ERunn
                 if defect != "missing":
                     (root / "app-timeline-verdict.json").write_text(json.dumps(receipt))
                 self.assertEqual("PASS" if defect in {None, "frozen"} else "UNVERIFIED", app_timeline_verdict(root))
+                if defect not in {None, "frozen"}:
+                    with self.assertRaisesRegex(CommandError, "^App timeline: missing or invalid signed evidence$"):
+                        require_visual_identity(root, "ios-lifecycle-pause-timeline")
+                    report = json.loads((root / "visual-identity-runner.json").read_text())
+                    self.assertEqual("FAIL", report["verdict"])
 
     def test_fixture_build_has_its_own_deadline_before_health_and_cannot_hide_failures(self):
         import strict_e2e_runner_support as support
