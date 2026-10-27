@@ -311,8 +311,8 @@ suffix contains the count and numeric error code. Playback History also retains 
 last polling snapshot's window presence, flag state and presentation phase/layer roles,
 then labels its two bounded failure-time direct flag reads (window and app root)
 separately, with request/return uptimes and elapsed time since the triggering action.
-Only public synthetic fixture asset IDs are printed verbatim; other nonempty IDs
-are redacted. Playback-entry timeout text
+Only public synthetic fixture asset IDs and bounded existing hashed scene references
+are printed verbatim; other nonempty IDs are redacted. Playback-entry timeout text
 retains the last successful Settings poll and its playback-marker observation. A failed
 snapshot leaves that observation intact and sets `lastSnapshotSucceeded=false`;
 attributes are unknown only until a snapshot first succeeds. Diagnostic reads never restart the
@@ -433,9 +433,14 @@ Next diagnostics retain its ordinal, pre-tap identity, issue/return and the last
 same-snapshot manifest completeness/geometry, contract and history cursor fields.
 Control diagnostics retain the single wake's issue/return and its first subsequent
 snapshot of all four buttons (exists/enabled/frame/window containment), presentation
-and playback marker. The existence-only Settings synchronization waiter takes one
-diagnostic window snapshot immediately after wake and one on timeout; it retains
-its original assertion and timeout. Snapshot APIs do not expose hittability, so
+and playback marker. Each control helper starts a fresh diagnostic record, so an
+action that never wakes cannot inherit a previous wake or visibility transition.
+The existence-only Settings synchronization waiter starts its original existence
+wait directly after wake, with no added success-path snapshot. Only a timeout
+takes one diagnostic window snapshot; that sample cannot establish whether the
+controls appeared and auto-hid between wake and timeout. When no wake happened,
+the suffix still reports Play/Pause and playback-marker presence from the last
+existing observation, or unknown if it failed. Snapshot APIs do not expose hittability, so
 the suffix explicitly reports `hittable=unavailable(snapshot-api)`. Visibility is
 reported as never observed, shown, or shown then absent (an auto-hide candidate);
 unobserved intervals never prove the controls were never displayed. Other control

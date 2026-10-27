@@ -15,6 +15,7 @@ struct PlaybackHistoryFailureDiagnostics {
     var didReadWakeObservation = false
     var wakeObservationTimes = "unavailable"
     var lastControlObservation: SlideshowControlBarButtonObservation?
+    var lastControlObservationTimes = "unavailable"
     var hasShownControls = false
     var hasShownThenAbsentControls = false
     var lastSceneFields = "unavailable"
@@ -67,16 +68,20 @@ struct PlaybackHistoryFailureDiagnostics {
 
     mutating func observe(_ event: SlideshowControlBarDiagnosticEvent) {
         switch event {
-        case .wake(let request, let returned):
-            wake = (request, returned)
+        case .begin:
+            wake = nil
             firstWakeObservation = nil
             lastControlObservation = nil
+            lastControlObservationTimes = "unavailable"
             didReadWakeObservation = false
             wakeObservationTimes = "unavailable"
             hasShownControls = false
             hasShownThenAbsentControls = false
+        case .wake(let request, let returned):
+            wake = (request, returned)
         case .observation(let observation, let request, let returned):
             lastControlObservation = observation
+            lastControlObservationTimes = "request=\(Self.time(request)),return=\(Self.time(returned))"
             if wake != nil, !didReadWakeObservation {
                 didReadWakeObservation = true
                 firstWakeObservation = observation
@@ -107,8 +112,13 @@ struct PlaybackHistoryFailureDiagnostics {
             hasShownThenAbsentControls
             ? "shown-then-absent(auto-hide-candidate)"
             : hasShownControls ? "shown" : "never-observed(visibility-between-reads-unknown)"
+        let lastPlayPausePresence =
+            lastControlObservation.map {
+                String($0.snapshots["slideshow.control.playPause.button"] != nil)
+            } ?? "unknown"
+        let lastMarkerPresence = lastControlObservation.map { String($0.hasPlaybackMarker) } ?? "unknown"
         return
-            " wake.request=\(Self.time(wake?.request)),wake.return=\(Self.time(wake?.returned)),wakeSnapshot{\(wakeObservationTimes),succeeded=\(firstWakeObservation != nil),window=\(firstWakeObservation.map { String(describing: $0.windowFrame) } ?? "unknown"),actionPosition=app-default-tap,playbackMarker.exists=\(firstWakeObservation.map { String($0.hasPlaybackMarker) } ?? "unknown");\(controls);\(Self.presentation(firstWakeObservation?.snapshots ?? [:]))},controls.visibility=\(visibility),lastSnapshotSucceeded=\(lastControlObservation != nil)"
+            " wake.request=\(Self.time(wake?.request)),wake.return=\(Self.time(wake?.returned)),wakeSnapshot{\(wakeObservationTimes),succeeded=\(firstWakeObservation != nil),window=\(firstWakeObservation.map { String(describing: $0.windowFrame) } ?? "unknown"),actionPosition=app-default-tap,playbackMarker.exists=\(firstWakeObservation.map { String($0.hasPlaybackMarker) } ?? "unknown");\(controls);\(Self.presentation(firstWakeObservation?.snapshots ?? [:]))},controls.visibility=\(visibility),lastSnapshotSucceeded=\(lastControlObservation != nil),lastSnapshot{\(lastControlObservationTimes),playPause.exists=\(lastPlayPausePresence),playbackMarker.exists=\(lastMarkerPresence)}"
     }
 
     var actionSuffix: String {

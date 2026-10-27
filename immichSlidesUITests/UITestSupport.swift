@@ -1177,6 +1177,7 @@ struct IOSFirstBootNavigation {
 }
 
 enum SlideshowControlBarDiagnosticEvent {
+    case begin
     case wake(request: TimeInterval, returned: TimeInterval)
     case observation(SlideshowControlBarButtonObservation?, request: TimeInterval, returned: TimeInterval)
     case tap(request: TimeInterval, returned: TimeInterval)
@@ -1318,6 +1319,7 @@ extension XCUIApplication {
         onDiagnosticEvent: ((SlideshowControlBarDiagnosticEvent) -> Void)? = nil,
         onTimeout: (String) -> Void
     ) -> Bool {
+        onDiagnosticEvent?(.begin)
         FirstFailureContext.mark("reveal-controls", element: identifier)
         FirstFailureContext.beginWait(seconds: timeout)
         defer { FirstFailureContext.endWait() }
@@ -1353,6 +1355,7 @@ extension XCUIApplication {
         identifier: String, timeout: TimeInterval,
         onDiagnosticEvent: ((SlideshowControlBarDiagnosticEvent) -> Void)? = nil
     ) -> Bool {
+        onDiagnosticEvent?(.begin)
         if descendants(matching: .any)["slideshow.currentAssetId.flag"].exists {
             let request = ProcessInfo.processInfo.systemUptime
             FirstFailureContext.action("tap") { tap() }
@@ -1376,6 +1379,7 @@ extension XCUIApplication {
         failureDiagnosticSuffix: (() -> String)? = nil,
         file: StaticString = #filePath, line: UInt = #line
     ) {
+        onDiagnosticEvent?(.begin)
         var timing = SlideshowControlBarTiming()
         timing.shouldVerifySettingsOutcome = identifier == "slideshow.control.settings.button"
         defer { print("Slideshow control action: \(timing.diagnostic)") }

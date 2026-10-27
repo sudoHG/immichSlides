@@ -137,16 +137,7 @@ final class PlaybackHistoryIOSUITests: XCTestCase {
         XCTAssertTrue(
             app.waitForSlideshowControlBarButton(
                 identifier: "slideshow.control.playPause.button", timeout: TestWait.seconds(.infrastructure(8)),
-                onDiagnosticEvent: { event in
-                    self.playbackControlDiagnostic(event)
-                    if case .wake = event {
-                        let request = ProcessInfo.processInfo.systemUptime
-                        let observation = try? app.slideshowControlBarButtonObservation(
-                            identifier: "slideshow.control.playPause.button")
-                        self.playbackControlDiagnostic(
-                            .observation(observation, request: request, returned: ProcessInfo.processInfo.systemUptime))
-                    }
-                }),
+                onDiagnosticEvent: playbackControlDiagnostic),
             "The slideshow must show the Play/Pause control\(playbackDiagnostics.controlSuffix)")
         XCTAssertTrue(waitForPlayPauseState(app: app, expected: "pause", timeout: TestWait.seconds(.product(4))))
 
