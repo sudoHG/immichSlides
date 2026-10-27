@@ -1,7 +1,169 @@
 import XCTest
 
 #if os(iOS)
+// Keep only the latest action/observation, not an unbounded trace or raw server identifiers.
+struct PlaybackHistoryFailureDiagnostics {
+    var actionRequest: TimeInterval?
+    var actionReturn: TimeInterval?
+    var pauseTap: (request: TimeInterval, returned: TimeInterval)?
+    var firstPauseRead: String?
+    var nextOrdinal = 0
+    var nextBeforeIdentity = "unavailable"
+    var nextTap: (request: TimeInterval, returned: TimeInterval)?
+    var wake: (request: TimeInterval, returned: TimeInterval)?
+    var firstWakeObservation: SlideshowControlBarButtonObservation?
+    var didReadWakeObservation = false
+    var wakeObservationTimes = "unavailable"
+    var lastControlObservation: SlideshowControlBarButtonObservation?
+    var lastControlObservationTimes = "unavailable"
+    var hasShownControls = false
+    var hasShownThenAbsentControls = false
+    var lastSceneFields = "unavailable"
+    var lastAssetPoll = "unavailable"
+
+    static func time(_ value: TimeInterval?) -> String {
+        value.map { String(format: "%.3f", $0) } ?? "unavailable"
+    }
+
+    static func token(_ value: String?, allowed: Set<String>) -> String {
+        guard let value else { return "absent" }
+        return allowed.contains(value) ? value : "redacted"
+    }
+
+    static func assetLabel(_ value: String?) -> String {
+        guard let value else { return "absent" }
+        if value.isEmpty || value == "no-asset" { return value.isEmpty ? "empty" : value }
+        // Only the synthetic public fixture IDs may enter failure text verbatim.
+        return value.range(of: #"^asset-[abc]-[1-9][0-9]{0,2}$"#, options: .regularExpression) != nil
+            ? value : "redacted-nonempty"
+    }
+
+    static func identity(_ value: String?) -> String {
+        guard let value else { return "absent" }
+        if value.isEmpty || value == "none" { return value.isEmpty ? "empty" : value }
+        return value.count <= 256
+            && value.range(of: #"^asset-[0-9a-f]{16}(,asset-[0-9a-f]{16}){0,7}$"#, options: .regularExpression) != nil
+            ? value : "redacted-nonempty"
+    }
+
+    static func presentation(_ snapshots: [String: XCUIElementSnapshot]) -> String {
+        ["contract", "frameSynchronized"].map { kind in
+            let fields = SharedSceneEvidenceManifest.parseKeyValueFields(
+                snapshots["slideshow.scenePresentation.\(kind).summary"]?.label ?? "")
+            let phase = token(
+                fields["phase"],
+                allowed: [
+                    "empty", "loading", "stablePhoto", "transition", "incomingFromLoading", "grace", "paused",
+                    "sourceError"
+                ])
+            let roles = token(
+                fields["layerRoles"], allowed: ["none", "stable", "incoming", "outgoing", "outgoing|incoming"])
+            let paused = token(fields["playbackPaused"], allowed: ["true", "false"])
+            let loading = token(fields["loadingVisible"], allowed: ["true", "false"])
+            return "\(kind).phase=\(phase),layerRoles=\(roles),playbackPaused=\(paused),loadingVisible=\(loading)"
+        }.joined(separator: ";")
+    }
+
+    static let controls = ["previous", "playPause", "next", "settings"]
+
+    mutating func recordPlaybackControlDiagnosticEvent(_ event: SlideshowControlBarDiagnosticEvent) {
+        switch event {
+        case .begin:
+            wake = nil
+            firstWakeObservation = nil
+            lastControlObservation = nil
+            lastControlObservationTimes = "unavailable"
+            didReadWakeObservation = false
+            wakeObservationTimes = "unavailable"
+            hasShownControls = false
+            hasShownThenAbsentControls = false
+        case .wake(let request, let returned):
+            wake = (request, returned)
+        case .observation(let observation, let request, let returned):
+            lastControlObservation = observation
+            lastControlObservationTimes = "request=\(Self.time(request)),return=\(Self.time(returned))"
+            if wake != nil, !didReadWakeObservation {
+                didReadWakeObservation = true
+                firstWakeObservation = observation
+                wakeObservationTimes = "request=\(Self.time(request)),return=\(Self.time(returned))"
+            }
+            if let observation, wake != nil {
+                let shown = Self.controls.contains { observation.snapshots["slideshow.control.\($0).button"] != nil }
+                hasShownThenAbsentControls = hasShownThenAbsentControls || (hasShownControls && !shown)
+                hasShownControls = hasShownControls || shown
+            }
+        case .tap(let request, let returned):
+            actionRequest = request
+            actionReturn = returned
+        }
+    }
+
+    var controlSuffix: String {
+        let controls = Self.controls.map { name in
+            let button = firstWakeObservation?.snapshots["slideshow.control.\(name).button"]
+            let exists = firstWakeObservation == nil ? "unknown" : String(button != nil)
+            let inside = button.map {
+                !($0.frame.isEmpty) && firstWakeObservation?.windowFrame.contains($0.frame) == true
+            }
+            return
+                "\(name){exists=\(exists),enabled=\(button.map { String($0.isEnabled) } ?? "unknown"),frame=\(button.map { String(describing: $0.frame) } ?? "unknown"),hittable=unavailable(snapshot-api),frameInsideWindow=\(inside.map(String.init) ?? "unknown")}"
+        }.joined(separator: ";")
+        let visibility =
+            hasShownThenAbsentControls
+            ? "shown-then-absent(auto-hide-candidate)"
+            : hasShownControls ? "shown" : "never-observed(visibility-between-reads-unknown)"
+        let lastPlayPausePresence =
+            lastControlObservation.map {
+                String($0.snapshots["slideshow.control.playPause.button"] != nil)
+            } ?? "unknown"
+        let lastMarkerPresence = lastControlObservation.map { String($0.hasPlaybackMarker) } ?? "unknown"
+        return
+            " wake.request=\(Self.time(wake?.request)),wake.return=\(Self.time(wake?.returned)),wakeSnapshot{\(wakeObservationTimes),succeeded=\(firstWakeObservation != nil),window=\(firstWakeObservation.map { String(describing: $0.windowFrame) } ?? "unknown"),actionPosition=app-default-tap,playbackMarker.exists=\(firstWakeObservation.map { String($0.hasPlaybackMarker) } ?? "unknown");\(controls);\(Self.presentation(firstWakeObservation?.snapshots ?? [:]))},controls.visibility=\(visibility),lastSnapshotSucceeded=\(lastControlObservation != nil),lastSnapshot{\(lastControlObservationTimes),playPause.exists=\(lastPlayPausePresence),playbackMarker.exists=\(lastMarkerPresence)}"
+    }
+
+    var actionSuffix: String {
+        "action.request=\(Self.time(actionRequest)),action.return=\(Self.time(actionReturn)),elapsedSinceAction=\(Self.time(actionRequest.map { ProcessInfo.processInfo.systemUptime - $0 }))"
+    }
+
+    var pauseSuffix: String {
+        " (pause.request=\(Self.time(pauseTap?.request)),pause.return=\(Self.time(pauseTap?.returned)),firstPauseRead{\(firstPauseRead ?? "unavailable")};\(controlSuffix))"
+    }
+
+    var sceneSuffix: String {
+        " (next.ordinal=\(nextOrdinal),next.beforeIdentity=\(nextBeforeIdentity),next.request=\(Self.time(nextTap?.request)),next.return=\(Self.time(nextTap?.returned)),lastScene{\(lastSceneFields)};\(actionSuffix))\(pauseSuffix)"
+    }
+}
+
 extension PlaybackHistoryIOSUITests {
+    func playbackControlDiagnostic(_ event: SlideshowControlBarDiagnosticEvent) {
+        playbackDiagnostics.recordPlaybackControlDiagnosticEvent(event)
+    }
+
+    func tapPlaybackControl(
+        app: XCUIApplication, identifier: String, beforeIdentity: String? = nil, isPause: Bool = false,
+        file: StaticString = #filePath, line: UInt = #line
+    ) {
+        if identifier == "slideshow.control.next.button" {
+            playbackDiagnostics.nextOrdinal += 1
+            playbackDiagnostics.nextBeforeIdentity = PlaybackHistoryFailureDiagnostics.identity(beforeIdentity)
+            playbackDiagnostics.nextTap = nil
+        }
+        app.tapSlideshowControlBarButton(
+            identifier: identifier,
+            onDiagnosticEvent: { event in
+                self.playbackControlDiagnostic(event)
+                if case .tap(let request, let returned) = event {
+                    if isPause {
+                        self.playbackDiagnostics.pauseTap = (request, returned)
+                        self.playbackDiagnostics.firstPauseRead = nil
+                    }
+                    if identifier == "slideshow.control.next.button" {
+                        self.playbackDiagnostics.nextTap = (request, returned)
+                    }
+                }
+            }, failureDiagnosticSuffix: { self.playbackDiagnostics.controlSuffix }, file: file, line: line)
+    }
+
     func attachManualLifecycleRuntimeEvidence(mode: ManualLifecycleMode) {
         guard !manualLifecycleRuntimeEvidenceRows.isEmpty,
             JSONSerialization.isValidJSONObject(manualLifecycleRuntimeEvidenceRows),
@@ -66,9 +228,10 @@ extension PlaybackHistoryIOSUITests {
             app.refreshSlideshowControlBarButton(
                 identifier: "slideshow.control.settings.button",
                 timeout: TestWait.seconds(.infrastructure(8)), pollSeconds: TestWait.seconds(.product(0.2)),
-                onTimeout: { diagnostic = " (\($0))" }),
+                onDiagnosticEvent: playbackControlDiagnostic,
+                onTimeout: { diagnostic = " (\($0)\(self.playbackDiagnostics.controlSuffix))" }),
             "The slideshow Settings button must be ready before opening playback settings.\(diagnostic)")
-        app.tapSlideshowControlBarButton(identifier: "slideshow.control.settings.button")
+        tapPlaybackControl(app: app, identifier: "slideshow.control.settings.button")
 
         let playbackEntry: XCUIElement
         if UIDevice.current.userInterfaceIdiom == .pad {
@@ -137,7 +300,8 @@ extension PlaybackHistoryIOSUITests {
             app.refreshSlideshowControlBarButton(
                 identifier: "slideshow.control.settings.button",
                 timeout: TestWait.seconds(.infrastructure(6)), pollSeconds: TestWait.seconds(.product(0.2)),
-                onTimeout: { diagnostic = " (\($0))" }),
+                onDiagnosticEvent: playbackControlDiagnostic,
+                onTimeout: { diagnostic = " (\($0)\(self.playbackDiagnostics.controlSuffix))" }),
             "Could not return from the playback settings page to the slideshow\(diagnostic)"
         )
     }
@@ -153,8 +317,16 @@ extension PlaybackHistoryIOSUITests {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             var didReadSnapshot = true
+            let request = ProcessInfo.processInfo.systemUptime
             let snapshots = app.evidenceSnapshotsByIdentifier(onSnapshotFailure: { _ in didReadSnapshot = false })
+            let returned = ProcessInfo.processInfo.systemUptime
             let button = snapshots["slideshow.control.playPause.button"]
+            if playbackDiagnostics.pauseTap != nil, playbackDiagnostics.firstPauseRead == nil {
+                let state = PlaybackHistoryFailureDiagnostics.token(
+                    (button?.value as? String)?.lowercased(), allowed: ["play", "pause"])
+                playbackDiagnostics.firstPauseRead =
+                    "request=\(PlaybackHistoryFailureDiagnostics.time(request)),return=\(PlaybackHistoryFailureDiagnostics.time(returned)),snapshotSucceeded=\(didReadSnapshot),control.exists=\(button != nil),state=\(state);\(PlaybackHistoryFailureDiagnostics.presentation(snapshots))"
+            }
             if let button, ((button.value as? String) ?? "").lowercased() == expected, Date() < deadline {
                 return true
             }
@@ -282,7 +454,10 @@ extension PlaybackHistoryIOSUITests {
             throw NSError(
                 domain: "PlaybackHistoryIOSUITests",
                 code: 10,
-                userInfo: [NSLocalizedDescriptionKey: "paused scene is not a visible photo scene: \(observed)"]
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "paused scene is not a visible photo scene: \(observed)\(playbackDiagnostics.pauseSuffix)"
+                ]
             )
         }
         return pausedFrame
@@ -452,7 +627,7 @@ extension PlaybackHistoryIOSUITests {
                 }), let changedIdentity
         else {
             attachSmartFillProbeLabels(app: app, name: "manual-lifecycle-scene-identity-unchanged-probe")
-            XCTFail("scene identity did not change")
+            XCTFail("scene identity did not change\(playbackDiagnostics.sceneSuffix)")
             throw NSError(
                 domain: "PlaybackHistoryIOSUITests", code: 6,
                 userInfo: [NSLocalizedDescriptionKey: "scene identity did not change"])
@@ -545,18 +720,23 @@ extension PlaybackHistoryIOSUITests {
             didObserve = guardWait.transaction().until(condition)
         }
         guard didObserve else {
+            // These are failure-time direct reads, never substitutes for the final polling observation.
+            let directReads = [
+                ("window", app.windows.firstMatch.descendants(matching: .any)["slideshow.currentAssetId.flag"]),
+                ("appRoot", app.descendants(matching: .any)["slideshow.currentAssetId.flag"])
+            ].map { scope, element in
+                let request = ProcessInfo.processInfo.systemUptime
+                do {
+                    let snapshot = try element.snapshot()
+                    return
+                        "\(scope){request=\(PlaybackHistoryFailureDiagnostics.time(request)),return=\(PlaybackHistoryFailureDiagnostics.time(ProcessInfo.processInfo.systemUptime)),succeeded=true,label=\(PlaybackHistoryFailureDiagnostics.assetLabel(snapshot.label))}"
+                } catch {
+                    return
+                        "\(scope){request=\(PlaybackHistoryFailureDiagnostics.time(request)),return=\(PlaybackHistoryFailureDiagnostics.time(ProcessInfo.processInfo.systemUptime)),succeeded=false,errorCode=\((error as NSError).code),label=unknown}"
+                }
+            }.joined(separator: ";")
             let hierarchy = app.debugDescription
-            let probeDiagnostic: [String]
-            do {
-                let candidate = try app.descendants(matching: .any)["slideshow.currentAssetId.flag"].snapshot()
-                probeDiagnostic = [
-                    "currentAssetProbe.exists=true",
-                    "currentAssetProbe.identifier=\(candidate.identifier)",
-                    "currentAssetProbe.label=\(candidate.label)"
-                ]
-            } catch {
-                probeDiagnostic = ["currentAssetProbe.snapshotError=\(error.localizedDescription)"]
-            }
+            let probeDiagnostic = [directReads, playbackDiagnostics.lastAssetPoll]
             let diagnostic =
                 ([
                     "currentAssetProbe.snapshotFailures=\(snapshotFailureCount)",
@@ -571,10 +751,10 @@ extension PlaybackHistoryIOSUITests {
             attachment.name = "manual-lifecycle-current-asset-probe-hierarchy"
             attachment.lifetime = .keepAlways
             add(attachment)
-            // Public failure text carries only the numeric code, never the raw snapshot error.
+            // Failure text carries only sanitized fields and numeric errors, never raw snapshot errors.
             let lastError = lastSnapshotFailureCode.map { "code:\($0)" } ?? "none"
             XCTFail(
-                "The slideshow must reliably expose slideshow.currentAssetId.flag in UI tests, EXIF panel or not. (snapshotFailures=\(snapshotFailureCount), lastError=\(lastError))"
+                "The slideshow must reliably expose slideshow.currentAssetId.flag in UI tests, EXIF panel or not. (snapshotFailures=\(snapshotFailureCount), lastError=\(lastError),lastPoll{\(playbackDiagnostics.lastAssetPoll)},failureTimeDirect{\(directReads)},\(playbackDiagnostics.actionSuffix))\(playbackDiagnostics.pauseSuffix)"
             )
             throw NSError(
                 domain: "PlaybackHistoryIOSUITests",
@@ -622,9 +802,24 @@ extension PlaybackHistoryIOSUITests {
         snapshots: [String: XCUIElementSnapshot]? = nil,
         onSnapshotFailure: ((Error) -> Void)? = nil
     ) -> String? {
+        let request = ProcessInfo.processInfo.systemUptime
+        var hasMainWindow: Bool?
+        var succeeded = true
+        let observed =
+            snapshots
+            ?? app.evidenceSnapshotsByIdentifier(
+                onSnapshotFailure: { error in
+                    succeeded = false
+                    onSnapshotFailure?(error)
+                },
+                onRootSnapshot: { root in
+                    hasMainWindow = root.children.contains { $0.elementType == .window }
+                })
+        let candidate = observed["slideshow.currentAssetId.flag"]
+        playbackDiagnostics.lastAssetPoll =
+            "request=\(PlaybackHistoryFailureDiagnostics.time(request)),return=\(PlaybackHistoryFailureDiagnostics.time(ProcessInfo.processInfo.systemUptime)),source=\(snapshots == nil ? "appRoot" : "suppliedSnapshot"),succeeded=\(succeeded),hasWindow=\(hasMainWindow.map(String.init) ?? "unknown"),flag=\(PlaybackHistoryFailureDiagnostics.assetLabel(candidate?.label));\(PlaybackHistoryFailureDiagnostics.presentation(observed))"
         guard
-            let probe = (snapshots ?? app.evidenceSnapshotsByIdentifier(onSnapshotFailure: onSnapshotFailure))[
-                "slideshow.currentAssetId.flag"]
+            let probe = candidate
         else { return nil }
         let label = probe.label.trimmingCharacters(in: .whitespacesAndNewlines)
         return label.isEmpty || label == "no-asset" ? nil : label
@@ -645,7 +840,8 @@ extension PlaybackHistoryIOSUITests {
         else {
             attachSmartFillProbeLabels(app: app, name: "smartfill-history-missing-complete-visible-probe")
             XCTFail(
-                "SmartFill must expose the complete manifest, stable visible render state and history cursor together")
+                "SmartFill must expose the complete manifest, stable visible render state and history cursor together\(playbackDiagnostics.sceneSuffix)"
+            )
             throw NSError(
                 domain: "PlaybackHistoryIOSUITests",
                 code: 3,
@@ -673,7 +869,8 @@ extension PlaybackHistoryIOSUITests {
         else {
             attachSmartFillProbeLabels(app: app, name: "smartfill-history-next-identity-unchanged-probe")
             XCTFail(
-                "After tapping next, the fully visible SmartFill scene identity did not change in \(Int(timeout)) s")
+                "After tapping next, the fully visible SmartFill scene identity did not change in \(Int(timeout)) s\(playbackDiagnostics.sceneSuffix)"
+            )
             throw NSError(
                 domain: "PlaybackHistoryIOSUITests",
                 code: 4,
@@ -686,7 +883,32 @@ extension PlaybackHistoryIOSUITests {
     func currentCompleteVisibleSmartFillScene(
         app: XCUIApplication, snapshots: [String: XCUIElementSnapshot]? = nil
     ) -> CompleteVisibleSmartFillScene? {
-        let snapshots = snapshots ?? app.evidenceSnapshotsByIdentifier()
+        let request = ProcessInfo.processInfo.systemUptime
+        var snapshotSucceeded = true
+        let snapshots =
+            snapshots ?? app.evidenceSnapshotsByIdentifier(onSnapshotFailure: { _ in snapshotSucceeded = false })
+        let returned = ProcessInfo.processInfo.systemUptime
+        let manifestLabel = snapshots["slideshow.smartfill.currentManifest.flag"]?.label
+        let fields = SharedSceneEvidenceManifest.parseKeyValueFields(manifestLabel ?? "")
+        let historyLabel = snapshots["slideshow.historyLedger.summary.flag"]?.label
+        let historyObject = historyLabel?.data(using: .utf8).flatMap {
+            (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any]
+        }
+        let numbers = ["slotCount", "gapPixelCount", "overlapPixelCount", "canvasCoverage", "emptyCanvasRatio"].map {
+            let number = fields[$0].flatMap(Double.init).flatMap { $0.isFinite ? $0 : nil }
+            return "\($0)=\(number.map { String($0) } ?? "unavailable")"
+        }.joined(separator: ",")
+        let historyFields = ["cursor", "entryCount", "canPrevious", "canRedo"].map {
+            "\($0)=\((historyObject?[$0] as? NSNumber)?.stringValue ?? "unavailable")"
+        }.joined(separator: ",")
+        let readiness =
+            fields["slotReadiness"].map {
+                $0.split(separator: ",", omittingEmptySubsequences: false).prefix(8).map {
+                    PlaybackHistoryFailureDiagnostics.token(String($0), allowed: ["ready", "pending", "failed"])
+                }.joined(separator: ",")
+            } ?? "absent"
+        playbackDiagnostics.lastSceneFields =
+            "request=\(PlaybackHistoryFailureDiagnostics.time(request)),return=\(PlaybackHistoryFailureDiagnostics.time(returned)),snapshotSucceeded=\(snapshotSucceeded),manifest.exists=\(manifestLabel != nil),complete=\(SharedSceneEvidenceManifest.manifestObservation(from: manifestLabel ?? "")?.isCompleteVisibleScene.description ?? "unknown"),\(numbers),slotReadiness=\(readiness),ledgerSceneAssets=\(PlaybackHistoryFailureDiagnostics.identity(fields["ledgerSceneAssets"])),history.exists=\(historyLabel != nil),\(historyFields);\(PlaybackHistoryFailureDiagnostics.presentation(snapshots))"
         guard let manifestProbe = snapshots["slideshow.smartfill.currentManifest.flag"],
             let contractProbe = snapshots["slideshow.scenePresentation.contract.summary"],
             let historyProbe = snapshots["slideshow.historyLedger.summary.flag"]
@@ -769,11 +991,15 @@ extension PlaybackHistoryIOSUITests {
     }
 
     func tapElement(_ element: XCUIElement) {
+        defer { playbackDiagnostics.actionReturn = ProcessInfo.processInfo.systemUptime }
         if element.isHittable {
+            playbackDiagnostics.actionRequest = ProcessInfo.processInfo.systemUptime
             element.tapForFailureEvidence()
             return
         }
-        element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tapForFailureEvidence()
+        let coordinate = element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        playbackDiagnostics.actionRequest = ProcessInfo.processInfo.systemUptime
+        coordinate.tapForFailureEvidence()
     }
 
     // Callers resolve the TestWait budget once; polling cadence stays fixed.

@@ -22,11 +22,13 @@ final class PlaybackHistoryIOSUITests: XCTestCase {
     }
 
     var manualLifecycleRuntimeEvidenceRows: [[String: Any]] = []
+    var playbackDiagnostics = PlaybackHistoryFailureDiagnostics()
 
     override func setUpWithError() throws {
         continueAfterFailure = false
         FirstFailureOrientation.set(.portrait)
         manualLifecycleRuntimeEvidenceRows = []
+        playbackDiagnostics = PlaybackHistoryFailureDiagnostics()
     }
 
     @MainActor
@@ -38,25 +40,25 @@ final class PlaybackHistoryIOSUITests: XCTestCase {
         let initialAssetID = try waitForCurrentAssetID(app: app)
         attachScreenshot(app: app, name: "history-01-initial-\(currentDeviceTag())")
 
-        app.tapSlideshowControlBarButton(identifier: "slideshow.control.next.button")
+        tapPlaybackControl(app: app, identifier: "slideshow.control.next.button", beforeIdentity: initialAssetID)
         let secondAssetID = try waitForCurrentAssetIDChange(
             app: app, from: initialAssetID, timeout: TestWait.seconds(.product(20)))
         attachScreenshot(app: app, name: "history-02-after-next-\(currentDeviceTag())")
 
-        app.tapSlideshowControlBarButton(identifier: "slideshow.control.next.button")
+        tapPlaybackControl(app: app, identifier: "slideshow.control.next.button", beforeIdentity: secondAssetID)
         let thirdAssetID = try waitForCurrentAssetIDChange(
             app: app, from: secondAssetID, timeout: TestWait.seconds(.product(20)))
         XCTAssertNotEqual(thirdAssetID, initialAssetID, "Two nexts in a row should reach a new playback scene")
         attachScreenshot(app: app, name: "history-03-after-second-next-\(currentDeviceTag())")
 
-        app.tapSlideshowControlBarButton(identifier: "slideshow.control.previous.button")
+        tapPlaybackControl(app: app, identifier: "slideshow.control.previous.button")
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(20))) { self.currentAssetID(app: app) == secondAssetID },
             "The first previous should return to the previous photo, not pick a new random one"
         )
         attachScreenshot(app: app, name: "history-04-after-previous-to-second-\(currentDeviceTag())")
 
-        app.tapSlideshowControlBarButton(identifier: "slideshow.control.previous.button")
+        tapPlaybackControl(app: app, identifier: "slideshow.control.previous.button")
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(20))) { self.currentAssetID(app: app) == initialAssetID },
             "The second previous should keep following the retained history back to the first photo"
@@ -73,7 +75,7 @@ final class PlaybackHistoryIOSUITests: XCTestCase {
         let initial = try waitForCompleteVisibleSmartFillScene(app: app, timeout: TestWait.seconds(.infrastructure(45)))
         attachScreenshot(app: app, name: "smartfill-history-01-initial")
 
-        app.tapSlideshowControlBarButton(identifier: "slideshow.control.next.button")
+        tapPlaybackControl(app: app, identifier: "slideshow.control.next.button", beforeIdentity: initial.sceneIdentity)
         let second = try waitForCompleteVisibleSmartFillSceneChange(
             app: app,
             from: initial.sceneIdentity,
@@ -82,7 +84,7 @@ final class PlaybackHistoryIOSUITests: XCTestCase {
         XCTAssertGreaterThan(second.historyCursor, initial.historyCursor)
         attachScreenshot(app: app, name: "smartfill-history-02-after-next")
 
-        app.tapSlideshowControlBarButton(identifier: "slideshow.control.next.button")
+        tapPlaybackControl(app: app, identifier: "slideshow.control.next.button", beforeIdentity: second.sceneIdentity)
         let third = try waitForCompleteVisibleSmartFillSceneChange(
             app: app,
             from: second.sceneIdentity,
@@ -92,7 +94,7 @@ final class PlaybackHistoryIOSUITests: XCTestCase {
         XCTAssertGreaterThan(third.historyCursor, second.historyCursor)
         attachScreenshot(app: app, name: "smartfill-history-03-after-second-next")
 
-        app.tapSlideshowControlBarButton(identifier: "slideshow.control.previous.button")
+        tapPlaybackControl(app: app, identifier: "slideshow.control.previous.button")
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(20))) {
                 self.currentCompleteVisibleSmartFillScene(app: app)?.sceneIdentity == second.sceneIdentity
@@ -103,7 +105,7 @@ final class PlaybackHistoryIOSUITests: XCTestCase {
         XCTAssertEqual(returnedSecond.historyCursor, second.historyCursor)
         attachScreenshot(app: app, name: "smartfill-history-04-after-previous-to-second")
 
-        app.tapSlideshowControlBarButton(identifier: "slideshow.control.previous.button")
+        tapPlaybackControl(app: app, identifier: "slideshow.control.previous.button")
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(20))) {
                 self.currentCompleteVisibleSmartFillScene(app: app)?.sceneIdentity == initial.sceneIdentity
@@ -134,13 +136,16 @@ final class PlaybackHistoryIOSUITests: XCTestCase {
 
         XCTAssertTrue(
             app.waitForSlideshowControlBarButton(
-                identifier: "slideshow.control.playPause.button", timeout: TestWait.seconds(.infrastructure(8))),
-            "The slideshow must show the Play/Pause control")
+                identifier: "slideshow.control.playPause.button", timeout: TestWait.seconds(.infrastructure(8)),
+                onDiagnosticEvent: playbackControlDiagnostic),
+            "The slideshow must show the Play/Pause control\(playbackDiagnostics.controlSuffix)")
         XCTAssertTrue(waitForPlayPauseState(app: app, expected: "pause", timeout: TestWait.seconds(.product(4))))
 
         // Pausing from the control bar must write the same autoPlayEnabled that the settings page uses.
-        app.tapSlideshowControlBarButton(identifier: "slideshow.control.playPause.button")
-        XCTAssertTrue(waitForPlayPauseState(app: app, expected: "play", timeout: TestWait.seconds(.product(3))))
+        tapPlaybackControl(app: app, identifier: "slideshow.control.playPause.button", isPause: true)
+        XCTAssertTrue(
+            waitForPlayPauseState(app: app, expected: "play", timeout: TestWait.seconds(.product(3))),
+            playbackDiagnostics.pauseSuffix)
         openPlaybackSettingsFromSlideshow(app: app)
         let autoPlayToggle = try requireAutoPlayToggle(app: app)
         XCTAssertTrue(
@@ -183,8 +188,10 @@ final class PlaybackHistoryIOSUITests: XCTestCase {
 
         XCTAssertTrue(
             waitForPlayPauseState(app: app, expected: "pause", timeout: TestWait.seconds(.product(4))))
-        app.tapSlideshowControlBarButton(identifier: "slideshow.control.playPause.button")
-        XCTAssertTrue(waitForPlayPauseState(app: app, expected: "play", timeout: TestWait.seconds(.product(3))))
+        tapPlaybackControl(app: app, identifier: "slideshow.control.playPause.button", isPause: true)
+        XCTAssertTrue(
+            waitForPlayPauseState(app: app, expected: "play", timeout: TestWait.seconds(.product(3))),
+            playbackDiagnostics.pauseSuffix)
 
         try assertSmartFillPauseOnlyFrameFreeze(app: app, evidenceEventPrefix: "ipad-pause-only")
     }
@@ -411,8 +418,17 @@ extension PlaybackHistoryIOSUITests {
                         "reason=\(lastPauseRejectionReason), remainingMarginSeconds=\(margin), requiredMarginSeconds=\(PlaybackHistoryIOSUITestsCalibration.minimumPauseTapMarginSeconds), preparationSeconds=\(String(format: "%.3f", elapsed)), \(diagnostic)"
                     self.attachSmartFillProbeLabels(app: app, name: "manual-lifecycle-pause-preparation-rejected-probe")
                     XCTFail("SmartFill Pause preparation was rejected before the deadline. (\(detail))")
-                } : nil)
-        XCTAssertTrue(waitForPlayPauseState(app: app, expected: "play", timeout: TestWait.seconds(.product(3))))
+                } : nil,
+            onDiagnosticEvent: { event in
+                self.playbackControlDiagnostic(event)
+                if case .tap(let request, let returned) = event {
+                    self.playbackDiagnostics.pauseTap = (request, returned)
+                    self.playbackDiagnostics.firstPauseRead = nil
+                }
+            }, failureDiagnosticSuffix: { self.playbackDiagnostics.controlSuffix })
+        XCTAssertTrue(
+            waitForPlayPauseState(app: app, expected: "play", timeout: TestWait.seconds(.product(3))),
+            playbackDiagnostics.pauseSuffix)
         let paused = try waitForPresentationProbe(app: app, timeout: TestWait.seconds(.product(3)))
         appendManualLifecycleRuntimeEvidence(app: app, mode: mode, event: "paused", probe: paused)
         RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.8))))
@@ -421,7 +437,7 @@ extension PlaybackHistoryIOSUITests {
         appendManualLifecycleRuntimeEvidence(app: app, mode: mode, event: "freeze-confirmed", probe: frozen)
 
         let initialIdentity = try sceneIdentity(app: app, mode: mode)
-        app.tapSlideshowControlBarButton(identifier: "slideshow.control.next.button")
+        tapPlaybackControl(app: app, identifier: "slideshow.control.next.button", beforeIdentity: initialIdentity)
         let afterNextIdentity = try waitForSceneIdentityChange(app: app, mode: mode, from: initialIdentity)
         let staticAfterNext = try waitForStablePresentationProbe(app: app, timeout: TestWait.seconds(.product(4)))
         XCTAssertTrue(
@@ -437,7 +453,7 @@ extension PlaybackHistoryIOSUITests {
             identity: afterNextIdentity
         )
 
-        app.tapSlideshowControlBarButton(identifier: "slideshow.control.previous.button")
+        tapPlaybackControl(app: app, identifier: "slideshow.control.previous.button")
         let afterPreviousIdentity = try waitForSceneIdentityChange(app: app, mode: mode, from: afterNextIdentity)
         let staticAfterPrevious = try waitForStablePresentationProbe(app: app, timeout: TestWait.seconds(.product(4)))
         XCTAssertTrue(
@@ -453,7 +469,7 @@ extension PlaybackHistoryIOSUITests {
             identity: afterPreviousIdentity
         )
 
-        app.tapSlideshowControlBarButton(identifier: "slideshow.control.playPause.button")
+        tapPlaybackControl(app: app, identifier: "slideshow.control.playPause.button")
         XCTAssertTrue(waitForPlayPauseState(app: app, expected: "pause", timeout: TestWait.seconds(.product(3))))
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(4))) {

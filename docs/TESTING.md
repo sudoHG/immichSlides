@@ -307,7 +307,12 @@ page or state. Do not query the transient button again to read hittability or ta
 Return false at the deadline without a final condition call. The current-asset poll retains its successful
 snapshot value and records snapshot failures separately from an absent probe; timeout
 attachments include the failure count and last snapshot error. Its failure-message
-suffix contains only the count and numeric error code. Playback-entry timeout text
+suffix contains the count and numeric error code. Playback History also retains the
+last polling snapshot's window presence, flag state and presentation phase/layer roles,
+then labels its two bounded failure-time direct flag reads (window and app root)
+separately, with request/return uptimes and elapsed time since the triggering action.
+Only public synthetic fixture asset IDs and bounded existing hashed scene references
+are printed verbatim; other nonempty IDs are redacted. Playback-entry timeout text
 retains the last successful Settings poll and its playback-marker observation. A failed
 snapshot leaves that observation intact and sets `lastSnapshotSucceeded=false`;
 attributes are unknown only until a snapshot first succeeds. Diagnostic reads never restart the
@@ -422,6 +427,25 @@ timeout. Playback History Settings uses the explicit bounded refresh, without
 the generic waiter's final condition call. Playback History
 Play/Pause polls, including manual lifecycle pause/resume, read the value from one
 fallible application snapshot per poll and reveal an absent control within the original deadline.
+Playback History failure suffixes retain the original Pause tap issue/return and
+the first state readback's request/return, independently of later polling wakes.
+Next diagnostics retain its ordinal, pre-tap identity, issue/return and the last
+same-snapshot manifest completeness/geometry, contract and history cursor fields.
+Control diagnostics retain the single wake's issue/return and its first subsequent
+snapshot of all four buttons (exists/enabled/frame/window containment), presentation
+and playback marker. Each control helper starts a fresh diagnostic record, so an
+action that never wakes cannot inherit a previous wake or visibility transition.
+The existence-only Settings synchronization waiter starts its original existence
+wait directly after wake, with no added success-path snapshot. Only a timeout
+takes one diagnostic window snapshot; that sample cannot establish whether the
+controls appeared and auto-hid between wake and timeout. When no wake happened,
+the suffix still reports Play/Pause and playback-marker presence from the last
+existing observation, or unknown if it failed. Snapshot APIs do not expose hittability, so
+the suffix explicitly reports `hittable=unavailable(snapshot-api)`. Visibility is
+reported as never observed, shown, or shown then absent (an auto-hide candidate);
+unobserved intervals never prove the controls were never displayed. Other control
+actions reuse their existing snapshots. These diagnostics add no waits or actions,
+do not replace failed assertions, and do not affect the failure reader or yellow policy.
 
 The lifecycle midpoint/Continue helpers always wake the canvas once before their
 appearance wait, retaining the existing 8-second appearance and 2-second readiness
