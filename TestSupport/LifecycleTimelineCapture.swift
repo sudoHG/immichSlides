@@ -199,8 +199,8 @@ final class LifecycleTimelineCapture {
         guard let heldPhotoPixels, proofs.last?["photo_pixels_sha256"] as? String == heldPhotoPixels else {
             throw LifecycleTimelineJudge.Failure("frozen photo pixels changed")
         }
-        try prepareFinalResume()
         try prepareSIGSTOPIfRequested()
+        try prepareFinalResume()
         let receipt = try performTimelineAction("continueReceived", perform: finalResume)
         _ = try captureTimelineContent("timeline-continue-early", expectedScene: nextScene.scene)
         let events = try waitForTimelineEvents { events in

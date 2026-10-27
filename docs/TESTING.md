@@ -749,6 +749,17 @@ The held-photo proof also compares exact decoded pixels before and after T+2 in
 the central photo band (10–90% of width, 30–60% of height), excluding the separately
 animated top EXIF and bottom control overlays. It applies no pixel tolerance.
 
+Local App-only SIGSTOP verification stops the paused App for 24 seconds **before
+Continue control preparation**. This proves that delays before the action do not
+consume the App-receipt timing window; it does not prove tolerance of 24-second
+native tap delivery. A tap delivered after the eight-second control auto-hide can
+only wake the controls and fail for missing `continueReceived`. That navigation
+residual is outside this timing contract; do not retry the tap or extend auto-hide.
+To inject once, create `playback-lifecycle-inject-stop` in the run's evidence
+directory. The XCTest process writes `playback-lifecycle-before-continue` while
+paused, then waits for `playback-lifecycle-stop-armed`; the host stops the exact
+device's App PID, writes the armed file, waits 24 seconds and sends SIGCONT.
+
 iPhone, iPad and tvOS share the sustained-dimming predicate and constants in
 `AccessLifecycleContract`: a bright MATCH anchor must identify the old photo at
 or above 95% of baseline, followed by a contiguous run of at least two dim MATCH
