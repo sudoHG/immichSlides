@@ -140,7 +140,8 @@ extension PlaybackHistoryIOSUITests {
     }
 
     func tapPlaybackControl(
-        app: XCUIApplication, identifier: String, beforeIdentity: String? = nil, isPause: Bool = false
+        app: XCUIApplication, identifier: String, beforeIdentity: String? = nil, isPause: Bool = false,
+        file: StaticString = #filePath, line: UInt = #line
     ) {
         if identifier == "slideshow.control.next.button" {
             playbackDiagnostics.nextOrdinal += 1
@@ -160,7 +161,7 @@ extension PlaybackHistoryIOSUITests {
                         self.playbackDiagnostics.nextTap = (request, returned)
                     }
                 }
-            }, failureDiagnosticSuffix: { self.playbackDiagnostics.controlSuffix })
+            }, failureDiagnosticSuffix: { self.playbackDiagnostics.controlSuffix }, file: file, line: line)
     }
 
     func attachManualLifecycleRuntimeEvidence(mode: ManualLifecycleMode) {
