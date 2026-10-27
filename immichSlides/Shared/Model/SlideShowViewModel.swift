@@ -1647,18 +1647,16 @@ extension SlideShowViewModel {
                         executeScenePresentationEffects(effects)
                     case .committingScene(let scene):
                         #if DEBUG
-                        PlaybackLifecycleTimeline.shared.record(
-                            "sceneCommitted",
-                            frame: lifecycleTimelineFrame(sceneRenderSnapshot),
-                            scene: PlaybackLifecycleTimeline.sceneKey(
-                                PlaybackSessionEngine.ScenePresentationIdentity(
-                                    generation: layerIdentity.generation, sceneID: layerIdentity.sceneID)),
-                            transitionScene: PlaybackLifecycleTimeline.sceneKey(
-                                PlaybackSessionEngine.ScenePresentationIdentity(
-                                    generation: layerIdentity.generation, sceneID: layerIdentity.sceneID)),
-                            transitionSource: playbackSession.lifecycleTimelineSourceForTesting(
-                                PlaybackSessionEngine.ScenePresentationIdentity(
-                                    generation: layerIdentity.generation, sceneID: layerIdentity.sceneID)))
+                        if let identity = playbackSession.presentationIdentity(
+                            generation: layerIdentity.generation, sceneID: layerIdentity.sceneID)
+                        {
+                            PlaybackLifecycleTimeline.shared.record(
+                                "sceneCommitted",
+                                frame: lifecycleTimelineFrame(sceneRenderSnapshot),
+                                scene: PlaybackLifecycleTimeline.sceneKey(identity),
+                                transitionScene: PlaybackLifecycleTimeline.sceneKey(identity),
+                                transitionSource: playbackSession.lifecycleTimelineSourceForTesting(identity))
+                        }
                         #endif
                         runtimeEvidenceRecorder.recordVisibleTickCommittedHistory()
                         for slot in scene?.photoSlots ?? [] {
