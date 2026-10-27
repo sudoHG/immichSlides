@@ -68,13 +68,14 @@ final class PlaybackLifecycleTimeline: @unchecked Sendable {
     }
 
     func record(
-        _ kind: String, frame: Frame? = nil, scene: String? = nil, request: String = "", exceptionBasis: String = ""
+        _ kind: String, frame: Frame? = nil, scene: String? = nil, request: String = "", exceptionBasis: String = "",
+        uptime: TimeInterval? = nil
     ) {
         guard let configuration else { return }
         lock.lock()
         defer { lock.unlock() }
         // The event timestamp precedes all serialization and disk IO.
-        let uptime = ProcessInfo.processInfo.systemUptime
+        let uptime = uptime ?? ProcessInfo.processInfo.systemUptime
         sequence += 1
         let event = Event(
             launchNonce: launchNonce, caseNonce: configuration.nonce, sequence: sequence, kind: kind,
@@ -100,8 +101,16 @@ final class PlaybackLifecycleTimeline: @unchecked Sendable {
         }
     }
 
+    func recordReceipt(_ kind: String, frame: @autoclosure () -> Frame) {
+        guard configuration != nil else { return }
+        // Snapshot construction must not move an input's origin under App CPU starvation.
+        let uptime = ProcessInfo.processInfo.systemUptime
+        record(kind, frame: frame(), uptime: uptime)
+    }
+
     /// Called only after the render transaction completes and its next display tick arrives.
     func committedFrame(_ frame: Frame) {
+        let uptime = ProcessInfo.processInfo.systemUptime
         guard let configuration else { return }
         lock.lock()
         defer { lock.unlock() }
@@ -109,15 +118,15 @@ final class PlaybackLifecycleTimeline: @unchecked Sendable {
             if let opacity = frame.outgoingOpacity, opacity < 1,
                 previousFrame.outgoingOpacity == nil || previousFrame.outgoingOpacity == 1
             {
-                record("renderFadeStarted", frame: frame)
+                record("renderFadeStarted", frame: frame, uptime: uptime)
             }
-            if previousFrame.isStable && !frame.isStable { record("renderUnstable", frame: frame) }
+            if previousFrame.isStable && !frame.isStable { record("renderUnstable", frame: frame, uptime: uptime) }
             if frame.isPaused && previousFrame.isPaused && frame.fingerprint != previousFrame.fingerprint {
-                record("frozenFrameChanged", frame: frame)
+                record("frozenFrameChanged", frame: frame, uptime: uptime)
             }
             if frame.isPaused && previousFrame.isPaused && frame.fingerprint == previousFrame.fingerprint {
                 if frozenFingerprint != frame.fingerprint {
-                    record("frameFrozen", frame: frame)
+                    record("frameFrozen", frame: frame, uptime: uptime)
                     frozenFingerprint = frame.fingerprint
                 }
             } else {
@@ -128,9 +137,11 @@ final class PlaybackLifecycleTimeline: @unchecked Sendable {
             && (previousFrame?.isStable != true || previousFrame?.scene != frame.scene
                 || (previousFrame?.isPaused == true && !frame.isPaused))
         {
-            record("sceneStable", frame: frame)
+            record("sceneStable", frame: frame, uptime: uptime)
         }
-        if frame.isPaused && previousFrame?.isPaused != true { record("pauseFrameCommitted", frame: frame) }
+        if frame.isPaused && previousFrame?.isPaused != true {
+            record("pauseFrameCommitted", frame: frame, uptime: uptime)
+        }
         previousFrame = frame
         let requestURL = configuration.directory.appendingPathComponent("playback-lifecycle-request")
         if let request = try? String(contentsOf: requestURL, encoding: .utf8), !request.isEmpty,

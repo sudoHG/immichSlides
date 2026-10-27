@@ -1493,7 +1493,7 @@ extension SlideShowViewModel {
             return
         }
         #if DEBUG
-        PlaybackLifecycleTimeline.shared.record(
+        PlaybackLifecycleTimeline.shared.recordReceipt(
             enabled ? "continueReceived" : "pauseReceived", frame: lifecycleTimelineFrame(sceneRenderSnapshot))
         #endif
         isAutoPlay = enabled

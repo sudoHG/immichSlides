@@ -7,7 +7,7 @@ import OSLog
 extension SlideShowViewModel {
     func requestPreviousScene() {
         #if DEBUG
-        PlaybackLifecycleTimeline.shared.record(
+        PlaybackLifecycleTimeline.shared.recordReceipt(
             "manualNavigationReceived", frame: lifecycleTimelineFrame(sceneRenderSnapshot))
         #endif
         guard playbackSession.sceneCount > 0 else { return }
@@ -29,7 +29,7 @@ extension SlideShowViewModel {
     /// clock.
     func suspendScenePresentationForBackground() {
         #if DEBUG
-        PlaybackLifecycleTimeline.shared.record(
+        PlaybackLifecycleTimeline.shared.recordReceipt(
             "backgroundReceived", frame: lifecycleTimelineFrame(sceneRenderSnapshot))
         #endif
         executeScenePresentationEffects(
@@ -44,7 +44,7 @@ extension SlideShowViewModel {
     /// not catch up on the deadline.
     func resumeScenePresentationFromBackground() {
         #if DEBUG
-        PlaybackLifecycleTimeline.shared.record(
+        PlaybackLifecycleTimeline.shared.recordReceipt(
             "foregroundReceived", frame: lifecycleTimelineFrame(sceneRenderSnapshot))
         #endif
         guard playbackSession.isSuspendedForBackground else {
@@ -65,7 +65,7 @@ extension SlideShowViewModel {
     func requestNextScene(isManual: Bool) {
         #if DEBUG
         if isManual {
-            PlaybackLifecycleTimeline.shared.record(
+            PlaybackLifecycleTimeline.shared.recordReceipt(
                 "manualNavigationReceived", frame: lifecycleTimelineFrame(sceneRenderSnapshot))
         }
         #endif
