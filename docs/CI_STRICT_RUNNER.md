@@ -1018,6 +1018,37 @@ Exhausting that budget fails as `simulator-readiness-timeout`, before any reset
 mutation; a warm device returns on its first valid response. Uninstall and the
 remaining reset steps are still mandatory before Xcode may install the app. A reset error fails the case.
 
+Each reset caller supplies `ios` or `tvos`; other values fail before simulator
+preparation. After keychain and privacy reset, iOS
+fixture simulators disable Password AutoFill with
+`simctl spawn UDID defaults write com.apple.WebUI AutoFillPasswords -bool NO`
+and require the device's persisted preference to be boolean `false` before the app runs.
+The runner resolves that exact UDID's absolute `dataPath` through `simctl list devices --json`,
+then verifies `Library/Preferences/com.apple.WebUI.plist` on the host with
+`plutil -extract AutoFillPasswords raw -expect bool -o -`. It does not start a second
+device process for `defaults read`: that spawn exhausted the remaining shared reset
+budget on a starved hosted iPad. Missing/ambiguous device paths, a failed write,
+missing/unreadable/wrongly typed or enabled preferences, and deadline overruns all fail preparation.
+This is the preference changed by Settings > General > AutoFill & Passwords >
+AutoFill Passwords and Passkeys on the pinned iOS 27 runtime, confirmed by a
+before/after preference diff and the Settings toggle's readback. After an iOS
+runtime pin change, repeat the Settings preference diff and the before/after
+prompt matrix on the pinned iPhone and iPad: a persisted boolean `false` alone does not prove
+that the new OS honours this key. The entire preference step shares at most 60 seconds,
+clamped to what remains of the existing 120-second reset deadline; it creates no new
+reset or case allowance. Device lookup, write and host verification each consume that
+same preference deadline. Logs report their elapsed times, the total preference duration,
+its actual budget and the remaining reset time, including failures. Strict, fixture UI,
+standalone access-lifecycle and listed-retry resets all apply this policy.
+The app's secure field, login flow and exact-prompt decline safety net are unchanged.
+No fixture credential is saved in Passwords. Erasing a device removes its settings;
+the next shared reset reapplies this one before installation. These are disposable,
+dedicated simulators, never personal devices or the host's preferences.
+tvOS keeps its existing environment: Apple's documented
+[Password AutoFill workflow](https://support.apple.com/en-ca/guide/security/sec8839a8de2/web)
+requests credentials from a nearby iPhone or iPad; this change does not establish
+or disable an equivalent local Save Password prompt on tvOS.
+
 UI consumers run this gate before identity/archive checks, simulator inventory
 and fixture server startup/health checks. Standalone fixture and strict runners
 also gate before simulator lookups and fixture health checks; resets use the same
@@ -1110,7 +1141,8 @@ separate from reset and unchanged XCTest deadlines. Reliability may therefore
 cost as much as the earlier 3–9-minute enumeration bootstrap; hosted re-probing
 must establish the actual critical-path cost.
 
-Use dedicated simulators: keychain/privacy reset applies to the whole device.
+Use dedicated simulators: keychain/privacy reset applies to the whole device,
+and iOS Password AutoFill stays disabled on that simulator; it is not restored.
 Server/UI test variables in direct,
 `TEST_RUNNER_` and `SIMCTL_CHILD_` forms are filtered. Strict fixture inputs are
 passed explicitly; real server configuration is never used.

@@ -617,7 +617,7 @@ def main(argv=None, *, simulator_prepared=False):
             require(code == 0, "compiled enumeration failed")
             summary["population"]["compiled"] = compiled_tests(json.loads(enumeration.read_text()), declared)
             rows = coverage_rows(declared, summary["population"]["compiled"], {"testNodes": []}, args.device)
-        reset_simulator_app(udid, boot_submitted=True)
+        reset_simulator_app(udid, platform=platform, boot_submitted=True)
         crash_directories = crash_report_directories()
         crash_reports_before = crash_report_snapshot(crash_directories)
         selected = [entry for entry in declared if not any(rule["identity"] == entry for rule in deselections)]
@@ -673,7 +673,8 @@ def main(argv=None, *, simulator_prepared=False):
                     summary["compiled_evidence"]["first_exit_code"] = raw_code
                 return raw_code, time.monotonic() - started
             retry_result = run_xcode_attempts(command, registry, tier="ui", environment="fixture", today=evaluated_on,
-                identity_for_key=lambda key: expected_by_key[key], reset=lambda: reset_simulator_app(udid, boot_submitted=True),
+                identity_for_key=lambda key: expected_by_key[key],
+                reset=lambda: reset_simulator_app(udid, platform=platform, boot_submitted=True),
                 execute=attempt, allocate_bundle=allocate, read=read_attempt)
             if official_mode:
                 summary["compiled_evidence"]["first_exit_code"] = retry_result["invocations"][0]["exit_code"]

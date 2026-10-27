@@ -961,7 +961,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             )
             service_log_path.write_text("scenario=unreachable listening=false\n", encoding="utf-8")
 
-        reset_log = run_preparation(reset_simulator_app, simulator_udid, boot_submitted=True)
+        reset_log = run_preparation(reset_simulator_app, simulator_udid, platform=arguments.platform, boot_submitted=True)
         (arguments.evidence_dir / "simulator-reset.log").write_text(reset_log, encoding="utf-8")
 
         environment = make_test_environment(
@@ -1031,12 +1031,12 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                                                         [service_log_path, service_log_b_path])
                 def reset_retry():
                     if arguments.suite == "late-image":
-                        retry_reset_log = reset_simulator_app(simulator_udid, boot_submitted=True)
+                        retry_reset_log = reset_simulator_app(simulator_udid, platform=arguments.platform, boot_submitted=True)
                         reset_late_image_fixture(server_url, input_key)
                         attempt_evidence.before_retry()
                     else:
                         attempt_evidence.before_retry()
-                        retry_reset_log = reset_simulator_app(simulator_udid, boot_submitted=True)
+                        retry_reset_log = reset_simulator_app(simulator_udid, platform=arguments.platform, boot_submitted=True)
                     (arguments.evidence_dir / (log_path.stem + "-retry-reset.log")).write_text(retry_reset_log, encoding="utf-8")
                     with (arguments.evidence_dir / "simulator-reset.log").open("a") as log:
                         log.write(retry_reset_log)
@@ -1144,7 +1144,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             log_parts: list[str] = []
             for index, session in enumerate(FILTER_PERSON_SESSIONS):
                 if index > 0:
-                    reset_logs.append(reset_simulator_app(simulator_udid, boot_submitted=True))
+                    reset_logs.append(reset_simulator_app(simulator_udid, platform=arguments.platform, boot_submitted=True))
                     with (arguments.evidence_dir / "simulator-reset.log").open("a") as log:
                         log.write(reset_logs[-1])
                 session_bundle = prepare_private_result_bundle_path(f"filter-person-{session['name']}")
