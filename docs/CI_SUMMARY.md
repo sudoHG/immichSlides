@@ -880,9 +880,11 @@ are authoritative.
 
 Current mode departure, IOSDriver Settings entry and Next readiness instead use
 an unscaled 60-second monotonic navigation guard. The fixed single-action child
-steps share its deadline; native actions no longer extend those paths. The outer
-wait receipt records that root allowance, while `action_duration_seconds` still
-describes only the last action; it is not a complete native-action total.
+steps share its deadline; native actions no longer extend those paths. For mode
+departure and Settings entry the outer wait receipt records that root allowance;
+Next has no outer wait, so its readiness receipt records the guard remainder at
+readiness start. `action_duration_seconds` still describes only the last action;
+it is not a complete native-action total.
 Mode diagnostics retain each native duration without treating it as a deduction.
 In-flight success and the single post-action observation follow the
 [navigation semantics](TESTING.md#3-assertions). Historical receipts and all
