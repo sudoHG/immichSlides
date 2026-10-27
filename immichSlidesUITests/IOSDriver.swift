@@ -454,18 +454,20 @@ struct IOSDriver: PlaybackDriver {
         let wake = guardWait.transaction()
         var observing = preparation
         let navigation = IOSFirstBootNavigation(app: app)
+        // Finish the composite modal search before starting the control bar's auto-hide window.
+        guard
+            preparation.until({
+                navigation.dismissPasswordPrompt(guardWait: guardWait, transaction: prompt)
+            })
+        else { return nil }
         while guardWait.remainingSeconds > 0 {
-            guard navigation.dismissPasswordPrompt(guardWait: guardWait, transaction: prompt) else {
-                RunLoop.current.run(
-                    until: Date().addingTimeInterval(
-                        min(UITestSupportWaitTiming.identityPollSeconds, guardWait.remainingSeconds)))
-                continue
-            }
             guard let captured = observing.query({ action.observe(app: app, identifier: identifier) })
             else { return nil }
             if let observation = captured {
                 action.isBarVisible = hasVisibleControlBar(observation)
-                if observation.isReady, action.isBarVisible {
+                if action.didWake, !observation.hasSettingsNavigationEvidence,
+                    observation.isReady, action.isBarVisible
+                {
                     action.isHittable = observing.query { observation.windowElement.buttons[identifier].isHittable }
                     if action.isHittable == true {
                         action.preparedTarget = observation.diagnostic
@@ -482,7 +484,11 @@ struct IOSDriver: PlaybackDriver {
                         action.timing.revealSeconds += duration
                         action.timing.revealDurationsSeconds.append(duration)
                     }
-                    if action.didWake { observing = wake }
+                    if action.didWake {
+                        // Match the shared tap helper: refresh even a visible bar, then read the target immediately.
+                        observing = wake
+                        continue
+                    }
                 }
             }
             RunLoop.current.run(

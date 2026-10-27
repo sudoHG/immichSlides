@@ -386,9 +386,15 @@ local XCTest activity logs can compare event latency without additional queries.
 IOSDriver wake and tap paths append each measured duration to the same lists
 as their aggregate timing fields.
 `IOSDriver.openSettings` now starts one 60-second monotonic guard before prompt
-handling and control preparation. Exact Not Now, optional canvas wake and Settings
+handling and control preparation. Exact Not Now, canvas wake and Settings
 each permit one action under that same root deadline. The optional prompt branch
-uses a non-polling probe. A returned Settings action permits one outcome snapshot
+uses a non-polling probe. Prompt clearance completes before the sole proactive
+wake; its composite modal search is not repeated inside the refreshed auto-hide
+window. With no Settings navigation evidence, the wake refreshes even visible
+controls, followed immediately by a fresh target snapshot, the existing complete
+control-bar check and live-hittability check. No Debug-only probe is required;
+unknown surfaces still cannot complete Settings navigation.
+A returned Settings action permits one outcome snapshot
 after expiry; only an actual Settings surface or explicitly permitted PIN entry passes.
 Native wake/tap duration lists remain diagnostic and no longer extend this path.
 Pause, Next, `revealControls`, `revealUsableControls` and rotation stable-frame
