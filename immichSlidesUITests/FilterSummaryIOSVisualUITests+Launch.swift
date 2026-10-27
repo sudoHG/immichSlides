@@ -645,23 +645,27 @@ extension FilterSummaryIOSVisualUITests {
         waitForReadinessMarker(app: app, identifier: "filterSummary.visual.ready")
         XCTAssertTrue(
             startPlaybackButton.isEnabled, "The 'Start Playback' button on the filter summary page should be enabled")
-        startPlaybackButton.tapForFailureEvidence()
-
-        var playbackEntryDiagnostic = ""
+        let guardWait = TestWait.hangGuard()
+        let start = guardWait.transaction()
+        var timing = SlideshowControlBarTiming()
+        var playbackEntryDiagnostic = "start-action"
         XCTAssertTrue(
-            waitForSlideshowSettingsButton(
-                app: app,
-                timeout: FilterSummaryIOSVisualUITestsWaitTiming.playbackControlTimeoutSeconds,
-                onTimeout: { playbackEntryDiagnostic = " (\($0))" }),
-            "After starting playback, the playback page should open and show the control bar\(playbackEntryDiagnostic)")
-
+            start.perform(
+                "tap",
+                {
+                    startPlaybackButton.tapForFailureEvidence()
+                    playbackEntryDiagnostic = "playback-arrival"
+                })
+                && start.until {
+                    timing.observe(app: app, identifier: "slideshow.control.settings.button")?
+                        .hasPlaybackMarker == true
+                },
+            "After starting playback, the playback page should open and show the control bar (phase=\(playbackEntryDiagnostic), \(timing.diagnostic))"
+        )
         XCTAssertTrue(
-            app.refreshSlideshowControlBarButton(
-                identifier: "slideshow.control.playPause.button",
-                timeout: FilterSummaryIOSVisualUITestsWaitTiming.navigationTimeoutSeconds,
-                pollSeconds: FilterSummaryIOSVisualUITestsWaitTiming.readbackPollSeconds,
-                onTimeout: { playbackEntryDiagnostic = " (\($0))" }),
-            "Playback page should show the play/pause button\(playbackEntryDiagnostic)")
+            refreshPlaybackControlsForNavigation(
+                app: app, guardWait: guardWait, timing: &timing, diagnostic: &playbackEntryDiagnostic),
+            "Playback page should show the play/pause button (phase=\(playbackEntryDiagnostic), \(timing.diagnostic))")
 
         RunLoop.current.run(
             until: Date().addingTimeInterval(FilterSummaryIOSVisualUITestsWaitTiming.playbackEntrySettleSeconds))

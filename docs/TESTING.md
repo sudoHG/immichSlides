@@ -185,6 +185,13 @@ Its optional-branch rule matches only `if step.until` and `if step.transaction()
 helper calls still require review. Product waits and complete evidence windows retain
 their existing semantics, cadence and budgets.
 
+Filter Summary visual tests share one guard from Start Playback through their
+single control-bar wake and readiness read. They open Settings through `IOSDriver`.
+The one-time entry-hint check returns from the Settings root with at most one Back
+action, recognizes playback independently of auto-hidden controls, then wakes
+hidden controls within that same guard. EXIF diagnostic return paths and capture refresh
+helpers retain their existing windows.
+
 For iOS first-boot paths that type and save server credentials, use
 `IOSFirstBootNavigation` in `UITestSupport`, including the interactive visual-audit
 pack. Use `selectMode` for selection-only screenshots and `selectModeAndContinue`

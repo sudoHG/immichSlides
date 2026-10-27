@@ -5,19 +5,105 @@ import XCTest
 extension FilterSummaryIOSVisualUITests {
     @MainActor
     func openSettingsFromSlideShow(app: XCUIApplication) {
-        var diagnostic = ""
-        XCTAssertTrue(
-            waitForSlideshowSettingsButton(
-                app: app, timeout: FilterSummaryIOSVisualUITestsWaitTiming.screenTransitionTimeoutSeconds,
-                onTimeout: { diagnostic = " (\($0))" }),
-            "Playback page should show the settings button\(diagnostic)")
+        XCTAssertTrue(IOSDriver(app: app).openSettings(), "Playback page should show the settings button")
+    }
 
-        app.tapSlideshowControlBarButton(identifier: "slideshow.control.settings.button")
+    @MainActor
+    func refreshPlaybackControlsForNavigation(
+        app: XCUIApplication, guardWait: TestWait.HangGuard, timing: inout SlideshowControlBarTiming,
+        diagnostic: inout String
+    ) -> Bool {
+        let preparation = guardWait.transaction()
+        let wake = guardWait.transaction()
+        let navigation = IOSFirstBootNavigation(app: app)
+        let identifier = "slideshow.control.playPause.button"
+        diagnostic = "controls-preparation"
+        defer { print("Visual playback navigation: phase=\(diagnostic), \(timing.diagnostic)") }
+        guard
+            preparation.until({
+                guard let surface = try? navigation.observe(destinationIdentifier: "slideshow.currentAssetId.flag"),
+                    !surface.hasModalObstacle
+                else { return false }
+                guard let observation = timing.observe(app: app, identifier: identifier) else { return false }
+                return observation.hasPlaybackMarker && !observation.hasSettingsNavigationEvidence
+            })
+        else { return false }
+        diagnostic = "wake-action"
+        guard wake.perform("tap", { timing.reveal(app: app) }) else { return false }
+        diagnostic = "wake-readiness"
+        // The single wake and its fresh read share the caller's navigation deadline.
+        let hasReadyControls = wake.until {
+            guard let observation = timing.observe(app: app, identifier: identifier),
+                observation.hasPlaybackMarker, !observation.hasSettingsNavigationEvidence, observation.isReady,
+                let settings = observation.snapshots["slideshow.control.settings.button"],
+                settings.elementType == .button, settings.isEnabled, !settings.frame.isEmpty,
+                observation.windowFrame.contains(settings.frame)
+            else { return false }
+            return observation.windowElement.buttons[identifier].isHittable
+        }
+        if hasReadyControls { diagnostic = "wake-complete" }
+        return hasReadyControls
+    }
 
+    @MainActor
+    func returnToSlideShowFromSettingsRoot(app: XCUIApplication) {
+        let guardWait = TestWait.hangGuard()
+        let preparation = guardWait.transaction()
+        let back = guardWait.transaction()
+        let navigation = IOSFirstBootNavigation(app: app)
+        var observation: IOSFirstBootNavigation.Observation?
+        var backButton: XCUIElement?
+        var hasReadyControls = false
+        var didIssueBack = false
+        func isPlayback(_ observed: IOSFirstBootNavigation.Observation) -> Bool {
+            !observed.hasModalObstacle && observed.hasDestination("slideshow.currentAssetId.flag")
+                && !observed.nodes.contains { $0.identifier.hasPrefix("settings.") }
+        }
+        func observePlayback(_ observed: IOSFirstBootNavigation.Observation) -> Bool {
+            guard isPlayback(observed) else { return false }
+            if let settings = observed.button("slideshow.control.settings.button"), settings.isEnabled,
+                !settings.frame.isEmpty, observed.window.frame.contains(settings.frame)
+            {
+                hasReadyControls = observed.windowElement.buttons[settings.identifier].isHittable
+            }
+            return true
+        }
+        let isPrepared = preparation.until {
+            guard let observed = try? navigation.observe(destinationIdentifier: "slideshow.currentAssetId.flag"),
+                !observed.hasModalObstacle
+            else { return false }
+            observation = observed
+            if observePlayback(observed) { return true }
+            guard observed.hasDestination("settings.item.playback") else { return false }
+            let buttons = app.navigationBars.buttons.matching(identifier: "BackButton").allElementsBoundByIndex
+            guard buttons.count == 1, let candidate = buttons.first, candidate.isHittable else { return false }
+            backButton = candidate
+            return true
+        }
+        var didReturn = isPrepared && observation.map(isPlayback) == true
+        if isPrepared, !didReturn, let backButton {
+            didReturn =
+                back.perform(
+                    "back",
+                    {
+                        didIssueBack = true
+                        backButton.tapForFailureEvidence()
+                    })
+                && back.until {
+                    guard let observed = try? navigation.observe(destinationIdentifier: "slideshow.currentAssetId.flag")
+                    else { return false }
+                    return observePlayback(observed)
+                }
+        }
+        var timing = SlideshowControlBarTiming()
+        var playbackEntryDiagnostic = didReturn ? "not-needed" : "not-started"
+        // Playback arrival survives control auto-hide; one wake restores the control needed by the next assertion.
         XCTAssertTrue(
-            waitForAnySettingsRootEntry(
-                app: app, timeout: FilterSummaryIOSVisualUITestsWaitTiming.navigationTimeoutSeconds),
-            "After opening settings from the playback page, the settings list should be visible"
+            didReturn
+                && (hasReadyControls
+                    || refreshPlaybackControlsForNavigation(
+                        app: app, guardWait: guardWait, timing: &timing, diagnostic: &playbackEntryDiagnostic)),
+            "Could not return from settings to the playback page (preparation=\(isPrepared), backIssued=\(didIssueBack), playbackReached=\(didReturn), controlsInitiallyReady=\(hasReadyControls), wake=\(playbackEntryDiagnostic), \(timing.diagnostic))"
         )
     }
 
