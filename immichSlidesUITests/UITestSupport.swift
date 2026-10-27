@@ -329,7 +329,10 @@ enum FirstFailureRemote {
 
 extension XCUIApplication {
     // Keep evidence reads in one tree so auto-hidden controls cannot disappear between queries.
-    func evidenceSnapshotsByIdentifier(onSnapshotFailure: ((Error) -> Void)? = nil) -> [String: XCUIElementSnapshot] {
+    func evidenceSnapshotsByIdentifier(
+        onSnapshotFailure: ((Error) -> Void)? = nil,
+        onRootSnapshot: ((XCUIElementSnapshot) -> Void)? = nil
+    ) -> [String: XCUIElementSnapshot] {
         FirstFailureContext.mark("query-element", element: "app-window")
         let root: XCUIElementSnapshot
         do {
@@ -338,6 +341,7 @@ extension XCUIApplication {
             onSnapshotFailure?(error)
             return [:]
         }
+        onRootSnapshot?(root)
         var snapshots: [String: XCUIElementSnapshot] = [:]
         var pending: [XCUIElementSnapshot] = [root]
         while let node = pending.popLast() {
@@ -1172,6 +1176,12 @@ struct IOSFirstBootNavigation {
     }
 }
 
+enum SlideshowControlBarDiagnosticEvent {
+    case wake(request: TimeInterval, returned: TimeInterval)
+    case observation(SlideshowControlBarButtonObservation?, request: TimeInterval, returned: TimeInterval)
+    case tap(request: TimeInterval, returned: TimeInterval)
+}
+
 struct SlideshowControlBarButtonObservation {
     let identifier: String
     let snapshots: [String: XCUIElementSnapshot]
@@ -1332,17 +1342,31 @@ extension XCUIApplication {
     }
 
     // Use only for functional checks, never to verify control-bar visibility or auto-hide timing.
-    func waitForSlideshowControlBarButton(identifier: String, timeout: TimeInterval) -> Bool {
+    func waitForSlideshowControlBarButton(
+        identifier: String, timeout: TimeInterval,
+        onDiagnosticEvent: ((SlideshowControlBarDiagnosticEvent) -> Void)? = nil
+    ) -> Bool {
         if descendants(matching: .any)["slideshow.currentAssetId.flag"].exists {
+            let request = ProcessInfo.processInfo.systemUptime
             FirstFailureContext.action("tap") { tap() }
+            onDiagnosticEvent?(.wake(request: request, returned: ProcessInfo.processInfo.systemUptime))
         }
-        return buttons[identifier].waitForPublicElement(identifier, timeout: timeout)
+        let didAppear = buttons[identifier].waitForPublicElement(identifier, timeout: timeout)
+        if !didAppear, let onDiagnosticEvent {
+            let request = ProcessInfo.processInfo.systemUptime
+            let observation = try? slideshowControlBarButtonObservation(identifier: identifier)
+            onDiagnosticEvent(
+                .observation(observation, request: request, returned: ProcessInfo.processInfo.systemUptime))
+        }
+        return didAppear
     }
 
     func tapSlideshowControlBarButton(
         identifier: String,
         requiringSnapshot: ((SlideshowControlBarButtonObservation?) -> Bool)? = nil,
         onReadinessTimeout: ((String) -> Void)? = nil,
+        onDiagnosticEvent: ((SlideshowControlBarDiagnosticEvent) -> Void)? = nil,
+        failureDiagnosticSuffix: (() -> String)? = nil,
         file: StaticString = #filePath, line: UInt = #line
     ) {
         var timing = SlideshowControlBarTiming()
@@ -1351,7 +1375,10 @@ extension XCUIApplication {
         let deadline = Date().addingTimeInterval(UITestSupportWaitTiming.controlAppearanceTimeoutSeconds)
         var didReveal = false
         while Date() < deadline {
+            let observationRequest = ProcessInfo.processInfo.systemUptime
             let observation = timing.observe(app: self, identifier: identifier)
+            onDiagnosticEvent?(
+                .observation(observation, request: observationRequest, returned: ProcessInfo.processInfo.systemUptime))
             timing.didObserveSettingsNavigation =
                 timing.didObserveSettingsNavigation || observation?.hasSettingsNavigationEvidence == true
             guard Date() < deadline else { break }
@@ -1362,7 +1389,9 @@ extension XCUIApplication {
                 if !didReveal, observation.hasPlaybackMarker {
                     // Spend the sole wake immediately before a fresh target snapshot, within this deadline.
                     didReveal = true
+                    let wakeRequest = ProcessInfo.processInfo.systemUptime
                     timing.reveal(app: self)
+                    onDiagnosticEvent?(.wake(request: wakeRequest, returned: ProcessInfo.processInfo.systemUptime))
                     continue
                 }
                 if didReveal, observation.isInsideWindow,
@@ -1379,7 +1408,9 @@ extension XCUIApplication {
                                 dy: frame.midY - observation.windowFrame.minY))
                     guard Date() < deadline else { break }
                     timing.tapCount += 1
+                    let tapRequest = ProcessInfo.processInfo.systemUptime
                     coordinate.tapForFailureEvidence()
+                    onDiagnosticEvent?(.tap(request: tapRequest, returned: ProcessInfo.processInfo.systemUptime))
                     let duration = Date().timeIntervalSince(startedAt)
                     timing.tapSeconds += duration
                     timing.tapDurationsSeconds.append(duration)
@@ -1408,15 +1439,15 @@ extension XCUIApplication {
         }
         if timing.tapCount == 0 {
             if let onReadinessTimeout {
-                onReadinessTimeout(timing.diagnostic)
+                onReadinessTimeout(timing.diagnostic + (failureDiagnosticSuffix?() ?? ""))
                 return
             }
             XCTFail(
-                "The slideshow control never became tappable before the deadline. (\(timing.diagnostic))",
+                "The slideshow control never became tappable before the deadline. (\(timing.diagnostic)\(failureDiagnosticSuffix?() ?? ""))",
                 file: file, line: line)
         } else {
             XCTFail(
-                "The slideshow Settings tap had no observed outcome before the deadline. (\(timing.diagnostic))",
+                "The slideshow Settings tap had no observed outcome before the deadline. (\(timing.diagnostic)\(failureDiagnosticSuffix?() ?? ""))",
                 file: file, line: line)
         }
     }
