@@ -51,7 +51,13 @@ The bounded [CI toolchain workflow](../.github/workflows/ci-toolchain.yml) prove
 inventory, policy, its unit tests and the existing host checks on `xcode-27` for relevant pull requests and manual
 dispatches. Its runner selector must match the pins file; GitHub chooses a runner before
 it can read repository files. This workflow is separate from the PR gate and the scheduled
-toolchain probe below.
+toolchain probe below. It calls the shared host runner directly with a 1,200-second
+total host-check budget, matching `host-linux`, instead of inheriting `check_all.sh`'s
+900-second default. The complete host/Python suite still runs in the pinned environment;
+earlier host checks consume part of that budget before Python starts. Its 30-minute job
+deadline leaves 10 minutes outside that budget for checkout, environment setup, the
+standalone policy checks and teardown. See [host-check records](CI_SUMMARY.md) for budget
+and timeout reporting semantics.
 
 ## Scheduled Xcode probe
 

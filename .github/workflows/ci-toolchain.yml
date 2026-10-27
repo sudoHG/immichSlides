@@ -17,7 +17,7 @@ permissions:
 jobs:
   toolchain:
     runs-on: xcode-27
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -44,4 +44,4 @@ jobs:
       - name: Run existing host checks in the pinned environment
         run: |
           export PATH="$RUNNER_TEMP/ci-python/bin:$PATH"
-          scripts/check_all.sh
+          "$RUNNER_TEMP/ci-python/bin/python3" -B scripts/run_host_checks.py --timeout-seconds 1200
