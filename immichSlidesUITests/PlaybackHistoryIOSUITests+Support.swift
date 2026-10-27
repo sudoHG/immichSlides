@@ -66,7 +66,7 @@ struct PlaybackHistoryFailureDiagnostics {
 
     static let controls = ["previous", "playPause", "next", "settings"]
 
-    mutating func observe(_ event: SlideshowControlBarDiagnosticEvent) {
+    mutating func recordPlaybackControlDiagnosticEvent(_ event: SlideshowControlBarDiagnosticEvent) {
         switch event {
         case .begin:
             wake = nil
@@ -136,7 +136,7 @@ struct PlaybackHistoryFailureDiagnostics {
 
 extension PlaybackHistoryIOSUITests {
     func playbackControlDiagnostic(_ event: SlideshowControlBarDiagnosticEvent) {
-        playbackDiagnostics.observe(event)
+        playbackDiagnostics.recordPlaybackControlDiagnosticEvent(event)
     }
 
     func tapPlaybackControl(
