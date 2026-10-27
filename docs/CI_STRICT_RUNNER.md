@@ -237,10 +237,19 @@ Each row also asserts the Swift pre-fallback reader's status/mark against
 verdict. Python asserts its independent `capture_identity` result against
 `pythonCapture`. The Swift test records any pre-fallback MATCH that Python does not
 accept with the same mark, and asserts that this set is exactly `stacked-checker`,
-`stacked-following-checker`, `stacked-foreign` and `stacked-mixed`. These four synthetic
-stacked composites remain a pre-existing reader gap not closed by this change:
+`stacked-following-checker`, `stacked-foreign` and `stacked-mixed`. These four corpus
+inputs remain a pre-existing reader gap not closed by this change:
 Swift accepts A2 while Python returns TRANSITION. Any added or resolved divergence
 fails the exact-set assertion. Full capture-reader equivalence does not hold.
+
+`stacked-checker` and `stacked-following-checker` reproduce the A3-over-A2 geometry
+of the measured hosted 1170x2532 iPhone frame described below, with an interpolated
+seam sampled at y=373 in 480x1039; the latter uses the following photo's checker edge.
+Thus iPhone late-image can still pass XCTest while Python returns TRANSITION on
+such frames; the overall result stays red. This remaining exposure is inferred
+from the readers and call sites, not a device-level reproduction. The corpus has
+no iPad-sized stacked seam-defect rows: that exposure is unknown, not proven safe.
+
 Strict rejection does not override legacy
 MATCH, and strict proof cannot supply complete-scene inheritance candidates.
 Native sizes and all parity rows remain
@@ -784,9 +793,14 @@ before requesting a screenshot. Readiness and both iOS judged captures
 (`ooo-current-scene` and `ooo-after-late`) use the Swift pre-fallback reader that
 corresponds to Python's independent `access_lifecycle_contract.capture_identity`.
 Full equivalence is not required for a safe readiness gate: every Swift acceptance
-must also be a Python acceptance of the same mark. The four known synthetic stacked
-composites above remain exceptions to that one-way condition; this change does not
-close that pre-existing reader gap. The general
+must also be a Python acceptance of the same mark. The four known stacked corpus
+cases above remain exceptions to that one-way condition; this change does not
+close that pre-existing reader gap. In particular, `stacked-checker` and
+`stacked-following-checker` reproduce the measured hosted iPhone A3-over-A2 geometry
+and interpolated seam described above. On such frames iPhone late-image can still
+pass XCTest while Python returns TRANSITION, leaving the overall result red; this
+exposure is inferred, not reproduced on a device. iPad-sized stacked seam defects
+are absent from the corpus, so their exposure is unknown, not proven safe. The general
 Swift reader's `strict-multi-slot` fallback cannot qualify this capture: its
 measured system-chrome exclusions can accept a Home Indicator that the host
 reader counts as a foreign photo palette. Both retained real iPad failure runs had
