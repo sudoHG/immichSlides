@@ -700,6 +700,55 @@ an exact offered request does not require interval review. All timing assertions
 continue to use actual T with the existing T±2 and four-second confirmation rules.
 
 Pause/continue timing distinguishes transition onset from stable new-photo confirmation.
+The additional Debug suites `ios-lifecycle-pause-timeline` (iPhone and iPad) and
+`tvos-lifecycle-pause-timeline` use the App's own monotonic DEBUG timeline instead
+of the screenshot timing algorithm below. The existing Release lifecycle suites
+retain that algorithm and their complete functional coverage unchanged.
+
+For the Debug suites, the T origin is **App received Continue**, rather than the
+runner issuing the Continue press. The receipt, the first committed display tick
+showing the old photo dimming, and the complete new photo's stable display tick
+all use `ProcessInfo.systemUptime`. The onset must remain in T±2 seconds, and the
+new photo must be stable within onset + 4 seconds on iPhone, iPad and tvOS.
+Runner tap issue/return and App receipt are retained separately as diagnostics.
+Stable means opacity exactly 1, the prerender barrier ready and every photo slot
+decoded; planning, download completion and a scheduled timer are insufficient.
+
+`PlaybackLifecycleTimeline` is enabled only through `PlatformCompat` in DEBUG.
+The XCTest process supplies `UI_TEST_EVIDENCE_DIR` and a per-case nonce; the App
+appends a separate `playback-lifecycle-timeline.jsonl`, with a per-launch nonce
+and contiguous sequence numbers. It uses neither the capped sequence recorder,
+container reads nor accessibility transport. A file request/response handshake
+in the real XCTest runner brackets an App uptime sample with runner uptime
+samples before the clocks are compared. Checkpoints seal complete event prefixes;
+partial trailing JSONL lines are never evidence. Missing events, nonce changes,
+sequence gaps and missing checkpoints fail. The host reader binds the official
+Swift judge receipt to the event prefix and each original content PNG by SHA-256;
+it does not implement another timing judge. Existing summaries and Release
+signatures remain readable, and new timeline failures cannot become yellow.
+
+`LifecycleTimelineJudge` is a pure function shared by unit and UI tests. Pause
+holds must not fade or commit another frame. Only the exact reducer branches for
+`fadeInNextPhotoIfPausedInFadeGap` and the short manual-hold raise may finish their
+explicitly named photo, then freeze (see the manual-hold
+[ADR](decisions/ADR-2026-09-30-hold-the-current-photo-until-a-manual-target-is-ready.md)
+and [architecture glossary](ARCHITECTURE.md#5-glossary)). The observer records
+these exceptions without modifying playback state, timers or animation.
+Automatic fades through black and the accepted approximately 0.2-second startup
+black remain intentional; this change introduces no black-duration threshold.
+Stable black images, wrong photos and missing conclusive content still fail.
+
+Every screenshot records the runner's full [request, return] uptime interval.
+Its content is judged only when that entire interval belongs to one stable photo
+or frozen frame in the App timeline; a boundary-crossing interval is inconclusive.
+Each proof point still requires a conclusive content check, otherwise it fails as
+missing evidence. Screenshot duration itself has no 1.001-second precision gate
+in these Debug cases. Screenshots independently identify public fixture pixels;
+the App's asset hashes only cross-check that identity, never supply it.
+The held-photo proof also compares exact decoded pixels before and after T+2 in
+the central photo band (10–90% of width, 30–60% of height), excluding the separately
+animated top EXIF and bottom control overlays. It applies no pixel tolerance.
+
 iPhone, iPad and tvOS share the sustained-dimming predicate and constants in
 `AccessLifecycleContract`: a bright MATCH anchor must identify the old photo at
 or above 95% of baseline, followed by a contiguous run of at least two dim MATCH

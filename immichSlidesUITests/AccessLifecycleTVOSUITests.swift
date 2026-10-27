@@ -260,6 +260,45 @@ final class AccessLifecycleTVOSUITests: XCTestCase {
         }
     }
 
+    #if DEBUG
+    @MainActor
+    func testTVOSPauseNextContinueAppTimeline() throws {
+        let input = try requireStrictE2EInput()
+        let timeline = try LifecycleTimelineCapture()
+        let app = try timeline.launchTimelineApp()
+        defer { app.terminateForFailureEvidence() }
+        try FirstFailureEvidence.preservingThrownFailure(self) {
+            try configureServerThroughFirstBoot(app: app, input: input)
+            try enterRandomPlayback(app: app)
+            let interval = try configureTVOSTimingPlaybackSettings(app: app)
+            let toggle = app.buttons["slideshow.control.playPause.button"]
+            let next = app.buttons["slideshow.control.next.button"]
+            let prepareToggle = {
+                self.ensureControlBarVisible(app: app, playPauseButton: toggle)
+                if !self.tryMoveFocus(.right, to: toggle, maximumPresses: 3) {
+                    self.moveFocus(
+                        .left, to: toggle, maximumPresses: 3, message: "App timeline: focus must reach Play/Pause.")
+                }
+            }
+            let selectToggle = {
+                prepareToggle()
+                FirstFailureRemote.press(.select)
+            }
+            try timeline.exercisePauseContinueTimeline(
+                interval: interval.actual,
+                pause: { selectToggle() },
+                next: {
+                    self.ensureControlBarVisible(app: app, playPauseButton: toggle)
+                    self.moveFocus(.right, to: next, maximumPresses: 3, message: "App timeline: focus must reach Next.")
+                    FirstFailureRemote.press(.select)
+                },
+                resume: { selectToggle() },
+                prepareFinalResume: { prepareToggle() },
+                finalResume: { FirstFailureRemote.press(.select) })
+        }
+    }
+    #endif
+
     @MainActor
     func testTVOSBackgroundReturnPreservesScene() throws {
         guard UIDevice.current.userInterfaceIdiom == .tv else {

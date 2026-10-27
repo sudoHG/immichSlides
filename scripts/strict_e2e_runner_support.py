@@ -179,6 +179,13 @@ LIFECYCLE_SUITES = {
     for platform, cases in (("ios", IOS_CASES), ("tvos", TVOS_CASES))
     for case, selector in cases.items()
 }
+TIMELINE_LIFECYCLE_SUITES = {
+    "ios-lifecycle-pause-timeline": (
+        "ios", "immichSlidesUITests/AccessLifecycleIOSUITests/testPauseNextContinueAppTimeline"),
+    "tvos-lifecycle-pause-timeline": (
+        "tvos", "immichSlidesUITests/AccessLifecycleTVOSUITests/testTVOSPauseNextContinueAppTimeline"),
+}
+LIFECYCLE_SUITES.update(TIMELINE_LIFECYCLE_SUITES)
 IMAGE_FAILURE_RECOVERY_SUITES = {
     "image-failure-recovery": ("ios", "immichSlidesUITests/ScenePresentationContractUITests/testIOSImageFailureRecovery"),
 }
@@ -223,7 +230,7 @@ DISPLAY_POLICY_SUITES = ("display-policy", "tvos-display-policy")
 # The test selects fixture A ids and the Python evaluator checks marks against fixture A.
 FIXTURE_A_ONLY_FILTER_SUITES = ("tvos-album",)
 SETTINGS_RESUME_SUITES = (
-    *LIFECYCLE_SUITES,
+    *(suite for suite in LIFECYCLE_SUITES if suite not in TIMELINE_LIFECYCLE_SUITES),
     "display-policy",
     "filter-edit-switch",
     "filter-switch",
@@ -1062,7 +1069,67 @@ def pause_timing_verdict(evidence_dir: Path) -> str:
     return "PASS" if signed else "UNVERIFIED"
 
 
+def app_timeline_verdict(evidence_dir: Path) -> str:
+    """Bind the official Swift judge receipt to its immutable event prefix and content PNGs.
+
+    Timing rules live only in LifecycleTimelineJudge.swift. This reader never promotes
+    an absent/malformed signature, and never reinterprets the legacy Release signature.
+    """
+    def check(condition):
+        if not condition:
+            raise ValueError("invalid App timeline signature")
+
+    try:
+        receipt = json.loads((evidence_dir / "app-timeline-verdict.json").read_text())
+        check(type(receipt["schema_version"]) is int and receipt["schema_version"] == 1 and receipt["verdict"] == "PASS")
+        check(receipt["suite"] == "lifecycle-pause-app-timeline")
+        count = receipt["event_count"]
+        check(type(count) is int and count > 0)
+        lines = (evidence_dir / "playback-lifecycle-timeline.jsonl").read_bytes().splitlines(keepends=True)[:count]
+        check(len(lines) == count and all(line.endswith(b"\n") for line in lines))
+        check(hashlib.sha256(b"".join(lines)).hexdigest() == receipt["timeline_sha256"])
+        events = [json.loads(line) for line in lines]
+        check(events[0]["kind"] == "timelineStarted"
+              and all(isinstance(receipt[key], str) and receipt[key] for key in ("case_nonce", "launch_nonce")))
+        previous = -math.inf
+        for sequence, event in enumerate(events, 1):
+            check(event["schemaVersion"] == 1 and event["sequence"] == sequence)
+            check(event["launchNonce"] == receipt["launch_nonce"] and event["caseNonce"] == receipt["case_nonce"])
+            check(type(event["uptime"]) in (float, int) and math.isfinite(event["uptime"]) and event["uptime"] >= previous)
+            previous = event["uptime"]
+        judgment = receipt["judgment"]
+        for key, kind in (("continueSequence", "continueReceived"), ("onsetSequence", "renderFadeStarted"),
+                          ("stableSequence", "sceneStable")):
+            check(type(judgment[key]) is int and 1 <= judgment[key] <= count)
+            check(events[judgment[key] - 1]["kind"] == kind)
+        proofs = receipt["content_checks"]
+        handshake = [proof for proof in proofs if proof["name"] == "clock-handshake"]
+        check(len(handshake) == 1)
+        clock = handshake[0]
+        check(clock["runner_request"] <= clock["app_uptime"] <= clock["runner_return"])
+        check(any(event["kind"] == "clockHandshake" and event["request"] == clock["request"]
+                  and event["uptime"] == clock["app_uptime"] for event in events))
+        names = ("timeline-start", "timeline-midpoint-pause", "timeline-after-next", "timeline-after-hold",
+                 "timeline-continue-early", "timeline-after-auto")
+        for name in names:
+            matches = [proof for proof in proofs if proof["name"] == name]
+            check(len(matches) == 1)
+            proof = matches[0]
+            check(proof["status"] in {"MATCH", "FROZEN"} and proof["request"] <= proof["return"] <= events[-1]["uptime"])
+            check(hashlib.sha256((evidence_dir / (name + ".png")).read_bytes()).hexdigest() == proof["png_sha256"])
+            if proof["status"] == "FROZEN":
+                check(hashlib.sha256((evidence_dir / (name + "-frozen-reference.png")).read_bytes()).hexdigest()
+                      == proof["frozen_proof"]["frozen_reference_sha256"])
+        return "PASS"
+    except (OSError, ValueError, KeyError, TypeError, IndexError, AssertionError):
+        return "UNVERIFIED"
+
+
 def require_visual_identity(evidence_dir: Path, suite: str, *, fixture_set: str = "a") -> dict[str, object]:
+    if suite in TIMELINE_LIFECYCLE_SUITES:
+        payload = {"verdict": app_timeline_verdict(evidence_dir), "suite": suite}
+        _write_visual_runner_report(evidence_dir, payload)
+        return payload
     if suite == IOS_LIFECYCLE_PAUSE_SUITE:
         payload = {"verdict": pause_timing_verdict(evidence_dir), "suite": suite}
         _write_visual_runner_report(evidence_dir, payload)

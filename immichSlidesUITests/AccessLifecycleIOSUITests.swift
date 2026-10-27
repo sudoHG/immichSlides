@@ -370,6 +370,35 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         }
     }
 
+    #if DEBUG
+    @MainActor
+    func testPauseNextContinueAppTimeline() throws {
+        let input = try requireStrictE2EInput()
+        let timeline = try LifecycleTimelineCapture()
+        let app = try timeline.launchTimelineApp()
+        defer { app.terminateForFailureEvidence() }
+        try FirstFailureEvidence.preservingThrownFailure(self) {
+            try completeFirstBootToPlayback(app: app, input: input)
+            let interval = try configureTimingPlaybackSettings(app: app, isAutoPlayEnabled: true)
+            var preparedResume: SlideshowControlBarButtonObservation?
+            try timeline.exercisePauseContinueTimeline(
+                interval: interval,
+                pause: {
+                    try self.confirmPlayPauseState(
+                        app: app, expected: "play", shouldTapIfNeeded: true,
+                        message: "App timeline: Pause must reach the App.")
+                },
+                next: {
+                    self.revealPlaybackControls(app: app)
+                    self.tapElement(app.buttons["slideshow.control.next.button"])
+                },
+                resume: { _ = try self.pressContinueStartingClock(app: app) },
+                prepareFinalResume: { preparedResume = try self.preparePlayPause(app: app, isContinuing: true) },
+                finalResume: { _ = try self.tapPreparedPlayPause(XCTUnwrap(preparedResume)) })
+        }
+    }
+    #endif
+
     // Narrow entry: autoplay at T seconds. Once a new scene is stable, press Home for T+2 and activate the
     // original process; the first stable frame must not jump to another photo.
     @MainActor

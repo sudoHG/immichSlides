@@ -1136,6 +1136,13 @@ extension PlaybackSessionEngine {
             stableVisibleClock?.suspend(at: time)
             layerTimeline.suspendMotion(at: time)
             if layerTimeline.raisedHeldPhotoEnd(at: time) != nil {
+                #if DEBUG
+                if reason == .userPaused, let currentTarget {
+                    PlaybackLifecycleTimeline.shared.record(
+                        "pauseManualHoldException", scene: PlaybackLifecycleTimeline.sceneKey(currentTarget.identity),
+                        exceptionBasis: "manualHoldRaise")
+                }
+                #endif
                 // A photo being raised for a manual hold, or kept up after Previous cancelled that hold, finishes its
                 // short fade during a user pause, like manual navigation. Nobody sees the background, so there it ends
                 // at once rather than coming back dim.
@@ -1180,6 +1187,11 @@ extension PlaybackSessionEngine {
                 return nil
             }
             beginManualNavigationWhilePaused()
+            #if DEBUG
+            PlaybackLifecycleTimeline.shared.record(
+                "pauseFadeGapException", scene: PlaybackLifecycleTimeline.sceneKey(pendingTarget.identity),
+                exceptionBasis: "automaticInvisibleGap")
+            #endif
             return scheduleWakeUp(
                 generation: pendingTarget.identity.generation,
                 purpose: .transitionCompletion,

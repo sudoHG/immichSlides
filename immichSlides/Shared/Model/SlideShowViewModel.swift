@@ -1492,6 +1492,10 @@ extension SlideShowViewModel {
             }
             return
         }
+        #if DEBUG
+        PlaybackLifecycleTimeline.shared.record(
+            enabled ? "continueReceived" : "pauseReceived", frame: lifecycleTimelineFrame(sceneRenderSnapshot))
+        #endif
         isAutoPlay = enabled
         let event: PlaybackSessionEngine.ScenePresentationEvent =
             enabled
@@ -1598,6 +1602,9 @@ extension SlideShowViewModel {
     }
 
     func rendererDecoded(_ identity: SceneRendererIdentity) {
+        #if DEBUG
+        PlaybackLifecycleTimeline.shared.rendererDecoded(identity)
+        #endif
         let historyCountBefore = playbackSession.presentationHistoryCount
         runtimeEvidenceRecorder.recordRendererDecoded()
         guard case let .presentationReady(layerIdentity)? = scenePresentationEffectExecutor.rendererDecoded(identity)
@@ -1639,6 +1646,13 @@ extension SlideShowViewModel {
                     case .effects(let effects):
                         executeScenePresentationEffects(effects)
                     case .committingScene(let scene):
+                        #if DEBUG
+                        PlaybackLifecycleTimeline.shared.record(
+                            "sceneCommitted",
+                            scene: PlaybackLifecycleTimeline.sceneKey(
+                                PlaybackSessionEngine.ScenePresentationIdentity(
+                                    generation: layerIdentity.generation, sceneID: layerIdentity.sceneID)))
+                        #endif
                         runtimeEvidenceRecorder.recordVisibleTickCommittedHistory()
                         for slot in scene?.photoSlots ?? [] {
                             recordSmartFillFirstImageDisplayed(assetId: slot.asset.id)
