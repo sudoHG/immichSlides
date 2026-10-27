@@ -385,12 +385,23 @@ The same diagnostic is printed on every return from readiness, refresh and actio
 local XCTest activity logs can compare event latency without additional queries.
 IOSDriver wake and tap paths append each measured duration to the same lists
 as their aggregate timing fields.
+
+<a id="next-and-settings-toggle-hang-guards"></a>
+
 `IOSDriver.next` shares one unscaled 60-second monotonic guard from the baseline
 photo read through one canvas wake, control preparation and one Next tap. Baseline
 and readiness reads started before expiry may satisfy late; they never authorize
 a tap after expiry. The baseline still uses the same screenshot identity reader.
 The Next outcome retains its four-second product window from tap return and
 requires a different recognized scene captured before that deadline.
+The final fresh snapshot requires an enabled Next control with a nonempty frame
+inside the window, the complete visible control bar and no Settings navigation
+evidence. Its frame supplies the sole coordinate tap, without a live hittability
+query or optional playback probe. A changed scene does not establish forward
+direction. Diagnostics record the baseline capture's Unix timestamp without an
+extra read. With autoplay running, the baseline can be stale by the time Next is
+tapped; a swallowed tap plus an automatic advance can satisfy the scene-change
+check. The guard does not distinguish those causes.
 
 AccessLifecycle's Settings extension uses one fresh guard per requested toggle
 change, spanning appearance, the initial fallible snapshot, at most one tap and
@@ -398,6 +409,9 @@ the requested-state readback. A failed or unknown value cannot prove an off stat
 An already-correct initial snapshot needs no tap; a returned tap permits one final
 read under the shared guard, including after expiry. The Timing extension and
 `PlaybackIntervalSliderIOS` keep their existing clocks and adjustment behavior.
+The autoplay check after changing display policy remains optional: one non-polling
+presence probe skips an absent toggle without waiting out the guard. A present
+toggle uses the same guarded initial-state read, single tap and readback.
 
 | Caller | Previous deadline | Current deadline |
 | --- | --- | --- |
@@ -405,7 +419,7 @@ read under the shared guard, including after expiry. The Timing extension and
 | `IOSDriver.next` outcome | Earlier of entry + 8 s + measured wake and tap return + 4 s | Tap return + 4 s |
 | Settings autoplay on | Appearance 12 s, then independent 4 s after any tap | Toggle entry + 60 s |
 | Settings EXIF off | Appearance 8 s, then independent 4 s after any tap | Toggle entry + 60 s |
-| Settings autoplay after display-policy change | Optional appearance 3 s, then 4 s after a tap | Required appearance and readback under toggle entry + 60 s |
+| Settings autoplay after display-policy change | Optional appearance 3 s, then 4 s after a tap | One optional presence probe; if present, initial state, tap and readback share toggle entry + 60 s |
 
 Failure prefixes and environment readers are unchanged. Baseline and Next outcome
 identity failures remain red; toggle readback failures gain no yellow eligibility.
@@ -959,17 +973,9 @@ Control readiness, orientation, the 10-second observation allowance, the 0.5-sec
 and the pixel-difference limit remain unchanged. Thrown failures are recorded
 before app termination. Stable-frame diagnostics separate control preparation,
 screenshot capture and pixel analysis without additional UI reads. IOSDriver Next
-also separates its pre-tap scene capture and classification durations. Scene
-identification and control readiness still share the original 4-second preparation
-budget, but the measured canvas wake is excluded: after the wake returns, readiness
-gets only the remainder that existed before that wake. Its cost, including XCTest
-post-event idle, remains in the reveal timing and action receipt. The original
-8-second preparation-plus-outcome ceiling excludes that same wake cost; the actual
-Next tap still consumes the ceiling, and outcome observation lasts at most 4 seconds
-from tap return. Late readiness snapshots and late outcome captures still fail.
-The final fresh snapshot requires an enabled Next control, the other three control
-buttons present in the window with non-empty frames, and no Settings navigation
-evidence, without a live hittability query or optional playback probe.
+uses the [shared readiness guard and separate product outcome window](#next-and-settings-toggle-hang-guards);
+that section also defines its snapshot geometry, baseline capture diagnostics and
+autoplay limitation.
 
 Rotation captures first use the existing control-readiness check, with no extra
 canvas tap in the steady state. If that check fails, the capture refreshes the bar

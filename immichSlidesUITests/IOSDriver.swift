@@ -176,6 +176,7 @@ struct IOSDriver: PlaybackDriver {
             let observation = visiblePhotoObservation()
             action.sceneCaptureSeconds += observation.captureSeconds
             action.sceneClassificationSeconds += observation.classificationSeconds
+            action.baselineCapturedAt = observation.capturedAt
             sceneBefore = observation.mark
             return sceneBefore != nil
         }
@@ -430,6 +431,7 @@ struct IOSDriver: PlaybackDriver {
         var sceneReadSeconds: TimeInterval = .zero
         var sceneCaptureSeconds: TimeInterval = .zero
         var sceneClassificationSeconds: TimeInterval = .zero
+        var baselineCapturedAt: Date?
         var issuedAt: TimeInterval?
         var returnedAt: TimeInterval?
 
@@ -440,7 +442,7 @@ struct IOSDriver: PlaybackDriver {
         var diagnostic: String {
             let actionableToTapSeconds = preparedAt.flatMap { preparedAt in issuedAt.map { $0 - preparedAt } }
             return
-                "\(timing.diagnostic), preparedTarget={\(preparedTarget)}, barVisible=\(isBarVisible), hittable=\(isHittable.map(String.init) ?? "unknown"), wakeIssued=\(didWake), sceneReadSeconds=\(sceneReadSeconds), sceneCaptureSeconds=\(sceneCaptureSeconds), sceneClassificationSeconds=\(sceneClassificationSeconds), actionableToTapSeconds=\(actionableToTapSeconds.map(String.init(describing:)) ?? "none"), tapIssuedAt=\(issuedAt.map(String.init(describing:)) ?? "none"), tapReturnedAt=\(returnedAt.map(String.init(describing:)) ?? "none")"
+                "\(timing.diagnostic), preparedTarget={\(preparedTarget)}, barVisible=\(isBarVisible), hittable=\(isHittable.map(String.init) ?? "unknown"), wakeIssued=\(didWake), sceneReadSeconds=\(sceneReadSeconds), sceneCaptureSeconds=\(sceneCaptureSeconds), sceneClassificationSeconds=\(sceneClassificationSeconds), baselineCapturedAtUnixSeconds=\(baselineCapturedAt.map { String($0.timeIntervalSince1970) } ?? "none"), actionableToTapSeconds=\(actionableToTapSeconds.map(String.init(describing:)) ?? "none"), tapIssuedAt=\(issuedAt.map(String.init(describing:)) ?? "none"), tapReturnedAt=\(returnedAt.map(String.init(describing:)) ?? "none")"
         }
     }
 

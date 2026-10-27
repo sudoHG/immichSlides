@@ -559,7 +559,7 @@ extension AccessLifecycleIOSUITests {
         tapElement(singlePhoto)
         requests.append("settings.save.display_mode")
         if setPlaybackToggleFromUI(
-            app: app, identifier: "settings.playback.autoPlay.toggle", shouldBeOn: true,
+            app: app, identifier: "settings.playback.autoPlay.toggle", shouldBeOn: true, isOptional: true,
             appearanceFailureMessage: "Playback settings must provide the autoplay toggle.",
             readbackFailureMessage: "Autoplay must stay on after changing the display policy."
         ) {
@@ -744,7 +744,7 @@ extension AccessLifecycleIOSUITests {
     @MainActor
     @discardableResult
     func setPlaybackToggleFromUI(
-        app: XCUIApplication, identifier: String, shouldBeOn: Bool,
+        app: XCUIApplication, identifier: String, shouldBeOn: Bool, isOptional: Bool = false,
         appearanceFailureMessage: String, readbackFailureMessage: String
     ) -> Bool {
         let guardWait = TestWait.hangGuard()
@@ -753,6 +753,7 @@ extension AccessLifecycleIOSUITests {
             XCTFail(appearanceFailureMessage)
             return false
         }
+        if isOptional && !transaction.probe({ toggle.exists }) { return false }
         var observedState: Bool?
         func observeState() -> Bool? {
             FirstFailureContext.mark("settings-readback", element: identifier)

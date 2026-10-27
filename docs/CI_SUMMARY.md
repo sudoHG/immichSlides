@@ -878,15 +878,17 @@ still includes all wall time. The [Settings caller formulas](TESTING.md#3-assert
 and [rotation caller formulas](TESTING.md#running-controlled-integration-and-end-to-end-tests)
 are authoritative.
 
-Current mode departure and IOSDriver Settings entry instead share an unscaled
-60-second monotonic navigation guard through preparation, the fixed single-action
-child steps and outcome. Native actions no longer extend those paths. The outer
+Current mode departure, IOSDriver Settings entry and Next readiness instead use
+an unscaled 60-second monotonic navigation guard. The fixed single-action child
+steps share its deadline; native actions no longer extend those paths. The outer
 wait receipt records that root allowance, while `action_duration_seconds` still
 describes only the last action; it is not a complete native-action total.
 Mode diagnostics retain each native duration without treating it as a deduction.
 In-flight success and the single post-action observation follow the
 [navigation semantics](TESTING.md#3-assertions). Historical receipts and all
 environment readers keep their existing interpretation.
+Next's separate product outcome window follows the
+[authoritative Next contract](TESTING.md#next-and-settings-toggle-hang-guards).
 
 An optional `first_failure.gate` carries the album capture gate's last observed
 conditions on its timeout paths only. The First failure line in `summary.md`
@@ -1312,25 +1314,17 @@ subject to Hogan's override; the allowlists and policy versions are unchanged.
 The [strict runner capture contract](CI_STRICT_RUNNER.md) also describes the
 remaining stable-check-to-Pause race at the unchanged default 5 s interval.
 
-IOSDriver Next preserves its pre-wake preparation remainder by excluding the
-measured canvas-wake cost. A readiness timeout can therefore now reach an actual
-`query-element` wait on `slideshow.control.next.button`, with a positive expired
-budget, instead of failing immediately at `select` with a zero budget after the
-wake. This changes potential yellow eligibility: both `ENVIRONMENT_WAIT_STEPS`
-and `ENVIRONMENT_WAIT_STEPS_V3` already allow that `control_action/hidden_controls`
-availability wait, subject to every existing hosted starvation and surface proof.
-The allowlists, prefix mappings and policy versions are unchanged. The original
-zero-budget receipt gains no eligibility; baseline and post-Next scene-identity
-failures remain red. This applies to every Next caller, including p2-rotation
-(`testRotationDuringPlaybackIOS`): its Next readiness wait can be environment-limited
-under the same proof, while the rotation 30-second bound, rotation captures and
-scene-change assertions stay red. The readiness remainder can be only milliseconds
-when baseline capture and classification used most of the preparation budget, so
-such a candidate may reflect starvation of the test process's own pixel
-classification rather than a slow control; the starvation proof still applies. A
-zero-observation failure left at `reveal-controls` would need a sub-millisecond
-positive budget that never enters the readiness loop, and the same deadline and
-starvation proofs still gate it.
+IOSDriver Next uses the
+[shared readiness guard](TESTING.md#next-and-settings-toggle-hang-guards), so fewer
+short readiness timeouts can reach yellow. Its conditional yellow eligibility is
+unchanged: `ENVIRONMENT_WAIT_STEPS` and `ENVIRONMENT_WAIT_STEPS_V3` allow the
+`control_action/hidden_controls` availability wait on
+`slideshow.control.next.button`, subject to every existing hosted starvation,
+surface and positive expired-budget proof. Allowlists, prefix mappings and policy
+versions are unchanged; an original zero-budget receipt gains no eligibility.
+Baseline and post-Next scene-identity failures remain red. This applies to every
+Next caller, including p2-rotation (`testRotationDuringPlaybackIOS`); its rotation
+30-second bound, rotation captures and scene-change assertions also stay red.
 
 IOSDriver Settings preserves the entry remainder after its measured native wake
 and Settings tap. A failure formerly reached with zero remaining outcome budget

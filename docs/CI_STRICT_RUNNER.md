@@ -159,21 +159,9 @@ iPhone landscape has no measured entry, and the portrait phone's glyph-only
 box grants no palette exclusion. EXIF uses the same reader without waiting for
 controls to hide; the six-Next limit and existing deadlines remain unchanged.
 
-The iOS Next driver captures the baseline photo, then issues at most one proactive
-wake before preparing the control from a fallible snapshot.
-The final snapshot must identify an enabled button with a nonempty frame inside
-the window, a visible control bar, and no Settings navigation evidence. It does not
-require the optional playback-marker probe. Its frame supplies the sole coordinate tap;
-there is no live hittability query or element tap that re-resolves the button.
-Snapshot geometry establishes readiness; an observed photo change is required to
-pass. This existing check does not establish forward direction. Baseline scene
-identification and final readiness share the original 4-second preparation budget,
-excluding only the measured canvas-wake duration. Readiness after wake return gets
-the pre-wake remainder, not another full preparation window. The outcome window
-starts at tap return, lasts at most 4 seconds, and ends within the original
-8-second total plus that same measured wake duration. The actual Next tap still
-consumes the total ceiling; late snapshots/captures do not pass. Wake delivery,
-including XCTest post-event idle, is recorded separately as reveal/action timing.
+The iOS Next driver's readiness guard, one-tap snapshot geometry, separate product
+outcome window and diagnostic timestamps are defined in
+[Testing conventions](TESTING.md#next-and-settings-toggle-hang-guards).
 Image-failure recovery locally prepares Next and redo without the playback probe:
 one preparatory snapshot must exclude Settings navigation, then at most one wake
 precedes a fresh snapshot of an enabled Next button with a nonempty frame inside
