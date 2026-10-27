@@ -16,9 +16,9 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageOps
 from PIL.PngImagePlugin import PngInfo
 
-
 SCRIPT_DIR = Path(__file__).resolve().parent
 
+from access_lifecycle_contract import capture_identity  # noqa: E402
 from strict_e2e_photo_identity import (  # noqa: E402
     IdentityAssertionError,
     assert_exif_correspondence,
@@ -229,7 +229,7 @@ def _with_exif_card(png: bytes, model: str) -> bytes:
 
 
 class FrameGlyphBoundaryTests(unittest.TestCase):
-    def test_shared_public_frames_have_the_same_swift_and_python_verdicts(self) -> None:
+    def test_shared_public_frames_keep_recorded_reader_verdicts_and_strict_slot_parity(self) -> None:
         cases = json.loads((SCRIPT_DIR.parent / "immichSlidesTests/Fixtures/public-photo-identity-cases.json").read_text())
         checker_frames = {}
         for case in cases:
@@ -268,6 +268,9 @@ class FrameGlyphBoundaryTests(unittest.TestCase):
                     draw.rectangle((x, y, x + width - 1, y + height - 1), fill=(red, green, blue))
                 color_box, glyph_box = PUBLIC_SCENE_GEOMETRIES.get(frame.size, (None, None))
                 png = _png(frame)
+                identity = capture_identity(png)
+                expected = case["pythonCapture"]
+                self.assertEqual((identity.status, identity.mark), (expected["status"], expected["mark"]))
                 if case["marks"]:
                     self.assertEqual([photo.mark for photo in public_frame_photos_from_bytes(
                         png, color_exclusion_box=color_box, glyph_overlay_box=glyph_box)], case["marks"])

@@ -13,6 +13,7 @@ final class StrictE2ELateImageHold {
     let armedAt: TimeInterval
     let armedElapsedMilliseconds: Double
     private(set) var deadline: TimeInterval?
+    var lastReadinessIdentity: StrictE2EPhotoIdentity.Result?
     private var steps: [[String: Any]] = []
     private var heldStartedAt: TimeInterval?
     private var releasedAt: TimeInterval?
@@ -44,8 +45,12 @@ final class StrictE2ELateImageHold {
                 return seconds > 0 ? (name, seconds) : nil
             }.max { $0.seconds < $1.seconds }
             let summary = longest.map { "\($0.name) (\(String(format: "%.3f", $0.seconds))s)" } ?? "none (0.000s)"
+            let identitySummary =
+                lastReadinessIdentity.map { "status=\($0.status.rawValue) notes=\($0.notes)" }
+                ?? "unavailable"
             XCTFail(
-                "Held response budget exhausted before release: invalid late-image run; longest held step=\(summary)")
+                "Held response budget exhausted before release: invalid late-image run; longest held step=\(summary); last current-readiness identity=\(identitySummary)"
+            )
             throw StrictE2ELateImageError.heldBudget
         }
     }
@@ -257,11 +262,16 @@ extension XCTestCase {
                 afterRender["layerIDs"] ?? "", afterRender["historyCount"] ?? "",
                 afterManifest["ledgerSceneAssets"] ?? "", afterManifest["scenePublishTimestamp"] ?? ""
             ]
+            var hasRecognizableIdentity = false
             if [before, after].allSatisfy(StrictE2ESceneCapture.isStableWindow),
                 beforeRender["playbackPaused"] == "true", afterRender["playbackPaused"] == "true",
-                references.allSatisfy({ !$0.isEmpty }), references == afterReferences,
-                StrictE2EPhotoIdentity.captureIdentity(png: png).status == .match
+                references.allSatisfy({ !$0.isEmpty }), references == afterReferences
             {
+                let identity = StrictE2EPhotoIdentity.captureIdentityForOutOfOrderValidator(png: png)
+                hold.lastReadinessIdentity = identity
+                hasRecognizableIdentity = identity.status == .match
+            }
+            if hasRecognizableIdentity {
                 if previousReferences == references, previousPNG == png { return true }
                 previousReferences = references
                 previousPNG = png
