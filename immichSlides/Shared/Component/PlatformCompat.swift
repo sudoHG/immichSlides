@@ -26,14 +26,14 @@ enum PlatformCompat {
     }
 
     #if DEBUG
-    static var lifecycleTimelineConfigurationForTesting: (directory: URL, nonce: String)? {
+    static let lifecycleTimelineConfigurationForTesting: (directory: URL, nonce: String)? = {
         let environment = ProcessInfo.processInfo.environment
         guard environment["UI_TEST_PLAYBACK_LIFECYCLE_TIMELINE"] == "1",
             let directory = environment["UI_TEST_EVIDENCE_DIR"], !directory.isEmpty,
             let nonce = environment["UI_TEST_PLAYBACK_LIFECYCLE_NONCE"], !nonce.isEmpty
         else { return nil }
         return (URL(fileURLWithPath: directory, isDirectory: true), nonce)
-    }
+    }()
 
     static func isRunningXCTest(environment: [String: String]) -> Bool {
         environment["XCTestConfigurationFilePath"] != nil

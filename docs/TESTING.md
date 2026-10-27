@@ -720,7 +720,9 @@ appends a separate `playback-lifecycle-timeline.jsonl`, with a per-launch nonce
 and contiguous sequence numbers. It uses neither the capped sequence recorder,
 container reads nor accessibility transport. A file request/response handshake
 in the real XCTest runner brackets an App uptime sample with runner uptime
-samples before the clocks are compared. Checkpoints seal complete event prefixes;
+samples before the clocks are compared. Its bracket width affects screenshot
+attribution uncertainty only; it supplies no timing tolerance or deadline extension.
+Checkpoints seal complete event prefixes;
 partial trailing JSONL lines are never evidence. Missing events, nonce changes,
 sequence gaps and missing checkpoints fail. The host reader binds the official
 Swift judge receipt to the event prefix and each original content PNG by SHA-256;
@@ -728,9 +730,17 @@ it does not implement another timing judge. Existing summaries and Release
 signatures remain readable, and new timeline failures cannot become yellow.
 
 `LifecycleTimelineJudge` is a pure function shared by unit and UI tests. Pause
-holds must not fade or commit another frame. Only the exact reducer branches for
-`fadeInNextPhotoIfPausedInFadeGap` and the short manual-hold raise may finish their
-explicitly named photo, then freeze (see the manual-hold
+holds must not fade or commit another frame. A manual navigation receipt while
+paused permits one manual transition to one new target, with exactly one commit,
+ending only at that target's `sceneStable(isPaused)`. Target/source provenance
+rejects automatic changes and a second target inside that window.
+The exact reducer branches for `fadeInNextPhotoIfPausedInFadeGap`, the short
+manual-hold raise and `beginPausedManualCrossfadeIfHeld` are explicit exceptions.
+The raise names the layer marked `isRaisedForHold`, rather than `currentTarget`.
+A held manual target may crossfade after Pause once ready, including after the
+raised photo settles; its identity must match the pending hold captured at Pause
+or the current paused manual navigation. Each permitted transition then freezes
+(see the manual-hold
 [ADR](decisions/ADR-2026-09-30-hold-the-current-photo-until-a-manual-target-is-ready.md)
 and [architecture glossary](ARCHITECTURE.md#5-glossary)). The observer records
 these exceptions without modifying playback state, timers or animation.
@@ -749,9 +759,11 @@ The held-photo proof also compares exact decoded pixels before and after T+2 in
 the central photo band (10–90% of width, 30–60% of height), excluding the separately
 animated top EXIF and bottom control overlays. It applies no pixel tolerance.
 
-Local App-only SIGSTOP verification stops the paused App for 24 seconds **before
-Continue control preparation**. This proves that delays before the action do not
-consume the App-receipt timing window; it does not prove tolerance of 24-second
+Local App-only SIGSTOP verification starts the paused App's 24-second STOP **before
+Continue control preparation**; the STOP may overlap preparation queries or remote
+presses. The origin is App receipt by construction of the judge and its timing
+mutations. The STOP runs show that pre-action delays do not consume that window;
+they do not prove tolerance of 24-second
 native tap delivery. A tap delivered after the eight-second control auto-hide can
 only wake the controls and fail for missing `continueReceived`. That navigation
 residual is outside this timing contract; do not retry the tap or extend auto-hide.
@@ -759,6 +771,12 @@ To inject once, create `playback-lifecycle-inject-stop` in the run's evidence
 directory. The XCTest process writes `playback-lifecycle-before-continue` while
 paused, then waits for `playback-lifecycle-stop-armed`; the host stops the exact
 device's App PID, writes the armed file, waits 24 seconds and sends SIGCONT.
+
+The Debug observer caches launch configuration and scene/asset hashes. A directory
+change notification refreshes the cached request only when its modification date
+changes; committed ticks consume that cache without reading files. Body evaluation
+compares numeric layer samples, with fingerprint SHA-256 computed only for emitted
+events. JSONL appends and request-change reads still add Debug-only scheduling cost.
 
 iPhone, iPad and tvOS share the sustained-dimming predicate and constants in
 `AccessLifecycleContract`: a bright MATCH anchor must identify the old photo at

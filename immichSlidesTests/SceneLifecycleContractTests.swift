@@ -7,7 +7,7 @@ import Testing
 struct SceneLifecycleContractTests {
     @Test(arguments: [
         "valid", "early", "late", "missing", "missingFade", "sequence", "nonce", "exception", "slowStable", "samePhoto",
-        "notStable"
+        "notStable", "caseNonce"
     ])
     func `app timeline rejects timing and integrity mutations`(mutation: String) throws {
         var events = [
@@ -32,6 +32,7 @@ struct SceneLifecycleContractTests {
             for index in events.indices { events[index].sequence = index + 1 }
         case "sequence": events[5].sequence = 8
         case "nonce": events[5].launchNonce = "another-launch"
+        case "caseNonce": events[5].caseNonce = "another-case"
         case "exception": events[2].kind = "pauseFadeGapException"
         case "slowStable": events[6].uptime += 3
         case "samePhoto": events[6].assets = events[4].assets
@@ -47,7 +48,7 @@ struct SceneLifecycleContractTests {
                 "early": "Continue onset outside T±2", "late": "Continue onset outside T±2",
                 "missing": "noncontiguous sequence", "sequence": "noncontiguous sequence",
                 "missingFade": "missing unambiguous fade onset",
-                "nonce": "nonce mismatch", "exception": "pause exception misuse",
+                "nonce": "nonce mismatch", "caseNonce": "nonce mismatch", "exception": "pause exception misuse",
                 "slowStable": "new photo not stable within onset+4", "samePhoto": "new photo not stable within onset+4",
                 "notStable": "new photo not stable within onset+4"
             ][mutation]
@@ -79,39 +80,147 @@ struct SceneLifecycleContractTests {
         }
     }
 
-    @Test(arguments: ["pauseFadeGapException", "pauseManualHoldException"])
-    func `pause exceptions finish only the explicitly named photo and cannot excuse later changes`(kind: String) throws
+    @Test(arguments: [
+        "gap", "raise", "sceneMismatch", "basisMismatch", "notImmediate", "held", "heldMismatch", "heldMissing",
+        "heldAutomatic", "heldAfterRaise"
+    ])
+    func `pause exceptions finish only the explicitly named photo and cannot excuse later changes`(mutation: String)
+        throws
     {
-        let basis = kind == "pauseFadeGapException" ? "automaticInvisibleGap" : "manualHoldRaise"
+        let isHeld = mutation.hasPrefix("held")
+        let kind =
+            isHeld
+            ? "pauseHeldCrossfadeException" : mutation == "raise" ? "pauseManualHoldException" : "pauseFadeGapException"
+        let basis = isHeld ? "heldManualTargetReady" : mutation == "raise" ? "manualHoldRaise" : "automaticInvisibleGap"
         var events = [
             LifecycleTimelineEvent(sequence: 1, kind: "timelineStarted", uptime: 0),
-            LifecycleTimelineEvent(sequence: 2, kind: "pauseReceived", uptime: 1, scene: "old"),
-            LifecycleTimelineEvent(sequence: 3, kind: kind, uptime: 1, scene: "next", exceptionBasis: basis),
-            LifecycleTimelineEvent(sequence: 4, kind: "frozenFrameChanged", uptime: 1.1, scene: "next"),
             LifecycleTimelineEvent(
-                sequence: 5, kind: "sceneStable", uptime: 1.3, scene: "next", isStable: true, isPaused: true)
+                sequence: 2, kind: "pauseReceived", uptime: 1, scene: "old", heldTargetScene: isHeld ? "next" : nil),
+            LifecycleTimelineEvent(
+                sequence: 3, kind: kind, uptime: 1, scene: "next", exceptionBasis: basis,
+                transitionScene: isHeld ? "next" : nil, transitionSource: isHeld ? "manualNext" : nil),
+            LifecycleTimelineEvent(
+                sequence: 4, kind: isHeld ? "renderFadeStarted" : "frozenFrameChanged", uptime: 1.1,
+                scene: isHeld ? "old" : "next", isPaused: true, transitionScene: "next", transitionSource: "manualNext"),
+            LifecycleTimelineEvent(
+                sequence: 5, kind: "sceneCommitted", uptime: 1.2, scene: "next", isPaused: true,
+                transitionScene: "next", transitionSource: "manualNext"),
+            LifecycleTimelineEvent(
+                sequence: 6, kind: "sceneStable", uptime: 1.3, scene: "next", isStable: true, isPaused: true,
+                transitionScene: "next", transitionSource: "manualNext")
         ]
-        try LifecycleTimelineJudge.validate(events)
-        events.append(LifecycleTimelineEvent(sequence: 6, kind: "frozenFrameChanged", uptime: 2, scene: "next"))
-        #expect(throws: LifecycleTimelineJudge.Failure.self) { try LifecycleTimelineJudge.validate(events) }
+        switch mutation {
+        case "sceneMismatch": events[3].scene = "other"
+        case "basisMismatch": events[2].exceptionBasis = "wrong-basis"
+        case "notImmediate": events.insert(LifecycleTimelineEvent(sequence: 0, kind: "checkpoint", uptime: 1), at: 2)
+        case "heldMismatch": events[1].heldTargetScene = "other"
+        case "heldMissing": events[1].heldTargetScene = nil
+        case "heldAutomatic": events[2].transitionSource = "autoplay"
+        case "heldAfterRaise":
+            events.insert(
+                contentsOf: [
+                    LifecycleTimelineEvent(
+                        sequence: 0, kind: "pauseManualHoldException", uptime: 1, scene: "raised",
+                        exceptionBasis: "manualHoldRaise"),
+                    LifecycleTimelineEvent(
+                        sequence: 0, kind: "sceneStable", uptime: 1, scene: "raised", isStable: true, isPaused: true)
+                ], at: 2)
+            events[5].scene = "raised"
+        default: break
+        }
+        if isHeld, let index = events.firstIndex(where: { $0.kind == "pauseHeldCrossfadeException" }) {
+            events.insert(LifecycleTimelineEvent(sequence: 0, kind: "checkpoint", uptime: 1), at: index)
+        }
+        for index in events.indices { events[index].sequence = index + 1 }
+        let isValid = ["gap", "raise", "held", "heldAfterRaise"].contains(mutation)
+        if isValid {
+            try LifecycleTimelineJudge.validate(events)
+            events.append(
+                LifecycleTimelineEvent(sequence: events.count + 1, kind: "frozenFrameChanged", uptime: 2, scene: "next")
+            )
+        }
+        let expected = isValid || mutation == "sceneMismatch" ? "frame advanced during pause" : "pause exception misuse"
+        do {
+            try LifecycleTimelineJudge.validate(events)
+            Issue.record("The pause exception mutation must fail")
+        } catch let error as LifecycleTimelineJudge.Failure {
+            #expect(error.description == "App timeline: \(expected)")
+        }
     }
 
-    @Test(arguments: [false, true])
-    func `content requires the entire capture interval to remain in one evidenced state`(crossesFade: Bool) throws {
-        let events = [
+    @Test(arguments: ["stable", "crossesFade", "missingSeal"])
+    func `content requires the entire capture interval to remain in one evidenced state`(mutation: String) throws {
+        var events = [
             LifecycleTimelineEvent(sequence: 1, kind: "timelineStarted", uptime: 0),
             LifecycleTimelineEvent(sequence: 2, kind: "sceneStable", uptime: 1, scene: "old", isStable: true),
             LifecycleTimelineEvent(sequence: 3, kind: "renderFadeStarted", uptime: 10, scene: "old"),
             LifecycleTimelineEvent(sequence: 4, kind: "sceneStable", uptime: 12, scene: "new", isStable: true),
             LifecycleTimelineEvent(sequence: 5, kind: "checkpoint", uptime: 14, scene: "new", isStable: true)
         ]
+        if mutation == "missingSeal" { events = Array(events.prefix(2)) }
         let state = try LifecycleTimelineJudge.contentState(
-            events, request: crossesFade ? 9 : 1, returned: crossesFade ? 13 : 9)
-        if crossesFade {
+            events, request: mutation == "crossesFade" ? 9 : 1, returned: mutation == "crossesFade" ? 13 : 9)
+        if mutation != "stable" {
             #expect(state == nil)
         } else {
             // A wide interval is still conclusive when its entire span has the same stable photo.
             #expect(state?.scene == "old")
+        }
+    }
+
+    @Test(arguments: [
+        "valid", "skippedPhoto", "automaticFade", "automaticCommit", "missingCommit",
+        "unpausedStable", "secondNavigation", "secondCommit", "oldTarget", "wrongCommitScene", "wrongStableScene",
+        "notStable"
+    ])
+    func `one paused Next permits one manual transition and then freezes again`(mutation: String) throws {
+        var events = [
+            LifecycleTimelineEvent(sequence: 1, kind: "timelineStarted", uptime: 0),
+            LifecycleTimelineEvent(sequence: 2, kind: "pauseReceived", uptime: 1, scene: "old"),
+            LifecycleTimelineEvent(sequence: 3, kind: "manualNavigationReceived", uptime: 2, scene: "old"),
+            LifecycleTimelineEvent(
+                sequence: 4, kind: "renderFadeStarted", uptime: 2.1, scene: "old", isPaused: true,
+                transitionScene: "next", transitionSource: "manualNext"),
+            LifecycleTimelineEvent(
+                sequence: 5, kind: "sceneCommitted", uptime: 2.2, scene: "next", isPaused: true,
+                transitionScene: "next", transitionSource: "manualNext"),
+            LifecycleTimelineEvent(
+                sequence: 6, kind: "sceneStable", uptime: 2.3, scene: "next", isStable: true, isPaused: true,
+                transitionScene: "next", transitionSource: "manualNext")
+        ]
+        switch mutation {
+        case "skippedPhoto":
+            events.insert(
+                LifecycleTimelineEvent(
+                    sequence: 0, kind: "sceneCommitted", uptime: 2.25, scene: "skipped", isPaused: true,
+                    transitionScene: "skipped", transitionSource: "manualNext"), at: 5)
+        case "automaticFade": events[3].transitionSource = "autoplay"
+        case "automaticCommit": events[4].transitionSource = "autoplay"
+        case "secondNavigation":
+            events.insert(
+                LifecycleTimelineEvent(sequence: 0, kind: "manualNavigationReceived", uptime: 2.1, scene: "old"), at: 4)
+        case "secondCommit": events.insert(events[4], at: 5)
+        case "oldTarget": events[3].transitionScene = "old"
+        case "wrongCommitScene": events[4].scene = "other"
+        case "wrongStableScene": events[5].scene = "other"
+        case "notStable": events[5].isStable = false
+        case "missingCommit": events.remove(at: 4)
+        case "unpausedStable": events[5].isPaused = false
+        default: break
+        }
+        for index in events.indices { events[index].sequence = index + 1 }
+        if mutation == "valid" {
+            try LifecycleTimelineJudge.validate(events)
+        } else {
+            let expected =
+                mutation.hasPrefix("automatic")
+                ? "automatic change during paused manual navigation" : "paused manual transition exceeded one target"
+            do {
+                try LifecycleTimelineJudge.validate(events)
+                Issue.record("The paused navigation mutation must fail")
+            } catch let error as LifecycleTimelineJudge.Failure {
+                #expect(error.description == "App timeline: \(expected)")
+            }
         }
     }
 

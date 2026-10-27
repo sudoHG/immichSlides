@@ -1649,7 +1649,14 @@ extension SlideShowViewModel {
                         #if DEBUG
                         PlaybackLifecycleTimeline.shared.record(
                             "sceneCommitted",
+                            frame: lifecycleTimelineFrame(sceneRenderSnapshot),
                             scene: PlaybackLifecycleTimeline.sceneKey(
+                                PlaybackSessionEngine.ScenePresentationIdentity(
+                                    generation: layerIdentity.generation, sceneID: layerIdentity.sceneID)),
+                            transitionScene: PlaybackLifecycleTimeline.sceneKey(
+                                PlaybackSessionEngine.ScenePresentationIdentity(
+                                    generation: layerIdentity.generation, sceneID: layerIdentity.sceneID)),
+                            transitionSource: playbackSession.lifecycleTimelineSourceForTesting(
                                 PlaybackSessionEngine.ScenePresentationIdentity(
                                     generation: layerIdentity.generation, sceneID: layerIdentity.sceneID)))
                         #endif

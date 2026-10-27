@@ -15,6 +15,9 @@ struct LifecycleTimelineEvent: Codable, Equatable, Sendable {
     var isPaused = false
     var request: String = ""
     var exceptionBasis: String = ""
+    var transitionScene: String?
+    var transitionSource: String?
+    var heldTargetScene: String?
 }
 
 enum LifecycleTimelineJudge {
@@ -31,6 +34,39 @@ enum LifecycleTimelineJudge {
         let stableSecondsAfterOnset: TimeInterval
     }
 
+    private struct PausedTransition {
+        let origin: String
+        var target: String?
+        var hasCommit = false
+
+        mutating func bind(_ scene: String) throws {
+            guard !scene.isEmpty, scene != origin, target == nil || target == scene else {
+                throw Failure("paused manual transition exceeded one target")
+            }
+            target = scene
+        }
+
+        mutating func accept(_ event: LifecycleTimelineEvent) throws {
+            guard ["manualNext", "manualPrevious"].contains(event.transitionSource ?? "") else {
+                throw Failure("automatic change during paused manual navigation")
+            }
+            guard event.isPaused else { throw Failure("paused manual transition exceeded one target") }
+            try bind(event.transitionScene ?? "")
+            switch event.kind {
+            case "sceneCommitted":
+                guard !hasCommit, event.scene == target else {
+                    throw Failure("paused manual transition exceeded one target")
+                }
+                hasCommit = true
+            case "sceneStable":
+                guard hasCommit, event.isStable, event.scene == target else {
+                    throw Failure("paused manual transition exceeded one target")
+                }
+            default: break
+            }
+        }
+    }
+
     static func validate(_ events: [LifecycleTimelineEvent]) throws {
         guard let first = events.first, first.kind == "timelineStarted", !first.launchNonce.isEmpty,
             !first.caseNonce.isEmpty
@@ -39,6 +75,9 @@ enum LifecycleTimelineJudge {
         var paused = false
         var exception: String?
         var exceptionScene: String?
+        var pauseScene = ""
+        var heldTargetScene: String?
+        var pausedTransition: PausedTransition?
         for (index, event) in events.enumerated() {
             guard event.schemaVersion == 1, event.sequence == index + 1 else {
                 throw Failure("noncontiguous sequence")
@@ -56,10 +95,25 @@ enum LifecycleTimelineJudge {
                 paused = true
                 exception = nil
                 exceptionScene = nil
-            case "continueReceived", "manualNavigationReceived":
+                pauseScene = event.scene
+                heldTargetScene = event.heldTargetScene.flatMap { $0.isEmpty ? nil : $0 }
+                pausedTransition = nil
+            case "continueReceived":
                 paused = false
                 exception = nil
                 exceptionScene = nil
+                heldTargetScene = nil
+                pausedTransition = nil
+            case "manualNavigationReceived":
+                exception = nil
+                exceptionScene = nil
+                heldTargetScene = nil
+                if paused {
+                    guard pausedTransition == nil else {
+                        throw Failure("paused manual transition exceeded one target")
+                    }
+                    pausedTransition = PausedTransition(origin: event.scene)
+                }
             case "pauseFadeGapException", "pauseManualHoldException":
                 let basis = event.kind == "pauseFadeGapException" ? "automaticInvisibleGap" : "manualHoldRaise"
                 guard paused, exception == nil, !event.scene.isEmpty,
@@ -69,13 +123,30 @@ enum LifecycleTimelineJudge {
                 }
                 exception = event.kind
                 exceptionScene = event.scene
+            case "pauseHeldCrossfadeException":
+                guard paused, !event.scene.isEmpty, event.transitionScene == event.scene,
+                    ["manualNext", "manualPrevious"].contains(event.transitionSource ?? ""),
+                    event.exceptionBasis == "heldManualTargetReady",
+                    heldTargetScene == event.scene || pausedTransition != nil
+                else { throw Failure("pause exception misuse") }
+                var transition = pausedTransition ?? PausedTransition(origin: pauseScene)
+                try transition.bind(event.scene)
+                pausedTransition = transition
+                heldTargetScene = nil
+                exception = nil
+                exceptionScene = nil
             case "renderFadeStarted", "sceneCommitted", "sceneStable", "frozenFrameChanged":
                 if paused {
-                    guard exception != nil, event.scene == exceptionScene else {
-                        throw Failure("frame advanced during pause")
+                    if var transition = pausedTransition {
+                        try transition.accept(event)
+                        pausedTransition = event.kind == "sceneStable" ? nil : transition
+                    } else {
+                        guard exception != nil, event.scene == exceptionScene else {
+                            throw Failure("frame advanced during pause")
+                        }
+                        // A raised or gap photo finishes its explicitly named fade, then freezes.
+                        if event.kind == "sceneStable" { exception = nil }
                     }
-                    // Both exceptions finish one short fade of the explicitly named photo, then freeze.
-                    if event.kind == "sceneStable" { exception = nil }
                 }
                 if event.kind == "sceneStable", event.isPaused { paused = true }
             case "renderUnstable", "pauseFrameCommitted", "frameFrozen": break
@@ -144,7 +215,8 @@ enum LifecycleTimelineJudge {
         else { return nil }
         let invalidating = [
             "renderFadeStarted", "renderUnstable", "frozenFrameChanged", "manualNavigationReceived",
-            "continueReceived", "pauseFadeGapException", "pauseManualHoldException", "backgroundReceived"
+            "continueReceived", "pauseFadeGapException", "pauseManualHoldException", "pauseHeldCrossfadeException",
+            "backgroundReceived"
         ]
         guard
             !events.contains(where: {

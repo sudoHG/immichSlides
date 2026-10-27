@@ -1274,12 +1274,14 @@ class FailureDiagnosticsTests(unittest.TestCase):
                        control_bar="hidden", step="query-element", element="slideshow.control.playPause.button",
                        wait_elapsed_seconds=60, deadline_seconds=5)
         for reason in ("nonce mismatch", "missing required event", "Continue onset outside T±2",
-                       "content contradicts stable or frozen timeline"):
+                       "content contradicts stable or frozen timeline", "paused manual transition exceeded one target",
+                       "automatic change during paused manual navigation", "pause exception misuse"):
             for wrapper in ("", 'failed: caught error: "', "XCTAssertTrue failed - "):
-                with self.subTest(reason=reason, wrapper=wrapper):
-                    diagnostic = classify_messages([wrapper + "App timeline: " + reason])
-                    self.assertEqual(dict(failure_phase="continue_timing", failure_class="evidence_capture"), diagnostic)
-                    self.assertFalse(environment_timing(failure, diagnostic["failure_phase"], diagnostic["failure_class"]))
+                for version in (1, 2, 3, 4):
+                    with self.subTest(reason=reason, wrapper=wrapper, policy_version=version):
+                        diagnostic = classify_messages([wrapper + "App timeline: " + reason])
+                        self.assertEqual(dict(failure_phase="continue_timing", failure_class="evidence_capture"), diagnostic)
+                        self.assertFalse(environment_timing(failure, diagnostic["failure_phase"], diagnostic["failure_class"], policy_version=version))
 
     def test_pause_readiness_replaces_its_receipt_wait_before_starting_the_next(self):
         source = (REPO_ROOT / "immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift").read_text()

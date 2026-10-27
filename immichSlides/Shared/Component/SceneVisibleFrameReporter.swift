@@ -187,7 +187,7 @@ struct PlaybackLifecycleTimelineModifier: ViewModifier {
     @State private var latestFrame: PlaybackLifecycleTimeline.Frame?
 
     func body(content: Content) -> some View {
-        if PlatformCompat.lifecycleTimelineConfigurationForTesting != nil {
+        if PlaybackLifecycleTimeline.shared.isEnabled {
             content
                 .onChange(of: frame, initial: true) { _, frame in latestFrame = frame }
                 .task {

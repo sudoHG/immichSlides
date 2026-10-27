@@ -269,6 +269,10 @@ extension PlaybackSessionEngine {
         private var manualPendingPresentationRestore: ManualPendingPresentationRestore?
 
         #if DEBUG
+        var lifecycleTimelineRaisedIdentityForTesting: ScenePresentationIdentity? {
+            layerTimeline.lifecycleTimelineRaisedIdentityForTesting
+        }
+
         var automaticFadeMidpointForTesting: TimeInterval? {
             guard suspensionReasons.isEmpty, underlyingPhase == .transition,
                 let pendingTarget, attemptLedger.latestSource(for: pendingTarget.identity) == .automatic,
@@ -1086,6 +1090,15 @@ extension PlaybackSessionEngine {
             else {
                 return nil
             }
+            #if DEBUG
+            if suspensionReasons == [.userPaused] {
+                let scene = PlaybackLifecycleTimeline.sceneKey(pendingTarget.identity)
+                PlaybackLifecycleTimeline.shared.record(
+                    "pauseHeldCrossfadeException", scene: scene, exceptionBasis: "heldManualTargetReady",
+                    transitionScene: scene,
+                    transitionSource: attemptLedger.latestSource(for: pendingTarget.identity)?.rawValue ?? "manualNext")
+            }
+            #endif
             isManualNavigationWhilePaused = true
             suspendedWakeUp = nil
             return beginTransition(
@@ -1137,9 +1150,9 @@ extension PlaybackSessionEngine {
             layerTimeline.suspendMotion(at: time)
             if layerTimeline.raisedHeldPhotoEnd(at: time) != nil {
                 #if DEBUG
-                if reason == .userPaused, let currentTarget {
+                if reason == .userPaused, let heldIdentity = layerTimeline.lifecycleTimelineRaisedIdentityForTesting {
                     PlaybackLifecycleTimeline.shared.record(
-                        "pauseManualHoldException", scene: PlaybackLifecycleTimeline.sceneKey(currentTarget.identity),
+                        "pauseManualHoldException", scene: PlaybackLifecycleTimeline.sceneKey(heldIdentity),
                         exceptionBasis: "manualHoldRaise")
                 }
                 #endif
@@ -1870,6 +1883,13 @@ extension PlaybackSessionEngine {
                 return materialized
             }
         }
+
+        #if DEBUG
+        /// The marked layer can differ from the reducer's current target during a manual hold.
+        var lifecycleTimelineRaisedIdentityForTesting: ScenePresentationIdentity? {
+            layers.first { $0.isRaisedForHold && $0.role == .incoming }?.identity
+        }
+        #endif
 
         /// When the photo raised out of an interrupted transition reaches full opacity, or nil once it has.
         func raisedHeldPhotoEnd(at time: TimeInterval) -> TimeInterval? {
