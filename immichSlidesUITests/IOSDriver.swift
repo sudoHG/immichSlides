@@ -465,7 +465,7 @@ struct IOSDriver: PlaybackDriver {
             else { return nil }
             if let observation = captured {
                 action.isBarVisible = hasVisibleControlBar(observation)
-                if action.didWake, observation.hasPlaybackMarker, !observation.hasSettingsNavigationEvidence,
+                if action.didWake, !observation.hasSettingsNavigationEvidence,
                     observation.isReady, action.isBarVisible
                 {
                     action.isHittable = observing.query { observation.windowElement.buttons[identifier].isHittable }
@@ -475,7 +475,7 @@ struct IOSDriver: PlaybackDriver {
                         return observation
                     }
                 }
-                if !action.didWake, observation.hasPlaybackMarker, !observation.hasSettingsNavigationEvidence {
+                if !action.didWake, !observation.hasSettingsNavigationEvidence {
                     action.didWake = wake.perform("tap") {
                         FirstFailureContext.mark("reveal-controls", element: identifier)
                         let startedAt = ProcessInfo.processInfo.systemUptime
