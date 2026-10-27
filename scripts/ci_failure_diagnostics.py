@@ -1276,6 +1276,8 @@ def normalized_xctest_failure(message):
         return None
     # Only unwrap the known Swift error types; arbitrary error descriptions stay private.
     text = re.sub(r"^(?:failed - |XCT(?:Assert\w+|Unwrap) failed(?:\:.*?)? - )", "", message)
+    if text.startswith('failed: caught error: "App timeline:'):
+        text = text[len('failed: caught error: "'):]
     for wrapper in ('failed: caught error: "message(\\"', 'failed: caught error: "message("',
                     'message(\\"', 'message("',
                     'failed: caught error: "Failure(message: \\"', 'failed: caught error: "Failure(message: "',
