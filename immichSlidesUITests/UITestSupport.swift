@@ -1314,7 +1314,9 @@ extension XCUIApplication {
     }
 
     func refreshSlideshowControlBarButton(
-        identifier: String, timeout: TimeInterval, pollSeconds: TimeInterval, onTimeout: (String) -> Void
+        identifier: String, timeout: TimeInterval, pollSeconds: TimeInterval,
+        onDiagnosticEvent: ((SlideshowControlBarDiagnosticEvent) -> Void)? = nil,
+        onTimeout: (String) -> Void
     ) -> Bool {
         FirstFailureContext.mark("reveal-controls", element: identifier)
         FirstFailureContext.beginWait(seconds: timeout)
@@ -1324,13 +1326,18 @@ extension XCUIApplication {
         defer { print("Slideshow control refresh: \(timing.diagnostic)") }
         var didReveal = false
         while Date() < deadline {
+            let observationRequest = ProcessInfo.processInfo.systemUptime
             let observation = timing.observe(app: self, identifier: identifier)
+            onDiagnosticEvent?(
+                .observation(observation, request: observationRequest, returned: ProcessInfo.processInfo.systemUptime))
             guard Date() < deadline else { break }
             if let observation {
                 if didReveal, observation.isReady { return true }
                 if !didReveal, observation.hasPlaybackMarker, !observation.hasSettingsNavigationEvidence {
                     didReveal = true
+                    let wakeRequest = ProcessInfo.processInfo.systemUptime
                     timing.reveal(app: self)
+                    onDiagnosticEvent?(.wake(request: wakeRequest, returned: ProcessInfo.processInfo.systemUptime))
                     continue
                 }
             }
@@ -1422,7 +1429,11 @@ extension XCUIApplication {
                         pollIntervalSeconds: UITestSupportWaitTiming.identityPollSeconds
                     ) {
                         let verifyStartedAt = Date()
+                        let observationRequest = ProcessInfo.processInfo.systemUptime
                         let outcome = timing.observe(app: self, identifier: identifier)
+                        onDiagnosticEvent?(
+                            .observation(
+                                outcome, request: observationRequest, returned: ProcessInfo.processInfo.systemUptime))
                         timing.didObserveSettingsNavigation =
                             timing.didObserveSettingsNavigation || outcome?.hasSettingsNavigationEvidence == true
                         timing.verifySeconds += Date().timeIntervalSince(verifyStartedAt)

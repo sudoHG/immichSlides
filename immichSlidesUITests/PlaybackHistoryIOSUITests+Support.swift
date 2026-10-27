@@ -217,9 +217,10 @@ extension PlaybackHistoryIOSUITests {
             app.refreshSlideshowControlBarButton(
                 identifier: "slideshow.control.settings.button",
                 timeout: TestWait.seconds(.infrastructure(8)), pollSeconds: TestWait.seconds(.product(0.2)),
-                onTimeout: { diagnostic = " (\($0))" }),
+                onDiagnosticEvent: playbackControlDiagnostic,
+                onTimeout: { diagnostic = " (\($0)\(self.playbackDiagnostics.controlSuffix))" }),
             "The slideshow Settings button must be ready before opening playback settings.\(diagnostic)")
-        app.tapSlideshowControlBarButton(identifier: "slideshow.control.settings.button")
+        tapPlaybackControl(app: app, identifier: "slideshow.control.settings.button")
 
         let playbackEntry: XCUIElement
         if UIDevice.current.userInterfaceIdiom == .pad {
@@ -288,7 +289,8 @@ extension PlaybackHistoryIOSUITests {
             app.refreshSlideshowControlBarButton(
                 identifier: "slideshow.control.settings.button",
                 timeout: TestWait.seconds(.infrastructure(6)), pollSeconds: TestWait.seconds(.product(0.2)),
-                onTimeout: { diagnostic = " (\($0))" }),
+                onDiagnosticEvent: playbackControlDiagnostic,
+                onTimeout: { diagnostic = " (\($0)\(self.playbackDiagnostics.controlSuffix))" }),
             "Could not return from the playback settings page to the slideshow\(diagnostic)"
         )
     }
