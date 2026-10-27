@@ -385,6 +385,33 @@ The same diagnostic is printed on every return from readiness, refresh and actio
 local XCTest activity logs can compare event latency without additional queries.
 IOSDriver wake and tap paths append each measured duration to the same lists
 as their aggregate timing fields.
+`IOSDriver.next` shares one unscaled 60-second monotonic guard from the baseline
+photo read through one canvas wake, control preparation and one Next tap. Baseline
+and readiness reads started before expiry may satisfy late; they never authorize
+a tap after expiry. The baseline still uses the same screenshot identity reader.
+The Next outcome retains its four-second product window from tap return and
+requires a different recognized scene captured before that deadline.
+
+AccessLifecycle's Settings extension uses one fresh guard per requested toggle
+change, spanning appearance, the initial fallible snapshot, at most one tap and
+the requested-state readback. A failed or unknown value cannot prove an off state.
+An already-correct initial snapshot needs no tap; a returned tap permits one final
+read under the shared guard, including after expiry. The Timing extension and
+`PlaybackIntervalSliderIOS` keep their existing clocks and adjustment behavior.
+
+| Caller | Previous deadline | Current deadline |
+| --- | --- | --- |
+| `IOSDriver.next` baseline / readiness | Entry + 4 s; measured wake refunded for readiness | Entry + 60 s, shared through Next issue; no wake refund |
+| `IOSDriver.next` outcome | Earlier of entry + 8 s + measured wake and tap return + 4 s | Tap return + 4 s |
+| Settings autoplay on | Appearance 12 s, then independent 4 s after any tap | Toggle entry + 60 s |
+| Settings EXIF off | Appearance 8 s, then independent 4 s after any tap | Toggle entry + 60 s |
+| Settings autoplay after display-policy change | Optional appearance 3 s, then 4 s after a tap | Required appearance and readback under toggle entry + 60 s |
+
+Failure prefixes and environment readers are unchanged. Baseline and Next outcome
+identity failures remain red; toggle readback failures gain no yellow eligibility.
+Next readiness retains its existing hidden-controls eligibility with the longer
+shared deadline, so fewer short readiness timeouts can reach yellow. Product
+timing and complete evidence windows remain separate from these guards.
 `IOSDriver.openSettings` now starts one 60-second monotonic guard before prompt
 handling and control preparation. Exact Not Now, canvas wake and Settings
 each permit one action under that same root deadline. The optional prompt branch
@@ -397,7 +424,7 @@ unknown surfaces still cannot complete Settings navigation.
 A returned Settings action permits one outcome snapshot
 after expiry; only an actual Settings surface or explicitly permitted PIN entry passes.
 Native wake/tap duration lists remain diagnostic and no longer extend this path.
-Pause, Next, `revealControls`, `revealUsableControls` and rotation stable-frame
+Pause, `revealControls`, `revealUsableControls` and rotation stable-frame
 deductions retain their existing clocks.
 
 | Settings caller | Previous preparation / outcome deadline | Current deadline | Timing boundary |
