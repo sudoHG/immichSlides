@@ -573,6 +573,7 @@ struct SlideShowViewIOS: View {
                 .ignoresSafeArea(.container, edges: .all)
         )
         .appStatusBarHidden(true)
+        .appHomeIndicatorAutoHidden()
         // Extend content to the very top so the navigation bar does not push EXIF down.
         .ignoresSafeArea(.container, edges: .top)
         .onAppear {

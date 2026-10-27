@@ -323,6 +323,16 @@ extension View {
         #endif
     }
 
+    /// iOS owns the Home Indicator's idle fade and touch reappearance.
+    @ViewBuilder
+    func appHomeIndicatorAutoHidden() -> some View {
+        #if os(iOS)
+        self.persistentSystemOverlays(.hidden)
+        #else
+        self
+        #endif
+    }
+
     /// tvOS has no insetGrouped, so this falls back to plain.
     @ViewBuilder
     func appListStyleInsetGrouped() -> some View {
