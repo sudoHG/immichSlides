@@ -375,6 +375,8 @@ def _is_forbidden_key(key: str) -> bool:
 
 def strict_app_launch_environment(suite: str | None) -> dict[str, str | None]:
     """Declare Swift launch keys; None is the runner-provided loopback server URL."""
+    if suite == "p2-rotation":
+        return {"UI_TEST_PLAYBACK_INTERVAL_SECONDS": "60"}
     if suite == "late-image":
         return {"UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE": "1", "UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT": "1"}
     if suite in {"album-empty", "filter-person", "journey-b", "tvos-flow", "tvos-person", "ios-lifecycle-first-wake"}:
