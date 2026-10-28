@@ -19,6 +19,10 @@ PRODUCTION_DIR = "immichSlides"
 
 # Identifiers that exist only for debugging or UI tests. Every code occurrence must sit in an `#if DEBUG` branch.
 DEBUG_ONLY_MARKERS = (
+    "PlaybackLifecycleTimeline",
+    "lifecycleTimeline",
+    "UI_TEST_PLAYBACK_LIFECYCLE_",
+    "playback-lifecycle-timeline.jsonl",
     "UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE",
     "PlaybackSequenceDebug",
     "qaPlaybackSequenceRecorder",

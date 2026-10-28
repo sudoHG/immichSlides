@@ -855,6 +855,7 @@ def public_validator_failure_message(value):
 # Source locations and enum meanings: docs/CI_STRICT_RUNNER.md#reviewed-prefix-table.
 # No activity marker exists in these flows. Suffixes (including values) are discarded.
 PREFIX_RULES = (
+    ("App timeline:", "continue_timing", "evidence_capture"),
     # tvOS timing-precondition fixes: keep separate from the broader diagnostics-only expansion.
     ("tvOS Continue wake timing precondition failed: Up must not be requested before T-2.", "continue_timing", "timing_window"),
     ("tvOS flow entry precondition failed:", "history_navigation", "control_state"),
@@ -1275,6 +1276,8 @@ def normalized_xctest_failure(message):
         return None
     # Only unwrap the known Swift error types; arbitrary error descriptions stay private.
     text = re.sub(r"^(?:failed - |XCT(?:Assert\w+|Unwrap) failed(?:\:.*?)? - )", "", message)
+    if text.startswith('failed: caught error: "App timeline:'):
+        text = text[len('failed: caught error: "'):]
     for wrapper in ('failed: caught error: "message(\\"', 'failed: caught error: "message("',
                     'message(\\"', 'message("',
                     'failed: caught error: "Failure(message: \\"', 'failed: caught error: "Failure(message: "',

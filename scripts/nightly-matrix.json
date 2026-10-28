@@ -55,6 +55,7 @@
     {"platform":"ios","device":"iphone","configuration":"Debug","suite":"pause-window","scenario":"normal","fixture":"b"},
     {"platform":"ios","device":"iphone","configuration":"Debug","suite":"smoke","scenario":"normal","fixture":"a"},
     {"platform":"ios","device":"iphone","configuration":"Debug","suite":"smoke","scenario":"normal","fixture":"b"},
+    {"platform":"ios","device":"iphone","configuration":"Debug","suite":"ios-lifecycle-pause-timeline","scenario":"normal","fixture":"a"},
     {"platform":"ios","device":"ipad","configuration":"Debug","suite":"album-empty","scenario":"normal","fixture":"a"},
     {"platform":"ios","device":"ipad","configuration":"Debug","suite":"album-empty","scenario":"normal","fixture":"b"},
     {"platform":"ios","device":"ipad","configuration":"Release","suite":"display-policy","scenario":"normal","fixture":"a"},
@@ -104,6 +105,7 @@
     {"platform":"ios","device":"ipad","configuration":"Debug","suite":"pause-stage","scenario":"normal","fixture":"b"},
     {"platform":"ios","device":"ipad","configuration":"Debug","suite":"pause-window","scenario":"normal","fixture":"a"},
     {"platform":"ios","device":"ipad","configuration":"Debug","suite":"pause-window","scenario":"normal","fixture":"b"},
+    {"platform":"ios","device":"ipad","configuration":"Debug","suite":"ios-lifecycle-pause-timeline","scenario":"normal","fixture":"a"},
     {"platform":"tvos","device":"tv","configuration":"Debug","suite":"late-image","scenario":"out-of-order","fixture":"a"},
     {"platform":"tvos","device":"tv","configuration":"Debug","suite":"late-image","scenario":"out-of-order","fixture":"b"},
     {"platform":"tvos","device":"tv","configuration":"Debug","suite":"p2-cache","scenario":"normal","fixture":"a"},
@@ -133,7 +135,8 @@
     {"platform":"tvos","device":"tv","configuration":"Debug","suite":"tvos-n1-cold","scenario":"normal","fixture":"b"},
     {"platform":"tvos","device":"tv","configuration":"Debug","suite":"tvos-person","scenario":"normal","fixture":"a"},
     {"platform":"tvos","device":"tv","configuration":"Debug","suite":"tvos-person","scenario":"normal","fixture":"b"},
-    {"platform":"tvos","device":"tv","configuration":"Release","suite":"tvos-switch","scenario":"normal","fixture":"a"}
+    {"platform":"tvos","device":"tv","configuration":"Release","suite":"tvos-switch","scenario":"normal","fixture":"a"},
+    {"platform":"tvos","device":"tv","configuration":"Debug","suite":"tvos-lifecycle-pause-timeline","scenario":"normal","fixture":"a"}
   ],
   "exclusions": [
     {"case":{"platform":"ios","device":"ipad","configuration":"Debug","suite":"smoke","scenario":"normal","fixture":"a"},"reason":"StrictE2ESmokeUITests.testIOSStrictE2EConnectionSmoke guards userInterfaceIdiom == .phone and skips iPad."},
@@ -145,6 +148,7 @@
     {"case":{"platform":"ios","device":"iphone","configuration":"Release","suite":"ios-lifecycle-first-wake","scenario":"normal","fixture":"b"},"reason":"ios-lifecycle-first-wake must use public fixture A; data from different servers cannot be mixed."},
     {"case":{"platform":"ios","device":"iphone","configuration":"Release","suite":"ios-lifecycle-pause","scenario":"normal","fixture":"b"},"reason":"ios-lifecycle-pause must use public fixture A; data from different servers cannot be mixed."},
     {"case":{"platform":"ios","device":"iphone","configuration":"Release","suite":"ios-lifecycle-settings","scenario":"normal","fixture":"b"},"reason":"ios-lifecycle-settings must use public fixture A; data from different servers cannot be mixed."},
+    {"case":{"platform":"ios","device":"iphone","configuration":"Debug","suite":"ios-lifecycle-pause-timeline","scenario":"normal","fixture":"b"},"reason":"ios-lifecycle-pause-timeline must use public fixture A; data from different servers cannot be mixed."},
     {"case":{"platform":"ios","device":"ipad","configuration":"Release","suite":"display-policy","scenario":"normal","fixture":"b"},"reason":"display-policy must use public fixture A; data from different servers cannot be mixed."},
     {"case":{"platform":"ios","device":"ipad","configuration":"Release","suite":"filter-switch","scenario":"normal","fixture":"b"},"reason":"Dual-server suites must start from fixture A."},
     {"case":{"platform":"ios","device":"ipad","configuration":"Debug","suite":"image-failure-recovery","scenario":"normal","fixture":"b"},"reason":"image-failure-recovery must use public fixture A; data from different servers cannot be mixed."},
@@ -152,12 +156,14 @@
     {"case":{"platform":"ios","device":"ipad","configuration":"Release","suite":"ios-lifecycle-first-wake","scenario":"normal","fixture":"b"},"reason":"ios-lifecycle-first-wake must use public fixture A; data from different servers cannot be mixed."},
     {"case":{"platform":"ios","device":"ipad","configuration":"Release","suite":"ios-lifecycle-pause","scenario":"normal","fixture":"b"},"reason":"ios-lifecycle-pause must use public fixture A; data from different servers cannot be mixed."},
     {"case":{"platform":"ios","device":"ipad","configuration":"Release","suite":"ios-lifecycle-settings","scenario":"normal","fixture":"b"},"reason":"ios-lifecycle-settings must use public fixture A; data from different servers cannot be mixed."},
+    {"case":{"platform":"ios","device":"ipad","configuration":"Debug","suite":"ios-lifecycle-pause-timeline","scenario":"normal","fixture":"b"},"reason":"ios-lifecycle-pause-timeline must use public fixture A; data from different servers cannot be mixed."},
     {"case":{"platform":"tvos","device":"tv","configuration":"Debug","suite":"tvos-album","scenario":"normal","fixture":"b"},"reason":"tvos-album must use public fixture A; data from different servers cannot be mixed."},
     {"case":{"platform":"tvos","device":"tv","configuration":"Release","suite":"tvos-display-policy","scenario":"normal","fixture":"b"},"reason":"tvos-display-policy must use public fixture A; data from different servers cannot be mixed."},
     {"case":{"platform":"tvos","device":"tv","configuration":"Release","suite":"tvos-lifecycle-background","scenario":"normal","fixture":"b"},"reason":"tvos-lifecycle-background must use public fixture A; data from different servers cannot be mixed."},
     {"case":{"platform":"tvos","device":"tv","configuration":"Release","suite":"tvos-lifecycle-pause","scenario":"normal","fixture":"b"},"reason":"tvos-lifecycle-pause must use public fixture A; data from different servers cannot be mixed."},
     {"case":{"platform":"tvos","device":"tv","configuration":"Release","suite":"tvos-lifecycle-settings","scenario":"normal","fixture":"b"},"reason":"tvos-lifecycle-settings must use public fixture A; data from different servers cannot be mixed."},
-    {"case":{"platform":"tvos","device":"tv","configuration":"Release","suite":"tvos-switch","scenario":"normal","fixture":"b"},"reason":"Dual-server suites must start from fixture A."}
+    {"case":{"platform":"tvos","device":"tv","configuration":"Release","suite":"tvos-switch","scenario":"normal","fixture":"b"},"reason":"Dual-server suites must start from fixture A."},
+    {"case":{"platform":"tvos","device":"tv","configuration":"Debug","suite":"tvos-lifecycle-pause-timeline","scenario":"normal","fixture":"b"},"reason":"tvos-lifecycle-pause-timeline must use public fixture A; data from different servers cannot be mixed."}
   ],
   "runner_exclusions": [
     {"runner":"run_access_lifecycle_ios.py","reason":"Unconverted standalone access-protection runner; unstable main flow and per-run build."},

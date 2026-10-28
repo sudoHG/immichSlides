@@ -433,6 +433,25 @@ final class PlaybackSessionOwner {
     }
 
     #if DEBUG
+    var lifecycleTimelineTransitionForTesting:
+        (
+            identity: PlaybackSessionEngine.ScenePresentationIdentity?, source: String, isHeld: Bool,
+            raisedIdentity: PlaybackSessionEngine.ScenePresentationIdentity?
+        )
+    {
+        let state = engine.scenePresentationState
+        let identity = (state.pendingTarget ?? state.currentTarget)?.identity
+        return (
+            identity, identity.map(lifecycleTimelineSourceForTesting) ?? "",
+            state.underlyingPhase == .grace && engine.canCancelUnseenManualPendingScenePresentation,
+            state.lifecycleTimelineRaisedIdentityForTesting
+        )
+    }
+
+    func lifecycleTimelineSourceForTesting(_ identity: PlaybackSessionEngine.ScenePresentationIdentity) -> String {
+        engine.transition(for: identity)?.transaction.source.rawValue ?? ""
+    }
+
     var retainedHistoryRecipesForTesting: [PlaybackScene] { historyLedger.entries.map(\.scene) }
 
     var automaticFadeMidpointForTesting: TimeInterval? {

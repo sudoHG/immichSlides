@@ -99,6 +99,19 @@ Published playback facts have no internal setter: `assets`, `currentIndex`, `tar
 
 ### Runtime evidence
 
+The separate DEBUG-only `PlaybackLifecycleTimeline` observes lifecycle receipts
+and committed render ticks for the Debug pause timing suites. It writes sparse
+JSONL into the XCTest-supplied host evidence directory through `PlatformCompat`,
+with launch/case nonces and contiguous sequence numbers. Its render observer
+reuses the scene visibility transaction-completion and next-display-tick boundary;
+it never delivers reducer events or changes playback clocks. All photo identities
+are hashed. Shared target membership includes iOS and tvOS; the recorder and its
+observer compile out of Release. The timing and independent screenshot contracts
+are documented in [testing](TESTING.md#running-controlled-integration-and-end-to-end-tests).
+Launch configuration and scene/asset hashes are cached; request changes refresh a
+cached challenge through directory notifications. Render ticks perform no request
+file reads, and numeric layer comparisons defer fingerprint hashing to sparse events.
+
 Evidence observations are synchronous, including query-time samples. The facade's navigation and evidence adapters supply clock samples and download records; scene publication timing annotations consume immutable action timestamps from `PlaybackRuntimeEvidenceRecorder`. Reading the startup summary can record missing readiness milestones, with one clock sample per newly recorded phase; reading the presentation probe accumulates Debug frame evidence from an immutable render snapshot, motion progress and history count. The readiness metric allows pending or failed slots after a ready slot has been observed. Startup reset clears only startup evidence, presentation reset clears only decode/readiness counters and history flags, and action reset clears only pending action timings; sequence history and frame accumulation survive these resets. The recorder does not access the download manager, Vision auditing or the engine itself. Sequence output delegates clock sampling, redaction, JSONL limits and serialization to `PlaybackSequenceDebugRecorder`; the facade owns Debug enablement and the OSLog path.
 
 On iOS, the Debug SmartFill rendered-slot summary reads leaf frame preferences directly inside the rendering `TimelineView` with `overlayPreferenceValue`. The asynchronous `onPreferenceChange` state remains a trace-collection input, but does not supply the frame summary. Paused UI checks read the presentation probe and rendered-slot labels from one accessibility snapshot that confirms `playbackPaused=true`.

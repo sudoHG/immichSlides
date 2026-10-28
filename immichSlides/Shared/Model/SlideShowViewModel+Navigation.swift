@@ -6,6 +6,10 @@ import OSLog
 
 extension SlideShowViewModel {
     func requestPreviousScene() {
+        #if DEBUG
+        PlaybackLifecycleTimeline.shared.recordReceipt(
+            "manualNavigationReceived", frame: lifecycleTimelineFrame(sceneRenderSnapshot))
+        #endif
         guard playbackSession.sceneCount > 0 else { return }
         let actionTimestamp = playbackManifestTimestamp()
         candidateProgression.cancelPendingSelection()
@@ -24,6 +28,10 @@ extension SlideShowViewModel {
     /// The platform page is the only scenePhase entry point; the reducer keeps background time out of the playback
     /// clock.
     func suspendScenePresentationForBackground() {
+        #if DEBUG
+        PlaybackLifecycleTimeline.shared.recordReceipt(
+            "backgroundReceived", frame: lifecycleTimelineFrame(sceneRenderSnapshot))
+        #endif
         executeScenePresentationEffects(
             playbackSession.reduceScenePresentation(
                 .suspend(.background),
@@ -35,6 +43,10 @@ extension SlideShowViewModel {
     /// Returning to the foreground only removes the background reason; if the user is still paused, stay frozen and do
     /// not catch up on the deadline.
     func resumeScenePresentationFromBackground() {
+        #if DEBUG
+        PlaybackLifecycleTimeline.shared.recordReceipt(
+            "foregroundReceived", frame: lifecycleTimelineFrame(sceneRenderSnapshot))
+        #endif
         guard playbackSession.isSuspendedForBackground else {
             return
         }
@@ -51,6 +63,12 @@ extension SlideShowViewModel {
     }
 
     func requestNextScene(isManual: Bool) {
+        #if DEBUG
+        if isManual {
+            PlaybackLifecycleTimeline.shared.recordReceipt(
+                "manualNavigationReceived", frame: lifecycleTimelineFrame(sceneRenderSnapshot))
+        }
+        #endif
         guard !assets.isEmpty else { return }
         let actionTimestamp = playbackManifestTimestamp()
         let transactionSource: PlaybackSceneTransactionSource = isManual ? .manualNext : .autoplay

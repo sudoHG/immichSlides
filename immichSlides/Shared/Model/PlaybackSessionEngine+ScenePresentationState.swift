@@ -269,6 +269,10 @@ extension PlaybackSessionEngine {
         private var manualPendingPresentationRestore: ManualPendingPresentationRestore?
 
         #if DEBUG
+        var lifecycleTimelineRaisedIdentityForTesting: ScenePresentationIdentity? {
+            layerTimeline.lifecycleTimelineRaisedIdentityForTesting
+        }
+
         var automaticFadeMidpointForTesting: TimeInterval? {
             guard suspensionReasons.isEmpty, underlyingPhase == .transition,
                 let pendingTarget, attemptLedger.latestSource(for: pendingTarget.identity) == .automatic,
@@ -1086,6 +1090,15 @@ extension PlaybackSessionEngine {
             else {
                 return nil
             }
+            #if DEBUG
+            if suspensionReasons == [.userPaused] {
+                let scene = PlaybackLifecycleTimeline.sceneKey(pendingTarget.identity)
+                PlaybackLifecycleTimeline.shared.record(
+                    "pauseHeldCrossfadeException", scene: scene, exceptionBasis: "heldManualTargetReady",
+                    transitionScene: scene,
+                    transitionSource: attemptLedger.latestSource(for: pendingTarget.identity)?.rawValue ?? "manualNext")
+            }
+            #endif
             isManualNavigationWhilePaused = true
             suspendedWakeUp = nil
             return beginTransition(
@@ -1136,6 +1149,13 @@ extension PlaybackSessionEngine {
             stableVisibleClock?.suspend(at: time)
             layerTimeline.suspendMotion(at: time)
             if layerTimeline.raisedHeldPhotoEnd(at: time) != nil {
+                #if DEBUG
+                if reason == .userPaused, let heldIdentity = layerTimeline.lifecycleTimelineRaisedIdentityForTesting {
+                    PlaybackLifecycleTimeline.shared.record(
+                        "pauseManualHoldException", scene: PlaybackLifecycleTimeline.sceneKey(heldIdentity),
+                        exceptionBasis: "manualHoldRaise")
+                }
+                #endif
                 // A photo being raised for a manual hold, or kept up after Previous cancelled that hold, finishes its
                 // short fade during a user pause, like manual navigation. Nobody sees the background, so there it ends
                 // at once rather than coming back dim.
@@ -1180,6 +1200,11 @@ extension PlaybackSessionEngine {
                 return nil
             }
             beginManualNavigationWhilePaused()
+            #if DEBUG
+            PlaybackLifecycleTimeline.shared.record(
+                "pauseFadeGapException", scene: PlaybackLifecycleTimeline.sceneKey(pendingTarget.identity),
+                exceptionBasis: "automaticInvisibleGap")
+            #endif
             return scheduleWakeUp(
                 generation: pendingTarget.identity.generation,
                 purpose: .transitionCompletion,
@@ -1858,6 +1883,13 @@ extension PlaybackSessionEngine {
                 return materialized
             }
         }
+
+        #if DEBUG
+        /// The marked layer can differ from the reducer's current target during a manual hold.
+        var lifecycleTimelineRaisedIdentityForTesting: ScenePresentationIdentity? {
+            layers.first { $0.isRaisedForHold && $0.role == .incoming }?.identity
+        }
+        #endif
 
         /// When the photo raised out of an interrupted transition reaches full opacity, or nil once it has.
         func raisedHeldPhotoEnd(at time: TimeInterval) -> TimeInterval? {

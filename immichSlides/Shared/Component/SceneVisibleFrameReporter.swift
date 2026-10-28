@@ -179,4 +179,30 @@ private final class SceneDisplayTickAwaiter: NSObject {
         continuation = nil
     }
 }
+
+#if DEBUG
+/// Observes the same committed render boundary as visibility, without delivering any playback events.
+struct PlaybackLifecycleTimelineModifier: ViewModifier {
+    let frame: PlaybackLifecycleTimeline.Frame
+    @State private var latestFrame: PlaybackLifecycleTimeline.Frame?
+
+    func body(content: Content) -> some View {
+        if PlaybackLifecycleTimeline.shared.isEnabled {
+            content
+                .onChange(of: frame, initial: true) { _, frame in latestFrame = frame }
+                .task {
+                    while !Task.isCancelled {
+                        await SceneTransactionCompletionAwaiter.wait()
+                        let committedFrame = latestFrame
+                        await SceneDisplayTickAwaiter().waitForNextTick()
+                        guard !Task.isCancelled else { return }
+                        if let committedFrame { PlaybackLifecycleTimeline.shared.committedFrame(committedFrame) }
+                    }
+                }
+        } else {
+            content
+        }
+    }
+}
+#endif
 #endif

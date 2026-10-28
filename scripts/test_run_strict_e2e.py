@@ -106,6 +106,60 @@ def tearDownModule():
 
 
 class StrictE2ERunnerTests(StrictE2ERunnerTestsCasesConfiguration, StrictE2ERunnerTestsCasesEvidence, unittest.TestCase):
+    def test_app_timeline_signature_requires_bound_events_clock_and_every_content_proof(self):
+        import hashlib
+        from strict_e2e_runner_support import app_timeline_verdict
+        for defect in (None, "missing", "hash", "nonce", "sequence", "clock", "content", "png", "judgment", "schema", "boolean-schema", "frozen", "frozen-png"):
+            with self.subTest(defect=defect), tempfile.TemporaryDirectory() as raw:
+                root = Path(raw)
+                kinds = ("timelineStarted", "clockHandshake", "continueReceived", "renderFadeStarted", "sceneStable", "checkpoint")
+                events = [dict(schemaVersion=1, sequence=i, kind=kind, launchNonce="launch", caseNonce="case", uptime=i,
+                               request="clock-request" if kind == "clockHandshake" else "")
+                          for i, kind in enumerate(kinds, 1)]
+                if defect == "nonce":
+                    events[3]["launchNonce"] = "other"
+                if defect == "sequence":
+                    events[3]["sequence"] += 1
+                lines = b"".join(json.dumps(event).encode() + b"\n" for event in events)
+                (root / "playback-lifecycle-timeline.jsonl").write_bytes(lines)
+                names = ("timeline-start", "timeline-midpoint-pause", "timeline-after-next", "timeline-after-hold",
+                         "timeline-continue-early", "timeline-after-auto")
+                proofs = [dict(name="clock-handshake", runner_request=1.5, app_uptime=2, runner_return=2.5, request="clock-request")]
+                for name in names:
+                    (root / (name + ".png")).write_bytes(b"bound-public-content")
+                    proofs.append(dict(name=name, status="MATCH", request=5, **{"return": 5.5},
+                                       png_sha256=hashlib.sha256(b"bound-public-content").hexdigest()))
+                receipt = dict(schema_version=1, suite="lifecycle-pause-app-timeline", verdict="PASS", event_count=len(events),
+                               case_nonce="case", launch_nonce="launch", timeline_sha256=hashlib.sha256(lines).hexdigest(),
+                               judgment=dict(continueSequence=3, onsetSequence=4, stableSequence=5), content_checks=proofs)
+                if defect == "hash":
+                    receipt["timeline_sha256"] = "0" * 64
+                if defect == "clock":
+                    proofs[0]["runner_request"] = 3
+                if defect == "content":
+                    proofs.pop()
+                if defect == "png":
+                    (root / (names[0] + ".png")).write_bytes(b"another-frame")
+                if defect == "judgment":
+                    receipt["judgment"]["onsetSequence"] = 5
+                if defect == "schema":
+                    receipt["schema_version"] = 2
+                if defect == "boolean-schema":
+                    receipt["schema_version"] = True
+                if defect in {"frozen", "frozen-png"}:
+                    proofs[4]["status"] = "FROZEN"
+                    proofs[4]["frozen_proof"] = dict(frozen_reference_sha256=hashlib.sha256(b"frozen-frame").hexdigest())
+                    (root / (names[3] + "-frozen-reference.png")).write_bytes(
+                        b"changed-frame" if defect == "frozen-png" else b"frozen-frame")
+                if defect != "missing":
+                    (root / "app-timeline-verdict.json").write_text(json.dumps(receipt))
+                self.assertEqual("PASS" if defect in {None, "frozen"} else "UNVERIFIED", app_timeline_verdict(root))
+                if defect not in {None, "frozen"}:
+                    with self.assertRaisesRegex(CommandError, "^App timeline: missing or invalid signed evidence$"):
+                        require_visual_identity(root, "ios-lifecycle-pause-timeline")
+                    report = json.loads((root / "visual-identity-runner.json").read_text())
+                    self.assertEqual("FAIL", report["verdict"])
+
     def test_fixture_build_has_its_own_deadline_before_health_and_cannot_hide_failures(self):
         import strict_e2e_runner_support as support
         from run_fixture_ui_tests import SERVICE_FIXTURE_BUILD_TIMEOUT_SECONDS, SERVICE_STARTUP_TIMEOUT_SECONDS
@@ -1214,6 +1268,21 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
 
 
 class FailureDiagnosticsTests(unittest.TestCase):
+    def test_app_timeline_failures_are_classified_and_never_yellow_eligible(self):
+        from ci_failure_diagnostics import classify_messages, environment_timing
+        failure = dict(source="xctest", app="running-foreground", scene_status="MATCH", surface="playback",
+                       control_bar="hidden", step="query-element", element="slideshow.control.playPause.button",
+                       wait_elapsed_seconds=60, deadline_seconds=5)
+        for reason in ("nonce mismatch", "missing required event", "Continue onset outside T±2",
+                       "content contradicts stable or frozen timeline", "paused manual transition exceeded one target",
+                       "automatic change during paused manual navigation", "pause exception misuse"):
+            for wrapper in ("", 'failed: caught error: "', "XCTAssertTrue failed - "):
+                for version in (1, 2, 3, 4):
+                    with self.subTest(reason=reason, wrapper=wrapper, policy_version=version):
+                        diagnostic = classify_messages([wrapper + "App timeline: " + reason])
+                        self.assertEqual(dict(failure_phase="continue_timing", failure_class="evidence_capture"), diagnostic)
+                        self.assertFalse(environment_timing(failure, diagnostic["failure_phase"], diagnostic["failure_class"], policy_version=version))
+
     def test_pause_readiness_replaces_its_receipt_wait_before_starting_the_next(self):
         source = (REPO_ROOT / "immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift").read_text()
         preparation = source.split("func preparePlayPause(", 1)[1].split("func tapPreparedPlayPause(", 1)[0]
