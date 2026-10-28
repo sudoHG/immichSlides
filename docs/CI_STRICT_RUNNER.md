@@ -344,7 +344,7 @@ as the stable history anchor. The single Pause, four-second pause readback,
 history-count precondition and capture-time pixel/manifest proof remain unchanged.
 
 `UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE=1` enables the Debug manifest probes.
-Probe-only launches are `album-empty`, `filter-person`, `journey-b`, `tvos-flow`, `tvos-person`, `ios-lifecycle-first-wake`,
+Probe-only launches are `album-empty`, `journey-b`, `tvos-flow`, `tvos-person`, `ios-lifecycle-first-wake`,
 and `AccessLifecycleIOSUITests.prepareLaunch`, including its cold relaunches and
 `run_access_lifecycle_ios.py`'s `testAccessProtectionSettingsAndLifecycle`.
 Only iOS `album-empty` sets the real playback interval to 30 seconds through `IOSDriver`
@@ -395,10 +395,18 @@ For `filter-person`, this replaces a fixed 0.8 s wait followed by up to 4 s of
 control reveal with a 0.8 s minimum settle and up to 4 s of scene/pixel observation.
 The 4.8 s ceiling is unchanged; the window allocation and required evidence differ.
 Release `filter-person` uses ordinary Pause and the probe-free pixel check, with
-controls revealed before the capture window. Debug `filter-person` retains the
-default 5 s playback interval and reserves no remaining-interval headroom between
-the stable check and Pause. A slow check plus tap can therefore enter the next
-transition; a frozen transition fails red as `control_action/control_state`.
+controls revealed before the capture window. Only the three person-membership
+launches explicitly set `UI_TEST_PLAYBACK_INTERVAL_SECONDS=60`. The existing
+Debug hook seeds a supported interval before playback, removing automatic advance
+from a suite that judges filter membership, not the autoplay interval. Release
+ignores that Debug-only hook and retains its original interval. Shared launch
+defaults and `album-empty`'s real 30 s slider and slope confirmation are unchanged.
+The stable snapshot and single Pause still share the existing preparation window;
+the 4 s pause readback and 4.8 s capture deadline are unchanged. Root and
+frame-synchronized labels from the same snapshot are retained in capture evidence
+and printed on gate failure. A paused stable scene with raw progress above one
+still fails; neither the stable predicate nor the pixel/identity proof is relaxed.
+A frozen transition still fails red as `control_action/control_state`.
 The stricter Pause-preparation wait's yellow-eligibility change is documented
 beside the allowlist in [CI summary](CI_SUMMARY.md#prepared-hosted-strict-environment-limits).
 For `filter-album`, widening its former 0.8 s fixed wait to at most 4.8 s is an

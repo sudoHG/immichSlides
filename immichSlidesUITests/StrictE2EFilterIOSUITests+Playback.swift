@@ -60,7 +60,8 @@ extension StrictE2EFilterIOSUITests {
         evidencePrefix: String
     ) throws {
         let input = try requireStrictE2EInput()
-        let app = try launchStrictE2EApp(recordSceneSequence: true)
+        // Membership screenshots do not judge autoplay; leave room for native Pause delivery.
+        let app = try launchStrictE2EApp(recordSceneSequence: true, playbackIntervalSeconds: 60)
         defer { app.terminateForFailureEvidence() }
         try completeFirstBootToModeSelection(app: app, input: input, evidencePrefix: evidencePrefix)
         enterFilterSummary(app: app)

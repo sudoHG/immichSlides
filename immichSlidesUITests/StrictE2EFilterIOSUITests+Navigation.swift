@@ -371,6 +371,8 @@ extension StrictE2EFilterIOSUITests {
         FirstFailureContext.mark("wait-scene", element: "slideshow.scenePresentation.contract.summary")
         guard isReady else {
             attachStrictSceneObservation(before: before, after: before, name: "\(name)-scene")
+            print("Album capture gate root: \(before["render"] ?? "missing")")
+            print("Album capture gate frame: \(before["frameSynchronizedRender"] ?? "missing")")
             let render = SharedSceneEvidenceManifest.parseKeyValueFields(before["render"] ?? "")
             let isManifestComplete = SharedSceneEvidenceManifest.manifestObservation(from: before["manifest"] ?? "")?
                 .isCompleteVisibleScene
@@ -461,6 +463,7 @@ extension StrictE2EFilterIOSUITests {
         return [
             "manifest": snapshots["slideshow.smartfill.currentManifest.flag"]?.label ?? "",
             "render": snapshots["slideshow.scenePresentation.contract.summary"]?.label ?? "",
+            "frameSynchronizedRender": snapshots["slideshow.scenePresentation.frameSynchronized.summary"]?.label ?? "",
             "playPauseValue": (snapshots["slideshow.control.playPause.button"]?.value as? String)?.lowercased()
                 ?? "unknown",
             "entryHintVisible": didSnapshotFail ? "unknown" : String(snapshots["slideshow.entryHint.banner"] != nil),

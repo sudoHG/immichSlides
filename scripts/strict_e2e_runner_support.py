@@ -377,7 +377,9 @@ def strict_app_launch_environment(suite: str | None) -> dict[str, str | None]:
     """Declare Swift launch keys; None is the runner-provided loopback server URL."""
     if suite == "late-image":
         return {"UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE": "1", "UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT": "1"}
-    if suite in {"album-empty", "filter-person", "journey-b", "tvos-flow", "tvos-person", "ios-lifecycle-first-wake"}:
+    if suite == "filter-person":
+        return {"UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE": "1", "UI_TEST_PLAYBACK_INTERVAL_SECONDS": "60"}
+    if suite in {"album-empty", "journey-b", "tvos-flow", "tvos-person", "ios-lifecycle-first-wake"}:
         return {"UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE": "1"}
     if suite in {"pause-window", "tvos-directional-wake"}:
         environment = {"UI_TEST_SERVER_URL": None, "UI_TEST_API_KEY": PUBLIC_API_KEY,
