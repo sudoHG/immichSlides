@@ -386,7 +386,17 @@ before the product's stable deadline is about 3.5 seconds. Subtract the
 test process's current system uptime, rather than the render sample's time, to
 account for stale snapshots. Missing or non-finite timing fields fail readiness.
 A legal pause can freeze a transition indefinitely; the later stable identity
-check cannot wait for that paused transition to finish. The tap gate adds no
+check cannot wait for that paused transition to finish. Both `runManualLifecycleContract`
+variants (SinglePhoto and SmartFill) explicitly launch with
+`UI_TEST_PLAYBACK_INTERVAL_SECONDS=60` so automatic advance does not race their
+manual Pause/Next/Previous/Play sequence on slow hosts. The iOS Debug initializer
+seeds the saved product interval after state reset through `PlatformCompat`,
+accepting whole seconds from 5 through 60; missing or invalid input leaves the
+setting unchanged. Release never reads the override, and tvOS does not apply it.
+Other launch callers, including the normal five-second autoplay and pause-frame
+contracts, retain their existing intervals. The motion, frozen progress, manual
+navigation and current-scene resume assertions and all product windows stay unchanged.
+The tap gate adds no
 snapshot, reveal or control-tap retry, and all post-Pause checks remain.
 On rejection, this SmartFill call reports the last reason (button not ready,
 scene incomplete or margin insufficient, or `none (snapshot gate passed)` when the

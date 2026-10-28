@@ -370,7 +370,9 @@ extension PlaybackHistoryIOSUITests {
 
     @MainActor
     func runManualLifecycleContract(mode: ManualLifecycleMode) throws {
-        let app = try launchConfiguredManualLifecycleAppAtModeSelection(mode: mode)
+        // Automatic advance must not race the manual Pause/Next/Previous/Play sequence on slow hosts.
+        let app = try launchConfiguredManualLifecycleAppAtModeSelection(
+            mode: mode, extraLaunchEnvironment: ["UI_TEST_PLAYBACK_INTERVAL_SECONDS": "60"])
         defer {
             attachManualLifecycleRuntimeEvidence(mode: mode)
             app.terminateForFailureEvidence()
