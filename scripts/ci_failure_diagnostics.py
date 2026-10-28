@@ -36,6 +36,7 @@ APP_TIMELINE_FAILURE_REASONS = frozenset({
     "pause exception misuse", "frame advanced during pause", "missing Continue receipt",
     "missing unambiguous fade onset", "Continue onset outside T±2", "new photo not stable within onset+4",
     "midpoint Pause did not cover T-2", "automatic transition before midpoint Pause",
+    "Pause must reach the App.", "focus must reach Play/Pause.", "focus must reach Next.",
 })
 VALIDATOR_FAILURE_FIELD = "validator_failure_message"
 VALIDATOR_FAILURE_MAX_LENGTH = 512

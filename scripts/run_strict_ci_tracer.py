@@ -30,7 +30,7 @@ from strict_e2e_build import build_settings, write_json
 from strict_e2e_p2_contract import P2_CASES, RAW_VERDICT, official_tests_facts
 from strict_e2e_server import PUBLIC_API_KEY
 from strict_e2e_runner_support import (IOS_LIFECYCLE_PAUSE_SUITE, SIMULATOR_READINESS_TIMEOUT_SECONDS,
-                                     SIMULATOR_PREPARATION_TIMEOUT_SECONDS,
+                                     SIMULATOR_PREPARATION_TIMEOUT_SECONDS, TIMELINE_LIFECYCLE_SUITES,
                                      destination_udid, pause_timing_verdict, prepare_simulator)
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -53,7 +53,7 @@ def read_case_official(evidence, suite):
         require(payload["result"] != "Passed" or (payload["passedTests"] == payload["totalTestCount"]
                 and payload["totalTestCount"] > 0), "passing official result has nonpassing counts")
         result = {name: payload[name] for name in (*counts, "result")}
-        if suite in {"ios-lifecycle-pause-timeline", "tvos-lifecycle-pause-timeline"} and payload["failedTests"] == 1:
+        if suite in TIMELINE_LIFECYCLE_SUITES and payload["failedTests"] == 1:
             message = public_app_timeline_failure_message(payload.get("message"))
             if message is not None:
                 result["message"] = message

@@ -1633,15 +1633,19 @@ Removing all compact receipt copies avoids that growth without raising the cap.
 
 ### Public failure diagnostics
 
-The Debug App-timeline suites annotate `official-summary.json` with the first official
-thrown error's `message`, then retain it in the case's existing attempt `message` in
-`summary.json` and `summary.md`. Only the two App-timeline methods qualify. The exporter
+The Debug App-timeline suites annotate `official-summary.json` with the `message`
+from the method's first official failure (assertion failures included), then retain
+it in the case's existing attempt `message` in `summary.json` and `summary.md`.
+Only the two App-timeline methods qualify. The exporter
 matches complete, code-defined error sentences after removing known XCTest wrappers;
-unknown reasons, dynamic event names and added suffixes become
-`App timeline: unrecognized failure (redacted)`. Warnings and other methods supply no
-message. The tracer checks the message again before publication. Versioned summary
-and receipt fields, failure classification and environment-limit eligibility stay
+unrecognized reasons carrying the `App timeline: ` prefix, dynamic event names and added
+suffixes become `App timeline: unrecognized failure (redacted)`. Errors without that
+prefix, warnings and other methods supply no message. The tracer checks the message
+again before publication. Versioned summary and receipt fields, failure classification
+and environment-limit eligibility stay
 unchanged. Missing legacy details leave the message absent and the failure red.
+Reporter rollups and issues still clear attempt messages in `ci_report.py`; consult
+the strict-tracer's own `summary.json` and `summary.md` for the sentence.
 
 Failed method nodes in `official-tests*.json` and the tracer's
 `trace.json` `official_methods` carry two fixed enums:
