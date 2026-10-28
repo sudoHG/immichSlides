@@ -1661,6 +1661,19 @@ XCTest assertion and the known Swift `AssertionError.message` and
 `Failure(message:)` wrappers are recognized;
 unmatched, missing or conflicting messages yield `unknown` for both fields.
 Snapshot/hittability failures identify only the class, with an unknown phase.
+The reviewed XCTest messages `Failed to terminate com.331works.immichSlides:`
+and `Application 'com.331works.immichSlides' does not have a process ID` identify
+`unknown/process_lifetime`. The phase stays unknown because termination can be
+explicit or part of `XCUIApplication.launch()`, including a launch in a different
+test. PID values and remaining text are discarded. These labels do not prove
+an XCTest/simulator defect or rule out an App crash or stalled launch.
+They add no `infrastructure` entry, retry or passing observation, and are
+ineligible under every supported
+[environment-limit policy](CI_SUMMARY.md#prepared-hosted-strict-environment-limits).
+Fixture UI failures remain red; that policy applies only to hosted nightly strict
+cases with the required evidence. The XCTest lifecycle API already guarantees
+`notRunning` after a successful `terminate()` and terminates an existing instance
+inside `launch()`, so an additional state wait or termination is not a proven fix.
 Journey-b's five history captures and tvOS's matching history captures have separate `history_*_capture` phases,
 and rotation's initial portrait, landscape and final portrait stable waits have
 separate `rotation_*_capture` phases. These map the existing interpolated names
