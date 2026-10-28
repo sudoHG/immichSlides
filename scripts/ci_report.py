@@ -1421,23 +1421,33 @@ def discover_runs(api, event_name, event, now):
     return sorted(runs.values(), key=lambda item: item["id"])
 
 
+def snapshot_artifacts(api):
+    # Consume GitHub's newest-first listing only until trusted history is found.
+    for page in range(1, 101):
+        batch = api.repo(f"actions/artifacts?per_page=100&page={page}")["artifacts"]
+        artifacts = []
+        for artifact in batch:
+            match = re.fullmatch(r"ci-report-daily-([1-9][0-9]*)-([1-9][0-9]*)", artifact["name"])
+            if not match or artifact.get("workflow_run", {}).get("head_branch") != "main":
+                continue
+            created = datetime.fromisoformat(artifact["created_at"].replace("Z", "+00:00"))
+            require(created.tzinfo is not None and created.utcoffset() == timedelta(0), "invalid snapshot creation time")
+            require(artifact["workflow_run"]["id"] == int(match[1]), "snapshot artifact run mismatch")
+            artifacts.append((created, int(match[1]), int(match[2]), artifact))
+        yield from sorted(artifacts, key=lambda item: item[:3], reverse=True)
+        if len(batch) < 100:
+            return
+    raise ContractError("GitHub pagination limit reached; publication refused")
+
+
 def read_snapshot(api):
     from ci_publish import json_member
     workflow = api.repo("actions/workflows/ci-report.yml", missing=True)
     if workflow is None:
         return None
     require(workflow["path"] == REPORT_PATH, "reporter workflow path mismatch")
-    artifacts = []
-    for artifact in api.pages("actions/artifacts", "artifacts"):
-        match = re.fullmatch(r"ci-report-daily-([1-9][0-9]*)-([1-9][0-9]*)", artifact["name"])
-        if not match or artifact.get("workflow_run", {}).get("head_branch") != "main":
-            continue
-        created = datetime.fromisoformat(artifact["created_at"].replace("Z", "+00:00"))
-        require(created.tzinfo is not None and created.utcoffset() == timedelta(0), "invalid snapshot creation time")
-        require(artifact["workflow_run"]["id"] == int(match[1]), "snapshot artifact run mismatch")
-        artifacts.append((created, int(match[1]), int(match[2]), artifact))
     runs = {}
-    for created, run_id, attempt, artifact in sorted(artifacts, key=lambda item: item[:3], reverse=True):
+    for created, run_id, attempt, artifact in snapshot_artifacts(api):
         run = runs.setdefault(run_id, None)
         if run is None:
             run = runs[run_id] = api.repo(f"actions/runs/{run_id}")
@@ -1446,7 +1456,10 @@ def read_snapshot(api):
                 and run["event"] in {"schedule", "workflow_dispatch", "workflow_run"} and on_main(run["head_sha"])):
             continue
         require(attempt <= run["run_attempt"], "snapshot attempt is ahead of its run")
-        require(sum(item[3]["name"] == artifact["name"] for item in artifacts) == 1, "duplicate reporter snapshot")
+        # Exact-name lookup checks duplicates beyond the discovery page without crawling unrelated artifacts.
+        matches = api.pages("actions/artifacts", "artifacts", name=artifact["name"])
+        require(sum(item["name"] == artifact["name"] and item.get("workflow_run", {}).get("head_branch") == "main"
+                    for item in matches) == 1, "duplicate reporter snapshot")
         require(not artifact["expired"], "previous reporter snapshot expired")
         snapshot = json_member(api, artifact, "history.json")
         require(snapshot["schema_version"] == 2 and snapshot["producer"] == {
