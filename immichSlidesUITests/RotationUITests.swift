@@ -276,7 +276,7 @@ final class RotationUITests: XCTestCase {
 
 #if os(iOS)
 private enum RotationTiming {
-    static let isolationIntervalSeconds = 60
+    static let isolationIntervalSeconds = Int(TestWait.seconds(.product(60)))
     // Next starts a new target with this frozen interval; fade-in can only postpone its automatic switch.
     #if DEBUG
     static let naturalSwitchEarliest = TestWait.seconds(.product(Double(isolationIntervalSeconds)))
