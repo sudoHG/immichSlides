@@ -381,9 +381,14 @@ The strict single-photo `pause-window` case also launches with the existing
 `IMMICHSLIDES_DISABLE_SMART_FILL=1` Debug override. Its initial autoplay must consume
 single photos even before Settings is reached: a slow initial Pause can otherwise
 retain a SmartFill scene containing A3 in the consumed history and make A2's next
-candidate A4. The real single-photo Settings selection, EXIF and five-second interval
-assertions remain. This case does not cover switching previously consumed SmartFill
-history to single photo. It sets no interval or auto-hide override; the outgoing
+candidate A4. With this override, selecting single photo in Settings has no playback
+effect; this suite only proves that the control is reachable. The iPhone/iPad Release
+`display-policy` suite uses no override and proves that the real Settings selection
+changes playback to a stable single photo. The fast pause-window path previously
+guarded release of the current scene's partner incidentally; the Next-order unit
+tests in `SlideShowViewModelStartupTests+DisplayMode.swift` cover that rule and
+preservation of earlier scenes' consumed assets. EXIF and five-second interval
+assertions remain. This case sets no interval or auto-hide override; the outgoing
 automatic fade, midpoint pause and all later image/freeze assertions keep their real
 five-second product interval and existing evidence windows.
 

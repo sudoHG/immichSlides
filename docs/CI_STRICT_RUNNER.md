@@ -460,8 +460,15 @@ Otherwise slow setup can let an initial SmartFill scene consume A1 and A3 before
 autoplay reaches A2. Switching to single photo preserves those previously consumed
 assets, so the next manual scene can correctly be A4 while the test requires A3.
 The override removes that unrelated SmartFill setup from this single-photo case;
-it does not cover the SmartFill-to-single-photo history transition. The real Settings
-selection and five-second interval readback remain required. No interval or auto-hide
+it does not cover the SmartFill-to-single-photo history transition. With this override,
+the Settings single-photo selection has no playback effect: this suite only proves
+that its control is reachable. The `display-policy` suite on iPhone/iPad Release,
+without this override, proves that a real Settings selection switches playback to a
+stable single photo. The fast pause-window setup previously guarded release of the
+current scene's partner incidentally; the display-mode Next-order unit tests in
+`SlideShowViewModelStartupTests+DisplayMode.swift` cover that rule and retention of
+earlier scenes' consumed assets. EXIF and the five-second interval readback remain
+required. No interval or auto-hide
 override is set, and the automatic pause-window still runs at the real five-second
 interval. The midpoint key enables a Debug-only,
 one-shot pause at the midpoint of the first automatic fade-out after the first
