@@ -128,7 +128,7 @@ jobs:
             --destination "$UI_DESTINATION" --archive-dir "$RUNNER_TEMP/ui-archive" \
             --selection-path "$RUNNER_TEMP/ui-selection/archive-selection-$UI_PLATFORM.json" \
             --relocated-path "$RUNNER_TEMP/ui-relocated" --output-dir "$RUNNER_TEMP/ui-records" \
-            --timeout-minutes 65 --total-timeout-minutes 85 --result-export-timeout-seconds 180 --wait-factor 2 --min-free-gib 30 \
+            --timeout-minutes 65 --total-timeout-minutes 85 --result-export-timeout-seconds 180 --wait-factor 2 --min-free-gib 20 \
             --max-parallel '${{ strategy.max-parallel }}' --compiled-from-official-results
       - name: Recheck the sensitive scan before publishing
         id: scan
@@ -236,7 +236,7 @@ jobs:
             --destination "$UI_DESTINATION" --archive-dir "$RUNNER_TEMP/ui-archive" \
             --selection-path "$RUNNER_TEMP/ui-selection/archive-selection-$UI_PLATFORM.json" \
             --relocated-path "$RUNNER_TEMP/ui-relocated" --output-dir "$RUNNER_TEMP/ui-records" \
-            --timeout-minutes 65 --total-timeout-minutes 85 --result-export-timeout-seconds 180 --wait-factor 2 --min-free-gib 30 \
+            --timeout-minutes 65 --total-timeout-minutes 85 --result-export-timeout-seconds 180 --wait-factor 2 --min-free-gib 20 \
             --max-parallel '${{ strategy.max-parallel }}' --compiled-from-official-results
       - name: Recheck the sensitive scan before publishing
         id: scan
@@ -446,7 +446,7 @@ jobs:
             --destination "$UI_DESTINATION" --archive-dir "$RUNNER_TEMP/ui-archive" \
             --selection-path "$RUNNER_TEMP/ui-selection/archive-selection-$UI_PLATFORM.json" \
             --relocated-path "$RUNNER_TEMP/ui-relocated" --output-dir "$RUNNER_TEMP/ui-records" \
-            --timeout-minutes 65 --total-timeout-minutes 85 --result-export-timeout-seconds 180 --wait-factor 2 --min-free-gib 30 \
+            --timeout-minutes 65 --total-timeout-minutes 85 --result-export-timeout-seconds 180 --wait-factor 2 --min-free-gib 20 \
             --max-parallel '${{ strategy.max-parallel }}' --compiled-from-official-results
       - name: Recheck the sensitive scan before publishing
         id: scan

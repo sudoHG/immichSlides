@@ -715,8 +715,8 @@ normalized method identities or clears an earlier read failure. Timing adds one
 monotonic clock read per successful step and one more plus fixed-message formatting
 on timeout; no extra subprocess, IO, wait, retry or collection allowance is added.
 The existing 180-second hosted budget remains unchanged. Shard timing also records
-the bound. Local disk checks retain 80 GiB; only hosted jobs pass the existing 30 GiB
-allowance. No simulator runtime is downloaded or installed.
+the bound. Local disk checks retain 80 GiB; hosted UI shards pass a 20 GiB
+allowance ([disk floor](CI_NIGHTLY.md)). No simulator runtime is downloaded or installed.
 
 The platform selection records include selection wait, producer run/attempt and refused
 identities. `shard-timing.json` records shard wall time, caps, timeouts and exit
