@@ -457,7 +457,7 @@ class StrictE2ERunnerTestsCasesConfiguration:
         })
         from strict_e2e_runner_support import write_app_launch_environment_audit
         for suite in ("album-empty", "filter-person", "journey-b", "tvos-flow", "tvos-person", "late-image",
-                      "ios-lifecycle-first-wake", "ios-lifecycle-settings"):
+                      "ios-lifecycle-first-wake", "ios-lifecycle-settings", "p2-ipad-layout"):
             with self.subTest(suite=suite), tempfile.TemporaryDirectory() as directory:
                 evidence = Path(directory)
                 write_app_launch_environment_audit(evidence, suite)

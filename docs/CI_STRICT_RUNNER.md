@@ -345,6 +345,7 @@ history-count precondition and capture-time pixel/manifest proof remain unchange
 
 `UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE=1` enables the Debug manifest probes.
 Probe-only launches are `album-empty`, `journey-b`, `tvos-flow`, `tvos-person`, `ios-lifecycle-first-wake`,
+`p2-ipad-layout`,
 and `AccessLifecycleIOSUITests.prepareLaunch`, including its cold relaunches and
 `run_access_lifecycle_ios.py`'s `testAccessProtectionSettingsAndLifecycle`.
 Only iOS `album-empty` sets the real playback interval to 30 seconds through `IOSDriver`
