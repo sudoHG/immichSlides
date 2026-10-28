@@ -45,6 +45,59 @@ extension SlideShowViewModelStartupTests {
         #expect(vm.safeCurrentScene?.id == originalSceneId)
         #expect(vm.safeCurrentScene?.photoSlots.map(\.asset.id) == ["asset-0", "asset-1"])
         assertSettledWithoutTransitionLayers(vm)
+
+        savePlaybackDisplayMode(.singlePhoto)
+        vm.refreshAutoPlaySettingsFromStore()
+        vm.requestNextScene()
+
+        #expect(vm.scene(at: vm.targetIndex)?.primaryAssetId == "asset-1")
+        completeCurrentScenePresentation(vm)
+        #expect(vm.safeCurrentScene?.photoSlots.map(\.asset.id) == ["asset-1"])
+    }
+
+    @Test
+    func `switching to single photo keeps assets from earlier SmartFill scenes excluded from Next`() {
+        let snapshot = PersistentPlaybackSnapshot.capture()
+        defer { snapshot.restore() }
+        savePlaybackDisplayMode(.smartFill)
+
+        let vm = SlideShowViewModel(source: .random)
+        resetDownloadManagerState(vm.downloadManager)
+        vm.updateSmartFillSurfaceForTesting(
+            PlaybackSmartFillSurface(
+                pixelSize: PlaybackPlanningPixelSize(width: 1179, height: 2556),
+                profile: .iPhone,
+                orientation: .portrait
+            )
+        )
+        // The panoramas put the first scene's partner after the later anchors in candidate order.
+        let assets = (0..<5).map { index in
+            makeAsset(
+                id: "asset-\(index)", width: (1...2).contains(index) ? 6000 : 1800,
+                height: (1...2).contains(index) ? 1000 : 2000)
+        }
+        markReady(assets, in: vm.downloadManager)
+        vm.scenePresentationTimestampProviderForTesting = { 0 }
+        vm.replacePlaybackAssetsForTesting(assets)
+        completeCurrentScenePresentation(vm)
+        #expect(vm.safeCurrentScene?.photoSlots.map(\.asset.id) == ["asset-0", "asset-3"])
+
+        for expectedAnchor in ["asset-1", "asset-2"] {
+            vm.requestNextScene()
+            completeCurrentScenePresentation(vm)
+            #expect(vm.safeCurrentScene?.photoSlots.map(\.asset.id) == [expectedAnchor])
+        }
+        #expect(vm.currentIndex == 2)
+
+        savePlaybackDisplayMode(.singlePhoto)
+        vm.refreshAutoPlaySettingsFromStore()
+        #expect(vm.safeCurrentScene?.photoSlots.map(\.asset.id) == ["asset-2"])
+
+        vm.requestNextScene()
+
+        #expect(vm.scene(at: vm.targetIndex)?.primaryAssetId == "asset-4")
+        completeCurrentScenePresentation(vm)
+        #expect(vm.safeCurrentScene?.photoSlots.map(\.asset.id) == ["asset-4"])
     }
 
     @Test
