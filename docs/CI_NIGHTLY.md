@@ -294,14 +294,15 @@ as unobserved, tracking the failure under the separate nightly infrastructure is
 according to the [reporting boundary](CI_REPORT.md#issue-lifecycle).
 This mode starts no builds or tests and changes no preparation or execution budget.
 Planning/aggregate have 15-minute caps.
-The hosted disk floor for test runs is 20 GiB: nightly strict shards and fixture UI
-shards, both nightly and PR (`ci_ui_tests.py run`). Hosted build/archive and other jobs
+The hosted disk floor for test runs is 20 GiB: nightly strict shards, the PR strict
+tracer, and fixture UI shards, both nightly and PR (`ci_ui_tests.py run`). Hosted build/archive and other jobs
 keep 30 GiB, and the local default stays 80 GiB. Hosted macOS runners start with about
 35 GiB free, and a fresh simulator's first boot downloads 1.5–2.5 GiB of system assets,
 so a 30 GiB floor left about 5 GiB for a shard. Nightly 39840861064 stopped three iPad
 strict cases at 29.7 GiB. Nightlies 40644640783 and 40659537510 each lost a whole
 iPad UI shard before xcodebuild started, at 29.6 and 29.8 GiB, after the archive was
-extracted at about 31.5–34.6 GiB free. Twenty GiB keeps a large safety margin while
+extracted at about 31.5–34.6 GiB free. PR #639's strict tracer stopped `filter-switch`
+at 29.3 GiB (run 40743445772). Twenty GiB keeps a large safety margin while
 leaving about 15 GiB per shard.
 
 ## Complete fixture UI

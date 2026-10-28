@@ -1192,7 +1192,7 @@ python3 -B scripts/run_strict_ci_tracer.py --platform ios \
 Repeat with `--platform tvos` and its destination. The tracer groups its cases,
 builds each shard once, then runs each case without building. It does not retry.
 The hosted workflow uses an initial 1,200-second cold budget, 600-second warm budget,
-and a 30 GiB disk preflight. Each runner segment has an additional 240-second outer
+and a 20 GiB disk preflight, matching the nightly strict floor ([CI_NIGHTLY](CI_NIGHTLY.md)). Each runner segment has an additional 240-second outer
 allowance for reset/export/cleanup; warm segments also allow 300 seconds of readiness
 per invocation. iOS allows two cold and three warm segments
 (105 minutes total); tvOS allows one of each (43 minutes total). The literal

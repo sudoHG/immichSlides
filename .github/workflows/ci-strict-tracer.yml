@@ -71,7 +71,7 @@ jobs:
         run: |
           "$RUNNER_TEMP/strict-python/bin/python3" -B scripts/run_strict_ci_tracer.py \
             --platform '${{ matrix.platform }}' --destination "$STRICT_DESTINATION" \
-            --output-dir "$RUNNER_TEMP/strict-tracer" --min-free-gib 30 \
+            --output-dir "$RUNNER_TEMP/strict-tracer" --min-free-gib 20 \
             --cold-timeout-seconds 1200 --warm-timeout-seconds 600
       - name: Account for every case after simulator preparation failure
         if: always() && (steps.simulator.outcome == 'failure' || steps.preparation.outcome == 'failure')
