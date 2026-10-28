@@ -359,6 +359,15 @@ pause-window/timeline captures. Settings page screenshots may opt in when the
 playback bar is only used to reach Settings. Native XCTest tap delivery can outlast
 eight seconds on a busy host; the override does not extend test waits, retry
 actions or change product timing assertions.
+The three ServerConfigForm Settings keyboard methods, the English Settings-only
+acceptance captures and the four localized About captures opt in explicitly.
+Their shared launch defaults stay empty. Acceptance methods that also capture
+playback keep eight seconds. ServerConfigForm retains the enabled, in-window,
+live-hittable Settings observation and taps its captured frame once; it does not
+resolve the transient button again or send repeated canvas taps while polling.
+Its existing 25/12-second readiness and eight-second Settings outcome windows,
+and all keyboard response windows, are unchanged. The override cannot cover an
+input stall longer than 60 seconds; a missed Settings outcome still fails.
 Control-bar visibility is an input to SmartFill planning; changing it discards
 prepared next. With this override, the SmartFill history round-trip test no longer
 covers a wake re-showing the bar, discarding prepared next, then Next. That path

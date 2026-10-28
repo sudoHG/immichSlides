@@ -289,7 +289,8 @@ extension FilterSummaryIOSVisualUITests {
     func runIOSLocalizedAboutAcceptance(locale: LocalizedAcceptanceLocale) throws {
         let aboutApp = try launchIntoSlideShow(
             colorScheme: "light",
-            acceptanceLocale: locale
+            acceptanceLocale: locale,
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
         )
         openSettingsFromSlideShow(app: aboutApp)
 
@@ -449,7 +450,8 @@ extension FilterSummaryIOSVisualUITests {
     func testIOSEnglishAcceptanceSettingsPlaybackScreenshot() throws {
         let app = try launchIntoSlideShow(
             colorScheme: "light",
-            shouldForceEnglishLocalization: true
+            shouldForceEnglishLocalization: true,
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
         )
 
         openSettingsFromSlideShow(app: app)
@@ -470,7 +472,8 @@ extension FilterSummaryIOSVisualUITests {
     func testIOSEnglishAcceptanceSettingsServerScreenshot() throws {
         let app = try launchIntoSlideShow(
             colorScheme: "light",
-            shouldForceEnglishLocalization: true
+            shouldForceEnglishLocalization: true,
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
         )
 
         openSettingsFromSlideShow(app: app)
@@ -492,7 +495,8 @@ extension FilterSummaryIOSVisualUITests {
     func testIOSEnglishAcceptanceSettingsCacheScreenshot() throws {
         let app = try launchIntoSlideShow(
             colorScheme: "light",
-            shouldForceEnglishLocalization: true
+            shouldForceEnglishLocalization: true,
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
         )
 
         openSettingsFromSlideShow(app: app)
@@ -514,7 +518,8 @@ extension FilterSummaryIOSVisualUITests {
     func testIOSEnglishAcceptanceSettingsAboutOpenSourceScreenshots() throws {
         let app = try launchIntoSlideShow(
             colorScheme: "light",
-            shouldForceEnglishLocalization: true
+            shouldForceEnglishLocalization: true,
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
         )
 
         openSettingsFromSlideShow(app: app)

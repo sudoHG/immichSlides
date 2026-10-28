@@ -35,7 +35,8 @@ final class ServerConfigFormIOSUITests: XCTestCase {
 
     @MainActor
     func testIOSSettingsServerURLKeyboardAppearsPromptly() throws {
-        let app = try launchConfiguredAppAtModeSelection()
+        let app = try launchConfiguredAppAtModeSelection(
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment)
         openServerSettingsFromModeSelection(app: app)
 
         let serverField = app.textFields["firstboot.serverURL.field"]
@@ -53,7 +54,8 @@ final class ServerConfigFormIOSUITests: XCTestCase {
 
     @MainActor
     func testIOSSettingsServerAPIKeyKeyboardAppearsAfterSavedConfig() throws {
-        let app = try launchConfiguredAppAtModeSelection()
+        let app = try launchConfiguredAppAtModeSelection(
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment)
         openServerSettingsFromModeSelection(app: app)
 
         let apiKeyField = app.secureTextFields["firstboot.apiKey.field"]
@@ -71,7 +73,8 @@ final class ServerConfigFormIOSUITests: XCTestCase {
 
     @MainActor
     func testIOSSettingsServerAPIKeyKeyboardAppearsAfterEditingURL() throws {
-        let app = try launchConfiguredAppAtModeSelection()
+        let app = try launchConfiguredAppAtModeSelection(
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment)
         openServerSettingsFromModeSelection(app: app)
 
         let serverField = app.textFields["firstboot.serverURL.field"]
@@ -131,7 +134,9 @@ final class ServerConfigFormIOSUITests: XCTestCase {
         )
     }
 
-    private func launchConfiguredAppAtModeSelection() throws -> XCUIApplication {
+    private func launchConfiguredAppAtModeSelection(extraLaunchEnvironment: [String: String] = [:]) throws
+        -> XCUIApplication
+    {
         let config = try requireTestServerConfig()
         let app = XCUIApplication()
         app.launchEnvironment["UI_TEST_RESET_STATE"] = "1"
@@ -139,6 +144,7 @@ final class ServerConfigFormIOSUITests: XCTestCase {
         app.launchEnvironment["UI_TEST_FORCE_MODE_SELECTION"] = "1"
         app.launchEnvironment["UI_TEST_SERVER_URL"] = config.url
         app.launchEnvironment["UI_TEST_API_KEY"] = config.apiKey
+        app.launchEnvironment.merge(extraLaunchEnvironment) { _, new in new }
         app.launchForFailureEvidence()
 
         XCTAssertTrue(
@@ -180,17 +186,24 @@ final class ServerConfigFormIOSUITests: XCTestCase {
         tapElement(continueButton)
 
         XCTAssertTrue(
-            waitForSlideshowSettingsButton(app: app, timeout: TestWait.seconds(.product(25))),
+            waitForSlideshowSettingsButton(app: app, timeout: TestWait.seconds(.product(25))) != nil,
             "After entering playback, the settings button should be visible"
         )
     }
 
     private func openSettingsFromSlideshow(app: XCUIApplication) {
-        let settingsButton = app.buttons["slideshow.control.settings.button"]
+        let observation = waitForSlideshowSettingsButton(app: app, timeout: WaitTiming.screenTransitionTimeoutSeconds)
         XCTAssertTrue(
-            waitForSlideshowSettingsButton(app: app, timeout: WaitTiming.screenTransitionTimeoutSeconds),
+            observation != nil,
             "Playback page should show Settings")
-        tapElement(settingsButton)
+        if let observation, let button = observation.button {
+            // Reuse the satisfying snapshot instead of resolving an auto-hiding button again.
+            observation.windowElement.coordinate(withNormalizedOffset: .zero).withOffset(
+                CGVector(
+                    dx: button.frame.midX - observation.windowFrame.minX,
+                    dy: button.frame.midY - observation.windowFrame.minY)
+            ).tapForFailureEvidence()
+        }
         XCTAssertTrue(
             waitForAnySettingsRootEntry(app: app, timeout: WaitTiming.controlAppearanceTimeoutSeconds),
             "Tapping Settings should open settings")
@@ -295,15 +308,30 @@ final class ServerConfigFormIOSUITests: XCTestCase {
         _ = waitUntil(timeout: WaitTiming.keyboardTransitionTimeoutSeconds, condition: { app.keyboards.count == 0 })
     }
 
-    private func waitForSlideshowSettingsButton(app: XCUIApplication, timeout: TimeInterval) -> Bool {
-        let button = app.buttons["slideshow.control.settings.button"]
-        return waitUntil(timeout: timeout) {
-            if button.exists && button.isHittable {
-                return true
+    private func waitForSlideshowSettingsButton(app: XCUIApplication, timeout: TimeInterval)
+        -> SlideshowControlBarButtonObservation?
+    {
+        let identifier = "slideshow.control.settings.button"
+        var timing = SlideshowControlBarTiming()
+        var didReveal = false
+        let deadline = Date().addingTimeInterval(timeout)
+        defer { print("Server form Settings readiness: \(timing.diagnostic)") }
+        while Date() < deadline {
+            let observation = timing.observe(app: app, identifier: identifier)
+            guard Date() < deadline else { break }
+            if let observation, observation.hasPlaybackMarker, !observation.hasSettingsNavigationEvidence {
+                if observation.isReady, observation.windowElement.buttons[identifier].isHittable {
+                    return observation
+                }
+                if !didReveal, Date() < deadline {
+                    didReveal = true
+                    timing.reveal(app: app)
+                }
             }
-            app.tapForFailureEvidence()
-            return false
+            guard Date() < deadline else { break }
+            RunLoop.current.run(until: min(deadline, Date().addingTimeInterval(WaitTiming.shortFocusSettleSeconds)))
         }
+        return nil
     }
 
     private func waitForAnySettingsRootEntry(app: XCUIApplication, timeout: TimeInterval) -> Bool {
