@@ -196,7 +196,7 @@ final class StrictE2ELateImageIOSUITests: XCTestCase, StrictE2EOnboardingIOS {
     @MainActor
     private func lateImageSceneObservation(app: XCUIApplication) -> [String: String] {
         var didSnapshotFail = false
-        let snapshots = app.evidenceSnapshotsByIdentifier { _ in didSnapshotFail = true }
+        let snapshots = app.evidenceSnapshotsByIdentifier(onSnapshotFailure: { _ in didSnapshotFail = true })
         return [
             "manifest": snapshots["slideshow.smartfill.currentManifest.flag"]?.label ?? "",
             "render": snapshots["slideshow.scenePresentation.contract.summary"]?.label ?? "",
