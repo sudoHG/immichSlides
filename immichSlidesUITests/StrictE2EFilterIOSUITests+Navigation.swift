@@ -174,7 +174,7 @@ extension StrictE2EFilterIOSUITests {
             guard ProcessInfo.processInfo.systemUptime < deadline else { return false }
             let requestedAt = ProcessInfo.processInfo.systemUptime
             var didSnapshotFail = false
-            let snapshots = app.evidenceSnapshotsByIdentifier { _ in didSnapshotFail = true }
+            let snapshots = app.evidenceSnapshotsByIdentifier(onSnapshotFailure: { _ in didSnapshotFail = true })
             after = self.albumSceneObservation(snapshots: snapshots, didSnapshotFail: didSnapshotFail)
             // Root progress can remain cached between state changes; this existing leaf follows TimelineView.
             after["motionRender"] = snapshots["slideshow.scenePresentation.frameSynchronized.summary"]?.label ?? ""
@@ -451,7 +451,7 @@ extension StrictE2EFilterIOSUITests {
     @MainActor
     private func albumSceneObservation(app: XCUIApplication) -> [String: String] {
         var didSnapshotFail = false
-        let snapshots = app.evidenceSnapshotsByIdentifier { _ in didSnapshotFail = true }
+        let snapshots = app.evidenceSnapshotsByIdentifier(onSnapshotFailure: { _ in didSnapshotFail = true })
         return albumSceneObservation(snapshots: snapshots, didSnapshotFail: didSnapshotFail)
     }
 
