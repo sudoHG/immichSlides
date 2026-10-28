@@ -1185,9 +1185,15 @@ allowance; queries, polling, screenshot capture and pixel analysis remain charge
 The driver reports its measured wakes directly, independently of receipt enablement,
 without a UI query. Every deduction appears in `deductedTapSeconds` and
 `totalDeductedTapSeconds` in capture logs and failure details. The inner driver's
-3-second readiness checks retain their original deadlines. Playback-rotation logs still
-measure all elapsed time, including every tap, against the 30-second natural-switch
-bound; the original start timestamp and bound are unchanged.
+3-second readiness checks retain their original deadlines. Playback-rotation logs
+measure every elapsed second from the original Next request against the configured
+natural-switch isolation interval. Debug P2-05 explicitly seeds 60 seconds through
+the existing `UI_TEST_PLAYBACK_INTERVAL_SECONDS` input, then uses the real Settings
+page to select SmartFill without overwriting that interval with the slider's
+30-second maximum. The new target after Next therefore uses 60 seconds. Release
+ignores the Debug input and retains the real 30-second slider setup and bound.
+This is a rotation-attribution arrangement, not a product response deadline or a
+longer wait. Control, orientation and stable-frame waits remain unchanged.
 Preparation diagnostics report existing snapshot time, native wake durations,
 live checks (`identifier:seconds:readback`) and total time without extra UI reads.
 Every saved candidate still requires all three controls' snapshot readiness,
@@ -1202,8 +1208,8 @@ returned helper-wake/refresh tap durations. The shared stable-frame callers are:
 | Caller | Old stable deadline | New stable deadline | Product boundary |
 | --- | --- | --- | --- |
 | iPad multi-photo layout: landscape and portrait `captureStable` | `t0+10` | `t0+10+R` | Orientation setup and multi-photo selection precede capture. No 30-second outer bound; only the 600 s warm / 1200 s cold invocation caps apply. |
-| Playback rotation: initial portrait `captureStable` | `t0+10` | `t0+10+R` | The whole sequence remains strictly below 30 seconds from the original Next request. |
-| Playback rotation: landscape and final portrait `captureStable` | `tr+10` | `tr+10+R` | Window settling and stable observation still share 10 active seconds; every wall-clock second also consumes the unchanged 30-second bound. |
+| Playback rotation: initial portrait `captureStable` | `t0+10` | `t0+10+R` | The whole sequence remains strictly below the isolation interval from the original Next request: 60 seconds in Debug, 30 in Release. |
+| Playback rotation: landscape and final portrait `captureStable` | `tr+10` | `tr+10+R` | Window settling and stable observation still share 10 active seconds; every wall-clock second also consumes the isolation interval. |
 | Orientation self-check: direct `StableFrame.wait` | `tr+10` | `tr+10` | No deduction callback. |
 | ReduceMotion segments: direct `StableFrame.wait` | `t0+10` | `t0+10` | No deduction callback; recording holds are unchanged. |
 
@@ -1215,7 +1221,7 @@ refresh and second driver wake. The inner 3-second readiness check is not extend
 long taps can therefore leave readiness false while extending the outer capture
 deadline. Only non-tap work bounds the iteration count, so the original wall-clock
 deadline can be exceeded across several iterations rather than just one admitted
-iteration. No cap is added. The playback-rotation 30-second bound still rejects
+iteration. No cap is added. The playback-rotation isolation bound still rejects
 an overlong completed sequence, but `p2-ipad-layout` has no such outer bound.
 In the extreme, its capture can reach the 600 s warm / 1200 s cold invocation cap
 and lose the `first_failure` receipt; an invocation timeout or missing receipt

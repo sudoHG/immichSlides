@@ -545,6 +545,21 @@ The API key is written to and readable from the UserDefaults XCTest fallback,
 and the Info.plist debug server is skipped. These launches are no longer
 probe-only and no longer exercise the Keychain-only path. That path remains
 covered by `album-empty` (iPhone and iPad, fixtures A and B) and `journey-a`.
+`p2-rotation` explicitly launches with `UI_TEST_PLAYBACK_INTERVAL_SECONDS=60`.
+The iOS Debug initializer seeds the existing saved interval before onboarding;
+the test still opens Settings and selects SmartFill, but does not replace that
+input with the slider's 30-second maximum. Its new scene after Next must finish
+the same portrait/landscape/portrait sequence before 60 seconds from the original
+Next request, including all query, tap and capture costs. This isolates rotation
+from automatic advance without extending any wait. Release ignores the launch
+input and retains the real 30-second slider setup and isolation bound.
+The P2 selector, step order, PNG names, recording, bindings, playing-state check,
+live hittability, stable frame pairs and failure prefixes are unchanged.
+Per-phase timing logs add no UI reads. Slow native AX/hittability failures remain
+red; a longer playback interval does not repair those failures.
+The key enables Debug XCTest mode, including the existing API-key fallback and
+debug-server suppression. This public-fixture case does not prove Keychain-only
+restoration. Other launch callers keep their existing input unless they opt in.
 The `late-image` case also combines the scene probe with
 `UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT`. That hint key enables XCTest mode: the
 API key can be restored from the UserDefaults XCTest fallback after cold launch,

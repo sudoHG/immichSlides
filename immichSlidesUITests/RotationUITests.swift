@@ -45,19 +45,24 @@ final class RotationUITests: XCTestCase {
         }
     }
 
-    // After next switches to a new scene, a fresh 30-second window starts. The whole rotation must finish before the
-    // earliest natural switch, so any switch in the recording can be attributed to the rotation.
+    // Isolate rotation from automatic advance with the existing Debug interval input; keep the real Settings path.
+    // The whole rotation must still finish before the earliest natural switch, including every native action.
     @MainActor
     func testRotationDuringPlaybackIOS() throws {
         FirstFailureOrientation.set(.portrait)
         let input = try requireStrictE2EInput()
-        let app = try launchStrictE2EApp()
+        let app = try launchStrictE2EApp(playbackIntervalSeconds: RotationTiming.isolationIntervalSeconds)
         defer { app.terminateForFailureEvidence() }
         try FirstFailureEvidence.preservingThrownFailure(self) {
             let driver = IOSDriver(app: app)
             let evidence = Evidence()
             driver.launchToPlayback(input: input)
+            #if DEBUG
+            driver.applyPlaybackSettings([.displayMode(isSinglePhoto: false)])
+            #else
+            // Release ignores the Debug input and retains its real 30-second slider setup and isolation bound.
             driver.applyPlaybackSettings([.interval30Seconds, .displayMode(isSinglePhoto: false)])
+            #endif
             var observedMark: String?
             _ = Wait.until(timeout: Timing.multiPhotoWait) {
                 observedMark = visibleSceneMark()
@@ -71,8 +76,18 @@ final class RotationUITests: XCTestCase {
                 )
             }
             let sceneStartedAt = Date()
+            var previousPhaseAt = ProcessInfo.processInfo.systemUptime
+            func recordPhase(_ phase: String) {
+                let now = ProcessInfo.processInfo.systemUptime
+                print(
+                    "Rotation sequence phase: name=\(phase), seconds=\(now - previousPhaseAt), elapsedSeconds=\(Date().timeIntervalSince(sceneStartedAt))"
+                )
+                previousPhaseAt = now
+            }
+            recordPhase("next-requested")
             try evidence.markStep("next-requested")
             driver.next()
+            recordPhase("next-returned")
             guard
                 Wait.until(
                     timeout: Timing.multiPhotoWait,
@@ -82,10 +97,12 @@ final class RotationUITests: XCTestCase {
                     })
             else {
                 throw Failure(
-                    "The public photo on screen did not change after next; the start of the 30-second timer is unknown, so a natural switch cannot be ruled out."
+                    "The public photo on screen did not change after next; the start of the \(Int(RotationTiming.naturalSwitchEarliest))-second timer is unknown, so a natural switch cannot be ruled out."
                 )
             }
+            recordPhase("next-visible")
             try captureStable("rotation-start-portrait", orientation: .portrait, driver: driver, evidence: evidence)
+            recordPhase("initial-portrait-captured")
             var playPauseValue = ""
             let isPlaying = Wait.until(timeout: Timing.multiPhotoWait) {
                 _ = driver.revealUsableControls()
@@ -99,18 +116,23 @@ final class RotationUITests: XCTestCase {
                     "Before rotating, the play button value must be pause (playing), but it was '\(playPauseValue.isEmpty ? "empty" : playPauseValue)'."
                 )
             }
+            recordPhase("playing-confirmed")
             try evidence.markStep("rotate-to-landscape")
             let landscapeDeadline = try rotate(app, to: .landscapeLeft, expecting: .landscape)
+            recordPhase("landscape-window")
             try captureStable(
                 "rotation-landscape-stable", orientation: .landscape, driver: driver, evidence: evidence,
                 deadline: landscapeDeadline
             )
+            recordPhase("landscape-captured")
             try evidence.markStep("rotate-to-portrait")
             let portraitDeadline = try rotate(app, to: .portrait, expecting: .portrait)
+            recordPhase("portrait-window")
             try captureStable(
                 "rotation-portrait-stable", orientation: .portrait, driver: driver, evidence: evidence,
                 deadline: portraitDeadline
             )
+            recordPhase("portrait-captured")
             let elapsed = Date().timeIntervalSince(sceneStartedAt)
             let limit = RotationTiming.naturalSwitchEarliest
             print("Rotation sequence: elapsedSeconds=\(elapsed), limitSeconds=\(limit)")
@@ -254,8 +276,12 @@ final class RotationUITests: XCTestCase {
 
 #if os(iOS)
 private enum RotationTiming {
-    // With a 30-second interval, the new scene after next switches naturally after 30 seconds at the earliest (the
-    // timer also waits for the fade-in to finish).
-    static let naturalSwitchEarliest: TimeInterval = TestWait.seconds(.product(30))
+    static let isolationIntervalSeconds = 60
+    // Next starts a new target with this frozen interval; fade-in can only postpone its automatic switch.
+    #if DEBUG
+    static let naturalSwitchEarliest = TestWait.seconds(.product(Double(isolationIntervalSeconds)))
+    #else
+    static let naturalSwitchEarliest = TestWait.seconds(.product(30))
+    #endif
 }
 #endif

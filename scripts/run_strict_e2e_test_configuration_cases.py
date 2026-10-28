@@ -457,13 +457,15 @@ class StrictE2ERunnerTestsCasesConfiguration:
         })
         from strict_e2e_runner_support import write_app_launch_environment_audit
         for suite in ("album-empty", "filter-person", "journey-b", "tvos-flow", "tvos-person", "late-image",
-                      "ios-lifecycle-first-wake", "ios-lifecycle-settings", "p2-ipad-layout"):
+                      "ios-lifecycle-first-wake", "ios-lifecycle-settings", "p2-ipad-layout", "p2-rotation"):
             with self.subTest(suite=suite), tempfile.TemporaryDirectory() as directory:
                 evidence = Path(directory)
                 write_app_launch_environment_audit(evidence, suite)
                 audit = json.loads((evidence / "app-launch-environment-audit.json").read_text())
                 self.assertEqual(audit["declaration_kind"], "static_swift_launch_keys")
                 expected = [] if suite == "ios-lifecycle-settings" else ["UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE"]
+                if suite == "p2-rotation":
+                    expected = ["UI_TEST_PLAYBACK_INTERVAL_SECONDS"]
                 if suite == "late-image":
                     expected.append("UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT")
                 if suite == "filter-person":
