@@ -26,17 +26,6 @@ match; see [the nightly guide](CI_NIGHTLY.md).
 
 ## 0. When to write a test
 
-For iOS control-bar navigation only, a Debug app launch may explicitly set
-`UI_TEST_CONTROL_BAR_AUTO_HIDE_SECONDS=60`. `PlatformCompat` accepts whole seconds
-from 1 through 3600; missing or invalid values retain the product's eight-second
-delay. The override is not compiled into Release and does not change tvOS.
-Opt in at the specific test's launch, never in a shared launch default. Keep the
-real delay in first-wake/auto-hide contracts, hidden-control screenshots and
-identity reads, visual/P2 evidence, and pause-window/timeline captures. Settings
-page screenshots may opt in when the playback bar is only used to reach Settings.
-Native XCTest tap delivery can outlast eight seconds on a busy host; the override
-does not extend test waits, retry actions or change product timing assertions.
-
 Every test must guard a failure that can realistically happen again. If you cannot name that failure in one sentence, do not write the test.
 
 Write a test when you:
@@ -357,6 +346,25 @@ step's existing timeout on one reveal and a fresh ready snapshot; neither failed
 snapshots nor navigation evidence authorize a reveal. Playback History refreshes
 after its back-navigation loop, including the early-ready path, before returning.
 No refresh restarts a deadline or sends a second reveal.
+
+For iOS control-bar navigation only, a Debug app launch may explicitly set
+`UI_TEST_CONTROL_BAR_AUTO_HIDE_SECONDS=60`. `PlatformCompat` accepts whole seconds
+from 1 through 3600; missing or invalid values retain the product's eight-second
+delay. The override is not compiled into Release and does not change tvOS.
+Opt in at the specific test's launch with
+`SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment`,
+never in a shared launch default. Keep the real delay in first-wake/auto-hide
+contracts, hidden-control screenshots and identity reads, visual/P2 evidence, and
+pause-window/timeline captures. Settings page screenshots may opt in when the
+playback bar is only used to reach Settings. Native XCTest tap delivery can outlast
+eight seconds on a busy host; the override does not extend test waits, retry
+actions or change product timing assertions.
+Control-bar visibility is an input to SmartFill planning; changing it discards
+prepared next. With this override, the SmartFill history round-trip test no longer
+covers a wake re-showing the bar, discarding prepared next, then Next. That path
+remains in the non-opted SmartFill manual-lifecycle, StrictE2E Filter and
+AccessLifecycle Navigation tests.
+
 The separate strict `pause-window` Play/Pause preparation starts its existing
 4-second readiness observation after its single canvas wake returns. Native tap
 delivery, including XCTest's post-event idle wait, cannot consume that observation before
