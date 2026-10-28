@@ -376,6 +376,17 @@ fail; the actual Play/Pause tap, 2-second Play readback, 4-second Pause readback
 and deadlines.
 Playback History Settings entry and sampling-overlay pre-Next retain their
 explicit refresh assertions so their mapped failure prefixes stay available.
+
+The strict single-photo `pause-window` case also launches with the existing
+`IMMICHSLIDES_DISABLE_SMART_FILL=1` Debug override. Its initial autoplay must consume
+single photos even before Settings is reached: a slow initial Pause can otherwise
+retain a SmartFill scene containing A3 in the consumed history and make A2's next
+candidate A4. The real single-photo Settings selection, EXIF and five-second interval
+assertions remain. This case does not cover switching previously consumed SmartFill
+history to single photo. It sets no interval or auto-hide override; the outgoing
+automatic fade, midpoint pause and all later image/freeze assertions keep their real
+five-second product interval and existing evidence windows.
+
 The SmartFill manual-lifecycle Pause also requires a complete stable scene and
 history cursor in the control's own tap snapshot, within the same appearance
 deadline. Every settled slot in the existing motion-frame summary must also expose

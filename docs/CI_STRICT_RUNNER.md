@@ -453,8 +453,17 @@ the hidden receiver gets one wake. One Select must return and change the button
 state within that same deadline before the before-pause capture. It never retries
 Select. The photo-identity, paused hold and Continue T±2 checks remain unchanged.
 `pause-window` sets the probe plus `UI_TEST_SERVER_URL`, `UI_TEST_API_KEY`,
-`UI_TEST_RESET_STATE`, `UI_TEST_FORCE_MODE_SELECTION` and
-`UI_TEST_PAUSE_AT_AUTOMATIC_FADE_MIDPOINT=1`. The last key enables a Debug-only,
+`UI_TEST_RESET_STATE`, `UI_TEST_FORCE_MODE_SELECTION`,
+`UI_TEST_PAUSE_AT_AUTOMATIC_FADE_MIDPOINT=1` and `IMMICHSLIDES_DISABLE_SMART_FILL=1`.
+The single-photo override applies from launch, before the real Settings selection.
+Otherwise slow setup can let an initial SmartFill scene consume A1 and A3 before
+autoplay reaches A2. Switching to single photo preserves those previously consumed
+assets, so the next manual scene can correctly be A4 while the test requires A3.
+The override removes that unrelated SmartFill setup from this single-photo case;
+it does not cover the SmartFill-to-single-photo history transition. The real Settings
+selection and five-second interval readback remain required. No interval or auto-hide
+override is set, and the automatic pause-window still runs at the real five-second
+interval. The midpoint key enables a Debug-only,
 one-shot pause at the midpoint of the first automatic fade-out after the first
 user Play, through the same command as the user's Pause. Automatic fades before
 the first user Play cannot consume the hook. The UI test polls only the frame-synchronized probe

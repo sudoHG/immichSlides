@@ -385,6 +385,7 @@ def strict_app_launch_environment(suite: str | None) -> dict[str, str | None]:
         key = "UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE" if suite == "pause-window" else "UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT"
         if suite == "pause-window":
             environment["UI_TEST_PAUSE_AT_AUTOMATIC_FADE_MIDPOINT"] = "1"
+            environment["IMMICHSLIDES_DISABLE_SMART_FILL"] = "1"
         return {**environment, key: "1"}
     return {}
 

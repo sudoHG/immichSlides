@@ -8,7 +8,9 @@ extension StrictE2EFirstBatchIOSUITests {
     func launchOutgoingPauseWindowApp() throws -> XCUIApplication {
         let input = try requireStrictE2EInput()
         let app = XCUIApplication()
+        // Start single-photo consumption before slow setup can autoplay a SmartFill scene containing A3.
         app.launchEnvironment = [
+            "IMMICHSLIDES_DISABLE_SMART_FILL": "1",
             "UI_TEST_SERVER_URL": input.serverURL,
             "UI_TEST_API_KEY": input.publicKey,
             "UI_TEST_RESET_STATE": "1",
