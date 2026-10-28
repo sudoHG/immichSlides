@@ -704,9 +704,16 @@ struct SlideShowViewIOS: View {
 
         guard !isPlaybackEntryHintVisible else { return }
         autoHideBarTask?.cancel()
+        #if DEBUG
+        let delaySeconds =
+            PlatformCompat.controlBarAutoHideDelaySecondsForTesting
+            ?? PlaybackViewMetrics.controlBarAutoHideDelaySeconds
+        #else
+        let delaySeconds = PlaybackViewMetrics.controlBarAutoHideDelaySeconds
+        #endif
         autoHideBarTask = Task {
 
-            try? await Task.sleep(for: .seconds(PlaybackViewMetrics.controlBarAutoHideDelaySeconds))
+            try? await Task.sleep(for: .seconds(delaySeconds))
 
             guard !Task.isCancelled else { return }
             await MainActor.run {

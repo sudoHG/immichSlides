@@ -33,7 +33,7 @@ final class PlaybackHistoryIOSUITests: XCTestCase {
 
     @MainActor
     func testPreviousNextRetainedHistoryFromRandomPlayback() throws {
-        let app = try launchConfiguredAppAtModeSelection()
+        let app = try launchConfiguredAppAtModeSelection(shouldExtendControlBarAutoHideForNavigation: true)
         defer { app.terminateForFailureEvidence() }
         startRandomPlaybackFromModeSelection(app: app)
 
@@ -68,7 +68,7 @@ final class PlaybackHistoryIOSUITests: XCTestCase {
 
     @MainActor
     func testSmartFillPreviousNextRoundTripUsesCompleteVisibleSceneIdentity() throws {
-        let app = try launchConfiguredSmartFillAppAtModeSelection()
+        let app = try launchConfiguredSmartFillAppAtModeSelection(shouldExtendControlBarAutoHideForNavigation: true)
         defer { app.terminateForFailureEvidence() }
         startFilteredPlaybackFromModeSelection(app: app)
 
@@ -129,7 +129,8 @@ final class PlaybackHistoryIOSUITests: XCTestCase {
 
     @MainActor
     func testManualLifecycleSettingsAndControlsStayBidirectionallySynchronized() throws {
-        let app = try launchConfiguredManualLifecycleAppAtModeSelection(mode: .singlePhoto)
+        let app = try launchConfiguredManualLifecycleAppAtModeSelection(
+            mode: .singlePhoto, shouldExtendControlBarAutoHideForNavigation: true)
         defer { app.terminateForFailureEvidence() }
         startFilteredPlaybackFromModeSelection(app: app)
         _ = try waitForStablePresentationProbe(app: app, timeout: TestWait.seconds(.infrastructure(45)))
@@ -257,12 +258,17 @@ extension PlaybackHistoryIOSUITests {
         let historyCursor: Int
     }
 
-    func launchConfiguredAppAtModeSelection() throws -> XCUIApplication {
+    func launchConfiguredAppAtModeSelection(
+        shouldExtendControlBarAutoHideForNavigation: Bool = false
+    ) throws -> XCUIApplication {
         let config = try requireTestServerConfig()
         let app = XCUIApplication()
         app.launchEnvironment["UI_TEST_RESET_STATE"] = "1"
         app.launchEnvironment["UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT"] = "1"
         app.launchEnvironment["UI_TEST_FORCE_AUTOPLAY_OFF"] = "1"
+        if shouldExtendControlBarAutoHideForNavigation {
+            app.launchEnvironment["UI_TEST_CONTROL_BAR_AUTO_HIDE_SECONDS"] = "60"
+        }
         app.launchEnvironment["UI_TEST_FORCE_MODE_SELECTION"] = "1"
         app.launchEnvironment["IMMICHSLIDES_DEBUG_PLAYBACK_SEQUENCE"] = "1"
         app.launchEnvironment["UI_TEST_SERVER_URL"] = config.url
@@ -277,12 +283,17 @@ extension PlaybackHistoryIOSUITests {
         return app
     }
 
-    func launchConfiguredSmartFillAppAtModeSelection() throws -> XCUIApplication {
+    func launchConfiguredSmartFillAppAtModeSelection(
+        shouldExtendControlBarAutoHideForNavigation: Bool = false
+    ) throws -> XCUIApplication {
         let config = try requireTestServerConfig()
         let app = XCUIApplication()
         app.launchEnvironment["UI_TEST_RESET_STATE"] = "1"
         app.launchEnvironment["UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT"] = "1"
         app.launchEnvironment["UI_TEST_FORCE_AUTOPLAY_OFF"] = "1"
+        if shouldExtendControlBarAutoHideForNavigation {
+            app.launchEnvironment["UI_TEST_CONTROL_BAR_AUTO_HIDE_SECONDS"] = "60"
+        }
         app.launchEnvironment["UI_TEST_FORCE_MODE_SELECTION"] = "1"
         // The filter summary picks the first album and person on the server; a replay list replaces that pool.
         try requireServerAlbumAndPerson()
@@ -314,13 +325,17 @@ extension PlaybackHistoryIOSUITests {
 
     func launchConfiguredManualLifecycleAppAtModeSelection(
         mode: ManualLifecycleMode,
-        shouldForceAutoplayOff: Bool = false
+        shouldForceAutoplayOff: Bool = false,
+        shouldExtendControlBarAutoHideForNavigation: Bool = false
     ) throws -> XCUIApplication {
         let config = try requireTestServerConfig()
         let app = XCUIApplication()
         app.launchEnvironment["UI_TEST_RESET_STATE"] = "1"
         app.launchEnvironment["UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT"] = "1"
         app.launchEnvironment["UI_TEST_FORCE_MODE_SELECTION"] = "1"
+        if shouldExtendControlBarAutoHideForNavigation {
+            app.launchEnvironment["UI_TEST_CONTROL_BAR_AUTO_HIDE_SECONDS"] = "60"
+        }
         if shouldForceAutoplayOff {
             app.launchEnvironment["UI_TEST_FORCE_AUTOPLAY_OFF"] = "1"
         }
