@@ -1763,7 +1763,6 @@ struct StableFrame {
     }
 
     static func showsMultiPhotoFixture(_ png: Data) -> Bool {
-        guard showsFixturePhoto(png) else { return false }
         let identity = StrictE2EPhotoIdentity.captureIdentity(png: png)
         return identity.status == .match && (identity.mark?.split(separator: "+").count ?? 0) >= 2
     }
