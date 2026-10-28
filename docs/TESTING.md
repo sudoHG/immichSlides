@@ -1147,13 +1147,18 @@ least two slot marks. Do not first require a whole-screen single-photo verdict:
 the same valid composite can be TRANSITION or UNRECOGNIZABLE in that classifier
 as the layout and motion change its aggregate colors, while its individual slots
 remain identifiable. The composite reader and its thresholds remain unchanged.
+This shared predicate also changes `p2-exif`'s multi-photo search and
+`exif-smartfill-multi` capture, and `p2-reduce-motion`'s multi-photo search, on iOS
+and tvOS. These callers do not require native planning evidence; Reduce Motion's
+later stable segment capture still uses `showsFixturePhoto` independently.
 For each orientation, scene search also requires the App's current manifest to
 report that planning orientation without a `surfaceReflow` projection. Rotation
 can rewrite the projected surface key while retaining an unrepresentable recipe,
 so the surface key alone is insufficient. Normal Next navigation stays within
-the existing six-press budget and reaches a fresh orientation-native plan. The
+the existing six-press budget per orientation and reaches a fresh orientation-native plan. The
 portrait evidence therefore shows a portrait-native layout and can contain
-different photos; same-scene rotation remains covered by `p2-rotation`. Screenshot
+different photos; same-scene rotation remains covered by `p2-rotation`, which does
+not require a multi-photo scene. Screenshot
 names, ordering and P2 review bindings are unchanged and still need signed review.
 Control readiness, orientation, the 10-second observation allowance, the 0.5-second pair spacing
 and the pixel-difference limit remain unchanged. Thrown failures are recorded
