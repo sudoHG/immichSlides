@@ -65,16 +65,10 @@ extension AccessLifecycleIOSUITests {
         openSettingsFromSlideshow(app: app)
         requests.append("settings.open")
         openPlaybackSettings(app: app)
-        let autoPlay = playbackSwitch(app: app, identifier: "settings.playback.autoPlay.toggle")
-        XCTAssertTrue(
-            autoPlay.waitForFailureEvidence(timeout: TestWait.seconds(.product(12))),
-            "Playback settings must provide the autoplay toggle.")
-        if !isToggleOn(autoPlay) {
-            tapElement(autoPlay)
-        }
-        XCTAssertTrue(
-            waitUntil(timeout: TestWait.seconds(.product(4))) { self.isToggleOn(autoPlay) },
-            "Autoplay must be turned on through the real settings UI."
+        setPlaybackToggleFromUI(
+            app: app, identifier: "settings.playback.autoPlay.toggle", shouldBeOn: true,
+            appearanceFailureMessage: "Playback settings must provide the autoplay toggle.",
+            readbackFailureMessage: "Autoplay must be turned on through the real settings UI."
         )
         requests.append("settings.save.autoplay")
         let interval = try setIntervalFromUI(
@@ -96,16 +90,10 @@ extension AccessLifecycleIOSUITests {
             targetIntervalSeconds = interval
         }
         requests.append("settings.save.interval")
-        let exif = playbackSwitch(app: app, identifier: "settings.playback.showExif.toggle")
-        XCTAssertTrue(
-            exif.waitForFailureEvidence(timeout: TestWait.seconds(.product(8))),
-            "Playback settings must provide the EXIF toggle.")
-        if isToggleOn(exif) {
-            tapElement(exif)
-        }
-        XCTAssertTrue(
-            waitUntil(timeout: TestWait.seconds(.product(4))) { !self.isToggleOn(exif) },
-            "EXIF must be turned off through the real settings."
+        setPlaybackToggleFromUI(
+            app: app, identifier: "settings.playback.showExif.toggle", shouldBeOn: false,
+            appearanceFailureMessage: "Playback settings must provide the EXIF toggle.",
+            readbackFailureMessage: "EXIF must be turned off through the real settings."
         )
         requests.append("settings.save.exif")
         returnToSlideshowFromSettings(app: app)
@@ -570,13 +558,11 @@ extension AccessLifecycleIOSUITests {
             "The display policy should offer single-photo mode.")
         tapElement(singlePhoto)
         requests.append("settings.save.display_mode")
-        let autoPlay = playbackSwitch(app: app, identifier: "settings.playback.autoPlay.toggle")
-        if autoPlay.waitForFailureEvidence(timeout: TestWait.seconds(.product(3))), !isToggleOn(autoPlay) {
-            tapElement(autoPlay)
-            XCTAssertTrue(
-                waitUntil(timeout: TestWait.seconds(.product(4))) { self.isToggleOn(autoPlay) },
-                "Autoplay must stay on after changing the display policy."
-            )
+        if setPlaybackToggleFromUI(
+            app: app, identifier: "settings.playback.autoPlay.toggle", shouldBeOn: true, isOptional: true,
+            appearanceFailureMessage: "Playback settings must provide the autoplay toggle.",
+            readbackFailureMessage: "Autoplay must stay on after changing the display policy."
+        ) {
             requests.append("settings.save.autoplay")
         }
         returnToSlideshowFromSettings(app: app)
@@ -753,6 +739,66 @@ extension AccessLifecycleIOSUITests {
     @MainActor
     func readIntervalSeconds(app: XCUIApplication) -> Int? {
         PlaybackIntervalSliderIOS.readSeconds(in: app)
+    }
+
+    @MainActor
+    @discardableResult
+    func setPlaybackToggleFromUI(
+        app: XCUIApplication, identifier: String, shouldBeOn: Bool, isOptional: Bool = false,
+        appearanceFailureMessage: String, readbackFailureMessage: String
+    ) -> Bool {
+        let guardWait = TestWait.hangGuard()
+        let transaction = guardWait.transaction()
+        guard let toggle = transaction.query({ playbackSwitch(app: app, identifier: identifier) }) else {
+            XCTFail(appearanceFailureMessage)
+            return false
+        }
+        if isOptional && !transaction.probe({ toggle.exists }) { return false }
+        var observedState: Bool?
+        func observeState() -> Bool? {
+            FirstFailureContext.mark("settings-readback", element: identifier)
+            guard let snapshot = try? toggle.snapshot(), snapshot.isEnabled, !snapshot.frame.isEmpty else { return nil }
+            switch (snapshot.value as? String)?.lowercased() {
+            case "1", "true": return true
+            case "0", "false": return false
+            default: return nil
+            }
+        }
+        guard
+            transaction.until({
+                observedState = observeState()
+                return observedState != nil
+            }), let initialState = observedState
+        else {
+            XCTFail(appearanceFailureMessage)
+            return false
+        }
+        // An already-correct immutable observation needs no action or extra read after expiry.
+        guard initialState != shouldBeOn else { return false }
+        guard
+            let isHittable = transaction.query({ toggle.isHittable }),
+            transaction.perform(
+                "tap",
+                {
+                    if isHittable {
+                        toggle.tapForFailureEvidence()
+                    } else {
+                        toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tapForFailureEvidence()
+                    }
+                })
+        else {
+            XCTFail(readbackFailureMessage)
+            return false
+        }
+        let didReachRequestedState = transaction.until {
+            observedState = observeState()
+            return observedState == shouldBeOn
+        }
+        XCTAssertTrue(didReachRequestedState, readbackFailureMessage)
+        print(
+            "Lifecycle settings toggle: identifier=\(identifier), before=\(initialState), requested=\(shouldBeOn), observed=\(observedState.map(String.init(describing:)) ?? "unknown"), tapCount=1, reached=\(didReachRequestedState)"
+        )
+        return true
     }
 
     @MainActor

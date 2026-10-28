@@ -164,52 +164,60 @@ struct IOSDriver: PlaybackDriver {
 
     func next() {
         let identifier = "slideshow.control.next.button"
-        let deadline = Date().addingTimeInterval(UITestSupportWaitTiming.stateChangeTimeoutSeconds)
-        let totalDeadline = deadline.addingTimeInterval(UITestSupportWaitTiming.stateChangeTimeoutSeconds)
+        let guardWait = TestWait.hangGuard()
+        let next = guardWait.transaction()
+        let wake = guardWait.transaction()
         var action = ControlAction()
         // Classifying the baseline can outlast auto-hide; only prepare the control afterward.
         var sceneBefore: String?
-        _ = Wait.until(timeout: max(.zero, deadline.timeIntervalSinceNow)) {
-            guard Date() < deadline else { return false }
+        let isBaselineReadable = next.until {
             let sceneReadStartedAt = ProcessInfo.processInfo.systemUptime
             defer { action.sceneReadSeconds += ProcessInfo.processInfo.systemUptime - sceneReadStartedAt }
             let observation = visiblePhotoObservation()
             action.sceneCaptureSeconds += observation.captureSeconds
             action.sceneClassificationSeconds += observation.classificationSeconds
+            action.baselineCapturedAt = observation.capturedAt
             sceneBefore = observation.mark
-            return sceneBefore != nil && Date() < deadline
+            return sceneBefore != nil
         }
-        guard let sceneBefore, Date() < deadline else {
+        guard isBaselineReadable, let sceneBefore else {
             XCTFail("The current scene must be readable before tapping Next. (\(action.diagnostic))")
             return
         }
-        if !action.didWake, Date() < deadline {
+        let didWake = wake.perform("tap") {
             action.didWake = true
             FirstFailureContext.mark("reveal-controls", element: identifier)
             let revealStartedAt = Date()
             // EXIF passes hits through; the upper photo area stays clear of the bar, tip and DEBUG buttons.
             let playbackWakePoint = CGVector(dx: 0.5, dy: 0.2)
-            FirstFailureContext.action("tap") {
-                app.coordinate(withNormalizedOffset: playbackWakePoint).tap()
-            }
+            app.coordinate(withNormalizedOffset: playbackWakePoint).tap()
             let duration = Date().timeIntervalSince(revealStartedAt)
             action.timing.revealSeconds += duration
             action.timing.revealDurationsSeconds.append(duration)
         }
-        // Keep the pre-wake remainder; XCTest wake delivery is recorded separately from readiness.
-        let preparationDeadline = deadline.addingTimeInterval(action.timing.revealSeconds)
+        var prepared: SlideshowControlBarButtonObservation?
+        let isPrepared =
+            didWake
+            && wake.until {
+                guard let observation = action.observe(app: app, identifier: identifier) else { return false }
+                action.isBarVisible = hasVisibleControlBar(observation)
+                guard observation.isReady, action.isBarVisible, !observation.hasSettingsNavigationEvidence else {
+                    return false
+                }
+                action.preparedTarget = observation.diagnostic
+                action.preparedAt = ProcessInfo.processInfo.systemUptime
+                prepared = observation
+                return true
+            }
         guard
-            let before = prepareControl(
-                identifier, until: preparationDeadline, action: &action, shouldRequireHittability: false)
+            isPrepared, let before = prepared,
+            next.perform("tap", { activateControl(before, action: &action) })
         else {
             XCTFail("Final Next preparation must provide an actionable control. (\(action.diagnostic))")
             return
         }
-        activateControl(before, action: &action)
-        // Exclude only the measured wake from the original preparation plus outcome ceiling.
-        let stateDeadline = min(
-            totalDeadline.addingTimeInterval(action.timing.revealSeconds),
-            Date().addingTimeInterval(UITestSupportWaitTiming.stateChangeTimeoutSeconds))
+        // The manual Next response keeps its product window, starting when the sole tap returns.
+        let stateDeadline = Date().addingTimeInterval(UITestSupportWaitTiming.stateChangeTimeoutSeconds)
         var lastVisiblePhoto: String?
         var lastCaptureRemainingSeconds: TimeInterval?
         let changed = Wait.until(timeout: max(.zero, stateDeadline.timeIntervalSinceNow)) {
@@ -423,6 +431,7 @@ struct IOSDriver: PlaybackDriver {
         var sceneReadSeconds: TimeInterval = .zero
         var sceneCaptureSeconds: TimeInterval = .zero
         var sceneClassificationSeconds: TimeInterval = .zero
+        var baselineCapturedAt: Date?
         var issuedAt: TimeInterval?
         var returnedAt: TimeInterval?
 
@@ -433,7 +442,7 @@ struct IOSDriver: PlaybackDriver {
         var diagnostic: String {
             let actionableToTapSeconds = preparedAt.flatMap { preparedAt in issuedAt.map { $0 - preparedAt } }
             return
-                "\(timing.diagnostic), preparedTarget={\(preparedTarget)}, barVisible=\(isBarVisible), hittable=\(isHittable.map(String.init) ?? "unknown"), wakeIssued=\(didWake), sceneReadSeconds=\(sceneReadSeconds), sceneCaptureSeconds=\(sceneCaptureSeconds), sceneClassificationSeconds=\(sceneClassificationSeconds), actionableToTapSeconds=\(actionableToTapSeconds.map(String.init(describing:)) ?? "none"), tapIssuedAt=\(issuedAt.map(String.init(describing:)) ?? "none"), tapReturnedAt=\(returnedAt.map(String.init(describing:)) ?? "none")"
+                "\(timing.diagnostic), preparedTarget={\(preparedTarget)}, barVisible=\(isBarVisible), hittable=\(isHittable.map(String.init) ?? "unknown"), wakeIssued=\(didWake), sceneReadSeconds=\(sceneReadSeconds), sceneCaptureSeconds=\(sceneCaptureSeconds), sceneClassificationSeconds=\(sceneClassificationSeconds), baselineCapturedAtUnixSeconds=\(baselineCapturedAt.map { String($0.timeIntervalSince1970) } ?? "none"), actionableToTapSeconds=\(actionableToTapSeconds.map(String.init(describing:)) ?? "none"), tapIssuedAt=\(issuedAt.map(String.init(describing:)) ?? "none"), tapReturnedAt=\(returnedAt.map(String.init(describing:)) ?? "none")"
         }
     }
 
