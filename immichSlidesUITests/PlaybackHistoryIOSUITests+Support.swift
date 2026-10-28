@@ -344,9 +344,14 @@ extension PlaybackHistoryIOSUITests {
         return value == "1" || value == "true"
     }
 
-    func waitForPresentationProbe(app: XCUIApplication, timeout: TimeInterval) throws -> ScenePresentationProbe {
-        guard waitUntil(timeout: timeout, condition: { self.presentationProbe(app: app) != nil }),
-            let probe = presentationProbe(app: app)
+    func waitForPresentationProbe(
+        app: XCUIApplication, timeout: TimeInterval, isFrameSynchronized: Bool = false
+    ) throws -> ScenePresentationProbe {
+        guard
+            waitUntil(
+                timeout: timeout,
+                condition: { self.presentationProbe(app: app, isFrameSynchronized: isFrameSynchronized) != nil }),
+            let probe = presentationProbe(app: app, isFrameSynchronized: isFrameSynchronized)
         else {
             let hierarchy = app.debugDescription
             print("MANUAL_LIFECYCLE_PROBE_HIERARCHY_BEGIN\n\(hierarchy)\nMANUAL_LIFECYCLE_PROBE_HIERARCHY_END")
@@ -361,14 +366,18 @@ extension PlaybackHistoryIOSUITests {
         return probe
     }
 
-    func waitForStablePresentationProbe(app: XCUIApplication, timeout: TimeInterval) throws -> ScenePresentationProbe {
+    func waitForStablePresentationProbe(
+        app: XCUIApplication, timeout: TimeInterval, isFrameSynchronized: Bool = false
+    ) throws -> ScenePresentationProbe {
         guard
             waitUntil(
                 timeout: timeout,
                 condition: {
-                    guard let probe = self.presentationProbe(app: app) else { return false }
+                    guard let probe = self.presentationProbe(app: app, isFrameSynchronized: isFrameSynchronized) else {
+                        return false
+                    }
                     return probe.phase == "stablePhoto" && !probe.rawProgress.isEmpty
-                }), let probe = presentationProbe(app: app)
+                }), let probe = presentationProbe(app: app, isFrameSynchronized: isFrameSynchronized)
         else {
             throw NSError(
                 domain: "PlaybackHistoryIOSUITests",
@@ -463,8 +472,11 @@ extension PlaybackHistoryIOSUITests {
         return pausedFrame
     }
 
-    func presentationProbe(app: XCUIApplication) -> ScenePresentationProbe? {
-        scenePresentationProbe(identifier: "slideshow.scenePresentation.contract.summary", app: app)
+    func presentationProbe(app: XCUIApplication, isFrameSynchronized: Bool = false) -> ScenePresentationProbe? {
+        if isFrameSynchronized {
+            return frameSynchronizedPresentationProbe(app: app)
+        }
+        return scenePresentationProbe(identifier: "slideshow.scenePresentation.contract.summary", app: app)
     }
 
     func frameSynchronizedPresentationProbe(app: XCUIApplication) -> ScenePresentationProbe? {

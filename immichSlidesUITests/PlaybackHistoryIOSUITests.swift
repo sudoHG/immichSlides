@@ -379,15 +379,18 @@ extension PlaybackHistoryIOSUITests {
         }
         startFilteredPlaybackFromModeSelection(app: app)
 
-        let initial = try waitForStablePresentationProbe(app: app, timeout: TestWait.seconds(.infrastructure(45)))
+        // The root label can stay cached between state changes; the TimelineView leaf samples each rendered frame.
+        let initial = try waitForStablePresentationProbe(
+            app: app, timeout: TestWait.seconds(.infrastructure(45)), isFrameSynchronized: true)
         appendManualLifecycleRuntimeEvidence(app: app, mode: mode, event: "initial-stable", probe: initial)
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(8))) {
-                self.presentationProbe(app: app)?.rawProgress.contains(where: {
+                self.frameSynchronizedPresentationProbe(app: app)?.rawProgress.contains(where: {
                     $0 > PlaybackHistoryIOSUITestsCalibration.observableMotionProgress
                 }) == true
             }, "The current autoplay scene must already show observable motion before the pause")
-        let movingInitial = try waitForPresentationProbe(app: app, timeout: TestWait.seconds(.product(3)))
+        let movingInitial = try waitForPresentationProbe(
+            app: app, timeout: TestWait.seconds(.product(3)), isFrameSynchronized: true)
         appendManualLifecycleRuntimeEvidence(
             app: app, mode: mode, event: "automatic-motion-observed", probe: movingInitial)
 
@@ -443,17 +446,20 @@ extension PlaybackHistoryIOSUITests {
         XCTAssertTrue(
             waitForPlayPauseState(app: app, expected: "play", timeout: TestWait.seconds(.product(3))),
             playbackDiagnostics.pauseSuffix)
-        let paused = try waitForPresentationProbe(app: app, timeout: TestWait.seconds(.product(3)))
+        let paused = try waitForPresentationProbe(
+            app: app, timeout: TestWait.seconds(.product(3)), isFrameSynchronized: true)
         appendManualLifecycleRuntimeEvidence(app: app, mode: mode, event: "paused", probe: paused)
         RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.8))))
-        let frozen = try waitForPresentationProbe(app: app, timeout: TestWait.seconds(.product(3)))
+        let frozen = try waitForPresentationProbe(
+            app: app, timeout: TestWait.seconds(.product(3)), isFrameSynchronized: true)
         XCTAssertEqual(paused.rawProgress, frozen.rawProgress, "Pausing must freeze the current transform progress")
         appendManualLifecycleRuntimeEvidence(app: app, mode: mode, event: "freeze-confirmed", probe: frozen)
 
         let initialIdentity = try sceneIdentity(app: app, mode: mode)
         tapPlaybackControl(app: app, identifier: "slideshow.control.next.button", beforeIdentity: initialIdentity)
         let afterNextIdentity = try waitForSceneIdentityChange(app: app, mode: mode, from: initialIdentity)
-        let staticAfterNext = try waitForStablePresentationProbe(app: app, timeout: TestWait.seconds(.product(4)))
+        let staticAfterNext = try waitForStablePresentationProbe(
+            app: app, timeout: TestWait.seconds(.product(4)), isFrameSynchronized: true)
         XCTAssertTrue(
             staticAfterNext.rawProgress.allSatisfy {
                 abs($0) < PlaybackHistoryIOSUITestsCalibration.zeroProgressTolerance
@@ -469,7 +475,8 @@ extension PlaybackHistoryIOSUITests {
 
         tapPlaybackControl(app: app, identifier: "slideshow.control.previous.button")
         let afterPreviousIdentity = try waitForSceneIdentityChange(app: app, mode: mode, from: afterNextIdentity)
-        let staticAfterPrevious = try waitForStablePresentationProbe(app: app, timeout: TestWait.seconds(.product(4)))
+        let staticAfterPrevious = try waitForStablePresentationProbe(
+            app: app, timeout: TestWait.seconds(.product(4)), isFrameSynchronized: true)
         XCTAssertTrue(
             staticAfterPrevious.rawProgress.allSatisfy {
                 abs($0) < PlaybackHistoryIOSUITestsCalibration.zeroProgressTolerance
@@ -487,11 +494,12 @@ extension PlaybackHistoryIOSUITests {
         XCTAssertTrue(waitForPlayPauseState(app: app, expected: "pause", timeout: TestWait.seconds(.product(3))))
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(4))) {
-                self.presentationProbe(app: app)?.rawProgress.contains(where: {
+                self.frameSynchronizedPresentationProbe(app: app)?.rawProgress.contains(where: {
                     $0 > PlaybackHistoryIOSUITestsCalibration.observableMotionProgress
                 }) == true
             }, "Play must make the current still scene start moving from p=0 immediately")
-        let resumed = try waitForPresentationProbe(app: app, timeout: TestWait.seconds(.product(3)))
+        let resumed = try waitForPresentationProbe(
+            app: app, timeout: TestWait.seconds(.product(3)), isFrameSynchronized: true)
         appendManualLifecycleRuntimeEvidence(
             app: app, mode: mode, event: "resumed-current-scene-motion", probe: resumed)
         attachScreenshot(app: app, name: "manual-lifecycle-\(mode == .smartFill ? "smartfill" : "single")-resumed")
