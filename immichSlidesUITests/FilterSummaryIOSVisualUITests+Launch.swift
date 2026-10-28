@@ -320,7 +320,8 @@ extension FilterSummaryIOSVisualUITests {
         dynamicTypeSize: String? = nil,
         shouldDisablePlaybackEntryHint: Bool = true,
         shouldForceAutoPlayOff: Bool = false,
-        shouldShowExifSamplingDebugOverlay: Bool = false
+        shouldShowExifSamplingDebugOverlay: Bool = false,
+        extraLaunchEnvironment: [String: String] = [:]
     ) throws -> XCUIApplication {
 
         let app = makeChineseLaunchApp(
@@ -336,6 +337,7 @@ extension FilterSummaryIOSVisualUITests {
         app.launchEnvironment["UI_TEST_API_KEY"] = config.apiKey
 
         app.launchEnvironment["UI_TEST_FORCE_MODE_SELECTION"] = "1"
+        app.launchEnvironment.merge(extraLaunchEnvironment) { _, new in new }
         app.launchForFailureEvidence()
 
         let continueButton = app.buttons["mode.continue.button"]

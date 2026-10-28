@@ -8,7 +8,8 @@ extension FilterSummaryIOSVisualUITests {
 
         let app = try launchIntoSlideShow(
             colorScheme: "dark",
-            shouldForceEnglishLocalization: true
+            shouldForceEnglishLocalization: true,
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
         )
 
         openSettingsFromSlideShow(app: app)
@@ -23,7 +24,9 @@ extension FilterSummaryIOSVisualUITests {
     @MainActor
     func testIOSSettingsServerSectionScreenshotLight() throws {
 
-        let app = try launchIntoSlideShow(colorScheme: "light")
+        let app = try launchIntoSlideShow(
+            colorScheme: "light",
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment)
 
         openSettingsFromSlideShow(app: app)
         openSettingsSection(app: app, sectionID: "settings.item.server")
@@ -63,7 +66,9 @@ extension FilterSummaryIOSVisualUITests {
     @MainActor
     func testIOSSettingsServerSectionScreenshotDark() throws {
 
-        let app = try launchIntoSlideShow(colorScheme: "dark")
+        let app = try launchIntoSlideShow(
+            colorScheme: "dark",
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment)
 
         openSettingsFromSlideShow(app: app)
         openSettingsSection(app: app, sectionID: "settings.item.server")
@@ -105,7 +110,8 @@ extension FilterSummaryIOSVisualUITests {
 
         let app = try launchIntoRandomSlideShow(
             colorScheme: "dark",
-            dynamicTypeSize: "accessibility5"
+            dynamicTypeSize: "accessibility5",
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
         )
 
         openSettingsFromSlideShow(app: app)
@@ -148,7 +154,8 @@ extension FilterSummaryIOSVisualUITests {
 
         let app = try launchIntoRandomSlideShow(
             colorScheme: "dark",
-            dynamicTypeSize: "accessibility5"
+            dynamicTypeSize: "accessibility5",
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
         )
 
         openSettingsFromSlideShow(app: app)
@@ -216,7 +223,8 @@ extension FilterSummaryIOSVisualUITests {
 
         let app = try launchIntoSlideShow(
             colorScheme: "dark",
-            dynamicTypeSize: "accessibility5"
+            dynamicTypeSize: "accessibility5",
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
         )
 
         openSettingsFromSlideShow(app: app)
@@ -251,7 +259,9 @@ extension FilterSummaryIOSVisualUITests {
 
     @MainActor
     func testAlertLookupRejectsUnrelatedAlertAndAcceptsMatchingText() throws {
-        let app = try launchIntoSlideShow(colorScheme: "dark")
+        let app = try launchIntoSlideShow(
+            colorScheme: "dark",
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment)
         openSettingsFromSlideShow(app: app)
         openSettingsSection(app: app, sectionID: "settings.item.cache")
 
@@ -285,7 +295,9 @@ extension FilterSummaryIOSVisualUITests {
     @MainActor
     func testIOSSettingsAboutPageScreenshotDark() throws {
 
-        let app = try launchIntoSlideShow(colorScheme: "dark")
+        let app = try launchIntoSlideShow(
+            colorScheme: "dark",
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment)
 
         openSettingsFromSlideShow(app: app)
         openSettingsAboutPage(app: app)
@@ -299,7 +311,9 @@ extension FilterSummaryIOSVisualUITests {
 
     @MainActor
     func testIOSSettingsAboutPageScreenshotLight() throws {
-        let app = try launchIntoSlideShow(colorScheme: "light")
+        let app = try launchIntoSlideShow(
+            colorScheme: "light",
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment)
 
         openSettingsFromSlideShow(app: app)
         openSettingsAboutPage(app: app)
@@ -315,7 +329,8 @@ extension FilterSummaryIOSVisualUITests {
     func testIOSSettingsAboutPageScreenshotAccessibility() throws {
         let app = try launchIntoSlideShow(
             colorScheme: "dark",
-            dynamicTypeSize: "accessibility5"
+            dynamicTypeSize: "accessibility5",
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
         )
 
         openSettingsFromSlideShow(app: app)
@@ -334,7 +349,9 @@ extension FilterSummaryIOSVisualUITests {
             FirstFailureOrientation.set(.portrait)
         }
 
-        let app = try launchIntoSlideShow(colorScheme: "light")
+        let app = try launchIntoSlideShow(
+            colorScheme: "light",
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment)
 
         openSettingsFromSlideShow(app: app)
         openSettingsAboutPage(app: app)
@@ -360,7 +377,8 @@ extension FilterSummaryIOSVisualUITests {
     func testIOSSettingsAboutPageEnglishLocalizationScreenshotLight() throws {
         let app = try launchIntoSlideShow(
             colorScheme: "light",
-            shouldForceEnglishLocalization: true
+            shouldForceEnglishLocalization: true,
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
         )
 
         openSettingsFromSlideShow(app: app)
@@ -376,7 +394,9 @@ extension FilterSummaryIOSVisualUITests {
     @MainActor
     func testIOSSettingsOpenSourceLicensesPageScreenshotLight() throws {
 
-        let app = try launchIntoSlideShow(colorScheme: "light")
+        let app = try launchIntoSlideShow(
+            colorScheme: "light",
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment)
 
         openSettingsFromSlideShow(app: app)
         openSettingsAboutPage(app: app)
@@ -429,7 +449,9 @@ extension FilterSummaryIOSVisualUITests {
             "This regression test only covers reopening the open source licenses entry in iPad settings"
         )
 
-        let app = try launchIntoSlideShow(colorScheme: "light")
+        let app = try launchIntoSlideShow(
+            colorScheme: "light",
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment)
 
         openSettingsFromSlideShow(app: app)
         openSettingsAboutPage(app: app)
@@ -453,7 +475,9 @@ extension FilterSummaryIOSVisualUITests {
             "This regression test only covers the split-view navigation in iPad settings"
         )
 
-        let app = try launchIntoSlideShow(colorScheme: "light")
+        let app = try launchIntoSlideShow(
+            colorScheme: "light",
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment)
 
         openSettingsFromSlideShow(app: app)
         openSettingsAboutPage(app: app)

@@ -1183,6 +1183,10 @@ enum SlideshowControlBarDiagnosticEvent {
     case tap(request: TimeInterval, returned: TimeInterval)
 }
 
+enum SlideshowControlBarNavigationTestConfiguration {
+    static let extendedAutoHideLaunchEnvironment = ["UI_TEST_CONTROL_BAR_AUTO_HIDE_SECONDS": "60"]
+}
+
 struct SlideshowControlBarButtonObservation {
     let identifier: String
     let snapshots: [String: XCUIElementSnapshot]

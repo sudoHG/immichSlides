@@ -35,6 +35,14 @@ enum PlatformCompat {
         return (URL(fileURLWithPath: directory, isDirectory: true), nonce)
     }()
 
+    /// Navigation-only UI tests can outlast native tap delivery without changing the product timer.
+    static var controlBarAutoHideDelaySecondsForTesting: Int? {
+        guard let rawSeconds = ProcessInfo.processInfo.environment["UI_TEST_CONTROL_BAR_AUTO_HIDE_SECONDS"],
+            let seconds = Int(rawSeconds), (1...3600).contains(seconds)
+        else { return nil }
+        return seconds
+    }
+
     static func isRunningXCTest(environment: [String: String]) -> Bool {
         environment["XCTestConfigurationFilePath"] != nil
             || environment.keys.contains {

@@ -33,7 +33,8 @@ final class PlaybackHistoryIOSUITests: XCTestCase {
 
     @MainActor
     func testPreviousNextRetainedHistoryFromRandomPlayback() throws {
-        let app = try launchConfiguredAppAtModeSelection()
+        let app = try launchConfiguredAppAtModeSelection(
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment)
         defer { app.terminateForFailureEvidence() }
         startRandomPlaybackFromModeSelection(app: app)
 
@@ -68,7 +69,8 @@ final class PlaybackHistoryIOSUITests: XCTestCase {
 
     @MainActor
     func testSmartFillPreviousNextRoundTripUsesCompleteVisibleSceneIdentity() throws {
-        let app = try launchConfiguredSmartFillAppAtModeSelection()
+        let app = try launchConfiguredSmartFillAppAtModeSelection(
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment)
         defer { app.terminateForFailureEvidence() }
         startFilteredPlaybackFromModeSelection(app: app)
 
@@ -129,7 +131,9 @@ final class PlaybackHistoryIOSUITests: XCTestCase {
 
     @MainActor
     func testManualLifecycleSettingsAndControlsStayBidirectionallySynchronized() throws {
-        let app = try launchConfiguredManualLifecycleAppAtModeSelection(mode: .singlePhoto)
+        let app = try launchConfiguredManualLifecycleAppAtModeSelection(
+            mode: .singlePhoto,
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment)
         defer { app.terminateForFailureEvidence() }
         startFilteredPlaybackFromModeSelection(app: app)
         _ = try waitForStablePresentationProbe(app: app, timeout: TestWait.seconds(.infrastructure(45)))
@@ -257,12 +261,15 @@ extension PlaybackHistoryIOSUITests {
         let historyCursor: Int
     }
 
-    func launchConfiguredAppAtModeSelection() throws -> XCUIApplication {
+    func launchConfiguredAppAtModeSelection(
+        extraLaunchEnvironment: [String: String] = [:]
+    ) throws -> XCUIApplication {
         let config = try requireTestServerConfig()
         let app = XCUIApplication()
         app.launchEnvironment["UI_TEST_RESET_STATE"] = "1"
         app.launchEnvironment["UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT"] = "1"
         app.launchEnvironment["UI_TEST_FORCE_AUTOPLAY_OFF"] = "1"
+        app.launchEnvironment.merge(extraLaunchEnvironment) { _, new in new }
         app.launchEnvironment["UI_TEST_FORCE_MODE_SELECTION"] = "1"
         app.launchEnvironment["IMMICHSLIDES_DEBUG_PLAYBACK_SEQUENCE"] = "1"
         app.launchEnvironment["UI_TEST_SERVER_URL"] = config.url
@@ -277,12 +284,15 @@ extension PlaybackHistoryIOSUITests {
         return app
     }
 
-    func launchConfiguredSmartFillAppAtModeSelection() throws -> XCUIApplication {
+    func launchConfiguredSmartFillAppAtModeSelection(
+        extraLaunchEnvironment: [String: String] = [:]
+    ) throws -> XCUIApplication {
         let config = try requireTestServerConfig()
         let app = XCUIApplication()
         app.launchEnvironment["UI_TEST_RESET_STATE"] = "1"
         app.launchEnvironment["UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT"] = "1"
         app.launchEnvironment["UI_TEST_FORCE_AUTOPLAY_OFF"] = "1"
+        app.launchEnvironment.merge(extraLaunchEnvironment) { _, new in new }
         app.launchEnvironment["UI_TEST_FORCE_MODE_SELECTION"] = "1"
         // The filter summary picks the first album and person on the server; a replay list replaces that pool.
         try requireServerAlbumAndPerson()
@@ -314,13 +324,15 @@ extension PlaybackHistoryIOSUITests {
 
     func launchConfiguredManualLifecycleAppAtModeSelection(
         mode: ManualLifecycleMode,
-        shouldForceAutoplayOff: Bool = false
+        shouldForceAutoplayOff: Bool = false,
+        extraLaunchEnvironment: [String: String] = [:]
     ) throws -> XCUIApplication {
         let config = try requireTestServerConfig()
         let app = XCUIApplication()
         app.launchEnvironment["UI_TEST_RESET_STATE"] = "1"
         app.launchEnvironment["UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT"] = "1"
         app.launchEnvironment["UI_TEST_FORCE_MODE_SELECTION"] = "1"
+        app.launchEnvironment.merge(extraLaunchEnvironment) { _, new in new }
         if shouldForceAutoplayOff {
             app.launchEnvironment["UI_TEST_FORCE_AUTOPLAY_OFF"] = "1"
         }
