@@ -24,7 +24,7 @@ final class RotationUITests: XCTestCase {
     func testSmartFillLayoutBothOrientationsIPad() throws {
         FirstFailureOrientation.set(.portrait)
         let input = try requireStrictE2EInput()
-        let app = try launchStrictE2EApp()
+        let app = try launchStrictE2EApp(recordSceneSequence: true)
         defer { app.terminateForFailureEvidence() }
         try FirstFailureEvidence.preservingThrownFailure(self) {
             let driver = IOSDriver(app: app)
