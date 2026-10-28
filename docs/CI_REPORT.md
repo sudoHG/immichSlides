@@ -211,8 +211,11 @@ its run's saved entry; older deliveries cannot overwrite it. A nightly entry als
 compact `attempt_history` so the first failure survives reruns. Conflicting identities
 or provenance are refused.
 
-Search repository artifacts with pagination and order reporter snapshots by artifact
-creation time, independently of workflow creation order or completion status. A verified
+Search repository artifacts page by page in GitHub's listing order (newest IDs first) and
+stop at the first trusted reporter snapshot; candidates are ordered by creation time only
+within a page, which matches upload order because reporter runs are serialized. Discovery
+still depends on the snapshot staying within the listing's 100-page limit, so a reporter
+outage of one to two weeks would again refuse until a per-run lookup replaces it. A verified
 upload from an earlier attempt remains usable if a later rerun is interrupted. Consume
 the newest available snapshot only after verifying its repository,
 workflow ID/path, main ancestry, uploader run/attempt and embedded provenance. The daily
