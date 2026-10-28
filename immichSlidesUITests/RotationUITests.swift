@@ -59,7 +59,8 @@ final class RotationUITests: XCTestCase {
             driver.launchToPlayback(input: input)
             #if DEBUG
             driver.applyPlaybackSettings([.displayMode(isSinglePhoto: false)])
-            #else
+            #endif
+            #if !DEBUG
             // Release ignores the Debug input and retains its real 30-second slider setup and isolation bound.
             driver.applyPlaybackSettings([.interval30Seconds, .displayMode(isSinglePhoto: false)])
             #endif
@@ -280,7 +281,8 @@ private enum RotationTiming {
     // Next starts a new target with this frozen interval; fade-in can only postpone its automatic switch.
     #if DEBUG
     static let naturalSwitchEarliest = TestWait.seconds(.product(Double(isolationIntervalSeconds)))
-    #else
+    #endif
+    #if !DEBUG
     static let naturalSwitchEarliest = TestWait.seconds(.product(30))
     #endif
 }
