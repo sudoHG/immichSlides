@@ -162,7 +162,11 @@ This reader must be merged before a producer emits version 2, following
 not activate UI execution, alter live scope or implement offline performance.
 
 The latest trusted snapshot is merged, rather than rebuilding historical days from
-producer artifacts. Only new evidence from the seven most recent UTC dates may drive
+producer artifacts. Snapshot discovery reads the newest artifact pages only until a
+trusted snapshot is found, then checks its exact name through GitHub's filtered
+artifact listing to reject duplicates across pages. It does not enumerate older,
+unrelated artifacts before reading that snapshot; pagination and API budgets remain bounded.
+Only new evidence from the seven most recent UTC dates may drive
 issues or post-merge notifications. Expired artifacts preserve saved results, cannot
 create infrastructure notifications, and cannot provide new closure evidence. Verified
 history remains for 90 days even after its seven-day producer evidence expires.

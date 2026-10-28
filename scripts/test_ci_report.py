@@ -1594,10 +1594,13 @@ class ReporterTests(unittest.TestCase):
                     return {"id": 20, "path": ci_report.REPORT_PATH}
                 if path.startswith("actions/runs/"):
                     return runs[int(path.rsplit("/", 1)[-1])]
+                if path.startswith("actions/artifacts?"):
+                    from urllib.parse import parse_qs, urlparse
+                    name = parse_qs(urlparse(path).query).get("name", [None])[0]
+                    return {"artifacts": [item for item in artifacts if name is None or item["name"] == name]}
                 return {"workflow_runs": [runs[20], runs[10]]}
             def pages(self, path, *args, **options):
-                return artifacts if path == "actions/artifacts" else [item for item in artifacts
-                    if item["workflow_run"]["id"] == int(path.split("/")[2])]
+                return ci_report.GitHub.pages(self, path, *args, **options)
         for attempt in (1, 2):
             runs[10]["run_attempt"] = attempt
             with self.subTest(attempt=attempt), patch("ci_report.on_main", return_value=True), \
@@ -2707,8 +2710,13 @@ class ReporterTests(unittest.TestCase):
         saved = ci_report.merge_snapshot(None, [entry()], date(2026, 10, 1))
         saved["producer"] = {"repository": "sudoHG/immichSlides", "workflow_path": ci_report.REPORT_PATH,
                              "run": {"id": "10", "attempt": 1}, "commit_sha": "a" * 40}
+        artifact = {"name": "ci-report-daily-10-1", "expired": False, "created_at": "2026-10-01T10:00:00Z",
+                    "workflow_run": {"id": 10, "head_branch": "main"}}
         class API:
             repository = "sudoHG/immichSlides"
+            duplicate = False
+            missing = False
+            exhausted = False
             def repo(self, path, **options):
                 if path == "actions/workflows/ci-report.yml":
                     return {"id": 20, "path": ci_report.REPORT_PATH}
@@ -2716,15 +2724,30 @@ class ReporterTests(unittest.TestCase):
                     return run
                 if path.startswith("actions/artifacts?"):
                     from urllib.parse import parse_qs, urlparse
-                    return {"artifacts": [{"name": "unrelated"}] * 100 if parse_qs(urlparse(path).query)["page"] == ["1"] else [{
-                        "name": "ci-report-daily-10-1", "expired": False, "created_at": "2026-10-01T10:00:00Z",
-                        "workflow_run": {"id": 10, "head_branch": "main"}}]}
+                    query = parse_qs(urlparse(path).query)
+                    if "name" in query:
+                        return {"artifacts": [artifact] * (2 if self.duplicate else 1)}
+                    if self.missing:
+                        return {"artifacts": []}
+                    page = int(query["page"][0])
+                    # More than 10,000 unrelated artifacts must not hide readable history.
+                    rows = [{"name": "unrelated"}] * 100
+                    if page == 2 and not self.exhausted:
+                        rows[0] = artifact
+                    return {"artifacts": rows}
                 return {"workflow_runs": [run]}
             def pages(self, path, *args, **options):
                 return ci_report.GitHub.pages(self, path, *args, **options)
         with patch("ci_report.on_main", return_value=True), patch("ci_publish.json_member", return_value=saved):
             self.assertEqual(saved, ci_report.read_snapshot(API()))
-        with patch("ci_report.on_main", return_value=True), patch.object(API, "pages", return_value=[]), self.assertRaises(ContractError):
+        with patch("ci_report.on_main", return_value=True), patch.object(API, "duplicate", True), \
+                self.assertRaisesRegex(ContractError, "duplicate reporter snapshot"):
+            ci_report.read_snapshot(API())
+        with patch.object(API, "exhausted", True), \
+                self.assertRaisesRegex(ContractError, "GitHub pagination limit reached"):
+            ci_report.read_snapshot(API())
+        with patch("ci_report.on_main", return_value=True), patch.object(API, "missing", True), \
+                self.assertRaisesRegex(ContractError, "previous reporter runs exist"):
             ci_report.read_snapshot(API())
         api = type("EmptyAPI", (), {"repository": "sudoHG/immichSlides", "request_count": 1, "remaining": 900,
                                    "request": lambda *args: None, "budget_exhausted": lambda *args: False})()
