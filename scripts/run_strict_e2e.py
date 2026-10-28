@@ -236,8 +236,10 @@ def export_private_result_bundle(
     if logical_bytes_contain(completed.stdout, sensitive_values):
         raise CommandError("Official test export contains test credentials; refusing to retain it.")
     exported = completed.stdout
+    timeline_message = None
     if enrich_failure_diagnostics:
-        from ci_failure_diagnostics import legacy_diagnostics, unknown_diagnostics
+        from ci_failure_diagnostics import (APP_TIMELINE_METHODS, legacy_diagnostics, legacy_failure_messages,
+                                            public_app_timeline_failure_message, unknown_diagnostics)
         failed = []
         def visit(node):
             if isinstance(node, dict):
@@ -263,6 +265,9 @@ def export_private_result_bundle(
             for node in failed:
                 key = str(node.get("nodeIdentifier", "")).removesuffix("()")
                 node.update(diagnostics.get(key, unknown_diagnostics()))
+                if len(failed) == 1 and key in APP_TIMELINE_METHODS:
+                    messages = legacy_failure_messages(legacy_root).get(key, [])
+                    timeline_message = public_app_timeline_failure_message(messages[0]) if messages else None
             if first_failure_spool is not None:
                 from ci_failure_diagnostics import collect_first_failure_spool
                 directory, selectors = first_failure_spool
@@ -295,6 +300,12 @@ def export_private_result_bundle(
             "failedTests": summary.failed_tests, "skippedTests": summary.skipped_tests,
             "result": summary.result,
         }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    if enrich_failure_diagnostics:
+        summary_payload = json.loads(summary_path.read_text())
+        summary_payload.pop("message", None)
+        if timeline_message is not None:
+            summary_payload["message"] = timeline_message
+        summary_path.write_text(json.dumps(summary_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return hashlib.sha256(exported).hexdigest()
 
 

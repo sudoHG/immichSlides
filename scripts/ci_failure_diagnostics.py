@@ -22,6 +22,21 @@ FAILURE_CLASSES = frozenset({"interval_readback", "hidden_controls", "scene_iden
                              "evidence_capture", "probe_readback", "fixture_response", "exif_visibility",
                              "exif_correspondence"})
 DIAGNOSTIC_FIELDS = frozenset({"failure_phase", "failure_class"})
+APP_TIMELINE_METHODS = frozenset({"AccessLifecycleIOSUITests/testPauseNextContinueAppTimeline",
+                                "AccessLifecycleTVOSUITests/testTVOSPauseNextContinueAppTimeline"})
+APP_TIMELINE_FAILURE_REDACTED = "App timeline: unrecognized failure (redacted)"
+APP_TIMELINE_FAILURE_REASONS = frozenset({
+    "missing evidence directory", "case nonce mismatch", "missing required event",
+    "runner and App uptime domains do not align", "missing action receipt",
+    "content contradicts stable or frozen timeline", "missing frozen content anchor",
+    "frozen photo pixels changed", "unreadable photo pixels", "missing conclusive content proof",
+    "Next did not change photo", "pause hold shorter than T+2", "missing stable event", "missing SIGSTOP handshake",
+    "paused manual transition exceeded one target", "automatic change during paused manual navigation",
+    "missing timelineStarted", "noncontiguous sequence", "nonce mismatch", "nonmonotonic uptime",
+    "pause exception misuse", "frame advanced during pause", "missing Continue receipt",
+    "missing unambiguous fade onset", "Continue onset outside T±2", "new photo not stable within onset+4",
+    "midpoint Pause did not cover T-2", "automatic transition before midpoint Pause",
+})
 VALIDATOR_FAILURE_FIELD = "validator_failure_message"
 VALIDATOR_FAILURE_MAX_LENGTH = 512
 VALIDATOR_FAILURE_REDACTED = "[redacted validator failure]"
@@ -1286,6 +1301,16 @@ def normalized_xctest_failure(message):
             text = text[len(wrapper):]
             break
     return text
+
+
+def public_app_timeline_failure_message(message):
+    """Retain fixed error sentences, never a private suffix or a dynamic event name."""
+    text = normalized_xctest_failure(message)
+    prefix = "App timeline: "
+    if text is None or not text.startswith(prefix):
+        return None
+    reason = text[len(prefix):].removesuffix('"')
+    return prefix + reason if reason in APP_TIMELINE_FAILURE_REASONS else APP_TIMELINE_FAILURE_REDACTED
 
 
 def classify_messages(messages):
