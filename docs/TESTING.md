@@ -388,6 +388,29 @@ account for stale snapshots. Missing or non-finite timing fields fail readiness.
 A legal pause can freeze a transition indefinitely; the later stable identity
 check cannot wait for that paused transition to finish. The tap gate adds no
 snapshot, reveal or control-tap retry, and all post-Pause checks remain.
+
+Both `runManualLifecycleContract` variants (SinglePhoto and SmartFill) explicitly
+launch with `UI_TEST_PLAYBACK_INTERVAL_SECONDS=60` so automatic advance does not race their
+manual Pause/Next/Previous/Play sequence on slow hosts. The iOS Debug initializer
+seeds the saved product interval after state reset through `PlatformCompat`,
+accepting whole seconds from 5 through 60; missing or invalid input leaves the
+setting unchanged. Release never reads the override, and tvOS does not apply it.
+Other launch callers, including the normal five-second autoplay and pause-frame
+contracts, retain their existing intervals. The motion, frozen progress, manual
+navigation and current-scene resume assertions and all product windows stay unchanged.
+For these two variants the 60-second interval is the primary protection;
+SmartFill's 2.5-second diagnostic / roughly 3.5-second stable-time margin gate remains a backstop.
+
+All motion reads in these two variants explicitly use
+`slideshow.scenePresentation.frameSynchronized.summary`: initial and pre-Pause motion,
+both frozen-progress samples, paused Next/Previous static origins and post-Play motion.
+The root contract label is outside the rendering `TimelineView` and can retain a
+state-change sample while the scene keeps moving. The frame-synchronized leaf uses
+the same progress calculation and serializer with the renderer's current snapshot;
+SmartFill still divides active time by the scene's frozen interval. Probe selection
+does not change phase predicates, assertion prefixes, thresholds or product windows.
+Other callers retain the root probe unless they explicitly select frame synchronization.
+
 On rejection, this SmartFill call reports the last reason (button not ready,
 scene incomplete or margin insufficient, or `none (snapshot gate passed)` when the
 final observation passed the gate but no tap was issued before the deadline, for

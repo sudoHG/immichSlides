@@ -64,6 +64,12 @@ struct ImmichSlidesApp: App {
             PlaybackSettingsStore().save(settings)
         }
 
+        if let intervalSeconds = PlatformCompat.playbackIntervalSecondsForTesting {
+            var settings = PlaybackSettingsStore().load() ?? PlaybackSettings()
+            settings.intervalSeconds = Double(intervalSeconds)
+            PlaybackSettingsStore().save(settings)
+        }
+
         if let forcedDisplayMode = env["UI_TEST_FORCE_PLAYBACK_DISPLAY_MODE"],
             let displayMode = PlaybackDisplayMode(rawValue: forcedDisplayMode)
         {

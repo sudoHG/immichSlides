@@ -43,6 +43,14 @@ enum PlatformCompat {
         return seconds
     }
 
+    /// Seed a supported product interval before playback without navigating through Settings.
+    static var playbackIntervalSecondsForTesting: Int? {
+        guard let rawSeconds = ProcessInfo.processInfo.environment["UI_TEST_PLAYBACK_INTERVAL_SECONDS"],
+            let seconds = Int(rawSeconds), (5...60).contains(seconds)
+        else { return nil }
+        return seconds
+    }
+
     static func isRunningXCTest(environment: [String: String]) -> Bool {
         environment["XCTestConfigurationFilePath"] != nil
             || environment.keys.contains {
