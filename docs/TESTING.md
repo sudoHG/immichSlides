@@ -395,8 +395,12 @@ manual Pause/Next/Previous/Play sequence on slow hosts. The iOS Debug initialize
 seeds the saved product interval after state reset through `PlatformCompat`,
 accepting whole seconds from 5 through 60; missing or invalid input leaves the
 setting unchanged. Release never reads the override, and tvOS does not apply it.
-Other launch callers, including the normal five-second autoplay and pause-frame
-contracts, retain their existing intervals. The motion, frozen progress, manual
+The three person-membership launches (`testFilterPersonNormalMatch`,
+`testFilterPersonConflictNormal`, and `testFilterPersonNoFaces`) also explicitly
+use 60 seconds; their capture scope and XCTest-mode side effects are documented
+in [the strict runner contract](CI_STRICT_RUNNER.md). Other launch callers,
+including the normal five-second autoplay and pause-frame contracts, retain
+their existing intervals. The motion, frozen progress, manual
 navigation and current-scene resume assertions and all product windows stay unchanged.
 For these two variants the 60-second interval is the primary protection;
 SmartFill's 2.5-second diagnostic / roughly 3.5-second stable-time margin gate remains a backstop.
