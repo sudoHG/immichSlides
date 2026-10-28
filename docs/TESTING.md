@@ -1147,6 +1147,14 @@ least two slot marks. Do not first require a whole-screen single-photo verdict:
 the same valid composite can be TRANSITION or UNRECOGNIZABLE in that classifier
 as the layout and motion change its aggregate colors, while its individual slots
 remain identifiable. The composite reader and its thresholds remain unchanged.
+For each orientation, scene search also requires the App's current manifest to
+report that planning orientation without a `surfaceReflow` projection. Rotation
+can rewrite the projected surface key while retaining an unrepresentable recipe,
+so the surface key alone is insufficient. Normal Next navigation stays within
+the existing six-press budget and reaches a fresh orientation-native plan. The
+portrait evidence therefore shows a portrait-native layout and can contain
+different photos; same-scene rotation remains covered by `p2-rotation`. Screenshot
+names, ordering and P2 review bindings are unchanged and still need signed review.
 Control readiness, orientation, the 10-second observation allowance, the 0.5-second pair spacing
 and the pixel-difference limit remain unchanged. Thrown failures are recorded
 before app termination. Stable-frame diagnostics separate control preparation,
