@@ -1142,6 +1142,11 @@ unchanged. The combined runner uses Debug, where the measured-progress probes ex
 
 `p2-ipad-layout` checks the multi-photo identity of each frame used by its stable
 pair, instead of taking a separate scene-check screenshot before the saved frame.
+Both multi-photo search and stable capture use `captureIdentity`'s MATCH with at
+least two slot marks. Do not first require a whole-screen single-photo verdict:
+the same valid composite can be TRANSITION or UNRECOGNIZABLE in that classifier
+as the layout and motion change its aggregate colors, while its individual slots
+remain identifiable. The composite reader and its thresholds remain unchanged.
 Control readiness, orientation, the 10-second observation allowance, the 0.5-second pair spacing
 and the pixel-difference limit remain unchanged. Thrown failures are recorded
 before app termination. Stable-frame diagnostics separate control preparation,
