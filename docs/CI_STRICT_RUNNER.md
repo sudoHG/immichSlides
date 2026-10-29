@@ -449,10 +449,10 @@ selectors use an empty launch environment and forbid the scene probe.
 before opening Settings; configuration still turns autoplay on through the real
 toggle and selects single-photo mode. Before its midpoint pause, it confirms the
 paused state, uses a real Next and the existing stable-photo capture window to
-establish a bright single-photo identity, then starts T/2 at the real Play press. Pause
-tap must return before the existing T-2 boundary and retain that identity. The
-pause timestamp is recorded before the later state readback; Continue still counts
-T from its press until the old photo starts fading. Play/Pause preparation issues one
+establish a bright single-photo identity, then starts T/2 at the real Play press.
+Release keeps the Pause/Next/hold/Continue functional checks; its schema-2 receipt
+records functional PASS and timing NOT_RUN. The Debug App-timeline twin judges
+the midpoint and Continue onset timing. Play/Pause preparation issues one
 canvas wake, then uses one fallible window snapshot per poll for button identity,
 enabled state, a nonempty frame inside the window and its current value. These are
 snapshot readiness checks, not live hittability queries. An already ready snapshot
@@ -461,16 +461,19 @@ The original 8-second appearance, 2-second readiness and 4-second state windows
 remain independent and fixed. A late snapshot fails, and readback never wakes or
 retaps the controls. The shared `IOSDriver` Settings query path is unchanged.
 Settings return has no known scene-clock origin and cannot start that wait. The setup
-capture is `timing-start.png`; the ordinary paused-frame identity, T+2 hold and
-Continue T±2 checks retain their existing deadlines and criteria. A legal frozen
-fade is still covered by `pause-window`, rather than admitted as a stable photo.
-`tvos-lifecycle-pause` anchors T/2 to a newly confirmed stable public photo. Its
-midpoint setup pools the existing two control/focus allocations, conditional
-playing-state readback and half-cycle under one absolute deadline. Both visible
-and hidden-bar paths poll Play/Pause focus until the anchored T-2 boundary; only
-the hidden receiver gets one wake. One Select must return and change the button
-state within that same deadline before the before-pause capture. It never retries
-Select. The photo-identity, paused hold and Continue T±2 checks remain unchanged.
+capture is `timing-start.png`; paused-frame identity, T+2 hold, same-scene Continue
+and eventual new-photo checks remain. Release captures for
+the midpoint pause and early Continue must return before the earliest fade window
+(T−2 from the actual Continue press); a late action/readback/capture is a red
+`continue_timing/timing_window` test-precondition failure, not a scene-identity
+failure or a timing PASS. A legal frozen fade is still covered by `pause-window`,
+rather than admitted as a stable photo.
+Release `tvos-lifecycle-pause` uses the same functional receipt and precondition
+checks, with T/2 anchored to the actual Continue Select. Control preparation keeps
+the existing focus press cap and state readback, with at most one Select and no
+retry. Debug timing is judged by `tvos-lifecycle-pause-timeline`; Release
+retains remote focus, photo identity, paused hold, same-scene resume and eventual
+new-photo checks without screenshot-clock onset or fade-duration verdicts.
 `pause-window` sets the probe plus `UI_TEST_SERVER_URL`, `UI_TEST_API_KEY`,
 `UI_TEST_RESET_STATE`, `UI_TEST_FORCE_MODE_SELECTION`,
 `UI_TEST_PAUSE_AT_AUTOMATIC_FADE_MIDPOINT=1` and `IMMICHSLIDES_DISABLE_SMART_FILL=1`.
@@ -1262,15 +1265,18 @@ shorter spikes may be missed and unrelated runner activity is included.
 [summary contract](CI_SUMMARY.md). Missing results, builds in a warm log, changed
 Products and failed strict contracts fail the tracer. P2 contract success is
 `needs-human-review`, with overall producer status `unverified`, never visual PASS.
-The iOS pause/Next/Continue suite also reports `needs-human-review` unless its
-existing `pause-next-continue.json` has `suite == "pause-next-continue"` and contains exactly one `first_transition_start`
-with `status: detected` and boolean `official_signed: true`. Pending, unsigned,
-missing or unreadable timing evidence remains review-pending; it does not turn
-an official XCTest pass into a test failure. The runner's visual receipt records
-`UNVERIFIED`, and the tracer reads the timing receipt directly, including older
-cases whose visual receipt said `NOT_REQUIRED`. Official counts and runner exit
-codes stay unchanged, and a nonzero exit still fails. This does not reinterpret
-fade samples, sign pending evidence or provide missing video for human review.
+Current Release iOS/tvOS pause runs require a schema-2 `release-functional`
+`pause-next-continue.json` bound to configuration `Release`, with a boolean
+functional signature and six ordered hash-bound PNG proofs. Missing/invalid
+version, mode, configuration, signature, proofs or PNGs fail the runner with exit 2,
+even when official XCTest counts pass. Functional PASS records timing NOT_RUN.
+The tracer reads functional evidence without promoting it to a timing PASS.
+For retained unversioned iOS histories, the legacy reader still requires exactly
+one `first_transition_start` with `status: detected` and boolean `official_signed: true`;
+pending, unsigned, missing or unreadable historical evidence remains
+`needs-human-review`/`UNVERIFIED`. Signed unversioned tvOS histories remain
+`NOT_REQUIRED`. Historical counts and recorded exit codes are preserved for the
+90-day retention period; no old fade samples are reinterpreted or signed.
 Only a complete observed set with every automated check passing permits a non-failed
 status. Cancellation and unexpected exceptions record failed status, an `interrupted`
 infrastructure entry and every unfinished case as `not-run`. Each runner starts in
@@ -1965,7 +1971,8 @@ New enum meanings and why the previous vocabulary cannot express them:
 | `Next-photo stable confirmation does not match the current raw screenshot` | `visible_scene_capture` | `evidence_capture` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift) |
 | `Next photo did not form a stable new MATCH within ` | `visible_scene_capture` | `scene_identity` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift) |
 | `Release lifecycle content: ` | `visible_scene_capture` | `scene_identity` | Shared Release photo/hold/resume checks in [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift). |
-| `Release lifecycle control: ` | `control_action` | `control_state` | Release Play/Pause readback in [AccessLifecycleTVOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift). |
+| `Release lifecycle timing precondition failed: ` | `continue_timing` | `timing_window` | Release midpoint/early-Continue action or screenshot arrived after the stable-photo coverage window; always red. |
+| `Release lifecycle control: ` | `control_action` | `control_state` | Release Play/Pause preparation/readback in the iOS and tvOS Timing helpers. |
 | `Release lifecycle focus: ` | `control_action` | `focus` | Release remote focus in [AccessLifecycleTVOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift). |
 | `Control-bar calibration must recognize the visible Settings crop.` | `visible_scene_capture` | `evidence_capture` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift); Settings-crop reference unwrap |
 | `Screenshot cannot be used as identity;` | `visible_scene_capture` | `scene_identity` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift) |

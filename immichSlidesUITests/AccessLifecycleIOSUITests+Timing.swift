@@ -6,8 +6,8 @@ import XCTest
 @MainActor
 enum ReleaseLifecycleFunctionalCapture {
     static func exercise(
-        interval: TimeInterval, pause: () throws -> Void, next: () throws -> Void,
-        resume: () throws -> Void, screenshot: () -> Data,
+        interval: TimeInterval, pause: (_ isMidpoint: Bool) throws -> Void, next: () throws -> Void,
+        resume: () throws -> Date, screenshot: () -> Data,
         persist: (Data, String) throws -> Void
     ) throws -> [[String: Any]] {
         var proofs: [[String: Any]] = []
@@ -18,8 +18,15 @@ enum ReleaseLifecycleFunctionalCapture {
                 "png_sha256": SHA256.hash(data: frame.png).map { String(format: "%02x", $0) }.joined()
             ])
         }
-        func capture(_ name: String, expected: String? = nil) throws -> (mark: String, png: Data) {
+        func capture(_ name: String, expected: String? = nil, before deadline: Date? = nil) throws -> (
+            mark: String, png: Data
+        ) {
             let png = screenshot()
+            if let deadline, Date() >= deadline {
+                throw AccessLifecycleContract.AssertionError.message(
+                    "Release lifecycle timing precondition failed: test action or capture missed the stable-photo window; name=\(name)"
+                )
+            }
             let identity = StrictE2EPhotoIdentity.captureIdentity(png: png)
             guard identity.status == .match, let mark = identity.mark,
                 expected.map({ $0 == mark }) ?? true
@@ -67,14 +74,17 @@ enum ReleaseLifecycleFunctionalCapture {
                 "Release lifecycle content: no stable new photo before the hang guard expired")
         }
 
-        try pause()
+        try pause(false)
         let initialIdentity = StrictE2EPhotoIdentity.captureIdentity(png: screenshot())
         try next()
         try record("timing-start", stable(excluding: initialIdentity.mark))
-        try resume()
-        RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(interval / 2))))
-        try pause()
-        let beforePause = try capture("before-pause")
+        let midpointContinueAt = try resume()
+        RunLoop.current.run(until: midpointContinueAt.addingTimeInterval(TestWait.seconds(.product(interval / 2))))
+        try pause(true)
+        let beforePause = try capture(
+            "before-pause",
+            before: midpointContinueAt.addingTimeInterval(
+                interval - AccessLifecycleContract.continueCaptureSlackSeconds))
         try record("before-pause", beforePause)
         try next()
         let afterNext = try stable(excluding: beforePause.mark)
@@ -93,8 +103,12 @@ enum ReleaseLifecycleFunctionalCapture {
             startMark: afterNext.mark, endMark: held.mark,
             holdSeconds: Date().timeIntervalSince(holdStart), intervalSeconds: interval)
         try record("pause-hold-end", held)
-        try resume()
-        try record("continue-early", capture("continue-early", expected: held.mark))
+        let continueAt = try resume()
+        try record(
+            "continue-early",
+            capture(
+                "continue-early", expected: held.mark,
+                before: continueAt.addingTimeInterval(interval - AccessLifecycleContract.continueCaptureSlackSeconds)))
         try record("after-auto-advance", stable(excluding: held.mark))
         return proofs
     }
@@ -390,10 +404,12 @@ extension AccessLifecycleIOSUITests {
         #if !DEBUG
         return try ReleaseLifecycleFunctionalCapture.exercise(
             interval: TimeInterval(intervalSeconds),
-            pause: {
+            pause: { isMidpoint in
                 try self.confirmPlayPauseState(
                     app: app, expected: "play", shouldTapIfNeeded: true,
-                    message: "Must be paused after the midpoint.")
+                    message: isMidpoint
+                        ? "Must be paused after the midpoint."
+                        : "Release lifecycle control: must be paused before establishing the timing anchor.")
                 self.requests.append("playback.pause")
             },
             next: {
@@ -402,10 +418,11 @@ extension AccessLifecycleIOSUITests {
                 self.requests.append("playback.next")
             },
             resume: {
-                _ = try self.pressContinueStartingClock(app: app)
+                let press = try self.pressContinueStartingClock(app: app)
                 XCTAssertTrue(
                     self.waitForPlayPauseState(app: app, expected: "pause", timeout: TestWait.seconds(.product(4))),
                     "Should be playing after Continue.")
+                return press.issued
             },
             screenshot: { app.screenshotForFailureEvidence().pngRepresentation },
             persist: { try self.persistRequiredPNG($0, name: $1) })

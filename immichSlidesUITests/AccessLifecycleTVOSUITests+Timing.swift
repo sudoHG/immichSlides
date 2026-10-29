@@ -465,13 +465,14 @@ extension AccessLifecycleTVOSUITests {
     @MainActor
     private func setReleasePlaybackState(
         app: XCUIApplication, playPauseButton: XCUIElement, expected: String, direction: XCUIRemote.Button
-    ) throws {
+    ) throws -> Date {
         ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
         moveFocus(
             direction, to: playPauseButton, maximumPresses: 3,
             message: "Release lifecycle focus: must reach Play/Pause.")
         let value = String(describing: playPauseButton.value ?? "").lowercased()
         let isPlaying = value.contains("暂停") || value.contains("pause")
+        let issued = Date()
         if isPlaying != (expected == "pause") { FirstFailureRemote.press(.select) }
         XCTAssertTrue(
             waitUntil(timeout: AccessLifecycleTVOSUITestsWaitTiming.stateChangeTimeoutSeconds) {
@@ -481,6 +482,7 @@ extension AccessLifecycleTVOSUITests {
                     : value.contains("播放") || value.contains("play")
             }, "Release lifecycle control: Play/Pause must reach the requested state.")
         record(expected == "play" ? "playback.pause" : "playback.play")
+        return issued
     }
 
     @MainActor
@@ -494,8 +496,8 @@ extension AccessLifecycleTVOSUITests {
         #if !DEBUG
         return try ReleaseLifecycleFunctionalCapture.exercise(
             interval: TimeInterval(intervalSeconds),
-            pause: {
-                try self.setReleasePlaybackState(
+            pause: { _ in
+                _ = try self.setReleasePlaybackState(
                     app: app, playPauseButton: playPauseButton, expected: "play", direction: .right)
             },
             next: {

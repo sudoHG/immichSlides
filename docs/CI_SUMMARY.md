@@ -958,7 +958,10 @@ proofs. Missing/unknown versions, signatures, proofs or mismatched hold/resume
 identities remain unverified. `pause_timing_verdict` returns `NOT_RUN` for the
 explicit functional mode, never `PASS`; the tracer's legacy `p2_verdict` field
 carries the separately validated functional verdict. Debug App timeline receipts
-and old summary/environment-limit readers are unchanged.
+and old summary/environment-limit readers are unchanged. Current Release runner
+invocations explicitly bind the configuration and require valid version-2
+functional evidence on iOS and tvOS; invalid or legacy evidence exits 2 even if
+XCTest passes. Configuration-free historical readers preserve old interpretation.
 
 Retiring a producer identity must also preserve interpretation of its retained
 records. Keep historical selectors in the reader, gated by the night's verified

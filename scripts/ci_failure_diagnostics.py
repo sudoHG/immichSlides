@@ -977,6 +977,7 @@ PREFIX_RULES = (
     ("Next-photo stable confirmation does not match the current raw screenshot", "visible_scene_capture", "evidence_capture"),
     ("Next photo did not form a stable new MATCH within ", "visible_scene_capture", "scene_identity"),
     ("Release lifecycle content: ", "visible_scene_capture", "scene_identity"),
+    ("Release lifecycle timing precondition failed: ", "continue_timing", "timing_window"),
     ("Release lifecycle control: ", "control_action", "control_state"),
     ("Release lifecycle focus: ", "control_action", "focus"),
     ("Control-bar calibration must recognize the visible Settings crop.", "visible_scene_capture", "evidence_capture"),

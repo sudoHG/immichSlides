@@ -114,8 +114,8 @@ class StrictE2ERunnerTests(StrictE2ERunnerTestsCasesConfiguration, StrictE2ERunn
                  "continue-early", "after-auto-advance")
         for suite, device in (("ios-lifecycle-pause", "iphone"), ("ios-lifecycle-pause", "ipad"),
                               ("tvos-lifecycle-pause", "tvos")):
-            for defect in (None, "version", "missing-version", "boolean-version", "mode", "configuration", "timing", "signature",
-                           "device", "missing-proof", "duplicate-proof", "hash", "hold", "resume", "advance"):
+            for defect in (None, "version", "missing-version", "boolean-version", "mode", "missing-mode", "configuration", "missing-configuration", "timing", "signature",
+                           "device", "missing-proof", "missing-png", "duplicate-proof", "hash", "hold", "resume", "advance"):
                 with self.subTest(suite=suite, device=device, defect=defect), tempfile.TemporaryDirectory() as raw:
                     root = Path(raw)
                     png = _rgb_png((60, 100, 180))
@@ -128,26 +128,31 @@ class StrictE2ERunnerTests(StrictE2ERunnerTestsCasesConfiguration, StrictE2ERunn
                                    timing_verdict="NOT_RUN", timeline=proofs)
                     if defect in {"version", "boolean-version"}: receipt["schema_version"] = 3 if defect == "version" else True
                     if defect == "missing-version": del receipt["schema_version"]
+                    if defect in {"missing-mode", "missing-configuration"}: del receipt[defect.removeprefix("missing-")]
                     if defect in {"mode", "configuration", "timing", "signature", "device"}:
                         key = {"timing": "timing_verdict", "signature": "functional_signed"}.get(defect, defect)
                         receipt[key] = {"mode": "legacy", "configuration": "Debug", "timing": "PASS",
                                         "signature": 1, "device": "wrong"}[defect]
                     if defect == "missing-proof": proofs.pop()
+                    if defect == "missing-png": (root / "continue-early.png").unlink()
                     if defect == "duplicate-proof": proofs.append(copy.deepcopy(proofs[-1]))
                     if defect == "hash": proofs[-1]["png_sha256"] = "0" * 64
                     if defect in {"hold", "resume", "advance"}:
                         proofs[{"hold": 3, "resume": 4, "advance": 5}[defect]]["mark"] = "A1" if defect != "advance" else "A2"
                     (root / "pause-next-continue.json").write_text(json.dumps(receipt))
-                    self.assertEqual("NOT_RUN" if defect not in {"version", "missing-version", "boolean-version", "mode", "configuration"}
+                    self.assertEqual("NOT_RUN" if defect not in {"version", "missing-version", "boolean-version", "mode", "missing-mode", "configuration", "missing-configuration"}
                                      else "UNVERIFIED", pause_timing_verdict(root))
                     self.assertEqual("PASS" if defect is None else "UNVERIFIED", pause_visual_verdict(root, suite))
-                    if defect is not None and (suite == "tvos-lifecycle-pause"
-                                              or pause_timing_verdict(root) == "NOT_RUN"):
-                        with self.assertRaisesRegex(CommandError, "^Release lifecycle: missing or invalid functional evidence$"):
-                            require_visual_identity(root, suite)
+                    if defect is not None:
+                        with self.assertRaisesRegex(CommandError, "^Release lifecycle: missing or invalid functional evidence$") as failure:
+                            require_visual_identity(root, suite, configuration="Release")
+                        self.assertEqual(2, failure.exception.code)
+                        failed = json.loads((root / "visual-identity-runner.json").read_text())
+                        self.assertEqual("FAIL", failed["verdict"])
+                        self.assertEqual("Release lifecycle: missing or invalid functional evidence", failed["error"])
                         continue
-                    visual = require_visual_identity(root, suite)
-                    self.assertEqual("PASS" if defect is None else "UNVERIFIED", visual["verdict"])
+                    visual = require_visual_identity(root, suite, configuration="Release")
+                    self.assertEqual("PASS", visual["verdict"])
                     if defect is None:
                         self.assertEqual("NOT_RUN", visual["timing_verdict"])
         with tempfile.TemporaryDirectory() as raw:
@@ -157,6 +162,10 @@ class StrictE2ERunnerTests(StrictE2ERunnerTestsCasesConfiguration, StrictE2ERunn
                     {"name": "first_transition_start", "status": "detected", "official_signed": True}]}))
             self.assertEqual("PASS", pause_timing_verdict(root))
             self.assertEqual("NOT_REQUIRED", require_visual_identity(root, "tvos-lifecycle-pause")["verdict"])
+            self.assertEqual("NOT_REQUIRED", json.loads((root / "visual-identity-runner.json").read_text())["verdict"])
+            for suite in ("ios-lifecycle-pause", "tvos-lifecycle-pause"):
+                with self.assertRaisesRegex(CommandError, "^Release lifecycle: missing or invalid functional evidence$"):
+                    require_visual_identity(root, suite, configuration="Release")
 
     def test_app_timeline_signature_requires_bound_events_clock_and_every_content_proof(self):
         import hashlib

@@ -842,8 +842,11 @@ of the screenshot timing algorithm below. Release `ios-lifecycle-pause` and
 `tvos-lifecycle-pause` retain the complete Pause/Next/hold/Continue flow, public
 photo identity, non-black stable frames and no flash-back during new-photo
 confirmation. They use a 60-second hang guard for eventual advancement, without
-judging screenshot onset, midpoint delivery before T−2, capture spans/gaps or
-onset+4. Their version 2 `release-functional` receipt explicitly records timing
+judging screenshot onset, capture spans/gaps or onset+4. Midpoint and early-Continue
+captures must still finish before the earliest fade window (T−2 from the real
+Continue press) to cover the stable-photo precondition; test-side latency past
+that boundary fails red as `continue_timing/timing_window`, never `scene_identity`.
+Their version 2 `release-functional` receipt explicitly records timing
 as `NOT_RUN`; a functional pass is never a timing pass. Debug executions of the
 original screenshot methods and their legacy receipt interpretation are unchanged.
 
@@ -866,7 +869,7 @@ membership and the separate no-flash-back suites. Pause holds still span T+2.
 | iOS/tvOS first-half screenshot deadline and early-change verdict; tvOS Up wake not before T−2 | `judgeMidpointPause` plus `judge`: premature fade remains a failure; remote focus/content checks remain functional |
 | iPhone/tvOS T±2 screenshot onset, sustained dimming, recovery veto and tvOS late-rescue span/continuity | `judge`: App Continue → actual render fade onset in T±2 |
 | iPad conservative onset interval, ≤1.001-second captures, ≤0.101-second gaps and original-photo luma evidence for onset | iPad `judge` with the same App onset contract; hash-bound content remains independent |
-| New-photo confirmation by onset+4 and T+6 recording boundary | `judge`: new stable scene by onset+4; Release still requires an identifiable different photo with its existing 0.8-second/1-second stable confirmation |
+| New-photo confirmation by onset+4 and T+6 recording boundary | `judge`: new stable scene by onset+4; Release requires an identifiable different photo observed across 0.8 seconds (1 second on iPad), with every intervening sample matching and non-black. Sampling gaps do not reset this functional confirmation; it makes no continuous timing claim. |
 | Auto-hide seconds/hidden stability in narrow first-wake and combined lifecycle helpers | No equivalent timeline case: retained |
 | Background first-segment screenshot deadline and combined lifecycle timing/progress judges | No equivalent timeline case: retained; combined methods are outside the nightly matrix |
 

@@ -1166,7 +1166,8 @@ def app_timeline_verdict(evidence_dir: Path) -> str:
         return "UNVERIFIED"
 
 
-def require_visual_identity(evidence_dir: Path, suite: str, *, fixture_set: str = "a") -> dict[str, object]:
+def require_visual_identity(evidence_dir: Path, suite: str, *, fixture_set: str = "a",
+                            configuration: str | None = None) -> dict[str, object]:
     if suite in TIMELINE_LIFECYCLE_SUITES:
         payload = {"verdict": app_timeline_verdict(evidence_dir), "suite": suite}
         if payload["verdict"] != "PASS":
@@ -1177,14 +1178,15 @@ def require_visual_identity(evidence_dir: Path, suite: str, *, fixture_set: str 
         return payload
     if suite in {IOS_LIFECYCLE_PAUSE_SUITE, "tvos-lifecycle-pause"}:
         verdict = pause_visual_verdict(evidence_dir, suite)
-        # Legacy tvOS runs relied on official XCTest assertions and had no outer timing review.
-        if verdict == "NOT_REQUIRED":
-            return {"verdict": verdict, "suite": suite}
         payload = {"verdict": verdict, "suite": suite, "timing_verdict": pause_timing_verdict(evidence_dir)}
-        if verdict == "UNVERIFIED" and (suite == "tvos-lifecycle-pause" or payload["timing_verdict"] == "NOT_RUN"):
+        # Current Release runs require v2; callers reading retained histories may omit configuration.
+        invalid_release = configuration == "Release" and (verdict != "PASS" or payload["timing_verdict"] != "NOT_RUN")
+        if invalid_release or (verdict == "UNVERIFIED" and (
+                suite == "tvos-lifecycle-pause" or payload["timing_verdict"] == "NOT_RUN")):
             payload["verdict"] = "FAIL"
+            payload["error"] = "Release lifecycle: missing or invalid functional evidence"
             _write_visual_runner_report(evidence_dir, payload)
-            raise CommandError("Release lifecycle: missing or invalid functional evidence", code=2)
+            raise CommandError(payload["error"], code=2)
         _write_visual_runner_report(evidence_dir, payload)
         return payload
     if suite in OUT_OF_ORDER_VISUAL_SUITES:
