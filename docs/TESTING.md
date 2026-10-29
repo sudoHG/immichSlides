@@ -1169,7 +1169,12 @@ that section also defines its snapshot geometry, baseline capture diagnostics an
 autoplay limitation.
 
 Rotation captures first use the existing control-readiness check, with no extra
-canvas tap in the steady state. If that check fails, the capture refreshes the bar
+canvas tap in the steady state. One window snapshot must contain all three
+enabled control buttons with non-empty frames inside the window, followed by one
+live play/pause hittability check. Resolving each button live repeats native
+accessibility work and can outlast the bar's auto-hide window; Next and Settings
+retain their snapshot checks rather than adding two more live resolutions.
+If that check fails, the capture refreshes the bar
 once and checks readiness once more, starting the second check after the wake
 returns with a freshly reset auto-hide timer. This does not guarantee that the
 timer cannot expire during a slow native interaction. Both checks and the refresh
@@ -1183,8 +1188,10 @@ without a UI query. Every deduction appears in `deductedTapSeconds` and
 3-second readiness checks retain their original deadlines. Playback-rotation logs still
 measure all elapsed time, including every tap, against the 30-second natural-switch
 bound; the original start timestamp and bound are unchanged.
-Every saved candidate still requires all three controls to be
-hittable, the requested orientation and public photo identity, and the stable
+Preparation diagnostics report existing snapshot time, native wake durations,
+live checks (`identifier:seconds:readback`) and total time without extra UI reads.
+Every saved candidate still requires all three controls' snapshot readiness,
+the live play/pause anchor, the requested orientation and public photo identity, and the stable
 frame pair. Other stable-frame callers report no tap deductions and retain their deadlines.
 Failures retain the `visible_scene_capture` / `timing_window` or rotation-capture
 classification; this does not introduce yellow eligibility.
