@@ -1763,7 +1763,6 @@ struct StableFrame {
     }
 
     static func showsMultiPhotoFixture(_ png: Data) -> Bool {
-        guard showsFixturePhoto(png) else { return false }
         let identity = StrictE2EPhotoIdentity.captureIdentity(png: png)
         return identity.status == .match && (identity.mark?.split(separator: "+").count ?? 0) >= 2
     }
@@ -1870,17 +1869,33 @@ extension PlaybackDriver {
             "\(maxNextPresses) next presses never reached \(marks.sorted()); last was \(current ?? "unidentified").")
     }
 
-    // Identify multi-photo screens by the public pattern; a missing probe must not veto a visible two-photo screen.
+    // Orientation-specific layout evidence needs a native plan; other flows judge only the public pixels.
     func advanceToMultiPhotoScene(in orientation: StepOrientation = .notApplicable, maxNextPresses: Int = 6) throws {
         var observations: [[String: Any]] = []
+        var acceptedManifest: String?
         for press in 0...maxNextPresses {
             if press > 0 { next() }
             if Wait.held(
                 timeout: Timing.multiPhotoWait, hold: Timing.multiPhotoHold,
                 {
-                    isShowingMultiPhotoScene(in: orientation)
+                    if orientation != .notApplicable {
+                        let manifests = snapshotNodes { $0.identifier == "slideshow.smartfill.currentManifest.flag" }
+                        guard manifests.count == 1,
+                            let surfaceKey = manifestField("surfaceKey", in: manifests[0].label),
+                            surfaceKey.split(separator: "-").dropFirst().first.map(String.init) == orientation.rawValue,
+                            // Reflow rewrites surfaceKey even when it retains an unrepresentable old recipe.
+                            manifestField("surfaceReflow", in: manifests[0].label) == nil
+                        else { return false }
+                        acceptedManifest = manifests[0].label
+                    }
+                    return isShowingMultiPhotoScene(in: orientation)
                 })
             {
+                if let acceptedManifest {
+                    print(
+                        "Multi-photo native plan: orientation=\(orientation.rawValue), nextPresses=\(press), surfaceKey=\(manifestField("surfaceKey", in: acceptedManifest) ?? "missing"), layoutVariant=\(manifestField("layoutVariant", in: acceptedManifest) ?? "missing"), surfaceReflow=none"
+                    )
+                }
                 return
             }
             let current = snapshotNodes { $0.identifier == "slideshow.smartfill.currentManifest.flag" }
@@ -1889,6 +1904,8 @@ extension PlaybackDriver {
                 "next_presses": press,
                 "current_probe_count": current.count,
                 "current_scene_types": current.compactMap { manifestField("sceneType", in: $0.label) },
+                "current_surface_keys": current.compactMap { manifestField("surfaceKey", in: $0.label) },
+                "current_surface_reflows": current.compactMap { manifestField("surfaceReflow", in: $0.label) },
                 "layer_probe_count": layers.count,
                 "layer_scene_types": layers.compactMap { manifestField("sceneType", in: $0.label) }
             ])

@@ -414,17 +414,20 @@ A legal pause can freeze a transition indefinitely; the later stable identity
 check cannot wait for that paused transition to finish. The tap gate adds no
 snapshot, reveal or control-tap retry, and all post-Pause checks remain.
 
-Both `runManualLifecycleContract` variants (SinglePhoto and SmartFill) explicitly
-launch with `UI_TEST_PLAYBACK_INTERVAL_SECONDS=60` so automatic advance does not race their
-manual Pause/Next/Previous/Play sequence on slow hosts. The iOS Debug initializer
-seeds the saved product interval after state reset through `PlatformCompat`,
+Both `runManualLifecycleContract` variants (SinglePhoto and SmartFill) and P2-05
+(`p2-rotation`) explicitly launch with `UI_TEST_PLAYBACK_INTERVAL_SECONDS=60`
+so automatic advance does not race their
+manual navigation or rotation sequence on slow hosts. The iOS and tvOS Debug initializers
+seed the saved product interval after state reset through `PlatformCompat`,
 accepting whole seconds from 5 through 60; missing or invalid input leaves the
-setting unchanged. Release never reads the override, and tvOS does not apply it.
+setting unchanged. Release never reads the override.
 The three person-membership launches (`testFilterPersonNormalMatch`,
 `testFilterPersonConflictNormal`, and `testFilterPersonNoFaces`) also explicitly
-use 60 seconds; their capture scope and XCTest-mode side effects are documented
-in [the strict runner contract](CI_STRICT_RUNNER.md). Other launch callers,
-including the normal five-second autoplay and pause-frame contracts, retain
+use 60 seconds. The single `tvos-person` launch also explicitly uses 60 seconds
+for its membership captures; no other tvOS launch opts in. These membership
+launches do not judge the autoplay interval. Their capture scope and XCTest-mode
+side effects are documented in [the strict runner contract](CI_STRICT_RUNNER.md).
+Other callers, including `tvos-flow`, normal five-second autoplay and pause-frame contracts, retain
 their existing intervals. The motion, frozen progress, manual
 navigation and current-scene resume assertions and all product windows stay unchanged.
 For these two variants the 60-second interval is the primary protection;
@@ -1176,6 +1179,24 @@ unchanged. The combined runner uses Debug, where the measured-progress probes ex
 
 `p2-ipad-layout` checks the multi-photo identity of each frame used by its stable
 pair, instead of taking a separate scene-check screenshot before the saved frame.
+Both multi-photo search and stable capture use `captureIdentity`'s MATCH with at
+least two slot marks. Do not first require a whole-screen single-photo verdict:
+the same valid composite can be TRANSITION or UNRECOGNIZABLE in that classifier
+as the layout and motion change its aggregate colors, while its individual slots
+remain identifiable. The composite reader and its thresholds remain unchanged.
+This shared predicate also changes `p2-exif`'s multi-photo search and
+`exif-smartfill-multi` capture, and `p2-reduce-motion`'s multi-photo search, on iOS
+and tvOS. These callers do not require native planning evidence; Reduce Motion's
+later stable segment capture still uses `showsFixturePhoto` independently.
+For each orientation, scene search also requires the App's current manifest to
+report that planning orientation without a `surfaceReflow` projection. Rotation
+can rewrite the projected surface key while retaining an unrepresentable recipe,
+so the surface key alone is insufficient. Normal Next navigation stays within
+the existing six-press budget per orientation and reaches a fresh orientation-native plan. The
+portrait evidence therefore shows a portrait-native layout and can contain
+different photos; same-scene rotation remains covered by `p2-rotation`, which does
+not require a multi-photo scene. Screenshot
+names, ordering and P2 review bindings are unchanged and still need signed review.
 Control readiness, orientation, the 10-second observation allowance, the 0.5-second pair spacing
 and the pixel-difference limit remain unchanged. Thrown failures are recorded
 before app termination. Stable-frame diagnostics separate control preparation,
@@ -1185,7 +1206,12 @@ that section also defines its snapshot geometry, baseline capture diagnostics an
 autoplay limitation.
 
 Rotation captures first use the existing control-readiness check, with no extra
-canvas tap in the steady state. If that check fails, the capture refreshes the bar
+canvas tap in the steady state. One window snapshot must contain all three
+enabled control buttons with non-empty frames inside the window, followed by one
+live play/pause hittability check. Resolving each button live repeats native
+accessibility work and can outlast the bar's auto-hide window; Next and Settings
+retain their snapshot checks rather than adding two more live resolutions.
+If that check fails, the capture refreshes the bar
 once and checks readiness once more, starting the second check after the wake
 returns with a freshly reset auto-hide timer. This does not guarantee that the
 timer cannot expire during a slow native interaction. Both checks and the refresh
@@ -1196,11 +1222,22 @@ allowance; queries, polling, screenshot capture and pixel analysis remain charge
 The driver reports its measured wakes directly, independently of receipt enablement,
 without a UI query. Every deduction appears in `deductedTapSeconds` and
 `totalDeductedTapSeconds` in capture logs and failure details. The inner driver's
-3-second readiness checks retain their original deadlines. Playback-rotation logs still
-measure all elapsed time, including every tap, against the 30-second natural-switch
-bound; the original start timestamp and bound are unchanged.
-Every saved candidate still requires all three controls to be
-hittable, the requested orientation and public photo identity, and the stable
+3-second readiness checks retain their original deadlines. Playback-rotation logs
+measure every elapsed second from the original Next request against the configured
+natural-switch isolation interval. Debug P2-05 explicitly seeds 60 seconds through
+the existing `UI_TEST_PLAYBACK_INTERVAL_SECONDS` input, then uses the real Settings
+page to select SmartFill without overwriting that interval with the slider's
+30-second maximum. Before returning from that same Settings visit, it reads
+`settings.playback.interval.value` through `PlaybackIntervalSliderIOS.readSeconds(in:)`
+and requires 60 seconds. This readback precedes the Next request and adds no wait
+beyond the existing read helper. The new target after Next therefore uses 60 seconds. Release
+ignores the Debug input and retains the real 30-second slider setup and bound.
+This is a rotation-attribution arrangement, not a product response deadline or a
+longer wait. Control, orientation and stable-frame waits remain unchanged.
+Preparation diagnostics report existing snapshot time, native wake durations,
+live checks (`identifier:seconds:readback`) and total time without extra UI reads.
+Every saved candidate still requires all three controls' snapshot readiness,
+the live play/pause anchor, the requested orientation and public photo identity, and the stable
 frame pair. Other stable-frame callers report no tap deductions and retain their deadlines.
 Failures retain the `visible_scene_capture` / `timing_window` or rotation-capture
 classification; this does not introduce yellow eligibility.
@@ -1211,8 +1248,8 @@ returned helper-wake/refresh tap durations. The shared stable-frame callers are:
 | Caller | Old stable deadline | New stable deadline | Product boundary |
 | --- | --- | --- | --- |
 | iPad multi-photo layout: landscape and portrait `captureStable` | `t0+10` | `t0+10+R` | Orientation setup and multi-photo selection precede capture. No 30-second outer bound; only the 600 s warm / 1200 s cold invocation caps apply. |
-| Playback rotation: initial portrait `captureStable` | `t0+10` | `t0+10+R` | The whole sequence remains strictly below 30 seconds from the original Next request. |
-| Playback rotation: landscape and final portrait `captureStable` | `tr+10` | `tr+10+R` | Window settling and stable observation still share 10 active seconds; every wall-clock second also consumes the unchanged 30-second bound. |
+| Playback rotation: initial portrait `captureStable` | `t0+10` | `t0+10+R` | The whole sequence remains strictly below the isolation interval from the original Next request: 60 seconds in Debug, 30 in Release. |
+| Playback rotation: landscape and final portrait `captureStable` | `tr+10` | `tr+10+R` | Window settling and stable observation still share 10 active seconds; every wall-clock second also consumes the isolation interval. |
 | Orientation self-check: direct `StableFrame.wait` | `tr+10` | `tr+10` | No deduction callback. |
 | ReduceMotion segments: direct `StableFrame.wait` | `t0+10` | `t0+10` | No deduction callback; recording holds are unchanged. |
 
@@ -1224,7 +1261,7 @@ refresh and second driver wake. The inner 3-second readiness check is not extend
 long taps can therefore leave readiness false while extending the outer capture
 deadline. Only non-tap work bounds the iteration count, so the original wall-clock
 deadline can be exceeded across several iterations rather than just one admitted
-iteration. No cap is added. The playback-rotation 30-second bound still rejects
+iteration. No cap is added. The playback-rotation isolation bound still rejects
 an overlong completed sequence, but `p2-ipad-layout` has no such outer bound.
 In the extreme, its capture can reach the 600 s warm / 1200 s cold invocation cap
 and lose the `first_failure` receipt; an invocation timeout or missing receipt

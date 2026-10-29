@@ -873,8 +873,9 @@ remaining observation allowance and `wait_elapsed_seconds` measures the restarte
 segment. The Settings outcome wait uses its original entry allowance minus all
 spent non-tap work, excluding its wake and Settings tap. Capture logs and failure
 details retain every deduction and their total; the single-action receipt field
-continues to describe only the latest action. The playback-rotation 30-second bound
-still includes all wall time. The [Settings caller formulas](TESTING.md#3-assertions)
+continues to describe only the latest action. The playback-rotation isolation bound
+(60 seconds in Debug, 30 in Release) still includes all wall time.
+The [Settings caller formulas](TESTING.md#3-assertions)
 and [rotation caller formulas](TESTING.md#running-controlled-integration-and-end-to-end-tests)
 are authoritative.
 
@@ -1340,7 +1341,8 @@ surface and positive expired-budget proof. Allowlists, prefix mappings and polic
 versions are unchanged; an original zero-budget receipt gains no eligibility.
 Baseline and post-Next scene-identity failures remain red. This applies to every
 Next caller, including p2-rotation (`testRotationDuringPlaybackIOS`); its rotation
-30-second bound, rotation captures and scene-change assertions also stay red.
+isolation bound (60 seconds in Debug, 30 in Release), rotation captures and
+scene-change assertions also stay red.
 
 IOSDriver Settings preserves the entry remainder after its measured native wake
 and Settings tap. A failure formerly reached with zero remaining outcome budget
@@ -1354,9 +1356,9 @@ exhausted preparation as `settings_navigation/hidden_controls`: returning that
 wake time can admit the Settings tap, followed by an expired allowlisted
 `settings_navigation/navigation` wait at `query-element`. Failures that still stop
 in preparation as `settings_navigation/hidden_controls` remain red, as do
-unknown/unrecognizable surfaces and all rotation/layout-capture or 30-second
-rotation-bound failures. Prefixes, markers, allowlists and policy versions do not
-change. Restarted waits retain only their non-tap remainder, never a fresh full
+unknown/unrecognizable surfaces and all rotation/layout-capture or rotation-isolation
+bound failures (60 seconds in Debug, 30 in Release). Prefixes, markers, allowlists
+and policy versions do not change. Restarted waits retain only their non-tap remainder, never a fresh full
 allowance. The coordinator accepted both availability-wait paths under Hogan's
 pure-availability-wait policy, as with #593, #596 and #607.
 
@@ -1368,9 +1370,10 @@ the first driver wake, explicit refresh and second driver wake. The inner driver
 3 s readiness deadline is not extended, so long taps can keep readiness false
 while extending the outer capture deadline. Only non-tap work bounds the number of
 iterations; unlike the old single admitted-iteration overrun, several iterations
-can overrun the original wall-clock deadline. The unchanged playback-rotation
-30-second product bound still includes that time and can independently fail.
-`p2-ipad-layout` has no such 30-second outer bound, only the 600 s warm / 1200 s cold
+can overrun the original wall-clock deadline. The playback-rotation isolation
+bound (60 seconds in Debug, 30 in Release) still includes that time and can
+independently fail.
+`p2-ipad-layout` has no such isolation bound, only the 600 s warm / 1200 s cold
 invocation caps. In the extreme, capture can run to the invocation cap and lose its
 `first_failure` receipt; that timeout or missing receipt stays red. No cap is added.
 
