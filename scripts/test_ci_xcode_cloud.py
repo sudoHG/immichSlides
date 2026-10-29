@@ -1492,7 +1492,14 @@ class GroupProducerTests(unittest.TestCase):
 
     def test_github_capacity_or_winning_forecast_skips_cloud_inventory_and_reconciliation(self):
         import ci_xcode_cloud_group_route as router
+        import ci_xcode_cloud_schedule as schedule
         self.registry["routing_enabled"] = True
+        # The 1120-second case relies on the 120-second margin, which month_policy drops near a month's end.
+        mid_month = datetime(2026, 10, 15, 12, tzinfo=timezone.utc)
+        mid_month_policy = patch.object(router, "month_policy",
+            side_effect=lambda _now, anchor, **kwargs: schedule.month_policy(mid_month, anchor, **kwargs))
+        mid_month_policy.start()
+        self.addCleanup(mid_month_policy.stop)
         api = Mock()
         api.pages.return_value = [self.pointer]
         cases = ((7200, 1, False, "github-capacity-or-queue-uncertain"),
