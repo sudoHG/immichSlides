@@ -297,7 +297,7 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
         }
 
         let input = try requireStrictE2EInput()
-        let app = try launchStrictE2EApp(recordSceneSequence: true)
+        let app = try launchStrictE2EApp(recordSceneSequence: true, playbackIntervalSeconds: 60)
         defer { app.terminateForFailureEvidence() }
 
         try StrictE2EVisualEvidence.writeRequiredJSON(

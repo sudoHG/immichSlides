@@ -311,6 +311,18 @@ the complete frozen manifest before judging normal, conflict-normal and no-faces
 frames against that fixture's glyphs and membership. The runner also requires the
 manifest fixture to equal its requested fixture. Missing or invalid manifests
 fail closed. Simulator Vision soloOnly results remain `UNVERIFIED`.
+
+The single tvOS person-rules launch explicitly sets
+`UI_TEST_PLAYBACK_INTERVAL_SECONDS=60`. The tvOS Debug initializer mirrors iOS:
+after optional state reset, it seeds the saved interval through the existing
+`PlatformCompat` parser (whole seconds from 5 through 60). This membership suite
+does not judge autoplay timing. Slow focus preparation and Pause delivery can
+otherwise consume the five-second scene and freeze an automatic transition.
+Stable-frame proof, the single Pause, capture deadlines and membership checks
+remain unchanged. Release ignores the hook. Shared launch defaults and every
+other tvOS launch, including the real autoplay checks in `tvos-flow`, keep their
+existing intervals.
+
 Shared scene-reader failures retain their original diagnostic prefix and append
 the screenshot basename, slot index and axis when known. Segmentation failures
 identify the rejected axes; an unresolved partition reports no guessed slot index.
@@ -344,7 +356,7 @@ as the stable history anchor. The single Pause, four-second pause readback,
 history-count precondition and capture-time pixel/manifest proof remain unchanged.
 
 `UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE=1` enables the Debug manifest probes.
-Probe-only launches are `album-empty`, `journey-b`, `tvos-flow`, `tvos-person`, `ios-lifecycle-first-wake`,
+Probe-only launches are `album-empty`, `journey-b`, `tvos-flow`, `ios-lifecycle-first-wake`,
 and `AccessLifecycleIOSUITests.prepareLaunch`, including its cold relaunches and
 `run_access_lifecycle_ios.py`'s `testAccessProtectionSettingsAndLifecycle`.
 Only iOS `album-empty` sets the real playback interval to 30 seconds through `IOSDriver`
@@ -538,12 +550,14 @@ Other probe-key launches are the configured SmartFill launch helpers in
 plus the three `filter-person` membership launches (`normal`, `conflict-normal`,
 and `nofaces`).
 Their additional `UI_TEST_*` keys enable XCTest mode.
-For Debug `filter-person`, adding `UI_TEST_PLAYBACK_INTERVAL_SECONDS=60` enables
+For Debug `filter-person` and `tvos-person`, adding `UI_TEST_PLAYBACK_INTERVAL_SECONDS=60` enables
 XCTest mode because that key is not exempt in `PlatformCompat.isRunningXCTest`.
 The API key is written to and readable from the UserDefaults XCTest fallback,
 and the Info.plist debug server is skipped. These launches are no longer
 probe-only and no longer exercise the Keychain-only path. That path remains
 covered by `album-empty` (iPhone and iPad, fixtures A and B) and `journey-a`.
+On tvOS, `tvos-flow` and `tvos-n1-cold` retain their original launch inputs and
+Keychain-only path; neither opts into the interval hook.
 The `late-image` case also combines the scene probe with
 `UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT`. That hint key enables XCTest mode: the
 API key can be restored from the UserDefaults XCTest fallback after cold launch,
