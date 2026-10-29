@@ -409,15 +409,18 @@ struct IOSDriver: PlaybackDriver {
             || app.buttons["settings.cache.clearDisk.button"].exists
     }
 
-    // For orientation steady-state evidence: wake the control bar if it is hidden, then require play / next /
-    // settings to all be tappable.
+    // For orientation evidence: require all control frames/enabled states and one live play/pause anchor.
     func revealUsableControls(recordWake: ((TimeInterval) -> Void)? = nil) -> Bool {
+        let startedAt = ProcessInfo.processInfo.systemUptime
         let deadline = Date().addingTimeInterval(UITestSupportWaitTiming.shortInteractionTimeoutSeconds)
         var action = ControlAction()
         let prepared = prepareControl(
             "slideshow.control.playPause.button", until: deadline, action: &action,
             alsoRequiring: ["slideshow.control.next.button", "slideshow.control.settings.button"])
         action.timing.revealDurationsSeconds.forEach { recordWake?($0) }
+        print(
+            "Usable controls preparation: prepared=\(prepared != nil), snapshotSeconds=\(action.timing.snapshotSeconds), wakeDurationsSeconds=\(action.timing.revealDurationsSeconds), hittabilityChecks=\(action.hittabilityChecks), totalSeconds=\(ProcessInfo.processInfo.systemUptime - startedAt)"
+        )
         return prepared != nil
     }
 
@@ -434,6 +437,7 @@ struct IOSDriver: PlaybackDriver {
         var baselineCapturedAt: Date?
         var issuedAt: TimeInterval?
         var returnedAt: TimeInterval?
+        var hittabilityChecks: [String] = []
 
         mutating func observe(app: XCUIApplication, identifier: String) -> SlideshowControlBarButtonObservation? {
             timing.observe(app: app, identifier: identifier)
@@ -533,16 +537,24 @@ struct IOSDriver: PlaybackDriver {
                         action.preparedAt = ProcessInfo.processInfo.systemUptime
                         return observation
                     }
-                    // Snapshot attributes are fallible; XCTest exposes hittability only on the live button.
-                    action.isHittable = ([identifier] + additionalIdentifiers).allSatisfy { requiredIdentifier in
+                    let hasReadySnapshots = ([identifier] + additionalIdentifiers).allSatisfy { requiredIdentifier in
                         guard Date() < deadline, let button = observation.snapshots[requiredIdentifier],
                             button.elementType == .button, button.isEnabled, !button.frame.isEmpty,
                             observation.windowFrame.contains(button.frame)
                         else { return false }
-                        return observation.windowElement.buttons[requiredIdentifier].wait(
+                        return true
+                    }
+                    action.isHittable = false
+                    if hasReadySnapshots {
+                        // Resolve one live anchor; repeated resolutions can outlast the bar's auto-hide window.
+                        let startedAt = ProcessInfo.processInfo.systemUptime
+                        let isHittable = observation.windowElement.buttons[identifier].wait(
                             for: \.isHittable, toEqual: true,
                             timeout: min(
                                 UITestSupportWaitTiming.identityPollSeconds, max(.zero, deadline.timeIntervalSinceNow)))
+                        action.hittabilityChecks.append(
+                            "\(identifier):\(ProcessInfo.processInfo.systemUptime - startedAt):\(isHittable)")
+                        action.isHittable = isHittable
                     }
                     if action.isHittable == true, Date() < deadline {
                         action.preparedTarget = observation.diagnostic
