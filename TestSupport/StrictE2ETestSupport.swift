@@ -127,12 +127,16 @@ extension XCTestCase {
     }
 
     @MainActor
-    func launchStrictE2EApp(recordSceneSequence: Bool = false, disablePlaybackEntryHint: Bool = false) throws
+    func launchStrictE2EApp(
+        recordSceneSequence: Bool = false, disablePlaybackEntryHint: Bool = false,
+        playbackIntervalSeconds: Int? = nil
+    ) throws
         -> XCUIApplication
     {
         let app = XCUIApplication()
         try prepareStrictE2ELaunch(
-            app, recordSceneSequence: recordSceneSequence, disablePlaybackEntryHint: disablePlaybackEntryHint)
+            app, recordSceneSequence: recordSceneSequence, disablePlaybackEntryHint: disablePlaybackEntryHint,
+            playbackIntervalSeconds: playbackIntervalSeconds)
         FirstFailureContext.mark("launch-app", element: "app-window")
         FirstFailureContext.action("launch") { app.launch() }
         return app
@@ -158,7 +162,8 @@ extension XCTestCase {
 
     @MainActor
     private func prepareStrictE2ELaunch(
-        _ app: XCUIApplication, recordSceneSequence: Bool = false, disablePlaybackEntryHint: Bool = false
+        _ app: XCUIApplication, recordSceneSequence: Bool = false, disablePlaybackEntryHint: Bool = false,
+        playbackIntervalSeconds: Int? = nil
     ) throws {
         app.launchEnvironment = [:]
         if recordSceneSequence {
@@ -167,6 +172,9 @@ extension XCTestCase {
         }
         if disablePlaybackEntryHint {
             app.launchEnvironment["UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT"] = "1"
+        }
+        if let playbackIntervalSeconds {
+            app.launchEnvironment["UI_TEST_PLAYBACK_INTERVAL_SECONDS"] = String(playbackIntervalSeconds)
         }
 
         let audit = try JSONSerialization.data(

@@ -466,6 +466,8 @@ class StrictE2ERunnerTestsCasesConfiguration:
                 expected = [] if suite == "ios-lifecycle-settings" else ["UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE"]
                 if suite == "late-image":
                     expected.append("UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT")
+                if suite == "filter-person":
+                    expected.append("UI_TEST_PLAYBACK_INTERVAL_SECONDS")
                 self.assertEqual(audit["launch_environment_keys"], sorted(expected))
 
 
