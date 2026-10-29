@@ -1279,6 +1279,8 @@ PREFIX_RULES = (
     ("The playback index probe is empty, so autoplay and retained-history cannot be proven.", "history_navigation", "probe_readback"),
     ("Failed to get matching snapshot", "unknown", "snapshot_query"),
     ("Failed to determine hittability", "unknown", "snapshot_query"),
+    ("Failed to terminate com.331works.immichSlides:", "unknown", "process_lifetime"),
+    ("Application 'com.331works.immichSlides' does not have a process ID", "unknown", "process_lifetime"),
 )
 
 

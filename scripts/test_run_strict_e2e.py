@@ -2421,7 +2421,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
         self.assertIn('failureMessage: "iPad new photo must be stably identifiable within 4 s of transition start"', timing)
 
     def test_reviewed_prefixes_map_private_values_and_unmatched_messages_stay_unknown(self):
-        from ci_failure_diagnostics import classify_messages, PREFIX_RULES, unknown_diagnostics
+        from ci_failure_diagnostics import classify_messages, environment_timing, PREFIX_RULES, unknown_diagnostics
         for prefix, phase, kind in PREFIX_RULES:
             with self.subTest(prefix=prefix):
                 expected = {"failure_phase": phase, "failure_class": kind}
@@ -2445,6 +2445,29 @@ class FailureDiagnosticsTests(unittest.TestCase):
             classify_messages(['failed - message("System pause analog must not rebuild the process")']),
             {"failure_phase": "background_return", "failure_class": "process_lifetime"},
         )
+        lifecycle_messages = (
+            "Failed to terminate com.331works.immichSlides:12380: Failed to terminate com.331works.immichSlides:0",
+            "Application 'com.331works.immichSlides' does not have a process ID",
+        )
+        for message in lifecycle_messages:
+            with self.subTest(lifecycle=message):
+                diagnostic = classify_messages([message])
+                self.assertEqual({"failure_phase": "unknown", "failure_class": "process_lifetime"}, diagnostic)
+                failure = dict(source="xctest", app="running-foreground", scene_status="MATCH", surface="playback",
+                    control_bar="hidden", step="query-element", element="slideshow.control.playPause.button",
+                    wait_elapsed_seconds=60, deadline_seconds=5)
+                for version in (1, 2, 3, 4):
+                    self.assertFalse(environment_timing(failure, diagnostic["failure_phase"],
+                        diagnostic["failure_class"], policy_version=version))
+                self.assertEqual(classify_messages([message, "Failed to get matching snapshot"]), unknown_diagnostics())
+        for message in (
+            "Failed to terminate some.other.application:12380: Failed to terminate some.other.application:0",
+            "Application 'some.other.application' does not have a process ID",
+            "Application 'com.331works.immichSlides' crashed",
+            "Application 'com.331works.immichSlides' does not have a",
+        ):
+            with self.subTest(unreviewed_lifecycle=message):
+                self.assertEqual(classify_messages([message]), unknown_diagnostics())
 
     def test_pause_window_export_retains_assertion_families_without_raw_messages(self):
         import copy
