@@ -417,15 +417,17 @@ snapshot, reveal or control-tap retry, and all post-Pause checks remain.
 Both `runManualLifecycleContract` variants (SinglePhoto and SmartFill) and P2-05
 (`p2-rotation`) explicitly launch with `UI_TEST_PLAYBACK_INTERVAL_SECONDS=60`
 so automatic advance does not race their
-manual navigation or rotation sequence on slow hosts. The iOS Debug initializer
-seeds the saved product interval after state reset through `PlatformCompat`,
+manual navigation or rotation sequence on slow hosts. The iOS and tvOS Debug initializers
+seed the saved product interval after state reset through `PlatformCompat`,
 accepting whole seconds from 5 through 60; missing or invalid input leaves the
-setting unchanged. Release never reads the override, and tvOS does not apply it.
+setting unchanged. Release never reads the override.
 The three person-membership launches (`testFilterPersonNormalMatch`,
 `testFilterPersonConflictNormal`, and `testFilterPersonNoFaces`) also explicitly
-use 60 seconds; their capture scope and XCTest-mode side effects are documented
-in [the strict runner contract](CI_STRICT_RUNNER.md). Other launch callers,
-including the normal five-second autoplay and pause-frame contracts, retain
+use 60 seconds. The single `tvos-person` launch also explicitly uses 60 seconds
+for its membership captures; no other tvOS launch opts in. These membership
+launches do not judge the autoplay interval. Their capture scope and XCTest-mode
+side effects are documented in [the strict runner contract](CI_STRICT_RUNNER.md).
+Other callers, including `tvos-flow`, normal five-second autoplay and pause-frame contracts, retain
 their existing intervals. The motion, frozen progress, manual
 navigation and current-scene resume assertions and all product windows stay unchanged.
 For these two variants the 60-second interval is the primary protection;
