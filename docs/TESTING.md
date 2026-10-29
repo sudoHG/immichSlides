@@ -414,9 +414,10 @@ A legal pause can freeze a transition indefinitely; the later stable identity
 check cannot wait for that paused transition to finish. The tap gate adds no
 snapshot, reveal or control-tap retry, and all post-Pause checks remain.
 
-Both `runManualLifecycleContract` variants (SinglePhoto and SmartFill) explicitly
-launch with `UI_TEST_PLAYBACK_INTERVAL_SECONDS=60` so automatic advance does not race their
-manual Pause/Next/Previous/Play sequence on slow hosts. The iOS Debug initializer
+Both `runManualLifecycleContract` variants (SinglePhoto and SmartFill) and P2-05
+(`p2-rotation`) explicitly launch with `UI_TEST_PLAYBACK_INTERVAL_SECONDS=60`
+so automatic advance does not race their
+manual navigation or rotation sequence on slow hosts. The iOS Debug initializer
 seeds the saved product interval after state reset through `PlatformCompat`,
 accepting whole seconds from 5 through 60; missing or invalid input leaves the
 setting unchanged. Release never reads the override, and tvOS does not apply it.
@@ -1190,7 +1191,10 @@ measure every elapsed second from the original Next request against the configur
 natural-switch isolation interval. Debug P2-05 explicitly seeds 60 seconds through
 the existing `UI_TEST_PLAYBACK_INTERVAL_SECONDS` input, then uses the real Settings
 page to select SmartFill without overwriting that interval with the slider's
-30-second maximum. The new target after Next therefore uses 60 seconds. Release
+30-second maximum. Before returning from that same Settings visit, it reads
+`settings.playback.interval.value` through `PlaybackIntervalSliderIOS.readSeconds(in:)`
+and requires 60 seconds. This readback precedes the Next request and adds no wait
+beyond the existing read helper. The new target after Next therefore uses 60 seconds. Release
 ignores the Debug input and retains the real 30-second slider setup and bound.
 This is a rotation-attribution arrangement, not a product response deadline or a
 longer wait. Control, orientation and stable-frame waits remain unchanged.

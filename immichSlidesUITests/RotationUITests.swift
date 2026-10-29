@@ -58,7 +58,17 @@ final class RotationUITests: XCTestCase {
             let evidence = Evidence()
             driver.launchToPlayback(input: input)
             #if DEBUG
-            driver.applyPlaybackSettings([.displayMode(isSinglePhoto: false)])
+            try driver.applyPlaybackSettings(
+                [.displayMode(isSinglePhoto: false)],
+                verifyInSettings: {
+                    let observed = PlaybackIntervalSliderIOS.readSeconds(in: app)
+                    print(
+                        "Rotation interval readback: observedSeconds=\(observed.map(String.init) ?? "missing"), expectedSeconds=\(RotationTiming.isolationIntervalSeconds)"
+                    )
+                    guard observed == RotationTiming.isolationIntervalSeconds else {
+                        throw Failure("The rotation isolation interval must match the displayed playback setting.")
+                    }
+                })
             #endif
             #if !DEBUG
             // Release ignores the Debug input and retains its real 30-second slider setup and isolation bound.

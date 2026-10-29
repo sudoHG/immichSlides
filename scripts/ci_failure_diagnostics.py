@@ -896,6 +896,7 @@ PREFIX_RULES = (
     ("The public photo on screen did not change after next;", "history_navigation", "scene_identity"),
     ("Before rotating, the play button value must be pause (playing),", "control_action", "control_state"),
     ("The rotation sequence took ", "unknown", "timing_window"),
+    ("The rotation isolation interval must match the displayed playback setting.", "interval_setup", "interval_readback"),
     ("Orientation API: after setting ", "unknown", "navigation"),
     ("Fresh install must open the normal first-boot page.", "firstboot_setup", "navigation"),
     ("First-boot page must show the API Key field.", "firstboot_setup", "navigation"),

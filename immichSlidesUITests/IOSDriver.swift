@@ -56,6 +56,10 @@ struct IOSDriver: PlaybackDriver {
     }
 
     func applyPlaybackSettings(_ settings: [PlaybackSetting]) {
+        applyPlaybackSettings(settings, verifyInSettings: {})
+    }
+
+    func applyPlaybackSettings(_ settings: [PlaybackSetting], verifyInSettings: () throws -> Void) rethrows {
         openSettings()
         openPlaybackSection()
         for setting in settings {
@@ -107,6 +111,7 @@ struct IOSDriver: PlaybackDriver {
                     "The EXIF toggle must reach the target state through the real settings.")
             }
         }
+        try verifyInSettings()
         returnToPlayback()
     }
 
