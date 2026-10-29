@@ -17,7 +17,8 @@ import time
 from pathlib import Path
 
 from ci_build_archive import file_hash, workspace_preflight
-from ci_failure_diagnostics import VALIDATOR_FAILURE_FIELD, public_validator_failure_message
+from ci_failure_diagnostics import (VALIDATOR_FAILURE_FIELD, public_app_timeline_failure_message,
+                                    public_validator_failure_message)
 from ci_execution_diagnostics import Recorder, TRUNCATION_PREFIX, TRUNCATION_REASONS, report_truncation, session
 from ci_bounded_diagnostics import (MAX_DIAGNOSTIC_SECONDS, MAX_PROCESSES, public_runner_process_name,
                                     render_runner_group_members, validate_runner_group_members)
@@ -29,7 +30,7 @@ from strict_e2e_build import build_settings, write_json
 from strict_e2e_p2_contract import P2_CASES, RAW_VERDICT, official_tests_facts
 from strict_e2e_server import PUBLIC_API_KEY
 from strict_e2e_runner_support import (IOS_LIFECYCLE_PAUSE_SUITE, SIMULATOR_READINESS_TIMEOUT_SECONDS,
-                                     SIMULATOR_PREPARATION_TIMEOUT_SECONDS,
+                                     SIMULATOR_PREPARATION_TIMEOUT_SECONDS, TIMELINE_LIFECYCLE_SUITES,
                                      destination_udid, pause_timing_verdict, prepare_simulator)
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -51,7 +52,12 @@ def read_case_official(evidence, suite):
         require(payload.get("result") in {"Passed", "Failed", "Skipped", "Unknown"}, "invalid official result")
         require(payload["result"] != "Passed" or (payload["passedTests"] == payload["totalTestCount"]
                 and payload["totalTestCount"] > 0), "passing official result has nonpassing counts")
-        return {name: payload[name] for name in (*counts, "result")}
+        result = {name: payload[name] for name in (*counts, "result")}
+        if suite in TIMELINE_LIFECYCLE_SUITES and payload["failedTests"] == 1:
+            message = public_app_timeline_failure_message(payload.get("message"))
+            if message is not None:
+                result["message"] = message
+        return result
 
     path = evidence / "official-summary.json"
     top = read(path) if path.is_file() else None
@@ -120,6 +126,7 @@ def evaluate_tracer(declared, results, *, interrupted=False, informational=()):
         observed.append(observation(result["identity"], outcome, result["duration_seconds"],
             reason=("Pause timing requires signed transition-start evidence" if pending_timing else
                     "P2 contract requires signed human review") if outcome == "needs-human-review" else None,
+            message=public_app_timeline_failure_message(official.get("message")) if outcome == "failed" else None,
             exit_code=result["exit_code"], failure_diagnostics=failure_diagnostics))
         if preparation_failed:
             observed[-1]["attempts"][0]["outcome"] = "not-run"

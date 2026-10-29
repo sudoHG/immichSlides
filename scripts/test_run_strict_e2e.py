@@ -1268,6 +1268,120 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
 
 
 class FailureDiagnosticsTests(unittest.TestCase):
+    def test_app_timeline_failure_allowlist_matches_swift_failure_and_assertion_sentences(self):
+        from ci_failure_diagnostics import APP_TIMELINE_FAILURE_REASONS
+        literal = r'"(?:[^"\\]|\\.)*"'
+        reasons = set()
+        for name in ("LifecycleTimelineJudge", "LifecycleTimelineCapture"):
+            source = (REPO_ROOT / "TestSupport" / (name + ".swift")).read_text()
+            for match in re.finditer(r'\bFailure\(\s*(' + literal + r')\s*([+)])', source):
+                reason = json.loads(match.group(1))
+                if match.group(2) == "+":
+                    self.assertEqual("unknown event ", reason, "only the dynamic unknown-event reason may be redacted")
+                else:
+                    reasons.add(reason)
+        for platform in ("IOS", "TVOS"):
+            source = (REPO_ROOT / "immichSlidesUITests" / ("AccessLifecycle" + platform + "UITests.swift")).read_text()
+            reasons.update(json.loads(match.group())[len("App timeline: "):]
+                           for match in re.finditer(r'"App timeline: (?:[^"\\]|\\.)*"', source))
+        self.assertSetEqual(reasons, APP_TIMELINE_FAILURE_REASONS)
+
+    def test_app_timeline_errors_survive_private_export_and_public_summary_without_changing_failure(self):
+        from ci_summary import render_markdown, test_identity
+        from run_strict_ci_tracer import evaluate_tracer, read_case_official, validate_case_export
+        from test_ci_summary import valid_summary
+        private = "PRIVATE_SENTINEL"
+        redacted = "App timeline: unrecognized failure (redacted)"
+        cases = [
+            ("ios", "missing required event", "missing required event"),
+            ("ios", "Continue onset outside T±2", "Continue onset outside T±2"),
+            ("ios", "missing required event " + private, None),
+            ("ios", "unknown event " + private, None),
+            ("tvos", "missing required event", "missing required event"),
+        ]
+        with tempfile.TemporaryDirectory() as raw:
+            for index, (platform, reason, expected_reason) in enumerate(cases):
+                with self.subTest(platform=platform, reason=reason):
+                    evidence = Path(raw) / str(index)
+                    evidence.mkdir()
+                    name = ("AccessLifecycleIOSUITests/testPauseNextContinueAppTimeline" if platform == "ios" else
+                            "AccessLifecycleTVOSUITests/testTVOSPauseNextContinueAppTimeline")
+                    suite = platform + "-lifecycle-pause-timeline"
+                    message = 'failed: caught error: "App timeline: ' + reason + '"'
+                    official = {"testNodes": [{"nodeType": "Unit test bundle", "name": "immichSlidesUITests", "children": [
+                        {"nodeType": "Test Case", "nodeIdentifier": name + "()", "result": "Failed"}]}]}
+                    legacy = {"issues": {"testFailureSummaries": {"_values": [{
+                        "testCaseName": {"_value": name.replace("/", ".") + "()"}, "message": {"_value": message}}]},
+                        "testWarningSummaries": {"_values": [{"testCaseName": {"_value": name.replace("/", ".") + "()"},
+                            "message": {"_value": private}}]}}}
+                    def export(command, **kwargs):
+                        return subprocess.CompletedProcess(command, 0, json.dumps(
+                            legacy if "--legacy" in command else official).encode(), b"")
+                    with mock.patch("run_strict_e2e.subprocess.run", side_effect=export), \
+                            mock.patch("run_strict_e2e.read_official_test_results_summary",
+                                       return_value=TestResultsSummary(1, 0, 1, 0, "Failed")):
+                        strict_runner.export_private_result_bundle(evidence / "private.xcresult", evidence, [private],
+                            enrich_failure_diagnostics=True)
+                    identity = test_identity("strict", suite, device="iphone" if platform == "ios" else "tv",
+                        configuration="Debug", suite=suite, scenario="normal", fixture="a")
+                    phase = dict(identity=identity, duration_seconds=140, exit_code=65, log_present=True,
+                        build_operations=0, products_unchanged=True,
+                        official_summary=read_case_official(evidence, suite),
+                        official_methods=validate_case_export(evidence, platform, suite))
+                    observed, status = evaluate_tracer([identity], [phase])
+                    expected = "App timeline: " + expected_reason if expected_reason else redacted
+                    self.assertEqual(expected, observed[0]["attempts"][0]["message"])
+                    self.assertEqual(("failed", "failed", 65),
+                        (status, observed[0]["outcome"], observed[0]["attempts"][0]["exit_code"]))
+                    self.assertNotIn("environment_limit", observed[0])
+                    summary = valid_summary()
+                    summary["run"].update(tier="strict", job="strict-tracer")
+                    summary["population"].update(declared=[identity], compiled=[identity], observed=observed)
+                    summary["status"] = status
+                    markdown = render_markdown(summary)
+                    self.assertIn(expected, markdown)
+                    exported = "".join(path.read_text() for path in evidence.glob("*.json")) + markdown
+                    self.assertNotIn(private, exported)
+            # Missing legacy details clear the prior message instead of fabricating a reason.
+            with mock.patch("run_strict_e2e.subprocess.run", return_value=subprocess.CompletedProcess(
+                    [], 0, json.dumps(official).encode(), b"")):
+                strict_runner.export_private_result_bundle(evidence / "private.xcresult", evidence, [private],
+                    enrich_failure_diagnostics=True)
+            self.assertNotIn("message", read_case_official(evidence, suite))
+
+    def test_app_timeline_error_publication_requires_the_actual_failed_method_and_first_failure(self):
+        from run_strict_ci_tracer import read_case_official
+        name = "AccessLifecycleIOSUITests/testPauseNextContinueAppTimeline"
+        sentence = "App timeline: missing required event"
+        for defect in ("other-method", "warning-only", "earlier-unrelated-failure"):
+            with self.subTest(defect=defect), tempfile.TemporaryDirectory() as raw:
+                evidence = Path(raw)
+                method = "OtherUITests/testOther" if defect == "other-method" else name
+                node = {"nodeType": "Test Case", "nodeIdentifier": method + "()", "result": "Failed"}
+                official = {"testNodes": [node]}
+                failures = [{"testCaseName": {"_value": method.replace("/", ".") + "()"},
+                             "message": {"_value": sentence}}]
+                if defect == "earlier-unrelated-failure":
+                    failures.insert(0, {"testCaseName": failures[0]["testCaseName"], "message": {"_value": "PRIVATE_SENTINEL"}})
+                legacy = {"issues": {"testWarningSummaries" if defect == "warning-only" else "testFailureSummaries":
+                                     {"_values": failures}}}
+                def export(command, **kwargs):
+                    return subprocess.CompletedProcess(command, 0, json.dumps(
+                        legacy if "--legacy" in command else official).encode(), b"")
+                with mock.patch("run_strict_e2e.subprocess.run", side_effect=export), \
+                        mock.patch("run_strict_e2e.read_official_test_results_summary",
+                                   return_value=TestResultsSummary(1, 0, 1, 0, "Failed")):
+                    strict_runner.export_private_result_bundle(evidence / "private.xcresult", evidence, ["PRIVATE_SENTINEL"],
+                        enrich_failure_diagnostics=True)
+                self.assertNotIn("message", json.loads((evidence / "official-summary.json").read_text()))
+                # The consumer also refuses arbitrary text and ignores this annotation on unrelated suites.
+                summary = json.loads((evidence / "official-summary.json").read_text())
+                summary["message"] = "App timeline: missing required event PRIVATE_SENTINEL"
+                (evidence / "official-summary.json").write_text(json.dumps(summary))
+                observed = read_case_official(evidence, "ios-lifecycle-pause-timeline")
+                self.assertNotIn("PRIVATE_SENTINEL", json.dumps(observed))
+                self.assertNotIn("message", read_case_official(evidence, "smoke"))
+
     def test_app_timeline_failures_are_classified_and_never_yellow_eligible(self):
         from ci_failure_diagnostics import classify_messages, environment_timing
         failure = dict(source="xctest", app="running-foreground", scene_status="MATCH", surface="playback",
