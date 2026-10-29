@@ -415,6 +415,18 @@ Debug hook seeds a supported interval before playback, removing automatic advanc
 from a suite that judges filter membership, not the autoplay interval. Release
 ignores that Debug-only hook and retains its original interval. Shared launch
 defaults and `album-empty`'s real 30 s slider and slope confirmation are unchanged.
+Debug `tvos-album-empty` explicitly seeds the same supported 60 s interval: it judges
+album membership and the empty result, not the autoplay interval. Its existing 30 s
+playback-entry deadline now also covers the final stable-scene and Play/Pause-focus
+snapshot before the single Pause. The tvOS `contract.summary` leaf already lives
+inside the rendering `TimelineView`; readiness requires `stablePhoto`, one `stable`
+layer at opacity 1, valid motion progress and a complete visible-scene manifest.
+Each judged PNG is bracketed by complete paused stable observations retaining the
+same layers, history count, scene assets and publication timestamp. Those observations
+are retained in `album-play-N-window.json`; the original public slot reader still
+judges every screenshot. The 4 s Pause readback, 3.5 s settles, Next actions, entry
+hint, other tvOS suites and Release capture path remain unchanged. An unstable or
+missing observation fails instead of publishing a candidate or retrying Pause.
 The motion clock starts at the automatic 1 s fade-in, before the stable clock.
 With the default 5 s interval, raw progress is `(t + 1) / 5`, where `t` is elapsed
 stable time: it reaches one at about 4 s and exceeds one before the 5 s stable

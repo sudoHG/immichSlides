@@ -102,8 +102,10 @@ extension StrictE2EFilterTVOSUITests {
 
     @MainActor
     func capturePausedPlaybackPNGs(
-        app: XCUIApplication, names: [String], stableFrameDeadline: Date? = nil
+        app: XCUIApplication, names: [String], stableFrameDeadline: Date? = nil,
+        requiresStableAlbumScene: Bool = false
     ) throws {
+        let playbackEntryDeadline = Date().addingTimeInterval(TestWait.seconds(.product(30)))
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
         XCTAssertTrue(
             playPauseButton.waitForPublicElement(
@@ -135,6 +137,22 @@ extension StrictE2EFilterTVOSUITests {
             readyFrame = try requireFocusedStablePersonFrame(
                 app: app, deadline: stableFrameDeadline, name: names[0])
         }
+        #if DEBUG
+        if requiresStableAlbumScene {
+            // The tvOS contract leaf lives inside the rendering TimelineView; Pause freezes any fade it observes.
+            var observation: [String: String] = [:]
+            let isReady = TestWait.until(.product(max(0, playbackEntryDeadline.timeIntervalSinceNow))) {
+                observation = self.tvosAlbumCaptureObservation(app: app)
+                return StrictE2ESceneCapture.isStableWindow(observation)
+                    && observation["playPauseFocused"] == "true" && Date() < playbackEntryDeadline
+            }
+            attachStrictSceneObservation(before: observation, after: observation, name: "album-before-pause")
+            guard isReady else {
+                throw StrictE2EPhotoIdentity.AssertionError.message(
+                    "Visual ID failed \(names[0]): no complete focused stable scene before Pause")
+            }
+        }
+        #endif
         if shouldSendPause {
             FirstFailureRemote.press(.select)
         }
@@ -166,7 +184,36 @@ extension StrictE2EFilterTVOSUITests {
         let nextButton = app.buttons["slideshow.control.next.button"]
         for (index, name) in names.enumerated() {
             ensureControlBarVisible(app: app)
+            #if DEBUG
+            let before = requiresStableAlbumScene ? tvosAlbumCaptureObservation(app: app) : [:]
+            if requiresStableAlbumScene, !isPausedTVOSAlbumCaptureScene(before) {
+                attachStrictSceneObservation(before: before, after: before, name: "\(name)-scene")
+                throw StrictE2EPhotoIdentity.AssertionError.message(
+                    "Visual ID failed \(name): the capture must start with a complete paused stable scene")
+            }
+            #endif
             let png = app.screenshotForFailureEvidence().pngRepresentation
+            #if DEBUG
+            if requiresStableAlbumScene {
+                let after = tvosAlbumCaptureObservation(app: app)
+                attachStrictSceneObservation(before: before, after: after, name: "\(name)-scene")
+                try StrictE2EVisualEvidence.writeRequiredJSON(
+                    ["before": before, "after": after], name: "\(name)-window.json")
+                let beforeRender = SharedSceneEvidenceManifest.parseKeyValueFields(before["render"] ?? "")
+                let afterRender = SharedSceneEvidenceManifest.parseKeyValueFields(after["render"] ?? "")
+                let beforeManifest = SharedSceneEvidenceManifest.parseKeyValueFields(before["manifest"] ?? "")
+                let afterManifest = SharedSceneEvidenceManifest.parseKeyValueFields(after["manifest"] ?? "")
+                guard isPausedTVOSAlbumCaptureScene(after),
+                    beforeRender["layerIDs"] == afterRender["layerIDs"],
+                    beforeRender["historyCount"] == afterRender["historyCount"],
+                    beforeManifest["ledgerSceneAssets"] == afterManifest["ledgerSceneAssets"],
+                    beforeManifest["scenePublishTimestamp"] == afterManifest["scenePublishTimestamp"]
+                else {
+                    throw StrictE2EPhotoIdentity.AssertionError.message(
+                        "Visual ID failed \(name): the single capture must retain the complete paused stable scene")
+                }
+            }
+            #endif
             if index == 0, let readyMark {
                 let identity = StrictE2EPhotoIdentity.captureIdentity(png: png)
                 XCTAssertTrue(
@@ -182,6 +229,23 @@ extension StrictE2EFilterTVOSUITests {
             }
         }
     }
+
+    #if DEBUG
+    @MainActor
+    private func tvosAlbumCaptureObservation(app: XCUIApplication) -> [String: String] {
+        let snapshots = app.evidenceSnapshotsByIdentifier()
+        return [
+            "manifest": snapshots["slideshow.smartfill.currentManifest.flag"]?.label ?? "",
+            "render": snapshots["slideshow.scenePresentation.contract.summary"]?.label ?? "",
+            "playPauseFocused": String(snapshots["slideshow.control.playPause.button"]?.hasFocus == true)
+        ]
+    }
+
+    private func isPausedTVOSAlbumCaptureScene(_ observation: [String: String]) -> Bool {
+        StrictE2ESceneCapture.isStableWindow(observation)
+            && SharedSceneEvidenceManifest.parseKeyValueFields(observation["render"] ?? "")["playbackPaused"] == "true"
+    }
+    #endif
 
     private struct StablePersonFrame {
         let mark: String
