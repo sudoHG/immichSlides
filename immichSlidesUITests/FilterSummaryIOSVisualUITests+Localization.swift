@@ -10,12 +10,18 @@ extension FilterSummaryIOSVisualUITests {
 
     @MainActor
     func testIOSTraditionalChineseHKAcceptanceFilterEditorScreenshot() throws {
-        try runIOSLocalizedFilterEditorAcceptance(locale: .hongKong)
+        try runIOSLocalizedFilterEditorAcceptance(
+            locale: .hongKong,
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
+        )
     }
 
     @MainActor
     func testIOSTraditionalChineseHKAcceptanceAlbumAndPersonScreenshots() throws {
-        try runIOSLocalizedAlbumAndPersonAcceptance(locale: .hongKong)
+        try runIOSLocalizedAlbumAndPersonAcceptance(
+            locale: .hongKong,
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
+        )
     }
 
     @MainActor
@@ -35,12 +41,18 @@ extension FilterSummaryIOSVisualUITests {
 
     @MainActor
     func testIOSTraditionalChineseTWAcceptanceFilterEditorScreenshot() throws {
-        try runIOSLocalizedFilterEditorAcceptance(locale: .taiwan)
+        try runIOSLocalizedFilterEditorAcceptance(
+            locale: .taiwan,
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
+        )
     }
 
     @MainActor
     func testIOSTraditionalChineseTWAcceptanceAlbumAndPersonScreenshots() throws {
-        try runIOSLocalizedAlbumAndPersonAcceptance(locale: .taiwan)
+        try runIOSLocalizedAlbumAndPersonAcceptance(
+            locale: .taiwan,
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
+        )
     }
 
     @MainActor
@@ -60,12 +72,18 @@ extension FilterSummaryIOSVisualUITests {
 
     @MainActor
     func testIOSJapaneseAcceptanceFilterEditorScreenshot() throws {
-        try runIOSLocalizedFilterEditorAcceptance(locale: .japanese)
+        try runIOSLocalizedFilterEditorAcceptance(
+            locale: .japanese,
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
+        )
     }
 
     @MainActor
     func testIOSJapaneseAcceptanceAlbumAndPersonScreenshots() throws {
-        try runIOSLocalizedAlbumAndPersonAcceptance(locale: .japanese)
+        try runIOSLocalizedAlbumAndPersonAcceptance(
+            locale: .japanese,
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
+        )
     }
 
     @MainActor
@@ -85,12 +103,18 @@ extension FilterSummaryIOSVisualUITests {
 
     @MainActor
     func testIOSSpanishAcceptanceFilterEditorScreenshot() throws {
-        try runIOSLocalizedFilterEditorAcceptance(locale: .spanish)
+        try runIOSLocalizedFilterEditorAcceptance(
+            locale: .spanish,
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
+        )
     }
 
     @MainActor
     func testIOSSpanishAcceptanceAlbumAndPersonScreenshots() throws {
-        try runIOSLocalizedAlbumAndPersonAcceptance(locale: .spanish)
+        try runIOSLocalizedAlbumAndPersonAcceptance(
+            locale: .spanish,
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
+        )
     }
 
     @MainActor
@@ -154,11 +178,15 @@ extension FilterSummaryIOSVisualUITests {
     }
 
     @MainActor
-    func runIOSLocalizedFilterEditorAcceptance(locale: LocalizedAcceptanceLocale) throws {
+    func runIOSLocalizedFilterEditorAcceptance(
+        locale: LocalizedAcceptanceLocale,
+        extraLaunchEnvironment: [String: String] = [:]
+    ) throws {
         let filterEditorApp = try launchIntoFilterEditor(
             colorScheme: "light",
             shouldPrepareFilterEditorVisuals: false,
-            acceptanceLocale: locale
+            acceptanceLocale: locale,
+            extraLaunchEnvironment: extraLaunchEnvironment
         )
         XCTAssertTrue(
             waitForLocalizedElement(
@@ -176,11 +204,15 @@ extension FilterSummaryIOSVisualUITests {
     }
 
     @MainActor
-    func runIOSLocalizedAlbumAndPersonAcceptance(locale: LocalizedAcceptanceLocale) throws {
+    func runIOSLocalizedAlbumAndPersonAcceptance(
+        locale: LocalizedAcceptanceLocale,
+        extraLaunchEnvironment: [String: String] = [:]
+    ) throws {
         let albumApp = try launchIntoAlbumFilterPage(
             colorScheme: "light",
             dynamicTypeSize: nil,
-            acceptanceLocale: locale
+            acceptanceLocale: locale,
+            extraLaunchEnvironment: extraLaunchEnvironment
         )
         attachScreenshot(
             app: albumApp,
@@ -191,7 +223,8 @@ extension FilterSummaryIOSVisualUITests {
         let personApp = try launchIntoPersonFilterPage(
             colorScheme: "light",
             dynamicTypeSize: nil,
-            acceptanceLocale: locale
+            acceptanceLocale: locale,
+            extraLaunchEnvironment: extraLaunchEnvironment
         )
         attachScreenshot(
             app: personApp,
@@ -386,7 +419,8 @@ extension FilterSummaryIOSVisualUITests {
         let app = try launchIntoFilterEditor(
             colorScheme: "light",
             shouldPrepareFilterEditorVisuals: false,
-            shouldForceEnglishLocalization: true
+            shouldForceEnglishLocalization: true,
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
         )
         XCTAssertTrue(
             anyElement(app: app, withLabel: "Edit Filters").waitForFailureEvidence(
@@ -404,7 +438,8 @@ extension FilterSummaryIOSVisualUITests {
         let app = try launchIntoAlbumFilterPage(
             colorScheme: "light",
             dynamicTypeSize: nil,
-            shouldForceEnglishLocalization: true
+            shouldForceEnglishLocalization: true,
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
         )
         attachScreenshot(
             app: app,
@@ -417,7 +452,8 @@ extension FilterSummaryIOSVisualUITests {
         let app = try launchIntoPersonFilterPage(
             colorScheme: "light",
             dynamicTypeSize: nil,
-            shouldForceEnglishLocalization: true
+            shouldForceEnglishLocalization: true,
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
         )
         attachScreenshot(
             app: app,

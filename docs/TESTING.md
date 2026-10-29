@@ -368,6 +368,15 @@ resolve the transient button again or send repeated canvas taps while polling.
 Its existing 25/12-second readiness and eight-second Settings outcome windows,
 and all keyboard response windows, are unchanged. The override cannot cover an
 input stall longer than 60 seconds; a missed Settings outcome still fails.
+The same explicit opt-in applies to navigation-only Settings, PIN and entry-hint
+operations, and to filter-editor, album and person page captures that reach those
+pages through slideshow Settings. Pass the environment from each method through
+the launch parameters, including localized acceptance helpers; their defaults stay
+empty. A configured relaunch that clears its environment must opt in again before
+launching. Ordinary arrival/readiness assertions do not make a navigation test a
+control-bar visibility contract. Tests whose purpose is control-bar visibility,
+auto-hide or first wake, and any flow capturing playback for visual review, keep
+the real delay.
 Control-bar visibility is an input to SmartFill planning; changing it discards
 prepared next. With this override, the SmartFill history round-trip test no longer
 covers a wake re-showing the bar, discarding prepared next, then Next. That path

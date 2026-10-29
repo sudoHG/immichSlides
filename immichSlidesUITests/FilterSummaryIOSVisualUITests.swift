@@ -529,13 +529,19 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
 
     @MainActor
     func testIOSFilterEditorVisualScreenshot() throws {
-        let app = try launchIntoFilterEditor(colorScheme: "dark")
+        let app = try launchIntoFilterEditor(
+            colorScheme: "dark",
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
+        )
         attachScreenshot(app: app, name: "ios-filter-editor-visual-\(currentDeviceTag())")
     }
 
     @MainActor
     func testIOSFilterEditorVisualScreenshotLight() throws {
-        let app = try launchIntoFilterEditor(colorScheme: "light")
+        let app = try launchIntoFilterEditor(
+            colorScheme: "light",
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
+        )
         attachScreenshot(app: app, name: "ios-filter-editor-visual-light-\(currentDeviceTag())")
     }
 
@@ -543,7 +549,8 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
     func testIOSFilterEditorVisualScreenshotAccessibility() throws {
         let app = try launchIntoFilterEditor(
             colorScheme: "dark",
-            dynamicTypeSize: "accessibility5"
+            dynamicTypeSize: "accessibility5",
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
         )
         attachScreenshot(app: app, name: "ios-filter-editor-visual-accessibility-\(currentDeviceTag())")
     }
@@ -552,7 +559,10 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
     func testIOSFilterEditorVisualScreenshotLandscape() throws {
         defer { FirstFailureOrientation.set(.portrait) }
 
-        let app = try launchIntoFilterEditor(colorScheme: "dark")
+        let app = try launchIntoFilterEditor(
+            colorScheme: "dark",
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
+        )
         setOrientation(.landscapeLeft, app: app, waitForTitleIdentifier: "filterEditor.page.title")
         attachScreenshot(app: app, name: "ios-filter-editor-visual-landscape-\(currentDeviceTag())")
     }
@@ -565,7 +575,8 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
         )
         let app = try launchIntoAlbumFilterPage(
             colorScheme: "dark",
-            dynamicTypeSize: nil
+            dynamicTypeSize: nil,
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
         )
 
         assertCompactPhoneFilterTopBar(
@@ -584,7 +595,8 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
         )
         let app = try launchIntoAlbumFilterPage(
             colorScheme: "light",
-            dynamicTypeSize: nil
+            dynamicTypeSize: nil,
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
         )
 
         assertCompactPhoneFilterTopBar(
@@ -603,7 +615,8 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
         )
         let app = try launchIntoAlbumFilterPage(
             colorScheme: "dark",
-            dynamicTypeSize: "accessibility5"
+            dynamicTypeSize: "accessibility5",
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
         )
 
         assertCompactPhoneFilterTopBar(
@@ -622,7 +635,8 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
         )
         let app = try launchIntoPersonFilterPage(
             colorScheme: "dark",
-            dynamicTypeSize: nil
+            dynamicTypeSize: nil,
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
         )
 
         assertCompactPhoneFilterTopBar(
@@ -641,7 +655,8 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
         )
         let app = try launchIntoPersonFilterPage(
             colorScheme: "light",
-            dynamicTypeSize: nil
+            dynamicTypeSize: nil,
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
         )
 
         assertCompactPhoneFilterTopBar(
@@ -660,7 +675,8 @@ final class FilterSummaryIOSVisualUITests: XCTestCase {
         )
         let app = try launchIntoPersonFilterPage(
             colorScheme: "dark",
-            dynamicTypeSize: "accessibility5"
+            dynamicTypeSize: "accessibility5",
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
         )
 
         assertCompactPhoneFilterTopBar(
