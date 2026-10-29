@@ -649,9 +649,6 @@ final class immichSlidesUITests: XCTestCase {
 
         app.terminateForFailureEvidence()
         app.launchEnvironment.removeAll()
-        app.launchEnvironment.merge(
-            SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
-        ) { _, new in new }
         app.launchForFailureEvidence()
 
         XCTAssertFalse(
