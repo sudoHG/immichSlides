@@ -5,7 +5,10 @@ extension immichSlidesUITests {
     // Playback settings constraint: with an empty filter, switching to filtered playback is blocked with an alert.
     @MainActor
     func testPlaybackSettingsBlocksFilteredModeWhenSelectionEmpty() throws {
-        let app = try launchConfiguredAppAtModeSelection(shouldResetState: true)
+        let app = try launchConfiguredAppAtModeSelection(
+            shouldResetState: true,
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
+        )
         startRandomPlaybackFromModeSelection(app: app)
 
         app.tapSlideshowControlBarButton(identifier: "slideshow.control.settings.button")
@@ -33,7 +36,10 @@ extension immichSlidesUITests {
 
     @MainActor
     func testPlaybackSettingsDisplayModePickerCanSelectSinglePhoto() throws {
-        let app = try launchConfiguredAppAtModeSelection(shouldResetState: true)
+        let app = try launchConfiguredAppAtModeSelection(
+            shouldResetState: true,
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
+        )
         startRandomPlaybackFromModeSelection(app: app)
 
         openSettingsFromSlideshow(app: app)
@@ -65,7 +71,10 @@ extension immichSlidesUITests {
 
     @MainActor
     func testServerSettingsShowsConnectionErrorAlertImmediately() throws {
-        let app = try launchConfiguredAppAtModeSelection(shouldResetState: true)
+        let app = try launchConfiguredAppAtModeSelection(
+            shouldResetState: true,
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
+        )
         startRandomPlaybackFromModeSelection(app: app)
 
         openSettingsFromSlideshow(app: app)
@@ -101,7 +110,10 @@ extension immichSlidesUITests {
 
     @MainActor
     func testServerSettingsAPIKeyHelpSheet() throws {
-        let app = try launchConfiguredAppAtModeSelection(shouldResetState: true)
+        let app = try launchConfiguredAppAtModeSelection(
+            shouldResetState: true,
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
+        )
         startRandomPlaybackFromModeSelection(app: app)
 
         openSettingsFromSlideshow(app: app)
@@ -155,7 +167,10 @@ extension immichSlidesUITests {
 
     @MainActor
     func testCacheManagementClearDiskCacheEntryWorks() throws {
-        let app = try launchConfiguredAppAtModeSelection(shouldResetState: true)
+        let app = try launchConfiguredAppAtModeSelection(
+            shouldResetState: true,
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
+        )
         startRandomPlaybackFromModeSelection(app: app)
 
         openSettingsFromSlideshow(app: app)
@@ -204,7 +219,10 @@ extension immichSlidesUITests {
 
     @MainActor
     func testPlaybackSettingAutoPlayAppliesAfterBackToSlideshow() throws {
-        let app = try launchConfiguredAppAtModeSelection(shouldResetState: true)
+        let app = try launchConfiguredAppAtModeSelection(
+            shouldResetState: true,
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
+        )
         startRandomPlaybackFromModeSelection(app: app)
 
         openSettingsFromSlideshow(app: app)
@@ -237,7 +255,10 @@ extension immichSlidesUITests {
 
     @MainActor
     func testCacheClearShowsSuccessMessageAfterConfirm() throws {
-        let app = try launchConfiguredAppAtModeSelection(shouldResetState: true)
+        let app = try launchConfiguredAppAtModeSelection(
+            shouldResetState: true,
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
+        )
         startRandomPlaybackFromModeSelection(app: app)
 
         openSettingsFromSlideshow(app: app)

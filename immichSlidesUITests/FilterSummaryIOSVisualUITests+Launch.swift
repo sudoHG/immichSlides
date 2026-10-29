@@ -755,14 +755,16 @@ extension FilterSummaryIOSVisualUITests {
         colorScheme: String,
         dynamicTypeSize: String?,
         shouldForceEnglishLocalization: Bool = false,
-        acceptanceLocale: LocalizedAcceptanceLocale? = nil
+        acceptanceLocale: LocalizedAcceptanceLocale? = nil,
+        extraLaunchEnvironment: [String: String] = [:]
     ) throws -> XCUIApplication {
         let app = try launchIntoFilterEditor(
             colorScheme: colorScheme,
             dynamicTypeSize: dynamicTypeSize,
             shouldPrepareFilterEditorVisuals: acceptanceLocale == nil && shouldForceEnglishLocalization == false,
             shouldForceEnglishLocalization: shouldForceEnglishLocalization,
-            acceptanceLocale: acceptanceLocale
+            acceptanceLocale: acceptanceLocale,
+            extraLaunchEnvironment: extraLaunchEnvironment
         )
 
         setOrientation(.portrait, app: app, waitForTitleIdentifier: "filterEditor.page.title")
@@ -789,14 +791,16 @@ extension FilterSummaryIOSVisualUITests {
         colorScheme: String,
         dynamicTypeSize: String?,
         shouldForceEnglishLocalization: Bool = false,
-        acceptanceLocale: LocalizedAcceptanceLocale? = nil
+        acceptanceLocale: LocalizedAcceptanceLocale? = nil,
+        extraLaunchEnvironment: [String: String] = [:]
     ) throws -> XCUIApplication {
         let app = try launchIntoFilterEditor(
             colorScheme: colorScheme,
             dynamicTypeSize: dynamicTypeSize,
             shouldPrepareFilterEditorVisuals: acceptanceLocale == nil && shouldForceEnglishLocalization == false,
             shouldForceEnglishLocalization: shouldForceEnglishLocalization,
-            acceptanceLocale: acceptanceLocale
+            acceptanceLocale: acceptanceLocale,
+            extraLaunchEnvironment: extraLaunchEnvironment
         )
 
         setOrientation(.portrait, app: app, waitForTitleIdentifier: "filterEditor.page.title")

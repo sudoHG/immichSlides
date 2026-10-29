@@ -210,7 +210,8 @@ extension FilterSummaryIOSVisualUITests {
     func testIOSSlideShowPlaybackEntryHintShowsOnlyOncePerOnboardingFlow() throws {
         let app = try launchIntoSlideShow(
             colorScheme: "dark",
-            shouldDisablePlaybackEntryHint: false
+            shouldDisablePlaybackEntryHint: false,
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
         )
         let entryHintBanner = app.otherElements["slideshow.entryHint.banner"]
 
@@ -239,7 +240,8 @@ extension FilterSummaryIOSVisualUITests {
     func testIOSSlideShowPlaybackEntryHintDismissesByTappingBubble() throws {
         let app = try launchIntoSlideShow(
             colorScheme: "dark",
-            shouldDisablePlaybackEntryHint: false
+            shouldDisablePlaybackEntryHint: false,
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
         )
         let entryHintBanner = app.otherElements["slideshow.entryHint.banner"]
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]

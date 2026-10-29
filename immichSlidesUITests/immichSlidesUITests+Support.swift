@@ -40,7 +40,8 @@ extension immichSlidesUITests {
     func launchConfiguredAppAtModeSelection(
         shouldResetState: Bool,
         shouldSeedFilterSelection: Bool = false,
-        colorScheme: String? = nil
+        colorScheme: String? = nil,
+        extraLaunchEnvironment: [String: String] = [:]
     ) throws -> XCUIApplication {
         let config = try requireTestServerConfig()
         let app = XCUIApplication()
@@ -59,6 +60,7 @@ extension immichSlidesUITests {
         app.launchEnvironment["UI_TEST_FORCE_MODE_SELECTION"] = "1"
         app.launchEnvironment["UI_TEST_SERVER_URL"] = config.url
         app.launchEnvironment["UI_TEST_API_KEY"] = config.apiKey
+        app.launchEnvironment.merge(extraLaunchEnvironment) { _, new in new }
         app.launchForFailureEvidence()
 
         XCTAssertTrue(

@@ -364,7 +364,10 @@ final class immichSlidesUITests: XCTestCase {
 
     @MainActor
     func testIPhonePortraitAndLandscapeSettingsSectionsNavigation() throws {
-        let app = try launchConfiguredAppAtModeSelection(shouldResetState: true)
+        let app = try launchConfiguredAppAtModeSelection(
+            shouldResetState: true,
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
+        )
         startRandomPlaybackFromModeSelection(app: app)
 
         openSettingsFromSlideshow(app: app)
@@ -564,7 +567,10 @@ final class immichSlidesUITests: XCTestCase {
 
     @MainActor
     func testPinProtectionBlocksBackAndRequiresPINForSettings() throws {
-        let app = try launchConfiguredAppAtModeSelection(shouldResetState: true)
+        let app = try launchConfiguredAppAtModeSelection(
+            shouldResetState: true,
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
+        )
         startRandomPlaybackFromModeSelection(app: app)
 
         openSettingsFromSlideshow(app: app)
@@ -620,7 +626,10 @@ final class immichSlidesUITests: XCTestCase {
     // Only checks that the config and PIN survive a relaunch; returning from settings is not mixed in.
     @MainActor
     func testPinAndServerConfigPersistAfterRelaunch() throws {
-        let app = try launchConfiguredAppAtModeSelection(shouldResetState: true)
+        let app = try launchConfiguredAppAtModeSelection(
+            shouldResetState: true,
+            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
+        )
         startRandomPlaybackFromModeSelection(app: app)
 
         openSettingsFromSlideshow(app: app)
