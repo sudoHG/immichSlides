@@ -481,7 +481,7 @@ jobs:
             --selection-path "$RUNNER_TEMP/ui-selection/archive-selection-$UI_PLATFORM.json" \
             --download-receipt-path "$RUNNER_TEMP/ui-download.json" \
             --relocated-path "$RUNNER_TEMP/ui-relocated" --output-dir "$RUNNER_TEMP/ui-records" \
-            --timeout-minutes 65 --total-timeout-minutes 85 --result-export-timeout-seconds 180 --wait-factor 2 --min-free-gib 30
+            --timeout-minutes 65 --total-timeout-minutes 85 --result-export-timeout-seconds 180 --wait-factor 2 --min-free-gib 20
       - name: Check for a standalone UI identity failure receipt
         id: identity_failure
         if: always()
