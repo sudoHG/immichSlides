@@ -1485,6 +1485,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
             ("immichSlidesUITests/RotationUITests.swift", "The public photo on screen did not change after next;", "history_navigation", "scene_identity"),
             ("immichSlidesUITests/RotationUITests.swift", "Before rotating, the play button value must be pause (playing),", "control_action", "control_state"),
             ("immichSlidesUITests/RotationUITests.swift", "The rotation sequence took ", "unknown", "timing_window"),
+            ("immichSlidesUITests/RotationUITests.swift", "The rotation isolation interval must match the displayed playback setting.", "interval_setup", "interval_readback"),
             ("immichSlidesUITests/RotationUITests.swift", "Orientation API: after setting ", "unknown", "navigation"),
             ("immichSlidesUITests/IOSDriver.swift", "Fresh install must open the normal first-boot page.", "firstboot_setup", "navigation"),
             ("immichSlidesUITests/IOSDriver.swift", "First-boot page must show the API Key field.", "firstboot_setup", "navigation"),

@@ -505,7 +505,14 @@ They also set other `UI_TEST_*` keys, so their XCTest mode remains enabled.
 `p2-rotation` explicitly launches with `UI_TEST_PLAYBACK_INTERVAL_SECONDS=60`.
 The iOS Debug initializer seeds the existing saved interval before onboarding;
 the test still opens Settings and selects SmartFill, but does not replace that
-input with the slider's 30-second maximum. Its new scene after Next must finish
+input with the slider's 30-second maximum. Before leaving that same Settings visit,
+`PlaybackIntervalSliderIOS.readSeconds(in:)` must read 60 from the App's interval label;
+a missing or different value fails as `interval_setup/interval_readback` before
+the isolation window starts. This adds no wait beyond the existing read helper.
+The label reads the settings model directly; opening the slider does not apply an
+interval adjustment, and the model's sanitizer accepts 60. Device runs must confirm
+that SwiftUI does not write back a clamped value when this Settings path is opened.
+Its new scene after Next must finish
 the same portrait/landscape/portrait sequence before 60 seconds from the original
 Next request, including all query, tap and capture costs. This isolates rotation
 from automatic advance without extending any wait. Release ignores the launch
@@ -1965,6 +1972,7 @@ New enum meanings and why the previous vocabulary cannot express them:
 | `First-boot page must show the Save Settings button.` | `firstboot_setup` | `navigation` | [IOSDriver.swift](../immichSlidesUITests/IOSDriver.swift); save control availability |
 | `A successful save must lead to mode selection.` | `firstboot_setup` | `navigation` | [IOSDriver.swift](../immichSlidesUITests/IOSDriver.swift); post-save destination |
 | `The interval must be set to 30 seconds with the real slider.` | `interval_setup` | `interval_readback` | [IOSDriver.swift](../immichSlidesUITests/IOSDriver.swift); interval slider readback |
+| `The rotation isolation interval must match the displayed playback setting.` | `interval_setup` | `interval_readback` | [RotationUITests.swift](../immichSlidesUITests/RotationUITests.swift); Debug isolation interval readback before Next |
 | `Playback settings must have display mode segments.` | `display_policy` | `navigation` | [IOSDriver.swift](../immichSlidesUITests/IOSDriver.swift); display-mode picker availability |
 | `Display mode must offer the target option.` | `display_policy` | `navigation` | [IOSDriver.swift](../immichSlidesUITests/IOSDriver.swift); target option availability |
 | `Display mode must switch to the target option.` | `display_policy` | `control_state` | [IOSDriver.swift](../immichSlidesUITests/IOSDriver.swift); selected option readback |
