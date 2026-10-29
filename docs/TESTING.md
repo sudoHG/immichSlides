@@ -838,8 +838,37 @@ continue to use actual T with the existing T±2 and four-second confirmation rul
 Pause/continue timing distinguishes transition onset from stable new-photo confirmation.
 The additional Debug suites `ios-lifecycle-pause-timeline` (iPhone and iPad) and
 `tvos-lifecycle-pause-timeline` use the App's own monotonic DEBUG timeline instead
-of the screenshot timing algorithm below. The existing Release lifecycle suites
-retain that algorithm and their complete functional coverage unchanged.
+of the screenshot timing algorithm below. Release `ios-lifecycle-pause` and
+`tvos-lifecycle-pause` retain the complete Pause/Next/hold/Continue flow, public
+photo identity, non-black stable frames and no flash-back during new-photo
+confirmation. They use a 60-second hang guard for eventual advancement, without
+judging screenshot onset, midpoint delivery before T−2, capture spans/gaps or
+onset+4. Their version 2 `release-functional` receipt explicitly records timing
+as `NOT_RUN`; a functional pass is never a timing pass. Debug executions of the
+original screenshot methods and their legacy receipt interpretation are unchanged.
+
+The nightly population has no combined lifecycle Release cases. The standalone
+pause mapping is the same on iPhone, iPad and tvOS: midpoint T−2 and no premature
+advance map to `LifecycleTimelineJudge.judgeMidpointPause`; Continue T±2 and
+new-photo onset+4 map to `LifecycleTimelineJudge.judge`. The iPad conservative
+capture interval/span/gap gates and tvOS dimming/rescue/first-half-window judges
+only establish that screenshot onset, so Release retires that precision chain.
+No separate fade-duration judge exists in these suites beyond onset+4. The
+combined access-lifecycle methods are not in the nightly matrix and retain their
+existing checks. Auto-hide seconds/hidden stability and background first-segment
+attribution have no equivalent Debug timeline coverage and remain unchanged,
+as do settings persistence, background/process identity, directional wake/focus,
+membership and the separate no-flash-back suites. Pause holds still span T+2.
+
+| Release precision judge in the pause methods | Debug replacement on the same platform/device |
+| --- | --- |
+| iOS midpoint Pause tap/confirmation before T−2 and unchanged timing-start photo; tvOS anchored midpoint/focus deadline and unchanged anchor photo | `judgeMidpointPause`: App Continue → Pause before T−2 with no intervening fade/commit |
+| iOS/tvOS first-half screenshot deadline and early-change verdict; tvOS Up wake not before T−2 | `judgeMidpointPause` plus `judge`: premature fade remains a failure; remote focus/content checks remain functional |
+| iPhone/tvOS T±2 screenshot onset, sustained dimming, recovery veto and tvOS late-rescue span/continuity | `judge`: App Continue → actual render fade onset in T±2 |
+| iPad conservative onset interval, ≤1.001-second captures, ≤0.101-second gaps and original-photo luma evidence for onset | iPad `judge` with the same App onset contract; hash-bound content remains independent |
+| New-photo confirmation by onset+4 and T+6 recording boundary | `judge`: new stable scene by onset+4; Release still requires an identifiable different photo with its existing 0.8-second/1-second stable confirmation |
+| Auto-hide seconds/hidden stability in narrow first-wake and combined lifecycle helpers | No equivalent timeline case: retained |
+| Background first-segment screenshot deadline and combined lifecycle timing/progress judges | No equivalent timeline case: retained; combined methods are outside the nightly matrix |
 
 For the Debug suites, the T origin is **App received Continue**, rather than the
 runner issuing the Continue press. The receipt, the first committed display tick

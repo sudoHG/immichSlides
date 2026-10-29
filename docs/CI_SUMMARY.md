@@ -949,6 +949,17 @@ failed/cancelled jobs, absent artifacts and other incomplete evidence.
 
 ### Reader-first evolution
 
+Lifecycle pause evidence has a separate receipt version from summary versions.
+Unversioned `pause-next-continue.json` keeps its legacy signed screenshot-onset
+interpretation for retained 90-day history. Version 2 requires mode
+`release-functional`, configuration `Release`, an exact functional signature,
+timing `NOT_RUN`, the platform's device and six ordered, hash-bound public-photo
+proofs. Missing/unknown versions, signatures, proofs or mismatched hold/resume
+identities remain unverified. `pause_timing_verdict` returns `NOT_RUN` for the
+explicit functional mode, never `PASS`; the tracer's legacy `p2_verdict` field
+carries the separately validated functional verdict. Debug App timeline receipts
+and old summary/environment-limit readers are unchanged.
+
 Retiring a producer identity must also preserve interpretation of its retained
 records. Keep historical selectors in the reader, gated by the night's verified
 scheduling evidence, until the last affected producer artifact expires; do not

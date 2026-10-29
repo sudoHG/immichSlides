@@ -11,8 +11,9 @@ enumeration and aggregation are documented in [Skeleton nightly](CI_NIGHTLY.md).
 Explicit warm runs can opt into [listed-only retries](TESTING.md#known-flaky-registry-and-listed-only-retries)
 with `--listed-retry-device`; the tracer and skeleton nightly continue to run once.
 Signed visual-review promotion remains separate work.
-The lifecycle pause flows distinguish transition onset from stable new-photo
-confirmation; the shared definition and the unchanged platform-specific timing
+The Debug lifecycle pause flows distinguish transition onset from stable new-photo
+confirmation; Release pause suites instead emit explicit version 2 functional
+receipts with timing `NOT_RUN`. The shared definition, coverage mapping and timing
 bounds are documented in [Testing conventions](TESTING.md#running-controlled-integration-and-end-to-end-tests).
 Simulator preparation and official exports have explicit phase deadlines; timeout
 records and private quarantine follow the [nightly infrastructure policy](CI_NIGHTLY.md#population-and-capacity).
@@ -1963,6 +1964,9 @@ New enum meanings and why the previous vocabulary cannot express them:
 | `Record until a new photo is identifiable, not until the T+2 identity timeout` | `continue_timing` | `evidence_capture` | [AccessLifecycleContract+TransitionTiming.swift](../TestSupport/AccessLifecycleContract+TransitionTiming.swift) |
 | `Next-photo stable confirmation does not match the current raw screenshot` | `visible_scene_capture` | `evidence_capture` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift) |
 | `Next photo did not form a stable new MATCH within ` | `visible_scene_capture` | `scene_identity` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift) |
+| `Release lifecycle content: ` | `visible_scene_capture` | `scene_identity` | Shared Release photo/hold/resume checks in [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift). |
+| `Release lifecycle control: ` | `control_action` | `control_state` | Release Play/Pause readback in [AccessLifecycleTVOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift). |
+| `Release lifecycle focus: ` | `control_action` | `focus` | Release remote focus in [AccessLifecycleTVOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift). |
 | `Control-bar calibration must recognize the visible Settings crop.` | `visible_scene_capture` | `evidence_capture` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift); Settings-crop reference unwrap |
 | `Screenshot cannot be used as identity;` | `visible_scene_capture` | `scene_identity` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift) |
 | `Must be able to return from settings to the playback page.` | `settings_navigation` | `navigation` | [AccessLifecycleIOSUITests+Navigation.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Navigation.swift) |

@@ -463,6 +463,27 @@ extension AccessLifecycleTVOSUITests {
     }
 
     @MainActor
+    private func setReleasePlaybackState(
+        app: XCUIApplication, playPauseButton: XCUIElement, expected: String, direction: XCUIRemote.Button
+    ) throws {
+        ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
+        moveFocus(
+            direction, to: playPauseButton, maximumPresses: 3,
+            message: "Release lifecycle focus: must reach Play/Pause.")
+        let value = String(describing: playPauseButton.value ?? "").lowercased()
+        let isPlaying = value.contains("暂停") || value.contains("pause")
+        if isPlaying != (expected == "pause") { FirstFailureRemote.press(.select) }
+        XCTAssertTrue(
+            waitUntil(timeout: AccessLifecycleTVOSUITestsWaitTiming.stateChangeTimeoutSeconds) {
+                let value = String(describing: playPauseButton.value ?? "").lowercased()
+                return expected == "pause"
+                    ? value.contains("暂停") || value.contains("pause")
+                    : value.contains("播放") || value.contains("play")
+            }, "Release lifecycle control: Play/Pause must reach the requested state.")
+        record(expected == "play" ? "playback.pause" : "playback.play")
+    }
+
+    @MainActor
     func exerciseTVOSPauseNextContinueVisibleTiming(
         app: XCUIApplication,
         playPauseButton: XCUIElement,
@@ -470,6 +491,27 @@ extension AccessLifecycleTVOSUITests {
         intervalSeconds: Int,
         isSinglePhotoModeVerified: Bool
     ) throws -> [[String: Any]] {
+        #if !DEBUG
+        return try ReleaseLifecycleFunctionalCapture.exercise(
+            interval: TimeInterval(intervalSeconds),
+            pause: {
+                try self.setReleasePlaybackState(
+                    app: app, playPauseButton: playPauseButton, expected: "play", direction: .right)
+            },
+            next: {
+                self.ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
+                self.moveFocus(
+                    .right, to: nextButton, maximumPresses: 3, message: "Release lifecycle focus: must reach Next.")
+                FirstFailureRemote.press(.select)
+                self.record("playback.next")
+            },
+            resume: {
+                try self.setReleasePlaybackState(
+                    app: app, playPauseButton: playPauseButton, expected: "pause", direction: .left)
+            },
+            screenshot: { app.screenshotForFailureEvidence().pngRepresentation },
+            persist: { try self.persistTVOSCapturedPNG($0, name: $1) })
+        #else
         let interval = TimeInterval(intervalSeconds)
         let midpointSetupAt = Date()
         ensureControlBarVisible(app: app, playPauseButton: playPauseButton)
@@ -647,6 +689,7 @@ extension AccessLifecycleTVOSUITests {
                 }
             ]
         ]
+        #endif
     }
 
     @MainActor
@@ -1011,6 +1054,15 @@ extension AccessLifecycleTVOSUITests {
         for (key, value) in extra {
             payload[key] = value
         }
+        #if !DEBUG
+        if name == "pause-next-continue.json" {
+            payload["schema_version"] = 2
+            payload["mode"] = "release-functional"
+            payload["configuration"] = "Release"
+            payload["functional_signed"] = true
+            payload["timing_verdict"] = "NOT_RUN"
+        }
+        #endif
         try StrictE2EVisualEvidence.writeRequiredJSON(payload, name: name)
     }
 }

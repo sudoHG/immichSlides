@@ -1,6 +1,106 @@
 import CryptoKit
 import XCTest
 
+#if !DEBUG
+/// Release judges public photo contents; precise timing belongs to the Debug App timeline suites.
+@MainActor
+enum ReleaseLifecycleFunctionalCapture {
+    static func exercise(
+        interval: TimeInterval, pause: () throws -> Void, next: () throws -> Void,
+        resume: () throws -> Void, screenshot: () -> Data,
+        persist: (Data, String) throws -> Void
+    ) throws -> [[String: Any]] {
+        var proofs: [[String: Any]] = []
+        func record(_ name: String, _ frame: (mark: String, png: Data)) throws {
+            try persist(frame.png, name)
+            proofs.append([
+                "name": name, "mark": frame.mark,
+                "png_sha256": SHA256.hash(data: frame.png).map { String(format: "%02x", $0) }.joined()
+            ])
+        }
+        func capture(_ name: String, expected: String? = nil) throws -> (mark: String, png: Data) {
+            let png = screenshot()
+            let identity = StrictE2EPhotoIdentity.captureIdentity(png: png)
+            guard identity.status == .match, let mark = identity.mark,
+                expected.map({ $0 == mark }) ?? true
+            else {
+                throw AccessLifecycleContract.AssertionError.message(
+                    "Release lifecycle content: required photo is black, unreadable or changed; name=\(name)")
+            }
+            return (mark, png)
+        }
+        func stable(excluding: String?) throws -> (mark: String, png: Data) {
+            let waiting = TestWait.hangGuard()
+            #if os(iOS)
+            let stability =
+                UIDevice.current.userInterfaceIdiom == .pad
+                ? AccessLifecycleContract.ipadNewStableMarkConfirmWindow
+                : AccessLifecycleContract.newStableMarkConfirmWindow
+            #else
+            let stability = AccessLifecycleContract.newStableMarkConfirmWindow
+            #endif
+            var candidate: (mark: String, at: Date)?
+            repeat {
+                let requested = Date()
+                let png = screenshot()
+                guard waiting.remainingSeconds > 0 else { break }
+                let identity = StrictE2EPhotoIdentity.captureIdentity(png: png)
+                if identity.status == .match, let mark = identity.mark, mark != excluding,
+                    identity.meanLuma >= AccessLifecycleContract.newStableMarkMinimumLuma
+                {
+                    if let candidate {
+                        guard candidate.mark == mark else {
+                            throw AccessLifecycleContract.AssertionError.message(
+                                "Release lifecycle content: new photo changed during stable confirmation")
+                        }
+                        if requested.timeIntervalSince(candidate.at) >= stability { return (mark, png) }
+                    } else {
+                        candidate = (mark, Date())
+                    }
+                } else if candidate != nil {
+                    throw AccessLifecycleContract.AssertionError.message(
+                        "Release lifecycle content: new photo became black, unreadable or flashed back")
+                }
+                RunLoop.current.run(until: Date().addingTimeInterval(AccessLifecycleContract.newStableMarkPollInterval))
+            } while waiting.remainingSeconds > 0
+            throw AccessLifecycleContract.AssertionError.message(
+                "Release lifecycle content: no stable new photo before the hang guard expired")
+        }
+
+        try pause()
+        let initialIdentity = StrictE2EPhotoIdentity.captureIdentity(png: screenshot())
+        try next()
+        try record("timing-start", stable(excluding: initialIdentity.mark))
+        try resume()
+        RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(interval / 2))))
+        try pause()
+        let beforePause = try capture("before-pause")
+        try record("before-pause", beforePause)
+        try next()
+        let afterNext = try stable(excluding: beforePause.mark)
+        try AccessLifecycleContract.assertPauseUsesVisibleIdentity(
+            pauseMark: beforePause.mark, afterNextMark: afterNext.mark,
+            didUseProgressProbe: false, didUseControlValueOnly: false)
+        try record("after-next", afterNext)
+        let holdStart = Date()
+        let holdTarget = interval + AccessLifecycleContract.pauseHoldBeyondIntervalSeconds
+        while Date().timeIntervalSince(holdStart) < holdTarget {
+            RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.product(0.4))))
+            _ = try capture("paused-hold", expected: afterNext.mark)
+        }
+        let held = try capture("pause-hold-end", expected: afterNext.mark)
+        try AccessLifecycleContract.assertPausedHoldWithoutAdvance(
+            startMark: afterNext.mark, endMark: held.mark,
+            holdSeconds: Date().timeIntervalSince(holdStart), intervalSeconds: interval)
+        try record("pause-hold-end", held)
+        try resume()
+        try record("continue-early", capture("continue-early", expected: held.mark))
+        try record("after-auto-advance", stable(excluding: held.mark))
+        return proofs
+    }
+}
+#endif
+
 #if os(iOS)
 extension AccessLifecycleIOSUITests {
     @MainActor
@@ -287,6 +387,29 @@ extension AccessLifecycleIOSUITests {
         app: XCUIApplication,
         intervalSeconds: Int
     ) throws -> [[String: Any]] {
+        #if !DEBUG
+        return try ReleaseLifecycleFunctionalCapture.exercise(
+            interval: TimeInterval(intervalSeconds),
+            pause: {
+                try self.confirmPlayPauseState(
+                    app: app, expected: "play", shouldTapIfNeeded: true,
+                    message: "Must be paused after the midpoint.")
+                self.requests.append("playback.pause")
+            },
+            next: {
+                self.revealPlaybackControls(app: app)
+                self.tapElement(app.buttons["slideshow.control.next.button"])
+                self.requests.append("playback.next")
+            },
+            resume: {
+                _ = try self.pressContinueStartingClock(app: app)
+                XCTAssertTrue(
+                    self.waitForPlayPauseState(app: app, expected: "pause", timeout: TestWait.seconds(.product(4))),
+                    "Should be playing after Continue.")
+            },
+            screenshot: { app.screenshotForFailureEvidence().pngRepresentation },
+            persist: { try self.persistRequiredPNG($0, name: $1) })
+        #else
         let interval = TimeInterval(intervalSeconds)
         // Settings returns at an arbitrary scene age. Establish an opaque paused photo before starting T/2.
         try confirmPlayPauseState(
@@ -390,6 +513,7 @@ extension AccessLifecycleIOSUITests {
             holdSeconds: holdSeconds,
             holdMark: holdMark
         )
+        #endif
     }
 
     struct ContinueWatchRawFrame {
@@ -981,6 +1105,15 @@ extension AccessLifecycleIOSUITests {
         for (key, value) in extra {
             payload[key] = value
         }
+        #if !DEBUG
+        if name == "pause-next-continue.json" {
+            payload["schema_version"] = 2
+            payload["mode"] = "release-functional"
+            payload["configuration"] = "Release"
+            payload["functional_signed"] = true
+            payload["timing_verdict"] = "NOT_RUN"
+        }
+        #endif
         try StrictE2EVisualEvidence.writeRequiredJSON(payload, name: name)
     }
 }
