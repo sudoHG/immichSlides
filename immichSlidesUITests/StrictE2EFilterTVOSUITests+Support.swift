@@ -105,7 +105,9 @@ extension StrictE2EFilterTVOSUITests {
         app: XCUIApplication, names: [String], stableFrameDeadline: Date? = nil,
         requiresStableAlbumScene: Bool = false
     ) throws {
+        #if DEBUG
         let playbackEntryDeadline = Date().addingTimeInterval(TestWait.seconds(.product(30)))
+        #endif
         let playPauseButton = app.buttons["slideshow.control.playPause.button"]
         XCTAssertTrue(
             playPauseButton.waitForPublicElement(

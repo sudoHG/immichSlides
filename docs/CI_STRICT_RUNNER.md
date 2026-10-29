@@ -427,6 +427,10 @@ are retained in `album-play-N-window.json`; the original public slot reader stil
 judges every screenshot. The 4 s Pause readback, 3.5 s settles, Next actions, entry
 hint, other tvOS suites and Release capture path remain unchanged. An unstable or
 missing observation fails instead of publishing a candidate or retrying Pause.
+The interval key also enables XCTest mode: the API key is written to and readable
+from the UserDefaults XCTest fallback, and the Info.plist debug server is skipped.
+This launch therefore does not exercise Keychain-only storage; `tvos-flow` and
+`tvos-n1-cold` retain that coverage, as detailed below.
 The motion clock starts at the automatic 1 s fade-in, before the stable clock.
 With the default 5 s interval, raw progress is `(t + 1) / 5`, where `t` is elapsed
 stable time: it reaches one at about 4 s and exceeds one before the 5 s stable
@@ -567,9 +571,10 @@ Other probe-key launches are the configured SmartFill launch helpers in
 `PlaybackHistoryIOSUITests`, `ScenePresentationContractUITests`, and
 `FilterSummaryTVOSVisualUITests.testTVOSSlideShowControlBarButtonsCanActivateOnSelect`,
 plus the three `filter-person` membership launches (`normal`, `conflict-normal`,
-and `nofaces`) and the single `tvos-person` membership launch.
+and `nofaces`) and the `tvos-person` and `tvos-album-empty` membership launches.
 Their additional `UI_TEST_*` keys enable XCTest mode.
-For Debug `filter-person` and `tvos-person`, adding `UI_TEST_PLAYBACK_INTERVAL_SECONDS=60` enables
+For Debug `filter-person`, `tvos-person` and `tvos-album-empty`, adding
+`UI_TEST_PLAYBACK_INTERVAL_SECONDS=60` enables
 XCTest mode because that key is not exempt in `PlatformCompat.isRunningXCTest`.
 The API key is written to and readable from the UserDefaults XCTest fallback,
 and the Info.plist debug server is skipped. These launches are no longer
