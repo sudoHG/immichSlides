@@ -31,7 +31,7 @@ from strict_e2e_p2_contract import P2_CASES, RAW_VERDICT, official_tests_facts
 from strict_e2e_server import PUBLIC_API_KEY
 from strict_e2e_runner_support import (IOS_LIFECYCLE_PAUSE_SUITE, SIMULATOR_READINESS_TIMEOUT_SECONDS,
                                      SIMULATOR_PREPARATION_TIMEOUT_SECONDS, TIMELINE_LIFECYCLE_SUITES,
-                                     destination_udid, pause_timing_verdict, prepare_simulator)
+                                     destination_udid, pause_visual_verdict, prepare_simulator)
 
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = ROOT / "scripts/strict-tracer.json"
@@ -536,7 +536,7 @@ def main(argv=None):
                      automated_contract_failed=contract_failed)
         if case["suite"] == IOS_LIFECYCLE_PAUSE_SUITE:
             # This existing field carries visual verdicts despite its legacy P2 name.
-            phase["p2_verdict"] = pause_timing_verdict(evidence)
+            phase["p2_verdict"] = pause_visual_verdict(evidence, case["suite"])
         if contract_failed:
             observed, _ = evaluate_tracer([phase["identity"]], [phase])
             if observed[0]["outcome"] == "failed":

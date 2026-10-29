@@ -1063,6 +1063,11 @@ def pause_timing_verdict(evidence_dir: Path) -> str:
     """Read the existing timing signature without reinterpreting screenshot samples."""
     try:
         receipt = json.loads((evidence_dir / "pause-next-continue.json").read_text())
+        if type(receipt.get("schema_version")) is int and receipt["schema_version"] == 2:
+            return ("NOT_RUN" if receipt.get("mode") == "release-functional"
+                    and receipt.get("configuration") == "Release" else "UNVERIFIED")
+        if "schema_version" in receipt:
+            return "UNVERIFIED"
         timeline = receipt.get("timeline")
         starts = [item for item in timeline if isinstance(item, dict) and item.get("name") == "first_transition_start"]
         signed = (receipt.get("suite") == "pause-next-continue" and len(starts) == 1
@@ -1070,6 +1075,39 @@ def pause_timing_verdict(evidence_dir: Path) -> str:
     except (OSError, ValueError, TypeError, AttributeError):
         signed = False
     return "PASS" if signed else "UNVERIFIED"
+
+
+def pause_visual_verdict(evidence_dir: Path, suite: str) -> str:
+    """Read the explicit Release functional version; retain the unversioned timing reader."""
+    try:
+        receipt = json.loads((evidence_dir / "pause-next-continue.json").read_text())
+        if "schema_version" not in receipt:
+            legacy = pause_timing_verdict(evidence_dir)
+            return "NOT_REQUIRED" if suite == "tvos-lifecycle-pause" and legacy == "PASS" else legacy
+        if not (type(receipt.get("schema_version")) is int and receipt["schema_version"] == 2
+                and receipt.get("mode") == "release-functional" and receipt.get("configuration") == "Release"
+                and receipt.get("suite") == "pause-next-continue" and receipt.get("functional_signed") is True
+                and receipt.get("timing_verdict") == "NOT_RUN"
+                and receipt.get("device") in ({"iphone", "ipad"} if suite == IOS_LIFECYCLE_PAUSE_SUITE else {"tvos"})):
+            return "UNVERIFIED"
+        names = ("timing-start", "before-pause", "after-next", "pause-hold-end", "continue-early", "after-auto-advance")
+        proofs = receipt["timeline"]
+        if not isinstance(proofs, list) or [item["name"] for item in proofs] != list(names):
+            return "UNVERIFIED"
+        marks = []
+        for proof in proofs:
+            mark = proof["mark"]
+            if mark not in {"A1", "A2", "A3", "A4", "A5"}:
+                return "UNVERIFIED"
+            png = (evidence_dir / (proof["name"] + ".png")).read_bytes()
+            if hashlib.sha256(png).hexdigest() != proof["png_sha256"]:
+                return "UNVERIFIED"
+            marks.append(mark)
+        if not (marks[1] != marks[2] and marks[2] == marks[3] == marks[4] and marks[5] != marks[4]):
+            return "UNVERIFIED"
+        return "PASS"
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        return "UNVERIFIED"
 
 
 def app_timeline_verdict(evidence_dir: Path) -> str:
@@ -1128,7 +1166,8 @@ def app_timeline_verdict(evidence_dir: Path) -> str:
         return "UNVERIFIED"
 
 
-def require_visual_identity(evidence_dir: Path, suite: str, *, fixture_set: str = "a") -> dict[str, object]:
+def require_visual_identity(evidence_dir: Path, suite: str, *, fixture_set: str = "a",
+                            configuration: str | None = None) -> dict[str, object]:
     if suite in TIMELINE_LIFECYCLE_SUITES:
         payload = {"verdict": app_timeline_verdict(evidence_dir), "suite": suite}
         if payload["verdict"] != "PASS":
@@ -1137,8 +1176,17 @@ def require_visual_identity(evidence_dir: Path, suite: str, *, fixture_set: str 
             raise CommandError("App timeline: missing or invalid signed evidence", code=2)
         _write_visual_runner_report(evidence_dir, payload)
         return payload
-    if suite == IOS_LIFECYCLE_PAUSE_SUITE:
-        payload = {"verdict": pause_timing_verdict(evidence_dir), "suite": suite}
+    if suite in {IOS_LIFECYCLE_PAUSE_SUITE, "tvos-lifecycle-pause"}:
+        verdict = pause_visual_verdict(evidence_dir, suite)
+        payload = {"verdict": verdict, "suite": suite, "timing_verdict": pause_timing_verdict(evidence_dir)}
+        # Current Release runs require v2; callers reading retained histories may omit configuration.
+        invalid_release = configuration == "Release" and (verdict != "PASS" or payload["timing_verdict"] != "NOT_RUN")
+        if invalid_release or (verdict == "UNVERIFIED" and (
+                suite == "tvos-lifecycle-pause" or payload["timing_verdict"] == "NOT_RUN")):
+            payload["verdict"] = "FAIL"
+            payload["error"] = "Release lifecycle: missing or invalid functional evidence"
+            _write_visual_runner_report(evidence_dir, payload)
+            raise CommandError(payload["error"], code=2)
         _write_visual_runner_report(evidence_dir, payload)
         return payload
     if suite in OUT_OF_ORDER_VISUAL_SUITES:
