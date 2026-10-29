@@ -18,11 +18,16 @@ enum ReleaseLifecycleFunctionalCapture {
                 "png_sha256": SHA256.hash(data: frame.png).map { String(format: "%02x", $0) }.joined()
             ])
         }
-        func capture(_ name: String, expected: String? = nil, before deadline: Date? = nil) throws -> (
+        func capture(
+            _ name: String, expected: String? = nil, before deadline: Date? = nil,
+            deadlineAtRequest: Bool = false
+        ) throws -> (
             mark: String, png: Data
         ) {
+            let requestedAt = Date()
             let png = screenshot()
-            if let deadline, Date() >= deadline {
+            let observedAt = deadlineAtRequest ? requestedAt : Date()
+            if let deadline, observedAt >= deadline {
                 throw AccessLifecycleContract.AssertionError.message(
                     "Release lifecycle timing precondition failed: test action or capture missed the stable-photo window; name=\(name)"
                 )
@@ -84,7 +89,8 @@ enum ReleaseLifecycleFunctionalCapture {
         let beforePause = try capture(
             "before-pause",
             before: midpointContinueAt.addingTimeInterval(
-                interval - AccessLifecycleContract.continueCaptureSlackSeconds))
+                interval - AccessLifecycleContract.continueCaptureSlackSeconds),
+            deadlineAtRequest: true)
         try record("before-pause", beforePause)
         try next()
         let afterNext = try stable(excluding: beforePause.mark)

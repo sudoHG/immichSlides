@@ -842,10 +842,12 @@ of the screenshot timing algorithm below. Release `ios-lifecycle-pause` and
 `tvos-lifecycle-pause` retain the complete Pause/Next/hold/Continue flow, public
 photo identity, non-black stable frames and no flash-back during new-photo
 confirmation. They use a 60-second hang guard for eventual advancement, without
-judging screenshot onset, capture spans/gaps or onset+4. Midpoint and early-Continue
-captures must still finish before the earliest fade window (T−2 from the real
-Continue press) to cover the stable-photo precondition; test-side latency past
-that boundary fails red as `continue_timing/timing_window`, never `scene_identity`.
+judging screenshot onset, capture spans/gaps or onset+4. The midpoint paused-photo
+screenshot request and early-Continue screenshot return must precede the earliest
+fade window (T−2 from the real Continue press) to cover the stable-photo
+precondition. The paused frame is already frozen, so its capture latency does not
+move the request-time measurement; Continue remains bounded by return time.
+Missing that boundary fails red as `continue_timing/timing_window`, never `scene_identity`.
 Their version 2 `release-functional` receipt explicitly records timing
 as `NOT_RUN`; a functional pass is never a timing pass. Debug executions of the
 original screenshot methods and their legacy receipt interpretation are unchanged.

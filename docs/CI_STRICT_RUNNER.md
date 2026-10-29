@@ -462,9 +462,11 @@ remain independent and fixed. A late snapshot fails, and readback never wakes or
 retaps the controls. The shared `IOSDriver` Settings query path is unchanged.
 Settings return has no known scene-clock origin and cannot start that wait. The setup
 capture is `timing-start.png`; paused-frame identity, T+2 hold, same-scene Continue
-and eventual new-photo checks remain. Release captures for
-the midpoint pause and early Continue must return before the earliest fade window
-(T−2 from the actual Continue press); a late action/readback/capture is a red
+and eventual new-photo checks remain. The Release midpoint paused-photo capture
+uses its screenshot request time before the earliest fade window (T−2 from the
+actual Continue press): the frame is already frozen, so capture latency cannot
+move that measurement. Early Continue still uses the screenshot return time.
+A missed request/return deadline is a red
 `continue_timing/timing_window` test-precondition failure, not a scene-identity
 failure or a timing PASS. A legal frozen fade is still covered by `pause-window`,
 rather than admitted as a stable photo.
@@ -1971,7 +1973,7 @@ New enum meanings and why the previous vocabulary cannot express them:
 | `Next-photo stable confirmation does not match the current raw screenshot` | `visible_scene_capture` | `evidence_capture` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift) |
 | `Next photo did not form a stable new MATCH within ` | `visible_scene_capture` | `scene_identity` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift) |
 | `Release lifecycle content: ` | `visible_scene_capture` | `scene_identity` | Shared Release photo/hold/resume checks in [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift). |
-| `Release lifecycle timing precondition failed: ` | `continue_timing` | `timing_window` | Release midpoint/early-Continue action or screenshot arrived after the stable-photo coverage window; always red. |
+| `Release lifecycle timing precondition failed: ` | `continue_timing` | `timing_window` | Release midpoint screenshot request or early-Continue screenshot return missed the stable-photo coverage window; always red. |
 | `Release lifecycle control: ` | `control_action` | `control_state` | Release Play/Pause preparation/readback in the iOS and tvOS Timing helpers. |
 | `Release lifecycle focus: ` | `control_action` | `focus` | Release remote focus in [AccessLifecycleTVOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift). |
 | `Control-bar calibration must recognize the visible Settings crop.` | `visible_scene_capture` | `evidence_capture` | [AccessLifecycleIOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift); Settings-crop reference unwrap |
