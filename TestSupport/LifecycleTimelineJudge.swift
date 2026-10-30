@@ -21,6 +21,8 @@ struct LifecycleTimelineEvent: Codable, Equatable, Sendable {
 }
 
 enum LifecycleTimelineJudge {
+    private static let frozenPixelMaximumChannelDifference = 1
+
     struct Failure: Error, CustomStringConvertible {
         let description: String
         init(_ reason: String) { description = "App timeline: " + reason }
@@ -226,5 +228,30 @@ enum LifecycleTimelineJudge {
             })
         else { return nil }
         return state
+    }
+
+    // Maintainer-approved; see docs/TESTING.md.
+    static func frozenPixelsEqual(
+        _ reference: [UInt8], _ candidate: [UInt8], events: [LifecycleTimelineEvent],
+        scene: String, frame: String, request: TimeInterval, returned: TimeInterval
+    ) throws -> Bool {
+        try validate(events)
+        guard !reference.isEmpty, reference.count == candidate.count else { return false }
+        if reference == candidate { return true }
+        guard request.isFinite, returned.isFinite, request <= returned, !scene.isEmpty, !frame.isEmpty,
+            let seal = events.first(where: { $0.uptime >= returned }),
+            seal.isPaused, seal.scene == scene, seal.frame == frame,
+            let anchor = events.last(where: {
+                $0.kind == "frameFrozen" && $0.uptime <= request && $0.isPaused
+                    && $0.scene == scene && $0.frame == frame
+            }),
+            zip(reference, candidate).allSatisfy({
+                abs(Int($0.0) - Int($0.1)) <= frozenPixelMaximumChannelDifference
+            })
+        else { return false }
+        return events.filter { $0.sequence >= anchor.sequence && $0.sequence <= seal.sequence }.allSatisfy {
+            ["frameFrozen", "checkpoint", "clockHandshake"].contains($0.kind)
+                && $0.isPaused && $0.scene == scene && $0.frame == frame
+        }
     }
 }

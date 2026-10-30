@@ -1,10 +1,78 @@
+import CoreGraphics
 import Foundation
+import ImageIO
 import Testing
 @testable import immichSlides
 
 @MainActor
 @Suite
 struct SceneLifecycleContractTests {
+    @Test(arguments: [
+        "exact", "oneLevel", "twoLevels", "missingFrozen", "frozenAfterRequest", "changedFrame", "changedScene",
+        "unpaused", "missingSeal", "frozenFrameChanged", "differentLength", "unreadablePNG"
+    ])
+    func `frozen captures allow one channel level only with an unchanged frozen timeline`(mutation: String) throws {
+        var events = [
+            LifecycleTimelineEvent(sequence: 1, kind: "timelineStarted", uptime: 0),
+            LifecycleTimelineEvent(sequence: 2, kind: "pauseReceived", uptime: 1, scene: "photo"),
+            LifecycleTimelineEvent(
+                sequence: 3, kind: "frameFrozen", uptime: 1.1, scene: "photo", frame: "frame",
+                isStable: true, isPaused: true),
+            LifecycleTimelineEvent(
+                sequence: 4, kind: "checkpoint", uptime: 4, scene: "photo", frame: "frame",
+                isStable: true, isPaused: true)
+        ]
+        var channelDifference: UInt8 = 1
+        switch mutation {
+        case "exact": channelDifference = 0
+        case "twoLevels": channelDifference = 2
+        case "missingFrozen": events[2].kind = "checkpoint"
+        case "frozenAfterRequest": events[2].uptime = 2.5
+        case "changedFrame": events[3].frame = "other"
+        case "changedScene": events[3].scene = "other"
+        case "unpaused": events[3].isPaused = false
+        case "missingSeal": events[3].uptime = 2.5
+        case "frozenFrameChanged": events[3].kind = "frozenFrameChanged"
+        default: break
+        }
+        do {
+            let reference = try frozenCapturePNG(channelDifference: 0)
+            let pixels = try frozenCapturePNG(
+                channelDifference: channelDifference, width: mutation == "differentLength" ? 22 : 20)
+            var toleratedMaximum: Int?
+            let isEqual = try LifecycleTimelineCapture.frozenPhotoPixelsEqual(
+                reference, mutation == "unreadablePNG" ? Data() : pixels,
+                events: events, scene: "photo", frame: "frame", request: 2, returned: 3,
+                onToleranceApplied: { toleratedMaximum = $0 })
+            #expect(isEqual == ["exact", "oneLevel"].contains(mutation))
+            #expect(toleratedMaximum == (mutation == "oneLevel" ? 1 : nil))
+            #expect(mutation != "frozenFrameChanged")
+        } catch let error as LifecycleTimelineJudge.Failure {
+            #expect(mutation == "frozenFrameChanged")
+            #expect(error.description == "App timeline: frame advanced during pause")
+        }
+    }
+
+    private func frozenCapturePNG(channelDifference: UInt8, width: Int = 20) throws -> Data {
+        let height = 20
+        let pixel: [UInt8] = [100, 110, 120, 255]
+        var pixels: [UInt8] = Array(repeating: pixel, count: width * height).flatMap { $0 }
+        // The changed pixel lies inside the capture's central photo band.
+        pixels[(10 * width + 10) * 4] += channelDifference
+        let provider = try #require(CGDataProvider(data: Data(pixels) as CFData))
+        let image = try #require(
+            CGImage(
+                width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: width * 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+                provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent))
+        let png = NSMutableData()
+        let destination = try #require(CGImageDestinationCreateWithData(png, "public.png" as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, image, nil)
+        #expect(CGImageDestinationFinalize(destination))
+        return png as Data
+    }
+
     @Test(arguments: [
         "valid", "early", "late", "missing", "missingFade", "sequence", "nonce", "exception", "slowStable", "samePhoto",
         "notStable", "caseNonce"

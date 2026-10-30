@@ -11,6 +11,7 @@ final class LifecycleTimelineCapture {
     private let nonce = UUID().uuidString
     private var proofs: [[String: Any]] = []
     private var actions: [[String: Any]] = []
+    private var frozenPixelTolerances: [[String: Any]] = []
 
     init() throws {
         guard let directory = StrictE2EVisualEvidence.directory() else {
@@ -101,7 +102,7 @@ final class LifecycleTimelineCapture {
         _ name: String, expectedScene: String? = nil, excludingScene: String? = nil
     ) throws -> LifecycleTimelineEvent {
         let waiting = TestWait.hangGuard()
-        var frozenReference: (frame: String, pixels: String, png: Data)?
+        var frozenReference: (frame: String, png: Data, request: TimeInterval)?
         repeat {
             _ = try checkpoint(guardWait: waiting)
             let requested = ProcessInfo.processInfo.systemUptime
@@ -134,15 +135,27 @@ final class LifecycleTimelineCapture {
                         let pixels = Self.frozenPhotoPixels(png)
                     else { throw LifecycleTimelineJudge.Failure("missing frozen content anchor") }
                     guard let reference = frozenReference, reference.frame == state.frame else {
-                        frozenReference = (state.frame, pixels, png)
+                        frozenReference = (state.frame, png, requested)
                         continue
                     }
-                    guard reference.pixels == pixels else {
+                    guard
+                        try Self.frozenPhotoPixelsEqual(
+                            reference.png, png, events: events, scene: state.scene, frame: state.frame,
+                            request: reference.request, returned: returned,
+                            onToleranceApplied: { maximum in
+                                self.frozenPixelTolerances.append([
+                                    "name": name + "-frozen", "maximum_channel_difference": maximum
+                                ])
+                            })
+                    else {
                         throw LifecycleTimelineJudge.Failure("frozen photo pixels changed")
                     }
                     mark = anchoredMark
                     try StrictE2EVisualEvidence.writeRequiredPNG(reference.png, name: name + "-frozen-reference")
-                    frozenProof = ["frozen_reference_sha256": Self.hash(reference.png), "frozen_pixels_sha256": pixels]
+                    frozenProof = [
+                        "frozen_reference_sha256": Self.hash(reference.png),
+                        "frozen_pixels_sha256": Self.hash(Data(pixels))
+                    ]
                 }
                 try StrictE2EVisualEvidence.writeRequiredPNG(png, name: name)
                 guard let photoPixels = Self.frozenPhotoPixels(png) else {
@@ -155,7 +168,7 @@ final class LifecycleTimelineCapture {
                     "name": name, "request": requested, "return": returned, "scene": state.scene,
                     "state_sequence": state.sequence, "mark": mark, "status": state.isStable ? "MATCH" : "FROZEN",
                     "mean_luma": identity.meanLuma, "png_sha256": Self.hash(png),
-                    "photo_pixels_sha256": photoPixels,
+                    "photo_pixels_sha256": Self.hash(Data(photoPixels)),
                     "width": properties[kCGImagePropertyPixelWidth as String] ?? 0,
                     "height": properties[kCGImagePropertyPixelHeight as String] ?? 0,
                     "frozen_proof": frozenProof
@@ -185,7 +198,8 @@ final class LifecycleTimelineCapture {
         _ = try captureTimelineContent("timeline-midpoint-pause", expectedScene: start.scene)
         _ = try performTimelineAction("manualNavigationReceived", perform: next)
         let nextScene = try captureTimelineContent("timeline-after-next", excludingScene: start.scene)
-        let heldPhotoPixels = proofs.last?["photo_pixels_sha256"] as? String
+        let heldPhotoPNG = try Data(contentsOf: directory.appendingPathComponent("timeline-after-next.png"))
+        let heldPhotoRequest = proofs.last?["request"] as? TimeInterval
         guard nextScene.scene != start.scene, nextScene.assets != start.assets else {
             throw LifecycleTimelineJudge.Failure("Next did not change photo")
         }
@@ -196,7 +210,17 @@ final class LifecycleTimelineCapture {
             throw LifecycleTimelineJudge.Failure("pause hold shorter than T+2")
         }
         _ = try captureTimelineContent("timeline-after-hold", expectedScene: nextScene.scene)
-        guard let heldPhotoPixels, proofs.last?["photo_pixels_sha256"] as? String == heldPhotoPixels else {
+        let heldEndPNG = try Data(contentsOf: directory.appendingPathComponent("timeline-after-hold.png"))
+        guard let heldPhotoRequest, let heldEnd = proofs.last?["return"] as? TimeInterval,
+            try Self.frozenPhotoPixelsEqual(
+                heldPhotoPNG, heldEndPNG, events: readTimelineEvents(), scene: nextScene.scene,
+                frame: nextScene.frame, request: heldPhotoRequest, returned: heldEnd,
+                onToleranceApplied: { maximum in
+                    self.frozenPixelTolerances.append([
+                        "name": "timeline-pause-hold", "maximum_channel_difference": maximum
+                    ])
+                })
+        else {
             throw LifecycleTimelineJudge.Failure("frozen photo pixels changed")
         }
         try prepareSIGSTOPIfRequested()
@@ -225,7 +249,8 @@ final class LifecycleTimelineCapture {
                 "timeline_sha256": Self.hash(
                     try Data(contentsOf: directory.appendingPathComponent("playback-lifecycle-timeline.jsonl"))
                         .split(separator: 10).prefix(finalEvents.count).reduce(into: Data()) { $0 += $1 + Data([10]) }),
-                "interval": interval, "judgment": judgmentObject, "actions": actions, "content_checks": proofs
+                "interval": interval, "judgment": judgmentObject, "actions": actions, "content_checks": proofs,
+                "frozen_pixel_tolerances": frozenPixelTolerances
             ], name: "app-timeline-verdict.json")
     }
 
@@ -256,8 +281,25 @@ final class LifecycleTimelineCapture {
         }
     }
 
+    static func frozenPhotoPixelsEqual(
+        _ referencePNG: Data, _ candidatePNG: Data, events: [LifecycleTimelineEvent],
+        scene: String, frame: String, request: TimeInterval, returned: TimeInterval,
+        onToleranceApplied: ((Int) -> Void)? = nil
+    ) throws -> Bool {
+        guard let reference = frozenPhotoPixels(referencePNG), let candidate = frozenPhotoPixels(candidatePNG) else {
+            return false
+        }
+        let isEqual = try LifecycleTimelineJudge.frozenPixelsEqual(
+            reference, candidate, events: events, scene: scene, frame: frame, request: request, returned: returned)
+        if isEqual, reference != candidate {
+            let maximum = zip(reference, candidate).reduce(0) { max($0, abs(Int($1.0) - Int($1.1))) }
+            onToleranceApplied?(maximum)
+        }
+        return isEqual
+    }
+
     private static func hash(_ value: String) -> String { hash(Data(value.utf8)) }
-    private static func frozenPhotoPixels(_ png: Data) -> String? {
+    private static func frozenPhotoPixels(_ png: Data) -> [UInt8]? {
         guard let source = CGImageSourceCreateWithData(png as CFData, nil),
             let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
             let crop = image.cropping(
@@ -278,7 +320,7 @@ final class LifecycleTimelineCapture {
             context.draw(crop, in: CGRect(x: 0, y: 0, width: crop.width, height: crop.height))
             return true
         }
-        return didDraw ? hash(Data(pixels)) : nil
+        return didDraw ? pixels : nil
     }
     private static func hash(_ value: Data) -> String {
         SHA256.hash(data: value).map { String(format: "%02x", $0) }.joined()

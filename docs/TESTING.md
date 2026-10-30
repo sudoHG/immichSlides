@@ -936,9 +936,32 @@ Each proof point still requires a conclusive content check, otherwise it fails a
 missing evidence. Screenshot duration itself has no 1.001-second precision gate
 in these Debug cases. Screenshots independently identify public fixture pixels;
 the App's asset hashes only cross-check that identity, never supply it.
-The held-photo proof also compares exact decoded pixels before and after T+2 in
+The held-photo proof also compares decoded pixels before and after T+2 in
 the central photo band (10–90% of width, 30–60% of height), excluding the separately
-animated top EXIF and bottom control overlays. It applies no pixel tolerance.
+animated top EXIF and bottom control overlays. Hogan approved a conditional
+one-level per-channel tolerance on 2026-10-30: only a `frameFrozen` event for the
+same scene/frame before the first capture, followed exclusively by unchanged
+paused frame/checkpoint evidence through the final capture's seal, can permit
+`abs(channel difference) <= 1`. Any `frozenFrameChanged` cancels the tolerance.
+All other comparisons remain exact; missing frozen evidence never grants tolerance.
+The same rule applies to a dim frozen frame's two conclusive captures. Crop,
+identity/brightness checks, T+2 hold, T±2 onset and onset+4 remain unchanged.
+When tolerance is applied, the verdict JSON's `frozen_pixel_tolerances` array
+records the comparison name and measured `maximum_channel_difference`; exact
+comparisons add no entry.
+
+On the pinned iPad Air 11-inch (M4), original App-only nominal 50% duty throttling
+produced a frozen-hold failure with 355,162 of 928,896 central pixels changed,
+each RGB channel by at most one level, while the App timeline retained one frozen
+frame. This does not establish whether the difference originated in rendering,
+compositing or capture. A separate unpaused single-photo run with a 60-second
+interval and PNG requests 2.002 seconds apart changed 56,475 central pixels:
+maximum RGB differences were 117/133/128, with 52,828 pixels exceeding one level.
+That observed motion still fails the approved tolerance; it is not a lower bound
+on every real change. At 60 Hz, the production 66-second motion window implies
+0.0207 pixel displacement per tick at 820 pixels from the centre; no raw
+single-tick pixel measurement was established. Small real changes can remain a
+risk even when logical frame evidence is unchanged.
 
 Local App-only SIGSTOP verification starts the paused App's 24-second STOP **before
 Continue control preparation**; the STOP may overlap preparation queries or remote
