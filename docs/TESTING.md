@@ -431,8 +431,8 @@ accepting whole seconds from 5 through 60; missing or invalid input leaves the
 setting unchanged. Release never reads the override.
 The three person-membership launches (`testFilterPersonNormalMatch`,
 `testFilterPersonConflictNormal`, and `testFilterPersonNoFaces`) also explicitly
-use 60 seconds. The single `tvos-person` launch also explicitly uses 60 seconds
-for its membership captures; no other tvOS launch opts in. These membership
+use 60 seconds. The `tvos-person` and `tvos-album-empty` launches also
+explicitly use 60 seconds for their membership captures. These membership
 launches do not judge the autoplay interval. Their capture scope and XCTest-mode
 side effects are documented in [the strict runner contract](CI_STRICT_RUNNER.md).
 Other callers, including `tvos-flow`, normal five-second autoplay and pause-frame contracts, retain

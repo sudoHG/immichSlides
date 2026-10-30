@@ -215,7 +215,7 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
         }
         let input = try requireStrictE2EInput()
         let emptyCopy = "当前筛选条件没有找到可播放照片，请换一组相册或人物再试。"
-        let app = try launchStrictE2EApp()
+        let app = try launchStrictE2EApp(recordSceneSequence: true, playbackIntervalSeconds: 60)
         defer { app.terminateForFailureEvidence() }
 
         try configureServerThroughFirstBoot(app: app, input: input)
@@ -245,7 +245,8 @@ final class StrictE2EFilterTVOSUITests: XCTestCase {
             .right, to: start, maximumPresses: 3,
             message: "With a selection, focus must be able to move to Start Playback.")
         FirstFailureRemote.press(.select)
-        try capturePausedPlaybackPNGs(app: app, names: ["album-play-1", "album-play-2"])
+        try capturePausedPlaybackPNGs(
+            app: app, names: ["album-play-1", "album-play-2"], requiresStableAlbumScene: true)
 
         try openFilterEditorFromPlaybackSettings(app: app)
         try isolateAndSelectEmptyAlbum(app: app, emptyAlbumID: emptyAlbumID, neighborID: targetAlbumID)

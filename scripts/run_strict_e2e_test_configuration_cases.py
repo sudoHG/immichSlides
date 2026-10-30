@@ -456,8 +456,8 @@ class StrictE2ERunnerTestsCasesConfiguration:
             "PATH", "STRICT_E2E_INPUT_SERVER_URL", "STRICT_E2E_INPUT_PUBLIC_KEY", "STRICT_E2E_INPUT_SCENARIO",
         })
         from strict_e2e_runner_support import write_app_launch_environment_audit
-        for suite in ("album-empty", "filter-person", "journey-b", "tvos-flow", "tvos-person", "late-image",
-                      "ios-lifecycle-first-wake", "ios-lifecycle-settings", "p2-ipad-layout", "p2-rotation"):
+        for suite in ("album-empty", "filter-person", "journey-b", "tvos-flow", "tvos-person", "tvos-album-empty",
+                      "late-image", "ios-lifecycle-first-wake", "ios-lifecycle-settings", "p2-ipad-layout", "p2-rotation"):
             with self.subTest(suite=suite), tempfile.TemporaryDirectory() as directory:
                 evidence = Path(directory)
                 write_app_launch_environment_audit(evidence, suite)
@@ -468,7 +468,7 @@ class StrictE2ERunnerTestsCasesConfiguration:
                     expected = ["UI_TEST_PLAYBACK_INTERVAL_SECONDS"]
                 if suite == "late-image":
                     expected.append("UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT")
-                if suite in {"filter-person", "tvos-person"}:
+                if suite in {"filter-person", "tvos-person", "tvos-album-empty"}:
                     expected.append("UI_TEST_PLAYBACK_INTERVAL_SECONDS")
                 self.assertEqual(audit["launch_environment_keys"], sorted(expected))
 
