@@ -230,7 +230,7 @@ enum LifecycleTimelineJudge {
         return state
     }
 
-    // Hogan approved one channel level only for an independently evidenced, unchanged frozen frame.
+    // Maintainer-approved; see docs/TESTING.md.
     static func frozenPixelsEqual(
         _ reference: [UInt8], _ candidate: [UInt8], events: [LifecycleTimelineEvent],
         scene: String, frame: String, request: TimeInterval, returned: TimeInterval

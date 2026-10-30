@@ -8,8 +8,8 @@ import Testing
 @Suite
 struct SceneLifecycleContractTests {
     @Test(arguments: [
-        "exact", "oneLevel", "twoLevels", "missingFrozen", "changedFrame", "changedScene", "unpaused", "missingSeal",
-        "frozenFrameChanged", "differentLength", "unreadablePNG"
+        "exact", "oneLevel", "twoLevels", "missingFrozen", "frozenAfterRequest", "changedFrame", "changedScene",
+        "unpaused", "missingSeal", "frozenFrameChanged", "differentLength", "unreadablePNG"
     ])
     func `frozen captures allow one channel level only with an unchanged frozen timeline`(mutation: String) throws {
         var events = [
@@ -26,7 +26,8 @@ struct SceneLifecycleContractTests {
         switch mutation {
         case "exact": channelDifference = 0
         case "twoLevels": channelDifference = 2
-        case "missingFrozen": events[2].kind = "pauseFrameCommitted"
+        case "missingFrozen": events[2].kind = "checkpoint"
+        case "frozenAfterRequest": events[2].uptime = 2.5
         case "changedFrame": events[3].frame = "other"
         case "changedScene": events[3].scene = "other"
         case "unpaused": events[3].isPaused = false
@@ -38,10 +39,13 @@ struct SceneLifecycleContractTests {
             let reference = try frozenCapturePNG(channelDifference: 0)
             let pixels = try frozenCapturePNG(
                 channelDifference: channelDifference, width: mutation == "differentLength" ? 22 : 20)
+            var toleratedMaximum: Int?
             let isEqual = try LifecycleTimelineCapture.frozenPhotoPixelsEqual(
                 reference, mutation == "unreadablePNG" ? Data() : pixels,
-                events: events, scene: "photo", frame: "frame", request: 2, returned: 3)
+                events: events, scene: "photo", frame: "frame", request: 2, returned: 3,
+                onToleranceApplied: { toleratedMaximum = $0 })
             #expect(isEqual == ["exact", "oneLevel"].contains(mutation))
+            #expect(toleratedMaximum == (mutation == "oneLevel" ? 1 : nil))
             #expect(mutation != "frozenFrameChanged")
         } catch let error as LifecycleTimelineJudge.Failure {
             #expect(mutation == "frozenFrameChanged")

@@ -942,10 +942,13 @@ animated top EXIF and bottom control overlays. Hogan approved a conditional
 one-level per-channel tolerance on 2026-10-30: only a `frameFrozen` event for the
 same scene/frame before the first capture, followed exclusively by unchanged
 paused frame/checkpoint evidence through the final capture's seal, can permit
-`abs(channel difference) <= 1`. Any `frozenFrameChanged` still fails validation.
+`abs(channel difference) <= 1`. Any `frozenFrameChanged` cancels the tolerance.
 All other comparisons remain exact; missing frozen evidence never grants tolerance.
 The same rule applies to a dim frozen frame's two conclusive captures. Crop,
 identity/brightness checks, T+2 hold, T±2 onset and onset+4 remain unchanged.
+When tolerance is applied, the verdict JSON's `frozen_pixel_tolerances` array
+records the comparison name and measured `maximum_channel_difference`; exact
+comparisons add no entry.
 
 On the pinned iPad Air 11-inch (M4), original App-only nominal 50% duty throttling
 produced a frozen-hold failure with 355,162 of 928,896 central pixels changed,
