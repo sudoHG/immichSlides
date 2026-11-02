@@ -258,6 +258,10 @@ class SummaryContractTests(unittest.TestCase):
                 row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
                 self.assertEqual(proof, ci_summary.parse_summary(summary)["population"]["observed"][0]["environment_limit"])
                 scan_diagnostic_json(json.dumps(summary).encode())
+                verdict = ci_verdict.evaluate_population(summary, summary["population"]["declared"],
+                    {"schema_version": 1, "approval_records": [], "expected_skips": [], "deselections": []},
+                    environment="fixture" if ui else "hermetic")
+                self.assertEqual("environment-limited", verdict["status"])
                 for messages in ([], row["failure_messages"] + ["App timeline:"],
                                  ["Before rotating, the play button value must be pause (playing),"]):
                     changed = copy.deepcopy(summary)
@@ -335,6 +339,14 @@ class SummaryContractTests(unittest.TestCase):
                 if proof:
                     row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
                     ci_summary.parse_summary(summary)
+        # This generic reader formerly rejected strict v1-v4 failures; preserve that interpretation.
+        summary, resource = hosted_timeout_summary()
+        row = summary["population"]["observed"][0]
+        proof = environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=4)
+        row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
+        verdict = ci_verdict.evaluate_population(summary, summary["population"]["declared"],
+            {"schema_version": 1, "approval_records": [], "expected_skips": [], "deselections": []}, environment="hermetic")
+        self.assertEqual("failed", verdict["status"])
 
     def test_late_image_preparation_and_held_budget_stay_red_in_every_policy(self):
         from ci_failure_diagnostics import (PREFIX_RULES, FIRST_FAILURE_STEPS, FIRST_FAILURE_ELEMENTS,
