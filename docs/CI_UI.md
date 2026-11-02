@@ -587,6 +587,20 @@ disposed; failed bundles remain quarantined until reviewed and deleted locally.
 Failed method nodes and UI observations also include the fixed `failure_phase`
 and `failure_class` enums described in
 [public failure diagnostics](CI_STRICT_RUNNER.md#public-failure-diagnostics).
+Nightly fixture UI now emits [policy v5](CI_SUMMARY.md#policy-v5-reader-preparation)
+after its readers merged in #667. Only complete, exact native XCTest/Apple tool
+failure lists qualify, with GitHub-hosted metadata and a matching count of raw
+xcresult `Failure Message` nodes. Ordinary timing assertions, mixed/unknown
+messages, multiple attempts and lists over 16 failures stay red. Native matching
+precedes assertion-wrapper stripping. A clean shard whose failures all qualify
+exits zero while `summary.status` and raw outcomes remain `failed`; its verdict
+is `environment-limited`, never passed. Timeout, cleanup, incomplete coverage and
+privacy failures remain nonzero. The PR `ci-ui` gate gains no yellow exception.
+Yellow shards emit an `::warning` with the exact tool message only after the
+sensitive scan and private-bundle handling succeed. They retain their raw failed
+private bundle in quarantine even when the invocation exits zero. Finalization
+failures stay red and emit no yellow warning.
+
 Each failed attempt retains its own labels; the observation keeps the first
 failure's labels even when a listed retry passes. Existing private official
 failure reads feed the reviewed prefix mapper, and unknown messages become

@@ -925,7 +925,7 @@ clipping any pre-hold part of cold launch and omitting private inputs. It also r
 the last current-readiness reader status and notes, or `unavailable` if no identity
 was read. Preparation has
 separate messages under `late_image` or `cold_relaunch/control_state`; neither
-phase appears in the retained v1–v4 environment timing allowlists. Prepared v5
+phase appears in the retained v1–v4 environment timing allowlists. Active v5
 allows deadline-exhausted navigation/focus preparation waits with every hosting,
 failure-window starvation and functional surface guard. Restoration of paused
 state, held-response budget exhaustion and the late-image Next history-advance
@@ -1446,18 +1446,21 @@ projects qualifying failures at its checkpoint, validates the candidate summary 
 official-method binding with the merged readers, and emits no proof on refusal. Its
 allowlist, evidence requirements, escalation and retained-proof policy are defined
 there. Functional failures and insufficient
-evidence stay red, including every UI shard without a continuous sampler.
+evidence stay red; ordinary UI timing waits have no yellow path.
 Local pinned-device timing contracts, all App behavior, test deadlines, visual validators,
 thresholds and retry limits remain unchanged. `run_strict_e2e.py` retains its raw
 failure exit code; only a complete tracer shard with exclusively yellow failures and
 no infrastructure errors exits zero, with per-case workflow and Markdown warnings.
 
-Readers additionally prepare [policy v5](CI_SUMMARY.md#policy-v5-reader-preparation)
-without activating it. Its timing taxonomy removes phase/element tuples while
+The strict tracer and fixture UI runner emit [policy v5](CI_SUMMARY.md#policy-v5-reader-preparation)
+after reader support merged in #667. Its timing taxonomy removes phase/element tuples while
 retaining exhausted deadlines, per-failure starvation evidence and functional
 exclusions. Its separate complete-message XCTest tool exception also accepts
-nightly fixture UI, without a sampler. Producers still emit v4; v5 activation
-requires a later PR after these readers reach the trusted base.
+nightly fixture UI, without a sampler. Complete raw legacy failure lists are
+projected before diagnostic folding; exact native matching precedes XCTAssert
+wrapper stripping. Unknown/mixed messages stay red, and over-16 lists or multiple
+attempts carry no complete-list field. Tool proofs retain hosting without the
+ordinary CPU/resource-count gate. PR UI classification stays unchanged.
 
 Public-fixture strict/UI failures can publish one first-failure receipt per
 method and existing attempt. Historical records without
@@ -1797,15 +1800,16 @@ and `Application 'com.331works.immichSlides' does not have a process ID` identif
 `unknown/process_lifetime`. The phase stays unknown because termination can be
 explicit or part of `XCUIApplication.launch()`, including a launch in a different
 test. PID values and remaining text are discarded from these diagnostic labels.
-The separate prepared v5 proof retains complete reviewed tool messages; termination
+The active v5 proof retains complete reviewed tool messages; termination
 PIDs are limited to 1–10 digits each, as an explicit exception preserving exact
 message binding. These labels do not prove
 an XCTest/simulator defect or rule out an App crash or stalled launch.
 They add no `infrastructure` entry, retry or passing observation, and are
-ineligible under the currently emitted v1–v4
+ineligible under the retained v1–v4
 [environment-limit policy](CI_SUMMARY.md#prepared-hosted-strict-environment-limits).
-Fixture UI failures remain red with current producer output; v1–v4 apply only to hosted nightly strict
-cases with the required evidence. The XCTest lifecycle API already guarantees
+Active v5 admits only complete, exactly bound native tool failures in hosted
+nightly strict and fixture UI; v1–v4 apply only to historical hosted strict cases.
+The XCTest lifecycle API already guarantees
 `notRunning` after a successful `terminate()` and terminates an existing instance
 inside `launch()`, so an additional state wait or termination is not a proven fix.
 Journey-b's five history captures and tvOS's matching history captures have separate `history_*_capture` phases,

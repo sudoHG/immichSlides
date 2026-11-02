@@ -385,6 +385,36 @@ def write_fixture_summary(summary, output):
     return diagnostic_exit
 
 
+def finish_fixture_coverage(summary, official, expected, policy, *, exit_code, runner_hosted,
+                            base_registry=None, evaluated_on=None):
+    """Keep failed producer status while a clean, fully bound tool-yellow invocation exits zero."""
+    from ci_failure_diagnostics import (attach_failure_messages, environment_limit_evidence,
+        bind_ui_environment_limits, EMITTED_ENVIRONMENT_POLICY_VERSION)
+    attach_failure_messages(summary["population"]["observed"], official)
+    if any(entry["outcome"] == "failed" for entry in summary["population"]["observed"]):
+        summary["status"] = "failed"
+    clean = exit_code in {0, 65} and not summary["infrastructure"]
+    if clean:
+        for index, entry in enumerate(summary["population"]["observed"]):
+            proof = environment_limit_evidence(summary, entry, [], runner_hosted=runner_hosted,
+                policy_version=EMITTED_ENVIRONMENT_POLICY_VERSION)
+            if proof is None:
+                continue
+            candidate = copy.deepcopy(summary)
+            target = candidate["population"]["observed"][index]
+            target["environment_limit"] = target["attempts"][0]["environment_limit"] = proof
+            try:
+                bind_ui_environment_limits(candidate, official)
+            except (ValueError, TypeError, KeyError, AttributeError):
+                continue
+            entry["environment_limit"] = entry["attempts"][0]["environment_limit"] = proof
+    verdict = evaluate_population(summary, expected, policy, environment="fixture",
+        base_registry=base_registry, evaluated_on=evaluated_on)
+    yellow = clean and verdict["status"] == "environment-limited"
+    summary["status"] = "failed" if verdict["status"] == "environment-limited" else verdict["status"]
+    return verdict, 0 if yellow else exit_code or (0 if verdict["status"] == "passed" else 1)
+
+
 def start_official_discovery(summary, device_id, base_policy, *, enabled):
     from ci_ui_discovery import DISCOVERY_MODE, discovery_eligible
     if not (enabled and summary["identity"]["event"] == "pull_request"
@@ -485,6 +515,7 @@ def main(argv=None, *, simulator_prepared=False):
     args = parser.parse_args(argv)
     output = args.output_dir.resolve()
     code, service, bundle, digest, summary = 1, None, None, None, None
+    verdict = None
     first_failure_root = None
     rows = []
     bundles, digests = [], {}
@@ -777,12 +808,12 @@ def main(argv=None, *, simulator_prepared=False):
             from ci_ui_discovery import retain_incomplete_discovery
             retain_incomplete_discovery(summary)
         measured_policy = {"schema_version": 1, "approval_records": [], "expected_skips": [], "deselections": []}
-        verdict = evaluate_population(summary, declared, policy if args.mode == "pr" else measured_policy, environment="fixture",
-                                      base_registry=registry, evaluated_on=evaluated_on)
+        first_export = output / "official-tests.json"
+        first_official = json.loads(first_export.read_text()) if first_export.is_file() else {"testNodes": []}
+        verdict, code = finish_fixture_coverage(summary, first_official, declared, policy if args.mode == "pr" else measured_policy,
+            exit_code=code, runner_hosted=os.environ.get("RUNNER_ENVIRONMENT") == "github-hosted",
+            base_registry=registry, evaluated_on=evaluated_on)
         write_json(output / "coverage-verdict.json", verdict)
-        summary["status"] = verdict["status"]
-        if summary["status"] != "passed":
-            code = code or 1
     except KeyboardInterrupt:
         code = 130
         if summary:
@@ -841,12 +872,19 @@ def main(argv=None, *, simulator_prepared=False):
             for number, path in reversed(list(enumerate(bundles, 1))):
                 disposal_output = output if number == 1 else output / ("disposal-attempt-" + str(number))
                 disposal_output.mkdir(exist_ok=True)
-                failures.extend(finalize_fixture_run(path, disposal_output, digests.get(path), successful=code == 0))
+                failures.extend(finalize_fixture_run(path, disposal_output, digests.get(path),
+                                                    successful=code == 0 and summary["status"] == "passed"))
             if failures:
                 code = code or 1
                 summary["status"] = "failed"
                 summary["infrastructure"].append({"code": "cleanup-failed", "message": "Private bundle disposal failed"})
                 write_fixture_summary(summary, output)
+            if code == 0 and not summary["infrastructure"] and verdict is not None and verdict["status"] == "environment-limited":
+                from ci_failure_diagnostics import render_environment_limit
+                for entry in summary["population"]["observed"]:
+                    if "environment_limit" in entry:
+                        print("::warning title=Environment-limited XCTest tool::" + entry["identity"]["key"]
+                              + ": " + render_environment_limit(entry["environment_limit"]), flush=True)
             print(f"Fixture UI: {summary['status']} ({len(rows)} per-test rows), exit {code}", flush=True)
     return code
 

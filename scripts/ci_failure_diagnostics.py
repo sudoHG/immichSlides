@@ -77,6 +77,7 @@ _validator_enabled = ContextVar("first_failure_validator_enabled", default=False
 
 ENVIRONMENT_LIMIT_FIELD = "environment_limit"
 ENVIRONMENT_POLICY_VERSION = 4
+EMITTED_ENVIRONMENT_POLICY_VERSION = 5
 FAILURE_MESSAGES_FIELD = "failure_messages"
 MAX_FAILURE_MESSAGES = 16
 UNRECOGNIZED_FAILURE_MESSAGE = "[unrecognized XCTest failure]"
@@ -267,6 +268,36 @@ def validate_failure_messages(messages):
             "failure messages: unreviewed public message")
 
 
+def public_failure_messages(messages):
+    """Project the complete raw official list; native matches precede assertion unwrapping."""
+    if not isinstance(messages, list) or not 0 < len(messages) <= MAX_FAILURE_MESSAGES:
+        return None
+    public = []
+    for message in messages:
+        if xctest_tool_class(message) is not None:
+            public.append(message)
+            continue
+        text = normalized_xctest_failure(message)
+        rule = next((rule for rule in PREFIX_RULES if text is not None and text.startswith(rule[0])), None)
+        public.append(rule[0] if rule is not None and xctest_tool_class(rule[0]) is None
+                      else UNRECOGNIZED_FAILURE_MESSAGE)
+    return public
+
+
+def attach_failure_messages(observed, official):
+    """A retry cannot claim a single-invocation complete list."""
+    diagnostics = {first_failure_test_key(key): value for key, value in test_node_diagnostics(official).items()}
+    for entry in observed:
+        entry.pop(FAILURE_MESSAGES_FIELD, None)
+        for attempt in entry["attempts"]:
+            attempt.pop(FAILURE_MESSAGES_FIELD, None)
+        if entry["outcome"] != "failed" or len(entry["attempts"]) != 1:
+            continue
+        detail = diagnostics.get(first_failure_test_key(entry["identity"]["key"]), {})
+        if FAILURE_MESSAGES_FIELD in detail:
+            entry[FAILURE_MESSAGES_FIELD] = entry["attempts"][0][FAILURE_MESSAGES_FIELD] = deepcopy(detail[FAILURE_MESSAGES_FIELD])
+
+
 def failure_messages_diagnostics(messages):
     kinds = {xctest_tool_class(message) for message in messages}
     if None not in kinds and len(kinds) == 1:
@@ -421,8 +452,6 @@ def bind_ui_environment_limits(summary, official):
             "environment limit: missing official UI evidence")
     for node in official["testNodes"]:
         visit(node)
-    def failure_count(node):
-        return int(node.get("nodeType") == "Failure Message") + sum(failure_count(child) for child in node.get("children", []))
     for entry in summary["population"]["observed"]:
         if ENVIRONMENT_LIMIT_FIELD not in entry:
             continue
@@ -430,8 +459,14 @@ def bind_ui_environment_limits(summary, official):
         require(node.get("result") == "Failed" and node.get(FAILURE_MESSAGES_FIELD) == entry[FAILURE_MESSAGES_FIELD]
                 and all(node.get(key) == entry.get(key) for key in DIAGNOSTIC_FIELDS),
                 "environment limit: official UI failure messages differ")
-        require(failure_count(node) == len(entry[FAILURE_MESSAGES_FIELD]),
+        require(official_failure_count(node) == len(entry[FAILURE_MESSAGES_FIELD]),
                 "environment limit: official UI failure count differs")
+
+
+def official_failure_count(node):
+    """Count the original failure nodes before publishing a complete message list."""
+    return int(node.get("nodeType") == "Failure Message") + sum(
+        official_failure_count(child) for child in node.get("children", []))
 
 
 def unavailable_first_failure(source, step="unknown", element="unknown"):
@@ -1495,6 +1530,8 @@ PREFIX_RULES = (
     ("Failed to determine hittability", "unknown", "snapshot_query"),
     ("Failed to terminate com.331works.immichSlides:", "unknown", "process_lifetime"),
     ("Application 'com.331works.immichSlides' does not have a process ID", "unknown", "process_lifetime"),
+    ("Failed to launch com.331works.immichSlides:", "unknown", "process_lifetime"),
+    ("Failed to launch Application 'com.331works.immichSlides':", "unknown", "process_lifetime"),
 )
 
 
@@ -1547,16 +1584,12 @@ def classify_messages(messages):
 
 
 def legacy_failure_summaries(value):
-    """Iterate existing official summaries; callers retain only their own public projection."""
+    """Read the invocation aggregate once; action issues repeat the same failures."""
     if isinstance(value, dict):
-        summaries = value.get("testFailureSummaries")
+        issues = value.get("issues")
+        summaries = issues.get("testFailureSummaries") if isinstance(issues, dict) else None
         rows = summaries.get("_values", []) if isinstance(summaries, dict) else []
         yield from (row for row in rows if isinstance(row, dict)) if isinstance(rows, list) else ()
-        for child in value.values():
-            yield from legacy_failure_summaries(child)
-    elif isinstance(value, list):
-        for child in value:
-            yield from legacy_failure_summaries(child)
 
 
 def legacy_failure_messages(payload):
@@ -1565,7 +1598,7 @@ def legacy_failure_messages(payload):
     for row in legacy_failure_summaries(payload):
         name = row.get("testCaseName", {}).get("_value") if isinstance(row.get("testCaseName"), dict) else None
         if isinstance(name, str):
-            key = name.removesuffix("()").replace(".", "/")
+            key = first_failure_test_key(name.removesuffix("()").replace(".", "/"))
             raw = row.get("message")
             messages.setdefault(key, []).append(raw.get("_value") if isinstance(raw, dict) else None)
     return messages
@@ -1585,6 +1618,8 @@ def test_node_diagnostics(payload):
             key = str(node.get("nodeIdentifier", "")).removesuffix("()")
             diagnostics[key] = ({field: node[field] for field in DIAGNOSTIC_FIELDS}
                                 if DIAGNOSTIC_FIELDS <= node.keys() else unknown_diagnostics())
+            if FAILURE_MESSAGES_FIELD in node:
+                diagnostics[key][FAILURE_MESSAGES_FIELD] = deepcopy(node[FAILURE_MESSAGES_FIELD])
             receipt = public_first_failure(node.get(FIRST_FAILURE_FIELD))
             if receipt is not None and receipt["source"] == "xctest":
                 diagnostics[key][FIRST_FAILURE_FIELD] = receipt
