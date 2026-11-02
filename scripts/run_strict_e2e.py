@@ -236,10 +236,10 @@ def export_private_result_bundle(
     if logical_bytes_contain(completed.stdout, sensitive_values):
         raise CommandError("Official test export contains test credentials; refusing to retain it.")
     exported = completed.stdout
-    timeline_message = None
+    public_message = None
     if enrich_failure_diagnostics:
-        from ci_failure_diagnostics import (APP_TIMELINE_METHODS, legacy_diagnostics, legacy_failure_messages,
-                                            public_app_timeline_failure_message, unknown_diagnostics,
+        from ci_failure_diagnostics import (PUBLIC_FAILURE_MESSAGE_METHOD_BY_SUITE, legacy_diagnostics,
+                                            legacy_failure_messages, public_xctest_failure_message, unknown_diagnostics,
                                             public_failure_messages, failure_messages_diagnostics, first_failure_test_key,
                                             official_failure_count)
         failed = []
@@ -273,9 +273,9 @@ def export_private_result_bundle(
                 if messages is not None and official_failure_count(node) == len(messages):
                     node["failure_messages"] = messages
                     node.update(failure_messages_diagnostics(messages))
-                if len(failed) == 1 and key in APP_TIMELINE_METHODS:
-                    messages = legacy_failure_messages(legacy_root).get(key, [])
-                    timeline_message = public_app_timeline_failure_message(messages[0]) if messages else None
+                if len(failed) == 1 and key in PUBLIC_FAILURE_MESSAGE_METHOD_BY_SUITE.values():
+                    messages = raw_messages.get(key, [])
+                    public_message = public_xctest_failure_message(messages[0], method=key) if messages else None
             if first_failure_spool is not None:
                 from ci_failure_diagnostics import collect_first_failure_spool
                 directory, selectors = first_failure_spool
@@ -311,8 +311,8 @@ def export_private_result_bundle(
     if enrich_failure_diagnostics:
         summary_payload = json.loads(summary_path.read_text())
         summary_payload.pop("message", None)
-        if timeline_message is not None:
-            summary_payload["message"] = timeline_message
+        if public_message is not None:
+            summary_payload["message"] = public_message
         summary_path.write_text(json.dumps(summary_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return hashlib.sha256(exported).hexdigest()
 
