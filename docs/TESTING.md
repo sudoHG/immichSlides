@@ -955,8 +955,10 @@ and `differing_pixel_count` (pixels with any unequal RGBA channel, counted once)
 Only this fixed integer grammar reaches the public App-timeline message path;
 the exporter and both tracer consumers reject other sites, values or suffixes.
 The failure retains its existing `continue_timing/evidence_capture` labels and cannot become yellow.
-Statistics are measured only on rejected comparisons. Unreadable PNGs or unequal
-decoded crop sizes fail as `unreadable photo pixels`, without invented measurements.
+Statistics are measured only on rejected comparisons with equal decoded crop sizes.
+Unreadable PNGs return false without measurements. Unequal crop sizes still undergo
+timeline validation (including the `frozenFrameChanged` veto), then return false
+without measurements if validation succeeds.
 
 On the pinned iPad Air 11-inch (M4), original App-only nominal 50% duty throttling
 produced a frozen-hold failure with 355,162 of 928,896 central pixels changed,

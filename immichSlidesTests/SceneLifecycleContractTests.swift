@@ -50,8 +50,7 @@ struct SceneLifecycleContractTests {
                     measuredCount = count
                 },
                 onToleranceApplied: { toleratedMaximum = $0 })
-            #expect(!["differentLength", "unreadablePNG"].contains(mutation))
-            if ["exact", "oneLevel"].contains(mutation) {
+            if ["exact", "oneLevel", "differentLength", "unreadablePNG"].contains(mutation) {
                 #expect(measuredMaximum == nil && measuredCount == nil)
             } else {
                 #expect(measuredMaximum == Int(channelDifference))
@@ -61,12 +60,8 @@ struct SceneLifecycleContractTests {
             #expect(toleratedMaximum == (mutation == "oneLevel" ? 1 : nil))
             #expect(mutation != "frozenFrameChanged")
         } catch let error as LifecycleTimelineJudge.Failure {
-            if ["differentLength", "unreadablePNG"].contains(mutation) {
-                #expect(error.description == "App timeline: unreadable photo pixels")
-            } else {
-                #expect(mutation == "frozenFrameChanged")
-                #expect(error.description == "App timeline: frame advanced during pause")
-            }
+            #expect(mutation == "frozenFrameChanged")
+            #expect(error.description == "App timeline: frame advanced during pause")
         }
     }
 
@@ -75,8 +70,9 @@ struct SceneLifecycleContractTests {
         let pixel: [UInt8] = [100, 110, 120, 255]
         var pixels: [UInt8] = Array(repeating: pixel, count: width * height).flatMap { $0 }
         // The changed pixel lies inside the capture's central photo band.
-        pixels[(10 * width + 10) * 4] += channelDifference
-        pixels[(10 * width + 10) * 4 + 1] += channelDifference
+        // Different magnitudes make either single-channel maximum miss a rejected case.
+        pixels[(10 * width + 10) * 4] += channelDifference == 2 ? 1 : channelDifference
+        pixels[(10 * width + 10) * 4 + 1] += channelDifference == 2 ? 2 : 0
         let provider = try #require(CGDataProvider(data: Data(pixels) as CFData))
         let image = try #require(
             CGImage(

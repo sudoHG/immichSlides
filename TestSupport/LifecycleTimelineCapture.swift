@@ -297,14 +297,11 @@ final class LifecycleTimelineCapture {
         onDifferenceMeasured: ((Int, Int) -> Void)? = nil,
         onToleranceApplied: ((Int) -> Void)? = nil
     ) throws -> Bool {
-        guard let reference = frozenPhotoPixels(referencePNG), let candidate = frozenPhotoPixels(candidatePNG),
-            reference.count == candidate.count
-        else {
-            throw LifecycleTimelineJudge.Failure("unreadable photo pixels")
-        }
+        guard let reference = frozenPhotoPixels(referencePNG), let candidate = frozenPhotoPixels(candidatePNG)
+        else { return false }
         let isEqual = try LifecycleTimelineJudge.frozenPixelsEqual(
             reference, candidate, events: events, scene: scene, frame: frame, request: request, returned: returned)
-        if !isEqual {
+        if !isEqual, reference.count == candidate.count {
             var maximum = 0
             var differingPixels = 0
             for offset in stride(from: 0, to: reference.count, by: 4) {

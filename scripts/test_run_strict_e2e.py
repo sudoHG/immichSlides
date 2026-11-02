@@ -1367,7 +1367,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
                 self.assertNotIn("PRIVATE_SENTINEL", (evidence / "official-tests.json").read_text())
 
     def test_app_timeline_failure_allowlist_matches_swift_failure_and_assertion_sentences(self):
-        from ci_failure_diagnostics import APP_TIMELINE_FAILURE_REASONS
+        from ci_failure_diagnostics import APP_TIMELINE_FAILURE_REASONS, public_app_timeline_failure_message
         literal = r'"(?:[^"\\]|\\.)*"'
         reasons = set()
         for name in ("LifecycleTimelineJudge", "LifecycleTimelineCapture"):
@@ -1383,6 +1383,15 @@ class FailureDiagnosticsTests(unittest.TestCase):
             reasons.update(json.loads(match.group())[len("App timeline: "):]
                            for match in re.finditer(r'"App timeline: (?:[^"\\]|\\.)*"', source))
         self.assertSetEqual(reasons, APP_TIMELINE_FAILURE_REASONS)
+        capture = (REPO_ROOT / "TestSupport" / "LifecycleTimelineCapture.swift").read_text()
+        sites = set(re.findall(r'\bpixelDiagnostic\(\s*site:\s*"([^"]+)"', capture))
+        self.assertSetEqual(sites, {"frozen-reference", "pause-hold"})
+        format_match = re.search(r'\bfunc pixelDiagnostic\([^)]*\) -> String \{\s*(' + literal + r')', capture)
+        self.assertIsNotNone(format_match)
+        diagnostic = format_match.group(1)[1:-1].replace(r"\(site)", "pause-hold").replace(
+            r"\(maximum)", "1").replace(r"\(count)", "355162")
+        message = "App timeline: frozen photo pixels changed" + diagnostic
+        self.assertEqual(message, public_app_timeline_failure_message(message))
 
     def test_app_timeline_errors_survive_private_export_and_public_summary_without_changing_failure(self):
         from ci_summary import render_markdown, test_identity
@@ -1402,8 +1411,10 @@ class FailureDiagnosticsTests(unittest.TestCase):
         cases.extend((platform, reason, expected) for platform in ("ios", "tvos") for reason, expected in (
             (pixel_reason, pixel_reason), (reference_reason, reference_reason),
             (pixel_reason.replace("=1 differing", "=255 differing"), pixel_reason.replace("=1 differing", "=255 differing")),
+            (pixel_reason.replace("=355162", "=99999999"), pixel_reason.replace("=355162", "=99999999")),
             (pixel_reason + " " + private, None),
             (pixel_reason.replace("pause-hold", private), None),
+            (pixel_reason.replace("pause-hold", "unknown-site"), None),
             (pixel_reason.replace("=1 differing", "=256 differing"), None),
             (pixel_reason.replace("=1 differing", "=-1 differing"), None),
             (pixel_reason.replace("=1 differing", "=1.0 differing"), None),
