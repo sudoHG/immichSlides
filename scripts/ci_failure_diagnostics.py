@@ -452,8 +452,6 @@ def bind_ui_environment_limits(summary, official):
             "environment limit: missing official UI evidence")
     for node in official["testNodes"]:
         visit(node)
-    def failure_count(node):
-        return int(node.get("nodeType") == "Failure Message") + sum(failure_count(child) for child in node.get("children", []))
     for entry in summary["population"]["observed"]:
         if ENVIRONMENT_LIMIT_FIELD not in entry:
             continue
@@ -461,8 +459,14 @@ def bind_ui_environment_limits(summary, official):
         require(node.get("result") == "Failed" and node.get(FAILURE_MESSAGES_FIELD) == entry[FAILURE_MESSAGES_FIELD]
                 and all(node.get(key) == entry.get(key) for key in DIAGNOSTIC_FIELDS),
                 "environment limit: official UI failure messages differ")
-        require(failure_count(node) == len(entry[FAILURE_MESSAGES_FIELD]),
+        require(official_failure_count(node) == len(entry[FAILURE_MESSAGES_FIELD]),
                 "environment limit: official UI failure count differs")
+
+
+def official_failure_count(node):
+    """Count the original failure nodes before publishing a complete message list."""
+    return int(node.get("nodeType") == "Failure Message") + sum(
+        official_failure_count(child) for child in node.get("children", []))
 
 
 def unavailable_first_failure(source, step="unknown", element="unknown"):
@@ -1580,16 +1584,12 @@ def classify_messages(messages):
 
 
 def legacy_failure_summaries(value):
-    """Iterate existing official summaries; callers retain only their own public projection."""
+    """Read the invocation aggregate once; action issues repeat the same failures."""
     if isinstance(value, dict):
-        summaries = value.get("testFailureSummaries")
+        issues = value.get("issues")
+        summaries = issues.get("testFailureSummaries") if isinstance(issues, dict) else None
         rows = summaries.get("_values", []) if isinstance(summaries, dict) else []
         yield from (row for row in rows if isinstance(row, dict)) if isinstance(rows, list) else ()
-        for child in value.values():
-            yield from legacy_failure_summaries(child)
-    elif isinstance(value, list):
-        for child in value:
-            yield from legacy_failure_summaries(child)
 
 
 def legacy_failure_messages(payload):

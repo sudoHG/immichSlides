@@ -389,7 +389,7 @@ def finish_fixture_coverage(summary, official, expected, policy, *, exit_code, r
                             base_registry=None, evaluated_on=None):
     """Keep failed producer status while a clean, fully bound tool-yellow invocation exits zero."""
     from ci_failure_diagnostics import (attach_failure_messages, environment_limit_evidence,
-        bind_ui_environment_limits, EMITTED_ENVIRONMENT_POLICY_VERSION)
+        bind_ui_environment_limits, render_environment_limit, EMITTED_ENVIRONMENT_POLICY_VERSION)
     attach_failure_messages(summary["population"]["observed"], official)
     if any(entry["outcome"] == "failed" for entry in summary["population"]["observed"]):
         summary["status"] = "failed"
@@ -412,6 +412,11 @@ def finish_fixture_coverage(summary, official, expected, policy, *, exit_code, r
         base_registry=base_registry, evaluated_on=evaluated_on)
     yellow = clean and verdict["status"] == "environment-limited"
     summary["status"] = "failed" if verdict["status"] == "environment-limited" else verdict["status"]
+    if yellow:
+        for entry in summary["population"]["observed"]:
+            if "environment_limit" in entry:
+                print("::warning title=Environment-limited XCTest tool::" + entry["identity"]["key"]
+                      + ": " + render_environment_limit(entry["environment_limit"]), flush=True)
     return verdict, 0 if yellow else exit_code or (0 if verdict["status"] == "passed" else 1)
 
 
@@ -871,7 +876,8 @@ def main(argv=None, *, simulator_prepared=False):
             for number, path in reversed(list(enumerate(bundles, 1))):
                 disposal_output = output if number == 1 else output / ("disposal-attempt-" + str(number))
                 disposal_output.mkdir(exist_ok=True)
-                failures.extend(finalize_fixture_run(path, disposal_output, digests.get(path), successful=code == 0))
+                failures.extend(finalize_fixture_run(path, disposal_output, digests.get(path),
+                                                    successful=code == 0 and summary["status"] == "passed"))
             if failures:
                 code = code or 1
                 summary["status"] = "failed"

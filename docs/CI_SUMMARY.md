@@ -1056,12 +1056,13 @@ KeyboardInterrupt or SystemExit, still raises `RunnerGroupCleanupError` with an
 unavailable projection so live build inputs are retained. This failure-only read
 does not extend the group grace or change a case verdict, retry, deadline or yellow qualification.
 
-### Prepared hosted strict environment limits
+<a id="prepared-hosted-strict-environment-limits"></a>
 
-Producers still emit policy v4. Readers also accept the separately prepared
-[policy v5](#policy-v5-reader-preparation); no producer emits v5 until this reader
-has merged into the trusted base. The v1–v4 scope and interpretation below remain
-unchanged for their complete 90-day retention period.
+### Retained hosted strict environment limits
+
+Producers emit [policy v5](#policy-v5-reader-preparation) after reader PR #667
+merged into the trusted base. The v1–v4 scope and interpretation below remain
+readable and unchanged for their complete 90-day retention period.
 
 Hogan approved this judgement policy on 2026-10-21. The strict tracer now emits
 `environment_limit` from each qualifying warm case's original receipts, using the
@@ -1454,13 +1455,18 @@ their existing reviewed prefix, and the tool messages below retain their complet
 original text (at most 512 characters). Unknown messages use the fixed
 `[unrecognized XCTest failure]` marker and remain red. No assertion suffix,
 private value, path or arbitrary free text is admitted by this extension.
-Producers project this list from raw legacy `testFailureSummaries` before folding
-diagnostic classes, retaining duplicates, unknown markers and mixed failures.
+Producers project this list from the invocation root's raw legacy
+`issues.testFailureSummaries._values` before folding diagnostic classes. They read
+only this aggregate: `actions._values[].actionResult.issues` repeats its failures.
+Distinct entries in the aggregate, including identical messages, unknown markers
+and mixed failures, remain in order. Missing aggregate evidence stays red.
 Native tool matching happens before stripping any XCTAssert or Swift assertion
 wrapper. Unknown messages remain red; more than 16 messages or multiple attempts
-produce no `failure_messages` claim. Strict tools use hosting metadata without
-the ordinary failure-resource-count/CPU gate. Fixture UI additionally binds the
-original raw failure-node count before accepting a proof.
+produce no `failure_messages` claim. Strict and fixture UI exports bind the list
+length to the original raw `Failure Message` descendant count; a mismatch leaves
+the list absent and the failure red. Strict tools use hosting metadata without
+the ordinary failure-resource-count/CPU gate. Fixture UI rechecks that count
+before accepting a proof.
 
 `timing-wait` retains exactly one ordinary failure, its original first-failure
 projection and one unchanged case resource entry. The v5 projection adds

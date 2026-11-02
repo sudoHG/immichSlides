@@ -596,6 +596,8 @@ precedes assertion-wrapper stripping. A clean shard whose failures all qualify
 exits zero while `summary.status` and raw outcomes remain `failed`; its verdict
 is `environment-limited`, never passed. Timeout, cleanup, incomplete coverage and
 privacy failures remain nonzero. The PR `ci-ui` gate gains no yellow exception.
+Yellow shards emit an `::warning` with the exact tool message and retain their
+raw failed private bundle in quarantine even when the invocation exits zero.
 
 Each failed attempt retains its own labels; the observation keeps the first
 failure's labels even when a listed retry passes. Existing private official

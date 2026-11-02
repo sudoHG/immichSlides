@@ -1338,16 +1338,20 @@ class FailureDiagnosticsTests(unittest.TestCase):
                 ([tool, wait + " PRIVATE_SENTINEL"], [tool, wait], None),
                 (["XCTAssertTrue failed - " + tool], [marker], None),
                 (["PRIVATE_SENTINEL"], [marker], None), ([tool] * 17, None, None),
-                ([tool], [tool], "export"), ([tool], [tool], "legacy")):
+                ([tool], [tool], "export"), ([tool], [tool], "legacy"), ([tool], None, "raw-count")):
             with self.subTest(messages=messages, bundle_prefix=bundle_prefix), tempfile.TemporaryDirectory() as raw:
                 evidence = Path(raw)
                 name = "StrictE2ESmokeUITests/testIOSStrictE2EConnectionSmoke"
                 payload = {"testNodes": [{"nodeType": "Unit test bundle", "name": "immichSlidesUITests", "children": [
                     {"nodeType": "Test Case", "nodeIdentifier": ("immichSlidesUITests/" if bundle_prefix == "export" else "") + name + "()", "result": "Failed",
-                     "children": [{"nodeType": "Failure Message", "name": "failure"} for _ in messages]}]}]}
-                legacy = {"issues": {"testFailureSummaries": {"_values": [
+                     "children": [{"nodeType": "Failure Message", "name": "failure"}
+                                  for _ in ([] if bundle_prefix == "raw-count" else messages)]}]}]}
+                issues = {"_type": {"_name": "ResultIssueSummaries"}, "testFailureSummaries": {"_type": {"_name": "Array"}, "_values": [
                     {"testCaseName": {"_value": ("immichSlidesUITests." if bundle_prefix == "legacy" else "") + name.replace("/", ".") + "()"}, "message": {"_value": message}}
-                    for message in messages]}}}
+                    for message in messages]}}
+                # Xcode 27 repeats action issues in the invocation aggregate; neither copy is another failure.
+                legacy = {"_type": {"_name": "ActionsInvocationRecord"}, "issues": issues,
+                    "actions": {"_type": {"_name": "Array"}, "_values": [{"actionResult": {"issues": issues}}]}}
                 def export(command, **kwargs):
                     return subprocess.CompletedProcess(command, 0, json.dumps(legacy if "--legacy" in command else payload).encode(), b"")
                 with mock.patch("run_strict_e2e.subprocess.run", side_effect=export), \
@@ -2741,7 +2745,8 @@ class FailureDiagnosticsTests(unittest.TestCase):
             evidence = Path(raw)
             name = "StrictE2ESmokeUITests/testIOSStrictE2EConnectionSmoke"
             payload = {"testNodes": [{"nodeType": "Unit test bundle", "name": "immichSlidesUITests", "children": [
-                {"nodeType": "Test Case", "nodeIdentifier": name + "()", "result": "Failed"}]}]}
+                {"nodeType": "Test Case", "nodeIdentifier": name + "()", "result": "Failed",
+                 "children": [{"nodeType": "Failure Message", "name": "failure"}]}]}]}
             legacy = {"issues": {"testFailureSummaries": {"_values": [{
                 "testCaseName": {"_value": name.replace("/", ".") + "()"},
                 "message": {"_value": "XCTAssertTrue failed - The iOS slider must be settable to 30 seconds. PRIVATE_SENTINEL"}}]}}}
@@ -2789,6 +2794,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
             exported = (evidence / "official-tests.json").read_text()
             self.assertNotIn("PRIVATE_SENTINEL", exported)
             self.assertIn('"failure_messages"', exported)
+            self.assertNotIn("30 seconds", exported)
             self.assertEqual(validate_case_export(evidence, "ios", "smoke"), [{"identifier": name, "result": "Failed",
                 "failure_phase": "interval_setup", "failure_class": "interval_readback", "first_failure": receipt,
                 "failure_messages": ["The iOS slider must be settable to "]}])

@@ -49,9 +49,10 @@ class FixtureCoverageTests(unittest.TestCase):
                     node["nodeIdentifier"] = "immichSlidesUITests/" + node["nodeIdentifier"]
                 if defect == "raw-count":
                     node["children"] = []
-                verdict, code = runner.finish_fixture_coverage(summary, {"testNodes": [node]},
-                    summary["population"]["declared"], policy, exit_code=124 if defect == "timeout" else 65,
-                    runner_hosted=defect != "not-hosted")
+                with contextlib.redirect_stdout(io.StringIO()) as output:
+                    verdict, code = runner.finish_fixture_coverage(summary, {"testNodes": [node]},
+                        summary["population"]["declared"], policy, exit_code=124 if defect == "timeout" else 65,
+                        runner_hosted=defect != "not-hosted")
                 if defect in {"retry", "too-many"}:
                     self.assertNotIn("failure_messages", row)
                     self.assertTrue(all("failure_messages" not in attempt for attempt in row["attempts"]))
@@ -61,6 +62,11 @@ class FixtureCoverageTests(unittest.TestCase):
                 parse_summary(summary)
                 self.assertEqual("environment-limited" if yellow else "failed", verdict["status"])
                 self.assertEqual(yellow, "environment_limit" in row)
+                if yellow:
+                    self.assertIn("::warning title=Environment-limited XCTest tool::", output.getvalue())
+                    self.assertIn(messages[0], output.getvalue())
+                else:
+                    self.assertNotIn("::warning", output.getvalue())
 
     def test_same_named_target_and_class_keeps_failure_identity_through_summary(self):
         from ci_failure_diagnostics import first_failure_environment, collect_first_failure_spool, attach_first_failures
@@ -104,7 +110,7 @@ class FixtureCoverageTests(unittest.TestCase):
         from ci_summary import parse_summary, test_identity
         from ci_verdict import parse_policy
         from test_ci_summary import archive_download_summary
-        for phase in ("tests-read", "export", "summary-read", "details-read", "attachments-export"):
+        for phase in ("tests-read", "export", "summary-read", "details-read", "attachments-export", "tool-yellow"):
             with self.subTest(phase=phase), tempfile.TemporaryDirectory() as directory:
                 root, output = Path(directory, "checkout"), Path(directory, "output")
                 root.mkdir()
@@ -115,6 +121,10 @@ class FixtureCoverageTests(unittest.TestCase):
                 source.touch()
                 (source.parent / "Debug-iphonesimulator/immichSlides.app").mkdir(parents=True)
                 seed = archive_download_summary()
+                tool = "Application 'com.331works.immichSlides' does not have a process ID"
+                if phase == "tool-yellow":
+                    seed["identity"].update(event="schedule", ref="refs/heads/main")
+                    seed["identity"].pop("dirty", None)
                 declared = [test_identity("ui", "NavigationUITests/testMethod" + str(index),
                             platform="ios", device="ipad") for index in range(21)]
                 official = {"devices": [{"deviceId": "target", "modelName": "iPad Pro", "platform": "iOS Simulator"}],
@@ -122,6 +132,17 @@ class FixtureCoverageTests(unittest.TestCase):
                         {"nodeType": "Test Case", "nodeIdentifier": entry["key"] + "()", "durationInSeconds": 1,
                          "result": "Passed" if index == 0 else "Skipped"} for index, entry in enumerate(declared)]}]}
                 counts = {"totalTestCount": 21, "passedTests": 1, "failedTests": 0, "skippedTests": 20, "result": "Passed"}
+                if phase == "tool-yellow":
+                    nodes = official["testNodes"][0]["children"]
+                    for index, node in enumerate(nodes):
+                        node["result"] = "Failed" if index == 0 else "Passed"
+                    nodes[0]["children"] = [{"nodeType": "Failure Message", "name": tool}]
+                    counts.update(passedTests=20, failedTests=1, skippedTests=0, result="Failed")
+                issues = {"testFailureSummaries": {"_values": [{
+                    "testCaseName": {"_value": declared[0]["key"].replace("/", ".") + "()"},
+                    "issueType": {"_value": "Uncategorized"},
+                    "message": {"_value": tool}}]}}
+                legacy = {"issues": issues, "actions": {"_values": [{"actionResult": {"issues": issues}}]}}
                 policy = parse_policy((runner.ROOT / "scripts/ci-test-policy.json").read_text())
                 inputs = {"hashes": seed["hashes"], "population": dict(seed["population"], declared=declared,
                     compiled=[], observed=[]), "policy": policy, "discovery_policy": policy, "deselections": [],
@@ -136,10 +157,12 @@ class FixtureCoverageTests(unittest.TestCase):
                             Path(command[command.index("-test-enumeration-output-path") + 1]).write_text(json.dumps(enumeration))
                         else:
                             executions.append(command)
-                    return SimpleNamespace(wait=lambda **kwargs: 0, pid=42)
+                    return SimpleNamespace(wait=lambda **kwargs: 65 if phase == "tool-yellow" and "-enumerate-tests" not in command else 0, pid=42)
                 def read(command, **kwargs):
                     self.assertEqual(command[:2], ["xcrun", "xcresulttool"])
                     self.assertEqual(kwargs["timeout"], 180)
+                    if "--legacy" in command:
+                        return subprocess.CompletedProcess(command, 0, json.dumps(legacy).encode())
                     if command[4] == "tests":
                         tests_reads.append(command)
                     current = ("attachments-export" if command[2] == "export" else "details-read" if command[4] == "test-details"
@@ -150,10 +173,14 @@ class FixtureCoverageTests(unittest.TestCase):
                     clock[0] += 0.44
                     detail = ({"testIdentifier": command[command.index("--test-id") + 1], "testResult": "Skipped", "testRuns": [
                         {"nodeType": "Test Case Run", "result": "Skipped", "name": "Official skip"}]} if current == "details-read" else {})
+                    if phase == "tool-yellow" and current == "details-read":
+                        detail = {"testIdentifier": command[command.index("--test-id") + 1], "testResult": "Failed",
+                                  "testRuns": [{"nodeType": "Test Case Run", "result": "Failed", "name": tool}]}
                     payload = json.dumps(counts if command[4] == "summary" else detail if current == "details-read" else official)
                     return subprocess.CompletedProcess(command, 0, payload if kwargs.get("text") else payload.encode())
                 with contextlib.ExitStack() as stack:
-                    stack.enter_context(patch.dict(os.environ, {"GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "2"}))
+                    stack.enter_context(patch.dict(os.environ, {"GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "2",
+                                                              "RUNNER_ENVIRONMENT": "github-hosted"}))
                     for name, value in (("ROOT", root), ("run_identity", seed["identity"]),
                         ("source_metadata", (".github/workflows/ci-nightly.yml", False)), ("fixture_inputs", inputs),
                         ("toolchain", seed["toolchain"]), ("prepare_fixture_result_bundle", bundle),
@@ -166,12 +193,22 @@ class FixtureCoverageTests(unittest.TestCase):
                     stack.enter_context(patch.object(runner.subprocess, "Popen", side_effect=process))
                     stack.enter_context(patch.object(runner.subprocess, "run", side_effect=read))
                     stack.enter_context(patch.object(runner.time, "monotonic", side_effect=lambda: clock[0]))
-                    stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+                    stdout = stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
                     stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
                     code = runner.main(["--device", "ipad", "--destination", "platform=iOS Simulator,id=target",
                         "--output-dir", str(output), "--xctestrun", str(source), "--shard", "navigation",
                         "--shard-manifest", str(root / "manifest.json"), "--listed-only-retry",
                         "--result-export-timeout-seconds", "180", "--failure-screenshots"])
+                    retained = runner.finalize_fixture_run.call_args
+                if phase == "tool-yellow":
+                    self.assertEqual(0, code)
+                    result = parse_summary((output / "summary.json").read_text())
+                    self.assertEqual("failed", result["status"])
+                    self.assertIn("environment_limit", result["population"]["observed"][0])
+                    self.assertEqual(False, retained.kwargs["successful"])
+                    self.assertIn(tool, stdout.getvalue())
+                    self.assertIn("::warning title=Environment-limited XCTest tool::", stdout.getvalue())
+                    continue
                 self.assertEqual(code, 1)
                 result = parse_summary((output / "summary.json").read_text())
                 self.assertEqual(result["status"], "failed")
