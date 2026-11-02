@@ -168,9 +168,9 @@ def method_observations(raw, trace, *, runner_hosted=False):
         require(isinstance(methods, list), "invalid official method list")
         seen, counts = set(), Counter()
         for method in methods:
-            from ci_failure_diagnostics import DIAGNOSTIC_FIELDS, FIRST_FAILURE_FIELD, validate_diagnostic_fields
+            from ci_failure_diagnostics import DIAGNOSTIC_FIELDS, FIRST_FAILURE_FIELD, FAILURE_MESSAGES_FIELD, validate_diagnostic_fields
             validate_diagnostic_fields({key: value for key, value in method.items() if key != FIRST_FAILURE_FIELD})
-            require(set(method) == {"identifier", "result"} | ((DIAGNOSTIC_FIELDS | {FIRST_FAILURE_FIELD}) & method.keys()) and method["identifier"] in wanted
+            require(set(method) == {"identifier", "result"} | ((DIAGNOSTIC_FIELDS | {FIRST_FAILURE_FIELD, FAILURE_MESSAGES_FIELD}) & method.keys()) and method["identifier"] in wanted
                     and method["identifier"] not in seen and method["result"] in {"Passed", "Failed", "Skipped"},
                     "unexpected or duplicate official method")
             seen.add(method["identifier"])
@@ -197,16 +197,20 @@ def method_observations(raw, trace, *, runner_hosted=False):
             result = observation(wanted[method["identifier"]], outcome, 0,
                 exit_code=phase.get("exit_code"), reason="Official test was skipped" if outcome == "skipped" else None,
                 failure_diagnostics=diagnostics if outcome == "failed" else None)
+            if outcome == "failed" and FAILURE_MESSAGES_FIELD in method:
+                result[FAILURE_MESSAGES_FIELD] = result["attempts"][0][FAILURE_MESSAGES_FIELD] = copy.deepcopy(method[FAILURE_MESSAGES_FIELD])
             from ci_failure_diagnostics import public_first_failure
             receipt = public_first_failure(method.get(FIRST_FAILURE_FIELD)) if outcome == "failed" else None
             if receipt is not None and receipt["source"] == "xctest":
                 result[FIRST_FAILURE_FIELD] = result["attempts"][0][FIRST_FAILURE_FIELD] = copy.deepcopy(receipt)
-            from ci_failure_diagnostics import environment_limit_evidence
+            from ci_failure_diagnostics import environment_limit_evidence, VALIDATOR_FAILURE_FIELD
             claimed = case_records.get(identity_key(case), {}).get("environment_limit")
             if claimed is not None and outcome == "failed":
                 require(not phase.get("infrastructure") and not phase.get("official_error")
                         and phase.get("exit_code") not in {124, 130} and phase.get("log_present") is True
-                        and phase.get("build_operations") == 0 and phase.get("products_unchanged") is True,
+                        and phase.get("build_operations") == 0 and phase.get("products_unchanged") is True
+                        and (claimed["policy_version"] != 5 or not phase.get("automated_contract_failed")
+                             and VALIDATOR_FAILURE_FIELD not in phase),
                         "environment limit cannot conceal strict invocation infrastructure")
                 proof = environment_limit_evidence(summary, result,
                     phase.get("bounded_diagnostics", {}).get("case_resources", []), runner_hosted=runner_hosted,
@@ -467,7 +471,7 @@ def text(value):
 
 
 def failure_details(item):
-    from ci_failure_diagnostics import FIRST_FAILURE_FIELD, VALIDATOR_FAILURE_FIELD
+    from ci_failure_diagnostics import FIRST_FAILURE_FIELD, VALIDATOR_FAILURE_FIELD, FAILURE_MESSAGES_FIELD
     details = {"identity": item["identity"], "outcome": item["outcome"],
                "exit_codes": [attempt["exit_code"] for attempt in item["attempts"]]}
     if VALIDATOR_FAILURE_FIELD in item:
@@ -476,6 +480,8 @@ def failure_details(item):
         details[FIRST_FAILURE_FIELD] = copy.deepcopy(item[FIRST_FAILURE_FIELD])
     if "environment_limit" in item:
         details["environment_limit"] = copy.deepcopy(item["environment_limit"])
+    if FAILURE_MESSAGES_FIELD in item:
+        details[FAILURE_MESSAGES_FIELD] = copy.deepcopy(item[FAILURE_MESSAGES_FIELD])
     return details
 
 
@@ -501,12 +507,17 @@ def render_entry(entry):
     lines.extend("\nFirst failure: " + text(identity_key(item["identity"])) + ": "
                  + text(render_first_failure(item[FIRST_FAILURE_FIELD])) + "."
                  for item in diagnostics["failures"][:50] if FIRST_FAILURE_FIELD in item)
+    lines.extend("\nOfficial failures: " + text(identity_key(item["identity"])) + ": "
+                 + "; ".join(text(message) for message in item["failure_messages"])
+                 for item in diagnostics["failures"] if "failure_messages" in item)
     lines.extend(f"Missing evidence: {text(identity_key(item['identity']))}: {item['reason']}."
                  for item in diagnostics["missing"][:50])
     lines.extend(f"Infrastructure: {text(item)}." for item in diagnostics["infrastructure"])
     from ci_failure_diagnostics import render_environment_limit
     if any("environment_limit" in item and not item.get("environment_limit_escalation") for item in diagnostics["failures"]):
-        lines.append("\n> **WARNING: hosted timing failures are environment-limited (yellow), never passes.**")
+        category = ("timing or XCTest/Apple tool" if any(item.get("environment_limit", {}).get("kind") == "xctest-tool"
+                    for item in diagnostics["failures"]) else "timing")
+        lines.append(f"\n> **WARNING: hosted {category} failures are environment-limited (yellow), never passes.**")
     lines.extend("\nWARNING: " + text(identity_key(item["identity"])) + ": "
                  + text(render_environment_limit(item["environment_limit"]))
                  for item in diagnostics["failures"] if "environment_limit" in item and not item.get("environment_limit_escalation"))
@@ -657,7 +668,8 @@ def nightly_ui_attempt(api, run, attempt, artifacts, raw):
     if matches[0]["expired"]:
         raise EvidenceExpired("nightly UI aggregate expired")
     require(json_member(api, matches[0], "nightly-ui.json") == ui, "nightly UI aggregate binding differs")
-    summaries = []
+    summaries, official_tests = [], {}
+    hosted_jobs = None
     for shard in plan["shards"]:
         name = f"ui-{shard['device']}-{shard['shard']}-{run['id']}-{attempt}"
         matches = [item for item in artifacts if item["name"] == name]
@@ -671,6 +683,15 @@ def nightly_ui_attempt(api, run, attempt, artifacts, raw):
                 and summary["run"] == {**plan["run"], "tier": "ui", "job": "ui-" + shard["device"], "shard": shard["shard"]}
                 and summary["hashes"] == plan["hashes"][shard["device"]], "nightly UI shard source binding differs")
         summaries.append(summary)
+        if any("environment_limit" in item for item in summary["population"]["observed"]):
+            from ci_publish import complete_attempt_jobs
+            if hosted_jobs is None:
+                hosted_jobs = complete_attempt_jobs(api, {**run, "run_attempt": attempt})
+            matching = [job for job in hosted_jobs if job["name"] == f"ui-{shard['device']}-{shard['shard']}"]
+            require(len(matching) == 1 and matching[0].get("runner_group_name") == "GitHub Actions"
+                    and "self-hosted" not in matching[0].get("labels", []),
+                    "environment limit requires a verified GitHub-hosted UI job")
+            official_tests[(shard["device"], shard["shard"])] = json_member(api, matches[0], "official-tests.json")
     values = {}
     for name, path in (("policy", "scripts/ci-test-policy.json"), ("registry", "scripts/ci-known-flaky.json")):
         content = blob(path)
@@ -678,7 +699,7 @@ def nightly_ui_attempt(api, run, attempt, artifacts, raw):
         require(all(hashes["policies"][label] == hashlib.sha256(content).hexdigest() for hashes in plan["hashes"].values()),
                 "nightly UI policy differs from tested source")
         values[name] = decode(content.decode())
-    validate_ui_record(ui, summaries, **values, evaluated_on=date.fromisoformat(run["created_at"][:10]))
+    validate_ui_record(ui, summaries, **values, evaluated_on=date.fromisoformat(run["created_at"][:10]), official_tests=official_tests)
     require(raw["tiers"]["ui"] == ui["verdict"]["status"]
             and (ui["verdict"]["status"] != "failed" or raw["status"] == "failed"), "nightly UI status differs")
     verdict = copy.deepcopy(ui["verdict"])
@@ -883,6 +904,12 @@ def nightly_attempt(api, run, attempt, artifacts):
         infrastructure.extend(ui["infrastructure"])
     raw_yellow = {identity_key(item["identity"]): item["environment_limit"] for item in raw["observed"]
                   if "environment_limit" in item}
+    strict_yellow = bool(yellow_cases)
+    if ui is not None:
+        ui_yellow = {identity_key(item["identity"]): item["environment_limit"] for item in ui["observed"]
+                     if "environment_limit" in item}
+        yellow_cases.update(ui_yellow)
+        raw_yellow.update(ui_yellow)
     require(raw_yellow == yellow_cases and len(raw.get("environment_limited", [])) == len(raw_yellow) and set(raw_yellow) == {
         identity_key(item) for item in raw.get("environment_limited", [])}, "nightly environment limit bindings differ")
     if raw["status"] == "environment-limited":
@@ -893,7 +920,10 @@ def nightly_attempt(api, run, attempt, artifacts):
                 "nightly environment limit cannot conceal red or incomplete evidence")
     require(raw["status"] != "passed" or not yellow_cases, "environment-limited nightly cannot count as passed")
     if yellow_cases:
-        require(raw["tiers"]["strict"] in {"failed", "environment-limited"}, "environment-limited strict tier cannot count as passed")
+        if strict_yellow:
+            require(raw["tiers"]["strict"] in {"failed", "environment-limited"}, "environment-limited strict tier cannot count as passed")
+        if ui is not None and ui.get("environment_limited"):
+            require(raw["tiers"]["ui"] in {"failed", "environment-limited"}, "environment-limited UI tier cannot count as passed")
         counts["environment-limited"] = sum("environment_limit" in item for item in observed)
     entry.update(observed=observed, diagnostics={"counts": dict(counts), "missing": missing, "infrastructure": infrastructure,
         "failures": [failure_details(item) for item in observed if item["outcome"] in FAILURES]})
@@ -1263,6 +1293,11 @@ def environment_history(entries):
                 continue
             try:
                 validate_environment_limit(item["environment_limit"])
+                proof = item["environment_limit"]
+                if proof["policy_version"] == 5:
+                    require(item.get("failure_messages") == proof["failure_messages"]
+                            and all(item[key] == proof[key] for key in ("failure_phase", "failure_class") if key in item),
+                            "environment limit: retained failure messages differ")
             except (ValueError, TypeError, KeyError, AttributeError):
                 rejected.add(identity_token(item["identity"]))
         for item in items:
@@ -1273,8 +1308,9 @@ def environment_history(entries):
                     attempt.pop("environment_limit", None)
         if rejected:
             report["status"] = "failed"
-            if "strict" in report.get("tiers", {}):
-                report["tiers"]["strict"] = "failed"
+            for item in items:
+                if identity_token(item["identity"]) in rejected and item["identity"]["kind"] in report.get("tiers", {}):
+                    report["tiers"][item["identity"]["kind"]] = "failed"
         if not issue_eligible(report) or report["source"]["workflow_path"] != NIGHTLY_PATH:
             continue
         for item in report["observed"]:
@@ -1298,8 +1334,9 @@ def environment_history(entries):
                 item["environment_limit_escalation"] = True
         if escalated:
             report["status"] = "failed"
-            if "strict" in report.get("tiers", {}):
-                report["tiers"]["strict"] = "failed"
+            for item in report.get("observed", []):
+                if item.get("environment_limit_escalation") and item["identity"]["kind"] in report.get("tiers", {}):
+                    report["tiers"][item["identity"]["kind"]] = "failed"
         if any("environment_limit_rejection" in item or "environment_limit_escalation" in item
                for item in report.get("observed", [])):
             report["diagnostics"]["counts"]["environment-limited"] = sum(

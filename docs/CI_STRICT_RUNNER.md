@@ -1448,6 +1448,13 @@ thresholds and retry limits remain unchanged. `run_strict_e2e.py` retains its ra
 failure exit code; only a complete tracer shard with exclusively yellow failures and
 no infrastructure errors exits zero, with per-case workflow and Markdown warnings.
 
+Readers additionally prepare [policy v5](CI_SUMMARY.md#policy-v5-reader-preparation)
+without activating it. Its timing taxonomy removes phase/element tuples while
+retaining exhausted deadlines, per-failure starvation evidence and functional
+exclusions. Its separate complete-message XCTest tool exception also accepts
+nightly fixture UI, without a sampler. Producers still emit v4; v5 activation
+requires a later PR after these readers reach the trusted base.
+
 Public-fixture strict/UI failures can publish one first-failure receipt per
 method and existing attempt. Historical records without
 `first_failure` remain valid. No App code, workflow, assertion, deadline, retry,
@@ -1788,9 +1795,9 @@ explicit or part of `XCUIApplication.launch()`, including a launch in a differen
 test. PID values and remaining text are discarded. These labels do not prove
 an XCTest/simulator defect or rule out an App crash or stalled launch.
 They add no `infrastructure` entry, retry or passing observation, and are
-ineligible under every supported
+ineligible under the currently emitted v1–v4
 [environment-limit policy](CI_SUMMARY.md#prepared-hosted-strict-environment-limits).
-Fixture UI failures remain red; that policy applies only to hosted nightly strict
+Fixture UI failures remain red with current producer output; v1–v4 apply only to hosted nightly strict
 cases with the required evidence. The XCTest lifecycle API already guarantees
 `notRunning` after a successful `terminate()` and terminates an existing instance
 inside `launch()`, so an additional state wait or termination is not a proven fix.

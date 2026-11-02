@@ -1058,6 +1058,11 @@ does not extend the group grace or change a case verdict, retry, deadline or yel
 
 ### Prepared hosted strict environment limits
 
+Producers still emit policy v4. Readers also accept the separately prepared
+[policy v5](#policy-v5-reader-preparation); no producer emits v5 until this reader
+has merged into the trusted base. The v1–v4 scope and interpretation below remain
+unchanged for their complete 90-day retention period.
+
 Hogan approved this judgement policy on 2026-10-21. The strict tracer now emits
 `environment_limit` from each qualifying warm case's original receipts, using the
 merged proof, summary and official-method readers before publication. Existing nights,
@@ -1422,6 +1427,93 @@ Retained compact proofs are rechecked under their supported policy version (v1,
 v2, v3 or v4). Missing, unknown or obsolete policy versions and invalid proofs degrade to red with a fixed public
 reason; rendering, history loading and issue decisions must not raise because of
 those proofs. Original first-failure receipts remain outside compact history.
+
+### Policy v5 reader preparation
+
+Hogan generalized the 2026-10-21 starvation rule on 2026-10-31 and approved the
+XCTest/Apple-tool exception on 2026-10-30. Policy v5 separates two kinds of retained
+failure. It applies only to GitHub-hosted `ci-nightly`, on `schedule` or
+`workflow_dispatch`: ordinary timing waits in required strict cases, and the
+reviewed native tool failures in strict and fixture UI. PR `ci-ui`, `ci-pr-gate`,
+local, self-hosted and informational strict cases gain no exception. Yellow is
+never a pass, an explicit-pass recovery night, a product flake or a retry license.
+
+The closed proof retains `schema_version: 1`, `policy_version: 5`,
+`runner_hosted: true`, `failure_phase`, `failure_class`, `failure` and `resources`,
+and adds `kind` (`timing-wait` or `xctest-tool`) and `failure_messages`.
+The observation and its sole failed attempt retain the same complete ordered
+`failure_messages` list, diagnostic pair and proof. Original duplicate failures
+are not deduplicated. The list has 1–16 entries: ordinary assertions retain only
+their existing reviewed prefix, and the tool messages below retain their complete
+original text (at most 512 characters). Unknown messages use the fixed
+`[unrecognized XCTest failure]` marker and remain red. No assertion suffix,
+private value, path or arbitrary free text is admitted by this extension.
+
+`timing-wait` retains exactly one ordinary failure, its original first-failure
+projection and one unchanged case resource entry. The v5 projection adds
+`pre_event_idle` and `ax_root_acquisition` to the v2–v4 fields. All numbers retain
+the existing first-failure bounds and nulls. Unlike v1–v4, eligibility no longer
+depends on a phase/element/surface tuple: a timeout's incidental unrecognizable
+snapshot is not itself a failed photo-identity assertion. The class/step table
+below distinguishes a timeout from a functional result. The source must be
+XCTest and the App must be foreground. Every ordinary wait must have a positive
+recorded deadline and `wait_elapsed_seconds >= deadline_seconds`. Native idle
+durations alone prove neither a timeout nor host causality; no new 60-second
+threshold is introduced. An explicit native query timeout uses the tool branch.
+
+| Existing failure class | Timing-wait interpretation in v5 | Functional/red boundary |
+| --- | --- | --- |
+| `navigation` | Availability/navigation waits at `query-element`, `select`, `focus`, `reveal-controls`, `mode-card`, `mode-continue`, `mode-departure`, `save-password-prompt`, `wait-scene`, `settings-readback` or `launch-app`. | Wrong destination, dirty install container, connection-failure alert, forbidden back-button layout, lost live process and failed Next cursor advancement stay red, even with an expired prior wait. |
+| `hidden_controls`, `focus` | The same steps, for control availability, reveal or focus arrival. | An assertion forbidding a second press is red. |
+| `control_state` | Only `wait-scene` pause-readback timeouts: `After pausing, the control value must be play.` or `Album capture preparation must observe paused playback after one Pause.` | Other wrong state/value assertions, including the paused-during-transition contradiction, stay red. The reviewed Pause poll waits for readback for 4 seconds; its exhausted poll is a timeout. |
+| `timing_window` | `wait-scene` or `rotate`, for the existing `did not stabilize within the` prefixes and album stable-scene preparation timeout. | Early/late transitions, crossed evidence windows, invalid pacing and timing preconditions stay red. |
+| `probe_readback` | `query-element` for unreadable Play/Pause before acting; album `wait-scene` settling with every existing gate fact, including a complete loaded photo and confirmed advance. | Wrong or empty probe values, incomplete evidence, no advance, changed layers without history advance and frozen-layer contradictions stay red. |
+| `interval_readback` | None. | Wrong interval/value is functional. |
+| `scene_identity` | None. | Wrong/unchanged photo, black/blank scene and pixel/content contradictions are functional. |
+| `evidence_capture` | None. | Missing/corrupt evidence and frozen-photo pixel violations are functional. |
+| `process_lifetime`, `snapshot_query` | None in the ordinary branch. | Only the exact tool messages below have the separate exception; App process loss and other snapshot errors stay red. |
+| `fixture_response`, `exif_visibility`, `exif_correspondence`, `unknown`, any future class | None. | Red by default. |
+
+The existing failure-window starvation gate is unchanged: at least two ordered,
+distinct samples within inclusive ±5 seconds of the same case's first failure,
+strictly before and after it, every retained idle value measured and at most 5%.
+Case-wide median idle and maximum load cannot replace these samples. Missing,
+one-sided or high-idle samples remain red. Validator rejections remain red,
+including a validator failure accompanying an eligible XCTest message. Multiple
+ordinary failures have no per-failure timing receipt and remain red.
+
+`xctest-tool` requires no CPU samples or first-failure receipt: `failure` and
+`resources` are both null. Every original failure must be one of the reviewed
+complete messages in one diagnostic family; any additional functional, unknown,
+unrecognized or different-family failure keeps the method red:
+
+| Exact message grammar | Diagnostic pair |
+| --- | --- |
+| `Failed to terminate com.331works.immichSlides:<digits>: Failed to terminate com.331works.immichSlides:<digits>` | `unknown/process_lifetime` |
+| `Application 'com.331works.immichSlides' does not have a process ID` | `unknown/process_lifetime` |
+| `Failed to launch com.331works.immichSlides: Timed out while launching application via Xcode` (also the reviewed `Application 'com.331works.immichSlides'` target spelling) | `unknown/process_lifetime` |
+| `Failed to get matching snapshots: Timed out while evaluating UI query` | `unknown/snapshot_query` |
+
+These are maintainer-approved classification exceptions, not proof of an Apple
+defect or an exclusion of an App cause. The complete native message remains
+visible in summary/report warnings and compact history. Strict reporting binds
+the proof to each original `official_methods` failure list and existing clean
+invocation checks. Fixture UI independently binds every claim to that shard's
+original `official-tests.json` method, diagnostic pair and complete failure list;
+missing, duplicated or mismatched official methods fail closed. The reporter
+also verifies the current-attempt job's `GitHub Actions` runner group and absence
+of `self-hosted` labels for either tier. Matrix failures, cleanup/infrastructure
+errors and missing population/timing evidence remain red.
+
+Summary, population verdict, strict aggregate, fixture UI aggregate, outer
+nightly aggregate, report and compact-history readers all accept v5. Aggregates
+retain raw `failed` observations and count yellow separately; a wholly yellow
+night is `environment-limited`. The existing second-consecutive-UTC-night rule
+also applies to fixture UI; repeated messages in one method/night do not create
+another night. Rejection/escalation marks the affected tier red. Versions v1–v4
+retain their exact prior interpretation throughout the 90-day history window.
+Producer activation is a separate PR after this reader merges; a stacked draft
+does not establish trusted acceptance.
 
 ## Prepared version 2: scoped official discovery
 

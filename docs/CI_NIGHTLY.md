@@ -494,6 +494,13 @@ environment-limited night red (see
 [prepared hosted strict environment limits](CI_SUMMARY.md#prepared-hosted-strict-environment-limits)).
 
 Yellow means a retained failure with proven hosted CPU starvation, never a pass.
+This describes current v1–v4 producer output. Readers also prepare
+[v5 timing and XCTest tool exceptions](CI_SUMMARY.md#policy-v5-reader-preparation):
+ordinary timing waits retain the same failure-window CPU requirement; exact,
+complete native tool failures in strict and fixture UI require no CPU samples.
+The fixture UI and outer aggregates accept `environment-limited` while retaining
+raw failures; incomplete official lists, matrix jobs or evidence stay red.
+No v5 emission is activated here. Its producer PR must follow the reader merge.
 The [versioned proof contract and exact allowlist](CI_SUMMARY.md#prepared-hosted-strict-environment-limits)
 are authoritative; the plain-English boundary is:
 

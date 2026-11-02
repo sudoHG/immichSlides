@@ -242,6 +242,21 @@ def validate_shard(raw, identity, run, hashes, expected):
     return summary
 
 
+def bind_ui_aggregate(result, ui):
+    """Combine independently checked tiers without converting yellow into a pass."""
+    require(ui["verdict"]["status"] in {"passed", "failed", "environment-limited"}, "invalid nightly UI status")
+    result.update(schema_version=2, ui=ui)
+    result["tiers"]["ui"] = ui["verdict"]["status"]
+    if ui["verdict"]["status"] == "failed":
+        result["errors"].extend("UI: " + error for error in ui["verdict"]["errors"])
+        result["status"] = "failed"
+    yellow = ui["verdict"].get("environment_limited", [])
+    if yellow:
+        result.setdefault("environment_limited", []).extend(copy.deepcopy(yellow))
+        if result["status"] != "failed":
+            result["status"] = "environment-limited"
+
+
 def parse_identity_failure(raw, run, shard, declared, *, job="nightly-strict"):
     """An untrusted early receipt explains missing cases; it proves no source or execution."""
     receipt = decode(raw)
@@ -397,13 +412,10 @@ def main(argv=None):
             result["errors"].append("producer infrastructure: missing or invalid nightly UI aggregate: " + str(error))
         if ui is not None:
             # V2 always binds the separately published aggregate from this attempt.
-            result.update(schema_version=2, ui=ui)
-            result["tiers"]["ui"] = ui["verdict"]["status"]
+            bind_ui_aggregate(result, ui)
         else:
             result["tiers"]["ui"] = "failed"
-        if result["tiers"]["ui"] != "passed":
-            if ui is not None:
-                result["errors"].extend("UI: " + error for error in ui["verdict"]["errors"])
+        if result["tiers"]["ui"] == "failed":
             result["status"] = "failed"
         result["rollup_entry"]["status"] = result["status"]
     write_json(output / "nightly.json", result)

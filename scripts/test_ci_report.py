@@ -39,6 +39,58 @@ def entry(day="2026-10-01", outcome="failed", run=10, attempt=1):
 
 
 class ReporterTests(unittest.TestCase):
+    def test_v5_strict_methods_recheck_message_binding_and_retained_starvation_proof(self):
+        from ci_failure_diagnostics import environment_limit_evidence
+        from ci_nightly import aggregate_nightly
+        from test_ci_summary import hosted_v5_summary
+        summary, resource = hosted_v5_summary()
+        row = summary["population"]["observed"][0]
+        proof = environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=5)
+        row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
+        aggregate = aggregate_nightly([row["identity"]], [summary], live_in_scope=False)
+        self.assertEqual("environment-limited", aggregate["status"])
+        method = {"identifier": "StrictE2ESmokeUITests/testIOSStrictE2EConnectionSmoke", "result": "Failed",
+                  **{key: row[key] for key in ("failure_phase", "failure_class", "first_failure", "failure_messages")}}
+        phase = {"identity": row["identity"], "exit_code": 65, "build_operations": 0, "products_unchanged": True,
+                 "log_present": True, "official_methods": [method], "bounded_diagnostics": {"case_resources": [resource]},
+                 "official_summary": {"totalTestCount": 1, "passedTests": 0, "failedTests": 1, "skippedTests": 0}}
+        observed, missing = ci_report.method_observations(summary, {"warm": [phase]}, runner_hosted=True)
+        self.assertEqual([], missing)
+        self.assertEqual(proof, observed[0]["environment_limit"])
+        for mutation in ("missing", "functional", "mixed", "validator"):
+            changed = copy.deepcopy(phase)
+            target = changed["official_methods"][0]
+            if mutation == "missing":
+                target.pop("failure_messages")
+            elif mutation == "functional":
+                target["failure_messages"] = ["App timeline:"]
+            elif mutation == "mixed":
+                target["failure_messages"].append("App timeline:")
+            else:
+                changed["validator_failure_message"] = "[redacted validator failure]"
+            reason = ("environment limit cannot conceal strict invocation infrastructure" if mutation == "validator"
+                      else "environment limit differs from official method or case resources")
+            with self.subTest(mutation=mutation), self.assertRaisesRegex(ContractError,
+                    "^" + reason + "$"):
+                ci_report.method_observations(summary, {"warm": [changed]}, runner_hosted=True)
+        report = entry()
+        report.update(status="environment-limited", observed=observed, tiers={"strict": "environment-limited"})
+        report["diagnostics"]["failures"] = [ci_report.failure_details(observed[0])]
+        compact = ci_report.compact_entry(report, set())
+        following = copy.deepcopy(compact)
+        following.update(day="2026-10-02", run={"id": 11, "attempt": 1})
+        history = ci_report.environment_history([compact, following])
+        self.assertEqual(("environment-limited", "failed"), tuple(item["status"] for item in history))
+        broken = copy.deepcopy(compact)
+        broken["observed"][0]["environment_limit"]["resources"]["failure_samples"] = []
+        rejected = ci_report.environment_history([broken])[0]
+        self.assertEqual("failed", rejected["status"])
+        self.assertEqual("RED: invalid or obsolete environment-limit proof under the current policy",
+                         rejected["observed"][0]["environment_limit_rejection"])
+        mixed = copy.deepcopy(compact)
+        mixed["observed"][0]["failure_messages"].append("App timeline:")
+        self.assertEqual("failed", ci_report.environment_history([mixed])[0]["status"])
+
     def test_retained_password_prompt_proofs_revalidate_and_escalate(self):
         from ci_failure_diagnostics import environment_limit_evidence
         from test_ci_summary import hosted_mode_departure_summary
@@ -1188,6 +1240,70 @@ class ReporterTests(unittest.TestCase):
             self.assertEqual("appletv", failed[0]["identity"]["dimensions"]["device"])
             self.assertEqual("open", issue_decision(None, failed[0]["identity"], [report], registry_referenced=False)["action"])
             self.assertEqual(9, report["diagnostics"]["counts"]["declared"])
+            # The same bound fixture method can carry a v5 tool failure, without CPU samples.
+            from ci_failure_diagnostics import environment_limit_evidence
+            from ci_nightly import bind_ui_aggregate
+            original_row = summaries[-1]["population"]["observed"][0]
+            original_status, original_tiers = raw["status"], copy.deepcopy(raw["tiers"])
+            original_verdict, original_job_result = ui["verdict"], ui["matrix_job_result"]
+            row = observation(original_row["identity"], "failed", 2, exit_code=65,
+                failure_diagnostics={"failure_phase": "unknown", "failure_class": "process_lifetime"})
+            messages = ["Application 'com.331works.immichSlides' does not have a process ID"] * 2
+            row["failure_messages"] = row["attempts"][0]["failure_messages"] = messages
+            summaries[-1]["population"]["observed"] = [row]
+            summaries[-1]["status"] = "failed"
+            proof = environment_limit_evidence(summaries[-1], row, [], runner_hosted=True, policy_version=5)
+            self.assertIsNotNone(proof)
+            row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
+            node = {"nodeType": "Test Case", "nodeIdentifier": row["identity"]["key"] + "()", "result": "Failed",
+                    "failure_phase": "unknown", "failure_class": "process_lifetime", "failure_messages": messages}
+            official_tests = {("appletv", "visual"): {"testNodes": [node]}}
+            members[("ui-appletv-visual-10-1", "official-tests.json")] = official_tests[("appletv", "visual")]
+            ui["matrix_job_result"] = "success"
+            ui["verdict"] = judge_ui(plan, summaries, policy=policy, registry=registry,
+                evaluated_on=date(2026, 10, 1), matrix_job_result="success", official_tests=official_tests)
+            self.assertEqual("environment-limited", ui["verdict"]["status"])
+            raw.update(status="passed", tiers={**original_tiers, "strict": "passed"})
+            bind_ui_aggregate(raw, ui)
+            self.assertEqual("environment-limited", raw["status"])
+            jobs = [{"name": "ui-appletv-visual", "runner_group_name": "GitHub Actions", "labels": ["xcode-27"]}]
+            with patch("ci_publish.complete_attempt_jobs", return_value=jobs):
+                yellow_report = ci_report.nightly_attempt(api, run, 1, artifacts)
+                self.assertEqual(("environment-limited", 1),
+                    (yellow_report["status"], yellow_report["diagnostics"]["counts"]["environment-limited"]))
+                self.assertIn(messages[0], render_entry(yellow_report))
+                for mutation in ("missing-messages", "mixed", "duplicate-method"):
+                    original_node = copy.deepcopy(node)
+                    if mutation == "missing-messages":
+                        node.pop("failure_messages")
+                    elif mutation == "mixed":
+                        node["failure_messages"] = [*messages, "App timeline:"]
+                    else:
+                        official_tests[("appletv", "visual")]["testNodes"].append(copy.deepcopy(node))
+                    with self.subTest(v5_official=mutation), self.assertRaisesRegex(ContractError,
+                            "^nightly UI aggregate differs from bound shard evidence$"):
+                        ci_report.nightly_attempt(api, run, 1, artifacts)
+                    node.clear()
+                    node.update(original_node)
+                    official_tests[("appletv", "visual")]["testNodes"] = [node]
+            with patch("ci_publish.complete_attempt_jobs", return_value=[{**jobs[0], "runner_group_name": "private"}]), \
+                    self.assertRaisesRegex(ContractError, "^environment limit requires a verified GitHub-hosted UI job$"):
+                ci_report.nightly_attempt(api, run, 1, artifacts)
+            compact = ci_report.compact_entry(yellow_report, set())
+            following = copy.deepcopy(compact)
+            following.update(day="2026-10-02", run={"id": 11, "attempt": 1})
+            history = ci_report.environment_history([compact, following])
+            self.assertEqual(("environment-limited", "failed"), tuple(item["status"] for item in history))
+            self.assertEqual(("passed", "failed"), (history[1]["tiers"]["strict"], history[1]["tiers"]["ui"]))
+            self.assertEqual(messages, history[1]["observed"][-1]["environment_limit"]["failure_messages"])
+            self.assertIn(messages[0], render_entry(history[1]))
+            # Two identical native failures in one method/night are one yellow night, never two.
+            self.assertFalse(any(item.get("environment_limit_escalation") for item in history[0]["observed"]))
+            summaries[-1]["population"]["observed"] = [original_row]
+            summaries[-1]["status"] = "passed"
+            raw.update(status=original_status, tiers=original_tiers)
+            raw.pop("environment_limited")
+            ui["verdict"], ui["matrix_job_result"] = original_verdict, original_job_result
             retained_verdict, retained_capacity = ui["verdict"], ui["capacity"]
             ui["verdict"] = judge_ui(plan, summaries[1:], policy=policy, registry=registry,
                 evaluated_on=date(2026, 10, 1), matrix_job_result="failure")

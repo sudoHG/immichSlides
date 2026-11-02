@@ -65,7 +65,7 @@ def parse_ui_plan(raw):
     return plan
 
 
-def judge_ui(raw_plan, raw_summaries, *, policy, registry, evaluated_on, matrix_job_result):
+def judge_ui(raw_plan, raw_summaries, *, policy, registry, evaluated_on, matrix_job_result, official_tests=None):
     plan = parse_ui_plan(raw_plan)
     result = {"status": "failed", "matrix": {}, "shards": [], "observed": [], "deselected": [], "errors": []}
     wanted = {(item["device"], item["shard"]): item for item in plan["shards"]}
@@ -79,6 +79,9 @@ def judge_ui(raw_plan, raw_summaries, *, policy, registry, evaluated_on, matrix_
             require(summary["identity"] == plan["identity"] and summary["source"] == plan["source"]
                     and summary["run"] == {**plan["run"], "tier": "ui", "job": "ui-" + device, "shard": pair[1]}
                     and summary["hashes"] == plan["hashes"][device], "nightly UI shard provenance mismatch")
+            if any("environment_limit" in item for item in summary["population"]["observed"]):
+                from ci_failure_diagnostics import bind_ui_environment_limits
+                bind_ui_environment_limits(summary, (official_tests or {}).get(pair))
             summaries[pair] = summary
         except (ContractError, KeyError, TypeError, ValueError) as error:
             result["errors"].append("invalid UI shard: " + str(error))
@@ -113,16 +116,21 @@ def judge_ui(raw_plan, raw_summaries, *, policy, registry, evaluated_on, matrix_
     result["observed"].extend(observation(expected[key], "not-run", 0, reason="missing UI sample", exit_code=None)
                               for key in sorted(set(expected) - present - deselected))
     result["status"] = "failed" if result["errors"] else "passed"
+    yellow = [item["identity"] for item in result["observed"] if "environment_limit" in item]
+    if yellow:
+        result["environment_limited"] = yellow
+        if not result["errors"]:
+            result["status"] = "environment-limited"
     return result
 
 
-def validate_ui_record(raw, summaries, *, policy, registry, evaluated_on):
+def validate_ui_record(raw, summaries, *, policy, registry, evaluated_on, official_tests=None):
     record = decode(raw)
     fields(record, {"schema_version", "plan", "verdict", "matrix_job_result", "capacity"}, "nightly UI aggregate")
     require(type(record["schema_version"]) is int and record["schema_version"] == 1, "unsupported nightly UI aggregate")
     require(record["matrix_job_result"] in {"success", "failure", "cancelled", "skipped"}, "invalid UI job result")
     expected = judge_ui(record["plan"], summaries, policy=policy, registry=registry, evaluated_on=evaluated_on,
-                        matrix_job_result=record["matrix_job_result"])
+                        matrix_job_result=record["matrix_job_result"], official_tests=official_tests)
     require(record["verdict"] == expected, "nightly UI aggregate differs from bound shard evidence")
     capacity = record["capacity"]
     fields(capacity, {"max_parallel", "shards", "minimum_shard_waves", "start_order_waves", "shard_intervals", "wall_seconds"},
@@ -144,7 +152,7 @@ def validate_ui_record(raw, summaries, *, policy, registry, evaluated_on):
     ordered = sorted(capacity["shard_intervals"], key=lambda item: item["started_epoch"])
     require(capacity["start_order_waves"] == [[item["shard"] for item in ordered[index:index + 2]]
                                              for index in range(0, len(ordered), 2)], "invalid UI wave accounting")
-    require(expected["status"] != "passed" or set(pairs) == wanted, "passing UI aggregate lacks timing samples")
+    require(expected["status"] == "failed" or set(pairs) == wanted, "passing UI aggregate lacks timing samples")
     return record
 
 
@@ -187,7 +195,7 @@ def current_plan(root):
 
 def aggregate_ui(plan, records, *, matrix_job_result, root):
     from ci_summary import duration
-    summaries, intervals, errors = [], [], []
+    summaries, intervals, errors, official_tests = [], [], [], {}
     expected = {f"ui-{item['device']}-{item['shard']}-{plan['run']['id']}-{plan['run']['attempt']}" for item in plan["shards"]}
     actual = {path.name for path in records.iterdir()} if records.is_dir() else set()
     require(actual <= expected, "unexpected nightly UI artifact directories")
@@ -197,6 +205,8 @@ def aggregate_ui(plan, records, *, matrix_job_result, root):
             continue
         try:
             summaries.append(parse_summary((directory / "summary.json").read_text()))
+            if any("environment_limit" in row for row in summaries[-1]["population"]["observed"]):
+                official_tests[(item["device"], item["shard"])] = decode((directory / "official-tests.json").read_text())
             timing = decode((directory / "shard-timing.json").read_text())
             require(timing["device"] == item["device"] and timing["shard"] == item["shard"], "UI timing differs from shard")
             for key in ("started_epoch", "finished_epoch"):
@@ -217,14 +227,14 @@ def aggregate_ui(plan, records, *, matrix_job_result, root):
         require(run["head_sha"] == plan["identity"]["commit_sha"], "UI evaluation date source differs")
         evaluated_on = date.fromisoformat(run["created_at"][:10])
     verdict = judge_ui(plan, summaries, policy=policy, registry=registry, evaluated_on=evaluated_on,
-                       matrix_job_result=matrix_job_result)
+                       matrix_job_result=matrix_job_result, official_tests=official_tests)
     ordered = sorted(intervals, key=lambda item: item["started_epoch"])
     parallel, count = plan["max_parallel"], len(plan["shards"])
     record = {"schema_version": 1, "plan": plan, "verdict": verdict, "matrix_job_result": matrix_job_result,
               "capacity": {"max_parallel": parallel, "shards": count, "minimum_shard_waves": (count + parallel - 1) // parallel, "shard_intervals": intervals,
                            "start_order_waves": [[item["shard"] for item in ordered[index:index + parallel]] for index in range(0, len(ordered), parallel)],
                            "wall_seconds": time.time() - plan["started_epoch"]}}
-    validate_ui_record(record, summaries, policy=policy, registry=registry, evaluated_on=evaluated_on)
+    validate_ui_record(record, summaries, policy=policy, registry=registry, evaluated_on=evaluated_on, official_tests=official_tests)
     return record
 
 
@@ -261,10 +271,17 @@ def main(argv=None):
              f"{capacity['shards']} shards; max-parallel {capacity['max_parallel']}; minimum {capacity['minimum_shard_waves']} waves; observed start-order waves {len(capacity['start_order_waves'])}; wall {capacity['wall_seconds']:.1f}s.", "",
              "| Device | Shard | Verdict |", "|---|---|---|"]
     lines.extend(f"| {item['device']} | {item['shard']} | {item['verdict']['status']} |" for item in verdict["shards"])
+    if verdict.get("environment_limited"):
+        from ci_failure_diagnostics import render_environment_limit
+        from ci_summary import markdown_text
+        lines.append("\n> **WARNING: hosted XCTest/Apple tool failures are environment-limited (yellow), never passes.**")
+        lines.extend("\nWARNING: " + markdown_text(identity_key(item["identity"])) + ": "
+                     + markdown_text(render_environment_limit(item["environment_limit"]))
+                     for item in verdict["observed"] if "environment_limit" in item)
     lines.extend(["", *verdict["errors"]])
     (output / "nightly-ui.md").write_text("\n".join(lines) + "\n")
     print("\n".join(lines[:4]))
-    return 0 if verdict["status"] == "passed" else 1
+    return 1 if verdict["status"] == "failed" else 0
 
 
 if __name__ == "__main__":
