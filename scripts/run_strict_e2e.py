@@ -240,7 +240,7 @@ def export_private_result_bundle(
     if enrich_failure_diagnostics:
         from ci_failure_diagnostics import (APP_TIMELINE_METHODS, legacy_diagnostics, legacy_failure_messages,
                                             public_app_timeline_failure_message, unknown_diagnostics,
-                                            public_failure_messages, failure_messages_diagnostics)
+                                            public_failure_messages, failure_messages_diagnostics, first_failure_test_key)
         failed = []
         def visit(node):
             if isinstance(node, dict):
@@ -266,7 +266,7 @@ def export_private_result_bundle(
                 # Diagnostic availability must not change the official result or runner exit.
                 pass
             for node in failed:
-                key = str(node.get("nodeIdentifier", "")).removesuffix("()")
+                key = first_failure_test_key(node.get("nodeIdentifier", ""))
                 node.update(diagnostics.get(key, unknown_diagnostics()))
                 messages = public_failure_messages(raw_messages.get(key))
                 if messages is not None:

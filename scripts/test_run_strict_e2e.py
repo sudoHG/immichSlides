@@ -1334,18 +1334,19 @@ class FailureDiagnosticsTests(unittest.TestCase):
         tool = "Application 'com.331works.immichSlides' does not have a process ID"
         wait = "After pausing, the control value must be play."
         marker = "[unrecognized XCTest failure]"
-        for messages, expected in (([tool], [tool]), ([tool, tool], [tool, tool]),
-                ([tool, wait + " PRIVATE_SENTINEL"], [tool, wait]),
-                (["XCTAssertTrue failed - " + tool], [marker]),
-                (["PRIVATE_SENTINEL"], [marker]), ([tool] * 17, None)):
-            with self.subTest(messages=messages), tempfile.TemporaryDirectory() as raw:
+        for messages, expected, bundle_prefix in (([tool], [tool], None), ([tool, tool], [tool, tool], None),
+                ([tool, wait + " PRIVATE_SENTINEL"], [tool, wait], None),
+                (["XCTAssertTrue failed - " + tool], [marker], None),
+                (["PRIVATE_SENTINEL"], [marker], None), ([tool] * 17, None, None),
+                ([tool], [tool], "export"), ([tool], [tool], "legacy")):
+            with self.subTest(messages=messages, bundle_prefix=bundle_prefix), tempfile.TemporaryDirectory() as raw:
                 evidence = Path(raw)
                 name = "StrictE2ESmokeUITests/testIOSStrictE2EConnectionSmoke"
                 payload = {"testNodes": [{"nodeType": "Unit test bundle", "name": "immichSlidesUITests", "children": [
-                    {"nodeType": "Test Case", "nodeIdentifier": name + "()", "result": "Failed",
+                    {"nodeType": "Test Case", "nodeIdentifier": ("immichSlidesUITests/" if bundle_prefix == "export" else "") + name + "()", "result": "Failed",
                      "children": [{"nodeType": "Failure Message", "name": "failure"} for _ in messages]}]}]}
                 legacy = {"issues": {"testFailureSummaries": {"_values": [
-                    {"testCaseName": {"_value": name.replace("/", ".") + "()"}, "message": {"_value": message}}
+                    {"testCaseName": {"_value": ("immichSlidesUITests." if bundle_prefix == "legacy" else "") + name.replace("/", ".") + "()"}, "message": {"_value": message}}
                     for message in messages]}}}
                 def export(command, **kwargs):
                     return subprocess.CompletedProcess(command, 0, json.dumps(legacy if "--legacy" in command else payload).encode(), b"")
@@ -1355,7 +1356,9 @@ class FailureDiagnosticsTests(unittest.TestCase):
                         enrich_failure_diagnostics=True)
                 exported = json.loads((evidence / "official-tests.json").read_text())
                 self.assertEqual(expected, exported["testNodes"][0]["children"][0].get("failure_messages"))
-                method = validate_case_export(evidence, "ios", "smoke")[0]
+                from ci_failure_diagnostics import test_node_diagnostics
+                method = (test_node_diagnostics(exported)["immichSlidesUITests/" + name] if bundle_prefix == "export"
+                          else validate_case_export(evidence, "ios", "smoke")[0])
                 self.assertEqual(expected, method.get("failure_messages"))
                 self.assertNotIn("PRIVATE_SENTINEL", (evidence / "official-tests.json").read_text())
 

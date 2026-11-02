@@ -1598,7 +1598,7 @@ def legacy_failure_messages(payload):
     for row in legacy_failure_summaries(payload):
         name = row.get("testCaseName", {}).get("_value") if isinstance(row.get("testCaseName"), dict) else None
         if isinstance(name, str):
-            key = name.removesuffix("()").replace(".", "/")
+            key = first_failure_test_key(name.removesuffix("()").replace(".", "/"))
             raw = row.get("message")
             messages.setdefault(key, []).append(raw.get("_value") if isinstance(raw, dict) else None)
     return messages
