@@ -136,6 +136,11 @@ def evaluate_tracer(declared, results, *, interrupted=False, informational=()):
             observed[-1][VALIDATOR_FAILURE_FIELD] = observed[-1]["attempts"][0][VALIDATOR_FAILURE_FIELD] = result[VALIDATOR_FAILURE_FIELD]
         if outcome == "failed" and receipt is not None and (preparation_failed or receipt["source"] in {"xctest", "validator"}):
             observed[-1][FIRST_FAILURE_FIELD] = observed[-1]["attempts"][0][FIRST_FAILURE_FIELD] = receipt
+        from ci_failure_diagnostics import MAX_FAILURE_MESSAGES
+        failed_methods = [method for method in result.get("official_methods", []) if method["result"] == "Failed"]
+        messages = failed_methods[0].get("failure_messages") if len(failed_methods) == 1 else None
+        if outcome == "failed" and isinstance(messages, list) and 0 < len(messages) <= MAX_FAILURE_MESSAGES:
+            observed[-1]["failure_messages"] = observed[-1]["attempts"][0]["failure_messages"] = copy.deepcopy(messages)
     declared_keys = {identity_key(item) for item in declared}
     observed_keys = {identity_key(item["identity"]) for item in observed}
     complete = bool(declared) and declared_keys == observed_keys and len(results) == len(declared)
@@ -182,8 +187,10 @@ def runner_group_members(group_id):
 
 def produce_environment_limits(summary, results, *, informational=(), policy_version=None, rejections=None):
     """Attach only reader-validated same-case proofs; retain every raw outcome."""
-    from ci_failure_diagnostics import ENVIRONMENT_LIMIT_FIELD, environment_limit_evidence
+    from ci_failure_diagnostics import (ENVIRONMENT_LIMIT_FIELD, environment_limit_evidence,
+        EMITTED_ENVIRONMENT_POLICY_VERSION, xctest_tool_class)
     from ci_bounded_diagnostics import validate_receipt
+    policy_version = EMITTED_ENVIRONMENT_POLICY_VERSION if policy_version is None else policy_version
     summary.pop("strict_case_evidence", None)
     if rejections is not None:
         rejections.clear()
@@ -210,13 +217,16 @@ def produce_environment_limits(summary, results, *, informational=(), policy_ver
             ledger = phase.get("bounded_diagnostics")
             validate_receipt(ledger)
             resources = ledger.get("case_resources", [])
+            messages = entry.get("failure_messages", [])
+            tool = policy_version == 5 and bool(messages) and all(xctest_tool_class(message) is not None for message in messages)
             failures = [resource for resource in resources if resource["first_failure_elapsed_seconds"] is not None]
-            if len(failures) != 1:
+            if not tool and len(failures) != 1:
                 reject("failure-resource-count")
                 continue
             samples = [event["sample"] for event in ledger["events"] if event["scope"] == "xcode"
-                and event["sequence"] == failures[0]["sequence"] and event["sample"] is not None]
-            hosted = len(samples) == 1 and samples[0]["runner_hosted"] is True
+                and (tool and event["phase"] == "test-execution" or not tool and event["sequence"] == failures[0]["sequence"])
+                and event["sample"] is not None]
+            hosted = bool(samples) and (tool or len(samples) == 1) and all(sample["runner_hosted"] is True for sample in samples)
             proof = environment_limit_evidence(summary, entry, resources, runner_hosted=hosted, policy_version=policy_version)
             if proof is None:
                 reject("missing-xcode-host-samples" if not samples else
@@ -662,7 +672,8 @@ def main(argv=None):
             print(f"{key}: environment-limit: not eligible ({reason})", flush=True)
     for entry in summary["population"]["observed"]:
         if "environment_limit" in entry:
-            print("::warning title=Environment-limited strict timing::" + identity_key(entry["identity"])
+            title = "Environment-limited XCTest tool" if entry["environment_limit"].get("kind") == "xctest-tool" else "Environment-limited strict timing"
+            print("::warning title=" + title + "::" + identity_key(entry["identity"])
                   + ": " + render_environment_limit(entry["environment_limit"]), flush=True)
     return exit_code
 

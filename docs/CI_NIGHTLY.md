@@ -493,16 +493,18 @@ health, with one exception: an informational failure can turn an otherwise
 environment-limited night red (see
 [prepared hosted strict environment limits](CI_SUMMARY.md#prepared-hosted-strict-environment-limits)).
 
-Yellow means a retained failure with proven hosted CPU starvation, never a pass.
-This describes current v1–v4 producer output. Readers also prepare
-[v5 timing and XCTest tool exceptions](CI_SUMMARY.md#policy-v5-reader-preparation):
+Yellow means a retained failure, never a pass. Producers now emit
+[v5 timing and XCTest tool exceptions](CI_SUMMARY.md#policy-v5-reader-preparation),
+after reader support merged in #667:
 ordinary timing waits retain the same failure-window CPU requirement; exact,
 complete native tool failures in strict and fixture UI require no CPU samples.
 The fixture UI and outer aggregates accept `environment-limited` while retaining
 raw failures; incomplete official lists, matrix jobs or evidence stay red.
-No v5 emission is activated here. Its producer PR must follow the reader merge.
-The [versioned proof contract and exact allowlist](CI_SUMMARY.md#prepared-hosted-strict-environment-limits)
-are authoritative; the plain-English boundary is:
+Clean fixture shards with only bound native tool failures exit zero but retain
+raw `summary.status: failed`. Cleanup errors and mixed failures stay nonzero.
+The [v5 class/step taxonomy](CI_SUMMARY.md#policy-v5-reader-preparation) is
+authoritative for new output. The following table documents retained v1–v4
+boundaries for the 90-day history window:
 
 | Failure | Can be yellow? |
 | --- | --- |
@@ -580,7 +582,7 @@ The receipt cannot distinguish this from slow settling; no Swift change is made.
 The first night without CPU starvation is red, two consecutive yellow nights
 escalate to red, and independent strict pause and history cases remain in place.
 
-The producer emits v4 for all new proofs, including existing UI waits and album
+The producer emitted v4 before v5 activation, including existing UI waits and album
 settling. Reader support was introduced separately before activation; trusted
 acceptance requires a base containing that reader, and a stacked draft alone
 does not establish it.

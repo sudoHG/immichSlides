@@ -239,7 +239,8 @@ def export_private_result_bundle(
     timeline_message = None
     if enrich_failure_diagnostics:
         from ci_failure_diagnostics import (APP_TIMELINE_METHODS, legacy_diagnostics, legacy_failure_messages,
-                                            public_app_timeline_failure_message, unknown_diagnostics)
+                                            public_app_timeline_failure_message, unknown_diagnostics,
+                                            public_failure_messages, failure_messages_diagnostics)
         failed = []
         def visit(node):
             if isinstance(node, dict):
@@ -253,11 +254,13 @@ def export_private_result_bundle(
             visit(node)
         if failed:
             diagnostics = {}
+            raw_messages = {}
             legacy_root = {}
             try:
                 details = subprocess.run(["xcrun", "xcresulttool", "get", "object", "--legacy", "--path", str(bundle), "--format", "json"],
                                          capture_output=True, check=True, timeout=export_timeout_seconds)
                 legacy_root = json.loads(details.stdout)
+                raw_messages = legacy_failure_messages(legacy_root)
                 diagnostics = legacy_diagnostics(legacy_root)
             except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
                 # Diagnostic availability must not change the official result or runner exit.
@@ -265,6 +268,10 @@ def export_private_result_bundle(
             for node in failed:
                 key = str(node.get("nodeIdentifier", "")).removesuffix("()")
                 node.update(diagnostics.get(key, unknown_diagnostics()))
+                messages = public_failure_messages(raw_messages.get(key))
+                if messages is not None:
+                    node["failure_messages"] = messages
+                    node.update(failure_messages_diagnostics(messages))
                 if len(failed) == 1 and key in APP_TIMELINE_METHODS:
                     messages = legacy_failure_messages(legacy_root).get(key, [])
                     timeline_message = public_app_timeline_failure_message(messages[0]) if messages else None

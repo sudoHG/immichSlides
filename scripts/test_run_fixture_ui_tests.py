@@ -19,6 +19,49 @@ from run_fixture_ui_tests import clean_environment, compiled_tests, coverage_row
 
 
 class FixtureCoverageTests(unittest.TestCase):
+    def test_nightly_tool_yellow_keeps_raw_failed_and_only_clean_complete_shards_exit_zero(self):
+        from test_ci_summary import hosted_v5_summary
+        from ci_summary import parse_summary
+        policy = {"schema_version": 1, "approval_records": [], "expected_skips": [], "deselections": []}
+        for defect in (None, "bundle-prefix", "mixed", "retry", "too-many", "raw-count", "infrastructure", "timeout", "ci-ui", "not-hosted"):
+            with self.subTest(defect=defect):
+                summary, _ = hosted_v5_summary(ui=True, tool=True)
+                row = summary["population"]["observed"][0]
+                messages = row["failure_messages"]
+                if defect == "mixed":
+                    messages.append("App timeline:")
+                elif defect == "too-many":
+                    messages *= 17
+                elif defect == "retry":
+                    row["attempts"].append(dict(row["attempts"][0], number=2))
+                    row["duration_seconds"] *= 2
+                elif defect == "infrastructure":
+                    summary["infrastructure"].append({"code": "cleanup-failed", "message": "Synthetic cleanup failure"})
+                elif defect == "ci-ui":
+                    summary["source"]["workflow_path"] = ".github/workflows/ci-ui.yml"
+                from ci_failure_diagnostics import failure_messages_diagnostics
+                node = {"nodeType": "Test Case", "nodeIdentifier": row["identity"]["key"] + "()", "result": "Failed",
+                    **failure_messages_diagnostics(messages),
+                    "children": [{"nodeType": "Failure Message", "name": "failure"} for _ in messages]}
+                if defect != "too-many":
+                    node["failure_messages"] = messages
+                if defect == "bundle-prefix":
+                    node["nodeIdentifier"] = "immichSlidesUITests/" + node["nodeIdentifier"]
+                if defect == "raw-count":
+                    node["children"] = []
+                verdict, code = runner.finish_fixture_coverage(summary, {"testNodes": [node]},
+                    summary["population"]["declared"], policy, exit_code=124 if defect == "timeout" else 65,
+                    runner_hosted=defect != "not-hosted")
+                if defect in {"retry", "too-many"}:
+                    self.assertNotIn("failure_messages", row)
+                    self.assertTrue(all("failure_messages" not in attempt for attempt in row["attempts"]))
+                yellow = defect in {None, "bundle-prefix"}
+                self.assertEqual(0 if yellow else 124 if defect == "timeout" else 65, code)
+                self.assertEqual("failed", summary["status"])
+                parse_summary(summary)
+                self.assertEqual("environment-limited" if yellow else "failed", verdict["status"])
+                self.assertEqual(yellow, "environment_limit" in row)
+
     def test_same_named_target_and_class_keeps_failure_identity_through_summary(self):
         from ci_failure_diagnostics import first_failure_environment, collect_first_failure_spool, attach_first_failures
         from ci_summary import observation, test_identity, write_summary, parse_summary

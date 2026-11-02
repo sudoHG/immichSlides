@@ -77,6 +77,7 @@ _validator_enabled = ContextVar("first_failure_validator_enabled", default=False
 
 ENVIRONMENT_LIMIT_FIELD = "environment_limit"
 ENVIRONMENT_POLICY_VERSION = 4
+EMITTED_ENVIRONMENT_POLICY_VERSION = 5
 FAILURE_MESSAGES_FIELD = "failure_messages"
 MAX_FAILURE_MESSAGES = 16
 UNRECOGNIZED_FAILURE_MESSAGE = "[unrecognized XCTest failure]"
@@ -265,6 +266,36 @@ def validate_failure_messages(messages):
     require(all(isinstance(message, str) and (message in prefixes or message == UNRECOGNIZED_FAILURE_MESSAGE
                 or xctest_tool_class(message) is not None) for message in messages),
             "failure messages: unreviewed public message")
+
+
+def public_failure_messages(messages):
+    """Project the complete raw official list; native matches precede assertion unwrapping."""
+    if not isinstance(messages, list) or not 0 < len(messages) <= MAX_FAILURE_MESSAGES:
+        return None
+    public = []
+    for message in messages:
+        if xctest_tool_class(message) is not None:
+            public.append(message)
+            continue
+        text = normalized_xctest_failure(message)
+        rule = next((rule for rule in PREFIX_RULES if text is not None and text.startswith(rule[0])), None)
+        public.append(rule[0] if rule is not None and xctest_tool_class(rule[0]) is None
+                      else UNRECOGNIZED_FAILURE_MESSAGE)
+    return public
+
+
+def attach_failure_messages(observed, official):
+    """A retry cannot claim a single-invocation complete list."""
+    diagnostics = {first_failure_test_key(key): value for key, value in test_node_diagnostics(official).items()}
+    for entry in observed:
+        entry.pop(FAILURE_MESSAGES_FIELD, None)
+        for attempt in entry["attempts"]:
+            attempt.pop(FAILURE_MESSAGES_FIELD, None)
+        if entry["outcome"] != "failed" or len(entry["attempts"]) != 1:
+            continue
+        detail = diagnostics.get(first_failure_test_key(entry["identity"]["key"]), {})
+        if FAILURE_MESSAGES_FIELD in detail:
+            entry[FAILURE_MESSAGES_FIELD] = entry["attempts"][0][FAILURE_MESSAGES_FIELD] = deepcopy(detail[FAILURE_MESSAGES_FIELD])
 
 
 def failure_messages_diagnostics(messages):
@@ -1495,6 +1526,8 @@ PREFIX_RULES = (
     ("Failed to determine hittability", "unknown", "snapshot_query"),
     ("Failed to terminate com.331works.immichSlides:", "unknown", "process_lifetime"),
     ("Application 'com.331works.immichSlides' does not have a process ID", "unknown", "process_lifetime"),
+    ("Failed to launch com.331works.immichSlides:", "unknown", "process_lifetime"),
+    ("Failed to launch Application 'com.331works.immichSlides':", "unknown", "process_lifetime"),
 )
 
 
@@ -1585,6 +1618,8 @@ def test_node_diagnostics(payload):
             key = str(node.get("nodeIdentifier", "")).removesuffix("()")
             diagnostics[key] = ({field: node[field] for field in DIAGNOSTIC_FIELDS}
                                 if DIAGNOSTIC_FIELDS <= node.keys() else unknown_diagnostics())
+            if FAILURE_MESSAGES_FIELD in node:
+                diagnostics[key][FAILURE_MESSAGES_FIELD] = deepcopy(node[FAILURE_MESSAGES_FIELD])
             receipt = public_first_failure(node.get(FIRST_FAILURE_FIELD))
             if receipt is not None and receipt["source"] == "xctest":
                 diagnostics[key][FIRST_FAILURE_FIELD] = receipt

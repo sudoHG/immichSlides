@@ -8,14 +8,14 @@ authority. See [trusted publication](CI_PUBLISHER.md) for admission and approval
 
 ## Collection and retention
 
-Readers prepare [yellow policy v5](CI_SUMMARY.md#policy-v5-reader-preparation)
+Readers accept active [yellow policy v5](CI_SUMMARY.md#policy-v5-reader-preparation)
 alongside unchanged v1–v4 history for the full 90-day window. V5 native tool
 claims in nightly strict and fixture UI bind complete original official-method
 failure lists and current-attempt GitHub-hosted job metadata. Exact tool messages
 remain visible in warnings and compact history; ordinary timing claims still
 need failure-window starvation evidence. The same second-consecutive-night rule
 marks the affected strict or UI tier red, without counting repeated messages in
-one method/night twice. Producer emission remains v4 until a later activation PR.
+one method/night twice. Producers now emit v5 after reader support merged in #667.
 
 `workflow_run` is filtered to `branches: [main]`. A main completion reads only its
 triggering producer run and the prior verified reporting snapshot. Its job condition

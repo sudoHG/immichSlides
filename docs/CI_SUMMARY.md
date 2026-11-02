@@ -1275,7 +1275,7 @@ exactly the two reviewed `mode-departure` entries. Unknown versions
 remain red. No original receipt, raw failure, threshold, deadline, wait or retry changes.
 
 Policy v4 follows the same reader-first rollout with an unchanged proof shape.
-The producer now emits v4 for all new proofs. Reader support was introduced
+The producer emitted v4 before v5 activation. Reader support was introduced
 separately before activation; trusted acceptance requires a base containing that
 reader, and a stacked draft alone does not establish it. Older readers reject v4 even
 for existing UI waits and album settling. Retained v1/v2/v3 interpretations stay
@@ -1424,11 +1424,13 @@ Nights containing yellow are ineligible unchanged-SHA baselines so the next
 scheduled night can collect the evidence needed for escalation.
 
 Retained compact proofs are rechecked under their supported policy version (v1,
-v2, v3 or v4). Missing, unknown or obsolete policy versions and invalid proofs degrade to red with a fixed public
+v2, v3, v4 or v5). Missing, unknown or obsolete policy versions and invalid proofs degrade to red with a fixed public
 reason; rendering, history loading and issue decisions must not raise because of
 those proofs. Original first-failure receipts remain outside compact history.
 
-### Policy v5 reader preparation
+<a id="policy-v5-reader-preparation"></a>
+
+### Policy v5 active
 
 Hogan generalized the 2026-10-21 starvation rule on 2026-10-31 and approved the
 XCTest/Apple-tool exception on 2026-10-30. Policy v5 separates two kinds of retained
@@ -1437,6 +1439,10 @@ failure. It applies only to GitHub-hosted `ci-nightly`, on `schedule` or
 reviewed native tool failures in strict and fixture UI. PR `ci-ui`, `ci-pr-gate`,
 local, self-hosted and informational strict cases gain no exception. Yellow is
 never a pass, an explicit-pass recovery night, a product flake or a retry license.
+The strict tracer and fixture UI runner now emit v5, after the readers merged in
+#667. `EMITTED_ENVIRONMENT_POLICY_VERSION` selects new producer proofs; the older
+`ENVIRONMENT_POLICY_VERSION` remains the retained v4 projection default. PR UI
+gates gain no yellow exception.
 
 The closed proof retains `schema_version: 1`, `policy_version: 5`,
 `runner_hosted: true`, `failure_phase`, `failure_class`, `failure` and `resources`,
@@ -1448,6 +1454,13 @@ their existing reviewed prefix, and the tool messages below retain their complet
 original text (at most 512 characters). Unknown messages use the fixed
 `[unrecognized XCTest failure]` marker and remain red. No assertion suffix,
 private value, path or arbitrary free text is admitted by this extension.
+Producers project this list from raw legacy `testFailureSummaries` before folding
+diagnostic classes, retaining duplicates, unknown markers and mixed failures.
+Native tool matching happens before stripping any XCTAssert or Swift assertion
+wrapper. Unknown messages remain red; more than 16 messages or multiple attempts
+produce no `failure_messages` claim. Strict tools use hosting metadata without
+the ordinary failure-resource-count/CPU gate. Fixture UI additionally binds the
+original raw failure-node count before accepting a proof.
 
 `timing-wait` retains exactly one ordinary failure, its original first-failure
 projection and one unchanged case resource entry. The v5 projection adds
@@ -1529,8 +1542,11 @@ are replaced with the fixed marker. The existing second-consecutive-UTC-night ru
 also applies to fixture UI; repeated messages in one method/night do not create
 another night. Rejection/escalation marks the affected tier red. Versions v1–v4
 retain their exact prior interpretation throughout the 90-day history window.
-Producer activation is a separate PR after this reader merges; a stacked draft
-does not establish trusted acceptance.
+The reader-first rollout is complete: v5 producers activate only after the
+reader merge. A clean fixture invocation with exclusively bound tool yellows
+exits zero while `summary.status` and every observation/attempt remain `failed`;
+`environment-limited` belongs only to verdicts and aggregates. Incomplete,
+mixed, timed-out or cleanup-failed invocations remain nonzero and red.
 
 ## Prepared version 2: scoped official discovery
 

@@ -1329,6 +1329,36 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
 
 
 class FailureDiagnosticsTests(unittest.TestCase):
+    def test_official_export_preserves_complete_public_failure_lists_before_class_folding(self):
+        from run_strict_ci_tracer import validate_case_export
+        tool = "Application 'com.331works.immichSlides' does not have a process ID"
+        wait = "After pausing, the control value must be play."
+        marker = "[unrecognized XCTest failure]"
+        for messages, expected in (([tool], [tool]), ([tool, tool], [tool, tool]),
+                ([tool, wait + " PRIVATE_SENTINEL"], [tool, wait]),
+                (["XCTAssertTrue failed - " + tool], [marker]),
+                (["PRIVATE_SENTINEL"], [marker]), ([tool] * 17, None)):
+            with self.subTest(messages=messages), tempfile.TemporaryDirectory() as raw:
+                evidence = Path(raw)
+                name = "StrictE2ESmokeUITests/testIOSStrictE2EConnectionSmoke"
+                payload = {"testNodes": [{"nodeType": "Unit test bundle", "name": "immichSlidesUITests", "children": [
+                    {"nodeType": "Test Case", "nodeIdentifier": name + "()", "result": "Failed",
+                     "children": [{"nodeType": "Failure Message", "name": "failure"} for _ in messages]}]}]}
+                legacy = {"issues": {"testFailureSummaries": {"_values": [
+                    {"testCaseName": {"_value": name.replace("/", ".") + "()"}, "message": {"_value": message}}
+                    for message in messages]}}}
+                def export(command, **kwargs):
+                    return subprocess.CompletedProcess(command, 0, json.dumps(legacy if "--legacy" in command else payload).encode(), b"")
+                with mock.patch("run_strict_e2e.subprocess.run", side_effect=export), \
+                        mock.patch("run_strict_e2e.read_official_test_results_summary", return_value=TestResultsSummary(1, 0, 1, 0, "Failed")):
+                    strict_runner.export_private_result_bundle(evidence / "private.xcresult", evidence, ["PRIVATE_SENTINEL"],
+                        enrich_failure_diagnostics=True)
+                exported = json.loads((evidence / "official-tests.json").read_text())
+                self.assertEqual(expected, exported["testNodes"][0]["children"][0].get("failure_messages"))
+                method = validate_case_export(evidence, "ios", "smoke")[0]
+                self.assertEqual(expected, method.get("failure_messages"))
+                self.assertNotIn("PRIVATE_SENTINEL", (evidence / "official-tests.json").read_text())
+
     def test_app_timeline_failure_allowlist_matches_swift_failure_and_assertion_sentences(self):
         from ci_failure_diagnostics import APP_TIMELINE_FAILURE_REASONS
         literal = r'"(?:[^"\\]|\\.)*"'
@@ -2755,9 +2785,10 @@ class FailureDiagnosticsTests(unittest.TestCase):
                 "synthesize_event": 0.36, "post_event_idle": 23.05, "ax_root_acquisition": 0.1}
             exported = (evidence / "official-tests.json").read_text()
             self.assertNotIn("PRIVATE_SENTINEL", exported)
-            self.assertNotIn("slider", exported)
+            self.assertIn('"failure_messages"', exported)
             self.assertEqual(validate_case_export(evidence, "ios", "smoke"), [{"identifier": name, "result": "Failed",
-                "failure_phase": "interval_setup", "failure_class": "interval_readback", "first_failure": receipt}])
+                "failure_phase": "interval_setup", "failure_class": "interval_readback", "first_failure": receipt,
+                "failure_messages": ["The iOS slider must be settable to "]}])
             for ambiguity in ("matching-method", "failure-time", "missing-time", "partial-time", "synthesis", "read-timeout"):
                 with self.subTest(native_failure=ambiguity), diagnostics.session() as recorder:
                     sampler.reset_mock()
@@ -3446,6 +3477,50 @@ class StrictCITracerTests(unittest.TestCase):
             self.assertIs(timeout, raised.exception)
             self.assertEqual([], list(output.iterdir()))
 
+    def test_v5_producer_keeps_functional_unstarved_and_mixed_failures_red(self):
+        import copy
+        from test_ci_summary import hosted_v5_summary
+        from ci_failure_diagnostics import classify_messages
+        from run_strict_ci_tracer import evaluate_tracer, produce_environment_limits
+        from ci_summary import parse_summary
+        tool = "Application 'com.331works.immichSlides' does not have a process ID"
+        for kind in ("timing", "tool", "tool-self-hosted", "tool-no-host", "functional", "unstarved", "mixed"):
+            with self.subTest(kind=kind):
+                summary, _ = hosted_v5_summary(tool=kind.startswith("tool") or kind == "mixed")
+                row = summary["population"]["observed"][0]
+                ledger = copy.deepcopy(summary["strict_case_evidence"][0]["bounded_diagnostics"])
+                if kind.startswith("tool") or kind == "mixed":
+                    row["failure_messages"] = [tool] + (["After pausing, the control value must be play."] if kind == "mixed" else [])
+                    row.update(classify_messages(row["failure_messages"]))
+                    ledger["case_resources"] = []
+                    sample = ledger["events"][0]["sample"]
+                    sample.update(cpu_percent=None, memory_free_bytes=None, load_average=None, image_version=None, processes=[])
+                    if kind == "tool-self-hosted":
+                        sample["runner_hosted"] = False
+                    elif kind == "tool-no-host":
+                        ledger["events"] = []
+                elif kind == "functional":
+                    row["failure_messages"] = ["App timeline:"]
+                    row.update(classify_messages(row["failure_messages"]))
+                elif kind == "unstarved":
+                    ledger["case_resources"][0]["failure_samples"][0]["idle_percent"] = 50
+                method = {"identifier": "StrictE2ESmokeUITests/testIOSStrictE2EConnectionSmoke", "result": "Failed",
+                    **{key: row[key] for key in ("failure_phase", "failure_class", "failure_messages", "first_failure") if key in row}}
+                phase = {"identity": row["identity"], "duration_seconds": 12, "exit_code": 65,
+                    "log_present": True, "build_operations": 0, "products_unchanged": True, "official_methods": [method],
+                    "official_summary": {"result": "Failed", "totalTestCount": 1, "passedTests": 0, "failedTests": 1, "skippedTests": 0},
+                    "bounded_diagnostics": ledger, **({"first_failure": row["first_failure"]} if "first_failure" in row else {})}
+                summary["population"]["observed"], summary["status"] = evaluate_tracer([row["identity"]], [phase])
+                self.assertEqual(0 if kind in {"timing", "tool"} else 1, produce_environment_limits(summary, [phase]))
+                observed = parse_summary(summary)["population"]["observed"][0]
+                self.assertEqual("failed", observed["outcome"])
+                self.assertEqual(row["failure_messages"], observed.get("failure_messages"))
+                if kind in {"timing", "tool"}:
+                    self.assertEqual(5, observed["environment_limit"]["policy_version"])
+                    self.assertEqual("xctest-tool" if kind == "tool" else "timing-wait", observed["environment_limit"]["kind"])
+                else:
+                    self.assertNotIn("environment_limit", observed)
+
     def test_hosted_timing_producer_round_trips_only_qualified_failures(self):
         import copy
         import contextlib
@@ -3813,7 +3888,7 @@ class StrictCITracerTests(unittest.TestCase):
                 proof = dict(summary["population"]["observed"][0]["environment_limit"], unexpected="refused")
                 rejections = {"stale-case": "stale-reason"}
                 with mock.patch("ci_failure_diagnostics.environment_limit_evidence", return_value=proof) if mutation == "bad projection" else ExitStack():
-                    self.assertEqual(1, produce_environment_limits(candidate, trace["warm"], rejections=rejections))
+                    self.assertEqual(1, produce_environment_limits(candidate, trace["warm"], policy_version=4, rejections=rejections))
                 from ci_summary import identity_key
                 expected = ({identity_key(candidate["population"]["observed"][0]["identity"]): "summary-reader-rejected"}
                             if mutation == "bad projection" else
@@ -3825,7 +3900,7 @@ class StrictCITracerTests(unittest.TestCase):
 
     def _produce_validator_records(self, directory, error, *, verdict="FAIL", runner_exit=2,
                                    receipt_suite="tvos-switch", nightly=False, child_load_timeout=False, case=None,
-                                   timing_failure=None, invocation_fault=None, bounded_diagnostics=None):
+                                   timing_failure=None, invocation_fault=None, bounded_diagnostics=None, policy_version=4):
         import run_strict_ci_tracer as tracer
         case = case or {"platform": "tvos", "device": "tv", "configuration": "Release",
                 "suite": "tvos-switch", "scenario": "normal", "fixture": "a"}
@@ -3915,7 +3990,10 @@ raise SystemExit(65)
                 (evidence / "official-tests.json").unlink()
             return runner_exit
 
-        with mock.patch.object(tracer, "run_runner", side_effect=runner), \
+        produce_limits = tracer.produce_environment_limits
+        with mock.patch.object(tracer, "produce_environment_limits", side_effect=lambda *args, **kwargs:
+                produce_limits(*args, **kwargs, policy_version=policy_version)), \
+                mock.patch.object(tracer, "run_runner", side_effect=runner), \
                 mock.patch.object(tracer, "workspace_preflight"), mock.patch.object(tracer, "run_identity", return_value=identity), \
                 mock.patch.object(tracer, "source_metadata", return_value=(".github/workflows/ci-nightly.yml" if nightly else None, False)), \
                 mock.patch.object(tracer.shutil, "disk_usage", return_value=mock.Mock(total=200 * 1024**3, free=100 * 1024**3)), \
