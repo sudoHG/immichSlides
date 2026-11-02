@@ -24,6 +24,12 @@ FAILURE_CLASSES = frozenset({"interval_readback", "hidden_controls", "scene_iden
 DIAGNOSTIC_FIELDS = frozenset({"failure_phase", "failure_class"})
 APP_TIMELINE_METHODS = frozenset({"AccessLifecycleIOSUITests/testPauseNextContinueAppTimeline",
                                 "AccessLifecycleTVOSUITests/testTVOSPauseNextContinueAppTimeline"})
+PUBLIC_FAILURE_MESSAGE_METHOD_BY_SUITE = {
+    "ios-lifecycle-pause-timeline": "AccessLifecycleIOSUITests/testPauseNextContinueAppTimeline",
+    "tvos-lifecycle-pause-timeline": "AccessLifecycleTVOSUITests/testTVOSPauseNextContinueAppTimeline",
+    "tvos-flow": "StrictE2ETVOSFlowUITests/testTVOSFirstBootModeSelectionAndCorePlayback",
+}
+TVOS_PUBLICATION_FAILURE_PREFIX = "The index probe must change after a playback action."
 APP_TIMELINE_FAILURE_REDACTED = "App timeline: unrecognized failure (redacted)"
 APP_TIMELINE_FAILURE_REASONS = frozenset({
     "missing evidence directory", "case nonce mismatch", "missing required event",
@@ -1565,6 +1571,22 @@ def public_app_timeline_failure_message(message):
         return None
     reason = text[len(prefix):].removesuffix('"')
     return prefix + reason if reason in APP_TIMELINE_FAILURE_REASONS else APP_TIMELINE_FAILURE_REDACTED
+
+
+def public_xctest_failure_message(message, *, method):
+    """Publish only a reviewed sentence or the tvOS publication check's three booleans."""
+    if method in APP_TIMELINE_METHODS:
+        return public_app_timeline_failure_message(message)
+    if method != PUBLIC_FAILURE_MESSAGE_METHOD_BY_SUITE["tvos-flow"]:
+        return None
+    text = normalized_xctest_failure(message)
+    if text is None or not text.startswith(TVOS_PUBLICATION_FAILURE_PREFIX):
+        return None
+    if text == TVOS_PUBLICATION_FAILURE_PREFIX or re.fullmatch(
+            re.escape(TVOS_PUBLICATION_FAILURE_PREFIX)
+            + r" advanceObserved=(?:true|false) stable=(?:true|false) referencesMatch=(?:true|false)", text):
+        return text
+    return TVOS_PUBLICATION_FAILURE_PREFIX + " [diagnostic redacted]"
 
 
 def classify_messages(messages):

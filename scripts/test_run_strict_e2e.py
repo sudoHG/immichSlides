@@ -1447,12 +1447,74 @@ class FailureDiagnosticsTests(unittest.TestCase):
                     enrich_failure_diagnostics=True)
             self.assertNotIn("message", read_case_official(evidence, suite))
 
-    def test_app_timeline_error_publication_requires_the_actual_failed_method_and_first_failure(self):
+    def test_tvos_publication_facts_survive_official_export_and_tracer_without_private_suffixes(self):
+        from ci_summary import render_markdown, test_identity
+        from run_strict_ci_tracer import evaluate_tracer, read_case_official, validate_case_export
+        from test_ci_summary import valid_summary
+        name = "StrictE2ETVOSFlowUITests/testTVOSFirstBootModeSelectionAndCorePlayback"
+        prefix = "The index probe must change after a playback action."
+        redacted = prefix + " [diagnostic redacted]"
+        diagnostic = prefix + " advanceObserved=true stable=false referencesMatch=true"
+        other_diagnostic = prefix + " advanceObserved=false stable=true referencesMatch=false"
+        cases = [(prefix, prefix), ("failed - " + diagnostic, diagnostic),
+                 ("XCTAssertTrue failed - " + diagnostic, diagnostic),
+                 (other_diagnostic, other_diagnostic),
+                 (diagnostic + " PRIVATE_SENTINEL", redacted),
+                 (diagnostic.replace("advanceObserved=true", "advanceObserved=PRIVATE_SENTINEL"), redacted),
+                 (diagnostic.replace("stable=false", "stable=PRIVATE_SENTINEL"), redacted),
+                 (diagnostic.replace("referencesMatch=true", "referencesMatch=PRIVATE_SENTINEL"), redacted),
+                 (diagnostic.replace(" referencesMatch=true", ""), redacted)]
+        for message, expected in cases:
+            with self.subTest(message=message), tempfile.TemporaryDirectory() as raw:
+                evidence = Path(raw)
+                official = {"testNodes": [{"nodeType": "Unit test bundle", "name": "immichSlidesUITests", "children": [
+                    {"nodeType": "Test Case", "nodeIdentifier": name + "()", "result": "Failed"}]}]}
+                legacy = {"issues": {"testFailureSummaries": {"_values": [{
+                    "testCaseName": {"_value": name.replace("/", ".") + "()"}, "message": {"_value": message}}]}}}
+                with mock.patch("run_strict_e2e.subprocess.run", side_effect=lambda command, **kwargs:
+                        subprocess.CompletedProcess(command, 0, json.dumps(
+                            legacy if "--legacy" in command else official).encode(), b"")), \
+                        mock.patch("run_strict_e2e.read_official_test_results_summary",
+                                   return_value=TestResultsSummary(1, 0, 1, 0, "Failed")):
+                    strict_runner.export_private_result_bundle(evidence / "private.xcresult", evidence,
+                        ["PRIVATE_SENTINEL"], enrich_failure_diagnostics=True)
+                exported = json.loads((evidence / "official-summary.json").read_text())
+                self.assertEqual(expected, exported.get("message"))
+                summary = read_case_official(evidence, "tvos-flow")
+                self.assertEqual(expected, summary.get("message"))
+                identity = test_identity("strict", "tvos-flow", device="tv", configuration="Debug",
+                    suite="tvos-flow", scenario="normal", fixture="b")
+                phase = dict(identity=identity, duration_seconds=140, exit_code=65, log_present=True,
+                    build_operations=0, products_unchanged=True, official_summary=summary,
+                    official_methods=validate_case_export(evidence, "tvos", "tvos-flow"))
+                # Each consumer must check the message again, even if its input was forged after export.
+                summary["message"] = message
+                (evidence / "official-summary.json").write_text(json.dumps(summary))
+                self.assertEqual(expected, read_case_official(evidence, "tvos-flow").get("message"))
+                observed, status = evaluate_tracer([identity], [phase])
+                self.assertEqual(expected, observed[0]["attempts"][0]["message"])
+                self.assertEqual(("failed", "failed", 65),
+                    (status, observed[0]["outcome"], observed[0]["attempts"][0]["exit_code"]))
+                self.assertEqual(("history_navigation", "probe_readback"),
+                    (observed[0]["failure_phase"], observed[0]["failure_class"]))
+                self.assertNotIn("environment_limit", observed[0])
+                public_summary = valid_summary()
+                public_summary["run"].update(tier="strict", job="strict-tracer")
+                public_summary["population"].update(declared=[identity], compiled=[identity], observed=observed)
+                public_summary["status"] = status
+                markdown = render_markdown(public_summary)
+                self.assertIn(expected, markdown)
+                self.assertNotIn("PRIVATE_SENTINEL", json.dumps(observed) + markdown)
+
+    def test_public_error_publication_requires_the_actual_failed_method_and_first_failure(self):
+        from itertools import product
         from run_strict_ci_tracer import read_case_official
-        name = "AccessLifecycleIOSUITests/testPauseNextContinueAppTimeline"
-        sentence = "App timeline: missing required event"
-        for defect in ("other-method", "warning-only", "earlier-unrelated-failure"):
-            with self.subTest(defect=defect), tempfile.TemporaryDirectory() as raw:
+        cases = [("AccessLifecycleIOSUITests/testPauseNextContinueAppTimeline", "ios-lifecycle-pause-timeline",
+                  "App timeline: missing required event"),
+                 ("StrictE2ETVOSFlowUITests/testTVOSFirstBootModeSelectionAndCorePlayback", "tvos-flow",
+                  "The index probe must change after a playback action. advanceObserved=false stable=true referencesMatch=true")]
+        for (name, suite, sentence), defect in product(cases, ("other-method", "warning-only", "earlier-unrelated-failure")):
+            with self.subTest(method=name, defect=defect), tempfile.TemporaryDirectory() as raw:
                 evidence = Path(raw)
                 method = "OtherUITests/testOther" if defect == "other-method" else name
                 node = {"nodeType": "Test Case", "nodeIdentifier": method + "()", "result": "Failed"}
@@ -1474,9 +1536,9 @@ class FailureDiagnosticsTests(unittest.TestCase):
                 self.assertNotIn("message", json.loads((evidence / "official-summary.json").read_text()))
                 # The consumer also refuses arbitrary text and ignores this annotation on unrelated suites.
                 summary = json.loads((evidence / "official-summary.json").read_text())
-                summary["message"] = "App timeline: missing required event PRIVATE_SENTINEL"
+                summary["message"] = sentence + " PRIVATE_SENTINEL"
                 (evidence / "official-summary.json").write_text(json.dumps(summary))
-                observed = read_case_official(evidence, "ios-lifecycle-pause-timeline")
+                observed = read_case_official(evidence, suite)
                 self.assertNotIn("PRIVATE_SENTINEL", json.dumps(observed))
                 self.assertNotIn("message", read_case_official(evidence, "smoke"))
 

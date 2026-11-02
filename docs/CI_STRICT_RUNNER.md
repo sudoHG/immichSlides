@@ -1753,15 +1753,24 @@ Removing all compact receipt copies avoids that growth without raising the cap.
 
 ### Public failure diagnostics
 
-The Debug App-timeline suites annotate `official-summary.json` with the `message`
+The Debug App-timeline suites and `tvos-flow` annotate `official-summary.json` with the `message`
 from the method's first official failure (assertion failures included), then retain
 it in the case's existing attempt `message` in `summary.json` and `summary.md`.
-Only the two App-timeline methods qualify. The exporter
+Only the two App-timeline methods and
+`StrictE2ETVOSFlowUITests/testTVOSFirstBootModeSelectionAndCorePlayback` qualify. The exporter
 matches complete, code-defined error sentences after removing known XCTest wrappers;
 unrecognized reasons carrying the `App timeline: ` prefix, dynamic event names and added
 suffixes become `App timeline: unrecognized failure (redacted)`. Errors without that
-prefix, warnings and other methods supply no message. The tracer checks the message
-again before publication. Versioned summary and receipt fields, failure classification
+prefix supply no App-timeline message. The tvOS flow retains only the exact sentence
+`The index probe must change after a playback action.` and its existing optional
+`advanceObserved=true|false stable=true|false referencesMatch=true|false` diagnostic.
+The three fields must all be present in that order, with no extra text; malformed
+or extended diagnostics become the fixed sentence plus ` [diagnostic redacted]`.
+No manifest contents, asset references, paths or arbitrary suffixes are published.
+These booleans describe the observed publication and capture window; they do not prove
+that an input reached the App or identify the historical hosted root cause.
+Warnings and other methods supply no message. The tracer checks the message and
+suite again before publication. Versioned summary and receipt fields, failure classification
 and environment-limit eligibility stay
 unchanged. Missing legacy details leave the message absent and the failure red.
 Reporter rollups and issues still clear attempt messages in `ci_report.py`; consult
@@ -1826,8 +1835,9 @@ yield unknown for both fields. The interval-setup assertions
 `Autoplay must be turned on through the real settings.` and
 `Autoplay must be on for the pause/background cases.` identify `interval_setup/control_state`.
 These labels locate a check; they do not establish a product or infrastructure
-root cause. No assertion text, observed value, path, identifier or frame is
-added to public records by the mapper.
+root cause. The phase/class mapper adds no assertion text, observed value, path,
+identifier or frame; the separately reviewed message path above retains only its
+fixed sentences and the three tvOS booleans.
 
 iOS lifecycle Play/Pause preparation closes its appearance receipt wait before
 starting its existing readiness wait. Both still use their original durations;
