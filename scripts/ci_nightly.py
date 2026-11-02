@@ -433,12 +433,16 @@ def main(argv=None):
     lines.extend(f"| {identity_key(item['identity'])} | "
                  f"{'failed (environment-limited; yellow)' if 'environment_limit' in item else item['outcome']} |" for item in result["observed"])
     from ci_failure_diagnostics import render_environment_limit
+    yellow_observed = [*result["observed"], *result.get("ui", {}).get("verdict", {}).get("observed", [])]
     if result.get("environment_limited"):
-        lines.append("\n> **WARNING: hosted timing failures are environment-limited (yellow), never passes.**")
-        print("::warning title=Environment-limited strict timing::"
-              f"{len(result['environment_limited'])} case(s); see the nightly summary for every case and resource sample.")
+        has_tool = any(item.get("environment_limit", {}).get("kind") == "xctest-tool" for item in yellow_observed)
+        category = "timing or XCTest/Apple tool" if has_tool else "timing"
+        title = "Environment-limited nightly failures" if has_tool else "Environment-limited strict timing"
+        lines.append(f"\n> **WARNING: hosted {category} failures are environment-limited (yellow), never passes.**")
+        print(f"::warning title={title}::"
+              f"{len(result['environment_limited'])} case(s); see the nightly summary for every case and its proof.")
     lines.extend("\nWARNING: " + identity_key(item["identity"]) + ": " + render_environment_limit(item["environment_limit"])
-                 for item in result["observed"] if "environment_limit" in item)
+                 for item in yellow_observed if "environment_limit" in item)
     lines.extend(["", *result["errors"]])
     (output / "nightly.md").write_text("\n".join(lines) + "\n")
     print("\n".join(lines[:14]))

@@ -246,7 +246,7 @@ def xctest_tool_class(message):
     if not isinstance(message, str) or len(message) > 512:
         return None
     lifecycle = (
-        r"Failed to terminate com\.331works\.immichSlides:[0-9]+: Failed to terminate com\.331works\.immichSlides:[0-9]+",
+        r"Failed to terminate com\.331works\.immichSlides:[0-9]{1,10}: Failed to terminate com\.331works\.immichSlides:[0-9]{1,10}",
         r"Application 'com\.331works\.immichSlides' does not have a process ID",
         r"Failed to launch (?:com\.331works\.immichSlides|Application 'com\.331works\.immichSlides'): Timed out while launching application via Xcode",
     )
@@ -280,6 +280,17 @@ def environment_timing_v5(failure, failure_class, messages):
         return False
     message = messages[0]
     step = failure["step"]
+    if (failure["scene_status"] in {"BLACK", "BLANK"} or failure["surface"] == "unknown"
+            or failure_class == "hidden_controls" and failure["control_bar"] == "visible"):
+        return False
+    # Target surfaces are functional context, independent of the old phase/class/step tuples.
+    expected_surface = next((surface for prefix, surface in (
+        ("slideshow.", "playback"), ("mode.", "mode"), ("firstboot.", "firstboot"),
+        ("settings.playback.", "playback-settings")) if failure["element"].startswith(prefix)), None)
+    if message == "A configured cold launch must go straight to the playback page.":
+        expected_surface = "playback"
+    if expected_surface is not None and failure["surface"] != expected_surface:
+        return False
     # These assertions describe a contradiction, even if an earlier wait used its deadline.
     contradictions = ("Chose filter but reached the playback page, so the mode card tap did not register.",
         "Playback page after uninstall means a dirty install container;", "Select must not accidentally hit the API Key help sheet.",
@@ -287,6 +298,7 @@ def environment_timing_v5(failure, failure_class, messages):
         "Connection test showed a failure alert:", "The iOS filter summary should no longer use a bottom back button,",
         "After changing the display mode, playback must still be on screen in the same live process.",
         "Album Next must advance the paused scene within the playback capture budget.",
+        "Next must be tappable twice right after entering the slideshow, before old image requests finish.",
         "The first next must advance the playback cursor.", "The second next must advance the playback cursor further.",
         "Must not press twice to mask the first wake", "Do not tap again and toggle playback")
     if message in contradictions:
@@ -306,9 +318,10 @@ def environment_timing_v5(failure, failure_class, messages):
         eligible = (step == "query-element" and message == "Play/pause value must be readable before acting.")
         if message == "Album capture preparation must reach a complete paused scene within the playback capture budget.":
             gate = failure.get("gate", {})
-            eligible = step == "wait-scene" and all(gate.get(key) is True for key in (
+            eligible = (step == "wait-scene" and failure["element"] == "slideshow.scenePresentation.contract.summary"
+                and all(gate.get(key) is True for key in (
                 "paused", "entry_hint_hidden", "advanced", "layers_changed", "manifest_complete")) \
-                and gate.get("stable") is False and gate.get("phase") in ENVIRONMENT_ALBUM_SETTLING_PHASES
+                and gate.get("stable") is False and gate.get("phase") in ENVIRONMENT_ALBUM_SETTLING_PHASES)
     elapsed, deadline = failure["wait_elapsed_seconds"], failure["deadline_seconds"]
     exhausted = elapsed is not None and deadline is not None and deadline > 0 and elapsed >= deadline
     # Idle durations alone do not prove a timeout; explicit native tool messages use their own branch.
@@ -405,6 +418,8 @@ def bind_ui_environment_limits(summary, official):
             "environment limit: missing official UI evidence")
     for node in official["testNodes"]:
         visit(node)
+    def failure_count(node):
+        return int(node.get("nodeType") == "Failure Message") + sum(failure_count(child) for child in node.get("children", []))
     for entry in summary["population"]["observed"]:
         if ENVIRONMENT_LIMIT_FIELD not in entry:
             continue
@@ -412,6 +427,8 @@ def bind_ui_environment_limits(summary, official):
         require(node.get("result") == "Failed" and node.get(FAILURE_MESSAGES_FIELD) == entry[FAILURE_MESSAGES_FIELD]
                 and all(node.get(key) == entry.get(key) for key in DIAGNOSTIC_FIELDS),
                 "environment limit: official UI failure messages differ")
+        require(failure_count(node) == len(entry[FAILURE_MESSAGES_FIELD]),
+                "environment limit: official UI failure count differs")
 
 
 def unavailable_first_failure(source, step="unknown", element="unknown"):
@@ -1633,6 +1650,6 @@ def scan_diagnostic_json(data):
             raise ValueError("duplicate first failure JSON key")
     except (json.JSONDecodeError, UnicodeDecodeError):
         ascii_keys = re.sub(rb"\\u00([0-9a-fA-F]{2})", lambda match: bytes([int(match[1], 16)]), data)
-        if any(('"' + field + '"').encode() in ascii_keys for field in (BOUNDED_DIAGNOSTICS_FIELD, FIRST_FAILURE_FIELD, ENVIRONMENT_LIMIT_FIELD)) or any(
+        if any(('"' + field + '"').encode() in ascii_keys for field in (BOUNDED_DIAGNOSTICS_FIELD, FIRST_FAILURE_FIELD, ENVIRONMENT_LIMIT_FIELD, FAILURE_MESSAGES_FIELD)) or any(
                 ('"' + field + '"').encode() in data for field in DIAGNOSTIC_FIELDS | {VALIDATOR_FAILURE_FIELD}):
             raise ValueError("invalid failure diagnostic JSON")

@@ -1453,18 +1453,24 @@ private value, path or arbitrary free text is admitted by this extension.
 projection and one unchanged case resource entry. The v5 projection adds
 `pre_event_idle` and `ax_root_acquisition` to the v2–v4 fields. All numbers retain
 the existing first-failure bounds and nulls. Unlike v1–v4, eligibility no longer
-depends on a phase/element/surface tuple: a timeout's incidental unrecognizable
+depends on allowlisted phase/class/step/element tuples: a timeout's incidental unrecognizable
 snapshot is not itself a failed photo-identity assertion. The class/step table
 below distinguishes a timeout from a functional result. The source must be
 XCTest and the App must be foreground. Every ordinary wait must have a positive
 recorded deadline and `wait_elapsed_seconds >= deadline_seconds`. Native idle
 durations alone prove neither a timeout nor host causality; no new 60-second
 threshold is introduced. An explicit native query timeout uses the tool branch.
+The functional surface guards remain mandatory: BLACK/BLANK are red;
+`hidden_controls` with an already-visible bar is red; unknown or wrong surfaces
+are red. A known target's surface must match its context (`slideshow.*` requires
+playback, `mode.*` requires mode, `firstboot.*` requires firstboot and
+`settings.playback.*` requires playback settings). A configured cold launch
+waiting for playback cannot qualify on firstboot, even with an unknown target.
 
 | Existing failure class | Timing-wait interpretation in v5 | Functional/red boundary |
 | --- | --- | --- |
-| `navigation` | Availability/navigation waits at `query-element`, `select`, `focus`, `reveal-controls`, `mode-card`, `mode-continue`, `mode-departure`, `save-password-prompt`, `wait-scene`, `settings-readback` or `launch-app`. | Wrong destination, dirty install container, connection-failure alert, forbidden back-button layout, lost live process and failed Next cursor advancement stay red, even with an expired prior wait. |
-| `hidden_controls`, `focus` | The same steps, for control availability, reveal or focus arrival. | An assertion forbidding a second press is red. |
+| `navigation` | Availability/navigation waits at `query-element`, `select`, `focus`, `reveal-controls`, `mode-card`, `mode-continue`, `mode-departure`, `save-password-prompt`, `wait-scene`, `settings-readback` or `launch-app`. | Wrong/unexpected destination or target surface, dirty install container, connection-failure alert, forbidden back-button layout, lost live process and failed Next cursor advancement stay red, even with an expired prior wait. This includes late-image's `Next must be tappable twice right after entering the slideshow, before old image requests finish.` history-advance failure. |
+| `hidden_controls`, `focus` | The same steps, for control availability, reveal or focus arrival. | `hidden_controls` with a visible bar but missing target stays red. An assertion forbidding a second press is red. BLACK/BLANK stay red for both classes. |
 | `control_state` | Only `wait-scene` pause-readback timeouts: `After pausing, the control value must be play.` or `Album capture preparation must observe paused playback after one Pause.` | Other wrong state/value assertions, including the paused-during-transition contradiction, stay red. The reviewed Pause poll waits for readback for 4 seconds; its exhausted poll is a timeout. |
 | `timing_window` | `wait-scene` or `rotate`, for the existing `did not stabilize within the` prefixes and album stable-scene preparation timeout. | Early/late transitions, crossed evidence windows, invalid pacing and timing preconditions stay red. |
 | `probe_readback` | `query-element` for unreadable Play/Pause before acting; album `wait-scene` settling with every existing gate fact, including a complete loaded photo and confirmed advance. | Wrong or empty probe values, incomplete evidence, no advance, changed layers without history advance and frozen-layer contradictions stay red. |
@@ -1489,17 +1495,22 @@ unrecognized or different-family failure keeps the method red:
 
 | Exact message grammar | Diagnostic pair |
 | --- | --- |
-| `Failed to terminate com.331works.immichSlides:<digits>: Failed to terminate com.331works.immichSlides:<digits>` | `unknown/process_lifetime` |
+| `Failed to terminate com.331works.immichSlides:<1-10 digits>: Failed to terminate com.331works.immichSlides:<1-10 digits>` | `unknown/process_lifetime` |
 | `Application 'com.331works.immichSlides' does not have a process ID` | `unknown/process_lifetime` |
 | `Failed to launch com.331works.immichSlides: Timed out while launching application via Xcode` (also the reviewed `Application 'com.331works.immichSlides'` target spelling) | `unknown/process_lifetime` |
 | `Failed to get matching snapshots: Timed out while evaluating UI query` | `unknown/snapshot_query` |
 
 These are maintainer-approved classification exceptions, not proof of an Apple
 defect or an exclusion of an App cause. The complete native message remains
-visible in summary/report warnings and compact history. Strict reporting binds
+visible in summary/report warnings and compact history; v5 alone retains bounded
+PID digits in the termination message, preserving exact binding. Native snapshot
+timeout remains `unknown/snapshot_query`. A native timeout mixed with an ordinary
+wait assertion is red, even with complete starvation evidence for the wait.
+Strict reporting binds
 the proof to each original `official_methods` failure list and existing clean
 invocation checks. Fixture UI independently binds every claim to that shard's
-original `official-tests.json` method, diagnostic pair and complete failure list;
+original `official-tests.json` method, diagnostic pair and complete failure list,
+including the count of raw `Failure Message` descendant nodes;
 missing, duplicated or mismatched official methods fail closed. The reporter
 also verifies the current-attempt job's `GitHub Actions` runner group and absence
 of `self-hosted` labels for either tier. Matrix failures, cleanup/infrastructure

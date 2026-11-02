@@ -57,7 +57,7 @@ class ReporterTests(unittest.TestCase):
         observed, missing = ci_report.method_observations(summary, {"warm": [phase]}, runner_hosted=True)
         self.assertEqual([], missing)
         self.assertEqual(proof, observed[0]["environment_limit"])
-        for mutation in ("missing", "functional", "mixed", "validator"):
+        for mutation in ("missing", "functional", "mixed", "validator", "contract"):
             changed = copy.deepcopy(phase)
             target = changed["official_methods"][0]
             if mutation == "missing":
@@ -66,9 +66,11 @@ class ReporterTests(unittest.TestCase):
                 target["failure_messages"] = ["App timeline:"]
             elif mutation == "mixed":
                 target["failure_messages"].append("App timeline:")
-            else:
+            elif mutation == "validator":
                 changed["validator_failure_message"] = "[redacted validator failure]"
-            reason = ("environment limit cannot conceal strict invocation infrastructure" if mutation == "validator"
+            else:
+                changed["automated_contract_failed"] = True
+            reason = ("environment limit cannot conceal strict invocation infrastructure" if mutation in {"validator", "contract"}
                       else "environment limit differs from official method or case resources")
             with self.subTest(mutation=mutation), self.assertRaisesRegex(ContractError,
                     "^" + reason + "$"):
@@ -81,6 +83,18 @@ class ReporterTests(unittest.TestCase):
         following.update(day="2026-10-02", run={"id": 11, "attempt": 1})
         history = ci_report.environment_history([compact, following])
         self.assertEqual(("environment-limited", "failed"), tuple(item["status"] for item in history))
+        from test_ci_summary import hosted_timeout_summary
+        legacy_summary, legacy_resource = hosted_timeout_summary()
+        legacy_row = legacy_summary["population"]["observed"][0]
+        legacy_proof = environment_limit_evidence(legacy_summary, legacy_row, [legacy_resource], runner_hosted=True, policy_version=4)
+        legacy_row["identity"] = observed[0]["identity"]
+        legacy_row["environment_limit"] = legacy_row["attempts"][0]["environment_limit"] = legacy_proof
+        legacy_report = copy.deepcopy(compact)
+        legacy_report["observed"] = [legacy_row]
+        legacy_report["diagnostics"]["failures"] = [ci_report.failure_details(legacy_row)]
+        migrated = ci_report.environment_history([legacy_report, following])
+        self.assertEqual([4, 5], [item["observed"][0]["environment_limit"]["policy_version"] for item in migrated])
+        self.assertEqual(("environment-limited", "failed"), tuple(item["status"] for item in migrated))
         broken = copy.deepcopy(compact)
         broken["observed"][0]["environment_limit"]["resources"]["failure_samples"] = []
         rejected = ci_report.environment_history([broken])[0]
@@ -105,6 +119,8 @@ class ReporterTests(unittest.TestCase):
                 rejected = ci_report.environment_history([changed])[0]
                 self.assertEqual("failed", rejected["status"])
                 self.assertNotIn("private-unreviewed-message", render_entry(rejected))
+                if mutation == "private-message":
+                    self.assertEqual(["[unrecognized XCTest failure]"], rejected["observed"][0]["failure_messages"])
 
     def test_retained_password_prompt_proofs_revalidate_and_escalate(self):
         from ci_failure_diagnostics import environment_limit_evidence
@@ -1271,7 +1287,8 @@ class ReporterTests(unittest.TestCase):
             self.assertIsNotNone(proof)
             row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
             node = {"nodeType": "Test Case", "nodeIdentifier": row["identity"]["key"] + "()", "result": "Failed",
-                    "failure_phase": "unknown", "failure_class": "process_lifetime", "failure_messages": messages}
+                    "failure_phase": "unknown", "failure_class": "process_lifetime", "failure_messages": messages,
+                    "children": [{"nodeType": "Failure Message", "name": message} for message in messages]}
             official_tests = {("appletv", "visual"): {"testNodes": [node]}}
             members[("ui-appletv-visual-10-1", "official-tests.json")] = official_tests[("appletv", "visual")]
             ui["matrix_job_result"] = "success"
@@ -1287,23 +1304,26 @@ class ReporterTests(unittest.TestCase):
                 self.assertEqual(("environment-limited", 1),
                     (yellow_report["status"], yellow_report["diagnostics"]["counts"]["environment-limited"]))
                 self.assertIn(messages[0], render_entry(yellow_report))
-                for mutation in ("missing-messages", "mixed", "duplicate-method"):
+                for mutation in ("missing-messages", "mixed", "duplicate-method", "raw-count"):
                     original_node = copy.deepcopy(node)
                     if mutation == "missing-messages":
                         node.pop("failure_messages")
                     elif mutation == "mixed":
                         node["failure_messages"] = [*messages, "App timeline:"]
-                    else:
+                    elif mutation == "duplicate-method":
                         official_tests[("appletv", "visual")]["testNodes"].append(copy.deepcopy(node))
+                    else:
+                        node["children"].pop()
                     with self.subTest(v5_official=mutation), self.assertRaisesRegex(ContractError,
                             "^nightly UI aggregate differs from bound shard evidence$"):
                         ci_report.nightly_attempt(api, run, 1, artifacts)
                     node.clear()
                     node.update(original_node)
                     official_tests[("appletv", "visual")]["testNodes"] = [node]
-            with patch("ci_publish.complete_attempt_jobs", return_value=[{**jobs[0], "runner_group_name": "private"}]), \
-                    self.assertRaisesRegex(ContractError, "^environment limit requires a verified GitHub-hosted UI job$"):
-                ci_report.nightly_attempt(api, run, 1, artifacts)
+            for job in ({**jobs[0], "runner_group_name": "private"}, {**jobs[0], "labels": ["self-hosted"]}):
+                with self.subTest(hosting=job), patch("ci_publish.complete_attempt_jobs", return_value=[job]), \
+                        self.assertRaisesRegex(ContractError, "^environment limit requires a verified GitHub-hosted UI job$"):
+                    ci_report.nightly_attempt(api, run, 1, artifacts)
             compact = ci_report.compact_entry(yellow_report, set())
             following = copy.deepcopy(compact)
             following.update(day="2026-10-02", run={"id": 11, "attempt": 1})
@@ -1312,8 +1332,24 @@ class ReporterTests(unittest.TestCase):
             self.assertEqual(("passed", "failed"), (history[1]["tiers"]["strict"], history[1]["tiers"]["ui"]))
             self.assertEqual(messages, history[1]["observed"][-1]["environment_limit"]["failure_messages"])
             self.assertIn(messages[0], render_entry(history[1]))
-            # Two identical native failures in one method/night are one yellow night, never two.
-            self.assertFalse(any(item.get("environment_limit_escalation") for item in history[0]["observed"]))
+            # Multiple messages and independent runs on one UTC day cannot supply two nights.
+            same_night = copy.deepcopy(compact)
+            same_night["run"]["id"] = 12
+            decision = issue_decision(None, row["identity"], [compact, same_night], registry_referenced=False)
+            self.assertEqual("none", decision["action"])
+            self.assertIsNone(decision["state"])
+            # This ordinary prefix shares the native diagnostic pair; only the all-tool guard rejects it.
+            mixed_history = copy.deepcopy(compact)
+            mixed_messages = [*messages, "Failed to terminate com.331works.immichSlides:"]
+            for item in [*mixed_history["observed"], *mixed_history["diagnostics"]["failures"]]:
+                if "environment_limit" not in item:
+                    continue
+                item["failure_messages"] = mixed_messages
+                item["environment_limit"]["failure_messages"] = mixed_messages
+                for attempt in item.get("attempts", []):
+                    attempt["failure_messages"] = mixed_messages
+                    attempt["environment_limit"]["failure_messages"] = mixed_messages
+            self.assertEqual("failed", ci_report.environment_history([mixed_history])[0]["status"])
             summaries[-1]["population"]["observed"] = [original_row]
             summaries[-1]["status"] = "passed"
             raw.update(status=original_status, tiers=original_tiers)

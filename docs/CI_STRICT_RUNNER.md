@@ -925,8 +925,12 @@ clipping any pre-hold part of cold launch and omitting private inputs. It also r
 the last current-readiness reader status and notes, or `unavailable` if no identity
 was read. Preparation has
 separate messages under `late_image` or `cold_relaunch/control_state`; neither
-phase appears in the environment timing allowlists. No new reader enums or summary
-schema are introduced, and old summaries remain readable.
+phase appears in the retained v1–v4 environment timing allowlists. Prepared v5
+allows deadline-exhausted navigation/focus preparation waits with every hosting,
+failure-window starvation and functional surface guard. Restoration of paused
+state, held-response budget exhaustion and the late-image Next history-advance
+assertion remain red. No new reader enums or summary schema are introduced, and
+old summaries remain readable.
 This preparation does not retry either judged capture or the flow.
 They explicitly release the hold, poll for
 zero pending responses and at least one successful socket write/flush with no
@@ -1792,7 +1796,10 @@ The reviewed XCTest messages `Failed to terminate com.331works.immichSlides:`
 and `Application 'com.331works.immichSlides' does not have a process ID` identify
 `unknown/process_lifetime`. The phase stays unknown because termination can be
 explicit or part of `XCUIApplication.launch()`, including a launch in a different
-test. PID values and remaining text are discarded. These labels do not prove
+test. PID values and remaining text are discarded from these diagnostic labels.
+The separate prepared v5 proof retains complete reviewed tool messages; termination
+PIDs are limited to 1–10 digits each, as an explicit exception preserving exact
+message binding. These labels do not prove
 an XCTest/simulator defect or rule out an App crash or stalled launch.
 They add no `infrastructure` entry, retry or passing observation, and are
 ineligible under the currently emitted v1–v4
