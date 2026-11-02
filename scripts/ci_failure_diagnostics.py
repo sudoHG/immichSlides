@@ -275,7 +275,7 @@ def failure_messages_diagnostics(messages):
 
 
 def environment_timing_v5(failure, failure_class, messages):
-    """Class/step semantics, independent of suite, phase, element and surface."""
+    """Class/step semantics with functional target/surface guards."""
     if failure["source"] != "xctest" or failure["app"] != "running-foreground" or len(messages) != 1:
         return False
     message = messages[0]
@@ -287,9 +287,12 @@ def environment_timing_v5(failure, failure_class, messages):
     expected_surface = next((surface for prefix, surface in (
         ("slideshow.", "playback"), ("mode.", "mode"), ("firstboot.", "firstboot"),
         ("settings.playback.", "playback-settings")) if failure["element"].startswith(prefix)), None)
+    if (failure["element"] in {"app-window", "unknown", "system.reduce-motion", "simulator", "BackButton"}
+            or failure["element"].startswith(("settings.item.", "settings.cache."))):
+        expected_surface = "playback"
     if message == "A configured cold launch must go straight to the playback page.":
         expected_surface = "playback"
-    if expected_surface is not None and failure["surface"] != expected_surface:
+    if failure["surface"] != expected_surface:
         return False
     # These assertions describe a contradiction, even if an earlier wait used its deadline.
     contradictions = ("Chose filter but reached the playback page, so the mode card tap did not register.",

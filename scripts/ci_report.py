@@ -1314,12 +1314,13 @@ def environment_history(entries):
             if identity_token(item["identity"]) in rejected:
                 item.pop("environment_limit", None)
                 item["environment_limit_rejection"] = "RED: invalid or obsolete environment-limit proof under the current policy"
-                if "failure_messages" in item:
-                    from ci_failure_diagnostics import validate_failure_messages, UNRECOGNIZED_FAILURE_MESSAGE
-                    try:
-                        validate_failure_messages(item["failure_messages"])
-                    except (ValueError, TypeError, KeyError, AttributeError):
-                        item["failure_messages"] = [UNRECOGNIZED_FAILURE_MESSAGE]
+                for target in [item, *item.get("attempts", [])]:
+                    if "failure_messages" in target:
+                        from ci_failure_diagnostics import validate_failure_messages, UNRECOGNIZED_FAILURE_MESSAGE
+                        try:
+                            validate_failure_messages(target["failure_messages"])
+                        except (ValueError, TypeError, KeyError, AttributeError):
+                            target["failure_messages"] = [UNRECOGNIZED_FAILURE_MESSAGE]
                 for attempt in item.get("attempts", []):
                     attempt.pop("environment_limit", None)
         if rejected:

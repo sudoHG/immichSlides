@@ -253,6 +253,9 @@ class SummaryContractTests(unittest.TestCase):
                 ("After pausing, the control value must be play.", "wait-scene", "slideshow.control.playPause.button", "scene_status", "BLACK"),
                 ("After pausing, the control value must be play.", "wait-scene", "slideshow.control.playPause.button", "scene_status", "BLANK"),
                 ("Playback page must provide play/pause.", "select", "slideshow.control.playPause.button", "control_bar", "visible"),
+                ("Playback page must provide play/pause.", "select", "slideshow.control.playPause.button", "surface", "mode"),
+                ("Playback page must provide play/pause.", "select", "app-window", "surface", "mode"),
+                ("Playback page must provide play/pause.", "select", "BackButton", "surface", "playback-settings"),
                 ("A configured cold launch must go straight to the playback page.", "launch-app", "app-window", "surface", "firstboot"),
                 ("After pausing, the control value must be play.", "wait-scene", "slideshow.control.playPause.button", "surface", "unknown")):
             summary, resource = hosted_v5_summary()
@@ -266,7 +269,7 @@ class SummaryContractTests(unittest.TestCase):
             self.assertIsNotNone(proof, (message, field))
             receipt["state"][field] = value
             proof["failure"] = environment_failure_projection(receipt, policy_version=5)
-            with self.subTest(guard=(field, value)), self.assertRaisesRegex(ci_summary.ContractError,
+            with self.subTest(guard=(element, field, value)), self.assertRaisesRegex(ci_summary.ContractError,
                     "^environment limit: failure is not an eligible timing wait$"):
                 validate_environment_limit(proof)
         for mutation in ("ci-ui", "pull_request", "local", "not-hosted", "job", "ui-timing"):

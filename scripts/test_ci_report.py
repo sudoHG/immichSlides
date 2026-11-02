@@ -104,7 +104,7 @@ class ReporterTests(unittest.TestCase):
         mixed = copy.deepcopy(compact)
         mixed["observed"][0]["failure_messages"].append("App timeline:")
         self.assertEqual("failed", ci_report.environment_history([mixed])[0]["status"])
-        for mutation in ("missing-class", "passed", "attempt", "private-message"):
+        for mutation in ("missing-class", "passed", "attempt", "private-message", "private-attempt-message"):
             changed = copy.deepcopy(compact)
             row = changed["observed"][0]
             if mutation == "missing-class":
@@ -113,6 +113,8 @@ class ReporterTests(unittest.TestCase):
                 row["outcome"] = "passed"
             elif mutation == "attempt":
                 row["attempts"][0]["failure_messages"] = ["App timeline:"]
+            elif mutation == "private-attempt-message":
+                row["attempts"][0]["failure_messages"] = ["private-unreviewed-message"]
             else:
                 row["failure_messages"] = ["private-unreviewed-message"]
             with self.subTest(history=mutation):
@@ -121,6 +123,9 @@ class ReporterTests(unittest.TestCase):
                 self.assertNotIn("private-unreviewed-message", render_entry(rejected))
                 if mutation == "private-message":
                     self.assertEqual(["[unrecognized XCTest failure]"], rejected["observed"][0]["failure_messages"])
+                if mutation == "private-attempt-message":
+                    self.assertEqual(["[unrecognized XCTest failure]"],
+                        rejected["observed"][0]["attempts"][0]["failure_messages"])
 
     def test_retained_password_prompt_proofs_revalidate_and_escalate(self):
         from ci_failure_diagnostics import environment_limit_evidence

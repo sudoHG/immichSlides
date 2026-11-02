@@ -1460,12 +1460,16 @@ XCTest and the App must be foreground. Every ordinary wait must have a positive
 recorded deadline and `wait_elapsed_seconds >= deadline_seconds`. Native idle
 durations alone prove neither a timeout nor host causality; no new 60-second
 threshold is introduced. An explicit native query timeout uses the tool branch.
-The functional surface guards remain mandatory: BLACK/BLANK are red;
-`hidden_controls` with an already-visible bar is red; unknown or wrong surfaces
-are red. A known target's surface must match its context (`slideshow.*` requires
-playback, `mode.*` requires mode, `firstboot.*` requires firstboot and
-`settings.playback.*` requires playback settings). A configured cold launch
-waiting for playback cannot qualify on firstboot, even with an unknown target.
+The functional surface guards remain mandatory: BLACK/BLANK and an unknown
+surface are red; `hidden_controls` with an already-visible bar is red. Mapped
+targets require their specific surface: `slideshow.*` requires `playback`,
+`mode.*` requires `mode`, `firstboot.*` requires `firstboot`, and
+`settings.playback.*` requires `playback-settings`. The remaining reviewed targets
+(`app-window`, `unknown`, `settings.item.*`, `settings.cache.*`, `BackButton`,
+`system.reduce-motion` and `simulator`) qualify only on `playback`; for example,
+`BackButton` on `playback-settings` stays red. A target without any surface rule
+stays red. A configured cold launch always requires `playback`, even with an
+unknown target. These surface checks supplement every other timing/evidence gate.
 
 | Existing failure class | Timing-wait interpretation in v5 | Functional/red boundary |
 | --- | --- | --- |
@@ -1519,7 +1523,9 @@ errors and missing population/timing evidence remain red.
 Summary, population verdict, strict aggregate, fixture UI aggregate, outer
 nightly aggregate, report and compact-history readers all accept v5. Aggregates
 retain raw `failed` observations and count yellow separately; a wholly yellow
-night is `environment-limited`. The existing second-consecutive-UTC-night rule
+night is `environment-limited`. Rejected history proofs lose their yellow claim;
+unreviewed `failure_messages` on both the observation and every retained attempt
+are replaced with the fixed marker. The existing second-consecutive-UTC-night rule
 also applies to fixture UI; repeated messages in one method/night do not create
 another night. Rejection/escalation marks the affected tier red. Versions v1–v4
 retain their exact prior interpretation throughout the 90-day history window.
