@@ -176,6 +176,8 @@ def evaluate_population(raw, expected, policy, *, environment, base_registry=Non
         compiled = tokens(population["compiled"])
         compiled_functions = tokens(population["compiled"], functions=True)
         observed = {identity_key(entry["identity"]): entry for entry in population["observed"]}
+        yellow = [entry["identity"] for entry in population["observed"]
+                  if entry.get("environment_limit", {}).get("policy_version") == 5]
         deselected = {identity_key(entry["identity"]): entry for entry in population["deselected"]}
         tier = summary["run"]["tier"]
         approved = tier_approved(policy, tier)
@@ -227,14 +229,20 @@ def evaluate_population(raw, expected, policy, *, environment, base_registry=Non
                   and entry["attempts"][1]["exit_code"] == 0 and eligible_entry(
                     registry, identity, tier=tier, environment=environment, today=evaluated_on)):
                 result["flaky_passed"].append(identity)
+            elif entry.get("environment_limit", {}).get("policy_version") == 5:
+                pass  # parse_summary has bound the proof to this failed nightly observation.
             elif entry["outcome"] != "passed":
                 errors.append(f"{entry['outcome']}: {label}")
         for entry in summary["infrastructure"]:
             category = NON_INFRASTRUCTURE_DIAGNOSTICS.get(entry["code"], "Infrastructure").lower()
             errors.append(f"{category} {entry['code']}: {entry['message']}")
-        if summary["status"] == "failed" or (summary["status"] == "unverified" and not result["expected_skips"]):
+        if (summary["status"] == "failed" and not yellow) or (summary["status"] == "unverified" and not result["expected_skips"]):
             errors.append(f"producer status is {summary['status']}")
         result["status"] = "failed" if errors else "passed"
+        if yellow:
+            result["environment_limited"] = yellow
+            if not errors:
+                result["status"] = "environment-limited"
     except (ContractError, TypeError, KeyError, ValueError) as error:
         result["errors"].append(f"invalid evidence: {error}")
     return result

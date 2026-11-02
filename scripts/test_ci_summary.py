@@ -168,6 +168,28 @@ def hosted_album_timeout_summary():
     return summary, resource
 
 
+def hosted_v5_summary(*, ui=False, tool=False):
+    summary, resource = hosted_timeout_summary()
+    row = summary["population"]["observed"][0]
+    messages = ["Failed to get matching snapshots: Timed out while evaluating UI query"] if tool else [
+        "After pausing, the control value must be play."]
+    row.update(failure_phase="unknown" if tool else "control_action",
+               failure_class="snapshot_query" if tool else "control_state", failure_messages=messages)
+    row["attempts"][0].update({key: row[key] for key in ("failure_phase", "failure_class", "failure_messages")})
+    if ui:
+        case = ci_summary.test_identity("ui", "ExampleUITests/testOpen", platform="ios", device="iphone")
+        summary["run"].update(tier="ui", job="ui-iphone", shard="navigation")
+        summary["population"].update(declared=[case], compiled=[case])
+        row["identity"] = case
+        summary.pop("strict_case_evidence")
+    if tool:
+        row.pop("first_failure")
+        row["attempts"][0].pop("first_failure")
+    else:
+        row["first_failure"].update(step="wait-scene")
+    return summary, resource
+
+
 def hosted_mode_departure_summary(phase):
     summary, resource = hosted_timeout_summary()
     row = summary["population"]["observed"][0]
@@ -224,7 +246,175 @@ def album_capture_gate_rejections(receipt):
 
 
 class SummaryContractTests(unittest.TestCase):
-    def test_late_image_preparation_and_held_budget_stay_red_in_every_policy(self):
+    def test_v5_functional_guards_and_scope_fail_closed(self):
+        from ci_failure_diagnostics import (classify_messages, environment_limit_evidence,
+            environment_failure_projection, validate_environment_limit, scan_diagnostic_json)
+        for message, step, element, field, value in (
+                ("After pausing, the control value must be play.", "wait-scene", "slideshow.control.playPause.button", "scene_status", "BLACK"),
+                ("After pausing, the control value must be play.", "wait-scene", "slideshow.control.playPause.button", "scene_status", "BLANK"),
+                ("Playback page must provide play/pause.", "select", "slideshow.control.playPause.button", "control_bar", "visible"),
+                ("Playback page must provide play/pause.", "select", "slideshow.control.playPause.button", "surface", "mode"),
+                ("Playback page must provide play/pause.", "select", "app-window", "surface", "mode"),
+                ("Playback page must provide play/pause.", "select", "BackButton", "surface", "playback-settings"),
+                ("A configured cold launch must go straight to the playback page.", "launch-app", "firstboot.serverURL.field", "surface", "firstboot"),
+                ("After pausing, the control value must be play.", "wait-scene", "slideshow.control.playPause.button", "surface", "unknown")):
+            summary, resource = hosted_v5_summary()
+            row = summary["population"]["observed"][0]
+            for target in (row, row["attempts"][0]):
+                target.update(classify_messages([message]), failure_messages=[message])
+            receipt = row["first_failure"]
+            receipt.update(step=step, element=element)
+            receipt["screenshot"] = {"status": "unavailable", "width": None, "height": None, "bytes": None}
+            proof = environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=5)
+            self.assertIsNotNone(proof, (message, field))
+            receipt["state"][field] = value
+            proof["failure"] = environment_failure_projection(receipt, policy_version=5)
+            with self.subTest(guard=(element, field, value)), self.assertRaisesRegex(ci_summary.ContractError,
+                    "^environment limit: failure is not an eligible timing wait$"):
+                validate_environment_limit(proof)
+        for mutation in ("ci-ui", "pull_request", "local", "not-hosted", "job", "ui-timing"):
+            summary, resource = hosted_v5_summary(ui=mutation == "ui-timing")
+            row = summary["population"]["observed"][0]
+            if mutation == "ci-ui":
+                summary["source"]["workflow_path"] = ".github/workflows/ci-ui.yml"
+            elif mutation in {"pull_request", "local"}:
+                summary["source"]["event"] = mutation
+            elif mutation == "job":
+                summary["run"]["job"] = "other-job"
+            with self.subTest(scope=mutation):
+                self.assertIsNone(environment_limit_evidence(summary, row, [resource],
+                    runner_hosted=mutation != "not-hosted", policy_version=5))
+        for messages in (["Failed to get matching snapshots: Timed out while evaluating UI query",
+                          "Application 'com.331works.immichSlides' does not have a process ID"],
+                         ["Failed to get matching snapshots: Timed out while evaluating UI query",
+                          "After pausing, the control value must be play."],
+                         ["After pausing, the control value must be play.",
+                          "Album capture preparation must observe paused playback after one Pause."]):
+            summary, resource = hosted_v5_summary()
+            row = summary["population"]["observed"][0]
+            for target in (row, row["attempts"][0]):
+                target.update(classify_messages(messages), failure_messages=messages)
+            with self.subTest(mixed=messages):
+                self.assertIsNone(environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=5))
+        for data in (b'{"failure_messages":["private"]', b'{"failure\\u005fmessages":["private"]'):
+            with self.subTest(malformed=data), self.assertRaisesRegex(ValueError, "^invalid failure diagnostic JSON$"):
+                scan_diagnostic_json(data)
+        pid_message = "Failed to terminate com.331works.immichSlides:1234567890: Failed to terminate com.331works.immichSlides:0"
+        scan_diagnostic_json(json.dumps({"failure_messages": [pid_message]}).encode())
+        with self.assertRaisesRegex(ValueError, "^failure messages: unreviewed public message$"):
+            scan_diagnostic_json(json.dumps({"failure_messages": [pid_message.replace("1234567890", "12345678901")]}).encode())
+
+    def test_v5_readers_bind_complete_messages_and_keep_functional_or_missing_evidence_red(self):
+        from ci_failure_diagnostics import environment_limit_evidence, scan_diagnostic_json
+        for ui, tool in ((False, False), (False, True), (True, True)):
+            summary, resource = hosted_v5_summary(ui=ui, tool=tool)
+            row = summary["population"]["observed"][0]
+            proof = environment_limit_evidence(summary, row, [] if tool else [resource],
+                                               runner_hosted=True, policy_version=5)
+            with self.subTest(ui=ui, tool=tool):
+                self.assertIsNotNone(proof)
+                row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
+                self.assertEqual(proof, ci_summary.parse_summary(summary)["population"]["observed"][0]["environment_limit"])
+                scan_diagnostic_json(json.dumps(summary).encode())
+                verdict = ci_verdict.evaluate_population(summary, summary["population"]["declared"],
+                    {"schema_version": 1, "approval_records": [], "expected_skips": [], "deselections": []},
+                    environment="fixture" if ui else "hermetic")
+                self.assertEqual("environment-limited", verdict["status"])
+                for messages in ([], ["Playback page must provide play/pause."]):
+                    changed = copy.deepcopy(summary)
+                    bad = changed["population"]["observed"][0]
+                    bad["failure_messages"] = bad["attempts"][0]["failure_messages"] = messages
+                    reason = ("failure messages: expected a bounded complete failure list" if not messages else
+                              "environment limit differs from scoped first failure evidence")
+                    with self.subTest(messages=messages), self.assertRaisesRegex(ValueError, "^" + reason + "$"):
+                        ci_summary.parse_summary(changed)
+                changed = copy.deepcopy(summary)
+                changed["population"]["observed"][0]["environment_limit"]["policy_version"] = 6
+                with self.assertRaisesRegex(ValueError, "unsupported policy version"):
+                    ci_summary.parse_summary(changed)
+        summary, resource = hosted_v5_summary()
+        row = summary["population"]["observed"][0]
+        row["first_failure"]["native_activity_seconds"] = dict.fromkeys((
+            "pre_event_idle", "find_window", "synthesize_event", "post_event_idle", "ax_root_acquisition"), 60.05)
+        for mutation in ("missing-samples", "idle", "validator", "not-elapsed"):
+            changed, sample = copy.deepcopy(row), copy.deepcopy(resource)
+            if mutation == "missing-samples":
+                sample["failure_samples"] = []
+            elif mutation == "idle":
+                sample["failure_samples"][0]["idle_percent"] = 6
+            elif mutation == "validator":
+                changed["validator_failure_message"] = "[redacted validator failure]"
+            elif mutation == "not-elapsed":
+                changed["first_failure"]["timing"]["wait_elapsed_seconds"] = 3
+            with self.subTest(mutation=mutation):
+                self.assertIsNone(environment_limit_evidence(summary, changed, [sample], runner_hosted=True, policy_version=5))
+        for message in ("Failed to terminate com.331works.immichSlides:123: Failed to terminate com.331works.immichSlides:0",
+                "Application 'com.331works.immichSlides' does not have a process ID",
+                "Failed to launch com.331works.immichSlides: Timed out while launching application via Xcode"):
+            summary, _ = hosted_v5_summary(ui=True, tool=True)
+            row = summary["population"]["observed"][0]
+            row["failure_class"] = row["attempts"][0]["failure_class"] = "process_lifetime"
+            row["failure_messages"] = row["attempts"][0]["failure_messages"] = [message]
+            proof = environment_limit_evidence(summary, row, [], runner_hosted=True, policy_version=5)
+            self.assertIsNotNone(proof, message)
+            row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
+            self.assertEqual(proof, ci_summary.parse_summary(summary)["population"]["observed"][0]["environment_limit"])
+            for suffix in (" unrelated failure", "\nApp timeline:"):
+                changed = copy.deepcopy(summary)
+                bad = changed["population"]["observed"][0]
+                bad["failure_messages"] = bad["attempts"][0]["failure_messages"] = [message + suffix]
+                with self.subTest(suffix=suffix), self.assertRaisesRegex(ValueError, "^failure messages: unreviewed public message$"):
+                    ci_summary.parse_summary(changed)
+        from ci_failure_diagnostics import classify_messages
+        for message, step, eligible in (
+                ("Playback page must provide play/pause.", "select", True),
+                ("After auto-advance, the playback controls must be revealable.", "select", True),
+                ("Focus must reach play/pause.", "focus", True),
+                ("Tapping settings must open the settings page.", "query-element", True),
+                ("rotation-landscape-stable did not stabilize within the ", "wait-scene", True),
+                ("Playback page must provide play/pause.", "history-readback", False),
+                ("The next photo after pause must show a different public pattern", "query-element", False),
+                ("Screenshot must not be empty:", "query-element", False),
+                ("Album Next must advance the paused scene within the playback capture budget.", "wait-scene", False),
+                ("Next must be tappable twice right after entering the slideshow, before old image requests finish.", "wait-scene", False),
+                ("Chose filter but reached the playback page, so the mode card tap did not register.", "mode-card", False),
+                ("Before rotating, the play button value must be pause (playing),", "wait-scene", False),
+                ("The playback interval must be 5 seconds.", "settings-readback", False),
+                ("Automatic photo change occurred before T-2;", "wait-scene", False),
+                ("The playback index probe is empty, so autoplay and retained-history cannot be proven.", "query-element", False),
+                ("App timeline:", "wait-scene", False)):
+            summary, resource = hosted_v5_summary()
+            row = summary["population"]["observed"][0]
+            checked_proof = environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=5)
+            diagnostics = classify_messages([message])
+            for target in (row, row["attempts"][0]):
+                target.update(diagnostics, failure_messages=[message])
+            row["first_failure"]["step"] = step
+            row["first_failure"]["state"]["scene_status"] = "UNRECOGNIZABLE"
+            proof = environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=5)
+            with self.subTest(taxonomy=message):
+                self.assertEqual(eligible, proof is not None)
+                if proof:
+                    row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
+                    ci_summary.parse_summary(summary)
+                else:
+                    from ci_failure_diagnostics import environment_failure_projection, validate_environment_limit
+                    checked_proof.update(diagnostics, failure_messages=[message],
+                        failure=environment_failure_projection(row["first_failure"], policy_version=5))
+                    row["environment_limit"] = row["attempts"][0]["environment_limit"] = checked_proof
+                    with self.assertRaisesRegex(ci_summary.ContractError,
+                            "^environment limit: failure is not an eligible timing wait$"):
+                        ci_summary.parse_summary(summary)
+        # This generic reader formerly rejected strict v1-v4 failures; preserve that interpretation.
+        summary, resource = hosted_timeout_summary()
+        row = summary["population"]["observed"][0]
+        proof = environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=4)
+        row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
+        verdict = ci_verdict.evaluate_population(summary, summary["population"]["declared"],
+            {"schema_version": 1, "approval_records": [], "expected_skips": [], "deselections": []}, environment="hermetic")
+        self.assertEqual("failed", verdict["status"])
+
+    def test_late_image_preparation_preserves_legacy_red_and_v5_timing_boundaries(self):
         from ci_failure_diagnostics import (PREFIX_RULES, FIRST_FAILURE_STEPS, FIRST_FAILURE_ELEMENTS,
             classify_messages, environment_timing, environment_failure_projection)
         mappings = [entry for entry in PREFIX_RULES if entry[0].startswith((
@@ -248,6 +438,32 @@ class SummaryContractTests(unittest.TestCase):
             entry.update(outcome="failed", **diagnostic)
             entry["attempts"][0].update(outcome="failed", exit_code=65, **diagnostic)
             self.assertEqual(ci_summary.parse_summary(summary)["population"]["observed"][0]["outcome"], "failed")
+            from ci_failure_diagnostics import environment_limit_evidence
+            summary, resource = hosted_v5_summary()
+            row = summary["population"]["observed"][0]
+            for target in (row, row["attempts"][0]):
+                target.update(diagnostic, failure_messages=[prefix])
+            row["first_failure"]["step"] = "focus" if kind == "focus" else "query-element"
+            proof = environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=5)
+            self.assertEqual(kind in {"navigation", "focus"}, proof is not None, prefix)
+
+    def test_v5_album_gate_retains_every_functional_exclusion(self):
+        from ci_failure_diagnostics import environment_limit_evidence, environment_failure_projection, validate_environment_limit
+        summary, resource = hosted_album_timeout_summary()
+        row = summary["population"]["observed"][0]
+        messages = ["Album capture preparation must reach a complete paused scene within the playback capture budget."]
+        row["failure_messages"] = row["attempts"][0]["failure_messages"] = messages
+        proof = environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=5)
+        self.assertIsNotNone(proof)
+        row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
+        ci_summary.parse_summary(summary)
+        for label, receipt, message in album_capture_gate_rejections(row["first_failure"]):
+            changed = copy.deepcopy(proof)
+            changed["failure"] = environment_failure_projection({key: value for key, value in receipt.items() if key != "gate"}, policy_version=5)
+            if "gate" in receipt:
+                changed["failure"]["gate"] = copy.deepcopy(receipt["gate"])
+            with self.subTest(gate=label), self.assertRaisesRegex(ci_summary.ContractError, "^" + re.escape(message) + "$"):
+                validate_environment_limit(changed)
 
     def test_password_prompt_timing_requires_new_policy_and_exact_mode_evidence(self):
         from ci_failure_diagnostics import (ENVIRONMENT_WAIT_STEPS_V3, ENVIRONMENT_WAIT_STEPS_V4,
@@ -671,7 +887,7 @@ class SummaryContractTests(unittest.TestCase):
             scan_diagnostic_json(json.dumps(private).encode())
         for path, value, prefix in ((('schema_version',), True, "environment limit: hosted evidence required"),
                 (('policy_version',), 999, "environment limit: unsupported policy version"),
-                (('policy_version',), 5, "environment limit: unsupported policy version"),
+                (('policy_version',), 6, "environment limit: unsupported policy version"),
                 (('policy_version',), True, "environment limit: unsupported policy version"),
                 (('policy_version',), 3.0, "environment limit: unsupported policy version"),
                 (('runner_hosted',), False, "environment limit: hosted evidence required"),

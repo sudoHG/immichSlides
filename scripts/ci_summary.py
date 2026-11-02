@@ -153,18 +153,29 @@ def validate_observation(entry):
         validate_diagnostic_fields(entry)
     except ValueError as error:
         raise ContractError(str(error)) from error
-    from ci_failure_diagnostics import ENVIRONMENT_LIMIT_FIELD, validate_environment_limit
-    optional = DIAGNOSTIC_FIELDS | {VALIDATOR_FAILURE_FIELD, FIRST_FAILURE_FIELD, ENVIRONMENT_LIMIT_FIELD}
+    from ci_failure_diagnostics import ENVIRONMENT_LIMIT_FIELD, FAILURE_MESSAGES_FIELD, validate_environment_limit
+    optional = DIAGNOSTIC_FIELDS | {VALIDATOR_FAILURE_FIELD, FIRST_FAILURE_FIELD, ENVIRONMENT_LIMIT_FIELD, FAILURE_MESSAGES_FIELD}
     fields(entry, {"identity", "outcome", "duration_seconds", "attempts"} | (optional & entry.keys()), "observation")
     validate_test_identity(entry["identity"])
     require(entry["outcome"] in OUTCOMES, "invalid outcome")
     if ENVIRONMENT_LIMIT_FIELD in entry:
         validate_environment_limit(entry[ENVIRONMENT_LIMIT_FIELD])
-        require(entry["identity"]["kind"] == "strict" and entry["outcome"] == "failed"
+        require((entry["identity"]["kind"] == "strict" or entry["identity"]["kind"] == "ui"
+                 and entry[ENVIRONMENT_LIMIT_FIELD]["policy_version"] == 5)
+                and entry["outcome"] == "failed"
                 and len(entry["attempts"]) == 1
                 and entry["attempts"][0]["outcome"] == "failed"
                 and entry["attempts"][0].get(ENVIRONMENT_LIMIT_FIELD) == entry[ENVIRONMENT_LIMIT_FIELD],
                 "environment limit requires one matching failed strict attempt")
+        if entry[ENVIRONMENT_LIMIT_FIELD]["policy_version"] == 5:
+            attempt = entry["attempts"][0]
+            require(VALIDATOR_FAILURE_FIELD not in attempt and all(attempt.get(key) == entry.get(key)
+                    for key in (*DIAGNOSTIC_FIELDS, FIRST_FAILURE_FIELD, FAILURE_MESSAGES_FIELD)),
+                    "environment limit: v5 attempt differs from observation")
+    if FAILURE_MESSAGES_FIELD in entry:
+        require(entry["identity"]["kind"] in {"strict", "ui"} and entry["outcome"] == "failed"
+                and len(entry["attempts"]) == 1 and entry["attempts"][0].get(FAILURE_MESSAGES_FIELD) == entry[FAILURE_MESSAGES_FIELD],
+                "failure messages require one matching failed attempt")
     if FIRST_FAILURE_FIELD in entry:
         require(entry["identity"]["kind"] in {"strict", "ui"}
                 and entry["outcome"] in {"failed", "flaky-passed", "crashed", "timed-out", "not-run"},
@@ -186,6 +197,8 @@ def validate_observation(entry):
                     "first failure source must match execution state")
         if ENVIRONMENT_LIMIT_FIELD in attempt:
             require(ENVIRONMENT_LIMIT_FIELD in entry, "environment limit attempt requires observation evidence")
+        if FAILURE_MESSAGES_FIELD in attempt:
+            require(FAILURE_MESSAGES_FIELD in entry, "failure messages attempt requires observation evidence")
         if VALIDATOR_FAILURE_FIELD in attempt:
             require(entry["identity"]["kind"] == "strict" and attempt["outcome"] == "failed",
                     "validator failure message requires a failed strict attempt")
@@ -344,9 +357,11 @@ def validate_summary_v1(payload):
     for entry in population["observed"]:
         if ENVIRONMENT_LIMIT_FIELD in entry:
             proof = entry[ENVIRONMENT_LIMIT_FIELD]
-            require(environment_limit_evidence(payload, entry, [proof["resources"]], runner_hosted=proof["runner_hosted"],
+            require(environment_limit_evidence(payload, entry, [] if proof["resources"] is None else [proof["resources"]], runner_hosted=proof["runner_hosted"],
                     policy_version=proof["policy_version"]) == proof,
                     "environment limit differs from scoped first failure evidence")
+            if proof.get("kind") == "xctest-tool":
+                continue
             evidence = evidence_by_case.get(identity_key(entry["identity"]), {})
             sequence = proof["resources"]["sequence"]
             samples = [event["sample"] for event in evidence.get("events", [])
@@ -420,6 +435,8 @@ def render_markdown(payload):
             continue
         message = "; ".join(detail for attempt in entry["attempts"]
                             for detail in (attempt["reason"], attempt["message"]) if detail)
+        if "failure_messages" in entry:
+            message = "; ".join(filter(None, [message, *entry["failure_messages"]]))
         outcome = "failed (environment-limited; yellow)" if "environment_limit" in entry else entry["outcome"]
         hints = []
         if payload.get("strict_case_evidence"):
@@ -450,7 +467,9 @@ def render_markdown(payload):
     for entry in population["deselected"]:
         lines.append(f"| {markdown_text(entry['identity']['key'])} | deselected | — | {markdown_text(entry['reason'])}; owned by {markdown_text(entry['owning_tier'])} |")
     if any("environment_limit" in entry for entry in population["observed"]):
-        lines.append("\n> **WARNING: hosted timing failures are environment-limited (yellow), never passes.**")
+        category = ("timing or XCTest/Apple tool" if any(entry.get("environment_limit", {}).get("kind") == "xctest-tool"
+                    for entry in population["observed"]) else "timing")
+        lines.append(f"\n> **WARNING: hosted {category} failures are environment-limited (yellow), never passes.**")
     for entry in population["observed"]:
         if "first_failure" in entry:
             from ci_failure_diagnostics import render_first_failure

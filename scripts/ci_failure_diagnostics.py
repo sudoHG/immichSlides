@@ -77,6 +77,9 @@ _validator_enabled = ContextVar("first_failure_validator_enabled", default=False
 
 ENVIRONMENT_LIMIT_FIELD = "environment_limit"
 ENVIRONMENT_POLICY_VERSION = 4
+FAILURE_MESSAGES_FIELD = "failure_messages"
+MAX_FAILURE_MESSAGES = 16
+UNRECOGNIZED_FAILURE_MESSAGE = "[unrecognized XCTest failure]"
 ENVIRONMENT_IDLE_MAX_PERCENT = 5
 ENVIRONMENT_ALBUM_SETTLING_PHASES = frozenset({"transition", "incomingFromLoading"})
 # Retained v1/v2 UI waits keep their original interpretation.
@@ -107,7 +110,7 @@ ENVIRONMENT_WAIT_STEPS_V4 = {
 }
 
 
-def environment_failure_projection(receipt):
+def environment_failure_projection(receipt, *, policy_version=ENVIRONMENT_POLICY_VERSION):
     return {"source": receipt["source"], "step": receipt["step"], "element": receipt["element"], "action": receipt["action"],
         "app": receipt["state"]["app"],
         "surface": receipt["state"]["surface"],
@@ -115,6 +118,8 @@ def environment_failure_projection(receipt):
         "scene_status": receipt["state"]["scene_status"],
         **{key: receipt["timing"][key] for key in ("wait_elapsed_seconds", "deadline_seconds", "action_duration_seconds")},
         "post_event_idle": receipt.get("native_activity_seconds", {}).get("post_event_idle"),
+        **({key: receipt.get("native_activity_seconds", {}).get(key)
+            for key in ("pre_event_idle", "ax_root_acquisition")} if policy_version == 5 else {}),
         **({"gate": dict(receipt["gate"])} if "gate" in receipt else {})}
 
 
@@ -148,12 +153,18 @@ def environment_timing(failure, phase, failure_class, *, policy_version=ENVIRONM
 def validate_environment_limit(proof):
     from ci_summary import fields, require
     from ci_bounded_diagnostics import validate_case_resources
-    fields(proof, {"schema_version", "policy_version", "runner_hosted", "failure_phase", "failure_class", "failure", "resources"},
+    require(isinstance(proof, dict) and type(proof.get("policy_version")) is int
+            and proof["policy_version"] in {1, 2, 3, 4, 5}, "environment limit: unsupported policy version")
+    names = {"schema_version", "policy_version", "runner_hosted", "failure_phase", "failure_class", "failure", "resources"}
+    if isinstance(proof, dict) and proof.get("policy_version") == 5:
+        names |= {"kind", FAILURE_MESSAGES_FIELD}
+    fields(proof, names,
            "environment limit")
-    require(type(proof["policy_version"]) is int and proof["policy_version"] in {1, 2, 3, 4},
-            "environment limit: unsupported policy version")
     require(type(proof["schema_version"]) is int and proof["schema_version"] == 1
             and proof["runner_hosted"] is True, "environment limit: hosted evidence required")
+    if proof["policy_version"] == 5:
+        validate_environment_limit_v5(proof)
+        return
     failure = proof["failure"]
     failure_fields = {"source", "step", "element", "action", "app", "surface", "control_bar", "scene_status", "wait_elapsed_seconds", "deadline_seconds",
                       "action_duration_seconds", "post_event_idle"}
@@ -191,6 +202,9 @@ def environment_limit_evidence(summary, entry, resources, *, runner_hosted, poli
     """Project checked case evidence; absence or ambiguity always retains the raw failure."""
     from ci_summary import require
     try:
+        version = ENVIRONMENT_POLICY_VERSION if policy_version is None else policy_version
+        if version == 5:
+            return environment_limit_evidence_v5(summary, entry, resources, runner_hosted=runner_hosted)
         require(runner_hosted is True and summary["source"]["workflow_path"] == ".github/workflows/ci-nightly.yml"
                 and summary["source"]["event"] in {"schedule", "workflow_dispatch"}
                 and summary["run"]["tier"] == "strict" and summary["run"]["job"] == "nightly-strict",
@@ -218,11 +232,206 @@ def render_environment_limit(proof):
         return "RED: invalid or obsolete environment-limit proof under the current policy"
     resource = proof["resources"]
     failure = proof["failure"]
+    if proof.get("kind") == "xctest-tool":
+        return "ENVIRONMENT-LIMITED (yellow; raw failure retained): XCTest/Apple tool; " + "; ".join(proof[FAILURE_MESSAGES_FIELD])
     return (f"ENVIRONMENT-LIMITED (yellow; raw failure retained): {proof['failure_phase']}/{proof['failure_class']}; "
         f"wait={failure['wait_elapsed_seconds']}s / deadline={failure['deadline_seconds']}s; "
         f"post-event-idle={failure['post_event_idle']}s; failure at {resource['first_failure_elapsed_seconds']}s; "
         + "; ".join(f"t={sample['elapsed_seconds']}s idle={sample['idle_percent']}% load1={sample['load_1m']} "
                     f"app-cpu={sample['cpu_percent']['app']}%" for sample in resource["failure_samples"]))
+
+
+def xctest_tool_class(message):
+    """Only reviewed complete native messages can bypass the CPU requirement."""
+    if not isinstance(message, str) or len(message) > 512:
+        return None
+    lifecycle = (
+        r"Failed to terminate com\.331works\.immichSlides:[0-9]{1,10}: Failed to terminate com\.331works\.immichSlides:[0-9]{1,10}",
+        r"Application 'com\.331works\.immichSlides' does not have a process ID",
+        r"Failed to launch (?:com\.331works\.immichSlides|Application 'com\.331works\.immichSlides'): Timed out while launching application via Xcode",
+    )
+    if any(re.fullmatch(pattern, message) for pattern in lifecycle):
+        return "process_lifetime"
+    if message == "Failed to get matching snapshots: Timed out while evaluating UI query":
+        return "snapshot_query"
+    return None
+
+
+def validate_failure_messages(messages):
+    from ci_summary import require
+    require(isinstance(messages, list) and 0 < len(messages) <= MAX_FAILURE_MESSAGES,
+            "failure messages: expected a bounded complete failure list")
+    prefixes = {prefix for prefix, _, _ in PREFIX_RULES}
+    require(all(isinstance(message, str) and (message in prefixes or message == UNRECOGNIZED_FAILURE_MESSAGE
+                or xctest_tool_class(message) is not None) for message in messages),
+            "failure messages: unreviewed public message")
+
+
+def failure_messages_diagnostics(messages):
+    kinds = {xctest_tool_class(message) for message in messages}
+    if None not in kinds and len(kinds) == 1:
+        return {"failure_phase": "unknown", "failure_class": kinds.pop()}
+    return classify_messages(messages)
+
+
+def environment_timing_v5(failure, failure_class, messages):
+    """Class/step semantics with functional target/surface guards."""
+    if failure["source"] != "xctest" or failure["app"] != "running-foreground" or len(messages) != 1:
+        return False
+    message = messages[0]
+    step = failure["step"]
+    if (failure["scene_status"] in {"BLACK", "BLANK"} or failure["surface"] == "unknown"
+            or failure_class == "hidden_controls" and failure["control_bar"] == "visible"):
+        return False
+    # Target surfaces are functional context, independent of the old phase/class/step tuples.
+    expected_surface = next((surface for prefix, surface in (
+        ("slideshow.", "playback"), ("mode.", "mode"), ("firstboot.", "firstboot"),
+        ("settings.playback.", "playback-settings")) if failure["element"].startswith(prefix)), None)
+    if (failure["element"] in {"app-window", "unknown", "system.reduce-motion", "simulator", "BackButton"}
+            or failure["element"].startswith(("settings.item.", "settings.cache."))):
+        expected_surface = "playback"
+    if message == "A configured cold launch must go straight to the playback page.":
+        expected_surface = "playback"
+    if failure["surface"] != expected_surface:
+        return False
+    # These assertions describe a contradiction, even if an earlier wait used its deadline.
+    contradictions = ("Chose filter but reached the playback page, so the mode card tap did not register.",
+        "Playback page after uninstall means a dirty install container;", "Select must not accidentally hit the API Key help sheet.",
+        "A cold launch with saved settings must not return to the first-boot page.",
+        "Connection test showed a failure alert:", "The iOS filter summary should no longer use a bottom back button,",
+        "After changing the display mode, playback must still be on screen in the same live process.",
+        "Album Next must advance the paused scene within the playback capture budget.",
+        "Next must be tappable twice right after entering the slideshow, before old image requests finish.",
+        "The first next must advance the playback cursor.", "The second next must advance the playback cursor further.",
+        "Must not press twice to mask the first wake", "Do not tap again and toggle playback")
+    if message in contradictions:
+        return False
+    eligible = (failure_class in {"navigation", "hidden_controls", "focus"}
+        and step in {"query-element", "select", "focus", "reveal-controls", "mode-card", "mode-continue",
+                     "mode-departure", "save-password-prompt", "wait-scene", "settings-readback", "launch-app"})
+    if failure_class == "control_state":
+        eligible = step == "wait-scene" and message in {
+            "After pausing, the control value must be play.",
+            "Album capture preparation must observe paused playback after one Pause."}
+    elif failure_class == "timing_window":
+        eligible = step in {"wait-scene", "rotate"} and (
+            " did not stabilize within the " in message
+            or message == "Album capture preparation must reach a stable scene before Pause.")
+    elif failure_class == "probe_readback":
+        eligible = (step == "query-element" and message == "Play/pause value must be readable before acting.")
+        if message == "Album capture preparation must reach a complete paused scene within the playback capture budget.":
+            gate = failure.get("gate", {})
+            eligible = (step == "wait-scene" and failure["element"] == "slideshow.scenePresentation.contract.summary"
+                and all(gate.get(key) is True for key in (
+                "paused", "entry_hint_hidden", "advanced", "layers_changed", "manifest_complete")) \
+                and gate.get("stable") is False and gate.get("phase") in ENVIRONMENT_ALBUM_SETTLING_PHASES)
+    elapsed, deadline = failure["wait_elapsed_seconds"], failure["deadline_seconds"]
+    exhausted = elapsed is not None and deadline is not None and deadline > 0 and elapsed >= deadline
+    # Idle durations alone do not prove a timeout; explicit native tool messages use their own branch.
+    return eligible and exhausted
+
+
+def validate_environment_limit_v5(proof):
+    from ci_summary import fields, require
+    from ci_bounded_diagnostics import validate_case_resources
+    messages = proof[FAILURE_MESSAGES_FIELD]
+    validate_failure_messages(messages)
+    diagnostics = failure_messages_diagnostics(messages)
+    require(all(proof[key] == diagnostics[key] for key in DIAGNOSTIC_FIELDS),
+            "environment limit: failure messages differ from diagnostic class")
+    if proof["kind"] == "xctest-tool":
+        require(all(xctest_tool_class(message) is not None for message in messages)
+                and proof["failure_class"] in {"process_lifetime", "snapshot_query"}
+                and proof["failure"] is None and proof["resources"] is None,
+                "environment limit: not an exclusive XCTest tool failure")
+        return
+    require(proof["kind"] == "timing-wait", "environment limit: unsupported failure kind")
+    failure = proof["failure"]
+    names = {"source", "step", "element", "action", "app", "surface", "control_bar", "scene_status",
+             "wait_elapsed_seconds", "deadline_seconds", "action_duration_seconds", "post_event_idle",
+             "pre_event_idle", "ax_root_acquisition"}
+    if isinstance(failure, dict) and "gate" in failure:
+        names.add("gate")
+    fields(failure, names, "environment failure")
+    receipt = unavailable_first_failure("xctest")
+    for key in ("source", "step", "element", "action"):
+        receipt[key] = failure[key]
+    for key in ("app", "surface", "control_bar", "scene_status"):
+        receipt["state"][key] = failure[key]
+    for key in ("wait_elapsed_seconds", "deadline_seconds", "action_duration_seconds"):
+        receipt["timing"][key] = failure[key]
+    receipt["native_activity_seconds"] = {key: failure.get(key) for key in NATIVE_ACTIVITY_FIELDS}
+    if "gate" in failure:
+        receipt["gate"] = failure["gate"]
+    validate_first_failure(receipt)
+    require(environment_timing_v5(failure, proof["failure_class"], messages),
+            "environment limit: failure is not an eligible timing wait")
+    resource = proof["resources"]
+    validate_case_resources([resource])
+    samples = resource["failure_samples"]
+    require(len(samples) >= 2 and all(sample["idle_percent"] is not None
+            and sample["idle_percent"] <= ENVIRONMENT_IDLE_MAX_PERCENT for sample in samples)
+            and any(sample["elapsed_seconds"] < resource["first_failure_elapsed_seconds"] for sample in samples)
+            and any(sample["elapsed_seconds"] > resource["first_failure_elapsed_seconds"] for sample in samples),
+            "environment limit: insufficient starvation evidence")
+
+
+def environment_limit_evidence_v5(summary, entry, resources, *, runner_hosted):
+    from ci_summary import require
+    require(runner_hosted is True and summary["source"]["workflow_path"] == ".github/workflows/ci-nightly.yml"
+            and summary["source"]["event"] in {"schedule", "workflow_dispatch"}
+            and (summary["run"]["tier"], summary["run"]["job"]) in {
+                ("strict", "nightly-strict"), ("ui", "ui-iphone"), ("ui", "ui-ipad"), ("ui", "ui-appletv")},
+            "environment limit: outside hosted nightly scope")
+    require(entry["outcome"] == "failed" and entry["identity"]["kind"] == summary["run"]["tier"]
+            and VALIDATOR_FAILURE_FIELD not in entry, "environment limit: not a timing or tool failure")
+    messages = entry[FAILURE_MESSAGES_FIELD]
+    validate_failure_messages(messages)
+    tool = all(xctest_tool_class(message) is not None for message in messages)
+    receipt = public_first_failure(entry.get(FIRST_FAILURE_FIELD))
+    require(receipt is None or receipt["source"] == "xctest", "environment limit: not an XCTest first failure")
+    require(tool or summary["run"]["tier"] == "strict" and receipt is not None,
+            "environment limit: missing strict first failure")
+    candidates = [resource for resource in resources if resource.get("first_failure_elapsed_seconds") is not None]
+    require(tool or len(candidates) == 1, "environment limit: ambiguous failure resources")
+    proof = {"schema_version": 1, "policy_version": 5, "runner_hosted": True,
+        "kind": "xctest-tool" if tool else "timing-wait", FAILURE_MESSAGES_FIELD: deepcopy(messages),
+        "failure_phase": entry.get("failure_phase"), "failure_class": entry.get("failure_class"),
+        "failure": None if tool else environment_failure_projection(receipt, policy_version=5),
+        "resources": None if tool else candidates[0]}
+    validate_environment_limit(proof)
+    return proof
+
+
+def bind_ui_environment_limits(summary, official):
+    """Recheck each yellow method against its complete original official failure list."""
+    from ci_summary import require
+    nodes = {}
+    def visit(node):
+        require(isinstance(node, dict), "environment limit: invalid official UI node")
+        if node.get("nodeType") == "Test Case":
+            key = str(node.get("nodeIdentifier", "")).removesuffix("()")
+            if key.count("/") == 2:
+                key = key.removeprefix("immichSlidesUITests/")
+            require(key not in nodes, "environment limit: duplicate official UI method")
+            nodes[key] = node
+        for child in node.get("children", []):
+            visit(child)
+    require(isinstance(official, dict) and isinstance(official.get("testNodes"), list),
+            "environment limit: missing official UI evidence")
+    for node in official["testNodes"]:
+        visit(node)
+    def failure_count(node):
+        return int(node.get("nodeType") == "Failure Message") + sum(failure_count(child) for child in node.get("children", []))
+    for entry in summary["population"]["observed"]:
+        if ENVIRONMENT_LIMIT_FIELD not in entry:
+            continue
+        node = nodes.get(entry["identity"]["key"], {})
+        require(node.get("result") == "Failed" and node.get(FAILURE_MESSAGES_FIELD) == entry[FAILURE_MESSAGES_FIELD]
+                and all(node.get(key) == entry.get(key) for key in DIAGNOSTIC_FIELDS),
+                "environment limit: official UI failure messages differ")
+        require(failure_count(node) == len(entry[FAILURE_MESSAGES_FIELD]),
+                "environment limit: official UI failure count differs")
 
 
 def unavailable_first_failure(source, step="unknown", element="unknown"):
@@ -1391,6 +1600,8 @@ def test_node_diagnostics(payload):
 def validate_diagnostic_fields(value):
     """Reject free text, unpaired fields and non-string values, without echoing them."""
     if isinstance(value, dict):
+        if FAILURE_MESSAGES_FIELD in value:
+            validate_failure_messages(value[FAILURE_MESSAGES_FIELD])
         if ENVIRONMENT_LIMIT_FIELD in value:
             validate_environment_limit(value[ENVIRONMENT_LIMIT_FIELD])
         if FIRST_FAILURE_FIELD in value:
@@ -1414,7 +1625,8 @@ def validate_diagnostic_fields(value):
 
 
 def scan_diagnostic_json(data):
-    diagnostic_fields = DIAGNOSTIC_FIELDS | {VALIDATOR_FAILURE_FIELD, BOUNDED_DIAGNOSTICS_FIELD, FIRST_FAILURE_FIELD}
+    diagnostic_fields = DIAGNOSTIC_FIELDS | {VALIDATOR_FAILURE_FIELD, BOUNDED_DIAGNOSTICS_FIELD, FIRST_FAILURE_FIELD,
+                                            ENVIRONMENT_LIMIT_FIELD, FAILURE_MESSAGES_FIELD}
     bounded_seen = False
     first_failure_seen = False
     duplicate_seen = False
@@ -1441,6 +1653,6 @@ def scan_diagnostic_json(data):
             raise ValueError("duplicate first failure JSON key")
     except (json.JSONDecodeError, UnicodeDecodeError):
         ascii_keys = re.sub(rb"\\u00([0-9a-fA-F]{2})", lambda match: bytes([int(match[1], 16)]), data)
-        if any(('"' + field + '"').encode() in ascii_keys for field in (BOUNDED_DIAGNOSTICS_FIELD, FIRST_FAILURE_FIELD, ENVIRONMENT_LIMIT_FIELD)) or any(
+        if any(('"' + field + '"').encode() in ascii_keys for field in (BOUNDED_DIAGNOSTICS_FIELD, FIRST_FAILURE_FIELD, ENVIRONMENT_LIMIT_FIELD, FAILURE_MESSAGES_FIELD)) or any(
                 ('"' + field + '"').encode() in data for field in DIAGNOSTIC_FIELDS | {VALIDATOR_FAILURE_FIELD}):
             raise ValueError("invalid failure diagnostic JSON")
