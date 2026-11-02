@@ -482,6 +482,7 @@ def failure_details(item):
         details["environment_limit"] = copy.deepcopy(item["environment_limit"])
     if FAILURE_MESSAGES_FIELD in item:
         details[FAILURE_MESSAGES_FIELD] = copy.deepcopy(item[FAILURE_MESSAGES_FIELD])
+        details.update({key: item[key] for key in ("failure_phase", "failure_class")})
     return details
 
 
@@ -1295,15 +1296,30 @@ def environment_history(entries):
                 validate_environment_limit(item["environment_limit"])
                 proof = item["environment_limit"]
                 if proof["policy_version"] == 5:
-                    require(item.get("failure_messages") == proof["failure_messages"]
-                            and all(item[key] == proof[key] for key in ("failure_phase", "failure_class") if key in item),
+                    require(item.get("outcome") == "failed" and "validator_failure_message" not in item
+                            and item.get("failure_messages") == proof["failure_messages"]
+                            and all(item.get(key) == proof[key] for key in ("failure_phase", "failure_class")),
                             "environment limit: retained failure messages differ")
+                    if "attempts" in item:
+                        attempts = item["attempts"]
+                        require(len(attempts) == 1 and attempts[0]["outcome"] == "failed"
+                                and "validator_failure_message" not in attempts[0]
+                                and attempts[0].get("environment_limit") == proof
+                                and all(attempts[0].get(key) == item[key]
+                                        for key in ("failure_phase", "failure_class", "failure_messages")),
+                                "environment limit: retained attempt differs")
             except (ValueError, TypeError, KeyError, AttributeError):
                 rejected.add(identity_token(item["identity"]))
         for item in items:
             if identity_token(item["identity"]) in rejected:
                 item.pop("environment_limit", None)
                 item["environment_limit_rejection"] = "RED: invalid or obsolete environment-limit proof under the current policy"
+                if "failure_messages" in item:
+                    from ci_failure_diagnostics import validate_failure_messages, UNRECOGNIZED_FAILURE_MESSAGE
+                    try:
+                        validate_failure_messages(item["failure_messages"])
+                    except (ValueError, TypeError, KeyError, AttributeError):
+                        item["failure_messages"] = [UNRECOGNIZED_FAILURE_MESSAGE]
                 for attempt in item.get("attempts", []):
                     attempt.pop("environment_limit", None)
         if rejected:

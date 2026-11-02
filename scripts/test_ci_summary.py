@@ -308,6 +308,33 @@ class SummaryContractTests(unittest.TestCase):
                 bad["failure_messages"] = bad["attempts"][0]["failure_messages"] = [message + suffix]
                 with self.subTest(suffix=suffix), self.assertRaisesRegex(ValueError, "^failure messages: unreviewed public message$"):
                     ci_summary.parse_summary(changed)
+        from ci_failure_diagnostics import classify_messages
+        for message, step, eligible in (
+                ("Playback page must provide play/pause.", "select", True),
+                ("After auto-advance, the playback controls must be revealable.", "select", True),
+                ("Focus must reach play/pause.", "focus", True),
+                ("Tapping settings must open the settings page.", "query-element", True),
+                ("rotation-landscape-stable did not stabilize within the ", "wait-scene", True),
+                ("Album Next must advance the paused scene within the playback capture budget.", "wait-scene", False),
+                ("Chose filter but reached the playback page, so the mode card tap did not register.", "mode-card", False),
+                ("Before rotating, the play button value must be pause (playing),", "wait-scene", False),
+                ("The playback interval must be 5 seconds.", "settings-readback", False),
+                ("Automatic photo change occurred before T-2;", "wait-scene", False),
+                ("The playback index probe is empty, so autoplay and retained-history cannot be proven.", "query-element", False),
+                ("App timeline:", "wait-scene", False)):
+            summary, resource = hosted_v5_summary()
+            row = summary["population"]["observed"][0]
+            diagnostics = classify_messages([message])
+            for target in (row, row["attempts"][0]):
+                target.update(diagnostics, failure_messages=[message])
+            row["first_failure"]["step"] = step
+            row["first_failure"]["state"]["scene_status"] = "UNRECOGNIZABLE"
+            proof = environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=5)
+            with self.subTest(taxonomy=message):
+                self.assertEqual(eligible, proof is not None)
+                if proof:
+                    row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
+                    ci_summary.parse_summary(summary)
 
     def test_late_image_preparation_and_held_budget_stay_red_in_every_policy(self):
         from ci_failure_diagnostics import (PREFIX_RULES, FIRST_FAILURE_STEPS, FIRST_FAILURE_ELEMENTS,

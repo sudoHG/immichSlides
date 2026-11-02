@@ -90,6 +90,21 @@ class ReporterTests(unittest.TestCase):
         mixed = copy.deepcopy(compact)
         mixed["observed"][0]["failure_messages"].append("App timeline:")
         self.assertEqual("failed", ci_report.environment_history([mixed])[0]["status"])
+        for mutation in ("missing-class", "passed", "attempt", "private-message"):
+            changed = copy.deepcopy(compact)
+            row = changed["observed"][0]
+            if mutation == "missing-class":
+                row.pop("failure_class")
+            elif mutation == "passed":
+                row["outcome"] = "passed"
+            elif mutation == "attempt":
+                row["attempts"][0]["failure_messages"] = ["App timeline:"]
+            else:
+                row["failure_messages"] = ["private-unreviewed-message"]
+            with self.subTest(history=mutation):
+                rejected = ci_report.environment_history([changed])[0]
+                self.assertEqual("failed", rejected["status"])
+                self.assertNotIn("private-unreviewed-message", render_entry(rejected))
 
     def test_retained_password_prompt_proofs_revalidate_and_escalate(self):
         from ci_failure_diagnostics import environment_limit_evidence
