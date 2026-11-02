@@ -256,7 +256,7 @@ class SummaryContractTests(unittest.TestCase):
                 ("Playback page must provide play/pause.", "select", "slideshow.control.playPause.button", "surface", "mode"),
                 ("Playback page must provide play/pause.", "select", "app-window", "surface", "mode"),
                 ("Playback page must provide play/pause.", "select", "BackButton", "surface", "playback-settings"),
-                ("A configured cold launch must go straight to the playback page.", "launch-app", "app-window", "surface", "firstboot"),
+                ("A configured cold launch must go straight to the playback page.", "launch-app", "firstboot.serverURL.field", "surface", "firstboot"),
                 ("After pausing, the control value must be play.", "wait-scene", "slideshow.control.playPause.button", "surface", "unknown")):
             summary, resource = hosted_v5_summary()
             row = summary["population"]["observed"][0]
