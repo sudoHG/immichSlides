@@ -389,7 +389,7 @@ def finish_fixture_coverage(summary, official, expected, policy, *, exit_code, r
                             base_registry=None, evaluated_on=None):
     """Keep failed producer status while a clean, fully bound tool-yellow invocation exits zero."""
     from ci_failure_diagnostics import (attach_failure_messages, environment_limit_evidence,
-        bind_ui_environment_limits, render_environment_limit, EMITTED_ENVIRONMENT_POLICY_VERSION)
+        bind_ui_environment_limits, EMITTED_ENVIRONMENT_POLICY_VERSION)
     attach_failure_messages(summary["population"]["observed"], official)
     if any(entry["outcome"] == "failed" for entry in summary["population"]["observed"]):
         summary["status"] = "failed"
@@ -412,11 +412,6 @@ def finish_fixture_coverage(summary, official, expected, policy, *, exit_code, r
         base_registry=base_registry, evaluated_on=evaluated_on)
     yellow = clean and verdict["status"] == "environment-limited"
     summary["status"] = "failed" if verdict["status"] == "environment-limited" else verdict["status"]
-    if yellow:
-        for entry in summary["population"]["observed"]:
-            if "environment_limit" in entry:
-                print("::warning title=Environment-limited XCTest tool::" + entry["identity"]["key"]
-                      + ": " + render_environment_limit(entry["environment_limit"]), flush=True)
     return verdict, 0 if yellow else exit_code or (0 if verdict["status"] == "passed" else 1)
 
 
@@ -520,6 +515,7 @@ def main(argv=None, *, simulator_prepared=False):
     args = parser.parse_args(argv)
     output = args.output_dir.resolve()
     code, service, bundle, digest, summary = 1, None, None, None, None
+    verdict = None
     first_failure_root = None
     rows = []
     bundles, digests = [], {}
@@ -883,6 +879,12 @@ def main(argv=None, *, simulator_prepared=False):
                 summary["status"] = "failed"
                 summary["infrastructure"].append({"code": "cleanup-failed", "message": "Private bundle disposal failed"})
                 write_fixture_summary(summary, output)
+            if code == 0 and not summary["infrastructure"] and verdict is not None and verdict["status"] == "environment-limited":
+                from ci_failure_diagnostics import render_environment_limit
+                for entry in summary["population"]["observed"]:
+                    if "environment_limit" in entry:
+                        print("::warning title=Environment-limited XCTest tool::" + entry["identity"]["key"]
+                              + ": " + render_environment_limit(entry["environment_limit"]), flush=True)
             print(f"Fixture UI: {summary['status']} ({len(rows)} per-test rows), exit {code}", flush=True)
     return code
 

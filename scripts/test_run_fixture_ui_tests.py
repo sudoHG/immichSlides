@@ -62,11 +62,7 @@ class FixtureCoverageTests(unittest.TestCase):
                 parse_summary(summary)
                 self.assertEqual("environment-limited" if yellow else "failed", verdict["status"])
                 self.assertEqual(yellow, "environment_limit" in row)
-                if yellow:
-                    self.assertIn("::warning title=Environment-limited XCTest tool::", output.getvalue())
-                    self.assertIn(messages[0], output.getvalue())
-                else:
-                    self.assertNotIn("::warning", output.getvalue())
+                self.assertNotIn("::warning", output.getvalue(), "Coverage judgement must wait for runner finalization before publishing")
 
     def test_same_named_target_and_class_keeps_failure_identity_through_summary(self):
         from ci_failure_diagnostics import first_failure_environment, collect_first_failure_spool, attach_first_failures
@@ -110,8 +106,10 @@ class FixtureCoverageTests(unittest.TestCase):
         from ci_summary import parse_summary, test_identity
         from ci_verdict import parse_policy
         from test_ci_summary import archive_download_summary
-        for phase in ("tests-read", "export", "summary-read", "details-read", "attachments-export", "tool-yellow"):
+        for phase in ("tests-read", "export", "summary-read", "details-read", "attachments-export",
+                      "tool-yellow", "tool-yellow-scan-failed", "tool-yellow-bundle-failed"):
             with self.subTest(phase=phase), tempfile.TemporaryDirectory() as directory:
+                tool_yellow = phase.startswith("tool-yellow")
                 root, output = Path(directory, "checkout"), Path(directory, "output")
                 root.mkdir()
                 bundle = Path(directory, "private/result/fixture.xcresult")
@@ -122,7 +120,7 @@ class FixtureCoverageTests(unittest.TestCase):
                 (source.parent / "Debug-iphonesimulator/immichSlides.app").mkdir(parents=True)
                 seed = archive_download_summary()
                 tool = "Application 'com.331works.immichSlides' does not have a process ID"
-                if phase == "tool-yellow":
+                if tool_yellow:
                     seed["identity"].update(event="schedule", ref="refs/heads/main")
                     seed["identity"].pop("dirty", None)
                 declared = [test_identity("ui", "NavigationUITests/testMethod" + str(index),
@@ -132,7 +130,7 @@ class FixtureCoverageTests(unittest.TestCase):
                         {"nodeType": "Test Case", "nodeIdentifier": entry["key"] + "()", "durationInSeconds": 1,
                          "result": "Passed" if index == 0 else "Skipped"} for index, entry in enumerate(declared)]}]}
                 counts = {"totalTestCount": 21, "passedTests": 1, "failedTests": 0, "skippedTests": 20, "result": "Passed"}
-                if phase == "tool-yellow":
+                if tool_yellow:
                     nodes = official["testNodes"][0]["children"]
                     for index, node in enumerate(nodes):
                         node["result"] = "Failed" if index == 0 else "Passed"
@@ -157,7 +155,7 @@ class FixtureCoverageTests(unittest.TestCase):
                             Path(command[command.index("-test-enumeration-output-path") + 1]).write_text(json.dumps(enumeration))
                         else:
                             executions.append(command)
-                    return SimpleNamespace(wait=lambda **kwargs: 65 if phase == "tool-yellow" and "-enumerate-tests" not in command else 0, pid=42)
+                    return SimpleNamespace(wait=lambda **kwargs: 65 if tool_yellow and "-enumerate-tests" not in command else 0, pid=42)
                 def read(command, **kwargs):
                     self.assertEqual(command[:2], ["xcrun", "xcresulttool"])
                     self.assertEqual(kwargs["timeout"], 180)
@@ -173,7 +171,7 @@ class FixtureCoverageTests(unittest.TestCase):
                     clock[0] += 0.44
                     detail = ({"testIdentifier": command[command.index("--test-id") + 1], "testResult": "Skipped", "testRuns": [
                         {"nodeType": "Test Case Run", "result": "Skipped", "name": "Official skip"}]} if current == "details-read" else {})
-                    if phase == "tool-yellow" and current == "details-read":
+                    if tool_yellow and current == "details-read":
                         detail = {"testIdentifier": command[command.index("--test-id") + 1], "testResult": "Failed",
                                   "testRuns": [{"nodeType": "Test Case Run", "result": "Failed", "name": tool}]}
                     payload = json.dumps(counts if command[4] == "summary" else detail if current == "details-read" else official)
@@ -195,19 +193,37 @@ class FixtureCoverageTests(unittest.TestCase):
                     stack.enter_context(patch.object(runner.time, "monotonic", side_effect=lambda: clock[0]))
                     stdout = stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
                     stack.enter_context(contextlib.redirect_stderr(io.StringIO()))
+                    if tool_yellow:
+                        scan = runner.write_sensitive_scan
+                        def sensitive_scan(*args, **kwargs):
+                            self.assertNotIn("::warning", stdout.getvalue(), "Warning precedes sensitive scan")
+                            if phase == "tool-yellow-scan-failed":
+                                raise ValueError("Synthetic sensitive scan failure")
+                            return scan(*args, **kwargs)
+                        def finalize(*args, **kwargs):
+                            self.assertNotIn("::warning", stdout.getvalue(), "Warning precedes private bundle handling")
+                            return ["Synthetic quarantine failure"] if phase == "tool-yellow-bundle-failed" else []
+                        stack.enter_context(patch.object(runner, "write_sensitive_scan", side_effect=sensitive_scan))
+                        runner.finalize_fixture_run.side_effect = finalize
                     code = runner.main(["--device", "ipad", "--destination", "platform=iOS Simulator,id=target",
                         "--output-dir", str(output), "--xctestrun", str(source), "--shard", "navigation",
                         "--shard-manifest", str(root / "manifest.json"), "--listed-only-retry",
                         "--result-export-timeout-seconds", "180", "--failure-screenshots"])
                     retained = runner.finalize_fixture_run.call_args
-                if phase == "tool-yellow":
-                    self.assertEqual(0, code)
+                if tool_yellow:
+                    yellow = phase == "tool-yellow"
+                    self.assertEqual(0 if yellow else 1, code)
                     result = parse_summary((output / "summary.json").read_text())
                     self.assertEqual("failed", result["status"])
                     self.assertIn("environment_limit", result["population"]["observed"][0])
                     self.assertEqual(False, retained.kwargs["successful"])
-                    self.assertIn(tool, stdout.getvalue())
-                    self.assertIn("::warning title=Environment-limited XCTest tool::", stdout.getvalue())
+                    if yellow:
+                        self.assertIn(tool, stdout.getvalue())
+                        self.assertIn("::warning title=Environment-limited XCTest tool::", stdout.getvalue())
+                    else:
+                        self.assertIn("sensitive-scan-failed" if phase == "tool-yellow-scan-failed" else "cleanup-failed",
+                                      [item["code"] for item in result["infrastructure"]])
+                        self.assertNotIn("::warning", stdout.getvalue())
                     continue
                 self.assertEqual(code, 1)
                 result = parse_summary((output / "summary.json").read_text())
