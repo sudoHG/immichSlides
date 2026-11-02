@@ -949,6 +949,14 @@ identity/brightness checks, T+2 hold, T±2 onset and onset+4 remain unchanged.
 When tolerance is applied, the verdict JSON's `frozen_pixel_tolerances` array
 records the comparison name and measured `maximum_channel_difference`; exact
 comparisons add no entry.
+Frozen-pixel failures retain the existing failure prefix and append the comparison
+site (`frozen-reference` or `pause-hold`), `maximum_channel_difference` (0–255)
+and `differing_pixel_count` (pixels with any unequal RGBA channel, counted once).
+Only this fixed integer grammar reaches the public App-timeline message path;
+the exporter and both tracer consumers reject other sites, values or suffixes.
+The failure retains its existing `continue_timing/evidence_capture` labels and cannot become yellow.
+Statistics are measured only on rejected comparisons. Unreadable PNGs or unequal
+decoded crop sizes fail as `unreadable photo pixels`, without invented measurements.
 
 On the pinned iPad Air 11-inch (M4), original App-only nominal 50% duty throttling
 produced a frozen-hold failure with 355,162 of 928,896 central pixels changed,

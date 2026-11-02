@@ -40,16 +40,33 @@ struct SceneLifecycleContractTests {
             let pixels = try frozenCapturePNG(
                 channelDifference: channelDifference, width: mutation == "differentLength" ? 22 : 20)
             var toleratedMaximum: Int?
+            var measuredMaximum: Int?
+            var measuredCount: Int?
             let isEqual = try LifecycleTimelineCapture.frozenPhotoPixelsEqual(
                 reference, mutation == "unreadablePNG" ? Data() : pixels,
                 events: events, scene: "photo", frame: "frame", request: 2, returned: 3,
+                onDifferenceMeasured: { maximum, count in
+                    measuredMaximum = maximum
+                    measuredCount = count
+                },
                 onToleranceApplied: { toleratedMaximum = $0 })
+            #expect(!["differentLength", "unreadablePNG"].contains(mutation))
+            if ["exact", "oneLevel"].contains(mutation) {
+                #expect(measuredMaximum == nil && measuredCount == nil)
+            } else {
+                #expect(measuredMaximum == Int(channelDifference))
+                #expect(measuredCount == 1)
+            }
             #expect(isEqual == ["exact", "oneLevel"].contains(mutation))
             #expect(toleratedMaximum == (mutation == "oneLevel" ? 1 : nil))
             #expect(mutation != "frozenFrameChanged")
         } catch let error as LifecycleTimelineJudge.Failure {
-            #expect(mutation == "frozenFrameChanged")
-            #expect(error.description == "App timeline: frame advanced during pause")
+            if ["differentLength", "unreadablePNG"].contains(mutation) {
+                #expect(error.description == "App timeline: unreadable photo pixels")
+            } else {
+                #expect(mutation == "frozenFrameChanged")
+                #expect(error.description == "App timeline: frame advanced during pause")
+            }
         }
     }
 
@@ -59,6 +76,7 @@ struct SceneLifecycleContractTests {
         var pixels: [UInt8] = Array(repeating: pixel, count: width * height).flatMap { $0 }
         // The changed pixel lies inside the capture's central photo band.
         pixels[(10 * width + 10) * 4] += channelDifference
+        pixels[(10 * width + 10) * 4 + 1] += channelDifference
         let provider = try #require(CGDataProvider(data: Data(pixels) as CFData))
         let image = try #require(
             CGImage(

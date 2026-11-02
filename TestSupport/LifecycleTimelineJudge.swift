@@ -25,7 +25,9 @@ enum LifecycleTimelineJudge {
 
     struct Failure: Error, CustomStringConvertible {
         let description: String
-        init(_ reason: String) { description = "App timeline: " + reason }
+        init(_ reason: String, pixelDiagnostic: String = "") {
+            description = "App timeline: " + reason + pixelDiagnostic
+        }
     }
 
     struct Judgment: Codable {
