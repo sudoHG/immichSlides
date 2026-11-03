@@ -1153,6 +1153,15 @@ Exhausting that budget fails as `simulator-readiness-timeout`, before any reset
 mutation; a warm device returns on its first valid response. Uninstall and the
 remaining reset steps are still mandatory before Xcode may install the app. A reset error fails the case.
 
+Keychain and privacy resets each retry a nonzero exit once, after at most one
+second, within the same 120-second reset deadline and 60-second command cap.
+The retry receives only the remaining budget; an exhausted budget starts no
+command. Timeouts retain their existing failure behavior. Both attempts publish
+their exit code and a fixed stderr class: `empty`, `service-unavailable`,
+`device-unavailable`, `permission-denied`, `posix-error`, `simulator-error` or
+`unclassified`. Raw stderr is never published for these two steps. A second
+failure stays nonzero and red; no XCTest flow is retried.
+
 Each reset caller supplies `ios` or `tvos`; other values fail before simulator
 preparation. After keychain and privacy reset, iOS
 fixture simulators disable Password AutoFill with
@@ -1348,6 +1357,18 @@ Official summary and selected-method exports are read even after runner failure;
 nonzero exits remain failures. Filter-person combines its three session exports
 and requires all three passes. Exit 0 means all automated tracer checks completed,
 not release eligibility.
+
+Every failed strict observation has a fixed public attempt `reason`, including
+a runner exit after passing XCTest, missing logs/results, changed warm Products
+and an invalid P2 verdict. The runner emits fixed `strict-post-test:` phase
+markers for evidence validation, cleanup/official export, sensitive scanning and
+private result finalization. On a nonzero child exit, the tracer publishes the
+last unfinished phase's fixed reason when XCTest passed; completed finalization,
+absent or unknown markers use `Strict runner failed after passing XCTest.`.
+No exception text, command output or path is copied into this reason. These
+messages appear in the tracer's summary and job log; reporter rollups keep their
+existing attempt-reason redaction. Passing XCTest and
+`VISUAL_REVIEW_REQUIRED` cannot turn a nonzero runner exit into success or yellow.
 
 ### Public validator failure receipts
 

@@ -284,6 +284,15 @@ class CommandError(Exception):
         self.code = code
 
 
+POST_TEST_PHASE_PREFIX = "strict-post-test: "
+POST_TEST_FAILURE_REASONS = {
+    "contract": "Strict post-test evidence validation failed.",
+    "cleanup": "Strict post-test cleanup or official export failed.",
+    "sensitive-scan": "Strict post-test sensitive scan failed.",
+    "private-result-finalization": "Strict private result bundle finalization failed.",
+}
+
+
 class InfrastructureTimeout(CommandError):
     """Retain the phase without exposing subprocess arguments or captured output."""
 
@@ -860,6 +869,20 @@ def _disable_password_autofill(simulator_udid: str, reset_deadline: float, repor
     return lines
 
 
+def _simulator_reset_stderr_class(stderr: str) -> str:
+    text = stderr.strip().lower()
+    for classification, fragments in (
+        ("service-unavailable", ("service connection", "service unavailable", "connection invalid", "connection interrupted")),
+        ("device-unavailable", ("invalid device", "current state", "device unavailable", "shutdown")),
+        ("permission-denied", ("permission denied", "operation not permitted")),
+        ("posix-error", ("nsposixerrordomain",)),
+        ("simulator-error", ("com.apple.coresimulator.simerror",)),
+    ):
+        if any(fragment in text for fragment in fragments):
+            return classification
+    return "unclassified" if text else "empty"
+
+
 def reset_simulator_app(simulator_udid: str, bundle_id: str = "com.331works.immichSlides", *,
                         platform: str, boot_submitted: bool = False) -> str:
     if platform not in ("ios", "tvos"):
@@ -910,7 +933,13 @@ def reset_simulator_app(simulator_udid: str, bundle_id: str = "com.331works.immi
         ("privacy", ["xcrun", "simctl", "privacy", simulator_udid, "reset", "all"]),
     ):
         completed = simulator_command(command, f"simulator-{step}-reset", deadline=deadline)
-        lines.append(f"{step}_reset_exit={completed.returncode}")
+        lines.append(f"{step}_reset_exit={completed.returncode}; stderr_class={_simulator_reset_stderr_class(completed.stderr)}")
+        report(lines[-1])
+        if completed.returncode != 0:
+            time.sleep(min(1, max(0, deadline - time.monotonic())))
+            completed = simulator_command(command, f"simulator-{step}-reset-retry", deadline=deadline)
+            lines.append(f"{step}_reset_retry_exit={completed.returncode}; stderr_class={_simulator_reset_stderr_class(completed.stderr)}")
+            report(lines[-1])
         if completed.returncode != 0:
             raise CommandError(f"Simulator {step} reset failed; cannot continue with isolated state.\n" + "\n".join(lines))
     if platform == "ios":

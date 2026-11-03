@@ -32,6 +32,7 @@ from strict_e2e_p2_contract import P2_CASES, RAW_VERDICT, official_tests_facts
 from strict_e2e_server import PUBLIC_API_KEY
 from strict_e2e_runner_support import (IOS_LIFECYCLE_PAUSE_SUITE, SIMULATOR_READINESS_TIMEOUT_SECONDS,
                                      SIMULATOR_PREPARATION_TIMEOUT_SECONDS,
+                                     POST_TEST_PHASE_PREFIX, POST_TEST_FAILURE_REASONS,
                                      destination_udid, pause_visual_verdict, prepare_simulator)
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -125,9 +126,27 @@ def evaluate_tracer(declared, results, *, interrupted=False, informational=()):
         failed_method = next((method for method in result.get("official_methods", []) if method["result"] == "Failed"), None)
         failure_diagnostics = ({field: failed_method[field] for field in DIAGNOSTIC_FIELDS}
                                if outcome == "failed" and failed_method is not None else None)
+        # records/ is public and unscanned; never copy a runner exception into the reason.
+        failure_reason = "Strict case automated checks failed."
+        if result.get("exit_code") != 0:
+            failure_reason = ("Strict runner failed after passing XCTest." if official.get("result") == "Passed"
+                              else "Strict runner exited with a nonzero status.")
+            if official.get("result") == "Passed" and result.get("runner_failure_reason") in POST_TEST_FAILURE_REASONS.values():
+                failure_reason = result["runner_failure_reason"]
+        elif result.get("log_present") is not True:
+            failure_reason = "Strict xcodebuild log is missing."
+        elif result.get("build_operations") != 0:
+            failure_reason = "Strict warm case performed build operations."
+        elif result.get("products_unchanged") is not True:
+            failure_reason = "Strict warm Products changed or reuse evidence is missing."
+        elif not official:
+            failure_reason = "Official XCTest evidence is missing or invalid."
+        elif p2 and result.get("p2_verdict") != RAW_VERDICT:
+            failure_reason = "P2 raw evidence verdict is missing or invalid."
         observed.append(observation(result["identity"], outcome, result["duration_seconds"],
             reason=("Pause timing requires signed transition-start evidence" if pending_timing else
-                    "P2 contract requires signed human review") if outcome == "needs-human-review" else None,
+                    "P2 contract requires signed human review") if outcome == "needs-human-review" else
+                    failure_reason if outcome == "failed" else None,
             message=public_xctest_failure_message(official.get("message"),
                 method=PUBLIC_FAILURE_MESSAGE_METHOD_BY_SUITE.get(result["identity"]["dimensions"]["suite"]))
                 if outcome == "failed" else None,
@@ -272,10 +291,11 @@ def produce_environment_limits(summary, results, *, informational=(), policy_ver
                  and all(ENVIRONMENT_LIMIT_FIELD in entry for entry in nonpassing)) else 1
 
 
-def run_runner(command, repo_root, log_path, *, timeout_seconds, truncation_seen=None):
+def run_runner(command, repo_root, log_path, *, timeout_seconds, truncation_seen=None, failure_report=None):
     with log_path.open("a+") as log:
         offset = log.tell()
         process = subprocess.Popen(command, cwd=repo_root, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+        code = None
         try:
             code = process.wait(timeout=timeout_seconds)
         finally:
@@ -299,6 +319,10 @@ def run_runner(command, repo_root, log_path, *, timeout_seconds, truncation_seen
                     members=members, truncated=truncated) from None
             log.seek(offset)
             lines = log.read().splitlines()
+            phases = [line.removeprefix(POST_TEST_PHASE_PREFIX) for line in lines if line.startswith(POST_TEST_PHASE_PREFIX)]
+            reason = POST_TEST_FAILURE_REASONS.get(phases[-1]) if phases else None
+            if code and reason is not None and failure_report is not None:
+                failure_report(reason)
             truncation = next((line for line in lines if line.startswith(TRUNCATION_PREFIX)
                                and line.removeprefix(TRUNCATION_PREFIX) in TRUNCATION_REASONS), None)
             if truncation is not None:
@@ -499,6 +523,7 @@ def main(argv=None):
             invocations = len(FILTER_PERSON_SESSIONS) if warm and case["suite"] == "filter-person" else 1
             phase["exit_code"] = run_runner(command, ROOT, output / "runner.log",
                 truncation_seen=child_truncated,
+                failure_report=lambda reason: phase.update(runner_failure_reason=reason),
                 timeout_seconds=((args.warm_timeout_seconds + SIMULATOR_READINESS_TIMEOUT_SECONDS) * invocations
                                  if warm else args.cold_timeout_seconds) + 240)
             return phase
@@ -632,6 +657,8 @@ def main(argv=None):
             if outcome == "needs-human-review" and not nightly and case["suite"] in P2_CASES and P2_CASES[case["suite"]].video:
                 recording_evidence(evidence, output / "p2-trace" / case["suite"])
             print(f"{case['suite']}: {outcome}, {phase['duration_seconds']:.1f}s, build operations={phase['build_operations']}", flush=True)
+            if outcome == "failed":
+                print(f"{case['suite']}: {observed[0]['attempts'][0]['reason']}", file=sys.stderr, flush=True)
             checkpoint()
         completed = True
     except BaseException as error:

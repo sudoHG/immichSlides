@@ -6182,6 +6182,28 @@ raise SystemExit(65)
                     self.assertEqual(65, tracer.run_runner(["unused"], Path(raw), Path(raw) / "runner.log", timeout_seconds=2))
                 write.assert_called_once_with(2, (line + "\n").encode("ascii"))
 
+        for stage, expected in (("contract", "Strict post-test evidence validation failed."),
+                ("cleanup", "Strict post-test cleanup or official export failed."),
+                ("sensitive-scan", "Strict post-test sensitive scan failed."),
+                ("private-result-finalization", "Strict private result bundle finalization failed."),
+                ("complete", None), ("sensitive-scan /Users/private-name", None)):
+            for code in (0, 1):
+                with self.subTest(stage=stage, code=code), tempfile.TemporaryDirectory() as raw:
+                    def spawn(*args, **kwargs):
+                        kwargs["stdout"].write("strict-post-test: contract\nstrict-post-test: " + stage + "\n")
+                        kwargs["stdout"].flush()
+                        return SimpleNamespace(pid=42, wait=lambda **kwargs: code)
+                    report = mock.Mock()
+                    with mock.patch.object(tracer.subprocess, "Popen", side_effect=spawn), \
+                            mock.patch.object(tracer, "stop_group"), \
+                            mock.patch.object(tracer, "group_has_live_members", return_value=False):
+                        self.assertEqual(code, tracer.run_runner(["unused"], Path(raw), Path(raw) / "runner.log",
+                            timeout_seconds=2, failure_report=report))
+                    if code and expected:
+                        report.assert_called_once_with(expected)
+                    else:
+                        report.assert_not_called()
+
     def test_failed_child_reservation_preserves_the_previous_ledger(self):
         import ci_execution_diagnostics as diagnostics
         with tempfile.TemporaryDirectory() as raw:
@@ -6545,6 +6567,13 @@ raise SystemExit(65)
             ("complete", [identity], [good], False, "passed", ["passed"]),
             ("empty manifest", [], [], False, "failed", []),
             ("p2", [p2], [{**good, "identity": p2, "p2_verdict": RAW_VERDICT}], False, "unverified", ["needs-human-review"]),
+            ("post-test runner exit", [p2], [{**good, "identity": p2, "p2_verdict": RAW_VERDICT,
+                "exit_code": 1}], False, "failed", ["failed"]),
+            ("post-test scan exit", [p2], [{**good, "identity": p2, "p2_verdict": RAW_VERDICT,
+                "runner_failure_reason": "Strict post-test sensitive scan failed.", "exit_code": 1}], False, "failed", ["failed"]),
+            ("private runner reason", [p2], [{**good, "identity": p2, "p2_verdict": RAW_VERDICT,
+                "runner_failure_reason": "Strict post-test sensitive scan failed. /Users/private-name", "exit_code": 1}],
+                False, "failed", ["failed"]),
             ("build in log", [identity], [{**good, "build_operations": 1}], False, "failed", ["failed"]),
             ("Products changed", [identity], [{**good, "products_unchanged": False}], False, "failed", ["failed"]),
             ("log missing", [identity], [{**good, "log_present": False}], False, "failed", ["failed"]),
@@ -6559,6 +6588,14 @@ raise SystemExit(65)
                 observed, actual = evaluate_tracer(declared, results, interrupted=interrupted)
                 self.assertEqual(actual, status)
                 self.assertEqual([entry["outcome"] for entry in observed], outcomes)
+                for entry in observed:
+                    if entry["outcome"] == "failed":
+                        reason = entry["attempts"][0]["reason"]
+                        self.assertTrue(reason, "every failed case must publish a public reason")
+                        if name in ("post-test runner exit", "private runner reason"):
+                            self.assertEqual("Strict runner failed after passing XCTest.", reason)
+                        elif name == "post-test scan exit":
+                            self.assertEqual("Strict post-test sensitive scan failed.", reason)
 
     def test_tracer_interruptions_record_failed_status_and_unrun_cases(self):
         import run_strict_ci_tracer as tracer

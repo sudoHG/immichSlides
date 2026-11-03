@@ -97,6 +97,7 @@ from strict_e2e_runner_support import (
     SETTINGS_RESUME_SUITES,
     CASE_E2E_IDS,
     CommandError,
+    POST_TEST_PHASE_PREFIX,
     InfrastructureTimeout,
     parse_xcconfig,
     prepare_task_xcconfig,
@@ -1299,6 +1300,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             json.dumps(summary_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
         from ci_failure_diagnostics import public_fixture_validator_scope
+        print(POST_TEST_PHASE_PREFIX + "contract", file=stdout, flush=True)
         with public_fixture_validator_scope(arguments.evidence_dir, screenshots=True):
             if arguments.suite in P2_CASES:
                 visual_payload = require_p2_evidence(
@@ -1436,6 +1438,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             actions.append(("remove_private_test_run", lambda path=run: path.unlink(missing_ok=True)))
         for bundle, suffix in private_bundles:
             actions.append(("export_and_hold_bundle" + suffix, lambda b=bundle, s=suffix: export_and_hold_bundle(b, s)))
+        print(POST_TEST_PHASE_PREFIX + "cleanup", file=stdout, flush=True)
         cleanup_failures.extend(run_cleanup_actions(actions))
 
         recorder = active()
@@ -1454,6 +1457,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                 except OSError as error:
                     cleanup_failures.append(f"write_cleanup_failures: {type(error).__name__}: {error}")
             try:
+                print(POST_TEST_PHASE_PREFIX + "sensitive-scan", file=stdout, flush=True)
                 write_sensitive_scan(
                     arguments.evidence_dir,
                     [PUBLIC_API_KEY, WRONG_PUBLIC_API_KEY],
@@ -1462,6 +1466,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                 cleanup_failures.append(f"sensitive_scan: {error}")
 
         successful = did_complete_checks and primary_exit_code == 0 and not cleanup_failures
+        print(POST_TEST_PHASE_PREFIX + "private-result-finalization", file=stdout, flush=True)
         for spool, _selectors, _number in first_failure_spools.values():
             shutil.rmtree(spool, ignore_errors=True)
         for bundle, suffix in private_bundles:
@@ -1478,6 +1483,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                 )
             except OSError as error:
                 cleanup_failures.append(f"write_cleanup_failures: {type(error).__name__}: {error}")
+        print(POST_TEST_PHASE_PREFIX + "complete", file=stdout, flush=True)
 
     if cleanup_failures:
         print("Cleanup or evidence finalization failed: " + " | ".join(cleanup_failures), file=stderr)
