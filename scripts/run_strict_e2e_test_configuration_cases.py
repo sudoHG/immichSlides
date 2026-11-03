@@ -747,21 +747,65 @@ class StrictE2ERunnerTestsCasesConfiguration:
         self.assertIn("uninstall_retry_exit=149", str(raised.exception))
 
     def test_reset_refuses_to_continue_with_keychain_or_privacy_state(self) -> None:
+        from strict_e2e_runner_support import InfrastructureTimeout
         for failed_step in ("keychain", "privacy"):
-            with self.subTest(failed_step=failed_step):
-                calls = []
+            for retry_exit in (0, 1):
+                for stderr, classification in (("", "empty"),
+                        ("Service connection invalid /Users/private-name", "service-unavailable"),
+                        ("Unable to perform request in current state: Shutdown", "device-unavailable"),
+                        ("Permission denied https://private-host.local", "permission-denied"),
+                        ("NSPOSIXErrorDomain private-value", "posix-error"),
+                        ("com.apple.CoreSimulator.SimError private-value", "simulator-error"),
+                        ("private-value", "unclassified")):
+                    with self.subTest(step=failed_step, retry_exit=retry_exit, classification=classification):
+                        calls, reset_calls, clock = [], [], [0.0]
 
-                def fake_run(command, **kwargs):
-                    calls.append(command)
-                    code = 1 if command[2] == failed_step else 0
-                    if command[2] == "get_app_container":
-                        code = 2
-                    return subprocess.CompletedProcess(command, code, "", "reset unavailable" if code == 1 else "")
+                        def fake_run(command, **kwargs):
+                            calls.append(command)
+                            code = 2 if command[2] == "get_app_container" else 0
+                            if command[2] == failed_step:
+                                reset_calls.append(command)
+                                self.assertLessEqual(kwargs["timeout"], min(60, 120 - clock[0]))
+                                clock[0] += 10
+                                code = 1 if len(reset_calls) == 1 else retry_exit
+                            return subprocess.CompletedProcess(command, code, "", stderr if code == 1 else "")
 
-                with mock.patch("run_strict_e2e.subprocess.run", side_effect=fake_run), mock.patch("run_strict_e2e.time.sleep"):
-                    with self.assertRaises(CommandError):
-                        reset_simulator_app("SIM-UDID", platform="tvos")
-                self.assertIn(["xcrun", "simctl", failed_step, "SIM-UDID", "reset", *(["all"] if failed_step == "privacy" else [])], calls)
+                        with mock.patch("run_strict_e2e.subprocess.run", side_effect=fake_run), mock.patch(
+                            "run_strict_e2e.time.monotonic", side_effect=lambda: clock[0]
+                        ), mock.patch("run_strict_e2e.time.sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)), \
+                                mock.patch("builtins.print") as report:
+                            if retry_exit:
+                                with self.assertRaisesRegex(CommandError, f"Simulator {failed_step} reset failed") as raised:
+                                    reset_simulator_app("SIM-UDID", platform="tvos")
+                                log = str(raised.exception)
+                                if failed_step == "keychain":
+                                    self.assertFalse(any(command[2] == "privacy" for command in calls))
+                            else:
+                                log = reset_simulator_app("SIM-UDID", platform="tvos")
+                        published = "\n".join(call.args[0] for call in report.call_args_list)
+                        for output in (log, published):
+                            self.assertIn(f"{failed_step}_reset_exit=1; stderr_class={classification}", output)
+                            retry_class = classification if retry_exit else "empty"
+                            self.assertIn(f"{failed_step}_reset_retry_exit={retry_exit}; stderr_class={retry_class}", output.splitlines())
+                            self.assertNotIn("private", output)
+                        expected = ["xcrun", "simctl", failed_step, "SIM-UDID", "reset", *(["all"] if failed_step == "privacy" else [])]
+                        self.assertEqual([expected, expected], reset_calls)
+
+        # The retry consumes the original reset deadline, including its one-second wait.
+        clock, reset_calls = [0.0], []
+        def exhausted(command, **kwargs):
+            if command[2] == "privacy":
+                reset_calls.append(command)
+                clock[0] = 120
+                return subprocess.CompletedProcess(command, 1, "", "private-value")
+            return subprocess.CompletedProcess(command, 2 if command[2] == "get_app_container" else 0, "", "")
+        with mock.patch("run_strict_e2e.subprocess.run", side_effect=exhausted), mock.patch(
+            "run_strict_e2e.time.monotonic", side_effect=lambda: clock[0]
+        ), mock.patch("run_strict_e2e.time.sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)), \
+                mock.patch("builtins.print"), self.assertRaisesRegex(InfrastructureTimeout, "simulator-privacy-reset-retry timed out"):
+            reset_simulator_app("SIM-UDID", platform="tvos")
+        self.assertEqual(1, len(reset_calls))
+        self.assertEqual(120, clock[0])
 
     def test_ios_reset_requires_disabled_password_autofill_after_isolation(self) -> None:
         import strict_e2e_runner_support as support
