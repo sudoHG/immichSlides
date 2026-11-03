@@ -889,10 +889,17 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
         var advanceObservation: [String: String] = [:]
         var previousObservation: [String: String] = [:]
         var lastObservation: [String: String] = [:]
+        var firstTransitionObservation: [String: String]?
         var didObserveAdvance = false
         let observeAdvance = { [self] in
             previousObservation = lastObservation
             lastObservation = strictSceneFrameObservation(app: app)
+            if firstTransitionObservation == nil,
+                SharedSceneEvidenceManifest.parseKeyValueFields(lastObservation["render"] ?? "")["phase"]
+                    == "transition"
+            {
+                firstTransitionObservation = lastObservation
+            }
             // The displayed index saturates at the pool size; repeated photos still publish new timing.
             let publication = scenePublication(in: lastObservation)
             let didPublish =
@@ -906,11 +913,19 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
                 didObserveAdvance = true
                 advanceObservation = lastObservation
             }
+            let stable = StrictE2ESceneCapture.isStableWindow(lastObservation)
+            let referencesMatch = StrictE2ESceneCapture.referencesMatch(
+                before: previousObservation, after: lastObservation)
+            print(
+                "tvOS publication observation: advanceObserved=\(didObserveAdvance) stable=\(stable) referencesMatch=\(referencesMatch)"
+            )
             return didObserveAdvance
                 && (!requiresStableCaptureWindow || StrictE2ESceneCapture.isStableWindow(lastObservation))
         }
         let didObserve: Bool
         if let timeout {
+            FirstFailureContext.beginWait(seconds: timeout)
+            defer { FirstFailureContext.endWait() }
             let deadline = Date().addingTimeInterval(timeout)
             var satisfied = false
             while Date() < deadline {
@@ -937,9 +952,18 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             before: baseline, after: advanceObservation, name: "tvos-scene-publication-advance")
         attachStrictSceneObservation(
             before: previousObservation, after: lastObservation, name: "tvos-resume-capture-window-timeout")
-        XCTFail(
-            "The index probe must change after a playback action. advanceObserved=\(didObserveAdvance) \(strictSceneCaptureDiagnostic(before: previousObservation, after: lastObservation, stable: StrictE2ESceneCapture.isStableWindow(lastObservation)))"
-        )
+        attachStrictSceneObservation(
+            before: firstTransitionObservation ?? [:], after: lastObservation, name: "tvos-resume-transition-progress")
+        if timeout != nil, requiresStableCaptureWindow,
+            StrictE2ESceneCapture.hasProgressingPublicationFacts(
+                firstTransition: firstTransitionObservation ?? [:], before: previousObservation, after: lastObservation)
+        {
+            XCTFail(
+                "The index probe must change after a playback action. advanceObserved=\(didObserveAdvance) \(strictSceneCaptureDiagnostic(before: previousObservation, after: lastObservation, stable: StrictE2ESceneCapture.isStableWindow(lastObservation)))"
+            )
+        } else {
+            XCTFail("The index probe must change after a playback action.")
+        }
         return false
     }
 

@@ -30,6 +30,8 @@ PUBLIC_FAILURE_MESSAGE_METHOD_BY_SUITE = {
     "tvos-flow": "StrictE2ETVOSFlowUITests/testTVOSFirstBootModeSelectionAndCorePlayback",
 }
 TVOS_PUBLICATION_FAILURE_PREFIX = "The index probe must change after a playback action."
+TVOS_PUBLICATION_FAILURE_PATTERN = (re.escape(TVOS_PUBLICATION_FAILURE_PREFIX)
+    + r" advanceObserved=(?:true|false) stable=(?:true|false) referencesMatch=(?:true|false)")
 APP_TIMELINE_FAILURE_REDACTED = "App timeline: unrecognized failure (redacted)"
 APP_TIMELINE_FAILURE_REASONS = frozenset({
     "missing evidence directory", "case nonce mismatch", "missing required event",
@@ -273,6 +275,7 @@ def validate_failure_messages(messages):
             "failure messages: expected a bounded complete failure list")
     prefixes = {prefix for prefix, _, _ in PREFIX_RULES}
     require(all(isinstance(message, str) and (message in prefixes or message == UNRECOGNIZED_FAILURE_MESSAGE
+                or re.fullmatch(TVOS_PUBLICATION_FAILURE_PATTERN, message)
                 or xctest_tool_class(message) is not None) for message in messages),
             "failure messages: unreviewed public message")
 
@@ -287,6 +290,9 @@ def public_failure_messages(messages):
             public.append(message)
             continue
         text = normalized_xctest_failure(message)
+        if text is not None and re.fullmatch(TVOS_PUBLICATION_FAILURE_PATTERN, text):
+            public.append(text)
+            continue
         rule = next((rule for rule in PREFIX_RULES if text is not None and text.startswith(rule[0])), None)
         public.append(rule[0] if rule is not None and xctest_tool_class(rule[0]) is None
                       else UNRECOGNIZED_FAILURE_MESSAGE)
@@ -368,6 +374,10 @@ def environment_timing_v5(failure, failure_class, messages):
             eligible = failure["element"] == "app-window" and failure["scene_status"] == "MATCH"
     elif failure_class == "probe_readback":
         eligible = (step == "query-element" and message == "Play/pause value must be readable before acting.")
+        if message == (TVOS_PUBLICATION_FAILURE_PREFIX
+                + " advanceObserved=true stable=false referencesMatch=true"):
+            eligible = (step == "query-element" and failure["element"] == "slideshow.scenePresentation.contract.summary"
+                and failure["scene_status"] == "TRANSITION" and failure["deadline_seconds"] == 3)
         if message == "Album capture preparation must reach a complete paused scene within the playback capture budget.":
             gate = failure.get("gate", {})
             eligible = (step == "wait-scene" and failure["element"] == "slideshow.scenePresentation.contract.summary"
@@ -1682,9 +1692,7 @@ def public_xctest_failure_message(message, *, method):
     text = normalized_xctest_failure(message)
     if text is None or not text.startswith(TVOS_PUBLICATION_FAILURE_PREFIX):
         return None
-    if text == TVOS_PUBLICATION_FAILURE_PREFIX or re.fullmatch(
-            re.escape(TVOS_PUBLICATION_FAILURE_PREFIX)
-            + r" advanceObserved=(?:true|false) stable=(?:true|false) referencesMatch=(?:true|false)", text):
+    if text == TVOS_PUBLICATION_FAILURE_PREFIX or re.fullmatch(TVOS_PUBLICATION_FAILURE_PATTERN, text):
         return text
     return TVOS_PUBLICATION_FAILURE_PREFIX + " [diagnostic redacted]"
 

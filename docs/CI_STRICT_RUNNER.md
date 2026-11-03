@@ -356,6 +356,16 @@ layers, even when their opacity has already reached one; that state cannot serve
 as the stable history anchor. The single Pause, four-second pause readback,
 history-count precondition and capture-time pixel/manifest proof remain unchanged.
 
+The first `tvos-flow` autoplay wait and both manual Next waits require an observed
+advance, exactly as on main. Only the resume wait also requires the App's complete
+stable render state. Matching references remain diagnostic and never gate success;
+no second snapshot is required to pass. Both autoplay observations remain six
+seconds, their publication waits remain three seconds, and manual Next retains its
+navigation guard. The product loop records its own balanced `beginWait`/`endWait`
+receipt, rather than inheriting a completed control-bar focus wait. Its predicate,
+Date deadline and polling remain unchanged. Capture-time pixel and manifest checks
+remain independent.
+
 `UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE=1` enables the Debug manifest probes.
 Probe-only launches are `album-empty`, `filter-album`, `journey-b`, `tvos-flow`, `ios-lifecycle-first-wake`,
 `p2-ipad-layout`,
@@ -1852,13 +1862,26 @@ The tvOS flow retains only the exact sentence
 `advanceObserved=true|false stable=true|false referencesMatch=true|false` diagnostic.
 The three fields must all be present in that order, with no extra text; malformed
 or extended diagnostics become the fixed sentence plus ` [diagnostic redacted]`.
+Swift omits the suffix when adjacent render/manifest observations are incomplete,
+slots are not all ready, coverage is not 1 or a gap/overlap exists. A nonstable
+observation must be a complete outgoing/incoming transition before it can publish
+the suffix; an unreadable probe cannot claim that only settling was missing.
+Only the three-second resume path may emit it. Both last observations must report
+`playbackPaused=false`. The first `phase=transition` observation recorded within
+this wait and the last observation must have identical nonempty `layerIDs`, and
+fade progress `(1 - outgoing opacity) + incoming opacity` must increase by at least
+0.01. Paused, frozen, changed-layer or insufficient-progress evidence emits only
+the fixed prefix and stays red. The first/last transition observations are attached
+for diagnosis without adding an App query or delaying successful polling.
 No manifest contents, asset references, paths or arbitrary suffixes are published.
 These booleans describe the observed publication and capture window; they do not prove
 that an input reached the App or identify the historical hosted root cause.
 Warnings and other methods supply no message. The tracer checks the message and
-suite again before publication. Versioned summary and receipt fields, failure classification
-and environment-limit eligibility stay
-unchanged. Missing legacy details leave the message absent and the failure red.
+suite again before publication. Receipt fields and failure classes remain unchanged.
+The complete boolean grammar also survives the bound `failure_messages` list;
+only the exact exhausted three-second resume settling timeout can qualify under
+[policy v5](CI_SUMMARY.md#policy-v5-reader-preparation). Missing legacy details
+leave the message absent and the failure red.
 Reporter rollups and issues still clear attempt messages in `ci_report.py`; consult
 the strict-tracer's own `summary.json` and `summary.md` for the sentence.
 

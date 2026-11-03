@@ -1551,6 +1551,8 @@ class FailureDiagnosticsTests(unittest.TestCase):
                  (diagnostic.replace("stable=false", "stable=PRIVATE_SENTINEL"), redacted),
                  (diagnostic.replace("referencesMatch=true", "referencesMatch=PRIVATE_SENTINEL"), redacted),
                  (diagnostic.replace(" referencesMatch=true", ""), redacted)]
+        from ci_failure_diagnostics import public_failure_messages
+        self.assertEqual([diagnostic], public_failure_messages(["XCTAssertTrue failed - " + diagnostic]))
         for message, expected in cases:
             with self.subTest(message=message), tempfile.TemporaryDirectory() as raw:
                 evidence = Path(raw)
@@ -1644,7 +1646,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
                         self.assertEqual(dict(failure_phase="continue_timing", failure_class="evidence_capture"), diagnostic)
                         self.assertFalse(environment_timing(failure, diagnostic["failure_phase"], diagnostic["failure_class"], policy_version=version))
 
-    def test_pause_readiness_replaces_its_receipt_wait_before_starting_the_next(self):
+    def test_pause_and_publication_waits_replace_previous_receipt_clocks(self):
         source = (REPO_ROOT / "immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift").read_text()
         preparation = source.split("func preparePlayPause(", 1)[1].split("func tapPreparedPlayPause(", 1)[0]
         readiness = preparation.split("if readinessDeadline == nil {", 1)[1].split("\n                }", 1)[0]
@@ -1656,6 +1658,18 @@ class FailureDiagnosticsTests(unittest.TestCase):
                          r'FirstFailureContext\.beginWait\(seconds:')
         self.assertRegex(preparation, r'FirstFailureContext\.beginWait\(seconds: [^\n]+\)\s+'
                          r'defer \{ FirstFailureContext\.endWait\(\) \}')
+
+        source = (REPO_ROOT / "immichSlidesUITests/StrictE2ETVOSFlowUITests.swift").read_text()
+        wait = source.split("private func waitForScenePublicationAdvance(", 1)[1].split(
+            "\n    @MainActor\n    private func waitUntil", 1)[0]
+        # Without this recorder the timeout inherits an already-completed focus wait.
+        product = wait.split("if let timeout {", 1)[1].split("} else {", 1)[0]
+        self.assertRegex(product, r'FirstFailureContext\.beginWait\(seconds: timeout\)\s+'
+                         r'defer \{ FirstFailureContext\.endWait\(\) \}')
+        self.assertIn('return didObserveAdvance\n                && (!requiresStableCaptureWindow || '
+                      'StrictE2ESceneCapture.isStableWindow(lastObservation))', wait)
+        self.assertIn('if timeout != nil, requiresStableCaptureWindow,', wait)
+        self.assertIn('StrictE2ESceneCapture.hasProgressingPublicationFacts(', wait)
 
     def test_mode_navigation_markers_preserve_environment_policy_boundaries(self):
         source = (REPO_ROOT / "immichSlidesUITests/UITestSupport.swift").read_text()
@@ -2541,7 +2555,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
                     self.assertEqual({owner for _, owner, _, _ in emitters}, shared_owners[prefix])
                 if prefix == "The index probe must change after a playback action.":
                     self.assertCountEqual([calls[-1] for _, _, _, calls in emitters],
-                                          ["XCTAssertTrue", "XCTAssertNotNil", "XCTFail"])
+                                          ["XCTAssertTrue", "XCTAssertNotNil", "XCTFail", "XCTFail"])
                 for emitter_source, owner, literal, calls in emitters:
                     if wrapper.startswith('failed: caught error:'):
                         self.assertTrue(calls[-1].endswith("AssertionError.message"), (literal, calls))
@@ -3692,6 +3706,103 @@ class StrictCITracerTests(unittest.TestCase):
                     self.assertEqual("xctest-tool" if kind == "tool" else "timing-wait", observed["environment_limit"]["kind"])
                 else:
                     self.assertNotIn("environment_limit", observed)
+
+    def test_tvos_publication_timeout_requires_exact_facts_and_an_exhausted_starved_wait(self):
+        import copy
+        from test_ci_summary import hosted_v5_summary
+        from ci_failure_diagnostics import (classify_messages, environment_failure_projection,
+            public_failure_messages, validate_environment_limit)
+        from run_strict_ci_tracer import evaluate_tracer, produce_environment_limits
+        from ci_summary import ContractError, parse_summary, test_identity
+        from ci_nightly import aggregate_nightly
+        message = ("The index probe must change after a playback action. "
+                   "advanceObserved=true stable=false referencesMatch=true")
+        valid_proof = None
+        cases = ("eligible", "no advance", "wrong references", "stable", "missing facts", "extra suffix",
+                 "missing wait", "early wait", "zero deadline", "missing deadline", "deadline 60",
+                 "paused", "no progress", "wrong page",
+                 "BLACK", "BLANK", "unknown", "UNRECOGNIZABLE", "wrong target", "wrong step",
+                 "missing samples", "high idle", "one sided")
+        for case in cases:
+            with self.subTest(case=case):
+                summary, resource = hosted_v5_summary()
+                row = summary["population"]["observed"][0]
+                identity = test_identity("strict", "tvos-flow", device="tv", configuration="Debug",
+                                         suite="tvos-flow", scenario="normal", fixture="a")
+                row["identity"] = identity
+                summary["population"].update(declared=[identity], compiled=[identity])
+                summary["strict_case_evidence"][0]["identity"] = identity
+                receipt = row["first_failure"]
+                receipt.update(step="query-element", element="slideshow.scenePresentation.contract.summary")
+                receipt["state"].update(control_bar="visible", scene_status="TRANSITION")
+                receipt["timing"].update(deadline_seconds=3, wait_elapsed_seconds=3)
+                raw = message
+                if case == "no advance":
+                    raw = raw.replace("advanceObserved=true", "advanceObserved=false")
+                elif case == "wrong references":
+                    raw = raw.replace("referencesMatch=true", "referencesMatch=false")
+                elif case == "stable":
+                    raw = raw.replace("stable=false", "stable=true")
+                elif case == "missing facts":
+                    raw = raw.replace(" referencesMatch=true", "")
+                elif case == "extra suffix":
+                    raw += " PRIVATE_SENTINEL"
+                elif case in {"paused", "no progress"}:
+                    # Swift's App-evidence gate emits only the fixed red prefix for these failures.
+                    raw = "The index probe must change after a playback action."
+                elif case == "deadline 60":
+                    receipt["timing"].update(deadline_seconds=60, wait_elapsed_seconds=60)
+                elif case in {"missing wait", "early wait", "zero deadline", "missing deadline"}:
+                    field, value = {"missing wait": ("wait_elapsed_seconds", None),
+                        "early wait": ("wait_elapsed_seconds", 2.99), "zero deadline": ("deadline_seconds", 0),
+                        "missing deadline": ("deadline_seconds", None)}[case]
+                    receipt["timing"][field] = value
+                elif case == "wrong page":
+                    receipt["state"]["surface"] = "mode"
+                elif case in {"BLACK", "BLANK", "unknown", "UNRECOGNIZABLE"}:
+                    receipt["state"]["scene_status"] = case
+                elif case == "wrong target":
+                    receipt["element"] = "slideshow.control.next.button"
+                elif case == "wrong step":
+                    receipt["step"] = "capture-frame"
+                elif case == "missing samples":
+                    resource["failure_samples"] = []
+                elif case == "high idle":
+                    resource["failure_samples"][0]["idle_percent"] = 5.01
+                elif case == "one sided":
+                    resource["failure_samples"][1]["elapsed_seconds"] = 7
+                messages = public_failure_messages(["failed - " + raw])
+                row.update(classify_messages(messages), failure_messages=messages)
+                method = {"identifier": "StrictE2ETVOSFlowUITests/testTVOSFirstBootModeSelectionAndCorePlayback",
+                    "result": "Failed", **{key: row[key] for key in (
+                    "failure_phase", "failure_class", "failure_messages", "first_failure")}}
+                phase = {"identity": row["identity"], "duration_seconds": 12, "exit_code": 65,
+                    "log_present": True, "build_operations": 0, "products_unchanged": True,
+                    "official_methods": [method], "first_failure": receipt,
+                    "official_summary": {"result": "Failed", "totalTestCount": 1, "passedTests": 0,
+                                         "failedTests": 1, "skippedTests": 0},
+                    "bounded_diagnostics": summary["strict_case_evidence"][0]["bounded_diagnostics"]}
+                summary["population"]["observed"], summary["status"] = evaluate_tracer([row["identity"]], [phase])
+                self.assertEqual(0 if case == "eligible" else 1, produce_environment_limits(summary, [phase]))
+                observed = parse_summary(summary)["population"]["observed"][0]
+                self.assertEqual(("failed", "failed", 65),
+                    (summary["status"], observed["outcome"], observed["attempts"][0]["exit_code"]))
+                self.assertNotIn("PRIVATE_SENTINEL", json.dumps(observed))
+                if case == "eligible":
+                    valid_proof = observed["environment_limit"]
+                    self.assertEqual([message], valid_proof["failure_messages"])
+                    self.assertEqual("environment-limited", aggregate_nightly(
+                        summary["population"]["declared"], [summary], live_in_scope=False)["status"])
+                else:
+                    self.assertNotIn("environment_limit", observed)
+                    # A forged retained claim must fail at the reader too, independently of the producer.
+                    forged = copy.deepcopy(valid_proof)
+                    forged.update(failure_messages=messages, resources=resource,
+                                  failure=environment_failure_projection(receipt, policy_version=5))
+                    error = ("insufficient starvation evidence" if case in {
+                        "missing samples", "high idle", "one sided"} else "failure is not an eligible timing wait")
+                    with self.assertRaisesRegex(ContractError, "^environment limit: " + error + "$\\Z"):
+                        validate_environment_limit(forged)
 
     def test_hosted_timing_producer_round_trips_only_qualified_failures(self):
         import copy
