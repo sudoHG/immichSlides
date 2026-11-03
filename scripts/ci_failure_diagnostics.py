@@ -80,6 +80,7 @@ FIRST_FAILURE_TIMING_FIELDS = ("since_action_issued_seconds", "since_action_retu
 NATIVE_ACTIVITY_FIELDS = ("pre_event_idle", "find_window", "synthesize_event", "post_event_idle", "ax_root_acquisition")
 _validator_input = ContextVar("first_failure_validator_input", default=None)
 _validator_enabled = ContextVar("first_failure_validator_enabled", default=False)
+_validator_capture = ContextVar("first_failure_validator_capture", default=None)
 
 ENVIRONMENT_LIMIT_FIELD = "environment_limit"
 ENVIRONMENT_POLICY_VERSION = 4
@@ -504,6 +505,57 @@ def remember_validator_input(image_bytes):
         _validator_input.set(image_bytes if len(image_bytes) <= 32 * 1024 * 1024 else None)
 
 
+def remember_validator_capture(path, image_bytes=None):
+    """Project only existing bounded fields from the actual PNG's cached capture window."""
+    if not _validator_enabled.get():
+        return
+    _validator_capture.set(None)
+    _validator_input.set(None)
+    if image_bytes is None:
+        return
+    try:
+        import hashlib
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > 65536:
+            return
+        capture = json.loads(path.read_text())
+        if capture["png_sha256"] != hashlib.sha256(image_bytes).hexdigest():
+            return
+        before, after = capture["before"], capture["after"]
+        started, deadline, requested, returned = (capture[key] for key in
+            ("window_started_unix", "deadline_unix", "capture_requested_unix", "capture_returned_unix"))
+        observed_before, observed_after = (float(piece["observed_unix"]) for piece in (before, after))
+        times = (started, deadline, requested, returned, observed_before, observed_after)
+        if any(type(value) not in (int, float) or not math.isfinite(value) for value in times):
+            return
+        if not (0 <= started <= observed_before <= requested <= returned <= observed_after
+                and started < deadline and observed_after - started <= FIRST_FAILURE_MAX_SECONDS
+                and deadline - started <= FIRST_FAILURE_MAX_SECONDS):
+            return
+        def fields(piece):
+            return dict(item.split("=", 1) for item in piece["render"].split(";") if "=" in item)
+        first, last = fields(before), fields(after)
+        receipt = unavailable_first_failure("validator", "capture-frame", "app-window")
+        state = receipt["state"]
+        state["observation"] = "cached"
+        if all(piece.get("playPauseValue") in ("play", "pause") for piece in (before, after)):
+            state["control_bar"] = "visible"
+            state["surface"] = "playback"
+        if first.get("playbackPaused") == last.get("playbackPaused") in ("true", "false"):
+            state["autoplay"] = "off" if last["playbackPaused"] == "true" else "on"
+        if first.get("historyCount") == last.get("historyCount"):
+            count = last.get("historyCount", "")
+            if re.fullmatch(r"0|[1-9][0-9]{0,9}", count) and int(count) <= 2**31 - 1:
+                state["history_count"] = int(count)
+        receipt["timing"].update({"wait_elapsed_seconds": returned - started,
+            "deadline_seconds": deadline - started, "capture_request_seconds": requested - started,
+            "capture_return_seconds": returned - started})
+        validate_first_failure(receipt)
+        _validator_capture.set((receipt, capture["png_sha256"]))
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, OverflowError, RecursionError):
+        # Optional, malformed or unbound capture metadata cannot alter a visual verdict.
+        pass
+
+
 def canonical_first_failure_png(data):
     import io
     from PIL import Image
@@ -563,16 +615,33 @@ def normalize_ui_failure_images(directory):
 def public_fixture_validator_scope(directory, *, screenshots=False):
     """Only the controlled fixture runner enters this scope; keep an actual validator input on failure."""
     enabled, image_token = _validator_enabled.set(True), _validator_input.set(None)
+    capture_token = _validator_capture.set(None)
     try:
         yield
     except Exception as error:
         receipt = unavailable_first_failure("validator", "capture-frame", "app-window")
         receipt["validator"] = {"kind": "unknown", "slot": None, "axis": "unknown"}
         message = public_validator_failure_message(str(error.__cause__ or error))
-        match = re.search(r"\bslot ([1-9][0-9]?) \((horizontal|vertical|both)(?: axes)?\)", message)
-        if match is not None and int(match[1]) <= 64:
-            receipt["validator"] = {"kind": "glyph", "slot": int(match[1]), "axis": match[2]}
+        slots = re.findall(r"\bslot ([1-9][0-9]?) \((horizontal|vertical|both)(?: axes)?\)", message)
+        if slots and int(slots[0][0]) <= 64:
+            slot, axis = slots[0]
+            if {item for item, _ in slots} == {slot} and {axis for _, axis in slots} == {"horizontal", "vertical"}:
+                axis = "both"
+            receipt["validator"] = {"kind": "glyph", "slot": int(slot), "axis": axis}
         data = _validator_input.get()
+        cached = _validator_capture.get()
+        try:
+            import hashlib
+            from strict_e2e_photo_identity import classify_screenshot
+            if (cached is not None and data and message not in {"unresolved", VALIDATOR_FAILURE_REDACTED}
+                    and hashlib.sha256(data).hexdigest() == cached[1]):
+                receipt["state"] = cached[0]["state"]
+                receipt["timing"] = cached[0]["timing"]
+                receipt["state"]["scene_status"] = classify_screenshot(data).status
+        except Exception:
+            # Cached optional diagnostics must preserve the validator's original rejection.
+            receipt = {**receipt, "state": unavailable_first_failure("validator")["state"],
+                       "timing": dict.fromkeys(FIRST_FAILURE_TIMING_FIELDS)}
         try:
             if screenshots and data:
                 image = collect_first_failure_image(lambda: canonical_first_failure_png(data))
@@ -594,6 +663,7 @@ def public_fixture_validator_scope(directory, *, screenshots=False):
     finally:
         _validator_enabled.reset(enabled)
         _validator_input.reset(image_token)
+        _validator_capture.reset(capture_token)
 
 
 def first_failure_test_key(identifier):
@@ -873,6 +943,13 @@ def render_first_failure(receipt):
     rendered = (f"{receipt['source']}/{receipt['step']}; {receipt['element']}; "
             f"since action={measured('since_action_issued_seconds')}; wait={measured('wait_elapsed_seconds')}; "
             f"deadline={measured('deadline_seconds')}; screenshot={receipt['screenshot']['status']}")
+    if receipt["source"] == "validator":
+        validator = receipt["validator"] or {}
+        state = receipt["state"]
+        rendered += (f"; slot={validator.get('slot') or 'unavailable'}; axis={validator.get('axis', 'unknown')}"
+            f"; capture={state['observation']}; scene={state['scene_status']}; autoplay={state['autoplay']}"
+            f"; history={state['history_count'] if state['history_count'] is not None else 'unavailable'}"
+            f"; capture request={measured('capture_request_seconds')}; return={measured('capture_return_seconds')}")
     if "gate" in receipt:
         gate = receipt["gate"]
         rendered += "; gate=" + gate["kind"] + ": " + ", ".join(

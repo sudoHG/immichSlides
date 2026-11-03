@@ -62,6 +62,59 @@ from strict_e2e_filter_contract_test_fixtures import (
 )
 
 class DeviceFilterVisualIdentityTestsCases:
+    def test_album_failure_publishes_only_capture_conditions_bound_to_its_png(self) -> None:
+        import hashlib
+        from ci_failure_diagnostics import public_fixture_validator_scope, render_first_failure
+
+        for defect in (None, "wrong-png", "reversed-time", "missing-window", "previous-capture"):
+            with self.subTest(defect=defect), tempfile.TemporaryDirectory() as raw:
+                evidence = Path(raw)
+                self._write_pngs(evidence, [("album-play-1", "A1"), ("album-play-2", "A2"),
+                                            ("album-play-3", "A3")], "b")
+                name = "album-play-2" if defect == "previous-capture" else "album-play-1"
+                buffer = io.BytesIO()
+                Image.new("RGB", IPAD_SCREEN, "black").save(buffer, format="PNG")
+                frame = buffer.getvalue()
+                (evidence / f"{name}.png").write_bytes(frame)
+                render = "phase=transition;playbackPaused=true;historyCount=1"
+                capture = {
+                    "png_sha256": hashlib.sha256(frame).hexdigest(),
+                    "window_started_unix": 100, "deadline_unix": 104.8,
+                    "capture_requested_unix": 101, "capture_returned_unix": 101.3,
+                    "before": {"render": render, "playPauseValue": "play", "observed_unix": "100.8",
+                               "manifest": "PRIVATE_SENTINEL"},
+                    "after": {"render": render, "playPauseValue": "play", "observed_unix": "101.4"},
+                }
+                if defect == "wrong-png":
+                    capture["png_sha256"] = "0" * 64
+                if defect == "reversed-time":
+                    capture["capture_returned_unix"] = 100.9
+                if defect == "previous-capture":
+                    first = (evidence / "album-play-1.png").read_bytes()
+                    capture["png_sha256"] = hashlib.sha256(first).hexdigest()
+                if defect != "missing-window":
+                    (evidence / "album-play-1-window.json").write_text(json.dumps(capture))
+                with self.assertRaisesRegex(FilterContractError, r"^unreadable public glyph slot: public photo colors are missing or mixed") as raised:
+                    with public_fixture_validator_scope(evidence, screenshots=True):
+                        evaluate_filter_visual_identity(evidence, "filter-album")
+                self.assertIn(f"screenshot {name}.png", str(raised.exception))
+                receipt = json.loads((evidence / "first-failure-validator.json").read_text())
+                self.assertEqual({"kind": "glyph", "slot": 1, "axis": "both"}, receipt["validator"])
+                self.assertNotIn("PRIVATE_SENTINEL", json.dumps(receipt))
+                if defect is None:
+                    self.assertEqual(("cached", "BLACK", "off", 1, "visible"), tuple(
+                        receipt["state"][key] for key in
+                        ("observation", "scene_status", "autoplay", "history_count", "control_bar")))
+                    self.assertAlmostEqual(1.3, receipt["timing"]["wait_elapsed_seconds"])
+                    self.assertAlmostEqual(4.8, receipt["timing"]["deadline_seconds"])
+                    self.assertAlmostEqual(1, receipt["timing"]["capture_request_seconds"])
+                    self.assertAlmostEqual(1.3, receipt["timing"]["capture_return_seconds"])
+                    self.assertIn("slot=1; axis=both", render_first_failure(receipt))
+                    self.assertIn("scene=BLACK; autoplay=off", render_first_failure(receipt))
+                else:
+                    self.assertEqual("unavailable", receipt["state"]["observation"])
+                    self.assertTrue(all(value is None for value in receipt["timing"].values()))
+
     def test_single_photo_switch_keeps_blurred_sides_consistent_with_the_sharp_photo(self) -> None:
         for defect in (None, "foreign-side", "black-side", "vertical-gap", "blurred-mid-left",
                        "two-line-gap", "three-line-gap"):

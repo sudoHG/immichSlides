@@ -24,7 +24,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         let input = try requireStrictE2EInput()
         let manifest = try loadEvidenceManifest()
         let albumID = try stringValue(manifest, keyPath: ["target_album", "id"])
-        let app = try launchStrictE2EApp()
+        let app = try launchStrictE2EApp(recordSceneSequence: true)
         defer { app.terminateForFailureEvidence() }
 
         try completeFirstBootToModeSelection(app: app, input: input, evidencePrefix: "filter-album")
@@ -33,13 +33,16 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         selectAlbum(app: app, albumID: albumID)
         returnFromAlbumFilter(app: app)
         startFilteredPlayback(app: app)
-        pausePlaybackIfNeeded(app: app)
+        print("Album capture checkpoint: before-pause")
+        guard pauseStableAlbumPlaybackIfNeeded(app: app, isFunctionalCapture: true) else { return }
 
-        _ = try captureAlbumPlaybackPNG(app: app, name: "album-play-1")
+        let firstScene = try captureStableAlbumPlaybackPNG(app: app, name: "album-play-1", isFunctionalCapture: true)
         tapNext(app: app)
-        _ = try captureAlbumPlaybackPNG(app: app, name: "album-play-2")
+        let secondScene = try captureStableAlbumPlaybackPNG(
+            app: app, name: "album-play-2", previousScene: firstScene, isFunctionalCapture: true)
         tapNext(app: app)
-        _ = try captureAlbumPlaybackPNG(app: app, name: "album-play-3")
+        _ = try captureStableAlbumPlaybackPNG(
+            app: app, name: "album-play-3", previousScene: secondScene, isFunctionalCapture: true)
     }
 
     // Swapping the target album through the real settings editor keeps filtered mode;

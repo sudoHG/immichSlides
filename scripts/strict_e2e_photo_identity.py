@@ -752,7 +752,8 @@ def _public_axis_slots(rgb: object, color_exclusion_box: tuple[int, int, int, in
                 completed = max(0, len(slots) - 1)
                 slot_word = "slot" if completed == 1 else "slots"
                 raise IdentityAssertionError("unreadable public glyph slot: public photo colors are missing or mixed"
-                                             f"; {'horizontal' if horizontal else 'vertical'} axis, {completed} completed {slot_word}")
+                                             f"; {'horizontal' if horizontal else 'vertical'} axis, {completed} completed {slot_word}"
+                                             f"; slot {completed + 1} ({'horizontal' if horizontal else 'vertical'})")
             mark = preceding
         if slots and slots[-1][0] == mark:
             slots[-1] = (mark, slots[-1][1], y + 1)

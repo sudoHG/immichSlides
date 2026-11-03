@@ -1,3 +1,4 @@
+import CryptoKit
 import XCTest
 
 #if os(iOS)
@@ -107,7 +108,7 @@ extension StrictE2EFilterIOSUITests {
 
     @MainActor
     private func captureStableAlbumPixels(
-        app: XCUIApplication, deadline: Date
+        app: XCUIApplication, deadline: Date, captureGuard: TestWait.HangGuard? = nil
     ) -> (png: Data, requestedAt: TimeInterval, returnedAt: TimeInterval)? {
         // Compare decoded, full-resolution color pixels; a logical stable probe can precede presentation.
         let minimumPairSeconds = AlbumCaptureTiming.minimumPixelPairSeconds
@@ -120,7 +121,7 @@ extension StrictE2EFilterIOSUITests {
         var captureCount = 0
         var pairSeconds: TimeInterval = .zero
         FirstFailureContext.mark("capture-frame", element: "app-window")
-        let isStable = TestWait.until(.product(max(.zero, deadline.timeIntervalSinceNow))) {
+        let observePixels: () -> Bool = {
             guard Date() < deadline else { return false }
             if let previousReturnedAt, Date().timeIntervalSince(previousReturnedAt) < minimumPairSeconds {
                 return false
@@ -144,6 +145,12 @@ extension StrictE2EFilterIOSUITests {
             previousFormat = format
             previousReturnedAt = Date(timeIntervalSince1970: returnedAt)
             return matches && Date() < deadline
+        }
+        let isStable = TestWait.until(.product(max(.zero, deadline.timeIntervalSinceNow))) {
+            if let captureGuard {
+                return captureGuard.transaction().query(observePixels) == true
+            }
+            return observePixels()
         }
         guard isStable else {
             XCTFail("Album capture pixels must match at least 0.6 seconds apart within the playback capture budget.")
@@ -248,7 +255,7 @@ extension StrictE2EFilterIOSUITests {
     }
 
     @MainActor
-    func pauseStableAlbumPlaybackIfNeeded(app: XCUIApplication) -> Bool {
+    func pauseStableAlbumPlaybackIfNeeded(app: XCUIApplication, isFunctionalCapture: Bool = false) -> Bool {
         #if DEBUG
         // Stability and the actionable target share the original 8 s Pause-preparation deadline.
         let identifier = "slideshow.control.playPause.button"
@@ -261,7 +268,8 @@ extension StrictE2EFilterIOSUITests {
             guard let controls = try? app.slideshowControlBarButtonObservation(identifier: identifier) else {
                 return false
             }
-            before = self.albumSceneObservation(snapshots: controls.snapshots)
+            before = self.albumSceneObservation(
+                snapshots: controls.snapshots, usesFrameSynchronizedRender: isFunctionalCapture)
             guard Date() < deadline else { return false }
             guard controls.isReady else {
                 if !didWake, !controls.hasSettingsNavigationEvidence {
@@ -278,7 +286,8 @@ extension StrictE2EFilterIOSUITests {
                 return false
             }
             let snapshotReturnedAt = Date().timeIntervalSince1970
-            before = self.albumSceneObservation(snapshots: stableControls.snapshots)
+            before = self.albumSceneObservation(
+                snapshots: stableControls.snapshots, usesFrameSynchronizedRender: isFunctionalCapture)
             before["stable_snapshot_requested_unix"] = String(snapshotRequestedAt)
             before["stable_snapshot_returned_unix"] = String(snapshotReturnedAt)
             guard stableControls.isReady, StrictE2ESceneCapture.isStableWindow(before),
@@ -293,7 +302,9 @@ extension StrictE2EFilterIOSUITests {
         guard isReady, Date() < deadline, let prepared, let button = prepared.button else {
             attachStrictSceneObservation(before: before, after: before, name: "album-before-pause")
             if rejectFrozenAlbumTransition(before) { return false }
-            XCTFail("Album capture preparation must reach a stable scene before Pause.")
+            failAlbumCapture(
+                "Album capture preparation must reach a stable scene before Pause.",
+                isFunctionalCapture: isFunctionalCapture)
             return false
         }
         var pauseTapIssuedAt = "notIssued"
@@ -316,7 +327,8 @@ extension StrictE2EFilterIOSUITests {
             guard let controls = try? app.slideshowControlBarButtonObservation(identifier: identifier) else {
                 return false
             }
-            after = self.albumSceneObservation(snapshots: controls.snapshots)
+            after = self.albumSceneObservation(
+                snapshots: controls.snapshots, usesFrameSynchronizedRender: isFunctionalCapture)
             return SharedSceneEvidenceManifest.parseKeyValueFields(after["render"] ?? "")["playbackPaused"] == "true"
                 && after["playPauseValue"] == "play"
         }
@@ -325,10 +337,13 @@ extension StrictE2EFilterIOSUITests {
         attachStrictSceneObservation(before: before, after: after, name: "album-pause")
         guard isPaused else {
             if after["playPauseValue"] != "play" {
-                XCTFail("After pausing, the control value must be play.")
+                failAlbumCapture(
+                    "After pausing, the control value must be play.", isFunctionalCapture: isFunctionalCapture)
                 return false
             }
-            XCTFail("Album capture preparation must observe paused playback after one Pause.")
+            failAlbumCapture(
+                "Album capture preparation must observe paused playback after one Pause.",
+                isFunctionalCapture: isFunctionalCapture)
             return false
         }
         return true
@@ -340,21 +355,24 @@ extension StrictE2EFilterIOSUITests {
 
     @MainActor
     func captureStableAlbumPlaybackPNG(
-        app: XCUIApplication, name: String, previousScene: [String: String]? = nil
+        app: XCUIApplication, name: String, previousScene: [String: String]? = nil, isFunctionalCapture: Bool = false
     ) throws -> [String: String] {
         #if DEBUG
+        print("Album capture checkpoint: before-capture \(name)")
         // Retained EXIF can still fade after the scene probe settles; preserve the old minimum settle time.
-        let settleDeadline = Date().addingTimeInterval(TestWait.seconds(.product(0.8)))
+        let windowStartedAt = Date()
+        let settleDeadline = windowStartedAt.addingTimeInterval(TestWait.seconds(.product(0.8)))
         let deadline = settleDeadline.addingTimeInterval(TestWait.seconds(.product(4)))
+        let captureGuard = TestWait.hangGuard()
         var before: [String: String] = [:]
         let previousRender = SharedSceneEvidenceManifest.parseKeyValueFields(previousScene?["render"] ?? "")
         var didAdvanceHistory: Bool?
         var hasObservedHistoryAdvance = false
         var didChangeLayers = false
         FirstFailureContext.mark("wait-scene", element: "slideshow.scenePresentation.contract.summary")
-        let isReady = TestWait.until(.product(max(.zero, deadline.timeIntervalSinceNow))) {
+        let observeScene: () -> Bool = {
             guard Date() >= settleDeadline else { return false }
-            before = self.albumSceneObservation(app: app)
+            before = self.albumSceneObservation(app: app, usesFrameSynchronizedRender: isFunctionalCapture)
             let render = SharedSceneEvidenceManifest.parseKeyValueFields(before["render"] ?? "")
             didAdvanceHistory =
                 Int(previousRender["historyCount"] ?? "").flatMap { previousCount in
@@ -367,6 +385,9 @@ extension StrictE2EFilterIOSUITests {
                 && render["layerIDs"] != previousRender["layerIDs"]
             guard self.isPausedStableAlbumScene(before), Date() < deadline else { return false }
             return previousScene == nil || didAdvanceHistory == true || didChangeLayers
+        }
+        let isReady = TestWait.until(.product(max(.zero, deadline.timeIntervalSinceNow))) {
+            captureGuard.transaction().query(observeScene) == true
         }
         FirstFailureContext.mark("wait-scene", element: "slideshow.scenePresentation.contract.summary")
         guard isReady else {
@@ -392,20 +413,30 @@ extension StrictE2EFilterIOSUITests {
                 if previousScene == nil, rejectFrozenAlbumTransition(before) { return }
                 if previousScene != nil, !hasObservedHistoryAdvance, !didChangeLayers {
                     FirstFailureContext.mark("wait-scene", element: "slideshow.control.next.button")
-                    XCTFail("Album Next must advance the paused scene within the playback capture budget. (\(facts))")
+                    failAlbumCapture(
+                        "Album Next must advance the paused scene within the playback capture budget. (\(facts))",
+                        isFunctionalCapture: isFunctionalCapture)
                 } else {
-                    XCTFail(
-                        "Album capture preparation must reach a complete paused scene within the playback capture budget. (\(facts))"
-                    )
+                    failAlbumCapture(
+                        "Album capture preparation must reach a complete paused scene within the playback capture budget. (\(facts))",
+                        isFunctionalCapture: isFunctionalCapture)
                 }
             }
             return [:]
         }
-        guard let capture = captureStableAlbumPixels(app: app, deadline: deadline) else { return [:] }
+        guard let capture = captureStableAlbumPixels(app: app, deadline: deadline, captureGuard: captureGuard) else {
+            return [:]
+        }
         let captureRequestedAt = capture.requestedAt
         let png = capture.png
         let captureReturnedAt = capture.returnedAt
-        let after = albumSceneObservation(app: app)
+        var after: [String: String] = [:]
+        if Date() < deadline {
+            after =
+                captureGuard.transaction().query {
+                    self.albumSceneObservation(app: app, usesFrameSynchronizedRender: isFunctionalCapture)
+                } ?? [:]
+        }
         let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
         attachment.name = name
         attachment.lifetime = .keepAlways
@@ -415,6 +446,8 @@ extension StrictE2EFilterIOSUITests {
         try StrictE2EVisualEvidence.writeRequiredJSON(
             [
                 "before": before, "after": after, "deadline_unix": deadline.timeIntervalSince1970,
+                "window_started_unix": windowStartedAt.timeIntervalSince1970,
+                "png_sha256": SHA256.hash(data: png).map { String(format: "%02x", $0) }.joined(),
                 "capture_requested_unix": captureRequestedAt, "capture_returned_unix": captureReturnedAt
             ], name: "\(name)-window.json")
         let beforeRender = SharedSceneEvidenceManifest.parseKeyValueFields(before["render"] ?? "")
@@ -443,6 +476,14 @@ extension StrictE2EFilterIOSUITests {
             && observation["entryHintVisible"] == "false"
     }
 
+    private func failAlbumCapture(_ message: String, isFunctionalCapture: Bool) {
+        if isFunctionalCapture {
+            XCTFail("Visual ID failed filter-album: \(message)")
+        } else {
+            XCTFail(message)
+        }
+    }
+
     private func rejectFrozenAlbumTransition(_ observation: [String: String]) -> Bool {
         let render = SharedSceneEvidenceManifest.parseKeyValueFields(observation["render"] ?? "")
         guard render["phase"] == "transition", render["playbackPaused"] == "true" else { return false }
@@ -451,18 +492,27 @@ extension StrictE2EFilterIOSUITests {
     }
 
     @MainActor
-    private func albumSceneObservation(app: XCUIApplication) -> [String: String] {
+    private func albumSceneObservation(
+        app: XCUIApplication, usesFrameSynchronizedRender: Bool = false
+    ) -> [String: String] {
         var didSnapshotFail = false
         let snapshots = app.evidenceSnapshotsByIdentifier(onSnapshotFailure: { _ in didSnapshotFail = true })
-        return albumSceneObservation(snapshots: snapshots, didSnapshotFail: didSnapshotFail)
+        return albumSceneObservation(
+            snapshots: snapshots, didSnapshotFail: didSnapshotFail,
+            usesFrameSynchronizedRender: usesFrameSynchronizedRender)
     }
 
     private func albumSceneObservation(
-        snapshots: [String: XCUIElementSnapshot], didSnapshotFail: Bool = false
+        snapshots: [String: XCUIElementSnapshot], didSnapshotFail: Bool = false,
+        usesFrameSynchronizedRender: Bool = false
     ) -> [String: String] {
         return [
             "manifest": snapshots["slideshow.smartfill.currentManifest.flag"]?.label ?? "",
-            "render": snapshots["slideshow.scenePresentation.contract.summary"]?.label ?? "",
+            "render": snapshots[
+                usesFrameSynchronizedRender
+                    ? "slideshow.scenePresentation.frameSynchronized.summary"
+                    : "slideshow.scenePresentation.contract.summary"
+            ]?.label ?? "",
             "frameSynchronizedRender": snapshots["slideshow.scenePresentation.frameSynchronized.summary"]?.label ?? "",
             "playPauseValue": (snapshots["slideshow.control.playPause.button"]?.value as? String)?.lowercased()
                 ?? "unknown",

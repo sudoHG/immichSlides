@@ -813,15 +813,19 @@ def _extract_ids_from_request_log(log_text: str) -> list[str]:
 
 
 def _evaluate_filter_album(evidence_dir: Path) -> dict[str, Any]:
+    from ci_failure_diagnostics import remember_validator_capture
     manifest = load_member_manifest(evidence_dir / "member-manifest.json")
     fixture_set = str(manifest["fixture_set"])
     marks = []
     frame_geometry = {}
     for name in FILTER_ALBUM_STEPS:
         path = evidence_dir / f"{name}.png"
+        remember_validator_capture(evidence_dir / f"{name}-window.json")
         if not path.is_file():
             raise FilterContractError(f"Missing visual input {name}.png")
-        frame_marks, geometry = target_album_frame_identity(path.read_bytes(), fixture_set, screenshot_name=f"{name}.png")
+        frame = path.read_bytes()
+        remember_validator_capture(evidence_dir / f"{name}-window.json", frame)
+        frame_marks, geometry = target_album_frame_identity(frame, fixture_set, screenshot_name=f"{name}.png")
         marks.extend(frame_marks)
         frame_geometry[name] = geometry
     return {
