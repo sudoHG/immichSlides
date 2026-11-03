@@ -41,6 +41,15 @@ struct FirstFailureTimeline {
         }
     }
 
+    mutating func extendWait(by seconds: TimeInterval) {
+        guard !activeWaits.isEmpty else { return }
+        let waitIndex = activeWaits.count - 1
+        let activeWait = activeWaits[waitIndex]
+        guard activeWait.deadlineSeconds > 0 else { return }
+        activeWaits[waitIndex] = (activeWait.startedAt, activeWait.deadlineSeconds + seconds)
+        waitDeadlineSeconds = activeWait.deadlineSeconds + seconds
+    }
+
     func timing(at time: TimeInterval) -> [String: Any] {
         func measured(_ value: TimeInterval?) -> Any {
             guard let value, value.isFinite, (0...86_400).contains(value) else { return NSNull() }
@@ -139,6 +148,13 @@ enum FirstFailureContext {
         lock.lock()
         defer { lock.unlock() }
         timeline.waitReturned(at: ProcessInfo.processInfo.systemUptime)
+    }
+
+    static func extendWait(by seconds: TimeInterval) {
+        guard isEnabled else { return }
+        lock.lock()
+        defer { lock.unlock() }
+        timeline.extendWait(by: seconds)
     }
 
     static func action<T>(_ name: String, _ operation: () throws -> T) rethrows -> T {

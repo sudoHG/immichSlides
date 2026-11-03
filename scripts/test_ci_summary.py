@@ -246,6 +246,88 @@ def album_capture_gate_rejections(receipt):
 
 
 class SummaryContractTests(unittest.TestCase):
+    def test_three_starved_waits_require_exact_timeout_and_functional_evidence(self):
+        from ci_failure_diagnostics import (classify_messages, environment_limit_evidence,
+            public_failure_messages, validate_environment_limit)
+        cases = (
+            ("The control bar is not hidden yet; cannot verify the first wake.",
+             "wait-scene", "slideshow.control.settings.button", "playback"),
+            ("Late image preparation must turn Autoplay off.",
+             "select", "settings.playback.autoPlay.toggle", "playback-settings"),
+            ("rotation-landscape-stable did not stabilize within the ",
+             "capture-frame", "app-window", "playback"))
+        for message, step, element, surface in cases:
+            summary, resource = hosted_v5_summary()
+            row = summary["population"]["observed"][0]
+            messages = public_failure_messages(['failed: caught error: "Failure(message: \\"' + message + '\\")"'])
+            self.assertEqual([message], messages)
+            for target in (row, row["attempts"][0]):
+                target.update(classify_messages(messages), failure_messages=messages)
+            receipt = row["first_failure"]
+            receipt.update(step=step, element=element)
+            receipt["state"].update(surface=surface, autoplay="off")
+            proof = environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=5)
+            with self.subTest(message=message):
+                self.assertIsNotNone(proof)
+                row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
+                self.assertEqual(proof, ci_summary.parse_summary(summary)["population"]["observed"][0]["environment_limit"])
+                negatives = [("deadline_seconds", 0), ("deadline_seconds", None),
+                    ("wait_elapsed_seconds", 4.99), ("wait_elapsed_seconds", None),
+                    ("scene_status", "BLACK"), ("scene_status", "BLANK"), ("surface", "unknown")]
+                if step == "select":
+                    negatives += [("autoplay", "on"), ("autoplay", "unknown"),
+                        ("step", "wait-scene"), ("element", "settings.playback.showExif.toggle")]
+                elif step == "capture-frame":
+                    negatives += [("scene_status", "UNRECOGNIZABLE"), ("scene_status", "TRANSITION"),
+                        ("step", "history-readback"), ("element", "simulator")]
+                else:
+                    negatives += [("control_bar", "visible"), ("control_bar", "unknown"),
+                        ("deadline_seconds", 0.59)]
+                    boundary = copy.deepcopy(summary)
+                    boundary_row = boundary["population"]["observed"][0]
+                    boundary_row["first_failure"]["timing"]["deadline_seconds"] = 0.6
+                    boundary_proof = environment_limit_evidence(boundary, boundary_row, [resource],
+                        runner_hosted=True, policy_version=5)
+                    self.assertIsNotNone(boundary_proof)
+                    boundary_row["environment_limit"] = boundary_row["attempts"][0]["environment_limit"] = boundary_proof
+                    ci_summary.parse_summary(boundary)
+                    missing = copy.deepcopy(summary)
+                    missing_row = missing["population"]["observed"][0]
+                    missing_row["first_failure"]["state"].pop("control_bar")
+                    self.assertIsNone(environment_limit_evidence(missing, missing_row, [resource],
+                        runner_hosted=True, policy_version=5))
+                for field, value in negatives:
+                    changed = copy.deepcopy(proof)
+                    changed["failure"][field] = value
+                    with self.subTest(field=field, value=value), self.assertRaisesRegex(ci_summary.ContractError,
+                            "^environment limit: failure is not an eligible timing wait$"):
+                        validate_environment_limit(changed)
+                changed = copy.deepcopy(proof)
+                changed["resources"]["failure_samples"] = []
+                with self.assertRaisesRegex(ci_summary.ContractError,
+                        "^environment limit: insufficient starvation evidence$"):
+                    validate_environment_limit(changed)
+                if step == "select":
+                    changed = copy.deepcopy(proof)
+                    changed["failure"].pop("autoplay")
+                    with self.assertRaisesRegex(ci_summary.ContractError,
+                            "^environment limit: failure is not an eligible timing wait$"):
+                        validate_environment_limit(changed)
+                    changed = copy.deepcopy(summary)
+                    changed["population"]["observed"][0]["first_failure"]["state"]["autoplay"] = "on"
+                    with self.assertRaisesRegex(ci_summary.ContractError,
+                            "^environment limit differs from scoped first failure evidence$"):
+                        ci_summary.parse_summary(changed)
+                # No adjacent rotation capture gains the new capture-frame exception.
+                if step == "capture-frame":
+                    for other in ("rotation-start-portrait", "rotation-portrait-stable", "layout-landscape-multi"):
+                        changed = copy.deepcopy(proof)
+                        other_message = other + " did not stabilize within the "
+                        changed.update(classify_messages([other_message]), failure_messages=[other_message])
+                        with self.subTest(other=other), self.assertRaisesRegex(ci_summary.ContractError,
+                                "^environment limit: failure is not an eligible timing wait$"):
+                            validate_environment_limit(changed)
+
     def test_v5_functional_guards_and_scope_fail_closed(self):
         from ci_failure_diagnostics import (classify_messages, environment_limit_evidence,
             environment_failure_projection, validate_environment_limit, scan_diagnostic_json)

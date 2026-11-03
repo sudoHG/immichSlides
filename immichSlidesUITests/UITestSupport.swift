@@ -1699,8 +1699,7 @@ struct StableFrame {
             if newlyDeductedTapSeconds > .zero {
                 deadline.addTimeInterval(newlyDeductedTapSeconds)
                 totalDeductedTapSeconds = measuredTapSeconds
-                FirstFailureContext.endWait()
-                FirstFailureContext.beginWait(seconds: max(.zero, deadline.timeIntervalSinceNow))
+                FirstFailureContext.extendWait(by: newlyDeductedTapSeconds)
             }
             let capturedAt = Date()
             let captureStartedAt = ProcessInfo.processInfo.systemUptime

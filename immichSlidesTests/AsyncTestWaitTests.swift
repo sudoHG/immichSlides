@@ -4,6 +4,21 @@ import Testing
 @MainActor
 @Suite
 struct AsyncTestWaitTests {
+    @Test(arguments: [0.0, 10.0])
+    func `deducted preparation taps extend the receipt budget without restarting its elapsed clock`(
+        originalDeadlineSeconds: Double
+    ) {
+        var timeline = FirstFailureTimeline()
+        timeline.waitStarted(seconds: originalDeadlineSeconds, at: 100)
+        timeline.waitStarted(seconds: 2, at: 101)
+        timeline.waitReturned(at: 102)
+        timeline.extendWait(by: 3)
+        timeline.waitReturned(at: 113.2)
+        let timing = timeline.timing(at: 120)
+        #expect(timing["deadline_seconds"] as? Double == (originalDeadlineSeconds > 0 ? 13 : 0))
+        #expect(abs((timing["wait_elapsed_seconds"] as? Double ?? 0) - 13.2) < 0.0001)
+    }
+
     @Test(arguments: [
         "late-query", "expired-query", "late-action", "missing-outcome", "single-action", "shared-deadline", "probe"
     ])

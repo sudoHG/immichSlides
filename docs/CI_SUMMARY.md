@@ -1471,7 +1471,13 @@ before accepting a proof.
 `timing-wait` retains exactly one ordinary failure, its original first-failure
 projection and one unchanged case resource entry. The v5 projection adds
 `pre_event_idle` and `ax_root_acquisition` to the v2–v4 fields. All numbers retain
-the existing first-failure bounds and nulls. Unlike v1–v4, eligibility no longer
+the existing first-failure bounds and nulls. The optional v5 field
+`environment_limit.failure.autoplay` accepts only `on`, `off` or `unknown` and is
+bound to the existing `first_failure.state.autoplay` reading. The producer emits
+it only for the exact late-image Autoplay-Off preparation message in nightly
+strict; that rule requires `off`, while missing, `on` or `unknown` stays red.
+First-wake, rotation and other producer proof shapes are unchanged.
+Unlike v1–v4, eligibility no longer
 depends on allowlisted phase/class/step/element tuples: a timeout's incidental unrecognizable
 snapshot is not itself a failed photo-identity assertion. The class/step table
 below distinguishes a timeout from a functional result. The source must be
@@ -1493,9 +1499,9 @@ unknown target. These surface checks supplement every other timing/evidence gate
 | Existing failure class | Timing-wait interpretation in v5 | Functional/red boundary |
 | --- | --- | --- |
 | `navigation` | Availability/navigation waits at `query-element`, `select`, `focus`, `reveal-controls`, `mode-card`, `mode-continue`, `mode-departure`, `save-password-prompt`, `wait-scene`, `settings-readback` or `launch-app`. | Wrong/unexpected destination or target surface, dirty install container, connection-failure alert, forbidden back-button layout, lost live process and failed Next cursor advancement stay red, even with an expired prior wait. This includes late-image's `Next must be tappable twice right after entering the slideshow, before old image requests finish.` history-advance failure. |
-| `hidden_controls`, `focus` | The same steps, for control availability, reveal or focus arrival. | `hidden_controls` with a visible bar but missing target stays red. An assertion forbidding a second press is red. BLACK/BLANK stay red for both classes. |
-| `control_state` | Only `wait-scene` pause-readback timeouts: `After pausing, the control value must be play.` or `Album capture preparation must observe paused playback after one Pause.` | Other wrong state/value assertions, including the paused-during-transition contradiction, stay red. The reviewed Pause poll waits for readback for 4 seconds; its exhausted poll is a timeout. |
-| `timing_window` | `wait-scene` or `rotate`, for the existing `did not stabilize within the` prefixes and album stable-scene preparation timeout. | Early/late transitions, crossed evidence windows, invalid pacing and timing preconditions stay red. |
+| `hidden_controls`, `focus` | The same steps, for control availability, reveal or focus arrival, plus waiting for hidden controls for exactly `The control bar is not hidden yet; cannot verify the first wake.` That wait requires `control_bar: hidden` and a deadline at least the required 0.6-second hidden-stability period. | `hidden_controls` with a visible bar but missing target stays red. For the exact first-wake message, unknown/missing/visible bar readings or a positive deadline shorter than 0.6 seconds stay red. An assertion forbidding a second press is red. BLACK/BLANK stay red for both classes. |
+| `control_state` | `wait-scene` pause-readback timeouts: `After pausing, the control value must be play.` or `Album capture preparation must observe paused playback after one Pause.` Also exactly `Late image preparation must turn Autoplay off.` at `select` on `settings.playback.autoPlay.toggle`, on `playback-settings`, with the failure snapshot's Autoplay readback `off`. | Missing/unknown or `on` toggle readback stays red. Other wrong state/value assertions, including the paused-during-transition contradiction, stay red. The reviewed Pause poll waits for readback for 4 seconds; its exhausted poll is a timeout. |
+| `timing_window` | `wait-scene` or `rotate`, for the existing `did not stabilize within the` prefixes and album stable-scene preparation timeout. Also exactly `rotation-landscape-stable did not stabilize within the ` at `capture-frame` on `app-window`, with scene `MATCH`. | Other capture-frame prefixes, identity/crop failures, early/late transitions, crossed evidence windows, invalid pacing and timing preconditions stay red. |
 | `probe_readback` | `query-element` for unreadable Play/Pause before acting; album `wait-scene` settling with every existing gate fact, including a complete loaded photo and confirmed advance. | Wrong or empty probe values, incomplete evidence, no advance, changed layers without history advance and frozen-layer contradictions stay red. |
 | `interval_readback` | None. | Wrong interval/value is functional. |
 | `scene_identity` | None. | Wrong/unchanged photo, black/blank scene and pixel/content contradictions are functional. |
@@ -1510,6 +1516,34 @@ Case-wide median idle and maximum load cannot replace these samples. Missing,
 one-sided or high-idle samples remain red. Validator rejections remain red,
 including a validator failure accompanying an eligible XCTest message. Multiple
 ordinary failures have no per-failure timing receipt and remain red.
+
+The first-wake precondition throws the reviewed `Failure` type and records its
+original wait before App teardown; the zero-second immediate check cannot qualify.
+Only a bar already read as `hidden` can establish a starved hidden-stability wait;
+an unknown or visible bar cannot distinguish starvation from an auto-hide
+regression. Current Release receipts always read `control_bar` as `unknown`, so
+Release first-wake never qualifies as yellow. No Release probe is added.
+These exact-message rules apply on every device, configuration and fixture under
+Hogan's general starvation rule, within the existing hosted-nightly strict scope;
+the historical cases below are examples, not device/configuration/fixture limits.
+Only the exact late-image preparation message adds `autoplay` to its v5 failure
+projection, bound to the existing first-failure state; other retained proofs keep
+their shape. Stable-frame receipts preserve the original elapsed-clock origin
+when already-excluded native tap time extends the recorded budget. This fixes
+misleading tiny remaining deadlines without extending the actual wait.
+An initially exhausted zero budget stays zero after tap deductions and cannot
+establish a positive-deadline timeout.
+
+Historical public artifacts are not repaired: run 41452305443 has two bracketing
+idle-0% samples for iPad Release first-wake but lacks foreground/wait evidence and
+stays red. Run 41556382710 iPad Debug late-image fixture B/out-of-order has no
+failure-window samples and reads Autoplay `on`, so stays red despite case-wide
+idle 0%. Run 41404430280 iPhone Debug rotation fixture A has four bracketing idle-0%
+samples and scene `MATCH`; its 0.01255-second remaining receipt qualifies at the
+reader level only, with the corrected producer `NOT_VERIFIED`. The original
+`Stable frame wait` log's `timeoutSeconds` has not been established; an original
+nonpositive budget would remain zero with the corrected producer and stay red.
+Consecutive-yellow escalation still applies.
 
 `xctest-tool` requires no CPU samples or first-failure receipt: `failure` and
 `resources` are both null. Every original failure must be one of the reviewed

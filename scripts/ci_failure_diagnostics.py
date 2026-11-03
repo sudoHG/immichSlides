@@ -88,6 +88,8 @@ FAILURE_MESSAGES_FIELD = "failure_messages"
 MAX_FAILURE_MESSAGES = 16
 UNRECOGNIZED_FAILURE_MESSAGE = "[unrecognized XCTest failure]"
 ENVIRONMENT_IDLE_MAX_PERCENT = 5
+# Bound to AccessLifecycleIOSUITestsCalibration.hiddenControlStabilitySeconds by the source audit.
+FIRST_WAKE_HIDDEN_STABILITY_SECONDS = 0.6
 ENVIRONMENT_ALBUM_SETTLING_PHASES = frozenset({"transition", "incomingFromLoading"})
 # Retained v1/v2 UI waits keep their original interpretation.
 ENVIRONMENT_WAIT_STEPS = {
@@ -346,14 +348,23 @@ def environment_timing_v5(failure, failure_class, messages):
     eligible = (failure_class in {"navigation", "hidden_controls", "focus"}
         and step in {"query-element", "select", "focus", "reveal-controls", "mode-card", "mode-continue",
                      "mode-departure", "save-password-prompt", "wait-scene", "settings-readback", "launch-app"})
+    if message == "The control bar is not hidden yet; cannot verify the first wake.":
+        eligible = (eligible and failure.get("control_bar") == "hidden"
+            and failure["deadline_seconds"] is not None
+            and failure["deadline_seconds"] >= FIRST_WAKE_HIDDEN_STABILITY_SECONDS)
     if failure_class == "control_state":
         eligible = step == "wait-scene" and message in {
             "After pausing, the control value must be play.",
             "Album capture preparation must observe paused playback after one Pause."}
+        if message == "Late image preparation must turn Autoplay off.":
+            eligible = (step == "select" and failure["element"] == "settings.playback.autoPlay.toggle"
+                and failure.get("autoplay") == "off")
     elif failure_class == "timing_window":
         eligible = step in {"wait-scene", "rotate"} and (
             " did not stabilize within the " in message
             or message == "Album capture preparation must reach a stable scene before Pause.")
+        if message == "rotation-landscape-stable did not stabilize within the " and step == "capture-frame":
+            eligible = failure["element"] == "app-window" and failure["scene_status"] == "MATCH"
     elif failure_class == "probe_readback":
         eligible = (step == "query-element" and message == "Play/pause value must be readable before acting.")
         if message == "Album capture preparation must reach a complete paused scene within the playback capture budget.":
@@ -389,12 +400,16 @@ def validate_environment_limit_v5(proof):
              "pre_event_idle", "ax_root_acquisition"}
     if isinstance(failure, dict) and "gate" in failure:
         names.add("gate")
+    if isinstance(failure, dict) and "autoplay" in failure:
+        names.add("autoplay")
     fields(failure, names, "environment failure")
     receipt = unavailable_first_failure("xctest")
     for key in ("source", "step", "element", "action"):
         receipt[key] = failure[key]
     for key in ("app", "surface", "control_bar", "scene_status"):
         receipt["state"][key] = failure[key]
+    if "autoplay" in failure:
+        receipt["state"]["autoplay"] = failure["autoplay"]
     for key in ("wait_elapsed_seconds", "deadline_seconds", "action_duration_seconds"):
         receipt["timing"][key] = failure[key]
     receipt["native_activity_seconds"] = {key: failure.get(key) for key in NATIVE_ACTIVITY_FIELDS}
@@ -436,6 +451,9 @@ def environment_limit_evidence_v5(summary, entry, resources, *, runner_hosted):
         "failure_phase": entry.get("failure_phase"), "failure_class": entry.get("failure_class"),
         "failure": None if tool else environment_failure_projection(receipt, policy_version=5),
         "resources": None if tool else candidates[0]}
+    # This exact preparation timeout needs the existing toggle readback; old proofs stay unchanged.
+    if messages == ["Late image preparation must turn Autoplay off."]:
+        proof["failure"]["autoplay"] = receipt["state"]["autoplay"]
     validate_environment_limit(proof)
     return proof
 

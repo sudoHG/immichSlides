@@ -61,7 +61,9 @@ final class AccessLifecycleIOSUITests: XCTestCase {
         lastPlayAt = Date()
         XCTAssertTrue(waitUntil(timeout: TestWait.seconds(.product(4))) { self.playPauseState(playPause) == "pause" })
         XCTAssertThrowsError(try requireHiddenPlaybackControls(app: app, timeout: TestWait.seconds(.product(0))))
-        try wakeControlsWithoutSwitching(app: app)
+        try FirstFailureEvidence.preservingThrownFailure(self) {
+            try wakeControlsWithoutSwitching(app: app)
+        }
     }
 
     // Identity comes only from public fixture screenshots.

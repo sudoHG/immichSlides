@@ -480,6 +480,9 @@ extension AccessLifecycleIOSUITests {
 
     @MainActor
     func requireHiddenPlaybackControls(app: XCUIApplication, timeout: TimeInterval) throws {
+        FirstFailureContext.mark("wait-scene", element: "slideshow.control.settings.button")
+        FirstFailureContext.beginWait(seconds: timeout)
+        defer { FirstFailureContext.endWait() }
         var hiddenSince: Date?
         guard
             waitUntil(
@@ -497,12 +500,7 @@ extension AccessLifecycleIOSUITests {
                         >= AccessLifecycleIOSUITestsCalibration.hiddenControlStabilitySeconds
                 })
         else {
-            throw NSError(
-                domain: "WakePrecondition", code: 1,
-                userInfo: [
-                    NSLocalizedDescriptionKey: "The control bar is not hidden yet; cannot verify the first wake."
-                ]
-            )
+            throw Failure("The control bar is not hidden yet; cannot verify the first wake.")
         }
     }
 

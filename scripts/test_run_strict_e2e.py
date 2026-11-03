@@ -1852,6 +1852,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
             ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "The pause/background cases must be able to switch to single-photo mode.", "interval_setup", "hidden_controls"),
             ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "The display policy should offer single-photo mode.", "unknown", "hidden_controls"),
             ("immichSlidesUITests/AccessLifecycleIOSUITests+Settings.swift", "The display policy should offer single-photo mode.", "unknown", "hidden_controls"),
+            ("immichSlidesUITests/AccessLifecycleIOSUITests+Settings.swift", "The control bar is not hidden yet; cannot verify the first wake.", "hidden_controls", "hidden_controls"),
             ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "Must return to the playback page after settings.", "settings_navigation", "navigation"),
             ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "Failed to persist iPad watch sample diagnostics:", "continue_timing", "evidence_capture"),
             ("immichSlidesUITests/AccessLifecycleIOSUITests+Timing.swift", "First-half-window evidence after Continue crossed the window;", "continue_timing", "timing_window"),
@@ -2164,9 +2165,17 @@ class FailureDiagnosticsTests(unittest.TestCase):
                     self.assertIn('"' + prefix, (root / source).read_text())
                 expected = {"failure_phase": phase, "failure_class": kind}
                 # Match each wrapper to its public call site.
-                if source.endswith("/RotationUITests.swift"):
+                if (source.endswith("/RotationUITests.swift")
+                        or prefix == "The control bar is not hidden yet; cannot verify the first wake."):
                     wrappers = ('Failure(message: "', 'failed: caught error: "Failure(message: \\"',
                                 'failed: caught error: "Failure(message: "', 'Failure(message: \\"')
+                    if prefix == "The control bar is not hidden yet; cannot verify the first wake.":
+                        from ci_failure_diagnostics import FIRST_WAKE_HIDDEN_STABILITY_SECONDS
+                        calibration = (root / "immichSlidesUITests/AccessLifecycleIOSUITests.swift").read_text()
+                        stability = re.search(r'hiddenControlStabilitySeconds:\s*TimeInterval\s*=\s*'
+                            r'TestWait\.seconds\(\.product\(([0-9.]+)\)\)', calibration)
+                        self.assertIsNotNone(stability)
+                        self.assertEqual(float(stability[1]), FIRST_WAKE_HIDDEN_STABILITY_SECONDS)
                 elif prefix in failure_prefixes:
                     wrappers = ("failed - ",)
                 elif prefix == "Held response budget exhausted before release:":
