@@ -685,6 +685,9 @@ struct SlideShowViewIOS: View {
         resetAutoHideTimer()
     }
     private func onSettings() {
+        #if DEBUG
+        PlatformCompat.consumeInitialSettingsControlHoldForTesting()
+        #endif
         if AccessProtectionStore.shared.isEnabled {
             if AccessProtectionStore.shared.isRecoveryNeeded {
                 isAccessProtectionRecoveryAlertPresented = true
@@ -704,7 +707,9 @@ struct SlideShowViewIOS: View {
 
         guard !isPlaybackEntryHintVisible else { return }
         autoHideBarTask?.cancel()
+        autoHideBarTask = nil
         #if DEBUG
+        guard !PlatformCompat.shouldHoldControlsForInitialSettingsForTesting else { return }
         let delaySeconds =
             PlatformCompat.controlBarAutoHideDelaySecondsForTesting
             ?? PlaybackViewMetrics.controlBarAutoHideDelaySeconds
