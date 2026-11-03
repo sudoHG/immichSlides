@@ -1472,6 +1472,7 @@ rotation requires scene `MATCH`; no other capture prefix or identity/crop failur
 gains this exception. Stable-frame diagnostic elapsed time now retains its
 original origin while already-excluded native taps extend its recorded budget;
 the actual deadline, polling, pair interval and tap deductions are unchanged.
+An initially exhausted zero budget stays zero in the receipt.
 See the [v5 table and historical evidence](CI_SUMMARY.md#policy-v5-reader-preparation).
 
 Public-fixture strict/UI failures can publish one first-failure receipt per

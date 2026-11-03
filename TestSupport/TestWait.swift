@@ -42,8 +42,8 @@ struct FirstFailureTimeline {
     }
 
     mutating func extendWait(by seconds: TimeInterval) {
-        guard let active = activeWaits.popLast() else { return }
-        activeWaits.append((active.startedAt, active.deadlineSeconds + seconds))
+        guard let active = activeWaits.last, active.deadlineSeconds > 0 else { return }
+        activeWaits[activeWaits.count - 1] = (active.startedAt, active.deadlineSeconds + seconds)
         waitDeadlineSeconds = active.deadlineSeconds + seconds
     }
 

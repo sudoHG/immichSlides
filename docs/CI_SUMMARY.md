@@ -1518,6 +1518,8 @@ projection, bound to the existing first-failure state; other retained proofs kee
 their shape. Stable-frame receipts preserve the original elapsed-clock origin
 when already-excluded native tap time extends the recorded budget. This fixes
 misleading tiny remaining deadlines without extending the actual wait.
+An initially exhausted zero budget stays zero after tap deductions and cannot
+establish a positive-deadline timeout.
 
 Historical public artifacts are not repaired: run 41452305443 has two bracketing
 idle-0% samples for iPad Release first-wake but lacks foreground/wait evidence and
