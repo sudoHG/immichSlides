@@ -6,7 +6,8 @@ import XCTest
 @MainActor
 enum ReleaseLifecycleFunctionalCapture {
     static func exercise(
-        interval: TimeInterval, pause: (_ isMidpoint: Bool) throws -> Void, next: () throws -> Void,
+        interval: TimeInterval, pause: (_ isMidpoint: Bool) throws -> Void,
+        midpointPause: ((Date) throws -> Void)? = nil, next: () throws -> Void,
         resume: () throws -> Date, screenshot: () -> Data,
         persist: (Data, String) throws -> Void
     ) throws -> [[String: Any]] {
@@ -84,8 +85,13 @@ enum ReleaseLifecycleFunctionalCapture {
         try next()
         try record("timing-start", stable(excluding: initialIdentity.mark))
         let midpointContinueAt = try resume()
-        RunLoop.current.run(until: midpointContinueAt.addingTimeInterval(TestWait.seconds(.product(interval / 2))))
-        try pause(true)
+        let midpointAt = midpointContinueAt.addingTimeInterval(TestWait.seconds(.product(interval / 2)))
+        if let midpointPause {
+            try midpointPause(midpointAt)
+        } else {
+            RunLoop.current.run(until: midpointAt)
+            try pause(true)
+        }
         let beforePause = try capture(
             "before-pause",
             before: midpointContinueAt.addingTimeInterval(
@@ -123,6 +129,8 @@ enum ReleaseLifecycleFunctionalCapture {
 
 #if os(iOS)
 extension AccessLifecycleIOSUITests {
+    private var playPauseReadinessTimeoutSeconds: TimeInterval { TestWait.seconds(.product(2)) }
+
     @MainActor
     func playPauseButton(_ app: XCUIApplication) -> XCUIElement {
         app.buttons["slideshow.control.playPause.button"]
@@ -183,11 +191,11 @@ extension AccessLifecycleIOSUITests {
             guard Date() < deadline else { break }
             if let observation, observation.button != nil {
                 if readinessDeadline == nil {
-                    let end = Date().addingTimeInterval(TestWait.seconds(.product(2)))
+                    let end = Date().addingTimeInterval(playPauseReadinessTimeoutSeconds)
                     readinessDeadline = end
                     deadline = end
                     FirstFailureContext.endWait()
-                    FirstFailureContext.beginWait(seconds: TestWait.seconds(.product(2)))
+                    FirstFailureContext.beginWait(seconds: playPauseReadinessTimeoutSeconds)
                 }
                 // Snapshot geometry is readiness evidence; the single tap's state readback proves its effect.
                 if observation.isReady, !observation.hasSettingsNavigationEvidence {
@@ -232,9 +240,11 @@ extension AccessLifecycleIOSUITests {
         expected: String,
         shouldTapIfNeeded: Bool,
         message: String,
+        tapNotBefore: Date? = nil,
         file: StaticString = #filePath, line: UInt = #line
     ) throws -> Date {
         let observation = try preparePlayPause(app: app)
+        if let tapNotBefore { RunLoop.current.run(until: tapNotBefore) }
         var returnedAt = Date()
         if shouldTapIfNeeded && (observation.button?.value as? String)?.lowercased() != expected {
             returnedAt = try tapPreparedPlayPause(observation).returned
@@ -416,6 +426,14 @@ extension AccessLifecycleIOSUITests {
                     message: isMidpoint
                         ? "Must be paused after the midpoint."
                         : "Release lifecycle control: must be paused before establishing the timing anchor.")
+                self.requests.append("playback.pause")
+            },
+            midpointPause: { midpointAt in
+                // Prepare while the original photo is playing; issue the sole Pause at the same midpoint.
+                RunLoop.current.run(until: midpointAt.addingTimeInterval(-self.playPauseReadinessTimeoutSeconds))
+                try self.confirmPlayPauseState(
+                    app: app, expected: "play", shouldTapIfNeeded: true,
+                    message: "Must be paused after the midpoint.", tapNotBefore: midpointAt)
                 self.requests.append("playback.pause")
             },
             next: {
