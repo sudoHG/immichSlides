@@ -1564,17 +1564,22 @@ def normalized_xctest_failure(message):
 
 
 def public_app_timeline_failure_message(message):
-    """Retain fixed error sentences, never a private suffix or a dynamic event name."""
+    """Retain fixed timeline errors and bounded pixel statistics, never private text."""
     text = normalized_xctest_failure(message)
     prefix = "App timeline: "
     if text is None or not text.startswith(prefix):
         return None
     reason = text[len(prefix):].removesuffix('"')
+    pixel = re.fullmatch(
+        r"frozen photo pixels changed site=(?:frozen-reference|pause-hold) "
+        r"maximum_channel_difference=(0|[1-9][0-9]{0,2}) differing_pixel_count=(?:0|[1-9][0-9]{0,7})", reason)
+    if pixel is not None and int(pixel.group(1)) <= 255:
+        return prefix + reason
     return prefix + reason if reason in APP_TIMELINE_FAILURE_REASONS else APP_TIMELINE_FAILURE_REDACTED
 
 
 def public_xctest_failure_message(message, *, method):
-    """Publish only a reviewed sentence or the tvOS publication check's three booleans."""
+    """Publish only the reviewed per-method failure grammars."""
     if method in APP_TIMELINE_METHODS:
         return public_app_timeline_failure_message(message)
     if method != PUBLIC_FAILURE_MESSAGE_METHOD_BY_SUITE["tvos-flow"]:

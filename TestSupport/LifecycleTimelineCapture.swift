@@ -138,17 +138,23 @@ final class LifecycleTimelineCapture {
                         frozenReference = (state.frame, png, requested)
                         continue
                     }
+                    var pixelDiagnostic = ""
                     guard
                         try Self.frozenPhotoPixelsEqual(
                             reference.png, png, events: events, scene: state.scene, frame: state.frame,
                             request: reference.request, returned: returned,
+                            onDifferenceMeasured: { maximum, count in
+                                pixelDiagnostic = Self.pixelDiagnostic(
+                                    site: "frozen-reference", maximum: maximum, count: count)
+                            },
                             onToleranceApplied: { maximum in
                                 self.frozenPixelTolerances.append([
                                     "name": name + "-frozen", "maximum_channel_difference": maximum
                                 ])
                             })
                     else {
-                        throw LifecycleTimelineJudge.Failure("frozen photo pixels changed")
+                        throw LifecycleTimelineJudge.Failure(
+                            "frozen photo pixels changed", pixelDiagnostic: pixelDiagnostic)
                     }
                     mark = anchoredMark
                     try StrictE2EVisualEvidence.writeRequiredPNG(reference.png, name: name + "-frozen-reference")
@@ -211,17 +217,21 @@ final class LifecycleTimelineCapture {
         }
         _ = try captureTimelineContent("timeline-after-hold", expectedScene: nextScene.scene)
         let heldEndPNG = try Data(contentsOf: directory.appendingPathComponent("timeline-after-hold.png"))
+        var pixelDiagnostic = ""
         guard let heldPhotoRequest, let heldEnd = proofs.last?["return"] as? TimeInterval,
             try Self.frozenPhotoPixelsEqual(
                 heldPhotoPNG, heldEndPNG, events: readTimelineEvents(), scene: nextScene.scene,
                 frame: nextScene.frame, request: heldPhotoRequest, returned: heldEnd,
+                onDifferenceMeasured: { maximum, count in
+                    pixelDiagnostic = Self.pixelDiagnostic(site: "pause-hold", maximum: maximum, count: count)
+                },
                 onToleranceApplied: { maximum in
                     self.frozenPixelTolerances.append([
                         "name": "timeline-pause-hold", "maximum_channel_difference": maximum
                     ])
                 })
         else {
-            throw LifecycleTimelineJudge.Failure("frozen photo pixels changed")
+            throw LifecycleTimelineJudge.Failure("frozen photo pixels changed", pixelDiagnostic: pixelDiagnostic)
         }
         try prepareSIGSTOPIfRequested()
         try prepareFinalResume()
@@ -284,18 +294,36 @@ final class LifecycleTimelineCapture {
     static func frozenPhotoPixelsEqual(
         _ referencePNG: Data, _ candidatePNG: Data, events: [LifecycleTimelineEvent],
         scene: String, frame: String, request: TimeInterval, returned: TimeInterval,
+        onDifferenceMeasured: ((Int, Int) -> Void)? = nil,
         onToleranceApplied: ((Int) -> Void)? = nil
     ) throws -> Bool {
-        guard let reference = frozenPhotoPixels(referencePNG), let candidate = frozenPhotoPixels(candidatePNG) else {
-            return false
-        }
+        guard let reference = frozenPhotoPixels(referencePNG), let candidate = frozenPhotoPixels(candidatePNG)
+        else { return false }
         let isEqual = try LifecycleTimelineJudge.frozenPixelsEqual(
             reference, candidate, events: events, scene: scene, frame: frame, request: request, returned: returned)
+        if !isEqual, reference.count == candidate.count {
+            var maximum = 0
+            var differingPixels = 0
+            for offset in stride(from: 0, to: reference.count, by: 4) {
+                var pixelMaximum = 0
+                for channel in 0..<4 {
+                    pixelMaximum = max(
+                        pixelMaximum, abs(Int(reference[offset + channel]) - Int(candidate[offset + channel])))
+                }
+                maximum = max(maximum, pixelMaximum)
+                if pixelMaximum > 0 { differingPixels += 1 }
+            }
+            onDifferenceMeasured?(maximum, differingPixels)
+        }
         if isEqual, reference != candidate {
             let maximum = zip(reference, candidate).reduce(0) { max($0, abs(Int($1.0) - Int($1.1))) }
             onToleranceApplied?(maximum)
         }
         return isEqual
+    }
+
+    private static func pixelDiagnostic(site: String, maximum: Int, count: Int) -> String {
+        " site=\(site) maximum_channel_difference=\(maximum) differing_pixel_count=\(count)"
     }
 
     private static func hash(_ value: String) -> String { hash(Data(value.utf8)) }

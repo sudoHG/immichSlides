@@ -40,10 +40,22 @@ struct SceneLifecycleContractTests {
             let pixels = try frozenCapturePNG(
                 channelDifference: channelDifference, width: mutation == "differentLength" ? 22 : 20)
             var toleratedMaximum: Int?
+            var measuredMaximum: Int?
+            var measuredCount: Int?
             let isEqual = try LifecycleTimelineCapture.frozenPhotoPixelsEqual(
                 reference, mutation == "unreadablePNG" ? Data() : pixels,
                 events: events, scene: "photo", frame: "frame", request: 2, returned: 3,
+                onDifferenceMeasured: { maximum, count in
+                    measuredMaximum = maximum
+                    measuredCount = count
+                },
                 onToleranceApplied: { toleratedMaximum = $0 })
+            if ["exact", "oneLevel", "differentLength", "unreadablePNG"].contains(mutation) {
+                #expect(measuredMaximum == nil && measuredCount == nil)
+            } else {
+                #expect(measuredMaximum == Int(channelDifference))
+                #expect(measuredCount == 1)
+            }
             #expect(isEqual == ["exact", "oneLevel"].contains(mutation))
             #expect(toleratedMaximum == (mutation == "oneLevel" ? 1 : nil))
             #expect(mutation != "frozenFrameChanged")
@@ -58,7 +70,9 @@ struct SceneLifecycleContractTests {
         let pixel: [UInt8] = [100, 110, 120, 255]
         var pixels: [UInt8] = Array(repeating: pixel, count: width * height).flatMap { $0 }
         // The changed pixel lies inside the capture's central photo band.
-        pixels[(10 * width + 10) * 4] += channelDifference
+        // Different magnitudes make either single-channel maximum miss a rejected case.
+        pixels[(10 * width + 10) * 4] += channelDifference == 2 ? 1 : channelDifference
+        pixels[(10 * width + 10) * 4 + 1] += channelDifference == 2 ? 2 : 0
         let provider = try #require(CGDataProvider(data: Data(pixels) as CFData))
         let image = try #require(
             CGImage(

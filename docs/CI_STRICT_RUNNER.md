@@ -1761,7 +1761,15 @@ Only the two App-timeline methods and
 matches complete, code-defined error sentences after removing known XCTest wrappers;
 unrecognized reasons carrying the `App timeline: ` prefix, dynamic event names and added
 suffixes become `App timeline: unrecognized failure (redacted)`. Errors without that
-prefix supply no App-timeline message. The tvOS flow retains only the exact sentence
+prefix supply no App-timeline message.
+The frozen-pixel sentence additionally permits exactly
+`site=frozen-reference|pause-hold maximum_channel_difference=N differing_pixel_count=N`
+(one site value, maximum 0–255, count 0–99,999,999, canonical decimal integers).
+The count includes each pixel once when any RGBA channel differs. The exporter
+and both tracer consumers recheck this grammar; extra or malformed text is redacted.
+These statistics identify a comparison failure without changing its classification
+or red verdict, and contain no scene, frame, asset, path or pixel values.
+The tvOS flow retains only the exact sentence
 `The index probe must change after a playback action.` and its existing optional
 `advanceObserved=true|false stable=true|false referencesMatch=true|false` diagnostic.
 The three fields must all be present in that order, with no extra text; malformed

@@ -1367,12 +1367,12 @@ class FailureDiagnosticsTests(unittest.TestCase):
                 self.assertNotIn("PRIVATE_SENTINEL", (evidence / "official-tests.json").read_text())
 
     def test_app_timeline_failure_allowlist_matches_swift_failure_and_assertion_sentences(self):
-        from ci_failure_diagnostics import APP_TIMELINE_FAILURE_REASONS
+        from ci_failure_diagnostics import APP_TIMELINE_FAILURE_REASONS, public_app_timeline_failure_message
         literal = r'"(?:[^"\\]|\\.)*"'
         reasons = set()
         for name in ("LifecycleTimelineJudge", "LifecycleTimelineCapture"):
             source = (REPO_ROOT / "TestSupport" / (name + ".swift")).read_text()
-            for match in re.finditer(r'\bFailure\(\s*(' + literal + r')\s*([+)])', source):
+            for match in re.finditer(r'\bFailure\(\s*(' + literal + r')\s*([+,)])', source):
                 reason = json.loads(match.group(1))
                 if match.group(2) == "+":
                     self.assertEqual("unknown event ", reason, "only the dynamic unknown-event reason may be redacted")
@@ -1383,6 +1383,15 @@ class FailureDiagnosticsTests(unittest.TestCase):
             reasons.update(json.loads(match.group())[len("App timeline: "):]
                            for match in re.finditer(r'"App timeline: (?:[^"\\]|\\.)*"', source))
         self.assertSetEqual(reasons, APP_TIMELINE_FAILURE_REASONS)
+        capture = (REPO_ROOT / "TestSupport" / "LifecycleTimelineCapture.swift").read_text()
+        sites = set(re.findall(r'\bpixelDiagnostic\(\s*site:\s*"([^"]+)"', capture))
+        self.assertSetEqual(sites, {"frozen-reference", "pause-hold"})
+        format_match = re.search(r'\bfunc pixelDiagnostic\([^)]*\) -> String \{\s*(' + literal + r')', capture)
+        self.assertIsNotNone(format_match)
+        diagnostic = format_match.group(1)[1:-1].replace(r"\(site)", "pause-hold").replace(
+            r"\(maximum)", "1").replace(r"\(count)", "355162")
+        message = "App timeline: frozen photo pixels changed" + diagnostic
+        self.assertEqual(message, public_app_timeline_failure_message(message))
 
     def test_app_timeline_errors_survive_private_export_and_public_summary_without_changing_failure(self):
         from ci_summary import render_markdown, test_identity
@@ -1397,6 +1406,23 @@ class FailureDiagnosticsTests(unittest.TestCase):
             ("ios", "unknown event " + private, None),
             ("tvos", "missing required event", "missing required event"),
         ]
+        pixel_reason = "frozen photo pixels changed site=pause-hold maximum_channel_difference=1 differing_pixel_count=355162"
+        reference_reason = pixel_reason.replace("pause-hold", "frozen-reference")
+        cases.extend((platform, reason, expected) for platform in ("ios", "tvos") for reason, expected in (
+            (pixel_reason, pixel_reason), (reference_reason, reference_reason),
+            (pixel_reason.replace("=1 differing", "=255 differing"), pixel_reason.replace("=1 differing", "=255 differing")),
+            (pixel_reason.replace("=355162", "=99999999"), pixel_reason.replace("=355162", "=99999999")),
+            (pixel_reason + " " + private, None),
+            (pixel_reason.replace("pause-hold", private), None),
+            (pixel_reason.replace("pause-hold", "unknown-site"), None),
+            (pixel_reason.replace("=1 differing", "=256 differing"), None),
+            (pixel_reason.replace("=1 differing", "=-1 differing"), None),
+            (pixel_reason.replace("=1 differing", "=1.0 differing"), None),
+            (pixel_reason.replace("=355162", "=100000000"), None),
+            (pixel_reason.replace("=1 differing", "=01 differing"), None),
+            (pixel_reason.replace("=355162", "=0355162"), None),
+            (pixel_reason.replace("=355162", "=" + private), None),
+            (pixel_reason.replace(" differing_pixel_count=355162", ""), None)))
         with tempfile.TemporaryDirectory() as raw:
             for index, (platform, reason, expected_reason) in enumerate(cases):
                 with self.subTest(platform=platform, reason=reason):
@@ -1428,16 +1454,30 @@ class FailureDiagnosticsTests(unittest.TestCase):
                         official_methods=validate_case_export(evidence, platform, suite))
                     observed, status = evaluate_tracer([identity], [phase])
                     expected = "App timeline: " + expected_reason if expected_reason else redacted
+                    self.assertEqual(expected, phase["official_summary"].get("message"))
+                    self.assertEqual(expected, observed[0]["attempts"][0]["message"])
+                    # Both consumers must reject forged suffixes, even after the official export.
+                    summary_path = evidence / "official-summary.json"
+                    forged = json.loads(summary_path.read_text())
+                    forged["message"] = message
+                    summary_path.write_text(json.dumps(forged))
+                    self.assertEqual(expected, read_case_official(evidence, suite).get("message"))
+                    phase["official_summary"]["message"] = message
+                    observed, status = evaluate_tracer([identity], [phase])
                     self.assertEqual(expected, observed[0]["attempts"][0]["message"])
                     self.assertEqual(("failed", "failed", 65),
                         (status, observed[0]["outcome"], observed[0]["attempts"][0]["exit_code"]))
                     self.assertNotIn("environment_limit", observed[0])
+                    if reason.startswith("frozen photo pixels changed"):
+                        self.assertEqual(("continue_timing", "evidence_capture"),
+                            (observed[0]["failure_phase"], observed[0]["failure_class"]))
                     summary = valid_summary()
                     summary["run"].update(tier="strict", job="strict-tracer")
                     summary["population"].update(declared=[identity], compiled=[identity], observed=observed)
                     summary["status"] = status
                     markdown = render_markdown(summary)
                     self.assertIn(expected, markdown)
+                    summary_path.write_text(json.dumps(read_case_official(evidence, suite)))
                     exported = "".join(path.read_text() for path in evidence.glob("*.json")) + markdown
                     self.assertNotIn(private, exported)
             # Missing legacy details clear the prior message instead of fabricating a reason.
