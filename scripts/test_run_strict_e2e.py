@@ -2125,6 +2125,11 @@ class FailureDiagnosticsTests(unittest.TestCase):
             "No two distinct target-album photos were seen in one full four-frame candidate rotation; all candidate originals were kept.",
         }
         root = Path(__file__).resolve().parents[1]
+        self.assertRegex(
+            (root / "immichSlidesUITests/StrictE2EFilterIOSUITests.swift").read_text()
+                .split("func testFilterAlbumTargetMembers()", 1)[1].split("\n    //", 1)[0],
+            r"guard\s+pauseStableAlbumPlaybackIfNeeded\(\s*app:\s*app,\s*isFunctionalCapture:\s*true\s*\)\s+else\b",
+            "Filter-album Pause preparation must keep visual failures red.")
         for source, prefix, phase, kind in cases:
             with self.subTest(source=source, prefix=prefix):
                 if prefix.startswith("Visual ID failed history-"):

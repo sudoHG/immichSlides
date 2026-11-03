@@ -357,7 +357,7 @@ as the stable history anchor. The single Pause, four-second pause readback,
 history-count precondition and capture-time pixel/manifest proof remain unchanged.
 
 `UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE=1` enables the Debug manifest probes.
-Probe-only launches are `album-empty`, `journey-b`, `tvos-flow`, `ios-lifecycle-first-wake`,
+Probe-only launches are `album-empty`, `filter-album`, `journey-b`, `tvos-flow`, `ios-lifecycle-first-wake`,
 `p2-ipad-layout`,
 and `AccessLifecycleIOSUITests.prepareLaunch`, including its cold relaunches and
 `run_access_lifecycle_ios.py`'s `testAccessProtectionSettingsAndLifecycle`.
@@ -385,9 +385,19 @@ precedes the stable period, so the worst-case margin is about 1.95 s plus the re
 navigation time.
 Timeout sentences distinguish unreadable probes, an unchanged short target and
 an unconfirmed slope. No preparatory Next is issued.
-`filter-album` retains its original interval, launch environment and probe-free
-Pause preparation. Its first-capture race remains a follow-up blocked on the Swift
-multi-photo identity false negative; it does not gain a Swift identity-reader dependency.
+Debug `filter-album` retains its original interval and entry hint. Its existing 8 s
+Pause preparation now requires the App's frame-synchronized stable scene and complete
+visible manifest before the single Pause. All three captures use the existing 0.8 s
+minimum settle and 4.8 s total ceiling, shared by scene readiness, the unchanged
+full-resolution pixel pair, and a final scene observation. The `Date` deadline and
+`TestWait.until(.product(...))` enforce that ceiling; the shared default 60 s
+monotonic hang guard bounds queries without defining the capture budget.
+Captures retain the same paused layers, history, assets and publication across
+the PNG; subsequent frames also require an observed history advance or changed layers.
+No Swift public-photo reader is added: the Python slot validator still judges every
+PNG. A frozen transition cannot qualify merely because its pixels match. Filter-album
+scene/Pause failures use the existing functional `Visual ID failed ` diagnostics, so
+they remain red under v5. Other album/person diagnostics retain their existing prefixes.
 Product timing and film-like Pause semantics remain unchanged.
 For Debug `album-empty` and `filter-person`, the existing 8 s Pause-preparation window must prove a
 stable complete scene and an actionable Play/Pause target together before the
@@ -402,7 +412,7 @@ second screenshot requested at least 0.6 s after the first returns. A mismatch
 replaces the comparison baseline and samples again only within that same deadline;
 timeout fails instead of publishing an unsettled frame. The identical probe-free
 pixel check also runs for Release `album-empty` and `filter-person` (neither in the
-nightly matrix; NOT_RUN locally) and all `filter-album` captures,
+nightly matrix; NOT_RUN locally) and Release `filter-album` captures,
 with the same 0.8 s minimum settle and 4.8 s total budget. The public photo-identity
 validator remains mandatory: identical pixels alone cannot prove a valid scene.
 For `filter-person`, this replaces a fixed 0.8 s wait followed by up to 4 s of
@@ -449,11 +459,13 @@ still fails; neither the stable predicate nor the pixel/identity proof is relaxe
 A frozen transition still fails red as `control_action/control_state`.
 The stricter Pause-preparation wait's yellow-eligibility change is documented
 beside the allowlist in [CI summary](CI_SUMMARY.md#prepared-hosted-strict-environment-limits).
-For `filter-album`, widening its former 0.8 s fixed wait to at most 4.8 s is an
+For Release `filter-album`, widening its former 0.8 s fixed wait to at most 4.8 s is an
 approved relaxation of a test-only wait, not a product contract. Controls are
 revealed once before starting the 0.8 s settle floor and the following 4 s pixel
-window; revealing controls remains outside that capture budget, as on main.
-The scene probe can settle before the retained EXIF card finishes its separate
+window; revealing controls remains outside that capture budget. Debug uses
+`captureStableAlbumPlaybackPNG` with the scene gate described above.
+For Debug `album-empty` and `filter-person`, the scene probe can settle before
+the retained EXIF card finishes its separate
 fade; logical EXIF visibility does not prove that the old card's pixels are gone.
 The second capture also requires history to advance by one or different layer IDs.
 Post-Pause transitions get that capture budget to recover, including the designed
@@ -466,6 +478,9 @@ including a paused transition. History advance remains recorded across polls, so
 later failed snapshot cannot erase it. Navigation and probe-readback failures append
 history-advance, last layer-change, phase, paused and manifest-completeness facts
 after their reviewed prefixes. The pixel validator still decides photo identity.
+Debug `filter-album` instead reports incomplete-scene and Next-advance timeouts
+through `Visual ID failed ` as `visible_scene_capture/scene_identity`. Its frozen
+transition rejection retains the existing functional prefix.
 For `tvos-person`, the scene key also exposes the existing read-only SmartFill
 manifest, motion-frame summary and EXIF tone accessibility anchors. These clear
 anchors read existing state; they do not change photo rendering, transition clocks,
@@ -1391,6 +1406,19 @@ before the corresponding input-registration producer;
 Unrecognized prefixes, filenames and suffixes are refused rather than treated as public
 text. The grammar accepts no URLs, keys, server addresses, directory paths, private
 xcresult text or pixel arrays. It does not decode images or change a visual check.
+
+An incomplete palette run also reports the first uncompleted slot through the existing
+slot/axis grammar. If both axes reject that same slot, the existing `first_failure`
+validator projection records `axis: both`. Filter-album can populate its existing cached
+state and capture timing fields from `album-play-N-window.json` only when its PNG SHA-256
+matches the actual validator input and the finite observation/capture timestamps are
+ordered. Missing, malformed or stale windows remain unavailable; a previous capture is
+never reused. Scene status comes from the unchanged public pixel classifier, while
+paused/control/history facts come from the bracketed App snapshots. The validator never
+claims a live failure snapshot. The summary renders these bounded fields without a new
+public field, enum or message grammar. Full stable/loading/manifest labels remain in the
+local window evidence; the hosted first-failure package exports only its existing bounded
+receipt and normalized PNG, not the full window file.
 
 The existing sensitive-output scan also covers UI, unit, fixture and flaky outputs.
 On the strict path it validates the field in case evidence, P2 recordings and review packages.
