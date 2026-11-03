@@ -1365,6 +1365,10 @@ markers for evidence validation, cleanup/official export, sensitive scanning and
 private result finalization. On a nonzero child exit, the tracer publishes the
 last unfinished phase's fixed reason when XCTest passed; completed finalization,
 absent or unknown markers use `Strict runner failed after passing XCTest.`.
+The `contract` phase reason appears only when a hard kill prevents `finally`
+from printing the later markers. Caught or propagating validation exceptions
+still execute `finally`; completed finalization therefore uses the generic
+reason, alongside the existing validator/`CommandError` diagnostics.
 No exception text, command output or path is copied into this reason. These
 messages appear in the tracer's summary and job log; reporter rollups keep their
 existing attempt-reason redaction. Passing XCTest and

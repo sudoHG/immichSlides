@@ -785,7 +785,8 @@ class StrictE2ERunnerTestsCasesConfiguration:
                         published = "\n".join(call.args[0] for call in report.call_args_list)
                         for output in (log, published):
                             self.assertIn(f"{failed_step}_reset_exit=1; stderr_class={classification}", output)
-                            self.assertIn(f"{failed_step}_reset_retry_exit={retry_exit}; stderr_class=", output)
+                            retry_class = classification if retry_exit else "empty"
+                            self.assertIn(f"{failed_step}_reset_retry_exit={retry_exit}; stderr_class={retry_class}", output.splitlines())
                             self.assertNotIn("private", output)
                         expected = ["xcrun", "simctl", failed_step, "SIM-UDID", "reset", *(["all"] if failed_step == "privacy" else [])]
                         self.assertEqual([expected, expected], reset_calls)

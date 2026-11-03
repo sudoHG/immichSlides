@@ -459,6 +459,53 @@ from run_strict_e2e_test_p2_cases import StrictE2EP2RunnerTestsCases
 import run_strict_e2e as strict_runner
 
 class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
+    def test_truncated_diagnostic_receipt_rejection_does_not_crash_p2_finalization(self):
+        from ci_failure_diagnostics import scan_diagnostic_json, validate_diagnostic_fields
+        from test_ci_summary import bounded_diagnostics_receipt
+        from ci_summary import test_identity
+        from run_strict_ci_tracer import evaluate_tracer
+
+        receipt = bounded_diagnostics_receipt(resources=True)
+        receipt.update(truncated=True, collection_seconds={"preparation": None, "xcode": None, "fixture": None})
+        receipt["events"] = [dict(receipt["events"][1], state="started", elapsed_seconds=0, official_exports=None)]
+        receipt["events"][0]["sample"] = {"cpu_percent": None, "memory_free_bytes": None, "load_average": None,
+            "runner_hosted": True, "image_version": None, "processes": []}
+        receipt["case_resources"][0].update(truncated=True, first_failure_elapsed_seconds=None, failure_samples=[])
+        scan = strict_runner.write_sensitive_scan
+        for malformed in (False, True):
+            candidate = json.loads(json.dumps(receipt))
+            if malformed:
+                candidate["events"][0]["phase"] = []
+            with self.subTest(malformed=malformed), tempfile.TemporaryDirectory() as raw:
+                evidence = Path(raw) / "evidence"
+                def scan_manifest(directory, values, **kwargs):
+                    path = directory / "case-manifest.json"
+                    manifest = json.loads(path.read_text())
+                    manifest["bounded_diagnostics"] = candidate
+                    path.write_text(json.dumps(manifest))
+                    return scan(directory, values, **kwargs)
+                with mock.patch.object(strict_runner, "write_sensitive_scan", side_effect=scan_manifest):
+                    code, _, stderr, _ = self._run_p2_main(evidence, suite="p2-exif", platform="ios", model="iPhone 17e")
+                self.assertEqual(2 if malformed else 0, code, stderr)
+                result = json.loads((evidence / "sensitive-scan.json").read_text())
+                self.assertEqual("FAIL" if malformed else "PASS", result["result"])
+                self.assertEqual(["case-manifest.json"] if malformed else [], result["matched_files"])
+                official = json.loads((evidence / "official-summary.json").read_text())
+                self.assertEqual((1, 1, 0), tuple(official[key] for key in ("totalTestCount", "passedTests", "failedTests")))
+                identity = test_identity("strict", "p2-exif", suite="p2-exif", device="iphone", fixture="a",
+                                         configuration="Debug", scenario="normal")
+                observed, status = evaluate_tracer([identity], [{"identity": identity, "exit_code": code,
+                    "duration_seconds": 1, "official_summary": official, "p2_verdict": RAW_VERDICT,
+                    "log_present": True, "build_operations": 0, "products_unchanged": True}])
+                self.assertEqual("failed" if malformed else "unverified", status)
+                if malformed:
+                    self.assertEqual("Strict runner failed after passing XCTest.", observed[0]["attempts"][0]["reason"])
+                    self.assertTrue((evidence / "cleanup-failures.json").is_file())
+                    for validate, value in ((validate_diagnostic_fields, {"bounded_diagnostics": candidate}),
+                                            (scan_diagnostic_json, json.dumps({"bounded_diagnostics": candidate}).encode())):
+                        with self.assertRaisesRegex(ValueError, "^bounded diagnostic event: invalid phase$"):
+                            validate(value)
+
     def test_runner_publishes_continue_watch_from_failed_case_evidence_only(self):
         raw = {"frames": [{"request": 0, "captured": .1, "returned": .2, "photo_decoded_mean_luma": .6}],
                "samples": [], "control_bar_wake": None}

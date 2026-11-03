@@ -224,10 +224,14 @@ class StrictE2EP2RunnerTestsCases:
     def test_p2_main_runs_selected_method_and_only_reports_review_required(self) -> None:
         with tempfile.TemporaryDirectory() as raw_directory:
             evidence = Path(raw_directory) / "p2-exif-iphone"
-            exit_code, _stdout, stderr, mocks = self._run_p2_main(
+            exit_code, stdout, stderr, mocks = self._run_p2_main(
                 evidence, suite="p2-exif", platform="ios", model="iPhone 17 Pro"
             )
             self.assertEqual(exit_code, 0, stderr)
+            self.assertEqual([
+                "strict-post-test: contract", "strict-post-test: cleanup", "strict-post-test: sensitive-scan",
+                "strict-post-test: private-result-finalization", "strict-post-test: complete",
+            ], [line for line in stdout.splitlines() if line.startswith("strict-post-test: ")])
             manifest = json.loads((evidence / "case-manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(manifest["suite"], "p2-exif")
             self.assertEqual(manifest["source_dirty_paths"], [])
