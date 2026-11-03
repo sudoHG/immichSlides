@@ -707,6 +707,7 @@ struct SlideShowViewIOS: View {
 
         guard !isPlaybackEntryHintVisible else { return }
         autoHideBarTask?.cancel()
+        autoHideBarTask = nil
         #if DEBUG
         guard !PlatformCompat.shouldHoldControlsForInitialSettingsForTesting else { return }
         let delaySeconds =

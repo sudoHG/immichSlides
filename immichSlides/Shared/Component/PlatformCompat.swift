@@ -45,7 +45,7 @@ enum PlatformCompat {
 
     @MainActor private static var didConsumeInitialSettingsControlHoldForTesting = false
 
-    /// Release the launch-only hold at the real Settings action, before any playback evidence is captured.
+    /// Whether the explicit launch-only hold still applies to initial Settings navigation.
     @MainActor static var shouldHoldControlsForInitialSettingsForTesting: Bool {
         ProcessInfo.processInfo.environment["UI_TEST_HOLD_CONTROLS_UNTIL_INITIAL_SETTINGS"] == "1"
             && !didConsumeInitialSettingsControlHoldForTesting

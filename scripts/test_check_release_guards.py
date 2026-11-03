@@ -117,6 +117,8 @@ class RuleTests(unittest.TestCase):
             "VisualAuditPreparation", "isAlbumVisualAuditReady", "isPeopleVisualAuditReady",
             "isFilterSummaryVisualAuditReady", "isFilterEditorVisualAuditReady", "shouldExposeUITestReadinessMarkers",
             "shouldResetStateForTesting", "controlBarAutoHideDelaySecondsForTesting",
+            "shouldHoldControlsForInitialSettingsForTesting", "consumeInitialSettingsControlHoldForTesting",
+            "didConsumeInitialSettingsControlHoldForTesting",
             "playbackIntervalSecondsForTesting",
             "visionAuditTriggerKey", "visionFaceAuditCandidateURLs", "makeQADebugSummary",
             "rejectedLayoutDiagnostic", "recordRejectedLayoutDiagnostic", "maximumRejectedLayoutSummar",
@@ -134,6 +136,7 @@ class RuleTests(unittest.TestCase):
             "UI_TEST_PREPARE_FILTER_SUMMARY_VISUAL_SELECTIONS", "UI_TEST_PREPARE_FILTER_EDITOR_VISUAL_SELECTIONS",
             "UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT", "UI_TEST_DISABLE_DEBUG_FILL_APIKEY_BUTTON",
             "UI_TEST_CONTROL_BAR_AUTO_HIDE_SECONDS",
+            "UI_TEST_HOLD_CONTROLS_UNTIL_INITIAL_SETTINGS",
             "UI_TEST_PLAYBACK_INTERVAL_SECONDS",
             "UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE", "UI_TEST_RESET_STATE",
         )

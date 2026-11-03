@@ -519,7 +519,7 @@ extension FilterSummaryIOSVisualUITests {
                 guard Date() < deadline else { break }
                 if let observation, observation.hasPlaybackMarker, !observation.hasSettingsNavigationEvidence {
                     // Auto-hidden controls do not mean that Back failed to reach playback.
-                    assertReturnedPlaybackControls(app: app)
+                    assertReturnedPlaybackControls(app: app, timing: timing)
                     return
                 }
                 RunLoop.current.run(
@@ -534,17 +534,18 @@ extension FilterSummaryIOSVisualUITests {
             }
         }
 
-        assertReturnedPlaybackControls(app: app)
+        assertReturnedPlaybackControls(app: app, timing: timing)
     }
 
-    private func assertReturnedPlaybackControls(app: XCUIApplication) {
+    private func assertReturnedPlaybackControls(app: XCUIApplication, timing: SlideshowControlBarTiming) {
+        var timeoutDiagnostic = "none"
         XCTAssertTrue(
             app.refreshSlideshowControlBarButton(
                 identifier: "slideshow.control.settings.button",
                 timeout: FilterSummaryIOSVisualUITestsWaitTiming.elementAppearanceTimeoutSeconds,
                 pollSeconds: FilterSummaryIOSVisualUITestsWaitTiming.readbackPollSeconds,
-                onTimeout: { _ in }),
-            "Could not return from settings to the playback page"
+                onTimeout: { timeoutDiagnostic = $0 }),
+            "Could not return from settings to the playback page (return=\(timing.diagnostic), refresh=\(timeoutDiagnostic))"
         )
     }
 
