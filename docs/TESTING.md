@@ -382,6 +382,21 @@ covers a wake re-showing the bar, discarding prepared next, then Next. That path
 remains in the non-opted SmartFill manual-lifecycle, StrictE2E Filter and
 AccessLifecycle Navigation tests.
 
+`testIOSExifAlbumDiagnosticScreenshots` instead explicitly launches with
+`UI_TEST_HOLD_CONTROLS_UNTIL_INITIAL_SETTINGS=1`. In Debug iOS only, this holds
+the initial playback controls through delayed native delivery of the first
+Settings tap. The real Settings action consumes the hold once per App process;
+returning from Settings, recreating the playback view or waking controls cannot
+rearm it. Playback evidence therefore retains the product's eight-second
+auto-hide, including every diagnostic screenshot and Next action. The launch
+key, hold state and consumption API are absent from Release. No shared launch
+default, response window or tap count changes.
+The diagnostic return helper recognizes playback from its App marker and absence
+of Settings navigation in one snapshot, then refreshes controls once before
+capture. It no longer sends Back merely because the returned playback bar has
+already hidden. The three two-second return observations and final five-second
+control preparation retain their existing bounds.
+
 The separate strict `pause-window` Play/Pause preparation starts its existing
 4-second readiness observation after its single canvas wake returns. Native tap
 delivery, including XCTest's post-event idle wait, cannot consume that observation before

@@ -511,15 +511,22 @@ extension FilterSummaryIOSVisualUITests {
 
     @MainActor
     func returnToSlideShowFromSettings(app: XCUIApplication) {
-
+        var timing = SlideshowControlBarTiming()
         for _ in 0..<3 {
-            if app.buttons["slideshow.control.settings.button"].waitForPublicElement(
-                "slideshow.control.settings.button",
-                timeout: FilterSummaryIOSVisualUITestsWaitTiming.readbackTimeoutSeconds)
-            {
-                return
+            let deadline = Date().addingTimeInterval(FilterSummaryIOSVisualUITestsWaitTiming.readbackTimeoutSeconds)
+            while Date() < deadline {
+                let observation = timing.observe(app: app, identifier: "slideshow.control.settings.button")
+                guard Date() < deadline else { break }
+                if let observation, observation.hasPlaybackMarker, !observation.hasSettingsNavigationEvidence {
+                    // Auto-hidden controls do not mean that Back failed to reach playback.
+                    assertReturnedPlaybackControls(app: app)
+                    return
+                }
+                RunLoop.current.run(
+                    until: min(
+                        deadline,
+                        Date().addingTimeInterval(FilterSummaryIOSVisualUITestsWaitTiming.readbackPollSeconds)))
             }
-
             let backButton = app.navigationBars.buttons.firstMatch
             if backButton.exists && backButton.isHittable {
                 backButton.tapForFailureEvidence()
@@ -527,10 +534,16 @@ extension FilterSummaryIOSVisualUITests {
             }
         }
 
+        assertReturnedPlaybackControls(app: app)
+    }
+
+    private func assertReturnedPlaybackControls(app: XCUIApplication) {
         XCTAssertTrue(
-            app.buttons["slideshow.control.settings.button"].waitForPublicElement(
-                "slideshow.control.settings.button",
-                timeout: FilterSummaryIOSVisualUITestsWaitTiming.elementAppearanceTimeoutSeconds),
+            app.refreshSlideshowControlBarButton(
+                identifier: "slideshow.control.settings.button",
+                timeout: FilterSummaryIOSVisualUITestsWaitTiming.elementAppearanceTimeoutSeconds,
+                pollSeconds: FilterSummaryIOSVisualUITestsWaitTiming.readbackPollSeconds,
+                onTimeout: { _ in }),
             "Could not return from settings to the playback page"
         )
     }

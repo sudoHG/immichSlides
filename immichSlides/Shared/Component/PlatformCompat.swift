@@ -43,6 +43,18 @@ enum PlatformCompat {
         return seconds
     }
 
+    @MainActor private static var didConsumeInitialSettingsControlHoldForTesting = false
+
+    /// Release the launch-only hold at the real Settings action, before any playback evidence is captured.
+    @MainActor static var shouldHoldControlsForInitialSettingsForTesting: Bool {
+        ProcessInfo.processInfo.environment["UI_TEST_HOLD_CONTROLS_UNTIL_INITIAL_SETTINGS"] == "1"
+            && !didConsumeInitialSettingsControlHoldForTesting
+    }
+
+    @MainActor static func consumeInitialSettingsControlHoldForTesting() {
+        didConsumeInitialSettingsControlHoldForTesting = true
+    }
+
     /// Seed a supported product interval before playback without navigating through Settings.
     static var playbackIntervalSecondsForTesting: Int? {
         guard let rawSeconds = ProcessInfo.processInfo.environment["UI_TEST_PLAYBACK_INTERVAL_SECONDS"],
