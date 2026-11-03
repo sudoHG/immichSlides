@@ -88,6 +88,8 @@ FAILURE_MESSAGES_FIELD = "failure_messages"
 MAX_FAILURE_MESSAGES = 16
 UNRECOGNIZED_FAILURE_MESSAGE = "[unrecognized XCTest failure]"
 ENVIRONMENT_IDLE_MAX_PERCENT = 5
+# Bound to AccessLifecycleIOSUITestsCalibration.hiddenControlStabilitySeconds by the source audit.
+FIRST_WAKE_HIDDEN_STABILITY_SECONDS = 0.6
 ENVIRONMENT_ALBUM_SETTLING_PHASES = frozenset({"transition", "incomingFromLoading"})
 # Retained v1/v2 UI waits keep their original interpretation.
 ENVIRONMENT_WAIT_STEPS = {
@@ -346,6 +348,10 @@ def environment_timing_v5(failure, failure_class, messages):
     eligible = (failure_class in {"navigation", "hidden_controls", "focus"}
         and step in {"query-element", "select", "focus", "reveal-controls", "mode-card", "mode-continue",
                      "mode-departure", "save-password-prompt", "wait-scene", "settings-readback", "launch-app"})
+    if message == "The control bar is not hidden yet; cannot verify the first wake.":
+        eligible = (eligible and failure.get("control_bar") == "hidden"
+            and failure["deadline_seconds"] is not None
+            and failure["deadline_seconds"] >= FIRST_WAKE_HIDDEN_STABILITY_SECONDS)
     if failure_class == "control_state":
         eligible = step == "wait-scene" and message in {
             "After pausing, the control value must be play.",

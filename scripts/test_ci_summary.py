@@ -281,7 +281,21 @@ class SummaryContractTests(unittest.TestCase):
                     negatives += [("scene_status", "UNRECOGNIZABLE"), ("scene_status", "TRANSITION"),
                         ("step", "history-readback"), ("element", "simulator")]
                 else:
-                    negatives += [("control_bar", "visible")]
+                    negatives += [("control_bar", "visible"), ("control_bar", "unknown"),
+                        ("deadline_seconds", 0.59)]
+                    boundary = copy.deepcopy(summary)
+                    boundary_row = boundary["population"]["observed"][0]
+                    boundary_row["first_failure"]["timing"]["deadline_seconds"] = 0.6
+                    boundary_proof = environment_limit_evidence(boundary, boundary_row, [resource],
+                        runner_hosted=True, policy_version=5)
+                    self.assertIsNotNone(boundary_proof)
+                    boundary_row["environment_limit"] = boundary_row["attempts"][0]["environment_limit"] = boundary_proof
+                    ci_summary.parse_summary(boundary)
+                    missing = copy.deepcopy(summary)
+                    missing_row = missing["population"]["observed"][0]
+                    missing_row["first_failure"]["state"].pop("control_bar")
+                    self.assertIsNone(environment_limit_evidence(missing, missing_row, [resource],
+                        runner_hosted=True, policy_version=5))
                 for field, value in negatives:
                     changed = copy.deepcopy(proof)
                     changed["failure"][field] = value

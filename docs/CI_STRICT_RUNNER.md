@@ -1466,7 +1466,13 @@ Three reviewed waits use the same exhausted-deadline and failure-window starvati
 gate: first-wake's hidden-control precondition (now a `Failure`, recorded before
 App teardown), late-image's exact Autoplay-Off preparation timeout at `select`,
 and the exact landscape rotation stabilization prefix at `capture-frame` on
-`app-window`. Late-image additionally requires the existing failure snapshot's
+`app-window`. First-wake additionally requires an explicit `hidden` control-bar
+reading and a deadline at least the 0.6-second hidden-stability period; unknown,
+missing or visible readings and shorter positive deadlines stay red. Current
+Release receipts always read `unknown`, so Release first-wake cannot turn yellow;
+no Release probe is added. These exact-message rules apply across every device,
+configuration and fixture within hosted-nightly strict scope.
+Late-image additionally requires the existing failure snapshot's
 toggle readback `off`; `on`, unknown or missing evidence stays red. Landscape
 rotation requires scene `MATCH`; no other capture prefix or identity/crop failure
 gains this exception. Stable-frame diagnostic elapsed time now retains its

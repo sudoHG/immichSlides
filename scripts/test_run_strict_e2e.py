@@ -2169,6 +2169,13 @@ class FailureDiagnosticsTests(unittest.TestCase):
                         or prefix == "The control bar is not hidden yet; cannot verify the first wake."):
                     wrappers = ('Failure(message: "', 'failed: caught error: "Failure(message: \\"',
                                 'failed: caught error: "Failure(message: "', 'Failure(message: \\"')
+                    if prefix == "The control bar is not hidden yet; cannot verify the first wake.":
+                        from ci_failure_diagnostics import FIRST_WAKE_HIDDEN_STABILITY_SECONDS
+                        calibration = (root / "immichSlidesUITests/AccessLifecycleIOSUITests.swift").read_text()
+                        stability = re.search(r'hiddenControlStabilitySeconds:\s*TimeInterval\s*=\s*'
+                            r'TestWait\.seconds\(\.product\(([0-9.]+)\)\)', calibration)
+                        self.assertIsNotNone(stability)
+                        self.assertEqual(float(stability[1]), FIRST_WAKE_HIDDEN_STABILITY_SECONDS)
                 elif prefix in failure_prefixes:
                     wrappers = ("failed - ",)
                 elif prefix == "Held response budget exhausted before release:":
