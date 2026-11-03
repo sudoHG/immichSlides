@@ -319,6 +319,10 @@ def run_runner(command, repo_root, log_path, *, timeout_seconds, truncation_seen
                     members=members, truncated=truncated) from None
             log.seek(offset)
             lines = log.read().splitlines()
+            for line in lines:
+                if re.fullmatch(r"(?:keychain|privacy)_reset(?:_retry)?_exit=-?(?:0|[1-9][0-9]{0,2}); "
+                                r"stderr_class=(?:empty|service-unavailable|device-unavailable|permission-denied|posix-error|simulator-error|unclassified)", line):
+                    print(line, file=sys.stderr, flush=True)
             phases = [line.removeprefix(POST_TEST_PHASE_PREFIX) for line in lines if line.startswith(POST_TEST_PHASE_PREFIX)]
             reason = POST_TEST_FAILURE_REASONS.get(phases[-1]) if phases else None
             if code and reason is not None and failure_report is not None:

@@ -6167,20 +6167,32 @@ raise SystemExit(65)
         import ci_execution_diagnostics as diagnostics
         from types import SimpleNamespace
         line = "bounded-diagnostics truncated: io-timeout"
+        reset_lines = ["keychain_reset_exit=1; stderr_class=posix-error",
+                       "keychain_reset_retry_exit=0; stderr_class=empty",
+                       "privacy_reset_exit=1; stderr_class=service-unavailable",
+                       "privacy_reset_exit=1; stderr_class=device-unavailable",
+                       "privacy_reset_exit=1; stderr_class=permission-denied",
+                       "privacy_reset_exit=1; stderr_class=simulator-error",
+                       "privacy_reset_retry_exit=1; stderr_class=unclassified"]
         for rejected in ("private-input", "event-cap", "bounded-diagnostics truncated: private-input /private/path",
                          line + " private-input"):
             with self.subTest(rejected=rejected), tempfile.TemporaryDirectory() as raw:
                 def spawn(*args, **kwargs):
-                    kwargs["stdout"].write(rejected + "\n" + line + "\nbounded-diagnostics truncated: event-cap\n")
+                    kwargs["stdout"].write(rejected + "\n" + line + "\nbounded-diagnostics truncated: event-cap\n"
+                        + "\n".join(reset_lines) + "\nprivacy_reset_exit=1; stderr_class=unclassified /private/path\n"
+                        + "privacy_reset_exit=private-input; stderr_class=empty\n")
                     kwargs["stdout"].flush()
                     return SimpleNamespace(pid=42, wait=lambda **kwargs: 65)
+                stderr = io.StringIO()
                 with mock.patch.object(tracer.subprocess, "Popen", side_effect=spawn), \
                         mock.patch.object(tracer, "stop_group"), \
                         mock.patch.object(tracer, "group_has_live_members", return_value=False), \
+                        mock.patch.object(tracer.sys, "stderr", stderr), \
                         mock.patch.object(diagnostics.threading, "Thread", side_effect=lambda *, target, daemon: SimpleNamespace(start=target)), \
                         mock.patch.object(diagnostics.os, "write") as write:
                     self.assertEqual(65, tracer.run_runner(["unused"], Path(raw), Path(raw) / "runner.log", timeout_seconds=2))
                 write.assert_called_once_with(2, (line + "\n").encode("ascii"))
+                self.assertEqual(reset_lines, stderr.getvalue().splitlines())
 
         for stage, expected in (("contract", "Strict post-test evidence validation failed."),
                 ("cleanup", "Strict post-test cleanup or official export failed."),
