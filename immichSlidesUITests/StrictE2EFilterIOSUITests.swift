@@ -33,7 +33,6 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         selectAlbum(app: app, albumID: albumID)
         returnFromAlbumFilter(app: app)
         startFilteredPlayback(app: app)
-        print("Album capture checkpoint: before-pause")
         guard pauseStableAlbumPlaybackIfNeeded(app: app, isFunctionalCapture: true) else { return }
 
         let firstScene = try captureStableAlbumPlaybackPNG(app: app, name: "album-play-1", isFunctionalCapture: true)

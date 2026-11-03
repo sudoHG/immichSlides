@@ -389,8 +389,10 @@ Debug `filter-album` retains its original interval and entry hint. Its existing 
 Pause preparation now requires the App's frame-synchronized stable scene and complete
 visible manifest before the single Pause. All three captures use the existing 0.8 s
 minimum settle and 4.8 s total ceiling, shared by scene readiness, the unchanged
-full-resolution pixel pair, and a final scene observation through one monotonic hang
-guard. Captures retain the same paused layers, history, assets and publication across
+full-resolution pixel pair, and a final scene observation. The `Date` deadline and
+`TestWait.until(.product(...))` enforce that ceiling; the shared default 60 s
+monotonic hang guard bounds queries without defining the capture budget.
+Captures retain the same paused layers, history, assets and publication across
 the PNG; subsequent frames also require an observed history advance or changed layers.
 No Swift public-photo reader is added: the Python slot validator still judges every
 PNG. A frozen transition cannot qualify merely because its pixels match. Filter-album
@@ -410,7 +412,7 @@ second screenshot requested at least 0.6 s after the first returns. A mismatch
 replaces the comparison baseline and samples again only within that same deadline;
 timeout fails instead of publishing an unsettled frame. The identical probe-free
 pixel check also runs for Release `album-empty` and `filter-person` (neither in the
-nightly matrix; NOT_RUN locally) and all `filter-album` captures,
+nightly matrix; NOT_RUN locally) and Release `filter-album` captures,
 with the same 0.8 s minimum settle and 4.8 s total budget. The public photo-identity
 validator remains mandatory: identical pixels alone cannot prove a valid scene.
 For `filter-person`, this replaces a fixed 0.8 s wait followed by up to 4 s of
@@ -457,11 +459,13 @@ still fails; neither the stable predicate nor the pixel/identity proof is relaxe
 A frozen transition still fails red as `control_action/control_state`.
 The stricter Pause-preparation wait's yellow-eligibility change is documented
 beside the allowlist in [CI summary](CI_SUMMARY.md#prepared-hosted-strict-environment-limits).
-For `filter-album`, widening its former 0.8 s fixed wait to at most 4.8 s is an
+For Release `filter-album`, widening its former 0.8 s fixed wait to at most 4.8 s is an
 approved relaxation of a test-only wait, not a product contract. Controls are
 revealed once before starting the 0.8 s settle floor and the following 4 s pixel
-window; revealing controls remains outside that capture budget, as on main.
-The scene probe can settle before the retained EXIF card finishes its separate
+window; revealing controls remains outside that capture budget. Debug uses
+`captureStableAlbumPlaybackPNG` with the scene gate described above.
+For Debug `album-empty` and `filter-person`, the scene probe can settle before
+the retained EXIF card finishes its separate
 fade; logical EXIF visibility does not prove that the old card's pixels are gone.
 The second capture also requires history to advance by one or different layer IDs.
 Post-Pause transitions get that capture budget to recover, including the designed
@@ -474,6 +478,9 @@ including a paused transition. History advance remains recorded across polls, so
 later failed snapshot cannot erase it. Navigation and probe-readback failures append
 history-advance, last layer-change, phase, paused and manifest-completeness facts
 after their reviewed prefixes. The pixel validator still decides photo identity.
+Debug `filter-album` instead reports incomplete-scene and Next-advance timeouts
+through `Visual ID failed ` as `visible_scene_capture/scene_identity`. Its frozen
+transition rejection retains the existing functional prefix.
 For `tvos-person`, the scene key also exposes the existing read-only SmartFill
 manifest, motion-frame summary and EXIF tone accessibility anchors. These clear
 anchors read existing state; they do not change photo rendering, transition clocks,

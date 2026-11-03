@@ -269,7 +269,7 @@ extension StrictE2EFilterIOSUITests {
                 return false
             }
             before = self.albumSceneObservation(
-                snapshots: controls.snapshots, usesFrameSynchronizedRender: isFunctionalCapture)
+                snapshots: controls.snapshots, shouldUseFrameSynchronizedRender: isFunctionalCapture)
             guard Date() < deadline else { return false }
             guard controls.isReady else {
                 if !didWake, !controls.hasSettingsNavigationEvidence {
@@ -287,7 +287,7 @@ extension StrictE2EFilterIOSUITests {
             }
             let snapshotReturnedAt = Date().timeIntervalSince1970
             before = self.albumSceneObservation(
-                snapshots: stableControls.snapshots, usesFrameSynchronizedRender: isFunctionalCapture)
+                snapshots: stableControls.snapshots, shouldUseFrameSynchronizedRender: isFunctionalCapture)
             before["stable_snapshot_requested_unix"] = String(snapshotRequestedAt)
             before["stable_snapshot_returned_unix"] = String(snapshotReturnedAt)
             guard stableControls.isReady, StrictE2ESceneCapture.isStableWindow(before),
@@ -328,7 +328,7 @@ extension StrictE2EFilterIOSUITests {
                 return false
             }
             after = self.albumSceneObservation(
-                snapshots: controls.snapshots, usesFrameSynchronizedRender: isFunctionalCapture)
+                snapshots: controls.snapshots, shouldUseFrameSynchronizedRender: isFunctionalCapture)
             return SharedSceneEvidenceManifest.parseKeyValueFields(after["render"] ?? "")["playbackPaused"] == "true"
                 && after["playPauseValue"] == "play"
         }
@@ -358,7 +358,6 @@ extension StrictE2EFilterIOSUITests {
         app: XCUIApplication, name: String, previousScene: [String: String]? = nil, isFunctionalCapture: Bool = false
     ) throws -> [String: String] {
         #if DEBUG
-        print("Album capture checkpoint: before-capture \(name)")
         // Retained EXIF can still fade after the scene probe settles; preserve the old minimum settle time.
         let windowStartedAt = Date()
         let settleDeadline = windowStartedAt.addingTimeInterval(TestWait.seconds(.product(0.8)))
@@ -372,7 +371,7 @@ extension StrictE2EFilterIOSUITests {
         FirstFailureContext.mark("wait-scene", element: "slideshow.scenePresentation.contract.summary")
         let observeScene: () -> Bool = {
             guard Date() >= settleDeadline else { return false }
-            before = self.albumSceneObservation(app: app, usesFrameSynchronizedRender: isFunctionalCapture)
+            before = self.albumSceneObservation(app: app, shouldUseFrameSynchronizedRender: isFunctionalCapture)
             let render = SharedSceneEvidenceManifest.parseKeyValueFields(before["render"] ?? "")
             didAdvanceHistory =
                 Int(previousRender["historyCount"] ?? "").flatMap { previousCount in
@@ -434,7 +433,7 @@ extension StrictE2EFilterIOSUITests {
         if Date() < deadline {
             after =
                 captureGuard.transaction().query {
-                    self.albumSceneObservation(app: app, usesFrameSynchronizedRender: isFunctionalCapture)
+                    self.albumSceneObservation(app: app, shouldUseFrameSynchronizedRender: isFunctionalCapture)
                 } ?? [:]
         }
         let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
@@ -493,23 +492,23 @@ extension StrictE2EFilterIOSUITests {
 
     @MainActor
     private func albumSceneObservation(
-        app: XCUIApplication, usesFrameSynchronizedRender: Bool = false
+        app: XCUIApplication, shouldUseFrameSynchronizedRender: Bool = false
     ) -> [String: String] {
         var didSnapshotFail = false
         let snapshots = app.evidenceSnapshotsByIdentifier(onSnapshotFailure: { _ in didSnapshotFail = true })
         return albumSceneObservation(
             snapshots: snapshots, didSnapshotFail: didSnapshotFail,
-            usesFrameSynchronizedRender: usesFrameSynchronizedRender)
+            shouldUseFrameSynchronizedRender: shouldUseFrameSynchronizedRender)
     }
 
     private func albumSceneObservation(
         snapshots: [String: XCUIElementSnapshot], didSnapshotFail: Bool = false,
-        usesFrameSynchronizedRender: Bool = false
+        shouldUseFrameSynchronizedRender: Bool = false
     ) -> [String: String] {
         return [
             "manifest": snapshots["slideshow.smartfill.currentManifest.flag"]?.label ?? "",
             "render": snapshots[
-                usesFrameSynchronizedRender
+                shouldUseFrameSynchronizedRender
                     ? "slideshow.scenePresentation.frameSynchronized.summary"
                     : "slideshow.scenePresentation.contract.summary"
             ]?.label ?? "",
