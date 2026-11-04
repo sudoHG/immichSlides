@@ -120,6 +120,8 @@ class RuleTests(unittest.TestCase):
             "shouldHoldControlsForInitialSettingsForTesting", "consumeInitialSettingsControlHoldForTesting",
             "didConsumeInitialSettingsControlHoldForTesting",
             "playbackIntervalSecondsForTesting",
+            "pauseOnInitialStableSceneForTesting", "shouldPauseOnInitialStableSceneForTesting",
+            "didPauseOnInitialStableSceneForTesting",
             "visionAuditTriggerKey", "visionFaceAuditCandidateURLs", "makeQADebugSummary",
             "rejectedLayoutDiagnostic", "recordRejectedLayoutDiagnostic", "maximumRejectedLayoutSummar",
             "smartFillPlannerLabel", "diagnosticSlotReferences", "manifestSlotRefs",
@@ -139,6 +141,7 @@ class RuleTests(unittest.TestCase):
             "UI_TEST_HOLD_CONTROLS_UNTIL_INITIAL_SETTINGS",
             "UI_TEST_PLAYBACK_INTERVAL_SECONDS",
             "UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE", "UI_TEST_RESET_STATE",
+            "UI_TEST_PAUSE_ON_INITIAL_STABLE_SCENE",
         )
         for key in keys:
             with self.subTest(key=key):

@@ -118,6 +118,9 @@ extension SlideShowViewTV {
                 syncExifOverlayPresentation(overlayAsset)
             }
             #if DEBUG
+            .onChange(of: snapshot, initial: true) { _, renderedSnapshot in
+                viewModel.pauseOnInitialStableSceneForTesting(renderedSnapshot)
+            }
             .modifier(
                 PlaybackLifecycleTimelineModifier(
                     frame: viewModel.lifecycleTimelineFrame(snapshot),

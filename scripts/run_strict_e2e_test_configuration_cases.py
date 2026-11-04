@@ -468,6 +468,8 @@ class StrictE2ERunnerTestsCasesConfiguration:
                     expected = ["UI_TEST_PLAYBACK_INTERVAL_SECONDS"]
                 if suite == "late-image":
                     expected.append("UI_TEST_DISABLE_PLAYBACK_ENTRY_HINT")
+                if suite == "tvos-flow":
+                    expected.append("UI_TEST_PAUSE_ON_INITIAL_STABLE_SCENE")
                 if suite in {"filter-person", "tvos-person", "tvos-album-empty"}:
                     expected.append("UI_TEST_PLAYBACK_INTERVAL_SECONDS")
                 self.assertEqual(audit["launch_environment_keys"], sorted(expected))

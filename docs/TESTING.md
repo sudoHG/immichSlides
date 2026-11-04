@@ -605,6 +605,11 @@ sequence after screenshots, scene sampling or other waits; do not reuse an earli
 visibility or focus observation. Evidence text can reuse a value already captured
 in that refreshed window. Product auto-hide and one Select per action remain unchanged.
 Read an initial history boundary from one fallible snapshot before slow evidence captures.
+Debug `tvos-flow` schedules its single initial Pause inside the App when the rendered
+and current initial scene are complete and stable with one history entry. This
+explicit launch request preserves Keychain-only setup, the 30-second entry deadline,
+four-second render-state pause readback and later real remote Pause/Play checks. It does not
+change the normal five-second interval or activate the XCTest credential fallback.
 Keep cold-launch existence and focus waits fallible and bounded; either wait may wake a
 focused hidden receiver, at most once across both waits. Record whether a wake was sent,
 and require actual Play/Pause focus afterward. Direction drivers must still issue their

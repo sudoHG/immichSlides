@@ -1567,10 +1567,12 @@ class FailureDiagnosticsTests(unittest.TestCase):
         from run_strict_ci_tracer import validate_case_export
         tool = "Application 'com.331works.immichSlides' does not have a process ID"
         wait = "After pausing, the control value must be play."
+        connection = "Once the real controlled server is reachable, connection test passed must be shown."
         marker = "[unrecognized XCTest failure]"
         for messages, expected, bundle_prefix in (([tool], [tool], None), ([tool, tool], [tool, tool], None),
                 ([tool, wait + " PRIVATE_SENTINEL"], [tool, wait], None),
                 (["XCTAssertTrue failed - " + tool], [marker], None),
+                (["XCTAssertTrue failed - " + connection], [connection], None),
                 (["PRIVATE_SENTINEL"], [marker], None), ([tool] * 17, None, None),
                 ([tool], [tool], "export"), ([tool], [tool], "legacy"), ([tool], None, "raw-count")):
             with self.subTest(messages=messages, bundle_prefix=bundle_prefix), tempfile.TemporaryDirectory() as raw:
@@ -2543,6 +2545,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
         import subprocess
         # Missing reader rows must stay red even when XCTest retains only a bounded receipt.
         cases = (
+            ("immichSlidesUITests/StrictE2EFilterTVOSUITests+Support.swift", "Once the real controlled server is reachable, connection test passed must be shown.", "firstboot_setup", "navigation", "XCTAssertTrue failed - "),
             ("immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift", "tvOS Continue wake timing precondition failed: Up must not be requested before T-2.", "continue_timing", "timing_window", 'failed: caught error: "message(\\"'),
             ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "tvOS flow entry precondition failed:", "history_navigation", "control_state", "XCTAssertEqual failed: (value) - "),
             ("immichSlidesUITests/StrictE2ETVOSFlowUITests.swift", "tvOS flow entry anchor must remain paused before checking the history boundary.", "history_navigation", "control_state", "XCTAssertEqual failed: (value) - "),

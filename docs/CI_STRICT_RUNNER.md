@@ -415,13 +415,23 @@ Backward history identity uses the complete pixel signature and ledger reference
 Probes cannot supply a
 missing pixel identity. A5 and A1+A5 have different signatures.
 
-Before the initial `tvos-flow` Pause, control-bar readiness and the complete stable
-scene share the existing 30-second playback-entry deadline. Each scene poll reads
-one fallible App snapshot, and the final observations are attached as
-`tvos-entry-capture-window`. Pausing during the initial fade freezes its incoming
-layers, even when their opacity has already reached one; that state cannot serve
-as the stable history anchor. The single Pause, four-second pause readback,
-history-count precondition and capture-time pixel/manifest proof remain unchanged.
+Debug `tvos-flow` requests `UI_TEST_PAUSE_ON_INITIAL_STABLE_SCENE=1`. The App sends
+one Pause through the existing user-command path when its rendered and current
+snapshots both show the complete, fully opaque stable initial scene, with exactly
+one committed history entry. This initial evidence setup no longer depends on
+runner or remote delivery latency. It never fires again after Play or a source reset.
+Control-bar readiness and the complete stable scene retain the existing 30-second
+playback-entry deadline. Each scene poll reads one fallible App snapshot, and the
+final observations are attached as `tvos-entry-capture-window`. Pausing during the
+initial fade freezes its incoming layers and cannot supply this anchor. The
+entry pause readback still has four seconds, but now reads the App render state's
+`playbackPaused=true` instead of a change in the control value. The history-count
+precondition and capture-time pixel/manifest proof remain unchanged. The physical
+remote Play/Pause key is exercised when resuming after the existing pause hold of
+at least ten seconds, while playback cannot advance automatically; that step retains
+its four-second control-value readback and subsequent autoplay/advance checks.
+Other focused Select toggles still cover the control-bar button. The hook compiles
+out of Release and does not change the five-second playback interval.
 
 The first `tvos-flow` autoplay wait and both manual Next waits require an observed
 advance, exactly as on main. Only the resume wait also requires the App's complete
@@ -434,7 +444,7 @@ Date deadline and polling remain unchanged. Capture-time pixel and manifest chec
 remain independent.
 
 `UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE=1` enables the Debug manifest probes.
-Probe-only launches are `album-empty`, `filter-album`, `journey-b`, `tvos-flow`, `ios-lifecycle-first-wake`,
+Probe-only launches are `album-empty`, `filter-album`, `journey-b`, `ios-lifecycle-first-wake`,
 `p2-ipad-layout`,
 and `AccessLifecycleIOSUITests.prepareLaunch`, including its cold relaunches and
 `run_access_lifecycle_ios.py`'s `testAccessProtectionSettingsAndLifecycle`.
@@ -678,7 +688,9 @@ The API key is written to and readable from the UserDefaults XCTest fallback,
 and the Info.plist debug server is skipped. These launches are no longer
 probe-only and no longer exercise the Keychain-only path. That path remains
 covered by `album-empty` (iPhone and iPad, fixtures A and B) and `journey-a`.
-On tvOS, `tvos-flow` and `tvos-n1-cold` retain their original launch inputs and
+On tvOS, `tvos-flow` also declares its one-shot initial stable-scene Pause request.
+Like the read-only scene probe, that request does not activate XCTest mode or its
+UserDefaults credential fallback. `tvos-flow` and `tvos-n1-cold` retain the
 Keychain-only path; neither opts into the interval hook.
 
 `p2-rotation` explicitly launches with `UI_TEST_PLAYBACK_INTERVAL_SECONDS=60`.
@@ -2565,6 +2577,7 @@ New enum meanings and why the previous vocabulary cannot express them:
 | `After submitting the URL, focus must be able to move down to API Key.` | `firstboot_setup` | `focus` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L99) |
 | `The first-boot form must show the Test Connection button.` | `firstboot_setup` | `navigation` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L109) |
 | `Once the real controlled service is reachable, the connection-test-passed status must show.` | `firstboot_setup` | `navigation` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L675) |
+| `Once the real controlled server is reachable, connection test passed must be shown.` | `firstboot_setup` | `navigation` | [StrictE2EFilterTVOSUITests+Support.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests+Support.swift); the original 45-second wait names `firstboot.connection.success` in its internal context. The unchanged public element vocabulary still projects `unknown`; the assertion identifies the wait without assigning a hosted root cause or adding a yellow rule |
 | `Select must not accidentally hit the API Key help sheet.` | `firstboot_setup` | `navigation` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L679) |
 | `After a successful connection, the Save Settings button must appear.` | `firstboot_setup` | `navigation` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L688) |
 | `The field must be focused before typing.` | `unknown` | `focus` | [StrictE2EFilterTVOSUITests+Support.swift](../immichSlidesUITests/StrictE2EFilterTVOSUITests+Support.swift#L381), [StrictE2ELateImageTVOSUITests.swift](../immichSlidesUITests/StrictE2ELateImageTVOSUITests.swift#L289), [StrictE2ESmokeUITests.swift](../immichSlidesUITests/StrictE2ESmokeUITests.swift#L124), [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L699) |

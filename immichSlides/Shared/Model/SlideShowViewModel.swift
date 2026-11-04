@@ -105,6 +105,7 @@ class SlideShowViewModel: ObservableObject {
     var automaticFadeMidpointPauseDeadlineForTesting: TimeInterval?
     var didReceiveFirstUserPlayForTesting = false
     var didPauseAtAutomaticFadeMidpointForTesting = false
+    var didPauseOnInitialStableSceneForTesting = false
     private(set) var smartFillCandidateSummaryBuildCountForTestingStorage: Int = 0
     private(set) var smartFillMainActorPlannerCallCountsForTesting: [SmartFillMainActorPlannerCallSite: Int] = [:]
     #endif

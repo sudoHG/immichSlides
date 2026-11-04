@@ -24,6 +24,10 @@ DEBUG_ONLY_MARKERS = (
     "UI_TEST_PLAYBACK_LIFECYCLE_",
     "playback-lifecycle-timeline.jsonl",
     "UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE",
+    "UI_TEST_PAUSE_ON_INITIAL_STABLE_SCENE",
+    "pauseOnInitialStableSceneForTesting",
+    "shouldPauseOnInitialStableSceneForTesting",
+    "didPauseOnInitialStableSceneForTesting",
     "PlaybackSequenceDebug",
     "qaPlaybackSequenceRecorder",
     "logQAPlaybackSequence",
@@ -178,6 +182,7 @@ PLATFORM_COMPAT_ONLY_KEYS = (
     "UI_TEST_DISABLE_DEBUG_FILL_APIKEY_BUTTON",
     "UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE",
     "UI_TEST_RESET_STATE",
+    "UI_TEST_PAUSE_ON_INITIAL_STABLE_SCENE",
 )
 PLATFORM_COMPAT_FILE = "immichSlides/Shared/Component/PlatformCompat.swift"
 

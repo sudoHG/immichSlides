@@ -427,8 +427,8 @@ extension StrictE2EFilterTVOSUITests {
         attachFocusAudit(app: app, name: "tvos-filter-firstboot-before-test-connection")
         FirstFailureRemote.press(.select)
         XCTAssertTrue(
-            app.staticTexts["firstboot.connection.success"].waitForFailureEvidence(
-                timeout: TestWait.seconds(.infrastructure(45))),
+            app.staticTexts["firstboot.connection.success"].waitForPublicElement(
+                "firstboot.connection.success", timeout: TestWait.seconds(.infrastructure(45))),
             "Once the real controlled server is reachable, connection test passed must be shown.")
 
         let saveButton = firstBootControl(
