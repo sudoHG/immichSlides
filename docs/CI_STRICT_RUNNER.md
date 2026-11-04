@@ -1855,6 +1855,16 @@ The frozen-pixel sentence additionally permits exactly
 (one site value, maximum 0–255, count 0–99,999,999, canonical decimal integers).
 The count includes each pixel once when any RGBA channel differs. The exporter
 and both tracer consumers recheck this grammar; extra or malformed text is redacted.
+The current producer adds one complete optional block, in this order:
+`mean_channel_difference=N control_bar_before=STATE control_bar_after=STATE exif_before=STATE exif_after=STATE`.
+The mean is a canonical signed decimal integer from -255 through 255 (no `+`,
+leading zero or negative zero); each state is exactly `visible`, `hidden` or `unknown`.
+Partial blocks are redacted. The mean averages candidate-minus-reference RGB channel
+differences over the same decoded crop and rounds to nearest, ties away from zero;
+alpha remains part of maximum/count only. App committed checkpoints bracket each
+capture's visibility readback; missing or disagreeing readings become unknown.
+Visibility does not establish that a fade has completed. Old sentences without
+this block remain readable, and no added field participates in the pixel verdict.
 These statistics identify a comparison failure without changing its classification
 or red verdict, and contain no scene, frame, asset, path or pixel values.
 The tvOS flow retains only the exact sentence

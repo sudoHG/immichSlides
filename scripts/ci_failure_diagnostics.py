@@ -1677,8 +1677,11 @@ def public_app_timeline_failure_message(message):
     reason = text[len(prefix):].removesuffix('"')
     pixel = re.fullmatch(
         r"frozen photo pixels changed site=(?:frozen-reference|pause-hold) "
-        r"maximum_channel_difference=(0|[1-9][0-9]{0,2}) differing_pixel_count=(?:0|[1-9][0-9]{0,7})", reason)
-    if pixel is not None and int(pixel.group(1)) <= 255:
+        r"maximum_channel_difference=(0|[1-9][0-9]{0,2}) differing_pixel_count=(?:0|[1-9][0-9]{0,7})"
+        r"(?: mean_channel_difference=(0|-?[1-9][0-9]{0,2})"
+        r" control_bar_before=(?:visible|hidden|unknown) control_bar_after=(?:visible|hidden|unknown)"
+        r" exif_before=(?:visible|hidden|unknown) exif_after=(?:visible|hidden|unknown))?", reason)
+    if pixel is not None and int(pixel.group(1)) <= 255 and (pixel.group(2) is None or abs(int(pixel.group(2))) <= 255):
         return prefix + reason
     return prefix + reason if reason in APP_TIMELINE_FAILURE_REASONS else APP_TIMELINE_FAILURE_REDACTED
 

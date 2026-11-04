@@ -9,7 +9,7 @@ import Testing
 struct SceneLifecycleContractTests {
     @Test(arguments: [
         "exact", "oneLevel", "twoLevels", "missingFrozen", "frozenAfterRequest", "changedFrame", "changedScene",
-        "unpaused", "missingSeal", "frozenFrameChanged", "differentLength", "unreadablePNG"
+        "unpaused", "missingSeal", "frozenFrameChanged", "differentLength", "unreadablePNG", "brighter", "darker"
     ])
     func `frozen captures allow one channel level only with an unchanged frozen timeline`(mutation: String) throws {
         var events = [
@@ -23,6 +23,7 @@ struct SceneLifecycleContractTests {
                 isStable: true, isPaused: true)
         ]
         var channelDifference: UInt8 = 1
+        var uniformDifference = 0
         switch mutation {
         case "exact": channelDifference = 0
         case "twoLevels": channelDifference = 2
@@ -33,28 +34,38 @@ struct SceneLifecycleContractTests {
         case "unpaused": events[3].isPaused = false
         case "missingSeal": events[3].uptime = 2.5
         case "frozenFrameChanged": events[3].kind = "frozenFrameChanged"
+        case "brighter": channelDifference = 0; uniformDifference = 3
+        case "darker": channelDifference = 0; uniformDifference = -3
         default: break
         }
         do {
             let reference = try frozenCapturePNG(channelDifference: 0)
             let pixels = try frozenCapturePNG(
-                channelDifference: channelDifference, width: mutation == "differentLength" ? 22 : 20)
+                channelDifference: channelDifference, width: mutation == "differentLength" ? 22 : 20,
+                uniformDifference: uniformDifference)
             var toleratedMaximum: Int?
             var measuredMaximum: Int?
             var measuredCount: Int?
+            var measuredMean: Int?
             let isEqual = try LifecycleTimelineCapture.frozenPhotoPixelsEqual(
                 reference, mutation == "unreadablePNG" ? Data() : pixels,
                 events: events, scene: "photo", frame: "frame", request: 2, returned: 3,
-                onDifferenceMeasured: { maximum, count in
+                onDifferenceMeasured: { maximum, count, mean in
                     measuredMaximum = maximum
                     measuredCount = count
+                    measuredMean = mean
                 },
                 onToleranceApplied: { toleratedMaximum = $0 })
             if ["exact", "oneLevel", "differentLength", "unreadablePNG"].contains(mutation) {
-                #expect(measuredMaximum == nil && measuredCount == nil)
+                #expect(measuredMaximum == nil && measuredCount == nil && measuredMean == nil)
+            } else if uniformDifference != 0 {
+                #expect(measuredMaximum == abs(uniformDifference))
+                #expect(measuredCount == 96)
+                #expect(measuredMean == uniformDifference)
             } else {
                 #expect(measuredMaximum == Int(channelDifference))
                 #expect(measuredCount == 1)
+                #expect(measuredMean == 0)
             }
             #expect(isEqual == ["exact", "oneLevel"].contains(mutation))
             #expect(toleratedMaximum == (mutation == "oneLevel" ? 1 : nil))
@@ -65,9 +76,11 @@ struct SceneLifecycleContractTests {
         }
     }
 
-    private func frozenCapturePNG(channelDifference: UInt8, width: Int = 20) throws -> Data {
+    private func frozenCapturePNG(
+        channelDifference: UInt8, width: Int = 20, uniformDifference: Int = 0
+    ) throws -> Data {
         let height = 20
-        let pixel: [UInt8] = [100, 110, 120, 255]
+        let pixel: [UInt8] = [100, 110, 120].map { UInt8($0 + uniformDifference) } + [255]
         var pixels: [UInt8] = Array(repeating: pixel, count: width * height).flatMap { $0 }
         // The changed pixel lies inside the capture's central photo band.
         // Different magnitudes make either single-channel maximum miss a rejected case.

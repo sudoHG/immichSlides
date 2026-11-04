@@ -24,6 +24,13 @@ final class PlaybackLifecycleTimeline: @unchecked Sendable {
         let transitionScene: String
         let transitionSource: String
         let heldTargetScene: String
+        let controlBarVisible: Bool?
+        let exifVisible: Bool?
+    }
+
+    struct OverlayState: Equatable {
+        let controlBarVisible: Bool
+        let exifVisible: Bool
     }
 
     struct LayerSample: Equatable {
@@ -53,6 +60,7 @@ final class PlaybackLifecycleTimeline: @unchecked Sendable {
     private var sequence = 0
     private var fileHandle: FileHandle?
     private var previousFrame: Frame?
+    private var overlayState: OverlayState?
     private var lastRequest = ""
     private var pendingRequest = ""
     private var requestModificationDate: Date?
@@ -162,7 +170,8 @@ final class PlaybackLifecycleTimeline: @unchecked Sendable {
             exceptionBasis: exceptionBasis,
             transitionScene: transitionScene ?? frame?.transitionScene ?? previousFrame?.transitionScene ?? "",
             transitionSource: transitionSource ?? frame?.transitionSource ?? previousFrame?.transitionSource ?? "",
-            heldTargetScene: frame?.heldTargetScene ?? "")
+            heldTargetScene: frame?.heldTargetScene ?? "",
+            controlBarVisible: overlayState?.controlBarVisible, exifVisible: overlayState?.exifVisible)
         do {
             if fileHandle == nil {
                 try FileManager.default.createDirectory(at: configuration.directory, withIntermediateDirectories: true)
@@ -189,11 +198,12 @@ final class PlaybackLifecycleTimeline: @unchecked Sendable {
     }
 
     /// Called only after the render transaction completes and its next display tick arrives.
-    func committedFrame(_ frame: Frame) {
+    func committedFrame(_ frame: Frame, overlays: OverlayState? = nil) {
         let uptime = ProcessInfo.processInfo.systemUptime
         guard isEnabled else { return }
         lock.lock()
         defer { lock.unlock() }
+        overlayState = overlays
         if let previousFrame {
             if let opacity = frame.outgoingOpacity, opacity < 1,
                 previousFrame.outgoingOpacity == nil || previousFrame.outgoingOpacity == 1

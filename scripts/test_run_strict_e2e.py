@@ -1437,6 +1437,9 @@ class FailureDiagnosticsTests(unittest.TestCase):
         self.assertIsNotNone(format_match)
         diagnostic = format_match.group(1)[1:-1].replace(r"\(site)", "pause-hold").replace(
             r"\(maximum)", "1").replace(r"\(count)", "355162")
+        diagnostic = diagnostic.replace(r"\(mean)", "-1").replace(
+            r"\(before.controlBar.rawValue)", "visible").replace(r"\(after.controlBar.rawValue)", "hidden").replace(
+            r"\(before.exif.rawValue)", "visible").replace(r"\(after.exif.rawValue)", "visible")
         message = "App timeline: frozen photo pixels changed" + diagnostic
         self.assertEqual(message, public_app_timeline_failure_message(message))
 
@@ -1470,6 +1473,26 @@ class FailureDiagnosticsTests(unittest.TestCase):
             (pixel_reason.replace("=355162", "=0355162"), None),
             (pixel_reason.replace("=355162", "=" + private), None),
             (pixel_reason.replace(" differing_pixel_count=355162", ""), None)))
+        overlay_suffix = (" mean_channel_difference=-3 control_bar_before=visible control_bar_after=hidden"
+                          " exif_before=visible exif_after=visible")
+        extended_reason = pixel_reason.replace("=1 differing", "=3 differing") + overlay_suffix
+        cases.extend((platform, reason, expected) for platform in ("ios", "tvos") for reason, expected in (
+            (extended_reason, extended_reason),
+            (extended_reason.replace("=-3 control", "=255 control"),
+             extended_reason.replace("=-3 control", "=255 control")),
+            (extended_reason.replace("=-3 control", "=-255 control"),
+             extended_reason.replace("=-3 control", "=-255 control")),
+            (extended_reason.replace("=-3 control", "=0 control"),
+             extended_reason.replace("=-3 control", "=0 control")),
+            (extended_reason.replace("visible", "unknown").replace("hidden", "unknown"),
+             extended_reason.replace("visible", "unknown").replace("hidden", "unknown")),
+            *((extended_reason.replace("=-3 control", "=" + invalid + " control"), None)
+              for invalid in ("256", "-256", "+3", "-0", "03", "-03", "1.5", private)),
+            *((extended_reason.replace(field + "=" + value, field + "=" + private), None)
+              for field, value in (("control_bar_before", "visible"), ("control_bar_after", "hidden"),
+                                   ("exif_before", "visible"), ("exif_after", "visible"))),
+            (extended_reason.removesuffix(" exif_after=visible"), None),
+            (extended_reason + " " + private, None)))
         with tempfile.TemporaryDirectory() as raw:
             for index, (platform, reason, expected_reason) in enumerate(cases):
                 with self.subTest(platform=platform, reason=reason):

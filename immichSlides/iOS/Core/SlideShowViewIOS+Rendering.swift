@@ -195,7 +195,13 @@ extension SlideShowViewIOS {
                 syncExifOverlayPresentation(overlayAsset)
             }
             #if DEBUG
-            .modifier(PlaybackLifecycleTimelineModifier(frame: viewModel.lifecycleTimelineFrame(snapshot)))
+            .modifier(
+                PlaybackLifecycleTimelineModifier(
+                    frame: viewModel.lifecycleTimelineFrame(snapshot),
+                    overlays: .init(
+                        controlBarVisible: isControlBarVisible,
+                        exifVisible: isRenderedExifOverlayVisible && retainedExifOverlayAsset != nil))
+            )
             .overlayPreferenceValue(SmartFillMotionFrameProbePreferenceKey.self) { rows in
                 if shouldExposeSmartFillMotionFrameProbeForTesting {
                     // Read the leaf render pass directly; onPreferenceChange state can retain a pre-pause frame.
