@@ -424,8 +424,13 @@ Control-bar readiness and the complete stable scene retain the existing 30-secon
 playback-entry deadline. Each scene poll reads one fallible App snapshot, and the
 final observations are attached as `tvos-entry-capture-window`. Pausing during the
 initial fade freezes its incoming layers and cannot supply this anchor. The
-four-second pause readback, history-count precondition, later real remote Pause/Play
-checks and capture-time pixel/manifest proof remain unchanged. The hook compiles
+entry pause readback still has four seconds, but now reads the App render state's
+`playbackPaused=true` instead of a change in the control value. The history-count
+precondition and capture-time pixel/manifest proof remain unchanged. The physical
+remote Play/Pause key is exercised when resuming after the existing pause hold of
+at least ten seconds, while playback cannot advance automatically; that step retains
+its four-second control-value readback and subsequent autoplay/advance checks.
+Other focused Select toggles still cover the control-bar button. The hook compiles
 out of Release and does not change the five-second playback interval.
 
 The first `tvos-flow` autoplay wait and both manual Next waits require an observed

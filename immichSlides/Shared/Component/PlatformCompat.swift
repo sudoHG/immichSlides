@@ -63,9 +63,8 @@ enum PlatformCompat {
         return seconds
     }
 
-    static var shouldPauseOnInitialStableSceneForTesting: Bool {
+    static let shouldPauseOnInitialStableSceneForTesting: Bool =
         ProcessInfo.processInfo.environment["UI_TEST_PAUSE_ON_INITIAL_STABLE_SCENE"] == "1"
-    }
 
     static func isRunningXCTest(environment: [String: String]) -> Bool {
         environment["XCTestConfigurationFilePath"] != nil

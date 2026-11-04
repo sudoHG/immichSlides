@@ -585,7 +585,8 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
         pauseEvidence.lifetime = .keepAlways
         add(pauseEvidence)
 
-        FirstFailureRemote.press(.select)
+        // Playback is still paused, so physical-key delivery cannot race an automatic advance.
+        FirstFailureRemote.press(.playPause)
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(4))) {
                 String(describing: playPauseButton.value ?? "") != retainedPausedValue
