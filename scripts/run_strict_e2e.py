@@ -145,12 +145,15 @@ class OfficialExportBudget:
     def remaining(self, phase):
         remaining = OFFICIAL_EXPORT_TIMEOUT_SECONDS - self.spent_seconds
         if remaining <= 0:
-            raise InfrastructureTimeout(phase, OFFICIAL_EXPORT_TIMEOUT_SECONDS)
+            raise InfrastructureTimeout(phase, 0)
         return remaining
 
 
 @contextmanager
 def measured_official_export(budget=None):
+    if budget is None:
+        yield
+        return
     recorder = active()
     sequence = recorder.next_sequence() if recorder is not None else None
     started = time.monotonic()
@@ -160,11 +163,15 @@ def measured_official_export(budget=None):
     except (subprocess.TimeoutExpired, InfrastructureTimeout):
         state = "timeout"
         raise
+    except Exception:
+        # The existing reader has no failed state; preserve the error without a success timing.
+        state = None
+        raise
     finally:
         elapsed = time.monotonic() - started
         if budget is not None:
             budget.spent_seconds += max(0, elapsed)
-        if recorder is not None:
+        if recorder is not None and state is not None:
             try:
                 from ci_execution_diagnostics import finite
                 from ci_bounded_diagnostics import MAX_DIAGNOSTIC_SECONDS
@@ -180,12 +187,12 @@ def measured_official_export(budget=None):
 
 
 def read_official_test_results_summary(bundle: Path, *, export_budget=None) -> TestResultsSummary:
-    export_budget = export_budget or OfficialExportBudget()
+    timeout = export_budget.remaining("official-summary-export") if export_budget is not None else 60
     try:
         with measured_official_export(export_budget):
-            return read_unit_official_test_results_summary(bundle, timeout_seconds=export_budget.remaining("official-summary-export"))
+            return read_unit_official_test_results_summary(bundle, timeout_seconds=timeout)
     except subprocess.TimeoutExpired as error:
-        raise InfrastructureTimeout("official-summary-export", OFFICIAL_EXPORT_TIMEOUT_SECONDS) from error
+        raise InfrastructureTimeout("official-summary-export", timeout) from error
 
 
 def reserve_unreachable_server_url() -> tuple[str, socket.socket]:
@@ -257,7 +264,7 @@ def prepare_private_result_bundle_path(suite: str) -> Path:
 def export_private_result_bundle(
     bundle: Path, evidence_dir: Path, sensitive_values: list[str], *, suffix: str = "",
     summary_timeout_seconds: float | None = None,
-    export_timeout_seconds: float = OFFICIAL_EXPORT_TIMEOUT_SECONDS,
+    export_timeout_seconds: float | None = None,
     export_budget=None,
     enrich_failure_diagnostics: bool = False,
     first_failure_spool=None,
@@ -265,27 +272,38 @@ def export_private_result_bundle(
     resource_sampler=None,
 ) -> str:
     from ci_flaky import official_result_step
-    if export_budget is None and summary_timeout_seconds is None:
-        export_budget = OfficialExportBudget()
+    timeout = (export_budget.remaining("official-tests-export") if export_budget is not None else 60)
+    if export_timeout_seconds is not None:
+        timeout = min(timeout, export_timeout_seconds) if export_budget is not None else export_timeout_seconds
     try:
         with measured_official_export(export_budget), official_result_step("export"):
-            timeout = min(export_timeout_seconds, export_budget.remaining("official-tests-export")) if export_budget is not None else export_timeout_seconds
             completed = subprocess.run(
                 ["xcrun", "xcresulttool", "get", "test-results", "tests", "--path", str(bundle), "--compact"],
                 capture_output=True, check=False, timeout=timeout,
             )
+            if completed.returncode != 0:
+                raise CommandError(f"Official test export failed with exit {completed.returncode}.")
     except subprocess.TimeoutExpired as error:
         if summary_timeout_seconds is not None:
             raise
-        raise InfrastructureTimeout("official-tests-export", export_timeout_seconds) from error
-    if completed.returncode != 0:
-        raise CommandError(f"Official test export failed with exit {completed.returncode}.")
+        raise InfrastructureTimeout("official-tests-export", timeout) from error
     payload = json.loads(completed.stdout)
     if not isinstance(payload, dict):
         raise CommandError("Official test export is not a JSON object.")
     if logical_bytes_contain(completed.stdout, sensitive_values):
         raise CommandError("Official test export contains test credentials; refusing to retain it.")
     exported = completed.stdout
+    (evidence_dir / f"official-tests{suffix}.json").write_bytes(exported)
+    summary_path = evidence_dir / f"official-summary{suffix}.json"
+    if not summary_path.exists():
+        # Required official outcomes must be available before optional legacy diagnostics run.
+        summary = (read_unit_official_test_results_summary(bundle, timeout_seconds=summary_timeout_seconds)
+                   if summary_timeout_seconds is not None else read_official_test_results_summary(bundle, export_budget=export_budget))
+        summary_path.write_text(json.dumps({
+            "totalTestCount": summary.total_test_count, "passedTests": summary.passed_tests,
+            "failedTests": summary.failed_tests, "skippedTests": summary.skipped_tests,
+            "result": summary.result,
+        }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     public_message = None
     if enrich_failure_diagnostics:
         from ci_failure_diagnostics import (PUBLIC_FAILURE_MESSAGE_METHOD_BY_SUITE, legacy_diagnostics,
@@ -308,14 +326,16 @@ def export_private_result_bundle(
             raw_messages = {}
             legacy_root = {}
             try:
+                timeout = export_timeout_seconds if export_timeout_seconds is not None else 60
+                if export_budget is not None:
+                    timeout = min(60, timeout, export_budget.remaining("official-tests-export"))
                 with measured_official_export(export_budget):
-                    timeout = min(export_timeout_seconds, export_budget.remaining("official-tests-export")) if export_budget is not None else export_timeout_seconds
                     details = subprocess.run(["xcrun", "xcresulttool", "get", "object", "--legacy", "--path", str(bundle), "--format", "json"],
                                              capture_output=True, check=True, timeout=timeout)
                 legacy_root = json.loads(details.stdout)
                 raw_messages = legacy_failure_messages(legacy_root)
                 diagnostics = legacy_diagnostics(legacy_root)
-            except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
+            except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError, InfrastructureTimeout):
                 # Diagnostic availability must not change the official result or runner exit.
                 pass
             for node in failed:
@@ -338,7 +358,7 @@ def export_private_result_bundle(
                     collect_native_activity, attach_pause_window_assertions, attach_failure_locations)
                 try:
                     collect_native_activity(bundle, legacy_root, failed, resource_sampler,
-                        recorder=active(), timeout=min(2.0, export_timeout_seconds))
+                        recorder=active(), timeout=min(2.0, export_timeout_seconds or 60))
                 except Exception:
                     recorder = active()
                     if recorder is not None:
@@ -350,16 +370,6 @@ def export_private_result_bundle(
                     repo_root=REPO_ROOT)
             exported = (json.dumps(payload, sort_keys=True) + "\n").encode()
     (evidence_dir / f"official-tests{suffix}.json").write_bytes(exported)
-    summary_path = evidence_dir / f"official-summary{suffix}.json"
-    if not summary_path.exists():
-        # Unit/UI consumers classify explicit export timeouts; strict runs use the phase wrapper.
-        summary = (read_unit_official_test_results_summary(bundle, timeout_seconds=summary_timeout_seconds)
-                   if summary_timeout_seconds is not None else read_official_test_results_summary(bundle, export_budget=export_budget))
-        summary_path.write_text(json.dumps({
-            "totalTestCount": summary.total_test_count, "passedTests": summary.passed_tests,
-            "failedTests": summary.failed_tests, "skippedTests": summary.skipped_tests,
-            "result": summary.result,
-        }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     if enrich_failure_diagnostics:
         summary_payload = json.loads(summary_path.read_text())
         summary_payload.pop("message", None)

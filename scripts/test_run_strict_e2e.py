@@ -589,6 +589,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
         configuration: str = "Debug",
         native_failure_epoch=None,
         warm_timeout_seconds: int | None = None,
+        official_tool=None,
     ) -> tuple[int, str, str, dict[str, mock.Mock]]:
         destination = f"platform={'tvOS' if platform == 'tvos' else 'iOS'} Simulator,id={P2_UDID}"
         selector = (
@@ -637,6 +638,8 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
 
         def fake_subprocess(command: list[str], **_: object) -> subprocess.CompletedProcess[object]:
             if command[:2] == ["xcrun", "xcresulttool"]:
+                if official_tool is not None:
+                    return official_tool(command, **_)
                 if timeout_phase == "official-tests-export":
                     raise subprocess.TimeoutExpired(["private-test-input"], 60, output=b"private-test-input")
                 if native_failure_epoch is not None:
@@ -692,7 +695,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
         ), mock.patch(
             "run_strict_e2e.read_official_test_results_summary",
             return_value=TestResultsSummary(1, 1, 0, 0, "Passed"),
-            side_effect=strict_runner.InfrastructureTimeout(timeout_phase, 60)
+            side_effect=strict_runner.read_official_test_results_summary if official_tool is not None else strict_runner.InfrastructureTimeout(timeout_phase, 60)
             if timeout_phase == "official-summary-export" else None,
         ), mock.patch(
             "run_strict_e2e.read_xcresult_facts",
@@ -1147,10 +1150,11 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                         mock.patch.object(strict_runner.time, "monotonic", side_effect=lambda: clock[0]):
                     recorder.charged["xcode"] = diagnostics.COLLECTION_BUDGET_SECONDS["xcode"]
                     if elapsed == 90:
-                        self.assertEqual("Passed", strict_runner.read_official_test_results_summary(bundle).result)
+                        self.assertEqual("Passed", strict_runner.read_official_test_results_summary(
+                            bundle, export_budget=strict_runner.OfficialExportBudget()).result)
                     else:
                         with self.assertRaises(CommandError) as raised:
-                            strict_runner.read_official_test_results_summary(bundle)
+                            strict_runner.read_official_test_results_summary(bundle, export_budget=strict_runner.OfficialExportBudget())
                         self.assertEqual(raised.exception.entry["code"], "official-summary-export-timeout")
                         self.assertEqual(124, raised.exception.code)
                         self.assertNotIn("private-test-input", str(raised.exception))
@@ -1200,6 +1204,121 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                         with self.assertRaisesRegex(CommandError, "^official-summary-export timed out"):
                             strict_runner.read_official_test_results_summary(bundle, export_budget=budget)
                         self.assertEqual(3, read.call_count, "exhaustion must not start another Apple-tool call")
+
+    def test_main_shares_export_budget_and_retains_failed_export_measurements(self):
+        import ci_execution_diagnostics as diagnostics
+        for suite in ("smoke", "filter-person"):
+            for failure in ("legacy", "legacy-low-remainder", "tests"):
+                with self.subTest(suite=suite, failure=failure), tempfile.TemporaryDirectory() as raw, diagnostics.session():
+                    clock, calls = [0.0], []
+                    def tool(command, **kwargs):
+                        kind = "legacy" if "--legacy" in command else command[4]
+                        timeout = kwargs["timeout"]
+                        calls.append((kind, timeout))
+                        timeout_kind = "legacy" if failure.startswith("legacy") else "tests"
+                        elapsed = (300 if kind == timeout_kind else
+                                   (60 if len(calls) == 1 else 40) if failure == "legacy-low-remainder" else 20)
+                        clock[0] += min(elapsed, timeout)
+                        if elapsed > timeout:
+                            raise subprocess.TimeoutExpired(["private-test-input"], timeout)
+                        payload = ({"testNodes": [{"nodeType": "Test Case", "nodeIdentifier":
+                            "StrictE2ESmokeUITests/testIOSStrictE2EConnectionSmoke()", "result": "Failed"}]}
+                            if kind == "tests" else {"totalTestCount": 1, "passedTests": 0,
+                                "failedTests": 1, "skippedTests": 0, "result": "Failed"})
+                        encoded = json.dumps(payload)
+                        return subprocess.CompletedProcess(command, 0, encoded if kwargs.get("text") else encoded.encode(), b"")
+                    evidence = Path(raw) / "evidence"
+                    with mock.patch.object(strict_runner.time, "monotonic", side_effect=lambda: clock[0]):
+                        code, _, stderr, _ = self._run_p2_main(evidence, suite=suite,
+                            platform="ios", model="iPhone", warm=True, official_tool=tool)
+                    self.assertNotEqual(0, code, stderr)
+                    manifest = json.loads((evidence / "case-manifest.json").read_text())
+                    events = [event for event in manifest.get("bounded_diagnostics", {}).get("events", [])
+                              if event["phase"] == "official-export"]
+                    if failure.startswith("legacy"):
+                        expected_calls = ([("summary", 180), ("tests", 120), ("summary", 80), ("legacy", 40)]
+                                          if failure == "legacy-low-remainder" else
+                                          [("summary", 180), ("tests", 160), ("summary", 140), ("legacy", 60)])
+                        self.assertEqual(expected_calls, calls)
+                        self.assertEqual([60, 40, 40, 40] if failure == "legacy-low-remainder" else [20, 20, 20, 60],
+                                         [event["elapsed_seconds"] for event in events])
+                        self.assertEqual(["completed"] * 3 + ["timeout"], [event["state"] for event in events])
+                        self.assertFalse(manifest.get("infrastructure"), manifest)
+                        summaries = list(evidence.glob("official-summary*.json"))
+                        self.assertTrue(summaries)
+                        self.assertTrue(all(json.loads(path.read_text())["result"] == "Failed" for path in summaries))
+                    else:
+                        self.assertEqual([("summary", 180), ("tests", 160)], calls)
+                        self.assertEqual([20, 160], [event["elapsed_seconds"] for event in events])
+                        self.assertEqual(["completed", "timeout"], [event["state"] for event in events])
+                        self.assertEqual("official-tests-export-timeout", manifest["infrastructure"][0]["code"])
+                        self.assertEqual("official-tests-export timed out after 160.0s.", manifest["infrastructure"][0]["message"])
+
+    def test_non_strict_exports_keep_individual_budgets_without_timing_events(self):
+        import ci_execution_diagnostics as diagnostics
+        for explicit in (False, True):
+            with self.subTest(explicit=explicit), tempfile.TemporaryDirectory() as raw, diagnostics.session() as recorder:
+                root = Path(raw)
+                calls = []
+                def tool(command, **kwargs):
+                    calls.append(kwargs["timeout"])
+                    payload = ({} if "--legacy" in command else {"testNodes": [{"nodeType": "Test Case",
+                        "nodeIdentifier": "StrictE2ESmokeUITests/testIOSStrictE2EConnectionSmoke()", "result": "Failed"}]}
+                        if command[4] == "tests" else {
+                        "totalTestCount": 1, "passedTests": 0, "failedTests": 1, "skippedTests": 0, "result": "Failed"})
+                    encoded = json.dumps(payload)
+                    return subprocess.CompletedProcess(command, 0, encoded if kwargs.get("text") else encoded.encode(), b"")
+                bundle = root / "bundle.xcresult"
+                bundle.mkdir()
+                options = dict(summary_timeout_seconds=180, export_timeout_seconds=180) if explicit else {}
+                with mock.patch.object(strict_runner.subprocess, "run", side_effect=tool):
+                    strict_runner.export_private_result_bundle(bundle, root, [], enrich_failure_diagnostics=True, **options)
+                self.assertEqual([180] * 3 if explicit else [60] * 3, calls)
+                self.assertFalse(recorder.receipt()["events"])
+
+    def test_failed_official_reads_spend_budget_without_success_timing(self):
+        import ci_execution_diagnostics as diagnostics
+        from run_offline_unit_tests import CommandError as SummaryReadError
+        for failed_kind in ("summary", "tests", "legacy"):
+            for error_kind in ("nonzero", "os-error"):
+                with self.subTest(read=failed_kind, error=error_kind), tempfile.TemporaryDirectory() as raw, diagnostics.session() as recorder:
+                    root, clock = Path(raw), [0.0]
+                    budget = strict_runner.OfficialExportBudget()
+                    bundle = root / "bundle.xcresult"
+                    bundle.mkdir()
+                    calls = []
+                    def tool(command, **kwargs):
+                        kind = "legacy" if "--legacy" in command else command[4]
+                        calls.append(kind)
+                        clock[0] += 20
+                        if kind == failed_kind:
+                            if error_kind == "os-error":
+                                raise OSError("read failed")
+                            if kwargs.get("check"):
+                                raise subprocess.CalledProcessError(17, command)
+                            return subprocess.CompletedProcess(command, 17, "", "read failed")
+                        payload = ({"testNodes": [{"nodeType": "Test Case", "nodeIdentifier":
+                            "StrictE2ESmokeUITests/testIOSStrictE2EConnectionSmoke()", "result": "Failed"}]}
+                            if kind == "tests" else {"totalTestCount": 1, "passedTests": 0,
+                                "failedTests": 1, "skippedTests": 0, "result": "Failed"})
+                        encoded = json.dumps(payload)
+                        return subprocess.CompletedProcess(command, 0, encoded if kwargs.get("text") else encoded.encode(), b"")
+                    with mock.patch.object(strict_runner.subprocess, "run", side_effect=tool), \
+                            mock.patch.object(strict_runner.time, "monotonic", side_effect=lambda: clock[0]):
+                        if failed_kind == "legacy":
+                            strict_runner.export_private_result_bundle(bundle, root, [], export_budget=budget,
+                                                                      enrich_failure_diagnostics=True)
+                            self.assertEqual("Failed", json.loads((root / "official-summary.json").read_text())["result"])
+                        else:
+                            with self.assertRaises((CommandError, SummaryReadError, OSError)) as raised:
+                                if failed_kind == "summary":
+                                    strict_runner.read_official_test_results_summary(bundle, export_budget=budget)
+                                else:
+                                    strict_runner.export_private_result_bundle(bundle, root, [], export_budget=budget,
+                                                                              enrich_failure_diagnostics=True)
+                            self.assertIn("read failed" if error_kind == "os-error" or failed_kind == "summary" else "exit 17", str(raised.exception))
+                    self.assertEqual(20 * len(calls), budget.spent_seconds)
+                    self.assertEqual(2 if failed_kind == "legacy" else 0, len(recorder.receipt()["events"]))
 
     def test_boot_settle_gate_requires_a_continuous_full_window_and_runs_once_per_job(self):
         import strict_e2e_runner_support as support

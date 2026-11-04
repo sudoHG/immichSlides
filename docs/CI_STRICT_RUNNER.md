@@ -35,12 +35,17 @@ Each strict XCTest invocation has one shared 180-second official-export allowanc
 Its initial summary read, final tests read and final summary read charge their
 actual monotonic tool time to the same budget, and each subprocess receives only
 the remaining allowance. Time between reads, including App evidence validation,
-does not spend this read-only allowance. A failed invocation's optional legacy
-diagnostic read shares the same remainder. Separate `filter-person` sessions and
+does not spend this read-only allowance. Final export reads tests, then the required
+summary, then optional legacy diagnostics. The legacy read uses at most
+`min(60, remaining)` seconds and its timeout stays swallowed, as on main; it cannot
+starve summary or increase the availability window for `failure_messages`.
+Separate `filter-person` sessions and
 result bundles have separate budgets. Exhaustion remains a red infrastructure
 timeout (`official-summary-export-timeout` or `official-tests-export-timeout`,
-exit 124), without a retry; a passed XCTest cannot override it. Unit/UI consumers
-retain their existing explicit export budgets and classification. Product and
+exit 124), without a retry; its message reports the remaining allowance given to
+that read. A passed XCTest cannot override it. Callers without an explicit budget
+or timeout retain independent 60-second reads; explicit Unit/UI limits and
+classification are unchanged, and their recorders emit no new timing events. Product and
 Xcode execution windows are unchanged.
 
 ### Hosted export measurements and capacity
@@ -75,17 +80,20 @@ The shared allowance redistributes the former three 60-second reads' total,
 allowing a 90-second individual read when the remaining reads fit. It is not a
 measured p95 claim. Clock-only `official-export` events now retain each read's
 numeric `elapsed_seconds`, a fresh sequence and `completed`/`timeout` state in
-the existing bounded receipt. No arguments, paths, command output, new schema or
+the existing bounded receipt. Nonzero exits and OSError reads spend their measured
+budget but emit no timing event: the current reader has no failed state, and the
+original error path retains the failure. No arguments, paths, command output, new schema or
 process sampling are added. These memory-only events use the existing event cap
 even when process/ledger collection is exhausted, and survive case compaction
 and export failure. Their invocation origin is the individual Apple-tool call;
 they do not change the Xcode case resource clock. Missing timings remain unknown.
 
 The [nightly capacity calculation](CI_NIGHTLY.md#population-and-capacity) stays
-unchanged: ordinary six-case shards reserve `6 × 180 = 1,080` seconds (18 minutes)
-for official reads; the person shard's two three-session cases and four ordinary
-cases reserve `10 × 180 = 1,800` seconds (30 minutes). Both equal the previous
-`invocations × 3 × 60` maximum. Raising each read independently to 180 seconds
+unchanged: the worst case is 180 seconds per invocation, equal to the old
+`3 × 60` path. This is 18 minutes over six ordinary invocations and 30 minutes
+over the person shard's ten invocations, within the existing shared per-case
+reset/export/cleanup allowance rather than a separate reservation.
+Raising each read independently to 180 seconds
 would instead add 60 minutes to the largest shard's documented 198-minute bound
 and exceed the 215-minute job timeout; this implementation does not do that.
 The existing 240-second per-case overhead, warm child caps and 215-minute job

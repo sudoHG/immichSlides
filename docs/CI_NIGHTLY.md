@@ -268,8 +268,9 @@ completed in 457.7 seconds including preparation and test execution
 ([run](https://github.com/sudoHG/immichSlides/actions/runs/37726829510)); 600 seconds
 gives cold boot its own budget above that measured complete-case duration.
 Local and hosted cases follow the [shared preparation and reset bounds](CI_STRICT_RUNNER.md#shared-simulator-reset).
-Official reads share a 180-second allowance per XCTest invocation, preserving the
-former three-read total; see [export measurements and capacity](CI_STRICT_RUNNER.md#hosted-export-measurements-and-capacity). Preparation/export
+Strict runner official reads share a 180-second allowance per XCTest invocation,
+preserving the former three-read worst case; listed retry reads retain their own
+60-second limits. See [export measurements and capacity](CI_STRICT_RUNNER.md#hosted-export-measurements-and-capacity). Preparation/export
 timeouts name the phase in compact infrastructure entries without command arguments/output, preserve a failed
 case record, finish cleanup and quarantine raw bundles privately. Xcode cold/warm
 execution budgets are unchanged; the outer warm allowance includes readiness. The tracer
