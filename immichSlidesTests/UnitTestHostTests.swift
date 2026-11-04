@@ -3,8 +3,11 @@ import Testing
 
 @Suite
 struct UnitTestHostTests {
-    @Test func `the read only scene probe does not activate XCTest mode`() {
-        let probe = ["UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE": "1"]
+    @Test(arguments: [
+        ["UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE": "1"],
+        ["UI_TEST_PAUSE_ON_INITIAL_STABLE_SCENE": "1"]
+    ])
+    func `strict scene launch flags do not activate XCTest mode`(_ probe: [String: String]) {
         #expect(!PlatformCompat.isRunningXCTest(environment: probe))
         #expect(!PlatformCompat.isRunningXCTest(environment: [:]))
         #expect(

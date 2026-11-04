@@ -182,7 +182,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
         }
 
         let input = try requireStrictE2EInput()
-        let app = try launchStrictE2EApp(recordSceneSequence: true)
+        let app = try launchStrictE2EApp(recordSceneSequence: true, pauseOnInitialStableScene: true)
         defer { app.terminateForFailureEvidence() }
 
         try configureServerThroughFirstBoot(app: app, input: input)
@@ -267,7 +267,7 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
                 "slideshow.control.settings.button", timeout: TestWait.seconds(.product(30))),
             "After Continue, the app must reach the playback page and show the control bar."
         )
-        // Pause freezes incoming layers too; finish the initial fade within the existing entry budget.
+        // The App schedules the initial Pause at its stable scene, before cross-process delivery can miss it.
         var previousEntryObservation: [String: String] = [:]
         var entryObservation: [String: String] = [:]
         let didReachStableEntry = TestWait.until(.product(max(0, playbackEntryDeadline.timeIntervalSinceNow))) {
@@ -281,12 +281,11 @@ final class StrictE2ETVOSFlowUITests: XCTestCase {
             didReachStableEntry, true,
             "tvOS flow entry precondition failed: initial scene did not stabilize before Pause."
         )
-        // Pause before screenshots or focus travel can consume the first autoplay interval.
-        let playingValue = String(describing: playPauseButton.value ?? "")
-        FirstFailureRemote.press(.playPause)
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(4))) {
-                String(describing: playPauseButton.value ?? "") != playingValue
+                let observation = self.strictSceneFrameObservation(app: app)
+                return SharedSceneEvidenceManifest.parseKeyValueFields(observation["render"] ?? "")["playbackPaused"]
+                    == "true"
             },
             "Autoplay must be paused before the history chain starts."
         )

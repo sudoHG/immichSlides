@@ -1531,6 +1531,7 @@ PREFIX_RULES = (
     ("After returning from settings, the playback transition must finish before a directional press.", "unknown", "timing_window"),
     ("After the first previous, one earlier history entry remains, so the button must stay enabled.", "history_navigation", "control_state"),
     ("Once the real controlled service is reachable, the connection-test-passed status must show.", "firstboot_setup", "navigation"),
+    ("Once the real controlled server is reachable, connection test passed must be shown.", "firstboot_setup", "navigation"),
     ("After the second previous returns to the history start, the button must be disabled again.", "history_navigation", "control_state"),
     ("After choosing random playback, focus must be able to move down to the Continue button.", "mode_selection", "focus"),
     ("After consuming one step of forward history, focus must be able to move to Next again.", "history_navigation", "focus"),

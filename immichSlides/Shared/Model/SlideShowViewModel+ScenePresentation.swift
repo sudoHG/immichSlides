@@ -27,6 +27,23 @@ extension SlideShowViewModel {
     }
 
     #if DEBUG
+    /// Anchor strict history evidence before runner or remote delivery latency can consume the first scene.
+    func pauseOnInitialStableSceneForTesting(_ renderedSnapshot: PlaybackSessionEngine.SceneRenderSnapshot) {
+        guard !didPauseOnInitialStableSceneForTesting, PlatformCompat.shouldPauseOnInitialStableSceneForTesting,
+            isAutoPlay, playbackSession.presentationHistoryCount == 1,
+            renderedSnapshot.phase == .stablePhoto, renderedSnapshot.layers.count == 1,
+            let layer = renderedSnapshot.layers.first, layer.role == .stable,
+            layer.opacity == 1, layer.isPresentationReady
+        else { return }
+        let current = sceneRenderSnapshot
+        guard current.phase == .stablePhoto, current.layers.count == 1,
+            current.layers.first?.identity == layer.identity,
+            current.layers.first?.opacity == 1, current.layers.first?.isPresentationReady == true
+        else { return }
+        didPauseOnInitialStableSceneForTesting = true
+        toggleAutoPlayFromUserInteraction()
+    }
+
     /// This timer observes the reducer's existing fade clock; pausing still uses the user's command path.
     func scheduleAutomaticFadeMidpointPauseForTesting() {
         guard PlatformCompat.shouldPauseAtAutomaticFadeMidpointForTesting(), didReceiveFirstUserPlayForTesting else {
