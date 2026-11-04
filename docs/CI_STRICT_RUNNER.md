@@ -31,9 +31,76 @@ idle medians remained zero under the test workload; waiting before strict did
 not provide sustained resource headroom. Shared readiness and reset bounds stay
 unchanged.
 
-Official tests and summary exports each have 60 seconds. Unit callers retain
-`unit-results-timed-out` with export phase and elapsed time; strict callers retain
-their preparation/export phase codes. Test-execution budgets are separate.
+Each strict XCTest invocation has one shared 180-second official-export allowance.
+Its initial summary read, final tests read and final summary read charge their
+actual monotonic tool time to the same budget, and each subprocess receives only
+the remaining allowance. Time between reads, including App evidence validation,
+does not spend this read-only allowance. Final export reads tests, then the required
+summary, then optional legacy diagnostics. The legacy read uses at most
+`min(60, remaining)` seconds and its timeout stays swallowed, as on main; it cannot
+starve summary or increase the availability window for `failure_messages`.
+Separate `filter-person` sessions and
+result bundles have separate budgets. Exhaustion remains a red infrastructure
+timeout (`official-summary-export-timeout` or `official-tests-export-timeout`,
+exit 124), without a retry; its message reports the remaining allowance given to
+that read. A passed XCTest cannot override it. Callers without an explicit budget
+or timeout retain independent 60-second reads; explicit Unit/UI limits and
+classification are unchanged, and their recorders emit no new timing events. Product and
+Xcode execution windows are unchanged.
+
+### Hosted export measurements and capacity
+
+The 2026-11-04 inspection covered 57 strict compact artifacts from nightly runs
+[41752369593](https://github.com/sudoHG/immichSlides/actions/runs/41752369593),
+[41686291096](https://github.com/sudoHG/immichSlides/actions/runs/41686291096) and
+[41631955358](https://github.com/sudoHG/immichSlides/actions/runs/41631955358).
+The first run was still in progress; this is an available-artifact sample, not a
+complete nightly population. Job logs expose whole-case durations, while these
+compact receipts retain test-execution starts and resources rather than separate
+official-tool durations. Do not substitute case duration for export duration.
+
+| Device | Artifacts / warm cases | Export median | Export p95 | Export max |
+| --- | --- | --- | --- | --- |
+| iPad | 23 / 130 | unknown | unknown | unknown |
+| iPhone | 22 / 108 | unknown | unknown | unknown |
+| tvOS | 12 / 62 | unknown | unknown | unknown |
+
+There are zero independently timed completed strict-export samples in that set.
+The iPad Debug `album-empty` fixture A job
+[126327429762](https://github.com/sudoHG/immichSlides/actions/runs/41752369593/job/126327429762)
+retains Passed official methods/summary followed by a summary-export timeout at
+the former 60-second limit: its needed completion time is unknown and at least
+that limit. Case resources report median idle 0%, but lack export-specific CPU
+samples. This does not prove when the read would complete. The related UI
+tests-read incident [#479](https://github.com/sudoHG/immichSlides/issues/479)
+records 184.7 seconds around its 180-second timeout; it is a different read and
+not a completed strict-export sample or a guarantee that 180 seconds suffices.
+
+The shared allowance redistributes the former three 60-second reads' total,
+allowing a 90-second individual read when the remaining reads fit. It is not a
+measured p95 claim. Clock-only `official-export` events now retain each read's
+numeric `elapsed_seconds`, a fresh sequence and `completed`/`timeout` state in
+the existing bounded receipt. Nonzero exits and OSError reads spend their measured
+budget but emit no timing event: the current reader has no failed state, and the
+original error path retains the failure. No arguments, paths, command output, new schema or
+process sampling are added. These memory-only events use the existing event cap
+even when process/ledger collection is exhausted, and survive case compaction
+and export failure. Their invocation origin is the individual Apple-tool call;
+they do not change the Xcode case resource clock. Missing timings remain unknown.
+
+The [nightly capacity calculation](CI_NIGHTLY.md#population-and-capacity) stays
+unchanged: the worst case is 180 seconds per invocation, equal to the old
+`3 × 60` path. This is 18 minutes over six ordinary invocations and 30 minutes
+over the person shard's ten invocations, within the existing shared per-case
+reset/export/cleanup allowance rather than a separate reservation.
+Raising each read independently to 180 seconds
+would instead add 60 minutes to the largest shard's documented 198-minute bound
+and exceed the 215-minute job timeout; this implementation does not do that.
+The existing 240-second per-case overhead, warm child caps and 215-minute job
+cap are unchanged. The documented 198-minute bound retains its 17-minute margin
+(600 seconds of preparation plus seven minutes for diagnostics/setup/upload/
+cleanup). This is scheduling headroom, not a guarantee under starvation; reaching
+any outer cap remains red. Device runs for this runner-only change: `NOT_RUN`.
 
 Strict builds use their own test plans and settings; they do not consume the default
 unit/UI archives. They reuse the [archive workspace preflight](CI_BUILD_ARCHIVE.md),
