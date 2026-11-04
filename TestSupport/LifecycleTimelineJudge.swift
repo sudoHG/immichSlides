@@ -18,6 +18,8 @@ struct LifecycleTimelineEvent: Codable, Equatable, Sendable {
     var transitionScene: String?
     var transitionSource: String?
     var heldTargetScene: String?
+    var controlBarVisible: Bool?
+    var exifVisible: Bool?
 }
 
 enum LifecycleTimelineJudge {

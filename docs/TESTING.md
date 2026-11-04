@@ -381,6 +381,8 @@ prepared next. With this override, the SmartFill history round-trip test no long
 covers a wake re-showing the bar, discarding prepared next, then Next. That path
 remains in the non-opted SmartFill manual-lifecycle, StrictE2E Filter and
 AccessLifecycle Navigation tests.
+The Debug pause-timeline suite also keeps the real delay so its exact timing
+judge retains control-bar visibility changes and their planning effects.
 
 `testIOSExifAlbumDiagnosticScreenshots` instead explicitly launches with
 `UI_TEST_HOLD_CONTROLS_UNTIL_INITIAL_SETTINGS=1`. In Debug iOS only, this holds
@@ -958,7 +960,12 @@ in these Debug cases. Screenshots independently identify public fixture pixels;
 the App's asset hashes only cross-check that identity, never supply it.
 The held-photo proof also compares decoded pixels before and after T+2 in
 the central photo band (10–90% of width, 30–60% of height), excluding the separately
-animated top EXIF and bottom control overlays. Hogan approved a conditional
+animated top EXIF and bottom control overlays. The iOS Debug pause-timeline test
+keeps the product's eight-second auto-hide: hiding during the T+2 hold, waking
+before final Continue and hiding after Continue remain inputs to its exact timing
+judge. Visibility changes can discard prepared next and re-plan a pending transition;
+the diagnostics observe these states without pinning them or changing the judge.
+Hogan approved a conditional
 one-level per-channel tolerance on 2026-10-30: only a `frameFrozen` event for the
 same scene/frame before the first capture, followed exclusively by unchanged
 paused frame/checkpoint evidence through the final capture's seal, can permit
@@ -972,7 +979,17 @@ comparisons add no entry.
 Frozen-pixel failures retain the existing failure prefix and append the comparison
 site (`frozen-reference` or `pause-hold`), `maximum_channel_difference` (0–255)
 and `differing_pixel_count` (pixels with any unequal RGBA channel, counted once).
-Only this fixed integer grammar reaches the public App-timeline message path;
+The current producer also appends `mean_channel_difference` and the two captures'
+`control_bar_before`, `control_bar_after`, `exif_before` and `exif_after` states.
+The signed mean is candidate minus reference over all RGB channels of the same
+decoded crop, rounded to the nearest integer, with ties away from zero (-255–255);
+alpha participates in maximum/count but not the mean. Each visibility is `visible`,
+`hidden` or `unknown`: the App's committed checkpoints bracketing that screenshot
+must agree, otherwise it is unknown. These are visibility observations, not proof
+of completed overlay fades or a color/HDR diagnosis. Content proofs retain the
+checkpoint sequence pair and these states. Older events omit the optional visibility
+fields and read as unknown; older failure sentences remain readable.
+Only the complete fixed grammar reaches the public App-timeline message path;
 the exporter and both tracer consumers reject other sites, values or suffixes.
 The failure retains its existing `continue_timing/evidence_capture` labels and cannot become yellow.
 Statistics are measured only on rejected comparisons with equal decoded crop sizes.

@@ -118,7 +118,13 @@ extension SlideShowViewTV {
                 syncExifOverlayPresentation(overlayAsset)
             }
             #if DEBUG
-            .modifier(PlaybackLifecycleTimelineModifier(frame: viewModel.lifecycleTimelineFrame(snapshot)))
+            .modifier(
+                PlaybackLifecycleTimelineModifier(
+                    frame: viewModel.lifecycleTimelineFrame(snapshot),
+                    overlays: .init(
+                        controlBarVisible: isControlBarVisible,
+                        exifVisible: isRenderedExifOverlayVisible && retainedExifOverlayAsset != nil))
+            )
             .onPreferenceChange(SmartFillMotionFrameProbePreferenceKey.self) { rows in
                 smartFillMotionFrameProbeRows = rows
             }

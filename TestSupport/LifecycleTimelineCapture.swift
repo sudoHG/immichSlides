@@ -13,6 +13,28 @@ final class LifecycleTimelineCapture {
     private var actions: [[String: Any]] = []
     private var frozenPixelTolerances: [[String: Any]] = []
 
+    private enum Visibility: String {
+        case visible, hidden, unknown
+
+        init(before: Bool?, after: Bool?) {
+            guard let before, before == after else {
+                self = .unknown
+                return
+            }
+            self = before ? .visible : .hidden
+        }
+    }
+
+    private struct CaptureOverlays {
+        let controlBar: Visibility
+        let exif: Visibility
+
+        init(before: LifecycleTimelineEvent, after: LifecycleTimelineEvent) {
+            controlBar = Visibility(before: before.controlBarVisible, after: after.controlBarVisible)
+            exif = Visibility(before: before.exifVisible, after: after.exifVisible)
+        }
+    }
+
     init() throws {
         guard let directory = StrictE2EVisualEvidence.directory() else {
             throw LifecycleTimelineJudge.Failure("missing evidence directory")
@@ -100,16 +122,17 @@ final class LifecycleTimelineCapture {
 
     private func captureTimelineContent(
         _ name: String, expectedScene: String? = nil, excludingScene: String? = nil
-    ) throws -> LifecycleTimelineEvent {
+    ) throws -> (state: LifecycleTimelineEvent, overlays: CaptureOverlays) {
         let waiting = TestWait.hangGuard()
-        var frozenReference: (frame: String, png: Data, request: TimeInterval)?
+        var frozenReference: (frame: String, png: Data, request: TimeInterval, overlays: CaptureOverlays)?
         repeat {
-            _ = try checkpoint(guardWait: waiting)
+            let beforeCapture = try checkpoint(guardWait: waiting)
             let requested = ProcessInfo.processInfo.systemUptime
             let screenshot = XCUIScreen.main.screenshot()
             let returned = ProcessInfo.processInfo.systemUptime
             let png = screenshot.pngRepresentation
-            _ = try checkpoint(guardWait: waiting)
+            let afterCapture = try checkpoint(guardWait: waiting)
+            let overlays = CaptureOverlays(before: beforeCapture, after: afterCapture)
             let events = try readTimelineEvents()
             if let state = try LifecycleTimelineJudge.contentState(events, request: requested, returned: returned),
                 expectedScene.map({ state.scene == $0 }) ?? true,
@@ -135,7 +158,7 @@ final class LifecycleTimelineCapture {
                         let pixels = Self.frozenPhotoPixels(png)
                     else { throw LifecycleTimelineJudge.Failure("missing frozen content anchor") }
                     guard let reference = frozenReference, reference.frame == state.frame else {
-                        frozenReference = (state.frame, png, requested)
+                        frozenReference = (state.frame, png, requested, overlays)
                         continue
                     }
                     var pixelDiagnostic = ""
@@ -143,9 +166,10 @@ final class LifecycleTimelineCapture {
                         try Self.frozenPhotoPixelsEqual(
                             reference.png, png, events: events, scene: state.scene, frame: state.frame,
                             request: reference.request, returned: returned,
-                            onDifferenceMeasured: { maximum, count in
+                            onDifferenceMeasured: { maximum, count, mean in
                                 pixelDiagnostic = Self.pixelDiagnostic(
-                                    site: "frozen-reference", maximum: maximum, count: count)
+                                    site: "frozen-reference", maximum: maximum, count: count, mean: mean,
+                                    before: reference.overlays, after: overlays)
                             },
                             onToleranceApplied: { maximum in
                                 self.frozenPixelTolerances.append([
@@ -177,9 +201,11 @@ final class LifecycleTimelineCapture {
                     "photo_pixels_sha256": Self.hash(Data(photoPixels)),
                     "width": properties[kCGImagePropertyPixelWidth as String] ?? 0,
                     "height": properties[kCGImagePropertyPixelHeight as String] ?? 0,
+                    "overlays": ["control_bar": overlays.controlBar.rawValue, "exif": overlays.exif.rawValue],
+                    "overlay_checkpoints": [beforeCapture.sequence, afterCapture.sequence],
                     "frozen_proof": frozenProof
                 ])
-                return state
+                return (state, overlays)
             }
             // Crossing a transition is inconclusive; every requested proof must still obtain a conclusive capture.
             RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.infrastructure(0.1))))
@@ -194,7 +220,7 @@ final class LifecycleTimelineCapture {
         _ = try checkpoint(clockHandshake: true)
         _ = try performTimelineAction("pauseReceived", perform: pause)
         let setupNext = try performTimelineAction("manualNavigationReceived", perform: next)
-        let start = try captureTimelineContent("timeline-start", excludingScene: setupNext.scene)
+        let start = try captureTimelineContent("timeline-start", excludingScene: setupNext.scene).state
         let firstContinue = try performTimelineAction("continueReceived", perform: resume)
         waitUntilUptime(firstContinue.uptime + Double(interval) / 2)
         let midpointPause = try performTimelineAction("pauseReceived", perform: pause)
@@ -203,7 +229,8 @@ final class LifecycleTimelineCapture {
             interval: Double(interval))
         _ = try captureTimelineContent("timeline-midpoint-pause", expectedScene: start.scene)
         _ = try performTimelineAction("manualNavigationReceived", perform: next)
-        let nextScene = try captureTimelineContent("timeline-after-next", excludingScene: start.scene)
+        let nextCapture = try captureTimelineContent("timeline-after-next", excludingScene: start.scene)
+        let nextScene = nextCapture.state
         let heldPhotoPNG = try Data(contentsOf: directory.appendingPathComponent("timeline-after-next.png"))
         let heldPhotoRequest = proofs.last?["request"] as? TimeInterval
         guard nextScene.scene != start.scene, nextScene.assets != start.assets else {
@@ -215,15 +242,17 @@ final class LifecycleTimelineCapture {
         guard holdEnd.uptime - holdStart.uptime >= Double(interval) + 2 else {
             throw LifecycleTimelineJudge.Failure("pause hold shorter than T+2")
         }
-        _ = try captureTimelineContent("timeline-after-hold", expectedScene: nextScene.scene)
+        let heldCapture = try captureTimelineContent("timeline-after-hold", expectedScene: nextScene.scene)
         let heldEndPNG = try Data(contentsOf: directory.appendingPathComponent("timeline-after-hold.png"))
         var pixelDiagnostic = ""
         guard let heldPhotoRequest, let heldEnd = proofs.last?["return"] as? TimeInterval,
             try Self.frozenPhotoPixelsEqual(
                 heldPhotoPNG, heldEndPNG, events: readTimelineEvents(), scene: nextScene.scene,
                 frame: nextScene.frame, request: heldPhotoRequest, returned: heldEnd,
-                onDifferenceMeasured: { maximum, count in
-                    pixelDiagnostic = Self.pixelDiagnostic(site: "pause-hold", maximum: maximum, count: count)
+                onDifferenceMeasured: { maximum, count, mean in
+                    pixelDiagnostic = Self.pixelDiagnostic(
+                        site: "pause-hold", maximum: maximum, count: count, mean: mean,
+                        before: nextCapture.overlays, after: heldCapture.overlays)
                 },
                 onToleranceApplied: { maximum in
                     self.frozenPixelTolerances.append([
@@ -294,7 +323,7 @@ final class LifecycleTimelineCapture {
     static func frozenPhotoPixelsEqual(
         _ referencePNG: Data, _ candidatePNG: Data, events: [LifecycleTimelineEvent],
         scene: String, frame: String, request: TimeInterval, returned: TimeInterval,
-        onDifferenceMeasured: ((Int, Int) -> Void)? = nil,
+        onDifferenceMeasured: ((Int, Int, Int) -> Void)? = nil,
         onToleranceApplied: ((Int) -> Void)? = nil
     ) throws -> Bool {
         guard let reference = frozenPhotoPixels(referencePNG), let candidate = frozenPhotoPixels(candidatePNG)
@@ -304,16 +333,21 @@ final class LifecycleTimelineCapture {
         if !isEqual, reference.count == candidate.count {
             var maximum = 0
             var differingPixels = 0
+            var signedRGBDifference: Int64 = 0
             for offset in stride(from: 0, to: reference.count, by: 4) {
                 var pixelMaximum = 0
                 for channel in 0..<4 {
+                    let difference = Int(candidate[offset + channel]) - Int(reference[offset + channel])
                     pixelMaximum = max(
-                        pixelMaximum, abs(Int(reference[offset + channel]) - Int(candidate[offset + channel])))
+                        pixelMaximum, abs(difference))
+                    if channel < 3 { signedRGBDifference += Int64(difference) }
                 }
                 maximum = max(maximum, pixelMaximum)
                 if pixelMaximum > 0 { differingPixels += 1 }
             }
-            onDifferenceMeasured?(maximum, differingPixels)
+            let rgbChannelCount = reference.count / 4 * 3
+            let mean = Int((Double(signedRGBDifference) / Double(rgbChannelCount)).rounded())
+            onDifferenceMeasured?(maximum, differingPixels, mean)
         }
         if isEqual, reference != candidate {
             let maximum = zip(reference, candidate).reduce(0) { max($0, abs(Int($1.0) - Int($1.1))) }
@@ -322,8 +356,10 @@ final class LifecycleTimelineCapture {
         return isEqual
     }
 
-    private static func pixelDiagnostic(site: String, maximum: Int, count: Int) -> String {
-        " site=\(site) maximum_channel_difference=\(maximum) differing_pixel_count=\(count)"
+    private static func pixelDiagnostic(
+        site: String, maximum: Int, count: Int, mean: Int, before: CaptureOverlays, after: CaptureOverlays
+    ) -> String {
+        " site=\(site) maximum_channel_difference=\(maximum) differing_pixel_count=\(count) mean_channel_difference=\(mean) control_bar_before=\(before.controlBar.rawValue) control_bar_after=\(after.controlBar.rawValue) exif_before=\(before.exif.rawValue) exif_after=\(after.exif.rawValue)"
     }
 
     private static func hash(_ value: String) -> String { hash(Data(value.utf8)) }
