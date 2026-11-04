@@ -1453,8 +1453,12 @@ The observation and its sole failed attempt retain the same complete ordered
 are not deduplicated. The list has 1–16 entries: ordinary assertions retain only
 their existing reviewed prefix, and the tool messages below retain their complete
 original text (at most 512 characters). Unknown messages use the fixed
-`[unrecognized XCTest failure]` marker and remain red. No assertion suffix,
-private value, path or arbitrary free text is admitted by this extension.
+`[unrecognized XCTest failure]` marker and remain red. No private value, path or
+arbitrary free text is admitted by this extension.
+The tvOS publication assertion additionally retains only its complete fixed
+`advanceObserved=true|false stable=true|false referencesMatch=true|false` suffix
+in that order. No other suffix is admitted; missing or malformed facts retain
+the existing prefix alone and cannot establish the settling exception below.
 Producers project this list from the invocation root's raw legacy
 `issues.testFailureSummaries._values` before folding diagnostic classes. They read
 only this aggregate: `actions._values[].actionResult.issues` repeats its failures.
@@ -1502,7 +1506,7 @@ unknown target. These surface checks supplement every other timing/evidence gate
 | `hidden_controls`, `focus` | The same steps, for control availability, reveal or focus arrival, plus waiting for hidden controls for exactly `The control bar is not hidden yet; cannot verify the first wake.` That wait requires `control_bar: hidden` and a deadline at least the required 0.6-second hidden-stability period. | `hidden_controls` with a visible bar but missing target stays red. For the exact first-wake message, unknown/missing/visible bar readings or a positive deadline shorter than 0.6 seconds stay red. An assertion forbidding a second press is red. BLACK/BLANK stay red for both classes. |
 | `control_state` | `wait-scene` pause-readback timeouts: `After pausing, the control value must be play.` or `Album capture preparation must observe paused playback after one Pause.` Also exactly `Late image preparation must turn Autoplay off.` at `select` on `settings.playback.autoPlay.toggle`, on `playback-settings`, with the failure snapshot's Autoplay readback `off`. | Missing/unknown or `on` toggle readback stays red. Other wrong state/value assertions, including the paused-during-transition contradiction, stay red. The reviewed Pause poll waits for readback for 4 seconds; its exhausted poll is a timeout. |
 | `timing_window` | `wait-scene` or `rotate`, for the existing `did not stabilize within the` prefixes and album stable-scene preparation timeout. Also exactly `rotation-landscape-stable did not stabilize within the ` at `capture-frame` on `app-window`, with scene `MATCH`. | Other capture-frame prefixes, identity/crop failures, early/late transitions, crossed evidence windows, invalid pacing and timing preconditions stay red. |
-| `probe_readback` | `query-element` for unreadable Play/Pause before acting; album `wait-scene` settling with every existing gate fact, including a complete loaded photo and confirmed advance. | Wrong or empty probe values, incomplete evidence, no advance, changed layers without history advance and frozen-layer contradictions stay red. |
+| `probe_readback` | `query-element` for unreadable Play/Pause before acting; album `wait-scene` settling with every existing gate fact, including a complete loaded photo and confirmed advance; the exact tvOS publication settling message described below. | Wrong or empty probe values, incomplete evidence, no advance, changed layers without history advance and frozen-layer contradictions stay red. |
 | `interval_readback` | None. | Wrong interval/value is functional. |
 | `scene_identity` | None. | Wrong/unchanged photo, black/blank scene and pixel/content contradictions are functional. |
 | `evidence_capture` | None. | Missing/corrupt evidence and frozen-photo pixel violations are functional. |
@@ -1516,6 +1520,37 @@ Case-wide median idle and maximum load cannot replace these samples. Missing,
 one-sided or high-idle samples remain red. Validator rejections remain red,
 including a validator failure accompanying an eligible XCTest message. Multiple
 ordinary failures have no per-failure timing receipt and remain red.
+
+The tvOS settling exception requires exactly
+`The index probe must change after a playback action. advanceObserved=true stable=false referencesMatch=true`
+at `query-element` on `slideshow.scenePresentation.contract.summary`, on foreground
+playback with scene `TRANSITION` and `deadline_seconds == 3`. Only stability may be
+missing: no advance, mismatched/missing references, missing facts, BLACK/BLANK,
+a wrong surface, any other deadline (including the 60-second navigation guard),
+or an unexhausted wait stays red. Only the resume path emits the suffix; both timed
+waits record their own unchanged three-second deadline.
+The first autoplay and both manual Next waits retain main's advance-only
+success condition; resume retains main's advance-and-stable condition. References
+never gate success, and success never requires a second snapshot. The same failure-window
+starvation samples, complete single-failure binding and consecutive-night escalation
+apply. Local and PR failures remain red, and retained v1–v4 proofs are unchanged.
+Swift emits the complete suffix only when both adjacent observations have readable
+render phase/roles, opacity in 0...1 and finite nonnegative raw motion progress, all slots explicitly `ready`,
+coverage exactly 1, empty-canvas ratio 0, and no gap or overlap. A nonstable render
+must have phase `transition` with outgoing/incoming layers; missing or contradictory
+fields emit only the original fixed prefix, which cannot qualify for yellow.
+Both adjacent render observations must explicitly report `playbackPaused=false`.
+Within this wait Swift records the first `phase=transition` observation; it must
+have the same nonempty outgoing/incoming `layerIDs` as the last observation, and
+fade progress `(1 - outgoing opacity) + incoming opacity` must rise by at least
+0.01. Paused transitions, no/insufficient progress, changed or missing layers and
+missing first-transition evidence emit only the fixed prefix and remain red,
+even with otherwise complete starvation evidence. These checks gate diagnostics
+only and do not alter passing conditions or add a query, wait or retry.
+Outgoing raw motion progress may exceed 1 during a transition; the existing stable-window
+0...1 check is unchanged and is not a completeness bound for transition evidence.
+Historical run 41686291096 has a completed focus wait's 5-second/1.161-second receipt;
+it does not prove exhaustion of the publication wait and remains red.
 
 The first-wake precondition throws the reviewed `Failure` type and records its
 original wait before App teardown; the zero-second immediate check cannot qualify.

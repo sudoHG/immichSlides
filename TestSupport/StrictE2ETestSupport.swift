@@ -2,6 +2,63 @@ import Foundation
 import XCTest
 
 enum StrictE2ESceneCapture {
+    static func hasProgressingPublicationFacts(
+        firstTransition: [String: String], before: [String: String], after: [String: String]
+    ) -> Bool {
+        guard [before, after].allSatisfy(hasCompletePublicationFacts) else { return false }
+        let previousRender = SharedSceneEvidenceManifest.parseKeyValueFields(before["render"] ?? "")
+        let lastRender = SharedSceneEvidenceManifest.parseKeyValueFields(after["render"] ?? "")
+        let firstRender = SharedSceneEvidenceManifest.parseKeyValueFields(firstTransition["render"] ?? "")
+        guard previousRender["playbackPaused"] == "false", lastRender["playbackPaused"] == "false",
+            let layerIDs = firstRender["layerIDs"], layerIDs == lastRender["layerIDs"],
+            layerIDs.components(separatedBy: "|").count == 2,
+            layerIDs.components(separatedBy: "|").allSatisfy({ !$0.isEmpty }),
+            let firstProgress = fadeProgress(firstRender), let lastProgress = fadeProgress(lastRender)
+        else { return false }
+        let minimumFadeProgressAdvance = 0.01
+        return lastProgress - firstProgress >= minimumFadeProgressAdvance
+    }
+
+    private static func fadeProgress(_ render: [String: String]) -> Double? {
+        guard render["phase"] == "transition", render["layerRoles"] == "outgoing|incoming",
+            let opacities = render["layerOpacities"]?.components(separatedBy: "|"), opacities.count == 2,
+            let outgoing = Double(opacities[0]), let incoming = Double(opacities[1]),
+            (0...1).contains(outgoing), (0...1).contains(incoming)
+        else { return nil }
+        return (1 - outgoing) + incoming
+    }
+
+    static func hasCompletePublicationFacts(_ observation: [String: String]) -> Bool {
+        let manifest = SharedSceneEvidenceManifest.parseKeyValueFields(observation["manifest"] ?? "")
+        guard let slotCount = Int(manifest["slotCount"] ?? ""), slotCount > 0,
+            let readiness = manifest["slotReadiness"]?.components(separatedBy: ","),
+            readiness.count == slotCount, readiness.allSatisfy({ $0 == "ready" }),
+            let references = manifest["ledgerSceneAssets"]?.components(separatedBy: ","),
+            references.count == slotCount,
+            references.allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }),
+            Double(manifest["canvasCoverage"] ?? "") == 1, Double(manifest["emptyCanvasRatio"] ?? "") == 0,
+            Int(manifest["gapPixelCount"] ?? "") == 0, Int(manifest["overlapPixelCount"] ?? "") == 0,
+            SharedSceneEvidenceManifest.manifestObservation(from: observation["manifest"] ?? "")?
+                .isCompleteVisibleScene == true
+        else { return false }
+        let render = SharedSceneEvidenceManifest.parseKeyValueFields(observation["render"] ?? "")
+        guard render["loadingVisible"] == "false", let roles = render["layerRoles"]?.components(separatedBy: "|"),
+            !roles.isEmpty, let opacities = render["layerOpacities"]?.components(separatedBy: "|"),
+            let progress = render["motionRawProgress"]?.components(separatedBy: "|"),
+            opacities.count == roles.count, progress.count == roles.count,
+            opacities.allSatisfy({ Double($0).map { (0...1).contains($0) } == true }),
+            progress.allSatisfy({ Double($0).map { $0.isFinite && $0 >= 0 } == true })
+        else { return false }
+        if render["phase"] == "stablePhoto" { return isStableWindow(observation) }
+        return render["phase"] == "transition" && roles == ["outgoing", "incoming"]
+    }
+
+    static func referencesMatch(before: [String: String], after: [String: String]) -> Bool {
+        let beforeRefs = SharedSceneEvidenceManifest.parseKeyValueFields(before["manifest"] ?? "")["ledgerSceneAssets"]
+        let afterRefs = SharedSceneEvidenceManifest.parseKeyValueFields(after["manifest"] ?? "")["ledgerSceneAssets"]
+        return beforeRefs?.isEmpty == false && beforeRefs == afterRefs
+    }
+
     static func isStableWindow(_ observation: [String: String]) -> Bool {
         let render = SharedSceneEvidenceManifest.parseKeyValueFields(observation["render"] ?? "")
         guard render["phase"] == "stablePhoto", render["layerRoles"] == "stable",
@@ -207,9 +264,7 @@ extension XCTestCase {
     }
 
     func strictSceneCaptureDiagnostic(before: [String: String], after: [String: String], stable: Bool) -> String {
-        let beforeRefs = SharedSceneEvidenceManifest.parseKeyValueFields(before["manifest"] ?? "")["ledgerSceneAssets"]
-        let afterRefs = SharedSceneEvidenceManifest.parseKeyValueFields(after["manifest"] ?? "")["ledgerSceneAssets"]
-        return "stable=\(stable) referencesMatch=\(beforeRefs != nil && beforeRefs == afterRefs)"
+        "stable=\(stable) referencesMatch=\(StrictE2ESceneCapture.referencesMatch(before: before, after: after))"
     }
 
     func attachStrictSceneObservation(before: [String: String], after: [String: String], name: String) {

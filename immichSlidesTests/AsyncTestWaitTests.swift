@@ -4,6 +4,94 @@ import Testing
 @MainActor
 @Suite
 struct AsyncTestWaitTests {
+    @Test(arguments: [
+        "complete", "extended-progress", "missing-render", "missing-opacity", "missing-progress",
+        "invalid-progress", "negative-progress", "wrong-phase", "wrong-role",
+        "not-ready", "missing-readiness", "empty-reference", "coverage", "gap", "overlap",
+        "paused", "previous-paused", "missing-paused", "no-progress", "insufficient-progress",
+        "layer-ids-changed", "missing-layer-ids", "missing-transition"
+    ])
+    func `publication timeout suffix requires complete unpaused evidence of the same progressing fade`(scenario: String)
+    {
+        var observation = [
+            "render":
+                "phase=transition;layerIDs=old|new;layerRoles=outgoing|incoming;layerOpacities=0.4|0;motionRawProgress=0.2|0;loadingVisible=false;playbackPaused=false",
+            "manifest":
+                "sceneType=double;slotCount=2;slotReadiness=ready,ready;canvasCoverage=1;emptyCanvasRatio=0;gapPixelCount=0;overlapPixelCount=0;ledgerSceneAssets=first,second"
+        ]
+        let firstTransition = [
+            "render": observation["render"]!.replacingOccurrences(
+                of: "layerOpacities=0.4|0", with: "layerOpacities=0.8|0")
+        ]
+        var previous = observation
+        switch scenario {
+        case "extended-progress":
+            observation["render"] = observation["render"]?.replacingOccurrences(
+                of: "motionRawProgress=0.2|0", with: "motionRawProgress=1.116401|0")
+        case "missing-render": observation["render"] = ""
+        case "missing-opacity":
+            observation["render"] = observation["render"]?.replacingOccurrences(of: "layerOpacities=0.4|0;", with: "")
+        case "missing-progress":
+            observation["render"] = observation["render"]?.replacingOccurrences(
+                of: "motionRawProgress=0.2|0;", with: "")
+        case "invalid-progress":
+            observation["render"] = observation["render"]?.replacingOccurrences(
+                of: "motionRawProgress=0.2|0", with: "motionRawProgress=nan|0")
+        case "negative-progress":
+            observation["render"] = observation["render"]?.replacingOccurrences(
+                of: "motionRawProgress=0.2|0", with: "motionRawProgress=-0.2|0")
+        case "wrong-phase":
+            observation["render"] = observation["render"]?.replacingOccurrences(
+                of: "phase=transition", with: "phase=stablePhoto")
+        case "wrong-role":
+            observation["render"] = observation["render"]?.replacingOccurrences(
+                of: "outgoing|incoming", with: "stable|incoming")
+        case "not-ready":
+            observation["manifest"] = observation["manifest"]?.replacingOccurrences(
+                of: "ready,ready", with: "ready,pending")
+        case "missing-readiness":
+            observation["manifest"] = observation["manifest"]?.replacingOccurrences(
+                of: "slotReadiness=ready,ready;", with: "")
+        case "empty-reference":
+            observation["manifest"] = observation["manifest"]?.replacingOccurrences(of: "first,second", with: "first,")
+        case "coverage":
+            observation["manifest"] = observation["manifest"]?.replacingOccurrences(
+                of: "canvasCoverage=1", with: "canvasCoverage=0.9")
+        case "gap":
+            observation["manifest"] = observation["manifest"]?.replacingOccurrences(
+                of: "gapPixelCount=0", with: "gapPixelCount=1")
+        case "overlap":
+            observation["manifest"] = observation["manifest"]?.replacingOccurrences(
+                of: "overlapPixelCount=0", with: "overlapPixelCount=1")
+        case "paused":
+            observation["render"] = observation["render"]?.replacingOccurrences(
+                of: "playbackPaused=false", with: "playbackPaused=true")
+        case "missing-paused":
+            observation["render"] = observation["render"]?.replacingOccurrences(of: ";playbackPaused=false", with: "")
+        case "no-progress":
+            observation["render"] = observation["render"]?.replacingOccurrences(
+                of: "layerOpacities=0.4|0", with: "layerOpacities=0.8|0")
+        case "insufficient-progress":
+            observation["render"] = observation["render"]?.replacingOccurrences(
+                of: "layerOpacities=0.4|0", with: "layerOpacities=0.795|0")
+        case "layer-ids-changed":
+            observation["render"] = observation["render"]?.replacingOccurrences(of: "old|new", with: "other|new")
+        case "missing-layer-ids":
+            observation["render"] = observation["render"]?.replacingOccurrences(of: "layerIDs=old|new;", with: "")
+        default: break
+        }
+        if scenario == "previous-paused" {
+            previous["render"] = previous["render"]?.replacingOccurrences(
+                of: "playbackPaused=false", with: "playbackPaused=true")
+        }
+        #expect(!StrictE2ESceneCapture.isStableWindow(observation))
+        #expect(
+            StrictE2ESceneCapture.hasProgressingPublicationFacts(
+                firstTransition: scenario == "missing-transition" ? [:] : firstTransition,
+                before: previous, after: observation)
+                == (scenario == "complete" || scenario == "extended-progress"))
+    }
+
     @Test(arguments: [0.0, 10.0])
     func `deducted preparation taps extend the receipt budget without restarting its elapsed clock`(
         originalDeadlineSeconds: Double
