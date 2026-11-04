@@ -152,7 +152,8 @@ final class StrictE2ESmokeUITests: XCTestCase {
         }
         XCTAssertTrue(
             Date() < focusReturnDeadline
-                && waitForTVOSFocus(on: field, timeout: max(TimeInterval.zero, focusReturnDeadline.timeIntervalSinceNow)),
+                && waitForTVOSFocus(
+                    on: field, timeout: max(TimeInterval.zero, focusReturnDeadline.timeIntervalSinceNow)),
             "After submitting, focus must return to the same field.")
     }
 
