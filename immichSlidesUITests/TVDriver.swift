@@ -269,9 +269,11 @@ struct TVDriver: PlaybackDriver {
         }
         XCTAssertTrue(submit.hasFocus, "The system keyboard submit button must be focused before submitting text.")
         press(.select)
-        press(.menu)
+        let focusReturnDeadline = Date().addingTimeInterval(UITestSupportWaitTiming.stateChangeTimeoutSeconds)
+        app.dismissTVOSKeyboardIfPresent(before: focusReturnDeadline)
         XCTAssertTrue(
-            waitForFocus(field, timeout: UITestSupportWaitTiming.stateChangeTimeoutSeconds),
+            Date() < focusReturnDeadline
+                && waitForFocus(field, timeout: max(TimeInterval.zero, focusReturnDeadline.timeIntervalSinceNow)),
             "After submitting, focus must return to the original field.")
     }
 

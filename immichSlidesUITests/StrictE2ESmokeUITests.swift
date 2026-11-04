@@ -143,14 +143,16 @@ final class StrictE2ESmokeUITests: XCTestCase {
         }
         XCTAssertTrue(submit.hasFocus, "The system keyboard submit button must be focused before submitting.")
         FirstFailureRemote.press(.select)
-        FirstFailureRemote.press(.menu)
+        let focusReturnDeadline = Date().addingTimeInterval(TestWait.seconds(.product(3)))
+        app.dismissTVOSKeyboardIfPresent(before: focusReturnDeadline)
         if field.identifier == "firstboot.serverURL.field" {
             XCTAssertEqual(
                 field.value as? String, value,
                 "The public test URL must be submitted unchanged, without keyboard control characters.")
         }
         XCTAssertTrue(
-            waitForTVOSFocus(on: field, timeout: TestWait.seconds(.product(3))),
+            Date() < focusReturnDeadline
+                && waitForTVOSFocus(on: field, timeout: max(TimeInterval.zero, focusReturnDeadline.timeIntervalSinceNow)),
             "After submitting, focus must return to the same field.")
     }
 

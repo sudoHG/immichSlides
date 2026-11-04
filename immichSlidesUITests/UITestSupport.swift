@@ -356,6 +356,22 @@ extension XCUIApplication {
 
 #if os(tvOS)
 extension XCUIApplication {
+    // Select can dismiss the keyboard; a later Menu would then exit the App at its root.
+    func dismissTVOSKeyboardIfPresent(before deadline: Date) {
+        guard Date() < deadline, let root = try? snapshot() else { return }
+        var pending = [root]
+        var hasVisibleKeyboard = false
+        while let node = pending.popLast() {
+            if node.elementType == .keyboard, !node.frame.isEmpty, root.frame.intersects(node.frame) {
+                hasVisibleKeyboard = true
+                break
+            }
+            pending.append(contentsOf: node.children)
+        }
+        guard hasVisibleKeyboard, state == .runningForeground, Date() < deadline else { return }
+        FirstFailureRemote.press(.menu)
+    }
+
     // Return a confirmed move, a confirmed edge, or an unknown observation without failing the poll.
     func pressAndWaitForTVOSFocusMovement(
         _ direction: XCUIRemote.Button, to identifier: String?, timeout: TimeInterval
