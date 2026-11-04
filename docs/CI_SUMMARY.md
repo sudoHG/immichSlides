@@ -1527,9 +1527,9 @@ at `query-element` on `slideshow.scenePresentation.contract.summary`, on foregro
 playback with scene `TRANSITION` and `deadline_seconds == 3`. Only stability may be
 missing: no advance, mismatched/missing references, missing facts, BLACK/BLANK,
 a wrong surface, any other deadline (including the 60-second navigation guard),
-or an unexhausted wait stays red. Only the resume path emits the suffix and records
-its own unchanged three-second deadline, rather than inheriting the previous focus
-wait. The first autoplay and both manual Next waits retain main's advance-only
+or an unexhausted wait stays red. Only the resume path emits the suffix; both timed
+waits record their own unchanged three-second deadline.
+The first autoplay and both manual Next waits retain main's advance-only
 success condition; resume retains main's advance-and-stable condition. References
 never gate success, and success never requires a second snapshot. The same failure-window
 starvation samples, complete single-failure binding and consecutive-night escalation
