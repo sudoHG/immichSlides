@@ -26,6 +26,8 @@ DEBUG_ONLY_MARKERS = (
     "UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE",
     "UI_TEST_PAUSE_ON_INITIAL_STABLE_SCENE",
     "pauseOnInitialStableSceneForTesting",
+    "shouldPauseOnInitialStableSceneForTesting",
+    "didPauseOnInitialStableSceneForTesting",
     "PlaybackSequenceDebug",
     "qaPlaybackSequenceRecorder",
     "logQAPlaybackSequence",
