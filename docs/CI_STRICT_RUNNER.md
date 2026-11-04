@@ -504,6 +504,12 @@ is reused for the sole coordinate tap; its effect is proved by snapshot readback
 The original 8-second appearance, 2-second readiness and 4-second state windows
 remain independent and fixed. A late snapshot fails, and readback never wakes or
 retaps the controls. The shared `IOSDriver` Settings query path is unchanged.
+Release iOS prepares the midpoint Pause one existing 2-second readiness allocation
+before T/2, then waits until the original midpoint before issuing its sole tap
+from that ready snapshot. This moves wake/snapshot work out of the post-midpoint
+capture margin without moving the Continue origin or T−2 deadline. Readback still
+uses its original 4-second limit, and late preparation/capture remains red. The
+tvOS midpoint path is unchanged.
 Settings return has no known scene-clock origin and cannot start that wait. The setup
 capture is `timing-start.png`; paused-frame identity, T+2 hold, same-scene Continue
 and eventual new-photo checks remain. The Release midpoint paused-photo capture

@@ -873,6 +873,11 @@ screenshot request and early-Continue screenshot return must precede the earlies
 fade window (T−2 from the real Continue press) to cover the stable-photo
 precondition. The paused frame is already frozen, so its capture latency does not
 move the request-time measurement; Continue remains bounded by return time.
+On iOS, midpoint control preparation starts one existing 2-second readiness
+allocation before T/2. The prepared snapshot supplies the single Pause tap, which
+is not issued before the original T/2 target. Preparation, tap delivery, readback
+and capture still consume the original T−2 boundary; a late preparation gains no
+new window or retry. tvOS retains its existing midpoint preparation order.
 Missing that boundary fails red as `continue_timing/timing_window`, never `scene_identity`.
 Their version 2 `release-functional` receipt explicitly records timing
 as `NOT_RUN`; a functional pass is never a timing pass. Debug executions of the
