@@ -302,13 +302,15 @@ final class StrictE2ELateImageTVOSUITests: XCTestCase {
         }
         XCTAssertTrue(submit.hasFocus, "The system keyboard submit button must be focused before submitting text.")
         FirstFailureRemote.press(.select)
-        FirstFailureRemote.press(.menu)
+        let focusReturnDeadline = Date().addingTimeInterval(TestWait.seconds(.product(4)))
+        app.dismissTVOSKeyboardIfPresent(before: focusReturnDeadline)
 
         if field.identifier == "firstboot.serverURL.field" {
             XCTAssertEqual(field.value as? String, value, "The server address must be submitted unchanged.")
         }
         XCTAssertTrue(
-            waitForFocus(on: field, timeout: TestWait.seconds(.product(4))),
+            Date() < focusReturnDeadline
+                && waitForFocus(on: field, timeout: max(TimeInterval.zero, focusReturnDeadline.timeIntervalSinceNow)),
             "After submitting text, focus must return to the original field.")
     }
 

@@ -2072,6 +2072,16 @@ requires paired string fields from these exact allowlists in JSON records,
 rejecting free text, duplicate diagnostic keys and malformed diagnostic JSON;
 credential scanning, publication checks and bundle quarantine remain in force.
 
+The six tvOS text-entry paths use the shared `dismissTVOSKeyboardIfPresent`
+helper after Select. A fresh App snapshot must contain a visible keyboard before
+the single optional Menu; missing/failed snapshots and an already-dismissed
+keyboard never authorize Menu. This avoids sending Exit to the App root after
+the system has already dismissed the keyboard. The snapshot, foreground check
+and Menu consume the existing focus-return budget (three seconds for smoke,
+four for the other paths); the following focus wait receives only the remainder.
+An expired budget fails without sending Menu. App exit behavior, assertion
+messages, retry policy and v5 eligibility remain unchanged.
+
 #### Reviewed prefix table
 
 The following additions come only from public Swift assertions in the linked source files.
@@ -2500,6 +2510,7 @@ New enum meanings and why the previous vocabulary cannot express them:
 | `Settings page must have ` | `settings_navigation` | `navigation` | [AccessLifecycleTVOSUITests+Navigation.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift#L642) |
 | `Directional key must wake the playback controls.` | `hidden_controls` | `hidden_controls` | [AccessLifecycleTVOSUITests+Navigation.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift#L666) |
 | `The field must be focused before input.` | `firstboot_setup` | `focus` | [AccessLifecycleTVOSUITests+Navigation.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift#L673), [TVDriver.swift](../immichSlidesUITests/TVDriver.swift#L259) |
+| `After submitting, focus must return to the original field.` | `firstboot_setup` | `focus` | [TVDriver.swift](../immichSlidesUITests/TVDriver.swift#L277); both callers enter credentials on the first-boot form. |
 | `System keyboard must show Next or Done.` | `firstboot_setup` | `navigation` | [AccessLifecycleTVOSUITests+Navigation.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift#L682) |
 | `Must focus the system keyboard submit button before submitting text.` | `firstboot_setup` | `focus` | [AccessLifecycleTVOSUITests+Navigation.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift#L686) |
 | `After submitting text, focus must return to the field.` | `firstboot_setup` | `focus` | [AccessLifecycleTVOSUITests+Navigation.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Navigation.swift#L691) |

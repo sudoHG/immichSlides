@@ -2056,6 +2056,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
         self.assertEqual(FAILURE_CLASSES, {kind for _, _, kind in PREFIX_RULES})
         # Fixed expectations catch missing/misclassified rows; source checks catch stale prefixes.
         capture_cases = (
+            ("immichSlidesUITests/TVDriver.swift", "After submitting, focus must return to the original field.", "firstboot_setup", "focus"),
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift", "Visual ID failed history-start:", "history_start_capture", "scene_identity"),
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift", "Visual ID failed history-first-next:", "history_first_next_capture", "scene_identity"),
             ("immichSlidesUITests/StrictE2EFirstBatchIOSUITests.swift", "Visual ID failed history-second-next:", "history_second_next_capture", "scene_identity"),

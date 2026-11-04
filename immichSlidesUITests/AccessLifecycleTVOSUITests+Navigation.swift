@@ -688,9 +688,12 @@ extension AccessLifecycleTVOSUITests {
         }
         XCTAssertTrue(submit.hasFocus, "Must focus the system keyboard submit button before submitting text.")
         FirstFailureRemote.press(.select)
-        FirstFailureRemote.press(.menu)
+        let focusReturnDeadline = Date().addingTimeInterval(
+            AccessLifecycleTVOSUITestsWaitTiming.stateChangeTimeoutSeconds)
+        app.dismissTVOSKeyboardIfPresent(before: focusReturnDeadline)
         XCTAssertTrue(
-            waitForFocus(on: field, timeout: AccessLifecycleTVOSUITestsWaitTiming.stateChangeTimeoutSeconds),
+            Date() < focusReturnDeadline
+                && waitForFocus(on: field, timeout: max(TimeInterval.zero, focusReturnDeadline.timeIntervalSinceNow)),
             "After submitting text, focus must return to the field.")
     }
 

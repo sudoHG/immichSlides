@@ -1625,6 +1625,7 @@ PREFIX_RULES = (
     ("The field must be focused before typing.", "unknown", "focus"),
     ("A missing image must not count as a pass", "visible_scene_capture", "scene_identity"),
     ("The field must be focused before input.", "firstboot_setup", "focus"),
+    ("After submitting, focus must return to the original field.", "firstboot_setup", "focus"),
     ("System keyboard must show Next or Done.", "firstboot_setup", "navigation"),
     ("After pause, focus must reach next.", "control_action", "focus"),
     ("Must return to playback settings.", "settings_navigation", "focus"),

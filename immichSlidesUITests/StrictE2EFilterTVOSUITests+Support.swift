@@ -463,9 +463,11 @@ extension StrictE2EFilterTVOSUITests {
         }
         XCTAssertTrue(submit.hasFocus, "The system keyboard's submit button must be focused before submitting text.")
         FirstFailureRemote.press(.select)
-        FirstFailureRemote.press(.menu)
+        let focusReturnDeadline = Date().addingTimeInterval(TestWait.seconds(.product(4)))
+        app.dismissTVOSKeyboardIfPresent(before: focusReturnDeadline)
         XCTAssertTrue(
-            waitForFocus(on: field, timeout: TestWait.seconds(.product(4))),
+            Date() < focusReturnDeadline
+                && waitForFocus(on: field, timeout: max(TimeInterval.zero, focusReturnDeadline.timeIntervalSinceNow)),
             "After submitting text, focus must return to the original field.")
     }
 
