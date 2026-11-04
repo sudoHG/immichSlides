@@ -1476,8 +1476,11 @@ class FailureDiagnosticsTests(unittest.TestCase):
         overlay_suffix = (" mean_channel_difference=-3 control_bar_before=visible control_bar_after=hidden"
                           " exif_before=visible exif_after=visible")
         extended_reason = pixel_reason.replace("=1 differing", "=3 differing") + overlay_suffix
+        mixed_overlay_reason = extended_reason.replace("control_bar_before=visible", "control_bar_before=hidden").replace(
+            "exif_before=visible exif_after=visible", "exif_before=hidden exif_after=unknown")
         cases.extend((platform, reason, expected) for platform in ("ios", "tvos") for reason, expected in (
             (extended_reason, extended_reason),
+            (mixed_overlay_reason, mixed_overlay_reason),
             (extended_reason.replace("=-3 control", "=255 control"),
              extended_reason.replace("=-3 control", "=255 control")),
             (extended_reason.replace("=-3 control", "=-255 control"),

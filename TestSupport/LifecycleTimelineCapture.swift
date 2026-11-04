@@ -42,12 +42,12 @@ final class LifecycleTimelineCapture {
         self.directory = directory
     }
 
-    func launchTimelineApp(launchEnvironment: [String: String] = [:]) throws -> XCUIApplication {
+    func launchTimelineApp() throws -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchEnvironment = launchEnvironment.merging([
+        app.launchEnvironment = [
             "UI_TEST_PLAYBACK_LIFECYCLE_TIMELINE": "1", "UI_TEST_PLAYBACK_LIFECYCLE_NONCE": nonce,
             "UI_TEST_EVIDENCE_DIR": directory.path
-        ]) { _, timelineValue in timelineValue }
+        ]
         FirstFailureContext.mark("launch-app", element: "app-window")
         FirstFailureContext.action("launch") { app.launch() }
         return app

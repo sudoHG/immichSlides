@@ -377,8 +377,7 @@ final class AccessLifecycleIOSUITests: XCTestCase {
     func testPauseNextContinueAppTimeline() throws {
         let input = try requireStrictE2EInput()
         let timeline = try LifecycleTimelineCapture()
-        let app = try timeline.launchTimelineApp(
-            launchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment)
+        let app = try timeline.launchTimelineApp()
         defer { app.terminateForFailureEvidence() }
         try FirstFailureEvidence.preservingThrownFailure(self) {
             try completeFirstBootToPlayback(app: app, input: input)

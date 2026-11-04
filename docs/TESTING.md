@@ -355,8 +355,7 @@ Opt in at the specific test's launch with
 `SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment`,
 never in a shared launch default. Keep the real delay in first-wake/auto-hide
 contracts, hidden-control screenshots and identity reads, visual/P2 evidence, and
-pause-window captures. The iOS Debug pause-timeline exception is described below.
-Settings page screenshots may opt in when the
+pause-window/timeline captures. Settings page screenshots may opt in when the
 playback bar is only used to reach Settings. Native XCTest tap delivery can outlast
 eight seconds on a busy host; the override does not extend test waits, retry
 actions or change product timing assertions.
@@ -382,6 +381,8 @@ prepared next. With this override, the SmartFill history round-trip test no long
 covers a wake re-showing the bar, discarding prepared next, then Next. That path
 remains in the non-opted SmartFill manual-lifecycle, StrictE2E Filter and
 AccessLifecycle Navigation tests.
+The Debug pause-timeline suite also keeps the real delay so its exact timing
+judge retains control-bar visibility changes and their planning effects.
 
 `testIOSExifAlbumDiagnosticScreenshots` instead explicitly launches with
 `UI_TEST_HOLD_CONTROLS_UNTIL_INITIAL_SETTINGS=1`. In Debug iOS only, this holds
@@ -959,13 +960,11 @@ in these Debug cases. Screenshots independently identify public fixture pixels;
 the App's asset hashes only cross-check that identity, never supply it.
 The held-photo proof also compares decoded pixels before and after T+2 in
 the central photo band (10–90% of width, 30–60% of height), excluding the separately
-animated top EXIF and bottom control overlays. Only `testPauseNextContinueAppTimeline`
-on iOS explicitly opts into the existing 60-second control-bar auto-hide override,
-keeping the bar visible across the held-photo comparison. This flow has no auto-hide
-assertion. Its waits, T+2 hold and App timing rules are unchanged; first-wake,
-pause-window, Release and tvOS keep their existing launch inputs and timers.
-This removes a changing UI state from the comparison without establishing the
-historical frozen-pixel failure's cause.
+animated top EXIF and bottom control overlays. The iOS Debug pause-timeline test
+keeps the product's eight-second auto-hide: hiding during the T+2 hold, waking
+before final Continue and hiding after Continue remain inputs to its exact timing
+judge. Visibility changes can discard prepared next and re-plan a pending transition;
+the diagnostics observe these states without pinning them or changing the judge.
 Hogan approved a conditional
 one-level per-channel tolerance on 2026-10-30: only a `frameFrozen` event for the
 same scene/frame before the first capture, followed exclusively by unchanged
