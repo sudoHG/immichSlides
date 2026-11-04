@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -133,12 +134,56 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # First-boot interaction can place even public fixture keys in XCTest's private activity archive.
 PRIVATE_RESULT_BUNDLE_SUITES = RUNNER_SUITES
-OFFICIAL_EXPORT_TIMEOUT_SECONDS = 60
+# Read-only Apple-tool allowance; evidence and capacity limits are in docs/CI_STRICT_RUNNER.md.
+OFFICIAL_EXPORT_TIMEOUT_SECONDS = 180
 
 
-def read_official_test_results_summary(bundle: Path) -> TestResultsSummary:
+class OfficialExportBudget:
+    def __init__(self):
+        self.spent_seconds = 0.0
+
+    def remaining(self, phase):
+        remaining = OFFICIAL_EXPORT_TIMEOUT_SECONDS - self.spent_seconds
+        if remaining <= 0:
+            raise InfrastructureTimeout(phase, OFFICIAL_EXPORT_TIMEOUT_SECONDS)
+        return remaining
+
+
+@contextmanager
+def measured_official_export(budget=None):
+    recorder = active()
+    sequence = recorder.next_sequence() if recorder is not None else None
+    started = time.monotonic()
+    state = "completed"
     try:
-        return read_unit_official_test_results_summary(bundle, timeout_seconds=OFFICIAL_EXPORT_TIMEOUT_SECONDS)
+        yield
+    except (subprocess.TimeoutExpired, InfrastructureTimeout):
+        state = "timeout"
+        raise
+    finally:
+        elapsed = time.monotonic() - started
+        if budget is not None:
+            budget.spent_seconds += max(0, elapsed)
+        if recorder is not None:
+            try:
+                from ci_execution_diagnostics import finite
+                from ci_bounded_diagnostics import MAX_DIAGNOSTIC_SECONDS
+                measured = finite(elapsed, MAX_DIAGNOSTIC_SECONDS)
+                if measured is not None:
+                    # Clock-only bookkeeping survives exhausted process/ledger collection budgets.
+                    recorder.retain({"scope": "xcode", "phase": "official-export", "state": state,
+                        "sequence": sequence, "elapsed_seconds": measured, "cpu_seconds": None,
+                        "sample": None, "input_sha256": None, "official_exports": None})
+            except Exception:
+                # Optional numeric diagnostics must not replace the original result or timeout.
+                pass
+
+
+def read_official_test_results_summary(bundle: Path, *, export_budget=None) -> TestResultsSummary:
+    export_budget = export_budget or OfficialExportBudget()
+    try:
+        with measured_official_export(export_budget):
+            return read_unit_official_test_results_summary(bundle, timeout_seconds=export_budget.remaining("official-summary-export"))
     except subprocess.TimeoutExpired as error:
         raise InfrastructureTimeout("official-summary-export", OFFICIAL_EXPORT_TIMEOUT_SECONDS) from error
 
@@ -213,17 +258,21 @@ def export_private_result_bundle(
     bundle: Path, evidence_dir: Path, sensitive_values: list[str], *, suffix: str = "",
     summary_timeout_seconds: float | None = None,
     export_timeout_seconds: float = OFFICIAL_EXPORT_TIMEOUT_SECONDS,
+    export_budget=None,
     enrich_failure_diagnostics: bool = False,
     first_failure_spool=None,
     first_failure_images=None,
     resource_sampler=None,
 ) -> str:
     from ci_flaky import official_result_step
+    if export_budget is None and summary_timeout_seconds is None:
+        export_budget = OfficialExportBudget()
     try:
-        with official_result_step("export"):
+        with measured_official_export(export_budget), official_result_step("export"):
+            timeout = min(export_timeout_seconds, export_budget.remaining("official-tests-export")) if export_budget is not None else export_timeout_seconds
             completed = subprocess.run(
                 ["xcrun", "xcresulttool", "get", "test-results", "tests", "--path", str(bundle), "--compact"],
-                capture_output=True, check=False, timeout=export_timeout_seconds,
+                capture_output=True, check=False, timeout=timeout,
             )
     except subprocess.TimeoutExpired as error:
         if summary_timeout_seconds is not None:
@@ -259,8 +308,10 @@ def export_private_result_bundle(
             raw_messages = {}
             legacy_root = {}
             try:
-                details = subprocess.run(["xcrun", "xcresulttool", "get", "object", "--legacy", "--path", str(bundle), "--format", "json"],
-                                         capture_output=True, check=True, timeout=export_timeout_seconds)
+                with measured_official_export(export_budget):
+                    timeout = min(export_timeout_seconds, export_budget.remaining("official-tests-export")) if export_budget is not None else export_timeout_seconds
+                    details = subprocess.run(["xcrun", "xcresulttool", "get", "object", "--legacy", "--path", str(bundle), "--format", "json"],
+                                             capture_output=True, check=True, timeout=timeout)
                 legacy_root = json.loads(details.stdout)
                 raw_messages = legacy_failure_messages(legacy_root)
                 diagnostics = legacy_diagnostics(legacy_root)
@@ -303,7 +354,7 @@ def export_private_result_bundle(
     if not summary_path.exists():
         # Unit/UI consumers classify explicit export timeouts; strict runs use the phase wrapper.
         summary = (read_unit_official_test_results_summary(bundle, timeout_seconds=summary_timeout_seconds)
-                   if summary_timeout_seconds is not None else read_official_test_results_summary(bundle))
+                   if summary_timeout_seconds is not None else read_official_test_results_summary(bundle, export_budget=export_budget))
         summary_path.write_text(json.dumps({
             "totalTestCount": summary.total_test_count, "passedTests": summary.passed_tests,
             "failedTests": summary.failed_tests, "skippedTests": summary.skipped_tests,
@@ -811,6 +862,9 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
     resource_samplers = {}
     app_hang_case_state = {}
     official_tests_digests: dict[str, str] = {}
+    official_export_budgets = {}
+    recorder = active()
+    case_start_sequence = recorder.sequence if recorder is not None else 0
 
     def record_timeout(error: InfrastructureTimeout) -> None:
         nonlocal primary_exit_code
@@ -1201,7 +1255,8 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                         "\n".join(commands) + "\n", encoding="utf-8"
                     )
                     raise CommandError(f"xcodebuild strict E2E failed with exit {exit_code}.", code=exit_code)
-                summary = read_official_test_results_summary(session_bundle)
+                export_budget = official_export_budgets.setdefault(session_bundle, OfficialExportBudget())
+                summary = read_official_test_results_summary(session_bundle, export_budget=export_budget)
                 require_official_single_pass(summary)
                 summaries.append(summary)
                 log_parts.append(session_log.read_text(encoding="utf-8"))
@@ -1265,7 +1320,8 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                 )
             if exit_code != 0:
                 raise CommandError(f"xcodebuild strict E2E failed with exit {exit_code}.", code=exit_code)
-            summary = read_official_test_results_summary(result_bundle_path)
+            export_budget = official_export_budgets.setdefault(result_bundle_path, OfficialExportBudget())
+            summary = read_official_test_results_summary(result_bundle_path, export_budget=export_budget)
             require_official_single_pass(summary)
         if service_log_path.is_file() and not arguments.listed_retry_device:
             (arguments.evidence_dir / "redacted-request.log").write_bytes(service_log_path.read_bytes())
@@ -1353,12 +1409,15 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                 digest = export_private_result_bundle(
                     bundle, arguments.evidence_dir, [PUBLIC_API_KEY, WRONG_PUBLIC_API_KEY], suffix=suffix,
                     enrich_failure_diagnostics=True,
+                    export_budget=official_export_budgets.setdefault(bundle, OfficialExportBudget()),
                     first_failure_spool=first_failure_spools[bundle][:2] if bundle in first_failure_spools else None,
                     resource_sampler=resource_samplers.get(bundle),
                 )
             except InfrastructureTimeout as error:
                 record_timeout(error)
                 raise
+            finally:
+                retain_case_diagnostics(bundle)
             official_tests_digests[suffix] = digest
             if case_manifest is not None and bundle in first_failure_spools:
                 from ci_failure_diagnostics import attach_first_failures
@@ -1366,23 +1425,6 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                     json.loads((arguments.evidence_dir / ("official-tests" + suffix + ".json")).read_text()),
                     first_failure_spools[bundle][2])
             if case_manifest is not None:
-                recorder = active()
-                receipt = recorder.receipt() if recorder is not None else None
-                if receipt is not None and resource_samplers:
-                    sequences = {sampler.sequence for sampler in resource_samplers.values()}
-                    # Keep hosting metadata alone so the growing shared ledger cannot exceed the export cap.
-                    receipt["events"] = [event for event in receipt["events"]
-                        if event["scope"] == "xcode" and event["phase"] == "test-execution"
-                        and event["state"] == "started" and event["sequence"] in sequences
-                        and event["sample"] is not None]
-                    receipt["case_resources"] = [case for case in receipt.get("case_resources", [])
-                                                  if case["sequence"] in sequences]
-                    from strict_e2e_resource_diagnostics import attach_continue_watch
-                    sampler = resource_samplers.get(bundle)
-                    if sampler is not None:
-                        attach_continue_watch(receipt, arguments.evidence_dir, platform=arguments.platform,
-                            suite=arguments.suite, result=case_manifest.get("result"), sequence=sampler.sequence)
-                    case_manifest["bounded_diagnostics"] = receipt
                 if bundle == result_bundle_path:
                     case_manifest["official_tests_sha256"] = digest
                 if suffix:
@@ -1390,6 +1432,28 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                 else:
                     case_manifest["official_tests_sha256"] = digest
                 write_case_manifest(arguments.evidence_dir, case_manifest)
+
+        def retain_case_diagnostics(bundle: Path) -> None:
+            recorder = active()
+            receipt = recorder.receipt() if recorder is not None else None
+            if case_manifest is None or receipt is None or not resource_samplers:
+                return
+            sequences = {sampler.sequence for sampler in resource_samplers.values()}
+            # Retain this case's numeric export timings alongside its hosting metadata.
+            receipt["events"] = [event for event in receipt["events"]
+                if event["scope"] == "xcode" and (
+                    event["phase"] == "official-export" and event["sequence"] > case_start_sequence
+                    or event["phase"] == "test-execution" and event["state"] == "started"
+                    and event["sequence"] in sequences and event["sample"] is not None)]
+            receipt["case_resources"] = [case for case in receipt.get("case_resources", [])
+                                          if case["sequence"] in sequences]
+            from strict_e2e_resource_diagnostics import attach_continue_watch
+            sampler = resource_samplers.get(bundle)
+            if sampler is not None:
+                attach_continue_watch(receipt, arguments.evidence_dir, platform=arguments.platform,
+                    suite=arguments.suite, result=case_manifest.get("result"), sequence=sampler.sequence)
+            case_manifest["bounded_diagnostics"] = receipt
+            write_case_manifest(arguments.evidence_dir, case_manifest)
 
         def stop_recording() -> None:
             if recording_process is not None:

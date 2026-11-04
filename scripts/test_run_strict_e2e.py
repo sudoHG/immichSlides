@@ -911,11 +911,12 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                 self.assertEqual(0, case["sampler_wall_seconds"])
                 ps.assert_not_called()
                 exported = json.loads((Path(raw) / "evidence/case-manifest.json").read_text())["bounded_diagnostics"]
-                self.assertEqual([sampler.sequence], [event["sequence"] for event in exported["events"]])
+                self.assertEqual([sampler.sequence], [event["sequence"] for event in exported["events"]
+                                                      if event["phase"] == "test-execution"])
                 self.assertIs(True, exported["events"][0]["sample"]["runner_hosted"])
                 self.assertIsNone(exported["collection_seconds"]["xcode"])
                 from ci_bounded_diagnostics import render_receipt
-                self.assertIn("Last retained phase: none", render_receipt(exported))
+                self.assertIn("official-export", render_receipt(exported))
 
     def test_warm_test_inputs_do_not_prevent_private_bundle_disposal(self):
         import ci_execution_diagnostics as diagnostics
@@ -942,8 +943,12 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                 with self.subTest(source=source):
                     self.assertNotIn(foreign_sequence, [event["sequence"] for event in receipt["events"]])
                     self.assertEqual([case["sequence"] for case in receipt["case_resources"]],
-                                     [event["sequence"] for event in receipt["events"]])
-            self.assertTrue(all(event["sample"]["processes"] == [] for event in retained["events"]))
+                                     [event["sequence"] for event in receipt["events"] if event["phase"] == "test-execution"])
+                    timings = [event for event in receipt["events"] if event["phase"] == "official-export"]
+                    self.assertEqual(1, len(timings))
+                    self.assertGreaterEqual(timings[0]["elapsed_seconds"], 0)
+                    self.assertIsNone(timings[0]["sample"])
+            self.assertTrue(all(event["sample"]["processes"] == [] for event in retained["events"] if event["sample"] is not None))
             self.assertEqual(diagnostics.MAX_EVENTS, len(recorder.receipt()["events"]))
             self.assertIn(foreign_event, recorder.receipt()["events"])
             self.assertEqual((evidence / "simulator-preparation.log").read_text(), "ready\n")
@@ -1035,7 +1040,8 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
             self.assertEqual(2, code, stderr)
             self.assertIn("xcodebuild timed out after 600.0s.", stderr)
             self.assertEqual("FAILED", json.loads((evidence / "case-manifest.json").read_text())["result"])
-            exported = [event for event in recorder.events if event["phase"] == "official-export"]
+            exported = [event for event in recorder.events if event["phase"] == "official-export"
+                        and event["official_exports"] is not None]
             self.assertEqual(1, len(exported))
             self.assertEqual({"bundle": True, "summary": True, "tests": True}, exported[0]["official_exports"])
             self.assertIsNone(recorder.receipt()["collection_seconds"]["xcode"])
@@ -1126,12 +1132,74 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             bundle = Path(raw) / "result.xcresult"
             bundle.mkdir()
-            def export(command, **kwargs):
-                self.assertEqual(kwargs.get("timeout"), 60)
-                raise subprocess.TimeoutExpired(["private-test-input"], 60, output=b"private-test-input")
-            with mock.patch("run_offline_unit_tests.subprocess.run", side_effect=export), self.assertRaises(CommandError) as raised:
-                strict_runner.read_official_test_results_summary(bundle)
-            self.assertEqual(raised.exception.entry["code"], "official-summary-export-timeout")
+            import ci_execution_diagnostics as diagnostics
+            for elapsed in (90, strict_runner.OFFICIAL_EXPORT_TIMEOUT_SECONDS + 1):
+                clock = [0.0]
+                def export(command, **kwargs):
+                    clock[0] += min(elapsed, kwargs["timeout"])
+                    if elapsed > kwargs["timeout"]:
+                        raise subprocess.TimeoutExpired(["private-test-input"], kwargs["timeout"], output=b"private-test-input")
+                    return subprocess.CompletedProcess(command, 0, json.dumps({
+                        "totalTestCount": 1, "passedTests": 1, "failedTests": 0,
+                        "skippedTests": 0, "result": "Passed"}), "")
+                with self.subTest(elapsed=elapsed), diagnostics.session() as recorder, \
+                        mock.patch("run_offline_unit_tests.subprocess.run", side_effect=export) as read, \
+                        mock.patch.object(strict_runner.time, "monotonic", side_effect=lambda: clock[0]):
+                    recorder.charged["xcode"] = diagnostics.COLLECTION_BUDGET_SECONDS["xcode"]
+                    if elapsed == 90:
+                        self.assertEqual("Passed", strict_runner.read_official_test_results_summary(bundle).result)
+                    else:
+                        with self.assertRaises(CommandError) as raised:
+                            strict_runner.read_official_test_results_summary(bundle)
+                        self.assertEqual(raised.exception.entry["code"], "official-summary-export-timeout")
+                        self.assertEqual(124, raised.exception.code)
+                        self.assertNotIn("private-test-input", str(raised.exception))
+                    read.assert_called_once()
+                    events = recorder.receipt()["events"]
+                    self.assertEqual(1, len(events))
+                    self.assertEqual(("official-export", "completed" if elapsed == 90 else "timeout",
+                                      min(elapsed, strict_runner.OFFICIAL_EXPORT_TIMEOUT_SECONDS)),
+                                     (events[0]["phase"], events[0]["state"], events[0]["elapsed_seconds"]))
+
+            # One slow read can spend the shared allowance; later reads cannot renew it.
+            for durations in ((90, 30, 50), (90, 60, 40)):
+                clock, timeouts = [0.0], []
+                durations_left = iter(durations)
+                def shared_export(command, **kwargs):
+                    elapsed = next(durations_left)
+                    timeouts.append(kwargs["timeout"])
+                    clock[0] += min(elapsed, kwargs["timeout"])
+                    if elapsed > kwargs["timeout"]:
+                        raise subprocess.TimeoutExpired(["private-test-input"], kwargs["timeout"])
+                    payload = ({"testNodes": []} if "tests" in command else {
+                        "totalTestCount": 1, "passedTests": 1, "failedTests": 0,
+                        "skippedTests": 0, "result": "Passed"})
+                    encoded = json.dumps(payload)
+                    return subprocess.CompletedProcess(command, 0, encoded if kwargs.get("text") else encoded.encode(), b"")
+                evidence = Path(raw) / str(durations[1])
+                evidence.mkdir()
+                budget = strict_runner.OfficialExportBudget()
+                with self.subTest(durations=durations), diagnostics.session() as recorder, \
+                        mock.patch("run_offline_unit_tests.subprocess.run", side_effect=shared_export) as read, \
+                        mock.patch.object(strict_runner.time, "monotonic", side_effect=lambda: clock[0]):
+                    strict_runner.read_official_test_results_summary(bundle, export_budget=budget)
+                    if sum(durations) < strict_runner.OFFICIAL_EXPORT_TIMEOUT_SECONDS:
+                        strict_runner.export_private_result_bundle(bundle, evidence, [], export_budget=budget)
+                    else:
+                        with self.assertRaises(CommandError) as raised:
+                            strict_runner.export_private_result_bundle(bundle, evidence, [], export_budget=budget)
+                        self.assertEqual("official-summary-export-timeout", raised.exception.entry["code"])
+                        self.assertEqual(124, raised.exception.code)
+                    self.assertEqual([strict_runner.OFFICIAL_EXPORT_TIMEOUT_SECONDS,
+                                      strict_runner.OFFICIAL_EXPORT_TIMEOUT_SECONDS - durations[0],
+                                      strict_runner.OFFICIAL_EXPORT_TIMEOUT_SECONDS - sum(durations[:2])], timeouts)
+                    self.assertEqual(3, read.call_count)
+                    self.assertEqual([90, durations[1], min(durations[2], timeouts[-1])],
+                                     [event["elapsed_seconds"] for event in recorder.receipt()["events"]])
+                    if sum(durations) > strict_runner.OFFICIAL_EXPORT_TIMEOUT_SECONDS:
+                        with self.assertRaisesRegex(CommandError, "^official-summary-export timed out"):
+                            strict_runner.read_official_test_results_summary(bundle, export_budget=budget)
+                        self.assertEqual(3, read.call_count, "exhaustion must not start another Apple-tool call")
 
     def test_boot_settle_gate_requires_a_continuous_full_window_and_runs_once_per_job(self):
         import strict_e2e_runner_support as support
