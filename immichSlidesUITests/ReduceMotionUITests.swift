@@ -283,11 +283,11 @@ private struct IOSReduceMotionSetting: ReduceMotionSystemSetting {
     }
 
     private struct ControlReply: Decodable {
-        let ok: Bool
+        let didSucceed: Bool
         let isOn: Bool?
 
         enum CodingKeys: String, CodingKey {
-            case ok
+            case didSucceed = "ok"
             case isOn = "is_on"
         }
     }
@@ -321,7 +321,7 @@ private struct IOSReduceMotionSetting: ReduceMotionSystemSetting {
                 return true
             }
         }
-        guard didReadBack, let systemControlReply, systemControlReply.ok, systemControlReply.isOn == isOn else {
+        guard didReadBack, let systemControlReply, systemControlReply.didSucceed, systemControlReply.isOn == isOn else {
             throw Failure(
                 "System settings: Reduce Motion read back after the simulator change is not \(isOn ? "on" : "off")")
         }
