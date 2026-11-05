@@ -1231,6 +1231,9 @@ PREFIX_RULES = (
     ("System settings: Reduce Motion read back after the simulator change is not ", "settings_navigation", "control_state"),
     ("System settings: Reduce Motion switch is not ready for system evidence.", "settings_navigation", "control_state"),
     ("System settings: Simulator Reduce Motion control is unavailable.", "settings_navigation", "control_state"),
+    ("System settings: Settings must be foreground before changing Reduce Motion.", "settings_navigation", "control_state"),
+    ("System settings: Reduce Motion snapshot readback timed out after one tap.", "settings_navigation", "control_state"),
+    ("System settings: Cannot find the 'Reduce Motion' switch", "settings_navigation", "control_state"),
     # tvOS timing-precondition fixes: keep separate from the broader diagnostics-only expansion.
     ("tvOS Continue wake timing precondition failed: Up must not be requested before T-2.", "continue_timing", "timing_window"),
     ("tvOS flow entry precondition failed:", "history_navigation", "control_state"),

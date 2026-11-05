@@ -1,5 +1,9 @@
 import XCTest
 
+private enum SwitchGeometry {
+    static let trailingTapFraction: CGFloat = 0.93
+}
+
 // P2-03 Reduce Motion: change the real system setting and record both display modes in
 // separate video segments; only a person watching the recording decides whether there is motion.
 final class ReduceMotionUITests: XCTestCase {
@@ -135,8 +139,8 @@ final class ReduceMotionUITests: XCTestCase {
         }
     }
 
-    // Only flips the system switch and reads the persisted value back by reopening settings each time; the app is
-    // not touched. It changes system settings, so it runs only in the StrictE2E plan with an evidence directory.
+    // Exercise only Settings, reopening it to verify persistence and restoration without launching the App.
+    // The StrictE2E evidence directory keeps this system-changing check out of ordinary test runs.
     @MainActor
     private func runSettingRoundTrip<System: ReduceMotionSystemSetting>(_ system: System) throws {
         guard StrictE2EVisualEvidence.directory() != nil else {
@@ -209,13 +213,13 @@ private final class ReduceMotionRestore {
     }
 }
 
-// Every operation reopens system settings from its main page; read / set end on the switch's page for screenshots.
+// Read and set open real system Settings and finish on the switch page for screenshots.
 @MainActor
 private protocol ReduceMotionSystemSetting {
     init()
     func read() throws -> Bool
-    // Switch to the target value and read it back on the same page. Persistence is proven separately by the
-    // self-check's reopening read(); the real test skips the reopen to save time.
+    // Open Settings before changing the switch, then confirm its value on that page. The separate round trip
+    // reopens Settings again to verify persistence.
     func set(_ isOn: Bool) throws
     func screenshot() -> Data
 }
@@ -266,7 +270,8 @@ private struct IOSReduceMotionSetting: ReduceMotionSystemSetting {
     // ui-label-lookup: The Motion row belongs to the system Settings app.
     private static let motionEntry = NSPredicate(format: "label IN %@", ["动态效果", "Motion"])
     // ui-label-lookup: The Reduce Motion toggle belongs to the system Settings app.
-    private static let toggleMatch = NSPredicate(format: "label IN %@", ["减弱动态效果", "Reduce Motion"])
+    private static let toggleLabels = ["减弱动态效果", "Reduce Motion"]
+    private static let toggleMatch = NSPredicate(format: "label IN %@", toggleLabels)
 
     private let settings = XCUIApplication(bundleIdentifier: "com.apple.Preferences")
 
@@ -275,55 +280,35 @@ private struct IOSReduceMotionSetting: ReduceMotionSystemSetting {
     }
 
     func set(_ isOn: Bool) throws {
-        try changeSystemValue(isOn)
-        guard try openToggle().isOn == isOn else {
-            throw ToggleValue.failure(
-                "Reduce Motion read back after the simulator change is not \(isOn ? "on" : "off")", in: settings)
+        // Settings must be in front before the change, preserving the P2 background/resume contract.
+        let toggle = try openToggle()
+        guard settings.state == .runningForeground else {
+            throw ToggleValue.failure("Settings must be foreground before changing Reduce Motion.", in: settings)
         }
-    }
-
-    private struct ControlReply: Decodable {
-        let didSucceed: Bool
-        let isOn: Bool?
-
-        enum CodingKeys: String, CodingKey {
-            case didSucceed = "ok"
-            case isOn = "is_on"
-        }
-    }
-
-    // Only the runner can invoke simctl. The App gets no control input and observes the real system notification.
-    private func changeSystemValue(_ isOn: Bool) throws {
-        guard let path = ProcessInfo.processInfo.environment["STRICT_E2E_REDUCE_MOTION_CONTROL_DIR"],
-            !path.isEmpty, !path.hasPrefix("$(")
-        else { throw Failure("System settings: Simulator Reduce Motion control is unavailable.") }
-        let directory = URL(fileURLWithPath: path)
-        let token = UUID().uuidString.lowercased()
-        let request = directory.appendingPathComponent("request-\(token).json")
-        let response = directory.appendingPathComponent("reply-\(token).json")
-        defer {
-            try? FileManager.default.removeItem(at: request)
-            try? FileManager.default.removeItem(at: response)
-        }
-        do {
-            try JSONSerialization.data(withJSONObject: ["is_on": isOn]).write(to: request, options: .atomic)
-        } catch {
-            throw Failure("System settings: Simulator Reduce Motion control is unavailable.")
+        guard toggle.isOn != isOn else { return }
+        XCTContext.runActivity(named: "System Reduce Motion: one tap with Settings foreground") { _ in
+            settings.coordinate(withNormalizedOffset: .zero)
+                .withOffset(
+                    CGVector(
+                        dx: toggle.frame.minX + toggle.frame.width * SwitchGeometry.trailingTapFraction,
+                        dy: toggle.frame.midY)
+                )
+                .tapForFailureEvidence()
         }
         FirstFailureContext.mark("settings-readback", element: "system.reduce-motion")
-        var systemControlReply: ControlReply?
-        let didReadBack = XCTContext.runActivity(named: "System Reduce Motion: simulator readback") { _ in
+        var lastSwitchState: SwitchObservation?
+        let didReadBack = XCTContext.runActivity(named: "System Reduce Motion: snapshot readback after one tap") { _ in
             TestWait.until(.product(MotionTiming.settingsReadbackTimeout)) {
-                guard let bytes = try? Data(contentsOf: response),
-                    let receivedControlReply = try? JSONDecoder().decode(ControlReply.self, from: bytes)
-                else { return false }
-                systemControlReply = receivedControlReply
-                return true
+                lastSwitchState = switchObservation()
+                return lastSwitchState?.isOn == isOn
             }
         }
-        guard didReadBack, let systemControlReply, systemControlReply.didSucceed, systemControlReply.isOn == isOn else {
-            throw Failure(
-                "System settings: Reduce Motion read back after the simulator change is not \(isOn ? "on" : "off")")
+        guard didReadBack else {
+            if let lastSwitchState, lastSwitchState.isOn != isOn {
+                throw ToggleValue.failure(
+                    "Reduce Motion read back after the tap is not \(isOn ? "on" : "off")", in: settings)
+            }
+            throw ToggleValue.failure("Reduce Motion snapshot readback timed out after one tap.", in: settings)
         }
     }
 
@@ -392,7 +377,7 @@ private struct IOSReduceMotionSetting: ReduceMotionSystemSetting {
         guard let root = try? settings.snapshot() else { return nil }
         var switches: [XCUIElementSnapshot] = []
         func visit(_ node: XCUIElementSnapshot) {
-            if node.elementType == .switch, node.identifier == "REDUCE_MOTION" { switches.append(node) }
+            if node.elementType == .switch, Self.toggleLabels.contains(node.label) { switches.append(node) }
             node.children.forEach(visit)
         }
         visit(root)

@@ -11,10 +11,6 @@
   "defaultOptions" : {
     "environmentVariableEntries" : [
       {
-        "key" : "STRICT_E2E_REDUCE_MOTION_CONTROL_DIR",
-        "value" : "$(STRICT_E2E_REDUCE_MOTION_CONTROL_DIR)"
-      },
-      {
         "key" : "STRICT_E2E_FIRST_FAILURE_ENABLED",
         "value" : "$(STRICT_E2E_FIRST_FAILURE_ENABLED)"
       },

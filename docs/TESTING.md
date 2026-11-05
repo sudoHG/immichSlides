@@ -1623,17 +1623,18 @@ compiler options and execution environment identical when comparing timing resul
 | `E2E-P2-04` | SmartFill multi-photo layout in both iPad orientations (`p2-ipad-layout`) |
 | `E2E-P2-05` | Rotation during playback on iPhone and iPad (`p2-rotation`) |
 
-The iOS Reduce Motion driver asks the strict runner to change the simulator's
-real `com.apple.Accessibility/ReduceMotionEnabled` preference through `simctl spawn
-defaults`. The test-only file control and system readback share the original
-three-second allowance; no control input is passed to the App. The App receives
-UIKit's real Reduce Motion notification and SwiftUI environment update. Settings
-is still reopened for every original/enabled/restored screenshot and the separate
-persistence round trip. Two adjacent fresh Settings snapshots must agree on the
-unique switch's explicit value and enabled, on-screen frame within the original
-four-second page allowance. No iOS switch tap or retry is used. The runner also
-restores the original preference (including absence) during cleanup. Motion
-segments, recording review and the tvOS interaction remain unchanged.
+The iOS Reduce Motion driver opens real system Settings first, putting the App
+in the background before changing the switch. Within the original four-second
+page allowance, adjacent Settings snapshots must agree on one enabled, on-screen
+switch and its explicit value. A needed change uses exactly one tap at the
+documented trailing position (93% of that switch frame's width). Fresh Settings
+application snapshots must show the requested value within the original
+three-second readback allowance; a delayed read never authorizes another tap.
+A readable opposite value and an unavailable/late snapshot have distinct red
+failures. The separate setting round trip reopens Settings to prove persistence
+and restoration. P2 keeps its original background/resume order, motion segments,
+holds, recording review and tvOS interaction. Motion behavior still requires
+human review; this test does not assert UIKit notification counts.
 
 ## Generating a local privacy page
 

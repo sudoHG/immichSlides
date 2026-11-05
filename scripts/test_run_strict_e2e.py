@@ -1563,19 +1563,36 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
 
 
 class FailureDiagnosticsTests(unittest.TestCase):
-    def test_system_reduce_motion_wrong_readback_is_classified_without_private_values(self):
+    def test_system_reduce_motion_throw_sites_are_source_bound_and_stay_red(self):
         from ci_failure_diagnostics import classify_messages, public_failure_messages, environment_timing_v5
-        prefix = "System settings: Reduce Motion read back after the tap is not "
+        from ui_test_inventory import blank_comments_and_strings, literal_or_comment_end
         source = (REPO_ROOT / "immichSlidesUITests/ReduceMotionUITests.swift").read_text()
         self.assertIn('return Failure("System settings: \\(message)")', source)
-        current = "System settings: Reduce Motion read back after the simulator change is not "
-        readiness = "System settings: Reduce Motion switch is not ready for system evidence."
-        unavailable = "System settings: Simulator Reduce Motion control is unavailable."
-        self.assertIn('"System settings: Reduce Motion read back after the simulator change is not ', source)
-        self.assertIn('"Reduce Motion switch is not ready for system evidence."', source)
-        self.assertIn('"' + unavailable + '"', source)
-        for public, suffix in ((prefix, "on"), (prefix, "off"), (current, "on"), (current, "off"),
-                               (readiness, ""), (unavailable, "")):
+        start = source.index("private struct IOSReduceMotionSetting:")
+        ios = source[start:source.index("\n#endif", start)]
+        code = blank_comments_and_strings(ios)
+        emitters = []
+        for match in re.finditer(r'\bthrow\s+ToggleValue\.failure\(\s*"', ios):
+            quote = match.end() - 1
+            end = literal_or_comment_end(ios, quote)
+            owner = list(re.finditer(r'\bfunc\s+(\w+)\s*\(', code[:match.start()]))[-1].group(1)
+            emitters.append((owner, ios[quote + 1:end - 1]))
+        expected = [
+            ("set", "Settings must be foreground before changing Reduce Motion."),
+            ("set", r'Reduce Motion read back after the tap is not \(isOn ? "on" : "off")'),
+            ("set", "Reduce Motion snapshot readback timed out after one tap."),
+            ("openToggle", "Cannot find the 'Reduce Motion' switch"),
+            ("waitForSettledSwitch", "Reduce Motion switch is not ready for system evidence."),
+        ]
+        self.assertCountEqual(emitters, expected, "every iOS setting throw site must have a reviewed owner and literal")
+        self.assertEqual(len(re.findall(r'\bthrow\b', code)), len(expected), "unreviewed direct throw in iOS driver")
+        current = [("System settings: " + text.split('\\(', 1)[0], suffix)
+                   for _, text in expected for suffix in (("on", "off") if '\\(' in text else ("",))]
+        # Preserve readers for the pre-R1 preference-control diagnostics, which no longer have live emitters.
+        historical = [("System settings: Reduce Motion read back after the simulator change is not ", suffix)
+                      for suffix in ("on", "off")]
+        historical.append(("System settings: Simulator Reduce Motion control is unavailable.", ""))
+        for public, suffix in current + historical:
             with self.subTest(prefix=public, suffix=suffix):
                 message = 'failed: caught error: "Failure(message: \\"' + public + suffix + ' PRIVATE_SENTINEL\\")"'
                 diagnostics = {"failure_phase": "settings_navigation", "failure_class": "control_state"}
