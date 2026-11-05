@@ -202,7 +202,9 @@ final class PlaybackHistoryIOSUITests: XCTestCase {
 
     @MainActor
     func testDiagnosticSmartFillSettingsPauseOnlyThreeSecondsFreezesRenderedFrames() throws {
-        let app = try launchConfiguredManualLifecycleAppAtModeSelection(mode: .smartFill)
+        let app = try launchConfiguredManualLifecycleAppAtModeSelection(
+            mode: .smartFill,
+            extraLaunchEnvironment: ["UI_TEST_HOLD_CONTROLS_UNTIL_INITIAL_SETTINGS": "1"])
         defer {
             attachManualLifecycleRuntimeEvidence(mode: .smartFill)
             app.terminateForFailureEvidence()
