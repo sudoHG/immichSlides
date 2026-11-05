@@ -1628,8 +1628,10 @@ in the background before changing the switch. Within the original four-second
 page allowance, adjacent Settings snapshots must agree on one enabled, on-screen
 switch and its explicit value. A needed change uses exactly one tap at the
 documented trailing position (93% of that switch frame's width). Fresh Settings
-application snapshots must show the requested value within the original
-three-second readback allowance; a delayed read never authorizes another tap.
+application snapshots must show the requested value within one six-second
+readback allowance (`2 × settingsReadbackTimeout`), equal to main's total, not
+longer. Main used two three-second readbacks separated by a center retap; the
+single-tap path spends that combined readback budget without a retap.
 A readable opposite value and an unavailable/late snapshot have distinct red
 failures. The separate setting round trip reopens Settings to prove persistence
 and restoration. P2 keeps its original background/resume order, motion segments,

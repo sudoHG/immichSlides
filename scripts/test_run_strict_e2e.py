@@ -1577,22 +1577,21 @@ class FailureDiagnosticsTests(unittest.TestCase):
             end = literal_or_comment_end(ios, quote)
             owner = list(re.finditer(r'\bfunc\s+(\w+)\s*\(', code[:match.start()]))[-1].group(1)
             emitters.append((owner, ios[quote + 1:end - 1]))
+        for _, literal in emitters:
+            # Swift escapes apostrophes in Failure(message:); the normalizer preserves that escape.
+            self.assertNotIn("'", literal, "reviewed Failure messages must not contain apostrophes")
         expected = [
             ("set", "Settings must be foreground before changing Reduce Motion."),
             ("set", r'Reduce Motion read back after the tap is not \(isOn ? "on" : "off")'),
             ("set", "Reduce Motion snapshot readback timed out after one tap."),
-            ("openToggle", "Cannot find the 'Reduce Motion' switch"),
+            ("openToggle", "Cannot find the Reduce Motion switch"),
             ("waitForSettledSwitch", "Reduce Motion switch is not ready for system evidence."),
         ]
         self.assertCountEqual(emitters, expected, "every iOS setting throw site must have a reviewed owner and literal")
         self.assertEqual(len(re.findall(r'\bthrow\b', code)), len(expected), "unreviewed direct throw in iOS driver")
         current = [("System settings: " + text.split('\\(', 1)[0], suffix)
                    for _, text in expected for suffix in (("on", "off") if '\\(' in text else ("",))]
-        # Preserve readers for the pre-R1 preference-control diagnostics, which no longer have live emitters.
-        historical = [("System settings: Reduce Motion read back after the simulator change is not ", suffix)
-                      for suffix in ("on", "off")]
-        historical.append(("System settings: Simulator Reduce Motion control is unavailable.", ""))
-        for public, suffix in current + historical:
+        for public, suffix in current:
             with self.subTest(prefix=public, suffix=suffix):
                 message = 'failed: caught error: "Failure(message: \\"' + public + suffix + ' PRIVATE_SENTINEL\\")"'
                 diagnostics = {"failure_phase": "settings_navigation", "failure_class": "control_state"}

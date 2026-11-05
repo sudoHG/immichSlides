@@ -298,7 +298,8 @@ private struct IOSReduceMotionSetting: ReduceMotionSystemSetting {
         FirstFailureContext.mark("settings-readback", element: "system.reduce-motion")
         var lastSwitchState: SwitchObservation?
         let didReadBack = XCTContext.runActivity(named: "System Reduce Motion: snapshot readback after one tap") { _ in
-            TestWait.until(.product(MotionTiming.settingsReadbackTimeout)) {
+            // Match main's combined two readback waits without issuing its center retap.
+            TestWait.until(.product(2 * MotionTiming.settingsReadbackTimeout)) {
                 lastSwitchState = switchObservation()
                 return lastSwitchState?.isOn == isOn
             }
@@ -337,7 +338,7 @@ private struct IOSReduceMotionSetting: ReduceMotionSystemSetting {
             }
         }
         guard toggle.exists else {
-            throw ToggleValue.failure("Cannot find the 'Reduce Motion' switch", in: settings)
+            throw ToggleValue.failure("Cannot find the Reduce Motion switch", in: settings)
         }
         return try waitForSettledSwitch()
     }
