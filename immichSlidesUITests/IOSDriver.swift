@@ -9,21 +9,17 @@ struct IOSDriver: PlaybackDriver {
 
     func launchToPlayback(input: StrictE2EInput) {
         let serverField = app.textFields["firstboot.serverURL.field"]
-        let serverTimeout = TestWait.seconds(.infrastructure(20))
-        let serverDeadline = Date().addingTimeInterval(serverTimeout)
         XCTAssertTrue(
             serverField.waitForPublicElement(
-                "firstboot.serverURL.field", timeout: serverTimeout),
+                "firstboot.serverURL.field", timeout: TestWait.seconds(.infrastructure(20))),
             "Fresh install must open the normal first-boot page.")
-        replaceText(
-            in: serverField, identifier: "firstboot.serverURL.field", with: input.serverURL, until: serverDeadline)
+        replaceText(in: serverField, with: input.serverURL)
         let apiKeyField = app.secureTextFields["firstboot.apiKey.field"]
-        let keyDeadline = Date().addingTimeInterval(UITestSupportWaitTiming.controlAppearanceTimeoutSeconds)
         XCTAssertTrue(
             apiKeyField.waitForPublicElement(
                 "firstboot.apiKey.field", timeout: UITestSupportWaitTiming.controlAppearanceTimeoutSeconds),
             "First-boot page must show the API Key field.")
-        replaceText(in: apiKeyField, identifier: "firstboot.apiKey.field", with: input.publicKey, until: keyDeadline)
+        replaceText(in: apiKeyField, with: input.publicKey)
         XCTAssertTrue(
             Wait.until(timeout: UITestSupportWaitTiming.shortInteractionTimeoutSeconds) {
                 secureFieldHasValue(apiKeyField)
@@ -714,12 +710,9 @@ struct IOSDriver: PlaybackDriver {
         }
     }
 
-    private func replaceText(in field: XCUIElement, identifier: String, with value: String, until deadline: Date) {
-        guard
-            let focused = IOSFirstBootNavigation(app: app).focusTextField(
-                field, identifier: identifier, until: deadline)
-        else { return }
-        let existing = focused.value as? String ?? ""
+    private func replaceText(in field: XCUIElement, with value: String) {
+        field.tapForFailureEvidence()
+        let existing = field.value as? String ?? ""
         let isPlaceholder = existing.contains("请输入") || existing.localizedCaseInsensitiveContains("enter")
         if !existing.isEmpty && !isPlaceholder {
             field.typeKey("a", modifierFlags: .command)
