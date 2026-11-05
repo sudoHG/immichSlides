@@ -472,6 +472,43 @@ extension XCUIApplication {
 struct IOSFirstBootNavigation {
     let app: XCUIApplication
 
+    func focusTextField(_ field: XCUIElement, identifier: String, until deadline: Date) -> XCUIElementSnapshot? {
+        FirstFailureContext.mark("focus", element: identifier)
+        FirstFailureContext.beginWait(seconds: max(.zero, deadline.timeIntervalSinceNow))
+        defer { FirstFailureContext.endWait() }
+        if Date() < deadline {
+            field.tapForFailureEvidence()
+            FirstFailureContext.mark("focus", element: identifier)
+            // iOS hasFocus is UI focus, not the keyboard-focus attribute used by XCTest typeText.
+            let focusedField = app.descendants(matching: .any).matching(
+                NSPredicate(format: "identifier == %@ AND hasKeyboardFocus == true", identifier)
+            ).firstMatch
+            while Date() < deadline {
+                if let focused = try? focusedField.snapshot(), focused.isEnabled, Date() < deadline,
+                    let application = try? app.snapshot()
+                {
+                    var pending = [application]
+                    var hasVisibleKeyboard = false
+                    while let node = pending.popLast() {
+                        if node.elementType == .keyboard, !node.frame.isEmpty,
+                            !node.frame.isNull, !node.frame.isInfinite,
+                            application.frame.intersects(node.frame)
+                        {
+                            hasVisibleKeyboard = true
+                            break
+                        }
+                        pending.append(contentsOf: node.children)
+                    }
+                    if hasVisibleKeyboard, Date() < deadline { return focused }
+                }
+                RunLoop.current.run(
+                    until: min(deadline, Date().addingTimeInterval(UITestSupportWaitTiming.identityPollSeconds)))
+            }
+        }
+        XCTFail("First-boot input must have keyboard focus and a visible keyboard before typing.")
+        return nil
+    }
+
     enum ModeModalSource: String {
         case none
         case appAlert = "app-alert"
