@@ -484,7 +484,7 @@ struct IOSFirstBootNavigation {
                 NSPredicate(format: "identifier == %@ AND hasKeyboardFocus == true", identifier)
             ).firstMatch
             while Date() < deadline {
-                if let focused = try? focusedField.snapshot(), focused.isEnabled,
+                if let focused = try? focusedField.snapshot(), focused.isEnabled, Date() < deadline,
                     let application = try? app.snapshot()
                 {
                     var pending = [application]
