@@ -618,23 +618,16 @@ extension AccessLifecycleIOSUITests {
     @MainActor
     func fillFirstBootForm(app: XCUIApplication, input: StrictE2EInput) throws {
         let serverField = app.textFields["firstboot.serverURL.field"]
-        let serverTimeout = TestWait.seconds(.infrastructure(20))
-        let serverDeadline = Date().addingTimeInterval(serverTimeout)
         XCTAssertTrue(
             serverField.waitForPublicElement(
-                "firstboot.serverURL.field", timeout: serverTimeout),
+                "firstboot.serverURL.field", timeout: TestWait.seconds(.infrastructure(20))),
             "A fresh install must reach the normal first-boot page.")
-        replaceText(
-            in: serverField, app: app, identifier: "firstboot.serverURL.field", with: input.serverURL,
-            until: serverDeadline)
+        replaceText(in: serverField, with: input.serverURL)
         let apiKeyField = app.secureTextFields["firstboot.apiKey.field"]
-        let keyTimeout = TestWait.seconds(.infrastructure(8))
-        let keyDeadline = Date().addingTimeInterval(keyTimeout)
         XCTAssertTrue(
-            apiKeyField.waitForPublicElement("firstboot.apiKey.field", timeout: keyTimeout),
+            apiKeyField.waitForPublicElement("firstboot.apiKey.field", timeout: TestWait.seconds(.infrastructure(8))),
             "The first-boot page must show the API Key field.")
-        replaceText(
-            in: apiKeyField, app: app, identifier: "firstboot.apiKey.field", with: input.publicKey, until: keyDeadline)
+        replaceText(in: apiKeyField, with: input.publicKey)
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(3))) { self.hasSecureFieldEnteredValue(apiKeyField) },
             "The API Key must be entered into the secure field.")
@@ -706,14 +699,9 @@ extension AccessLifecycleIOSUITests {
     }
 
     @MainActor
-    func replaceText(
-        in field: XCUIElement, app: XCUIApplication, identifier: String, with value: String, until deadline: Date
-    ) {
-        guard
-            let focused = IOSFirstBootNavigation(app: app).focusTextField(
-                field, identifier: identifier, until: deadline)
-        else { return }
-        let existingValue = focused.value as? String ?? ""
+    func replaceText(in field: XCUIElement, with value: String) {
+        field.tapForFailureEvidence()
+        let existingValue = field.value as? String ?? ""
         let looksLikePlaceholder =
             existingValue.contains("请输入") || existingValue.localizedCaseInsensitiveContains("enter")
         if !existingValue.isEmpty && !looksLikePlaceholder {

@@ -2002,12 +2002,6 @@ XCTest assertion and the known Swift `AssertionError.message` and
 `Failure(message:)` wrappers are recognized;
 unmatched, missing or conflicting messages yield `unknown` for both fields.
 Snapshot/hittability failures identify only the class, with an unknown phase.
-The reviewed native keyboard-focus sentence below retains only its fixed prefix;
-its event snapshot, element tree, labels, values and process details stay private.
-It is not added to `xctest_tool_class` and gains no native-tool yellow exception.
-The shared iOS first-boot readiness assertion identifies `firstboot_setup/focus`;
-only the unchanged v5 timing-wait rule can apply when every existing evidence gate
-is satisfied. Local failures, missing evidence and an unrecorded deadline stay red.
 The reviewed XCTest messages `Failed to terminate com.331works.immichSlides:`
 and `Application 'com.331works.immichSlides' does not have a process ID` identify
 `unknown/process_lifetime`. The phase stays unknown because termination can be
@@ -2336,8 +2330,6 @@ New enum meanings and why the previous vocabulary cannot express them:
 | `The rotation sequence took ` | `unknown` | `timing_window` | [RotationUITests.swift](../immichSlidesUITests/RotationUITests.swift); whole sequence must precede the earliest natural switch |
 | `Orientation API: after setting ` | `unknown` | `navigation` | [RotationUITests.swift](../immichSlidesUITests/RotationUITests.swift); shared orientation API window readback |
 | `Fresh install must open the normal first-boot page.` | `firstboot_setup` | `navigation` | [IOSDriver.swift](../immichSlidesUITests/IOSDriver.swift); initial configuration page |
-| `First-boot input must have keyboard focus and a visible keyboard before typing.` | `firstboot_setup` | `focus` | [UITestSupport.swift](../immichSlidesUITests/UITestSupport.swift); one tap and readiness share the existing field-appearance deadline |
-| `Failed to synthesize event: Neither element nor any descendant has keyboard focus.` | `unknown` | `focus` | Xcode 27.0 XCTest, reproduced on pinned iPhone 17e after the App's Done action removed focus; the native message can arise outside first boot, so its phase is unknown |
 | `First-boot page must show the API Key field.` | `firstboot_setup` | `navigation` | [IOSDriver.swift](../immichSlidesUITests/IOSDriver.swift); secure field availability |
 | `The API Key must be entered into the secure field.` | `firstboot_setup` | `control_state` | [IOSDriver.swift](../immichSlidesUITests/IOSDriver.swift); secure field value readback |
 | `First-boot page must show Test Connection.` | `firstboot_setup` | `navigation` | [IOSDriver.swift](../immichSlidesUITests/IOSDriver.swift); connection control availability |

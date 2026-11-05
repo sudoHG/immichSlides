@@ -192,17 +192,6 @@ action, recognizes playback independently of auto-hidden controls, then wakes
 hidden controls within that same guard. EXIF diagnostic return paths and capture refresh
 helpers retain their existing windows.
 
-The strict iOS onboarding, lifecycle and `IOSDriver` credential paths share
-`IOSFirstBootNavigation.focusTextField`. Field appearance, the single tap and
-keyboard readiness consume the original field-appearance deadline (20 infrastructure
-seconds for URL, eight for API Key); no wait restarts it. Before typing, a fallible
-XCUI query must identify the field with `hasKeyboardFocus`, and one App snapshot
-must contain a keyboard with a nonempty frame intersecting the App frame.
-The public snapshot's `hasFocus` describes UI focus and is false during normal
-iPhone text editing, so it cannot establish keyboard focus. Failed reads keep
-polling only within the same deadline; expiry fails without another tap or typing.
-The focused snapshot supplies the existing text for each caller's unchanged clearing strategy.
-
 For iOS first-boot paths that type and save server credentials, use
 `IOSFirstBootNavigation` in `UITestSupport`, including the interactive visual-audit
 pack. Use `selectMode` for selection-only screenshots and `selectModeAndContinue`
