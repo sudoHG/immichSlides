@@ -1623,6 +1623,18 @@ compiler options and execution environment identical when comparing timing resul
 | `E2E-P2-04` | SmartFill multi-photo layout in both iPad orientations (`p2-ipad-layout`) |
 | `E2E-P2-05` | Rotation during playback on iPhone and iPad (`p2-rotation`) |
 
+The iOS Reduce Motion driver asks the strict runner to change the simulator's
+real `com.apple.Accessibility/ReduceMotionEnabled` preference through `simctl spawn
+defaults`. The test-only file control and system readback share the original
+three-second allowance; no control input is passed to the App. The App receives
+UIKit's real Reduce Motion notification and SwiftUI environment update. Settings
+is still reopened for every original/enabled/restored screenshot and the separate
+persistence round trip. Two adjacent fresh Settings snapshots must agree on the
+unique switch's explicit value and enabled, on-screen frame within the original
+four-second page allowance. No iOS switch tap or retry is used. The runner also
+restores the original preference (including absence) during cleanup. Motion
+segments, recording review and the tvOS interaction remain unchanged.
+
 ## Generating a local privacy page
 
 Diagnostic identity fields are opaque correlation values. Playback request lifecycle JSONL hashes

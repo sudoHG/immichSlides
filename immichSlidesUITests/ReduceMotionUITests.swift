@@ -1,10 +1,6 @@
 import XCTest
 
-private enum SwitchGeometry {
-    static let trailingTapFraction: CGFloat = 0.93
-}
-
-// P2-03 Reduce Motion: toggle "Reduce Motion" through the real system settings and record both display modes in
+// P2-03 Reduce Motion: change the real system setting and record both display modes in
 // separate video segments; only a person watching the recording decides whether there is motion.
 final class ReduceMotionUITests: XCTestCase {
     override func invokeTest() {
@@ -275,27 +271,59 @@ private struct IOSReduceMotionSetting: ReduceMotionSystemSetting {
     private let settings = XCUIApplication(bundleIdentifier: "com.apple.Preferences")
 
     func read() throws -> Bool {
-        try value(of: openToggle())
+        try openToggle().isOn
     }
 
     func set(_ isOn: Bool) throws {
-        let toggle = try openToggle()
-        // The switch's tappable area varies by OS version: tap the switch position at the right of the row first,
-        // then fall back to the element center.
-        let taps: [() -> Void] = [
-            {
-                toggle.coordinate(withNormalizedOffset: CGVector(dx: SwitchGeometry.trailingTapFraction, dy: 0.5))
-                    .tapForFailureEvidence()
-            },
-            { toggle.tapForFailureEvidence() }
-        ]
-        for tap in taps where ToggleValue.parse(toggle.value) != isOn {
-            tap()
-            _ = Wait.until(timeout: MotionTiming.settingsReadbackTimeout) { ToggleValue.parse(toggle.value) == isOn }
-        }
-        guard try value(of: toggle) == isOn else {
+        try changeSystemValue(isOn)
+        guard try openToggle().isOn == isOn else {
             throw ToggleValue.failure(
-                "Reduce Motion read back after the tap is not \(isOn ? "on" : "off")", in: settings)
+                "Reduce Motion read back after the simulator change is not \(isOn ? "on" : "off")", in: settings)
+        }
+    }
+
+    private struct ControlReply: Decodable {
+        let ok: Bool
+        let isOn: Bool?
+
+        enum CodingKeys: String, CodingKey {
+            case ok
+            case isOn = "is_on"
+        }
+    }
+
+    // Only the runner can invoke simctl. The App gets no control input and observes the real system notification.
+    private func changeSystemValue(_ isOn: Bool) throws {
+        guard let path = ProcessInfo.processInfo.environment["STRICT_E2E_REDUCE_MOTION_CONTROL_DIR"],
+            !path.isEmpty, !path.hasPrefix("$(")
+        else { throw Failure("System settings: Simulator Reduce Motion control is unavailable.") }
+        let directory = URL(fileURLWithPath: path)
+        let token = UUID().uuidString.lowercased()
+        let request = directory.appendingPathComponent("request-\(token).json")
+        let response = directory.appendingPathComponent("reply-\(token).json")
+        defer {
+            try? FileManager.default.removeItem(at: request)
+            try? FileManager.default.removeItem(at: response)
+        }
+        do {
+            try JSONSerialization.data(withJSONObject: ["is_on": isOn]).write(to: request, options: .atomic)
+        } catch {
+            throw Failure("System settings: Simulator Reduce Motion control is unavailable.")
+        }
+        FirstFailureContext.mark("settings-readback", element: "system.reduce-motion")
+        var systemControlReply: ControlReply?
+        let didReadBack = XCTContext.runActivity(named: "System Reduce Motion: simulator readback") { _ in
+            TestWait.until(.product(MotionTiming.settingsReadbackTimeout)) {
+                guard let bytes = try? Data(contentsOf: response),
+                    let receivedControlReply = try? JSONDecoder().decode(ControlReply.self, from: bytes)
+                else { return false }
+                systemControlReply = receivedControlReply
+                return true
+            }
+        }
+        guard didReadBack, let systemControlReply, systemControlReply.ok, systemControlReply.isOn == isOn else {
+            throw Failure(
+                "System settings: Reduce Motion read back after the simulator change is not \(isOn ? "on" : "off")")
         }
     }
 
@@ -305,17 +333,17 @@ private struct IOSReduceMotionSetting: ReduceMotionSystemSetting {
 
     // Settings may reopen on the last subpage, so step forward through whichever entry is visible. Wait for the
     // next level only after tapping an entry.
-    private func openToggle() throws -> XCUIElement {
+    private func openToggle() throws -> SwitchObservation {
         settings.terminateForFailureEvidence()
         settings.launchForFailureEvidence()
         let toggle = settings.switches.matching(Self.toggleMatch).firstMatch
         let motion = entry(Self.motionEntry)
         let accessibility = entry(Self.accessibilityEntry)
         for _ in 0..<MotionTiming.settingsNavigationSteps {
-            if toggle.exists { return toggle }
+            if toggle.exists { return try waitForSettledSwitch() }
             if motion.exists {
                 motion.tapForFailureEvidence()
-                _ = toggle.waitForFailureEvidence(timeout: MotionTiming.settingsPageTimeout)
+                return try waitForSettledSwitch()
             } else if accessibility.exists {
                 accessibility.tapForFailureEvidence()
                 _ = motion.waitForFailureEvidence(timeout: MotionTiming.settingsPageTimeout)
@@ -326,7 +354,7 @@ private struct IOSReduceMotionSetting: ReduceMotionSystemSetting {
         guard toggle.exists else {
             throw ToggleValue.failure("Cannot find the 'Reduce Motion' switch", in: settings)
         }
-        return toggle
+        return try waitForSettledSwitch()
     }
 
     private func entry(_ match: NSPredicate) -> XCUIElement {
@@ -337,11 +365,42 @@ private struct IOSReduceMotionSetting: ReduceMotionSystemSetting {
             .firstMatch
     }
 
-    private func value(of toggle: XCUIElement) throws -> Bool {
-        guard let isOn = ToggleValue.parse(toggle.value) else {
-            throw ToggleValue.failure("Cannot read the switch value: \(String(describing: toggle.value))", in: settings)
+    private struct SwitchObservation: Equatable {
+        let frame: CGRect
+        let isOn: Bool
+    }
+
+    private func waitForSettledSwitch() throws -> SwitchObservation {
+        FirstFailureContext.mark("query-element", element: "system.reduce-motion")
+        var previousSwitchState: SwitchObservation?
+        var settledSwitchState: SwitchObservation?
+        let isReady = TestWait.until(.product(MotionTiming.settingsPageTimeout)) {
+            let currentSwitchState = switchObservation()
+            defer { previousSwitchState = currentSwitchState }
+            guard let currentSwitchState, currentSwitchState == previousSwitchState else { return false }
+            settledSwitchState = currentSwitchState
+            return true
         }
-        return isOn
+        guard isReady, let settledSwitchState else {
+            throw ToggleValue.failure("Reduce Motion switch is not ready for system evidence.", in: settings)
+        }
+        return settledSwitchState
+    }
+
+    // Bind value, enabled state and geometry to the system switch in one fresh Settings snapshot.
+    private func switchObservation() -> SwitchObservation? {
+        guard let root = try? settings.snapshot() else { return nil }
+        var switches: [XCUIElementSnapshot] = []
+        func visit(_ node: XCUIElementSnapshot) {
+            if node.elementType == .switch, node.identifier == "REDUCE_MOTION" { switches.append(node) }
+            node.children.forEach(visit)
+        }
+        visit(root)
+        guard switches.count == 1, let toggle = switches.first, toggle.isEnabled,
+            !toggle.frame.isEmpty, root.frame.contains(toggle.frame),
+            let isOn = ToggleValue.parse(toggle.value.map { String(describing: $0) })
+        else { return nil }
+        return SwitchObservation(frame: toggle.frame, isOn: isOn)
     }
 }
 #endif

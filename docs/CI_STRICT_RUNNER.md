@@ -2084,6 +2084,12 @@ messages, retry policy and v5 eligibility remain unchanged.
 
 #### Reviewed prefix table
 
+The iOS system Reduce Motion readiness, control availability and value failures below retain
+the existing `Failure(message:)` wrapper. They are functional `control_state`
+failures and remain red, including under policy v5; no yellow rule is added.
+The [system Settings interaction](TESTING.md#strict-end-to-end-case-identifiers)
+keeps its original page/readback allowances and P2 motion contract.
+
 The following additions come only from public Swift assertions in the linked source files.
 Identical text in other files has also been checked for phase consistency.
 Each row fixes both enum values before any suffix is read. Shared prefixes receive a
@@ -2235,6 +2241,10 @@ New enum meanings and why the previous vocabulary cannot express them:
 
 | Fixed source prefix | Phase | Class | Public source |
 |---|---|---|---|
+| `System settings: Reduce Motion read back after the tap is not ` | `settings_navigation` | `control_state` | [ReduceMotionUITests.swift](../immichSlidesUITests/ReduceMotionUITests.swift) |
+| `System settings: Reduce Motion read back after the simulator change is not ` | `settings_navigation` | `control_state` | [ReduceMotionUITests.swift](../immichSlidesUITests/ReduceMotionUITests.swift) |
+| `System settings: Reduce Motion switch is not ready for system evidence.` | `settings_navigation` | `control_state` | [ReduceMotionUITests.swift](../immichSlidesUITests/ReduceMotionUITests.swift) |
+| `System settings: Simulator Reduce Motion control is unavailable.` | `settings_navigation` | `control_state` | [ReduceMotionUITests.swift](../immichSlidesUITests/ReduceMotionUITests.swift) |
 | `tvOS flow entry precondition failed:` | `history_navigation` | `control_state` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L282) and [#L302](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L302); red when the initial scene did not stabilize before the entry pause, or when autoplay advanced before it. The `tvos-entry-capture-window` attachment distinguishes the two |
 | `tvOS flow entry anchor must remain paused before checking the history boundary.` | `history_navigation` | `control_state` | [StrictE2ETVOSFlowUITests.swift](../immichSlidesUITests/StrictE2ETVOSFlowUITests.swift#L306) |
 | `tvOS midpoint setup exhausted the original step budget before the half-cycle pause.` | `continue_timing` | `timing_window` | [AccessLifecycleTVOSUITests+Timing.swift](../immichSlidesUITests/AccessLifecycleTVOSUITests+Timing.swift#L343) |

@@ -856,6 +856,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
     service_process: subprocess.Popen[bytes] | None = None
     service_process_b: subprocess.Popen[bytes] | None = None
     recording_process: subprocess.Popen[bytes] | None = None
+    system_motion_control = None
     unreachable_reservation: socket.socket | None = None
     server_url_b: str | None = None
     service_log_b_path: Path | None = None
@@ -1056,6 +1057,14 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             server_url_b=server_url_b,
         )
         environment["STRICT_E2E_EVIDENCE_DIR"] = str(arguments.evidence_dir.resolve())
+        if arguments.platform == "ios" and arguments.suite == "p2-reduce-motion":
+            from strict_e2e_system_settings import SimulatorReduceMotionControl
+            system_motion_control = SimulatorReduceMotionControl(simulator_udid)
+            try:
+                system_motion_control.start()
+            except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+                raise CommandError("Simulator Reduce Motion control preparation failed.") from error
+            environment[system_motion_control.ENVIRONMENT_KEY] = str(system_motion_control.directory)
         if warm_receipt is not None:
             case_manifest["warm_build_identity"] = warm_receipt["identity"]
 
@@ -1499,6 +1508,8 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             ("close_unreachable_reservation", close_unreachable_reservation),
             ("write_service_lifecycle", write_lifecycle),
         ]
+        if system_motion_control is not None:
+            actions.insert(0, ("restore_system_reduce_motion", system_motion_control.close))
         if did_create_config:
             actions.append(
                 (

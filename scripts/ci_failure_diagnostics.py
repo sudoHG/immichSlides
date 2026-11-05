@@ -1227,6 +1227,10 @@ def public_validator_failure_message(value):
 # No activity marker exists in these flows. Suffixes (including values) are discarded.
 PREFIX_RULES = (
     ("App timeline:", "continue_timing", "evidence_capture"),
+    ("System settings: Reduce Motion read back after the tap is not ", "settings_navigation", "control_state"),
+    ("System settings: Reduce Motion read back after the simulator change is not ", "settings_navigation", "control_state"),
+    ("System settings: Reduce Motion switch is not ready for system evidence.", "settings_navigation", "control_state"),
+    ("System settings: Simulator Reduce Motion control is unavailable.", "settings_navigation", "control_state"),
     # tvOS timing-precondition fixes: keep separate from the broader diagnostics-only expansion.
     ("tvOS Continue wake timing precondition failed: Up must not be requested before T-2.", "continue_timing", "timing_window"),
     ("tvOS flow entry precondition failed:", "history_navigation", "control_state"),

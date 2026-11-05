@@ -1563,6 +1563,29 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
 
 
 class FailureDiagnosticsTests(unittest.TestCase):
+    def test_system_reduce_motion_wrong_readback_is_classified_without_private_values(self):
+        from ci_failure_diagnostics import classify_messages, public_failure_messages, environment_timing_v5
+        prefix = "System settings: Reduce Motion read back after the tap is not "
+        source = (REPO_ROOT / "immichSlidesUITests/ReduceMotionUITests.swift").read_text()
+        self.assertIn('return Failure("System settings: \\(message)")', source)
+        current = "System settings: Reduce Motion read back after the simulator change is not "
+        readiness = "System settings: Reduce Motion switch is not ready for system evidence."
+        unavailable = "System settings: Simulator Reduce Motion control is unavailable."
+        self.assertIn('"System settings: Reduce Motion read back after the simulator change is not ', source)
+        self.assertIn('"Reduce Motion switch is not ready for system evidence."', source)
+        self.assertIn('"' + unavailable + '"', source)
+        for public, suffix in ((prefix, "on"), (prefix, "off"), (current, "on"), (current, "off"),
+                               (readiness, ""), (unavailable, "")):
+            with self.subTest(prefix=public, suffix=suffix):
+                message = 'failed: caught error: "Failure(message: \\"' + public + suffix + ' PRIVATE_SENTINEL\\")"'
+                diagnostics = {"failure_phase": "settings_navigation", "failure_class": "control_state"}
+                self.assertEqual(classify_messages([message]), diagnostics)
+                self.assertEqual(public_failure_messages([message]), [public])
+                failure = dict(source="xctest", app="running-foreground", surface="playback", scene_status="MATCH",
+                               step="settings-readback", element="system.reduce-motion", control_bar="unknown",
+                               wait_elapsed_seconds=4, deadline_seconds=3)
+                self.assertFalse(environment_timing_v5(failure, "control_state", [public]))
+
     def test_official_export_preserves_complete_public_failure_lists_before_class_folding(self):
         from run_strict_ci_tracer import validate_case_export
         tool = "Application 'com.331works.immichSlides' does not have a process ID"
