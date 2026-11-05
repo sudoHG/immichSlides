@@ -384,7 +384,8 @@ AccessLifecycle Navigation tests.
 The Debug pause-timeline suite also keeps the real delay so its exact timing
 judge retains control-bar visibility changes and their planning effects.
 
-`testIOSExifAlbumDiagnosticScreenshots` instead explicitly launches with
+`testIOSExifAlbumDiagnosticScreenshots` and
+`testDiagnosticSmartFillSettingsPauseOnlyThreeSecondsFreezesRenderedFrames` instead explicitly launch with
 `UI_TEST_HOLD_CONTROLS_UNTIL_INITIAL_SETTINGS=1`. In Debug iOS only, this holds
 the initial playback controls through delayed native delivery of the first
 Settings tap. The real Settings action consumes the hold once per App process;
@@ -398,6 +399,10 @@ of Settings navigation in one snapshot, then refreshes controls once before
 capture. It no longer sends Back merely because the returned playback bar has
 already hidden. The three two-second return observations and final five-second
 control preparation retain their existing bounds.
+Playback History also recognizes returned playback from the same snapshot marker
+and absence of Settings navigation before its existing single control refresh.
+Its six return observations, six-second refresh, three-second Autoplay readback
+and four 0.75-second frozen-frame samples remain unchanged.
 
 The separate strict `pause-window` Play/Pause preparation starts its existing
 4-second readiness observation after its single canvas wake returns. Native tap

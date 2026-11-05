@@ -272,7 +272,7 @@ extension PlaybackHistoryIOSUITests {
 
     func returnToSlideshowFromPlaybackSettings(app: XCUIApplication) {
         for _ in 0..<6 {
-            if slideshowSettingsButtonIsReady(app: app) {
+            if hasReturnedToSlideshow(app: app) {
                 break
             }
 
@@ -306,11 +306,12 @@ extension PlaybackHistoryIOSUITests {
         )
     }
 
-    func slideshowSettingsButtonIsReady(app: XCUIApplication) -> Bool {
+    func hasReturnedToSlideshow(app: XCUIApplication) -> Bool {
         var timing = SlideshowControlBarTiming()
         let observation = timing.observe(app: app, identifier: "slideshow.control.settings.button")
         if observation == nil { print("Slideshow return observation: \(timing.diagnostic)") }
-        return observation?.isReady == true
+        // Auto-hidden controls do not mean that Back failed to reach playback.
+        return observation.map { $0.hasPlaybackMarker && !$0.hasSettingsNavigationEvidence } ?? false
     }
 
     func waitForPlayPauseState(app: XCUIApplication, expected: String, timeout: TimeInterval) -> Bool {
