@@ -40,6 +40,55 @@ enum LifecycleTimelineJudge {
         let stableSecondsAfterOnset: TimeInterval
     }
 
+    struct PauseHoldCapture {
+        var request: TimeInterval
+        var returned: TimeInterval
+        var controlBarVisible: Bool?
+        var exifVisible: Bool?
+        var controlsHiddenSince: TimeInterval?
+
+        func hasSameOverlays(as other: Self) -> Bool {
+            controlBarVisible != nil && exifVisible != nil
+                && controlBarVisible == other.controlBarVisible && exifVisible == other.exifVisible
+        }
+    }
+
+    enum PauseHoldReference {
+        case barHidden, afterNext
+    }
+
+    /// The early hold stays covered by App evidence even when its pixel reference is taken later.
+    static func pauseHoldReference(
+        _ events: [LifecycleTimelineEvent], scene: String, frame: String,
+        afterNext: PauseHoldCapture, hiddenReference: PauseHoldCapture?, afterHold: PauseHoldCapture,
+        holdStart: TimeInterval, holdDeadline: TimeInterval
+    ) throws -> PauseHoldReference {
+        try validate(events)
+        guard
+            let anchor = events.last(where: {
+                $0.kind == "frameFrozen" && $0.uptime <= afterNext.request && $0.isPaused
+                    && $0.scene == scene && $0.frame == frame
+            }), let seal = events.first(where: { $0.uptime >= afterHold.returned }),
+            events.filter({ $0.sequence >= anchor.sequence && $0.sequence <= seal.sequence }).allSatisfy({
+                ["frameFrozen", "checkpoint", "clockHandshake"].contains($0.kind)
+                    && $0.isPaused && $0.scene == scene && $0.frame == frame
+            })
+        else { throw Failure("pause hold lacks unchanged frozen evidence") }
+        if let reference = hiddenReference,
+            reference.request >= holdStart, reference.request <= reference.returned,
+            reference.returned <= holdDeadline,
+            let hiddenSince = reference.controlsHiddenSince,
+            reference.request >= hiddenSince + AccessLifecycleContract.hiddenControlStabilitySeconds,
+            reference.controlBarVisible == false, reference.hasSameOverlays(as: afterHold)
+        {
+            return .barHidden
+        }
+        guard afterNext.hasSameOverlays(as: afterHold) else {
+            throw Failure("pause hold lacks same-overlay pixel reference")
+        }
+        return .afterNext
+    }
+
     private struct PausedTransition {
         let origin: String
         var target: String?

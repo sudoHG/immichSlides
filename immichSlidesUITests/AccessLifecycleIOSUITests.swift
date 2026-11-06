@@ -5,7 +5,7 @@ enum AccessLifecycleIOSUITestsCalibration {
     static let alternateIntervalSeconds: Int = Int(TestWait.seconds(.product(20)))
     // Mirrors PlaybackViewMetrics.controlBarAutoHideDelaySeconds in SlideShowViewIOS.
     static let controlBarAutoHideDelaySeconds: TimeInterval = TestWait.seconds(.product(8))
-    static let hiddenControlStabilitySeconds: TimeInterval = TestWait.seconds(.product(0.6))
+    static let hiddenControlStabilitySeconds = AccessLifecycleContract.hiddenControlStabilitySeconds
     static let combinedTimingIntervalSeconds =
         Int(
             (controlBarAutoHideDelaySeconds + hiddenControlStabilitySeconds

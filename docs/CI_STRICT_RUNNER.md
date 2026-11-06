@@ -17,6 +17,28 @@ receipts with timing `NOT_RUN`. The shared definition, coverage mapping and timi
 bounds are documented in [Testing conventions](TESTING.md#running-controlled-integration-and-end-to-end-tests).
 Simulator preparation and official exports have explicit phase deadlines; timeout
 records and private quarantine follow the [nightly infrastructure policy](CI_NIGHTLY.md#population-and-capacity).
+
+For both Debug pause-timeline suites, Hogan chose option B on 2026-11-06: the
+pause-hold pixel comparison covers a new bar-hidden reference through hold end.
+The after-Next capture, changed-photo check and frozen-reference pair stay intact.
+App checkpoints plus continuously absent control-bar buttons trigger the new capture
+within the same original T+2 hold. The AX absence uses the existing 0.6-second
+`hiddenControlStabilitySeconds` first-wake calibration, covering the bar's 0.3-second
+opacity transition after AX removal. Failed/empty snapshots, reappearing controls
+or visible checkpoints reset that observed period. Late observations are rejected;
+no fixed sleep or renewed deadline is used. The first approximately eight seconds
+are guarded by a prior `frameFrozen` anchor and unchanged paused scene/frame
+evidence, including the `frozenFrameChanged` veto, through the final capture seal.
+If a hidden reference cannot complete before the original hold target, after-Next
+may be compared with after-hold only when both recorded control-bar and EXIF
+states are known and identical. Otherwise the fixed mapped error
+`App timeline: pause hold lacks same-overlay pixel reference` fails red; missing or
+changed frozen evidence uses `App timeline: pause hold lacks unchanged frozen evidence`.
+The receipt records reference timing relative to hold start and binds the selected
+PNG and its frozen-reference pair. The central crop, conditional maximum-one-level
+tolerance, anchor-before-request rule, all product windows and pixel diagnostics
+remain unchanged. See [the complete hold contract](TESTING.md#running-controlled-integration-and-end-to-end-tests).
+
 The shared preparation gate caps `simctl boot` at 60 seconds and gives boot,
 bootstatus and responsive app queries 600 seconds total. Post-boot queries use at
 most 300 seconds within that gate. The [shared reset](#shared-simulator-reset)
@@ -1942,8 +1964,10 @@ Partial blocks are redacted. The mean averages candidate-minus-reference RGB cha
 differences over the same decoded crop and rounds to nearest, ties away from zero;
 alpha remains part of maximum/count only. App committed checkpoints bracket each
 capture's visibility readback; missing or disagreeing readings become unknown.
-Visibility does not establish that a fade has completed. Old sentences without
-this block remain readable, and no added field participates in the pixel verdict.
+Visibility alone does not establish that a fade has completed; the hidden reference
+also requires the AX stability period described above. Old sentences without
+this block remain readable. Public diagnostic text does not control verdicts;
+Swift qualifies the capture pair from its separately recorded overlay observations.
 These statistics identify a comparison failure without changing its classification
 or red verdict, and contain no scene, frame, asset, path or pixel values.
 The tvOS flow retains only the exact sentence

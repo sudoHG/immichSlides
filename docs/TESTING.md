@@ -968,9 +968,33 @@ Each proof point still requires a conclusive content check, otherwise it fails a
 missing evidence. Screenshot duration itself has no 1.001-second precision gate
 in these Debug cases. Screenshots independently identify public fixture pixels;
 the App's asset hashes only cross-check that identity, never supply it.
-The held-photo proof also compares decoded pixels before and after T+2 in
+The held-photo proof also compares decoded pixels from bar-hidden through the end of the T+2 hold in
 the central photo band (10–90% of width, 30–60% of height), excluding the separately
-animated top EXIF and bottom control overlays. The iOS Debug pause-timeline test
+animated top EXIF and bottom control overlays. Hogan chose option B on 2026-11-06:
+remove the overlay-state confounder without loosening the pixel judge. The after-Next
+capture, its changed-photo check and its frozen-reference pair remain unchanged.
+Within that same hold, App checkpoints must report the control bar hidden, and
+all four control-bar buttons must be absent from successive fallible App snapshots
+for the existing `AccessLifecycleContract.hiddenControlStabilitySeconds` (0.6 seconds)
+before `timeline-hold-hidden-reference` is captured. This reuses the first-wake
+calibration: AX removes the buttons before their approximately 0.3-second opacity
+transition finishes. A failed/empty snapshot, a reappearing button or a visible App
+checkpoint resets the observed stability period; a late observation is rejected.
+There is no fixed sleep or extra hold window. Its bracketing checkpoints must agree
+on hidden controls and the same known EXIF state as `timeline-after-hold`.
+The first approximately eight seconds are guarded by the App timeline (`frameFrozen`
+before the after-Next request, unchanged paused scene/frame, no `frozenFrameChanged`
+through the final capture's seal), rather than by pixels. Hold start, its T+2 target
+and hold end do not move; reference polling and capture spend that existing window.
+A capture crossing the target cannot become the hidden reference. If no usable
+hidden reference completes in time, compare after-Next with after-hold only when
+both captures have identical, known control-bar and EXIF states. Otherwise fail red
+with `App timeline: pause hold lacks same-overlay pixel reference`; missing or changed
+frozen evidence fails red with `App timeline: pause hold lacks unchanged frozen evidence`.
+The verdict records the selected reference, hold checkpoint sequences, original deadline
+the AX-hidden stability start and reference request/return offsets from hold start; its selected PNG and frozen-reference
+pair are hash-bound by the host reader. Legacy receipts remain readable.
+The iOS Debug pause-timeline test
 keeps the product's eight-second auto-hide: hiding during the T+2 hold, waking
 before final Continue and hiding after Continue remain inputs to its exact timing
 judge. Visibility changes can discard prepared next and re-plan a pending transition;

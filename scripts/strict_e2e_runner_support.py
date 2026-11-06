@@ -1185,6 +1185,11 @@ def app_timeline_verdict(evidence_dir: Path) -> str:
                   and event["uptime"] == clock["app_uptime"] for event in events))
         names = ("timeline-start", "timeline-midpoint-pause", "timeline-after-next", "timeline-after-hold",
                  "timeline-continue-early", "timeline-after-auto")
+        if "pause_hold" in receipt:
+            reference = receipt["pause_hold"]["reference"]
+            check(reference in {"timeline-after-next", "timeline-hold-hidden-reference"})
+            if reference == "timeline-hold-hidden-reference":
+                names += (reference,)
         for name in names:
             matches = [proof for proof in proofs if proof["name"] == name]
             check(len(matches) == 1)
