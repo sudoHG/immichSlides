@@ -1616,7 +1616,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
                 (["XCTAssertTrue failed - " + tool], [marker], None),
                 (["XCTAssertTrue failed - " + connection], [connection], None),
                 ([focus + " Event dispatch snapshot: PRIVATE_SENTINEL"], [focus], None),
-                (["XCTAssertTrue failed - " + readiness], [readiness], None),
+                (["failed - " + readiness], [readiness], None),
                 (["PRIVATE_SENTINEL"], [marker], None), ([tool] * 17, None, None),
                 ([tool], [tool], "export"), ([tool], [tool], "legacy"), ([tool], None, "raw-count")):
             with self.subTest(messages=messages, bundle_prefix=bundle_prefix), tempfile.TemporaryDirectory() as raw:

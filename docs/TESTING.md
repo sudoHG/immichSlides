@@ -198,9 +198,14 @@ the existing `UITestSupportWaitTiming.elementAppearanceTimeoutSeconds` window,
 independent of field appearance. Each poll takes one fallible snapshot of the
 identifier-matched `hasKeyboardFocus` predicate result. It does not traverse an
 App snapshot or require a software keyboard; hardware-keyboard focus is valid.
-No query starts after the monotonic deadline and a late query cannot pass.
+No query starts at or after the monotonic deadline. A query issued before it
+may return ready late if the snapshot confirms a focused, enabled field, using
+HangGuard readback semantics without issuing a guard action or gaining another
+read. This is the [Hogan-approved D1 exception](TEST_WAITS.md#approved-post-tap-focus-readback-exception)
+to ordinary post-tap product timing; the worst case is 5 seconds plus one
+in-flight native query.
 Timeout returns nil after the fixed red assertion; callers never type without
-a focused result and retain their existing clearing strategy. Successful readiness
+a focused result and retain their existing clearing strategy. Readiness
 logs contain only the field identifier and elapsed/budget seconds. Onboarding,
 AccessLifecycle, `IOSDriver`, connection smoke and Strict Filter share this gate;
 Strict Filter also uses it for its existing server-settings replacement path.

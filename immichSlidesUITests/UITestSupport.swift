@@ -477,7 +477,8 @@ struct IOSFirstBootNavigation {
         // Tap delivery can be slow; focus arrival has its own window after the sole tap returns.
         let timeout = UITestSupportWaitTiming.elementAppearanceTimeoutSeconds
         let started = ProcessInfo.processInfo.systemUptime
-        let deadline = started + timeout
+        let readiness = TestWait.hangGuard(
+            timeoutSeconds: UITestSupportWaitTiming.elementAppearanceTimeoutSeconds)
         FirstFailureContext.mark("focus", element: identifier)
         FirstFailureContext.beginWait(seconds: timeout)
         defer {
@@ -490,17 +491,14 @@ struct IOSFirstBootNavigation {
         let focusedField = app.descendants(matching: .any).matching(
             NSPredicate(format: "identifier == %@ AND hasKeyboardFocus == true", identifier)
         ).firstMatch
-        while ProcessInfo.processInfo.systemUptime < deadline {
-            if let focused = try? focusedField.snapshot(), focused.isEnabled,
-                ProcessInfo.processInfo.systemUptime < deadline
-            {
-                return focused
-            }
-            let remaining = deadline - ProcessInfo.processInfo.systemUptime
-            guard remaining > 0 else { break }
-            RunLoop.current.run(
-                until: Date().addingTimeInterval(min(remaining, UITestSupportWaitTiming.identityPollSeconds)))
+        var focusedSnapshot: XCUIElementSnapshot?
+        // No guard action is issued: only queries admitted before expiry may return ready late.
+        let isReady = readiness.transaction().until(pollIntervalSeconds: UITestSupportWaitTiming.identityPollSeconds) {
+            guard let focused = try? focusedField.snapshot(), focused.isEnabled else { return false }
+            focusedSnapshot = focused
+            return true
         }
+        if isReady { return focusedSnapshot }
         XCTFail("First-boot input must have keyboard focus before typing.")
         return nil
     }
