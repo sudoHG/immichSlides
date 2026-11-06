@@ -246,6 +246,69 @@ def album_capture_gate_rejections(receipt):
 
 
 class SummaryContractTests(unittest.TestCase):
+    def test_unknown_ui_failure_duration_stays_red_and_cannot_supply_a_total_or_yellow_proof(self):
+        from ci_health import observation_metrics
+        summary = archive_download_summary()
+        summary.pop("archive_download")
+        identity = summary["population"]["declared"][0]
+        row = ci_summary.observation(identity, "failed", None, exit_code=65)
+        summary["population"]["observed"] = [row]
+        summary["status"] = "failed"
+        self.assertEqual(summary, ci_summary.parse_summary(json.dumps(summary)))
+        self.assertIn("| failed | unknown |", ci_summary.render_markdown(summary))
+        self.assertIsNone(observation_metrics([row])["test_duration_seconds"])
+        self.assertEqual(1, observation_metrics([row])["first_attempt_failures"])
+        policy = {"schema_version": 1, "approval_records": [], "expected_skips": [], "deselections": []}
+        verdict = ci_verdict.evaluate_population(summary, [identity], policy, environment="fixture")
+        self.assertEqual("failed", verdict["status"])
+        self.assertEqual([], verdict["missing_executed"])
+        for defect in ("passed", "skipped", "host", "strict", "numeric-total", "numeric-attempt"):
+            bad = copy.deepcopy(summary)
+            entry = bad["population"]["observed"][0]
+            if defect in {"passed", "skipped"}:
+                entry["outcome"] = entry["attempts"][0]["outcome"] = defect
+            elif defect in {"host", "strict"}:
+                entry["identity"]["kind"] = defect
+                entry["identity"]["dimensions"] = {} if defect == "host" else {
+                    "device": "iphone", "configuration": "Debug", "suite": "smoke", "scenario": "normal", "fixture": "a"}
+            elif defect == "numeric-total":
+                entry["duration_seconds"] = 0
+            else:
+                entry["attempts"][0]["duration_seconds"] = 0
+            with self.subTest(defect=defect), self.assertRaisesRegex(ci_summary.ContractError,
+                    "unknown duration requires a failed UI result|total duration must account for every attempt"):
+                ci_summary.parse_summary(bad)
+        from ci_failure_diagnostics import environment_limit_evidence
+        yellow, _ = hosted_v5_summary(ui=True, tool=True)
+        entry = yellow["population"]["observed"][0]
+        proof = environment_limit_evidence(yellow, entry, [], runner_hosted=True, policy_version=5)
+        entry["duration_seconds"] = entry["attempts"][0]["duration_seconds"] = None
+        self.assertIsNone(environment_limit_evidence(yellow, entry, [], runner_hosted=True, policy_version=5))
+        entry["environment_limit"] = entry["attempts"][0]["environment_limit"] = proof
+        with self.assertRaisesRegex(ci_summary.ContractError, "unknown duration requires a failed UI result"):
+            ci_summary.parse_summary(yellow)
+
+    def test_official_discovery_keeps_missing_failed_duration_bound_to_null(self):
+        from ci_ui_discovery import retain_incomplete_discovery
+        summary = discovery_summary()
+        summary["status"] = "failed"
+        evidence = summary["compiled_evidence"]
+        evidence["first_exit_code"] = 65
+        node = evidence["official_tests"]["testNodes"][0]["children"][0]
+        node.update(result="Failed", children=[{"nodeType": "Failure Message", "name": "Test crashed with signal term."}])
+        node.pop("durationInSeconds")
+        summary["population"]["observed"] = []
+        retain_incomplete_discovery(summary)
+        self.assertEqual(summary, ci_summary.parse_summary(summary))
+        self.assertIsNone(summary["population"]["observed"][0]["duration_seconds"])
+        for seconds in (0, 1):
+            bad = copy.deepcopy(summary)
+            entry = bad["population"]["observed"][0]
+            entry["duration_seconds"] = entry["attempts"][0]["duration_seconds"] = seconds
+            with self.subTest(seconds=seconds), self.assertRaisesRegex(ci_summary.ContractError,
+                    "official discovery and first observed outcome differ"):
+                ci_summary.parse_summary(bad)
+
     def test_three_starved_waits_require_exact_timeout_and_functional_evidence(self):
         from ci_failure_diagnostics import (classify_messages, environment_limit_evidence,
             public_failure_messages, validate_environment_limit)

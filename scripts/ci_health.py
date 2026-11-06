@@ -47,7 +47,8 @@ def observation_metrics(observed, *, unexpected_skips=None):
             "flaky_passed": sum(item["outcome"] == "flaky-passed" for item in observed),
             "skipped": sum(item["outcome"] == "skipped" for item in observed),
             "unexpected_skips": unexpected_skips,
-            "test_duration_seconds": sum(item["duration_seconds"] for item in observed)}
+            "test_duration_seconds": (sum(item["duration_seconds"] for item in observed)
+                                      if all(item["duration_seconds"] is not None for item in observed) else None)}
 
 
 def first_execution_metrics(entry):

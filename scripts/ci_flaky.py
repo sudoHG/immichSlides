@@ -133,13 +133,15 @@ def merge_retry(first, second):
     validate_observation(first)
     require("environment_limit" not in first, "environment-limited failure is not a product flake")
     require(first["outcome"] == "failed" and len(first["attempts"]) == 1, "retry requires one failed first attempt")
+    require(first["duration_seconds"] is not None, "retry requires a known first duration")
     if second is None:
         second = observation(first["identity"], "not-run", 0, reason="Retry result missing or invalid", exit_code=None)
     validate_observation(second)
     require(second["identity"] == first["identity"] and len(second["attempts"]) == 1, "retry result identity/attempt mismatch")
     merged = copy.deepcopy(first)
     merged["attempts"].append(dict(second["attempts"][0], number=2))
-    merged["duration_seconds"] += second["duration_seconds"]
+    merged["duration_seconds"] = (first["duration_seconds"] + second["duration_seconds"]
+                                  if second["duration_seconds"] is not None else None)
     merged["outcome"] = "flaky-passed" if second["outcome"] == "passed" else "failed"
     validate_observation(merged)
     return merged
@@ -154,7 +156,8 @@ def retry_observations(first, registry, *, tier, environment, today, reset, exec
         token = identity_key(record["identity"])
         require(token not in seen, "duplicate first-attempt identity")
         seen.add(token)
-        if (record["outcome"] == "failed" and "environment_limit" not in record and len(record["attempts"]) == 1
+        if (record["outcome"] == "failed" and record["duration_seconds"] is not None
+                and "environment_limit" not in record and len(record["attempts"]) == 1
                 and record["attempts"][0]["reason"] == ASSERTION_FAILURE
                 and eligible_entry(registry, record["identity"], tier=tier, environment=environment, today=today)):
             try:
@@ -322,6 +325,15 @@ def official_result_step(phase):
         raise
 
 
+def official_ui_duration(node):
+    # Xcode omits both fields for some terminated cases; no other shape proves an unknown duration.
+    if node.get("result") == "Failed" and "durationInSeconds" not in node and "duration" not in node:
+        return None
+    seconds = node.get("durationInSeconds")
+    duration(seconds)
+    return seconds
+
+
 def read_xcode_observations(bundle, identity_for_key, elapsed, invocation_exit, *, expected_device=None, export_timeout_seconds=60):
     from strict_e2e_p2_contract import official_tests_facts, device_class_of, P2ContractError
     with official_result_step("tests-read"):
@@ -357,7 +369,7 @@ def read_xcode_observations(bundle, identity_for_key, elapsed, invocation_exit, 
         for node in nodes:
             require(isinstance(node, dict), "invalid official result node")
             if node.get("nodeType") == "Test Case":
-                durations[node.get("nodeIdentifier")] = node.get("durationInSeconds")
+                durations[node.get("nodeIdentifier")] = node
             collect_durations(node.get("children", []))
     collect_durations(payload.get("testNodes", []))
     records = []
@@ -369,7 +381,7 @@ def read_xcode_observations(bundle, identity_for_key, elapsed, invocation_exit, 
         key = raw_key[:-2]
         require(METHOD.fullmatch(key) is not None and key not in seen, "invalid or repeated XCTest identity")
         seen.add(key)
-        duration(durations.get(raw_key))
+        seconds = official_ui_duration(durations[raw_key])
         if case["result"] == "Failed" and failure_outcomes.get(key) == "uncategorized":
             try:
                 with official_result_step("details-read"):
@@ -384,7 +396,10 @@ def read_xcode_observations(bundle, identity_for_key, elapsed, invocation_exit, 
         if outcome == "failed" and failure_outcomes.get(key) == "crashed":
             outcome = "crashed"
         from ci_failure_diagnostics import unknown_diagnostics
-        return observation(identity_for_key(key), outcome, durations[raw_key],
+        identity = identity_for_key(key)
+        if seconds is None and identity["kind"] != "ui":
+            duration(seconds)
+        return observation(identity, outcome, seconds,
                                    reason=("Official XCTest skip" if outcome == "skipped" else
                                            "Official XCTest crash" if outcome == "crashed" else
                                            ASSERTION_FAILURE if outcome == "failed" and failure_outcomes.get(key) == "assertion" else

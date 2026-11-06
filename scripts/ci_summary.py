@@ -183,8 +183,14 @@ def validate_observation(entry):
     if VALIDATOR_FAILURE_FIELD in entry:
         require(entry["identity"]["kind"] == "strict" and entry["outcome"] == "failed",
                 "validator failure message requires a failed strict observation")
-    duration(entry["duration_seconds"])
     require(isinstance(entry["attempts"], list) and bool(entry["attempts"]), "attempts must be nonempty")
+    for item in (entry, *entry["attempts"]):
+        if item["duration_seconds"] is None:
+            require(entry["identity"]["kind"] == "ui" and item["outcome"] in {"failed", "crashed"}
+                    and ENVIRONMENT_LIMIT_FIELD not in entry,
+                    "unknown duration requires a failed UI result without environment limit")
+        else:
+            duration(item["duration_seconds"])
     for number, attempt in enumerate(entry["attempts"], 1):
         require(isinstance(attempt, dict), "attempt must be an object")
         fields(attempt, {"number", "outcome", "duration_seconds", "exit_code", "reason", "message"}
@@ -205,7 +211,6 @@ def validate_observation(entry):
         integer(attempt["number"], 1, "attempt number")
         require(attempt["number"] == number, "attempts must be consecutive")
         require(attempt["outcome"] in ATTEMPT_OUTCOMES, "invalid attempt outcome")
-        duration(attempt["duration_seconds"])
         require(attempt["exit_code"] is None or type(attempt["exit_code"]) is int, "invalid exit code")
         nullable_string(attempt["reason"], "reason")
         nullable_string(attempt["message"], "message")
@@ -213,7 +218,9 @@ def validate_observation(entry):
             string(attempt["reason"], "skip reason")
         if attempt["outcome"] == "passed":
             require(attempt["exit_code"] in (0, None), "passed attempt cannot have a failing exit")
-    require(math.isclose(entry["duration_seconds"], sum(a["duration_seconds"] for a in entry["attempts"]), abs_tol=0.001),
+    seconds = [attempt["duration_seconds"] for attempt in entry["attempts"]]
+    require((entry["duration_seconds"] is None if None in seconds else
+             entry["duration_seconds"] is not None and math.isclose(entry["duration_seconds"], sum(seconds), abs_tol=0.001)),
             "total duration must account for every attempt")
     first = next((attempt for attempt in entry["attempts"] if attempt["outcome"] in {"failed", "crashed", "timed-out", "not-run"}), {})
     if FIRST_FAILURE_FIELD in entry or any(FIRST_FAILURE_FIELD in attempt for attempt in entry["attempts"]):
@@ -463,7 +470,8 @@ def render_markdown(payload):
         if hints:
             label += " (" + ", ".join(f"{key}={value}" for key, value in sorted(entry["identity"]["dimensions"].items())) + ")"
         detail = "; ".join(part for part in [markdown_text(message), *hints] if part)
-        lines.append(f"| {markdown_text(label)} | {outcome} | {entry['duration_seconds']:.3f} | {detail} |")
+        seconds = "unknown" if entry["duration_seconds"] is None else f"{entry['duration_seconds']:.3f}"
+        lines.append(f"| {markdown_text(label)} | {outcome} | {seconds} | {detail} |")
     for entry in population["deselected"]:
         lines.append(f"| {markdown_text(entry['identity']['key'])} | deselected | — | {markdown_text(entry['reason'])}; owned by {markdown_text(entry['owning_tier'])} |")
     if any("environment_limit" in entry for entry in population["observed"]):

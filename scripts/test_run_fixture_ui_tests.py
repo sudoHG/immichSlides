@@ -23,7 +23,7 @@ class FixtureCoverageTests(unittest.TestCase):
         from test_ci_summary import hosted_v5_summary
         from ci_summary import parse_summary
         policy = {"schema_version": 1, "approval_records": [], "expected_skips": [], "deselections": []}
-        for defect in (None, "bundle-prefix", "mixed", "retry", "too-many", "raw-count", "infrastructure", "timeout", "ci-ui", "not-hosted"):
+        for defect in (None, "bundle-prefix", "mixed", "retry", "too-many", "raw-count", "infrastructure", "timeout", "ci-ui", "not-hosted", "unknown-duration", "missing-official-duration"):
             with self.subTest(defect=defect):
                 summary, _ = hosted_v5_summary(ui=True, tool=True)
                 row = summary["population"]["observed"][0]
@@ -39,8 +39,11 @@ class FixtureCoverageTests(unittest.TestCase):
                     summary["infrastructure"].append({"code": "cleanup-failed", "message": "Synthetic cleanup failure"})
                 elif defect == "ci-ui":
                     summary["source"]["workflow_path"] = ".github/workflows/ci-ui.yml"
+                elif defect == "unknown-duration":
+                    row["duration_seconds"] = row["attempts"][0]["duration_seconds"] = None
                 from ci_failure_diagnostics import failure_messages_diagnostics
                 node = {"nodeType": "Test Case", "nodeIdentifier": row["identity"]["key"] + "()", "result": "Failed",
+                    "durationInSeconds": 12,
                     **failure_messages_diagnostics(messages),
                     "children": [{"nodeType": "Failure Message", "name": "failure"} for _ in messages]}
                 if defect != "too-many":
@@ -49,6 +52,8 @@ class FixtureCoverageTests(unittest.TestCase):
                     node["nodeIdentifier"] = "immichSlidesUITests/" + node["nodeIdentifier"]
                 if defect == "raw-count":
                     node["children"] = []
+                if defect == "missing-official-duration":
+                    node.pop("durationInSeconds")
                 with contextlib.redirect_stdout(io.StringIO()) as output:
                     verdict, code = runner.finish_fixture_coverage(summary, {"testNodes": [node]},
                         summary["population"]["declared"], policy, exit_code=124 if defect == "timeout" else 65,
@@ -107,7 +112,7 @@ class FixtureCoverageTests(unittest.TestCase):
         from ci_verdict import parse_policy
         from test_ci_summary import archive_download_summary
         for phase in ("tests-read", "export", "summary-read", "details-read", "attachments-export",
-                      "tool-yellow", "tool-yellow-scan-failed", "tool-yellow-bundle-failed"):
+                      "tool-yellow", "tool-yellow-scan-failed", "tool-yellow-bundle-failed", "tool-yellow-unknown-duration"):
             with self.subTest(phase=phase), tempfile.TemporaryDirectory() as directory:
                 tool_yellow = phase.startswith("tool-yellow")
                 root, output = Path(directory, "checkout"), Path(directory, "output")
@@ -135,6 +140,8 @@ class FixtureCoverageTests(unittest.TestCase):
                     for index, node in enumerate(nodes):
                         node["result"] = "Failed" if index == 0 else "Passed"
                     nodes[0]["children"] = [{"nodeType": "Failure Message", "name": tool}]
+                    if phase == "tool-yellow-unknown-duration":
+                        nodes[0].pop("durationInSeconds")
                     counts.update(passedTests=20, failedTests=1, skippedTests=0, result="Failed")
                 issues = {"testFailureSummaries": {"_values": [{
                     "testCaseName": {"_value": declared[0]["key"].replace("/", ".") + "()"},
@@ -212,9 +219,21 @@ class FixtureCoverageTests(unittest.TestCase):
                     retained = runner.finalize_fixture_run.call_args
                 if tool_yellow:
                     yellow = phase == "tool-yellow"
-                    self.assertEqual(0 if yellow else 1, code)
+                    self.assertEqual(0 if yellow else 65 if phase == "tool-yellow-unknown-duration" else 1, code)
                     result = parse_summary((output / "summary.json").read_text())
                     self.assertEqual("failed", result["status"])
+                    if phase == "tool-yellow-unknown-duration":
+                        row = result["population"]["observed"][0]
+                        self.assertIsNone(row["duration_seconds"])
+                        self.assertEqual(65, row["attempts"][0]["exit_code"])
+                        self.assertNotIn("environment_limit", row)
+                        self.assertEqual(21, len(result["population"]["observed"]))
+                        self.assertIn("| failed | unknown |", (output / "fixture-coverage.md").read_text())
+                        self.assertNotIn("::warning", stdout.getvalue())
+                        self.assertEqual([], json.loads((output / "coverage-verdict.json").read_text())["missing_executed"])
+                        self.assertNotIn("official-result-read-failed", [item["code"] for item in result["infrastructure"]])
+                        self.assertEqual(1, len(executions))
+                        continue
                     self.assertIn("environment_limit", result["population"]["observed"][0])
                     self.assertEqual(False, retained.kwargs["successful"])
                     if yellow:
@@ -990,6 +1009,11 @@ class FixtureCoverageTests(unittest.TestCase):
         rows = coverage_rows(expected, expected, nodes, "iphone")
         self.assertEqual(rows[0]["outcome"], "passed")
         self.assertEqual(rows[0]["duration_seconds"], 1.25)
+        interrupted = {"testNodes": [{"nodeType": "Test Case", "nodeIdentifier": "Flow/testFirst()",
+            "result": "Failed", "children": [{"name": "Test crashed with signal term.", "nodeType": "Failure Message"}]}]}
+        failed = coverage_rows(expected, expected, interrupted, "iphone")[0]
+        self.assertEqual("failed", failed["outcome"])
+        self.assertIsNone(failed["duration_seconds"])
         same_name = [{"kind": "ui", "key": "immichSlidesUITests/testFirst", "dimensions": {"platform": "ios"}}]
         same_node = {"testNodes": [dict(nodes["testNodes"][0], nodeIdentifier="immichSlidesUITests/testFirst()")]}
         self.assertEqual(coverage_rows(same_name, same_name, same_node, "iphone")[0]["identity"], same_name[0])
