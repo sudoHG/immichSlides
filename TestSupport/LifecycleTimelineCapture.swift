@@ -295,10 +295,10 @@ final class LifecycleTimelineCapture {
                 hiddenSince = nil
                 continue
             }
-            let areControlsAbsent = controlsAbsentFromSnapshot(app)
+            let hasNoControls = hasNoControlsInSnapshot(app)
             let observed = ProcessInfo.processInfo.systemUptime
             guard observed < deadline else { return nil }
-            guard areControlsAbsent == true else {
+            guard hasNoControls == true else {
                 hiddenSince = nil
                 continue
             }
@@ -316,7 +316,7 @@ final class LifecycleTimelineCapture {
         return nil
     }
 
-    private func controlsAbsentFromSnapshot(_ app: XCUIApplication) -> Bool? {
+    private func hasNoControlsInSnapshot(_ app: XCUIApplication) -> Bool? {
         guard let root = try? app.snapshot(), !root.children.isEmpty else { return nil }
         let identifiers: Set<String> = [
             "slideshow.control.settings.button", "slideshow.control.previous.button",
@@ -377,11 +377,11 @@ final class LifecycleTimelineCapture {
             referenceName = "timeline-after-next"
             referenceCapture = nextCapture
         }
-        let usesHiddenReference = referenceChoice == .barHidden
+        let isHiddenReferenceSelected = referenceChoice == .barHidden
         let referencePNG =
-            usesHiddenReference
+            isHiddenReferenceSelected
             ? try Data(contentsOf: directory.appendingPathComponent(referenceName + ".png")) : heldPhotoPNG
-        let referenceRequest = usesHiddenReference ? referenceCapture.request : heldPhotoRequest
+        let referenceRequest = isHiddenReferenceSelected ? referenceCapture.request : heldPhotoRequest
         var pixelDiagnostic = ""
         guard let referenceRequest, let heldEnd = proofs.last?["return"] as? TimeInterval,
             try Self.frozenPhotoPixelsEqual(
