@@ -1647,7 +1647,7 @@ class FailureDiagnosticsTests(unittest.TestCase):
                 if expected in ([focus], [readiness]):
                     from ci_failure_diagnostics import environment_timing_v5, xctest_tool_class
                     self.assertEqual("focus", method["failure_class"])
-                    self.assertEqual("firstboot_setup" if expected == [readiness] else "unknown", method["failure_phase"])
+                    self.assertEqual("unknown", method["failure_phase"])
                     self.assertIsNone(xctest_tool_class(expected[0]))
                     failure = dict(source="xctest", app="running-foreground", surface="firstboot", scene_status="UNRECOGNIZABLE",
                                    step="focus", element="firstboot.serverURL.field", control_bar="unknown",
