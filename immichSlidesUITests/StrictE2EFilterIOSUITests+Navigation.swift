@@ -684,7 +684,8 @@ extension StrictE2EFilterIOSUITests {
             serverField.waitForPublicElement("firstboot.serverURL.field", timeout: TestWait.seconds(.product(8))),
             "Server settings page should show the URL")
         replaceText(
-            in: serverField, app: app, with: serverURL, evidenceName: "server-url-replace",
+            in: serverField, app: app, identifier: "firstboot.serverURL.field", with: serverURL,
+            evidenceName: "server-url-replace",
             shouldRequireExactValue: true)
         let apiKeyField = app.secureTextFields["firstboot.apiKey.field"]
         if apiKeyField.waitForPublicElement("firstboot.apiKey.field", timeout: TestWait.seconds(.product(4))) {
@@ -693,6 +694,7 @@ extension StrictE2EFilterIOSUITests {
                 replaceText(
                     in: apiKeyField,
                     app: app,
+                    identifier: "firstboot.apiKey.field",
                     with: publicKey,
                     evidenceName: "server-apikey-replace",
                     shouldRequireExactValue: false

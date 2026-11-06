@@ -472,6 +472,39 @@ extension XCUIApplication {
 struct IOSFirstBootNavigation {
     let app: XCUIApplication
 
+    func focusTextField(_ field: XCUIElement, identifier: String) -> XCUIElementSnapshot? {
+        field.tapForFailureEvidence()
+        // Tap delivery can be slow; focus arrival has its own window after the sole tap returns.
+        let timeout = UITestSupportWaitTiming.elementAppearanceTimeoutSeconds
+        let started = ProcessInfo.processInfo.systemUptime
+        let deadline = started + timeout
+        FirstFailureContext.mark("focus", element: identifier)
+        FirstFailureContext.beginWait(seconds: timeout)
+        defer {
+            FirstFailureContext.endWait()
+            print(
+                "First-boot focus readiness: element=\(identifier) elapsedSeconds=\(ProcessInfo.processInfo.systemUptime - started) timeoutSeconds=\(timeout)"
+            )
+        }
+        // XCTest's keyboard focus also supports a connected hardware keyboard; UI hasFocus does not.
+        let focusedField = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier == %@ AND hasKeyboardFocus == true", identifier)
+        ).firstMatch
+        while ProcessInfo.processInfo.systemUptime < deadline {
+            if let focused = try? focusedField.snapshot(), focused.isEnabled,
+                ProcessInfo.processInfo.systemUptime < deadline
+            {
+                return focused
+            }
+            let remaining = deadline - ProcessInfo.processInfo.systemUptime
+            guard remaining > 0 else { break }
+            RunLoop.current.run(
+                until: Date().addingTimeInterval(min(remaining, UITestSupportWaitTiming.identityPollSeconds)))
+        }
+        XCTFail("First-boot input must have keyboard focus before typing.")
+        return nil
+    }
+
     enum ModeModalSource: String {
         case none
         case appAlert = "app-alert"

@@ -1607,11 +1607,16 @@ class FailureDiagnosticsTests(unittest.TestCase):
         tool = "Application 'com.331works.immichSlides' does not have a process ID"
         wait = "After pausing, the control value must be play."
         connection = "Once the real controlled server is reachable, connection test passed must be shown."
+        focus = "Failed to synthesize event: Neither element nor any descendant has keyboard focus."
+        support = (REPO_ROOT / "immichSlidesUITests/UITestSupport.swift").read_text()
+        readiness = "First-boot input must have keyboard focus before typing."
         marker = "[unrecognized XCTest failure]"
         for messages, expected, bundle_prefix in (([tool], [tool], None), ([tool, tool], [tool, tool], None),
                 ([tool, wait + " PRIVATE_SENTINEL"], [tool, wait], None),
                 (["XCTAssertTrue failed - " + tool], [marker], None),
                 (["XCTAssertTrue failed - " + connection], [connection], None),
+                ([focus + " Event dispatch snapshot: PRIVATE_SENTINEL"], [focus], None),
+                (["XCTAssertTrue failed - " + readiness], [readiness], None),
                 (["PRIVATE_SENTINEL"], [marker], None), ([tool] * 17, None, None),
                 ([tool], [tool], "export"), ([tool], [tool], "legacy"), ([tool], None, "raw-count")):
             with self.subTest(messages=messages, bundle_prefix=bundle_prefix), tempfile.TemporaryDirectory() as raw:
@@ -1639,7 +1644,17 @@ class FailureDiagnosticsTests(unittest.TestCase):
                 method = (test_node_diagnostics(exported)["immichSlidesUITests/" + name] if bundle_prefix == "export"
                           else validate_case_export(evidence, "ios", "smoke")[0])
                 self.assertEqual(expected, method.get("failure_messages"))
+                if expected in ([focus], [readiness]):
+                    from ci_failure_diagnostics import environment_timing_v5, xctest_tool_class
+                    self.assertEqual("focus", method["failure_class"])
+                    self.assertEqual("firstboot_setup" if expected == [readiness] else "unknown", method["failure_phase"])
+                    self.assertIsNone(xctest_tool_class(expected[0]))
+                    failure = dict(source="xctest", app="running-foreground", surface="firstboot", scene_status="UNRECOGNIZABLE",
+                                   step="focus", element="firstboot.serverURL.field", control_bar="unknown",
+                                   wait_elapsed_seconds=6, deadline_seconds=5)
+                    self.assertFalse(environment_timing_v5(failure, "focus", expected))
                 self.assertNotIn("PRIVATE_SENTINEL", (evidence / "official-tests.json").read_text())
+        self.assertTrue('XCTFail("' + readiness + '")' in support, "the shared Swift failure must stay source-bound")
 
     def test_app_timeline_failure_allowlist_matches_swift_failure_and_assertion_sentences(self):
         from ci_failure_diagnostics import APP_TIMELINE_FAILURE_REASONS, public_app_timeline_failure_message

@@ -13,13 +13,13 @@ struct IOSDriver: PlaybackDriver {
             serverField.waitForPublicElement(
                 "firstboot.serverURL.field", timeout: TestWait.seconds(.infrastructure(20))),
             "Fresh install must open the normal first-boot page.")
-        replaceText(in: serverField, with: input.serverURL)
+        replaceText(in: serverField, identifier: "firstboot.serverURL.field", with: input.serverURL)
         let apiKeyField = app.secureTextFields["firstboot.apiKey.field"]
         XCTAssertTrue(
             apiKeyField.waitForPublicElement(
                 "firstboot.apiKey.field", timeout: UITestSupportWaitTiming.controlAppearanceTimeoutSeconds),
             "First-boot page must show the API Key field.")
-        replaceText(in: apiKeyField, with: input.publicKey)
+        replaceText(in: apiKeyField, identifier: "firstboot.apiKey.field", with: input.publicKey)
         XCTAssertTrue(
             Wait.until(timeout: UITestSupportWaitTiming.shortInteractionTimeoutSeconds) {
                 secureFieldHasValue(apiKeyField)
@@ -710,9 +710,10 @@ struct IOSDriver: PlaybackDriver {
         }
     }
 
-    private func replaceText(in field: XCUIElement, with value: String) {
-        field.tapForFailureEvidence()
-        let existing = field.value as? String ?? ""
+    private func replaceText(in field: XCUIElement, identifier: String, with value: String) {
+        guard let focused = IOSFirstBootNavigation(app: app).focusTextField(field, identifier: identifier)
+        else { return }
+        let existing = focused.value as? String ?? ""
         let isPlaceholder = existing.contains("请输入") || existing.localizedCaseInsensitiveContains("enter")
         if !existing.isEmpty && !isPlaceholder {
             field.typeKey("a", modifierFlags: .command)
