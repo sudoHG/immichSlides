@@ -10,7 +10,9 @@ struct SceneLifecycleContractTests {
     @Test(arguments: [
         "hidden", "atHoldStart", "atDeadline", "visibleFallback", "hiddenFallback", "missingReference",
         "lateReference", "earlyReference", "reversedReference", "visibleReference",
-        "unknownBar", "unknownExif", "changedExif", "unknownAX", "unstableAX", "missingFrozen", "lateFrozen",
+        "unknownBar", "unknownExif", "changedExif", "unknownAX", "unstableAX", "missingAnchor",
+        "frameFrozen one frame late still selects barHidden", "barVisibleReset", "unpausedReset",
+        "buttonsPresentReset", "snapshotUnknownReset",
         "changedFrame",
         "changedScene", "unpaused", "missingSeal", "frozenFrameChanged"
     ])
@@ -49,8 +51,37 @@ struct SceneLifecycleContractTests {
         case "changedExif": hiddenReference?.exifVisible = false
         case "unknownAX": hiddenReference?.controlsHiddenSince = nil
         case "unstableAX": hiddenReference?.controlsHiddenSince = 12.5
-        case "missingFrozen": events[2].kind = "checkpoint"
-        case "lateFrozen": events[2].uptime = 3.1
+        case "missingAnchor": events[2].kind = "checkpoint"
+        case "frameFrozen one frame late still selects barHidden":
+            events = [
+                events[0],
+                LifecycleTimelineEvent(sequence: 2, kind: "pauseReceived", uptime: 1, scene: "previous"),
+                LifecycleTimelineEvent(sequence: 3, kind: "manualNavigationReceived", uptime: 1.2, scene: "previous"),
+                LifecycleTimelineEvent(
+                    sequence: 4, kind: "sceneCommitted", uptime: 1.5, scene: "photo", frame: "frame", isPaused: true,
+                    transitionScene: "photo", transitionSource: "manualNext"),
+                LifecycleTimelineEvent(
+                    sequence: 5, kind: "sceneStable", uptime: 2, scene: "photo", frame: "frame",
+                    isStable: true, isPaused: true, transitionScene: "photo", transitionSource: "manualNext"),
+                LifecycleTimelineEvent(
+                    sequence: 6, kind: "frameFrozen", uptime: 3.016, scene: "photo", frame: "frame", isPaused: true),
+                LifecycleTimelineEvent(
+                    sequence: 7, kind: "checkpoint", uptime: 5, scene: "photo", frame: "frame", isPaused: true),
+                LifecycleTimelineEvent(
+                    sequence: 8, kind: "checkpoint", uptime: 23, scene: "photo", frame: "frame", isPaused: true)
+            ]
+        case "barVisibleReset", "unpausedReset", "buttonsPresentReset", "snapshotUnknownReset":
+            var stability = LifecycleTimelineCapture.HiddenControlStability()
+            #expect(stability.observe(isPaused: true, controlBarVisible: false, hasNoControls: true, at: 12) == nil)
+            #expect(
+                stability.observe(
+                    isPaused: mutation != "unpausedReset", controlBarVisible: mutation == "barVisibleReset",
+                    hasNoControls: mutation == "snapshotUnknownReset" ? nil : mutation != "buttonsPresentReset",
+                    at: 12.2) == nil)
+            #expect(stability.observe(isPaused: true, controlBarVisible: false, hasNoControls: true, at: 12.3) == nil)
+            hiddenReference?.controlsHiddenSince = stability.observe(
+                isPaused: true, controlBarVisible: false, hasNoControls: true, at: 12.7)
+            #expect(stability.observe(isPaused: true, controlBarVisible: false, hasNoControls: true, at: 12.91) == 12.3)
         case "changedFrame": events[3].frame = "other"
         case "changedScene": events[3].scene = "other"
         case "unpaused": events[3].isPaused = false
@@ -60,19 +91,25 @@ struct SceneLifecycleContractTests {
         }
         let expectedFailure: String?
         switch mutation {
-        case "hidden", "atHoldStart", "atDeadline", "visibleFallback", "hiddenFallback", "visibleReference":
+        case "hidden", "atHoldStart", "atDeadline", "visibleFallback", "hiddenFallback", "visibleReference",
+            "frameFrozen one frame late still selects barHidden":
             expectedFailure = nil
-        case "missingFrozen", "lateFrozen", "changedFrame", "changedScene", "unpaused", "missingSeal":
+        case "missingAnchor", "changedFrame", "changedScene", "unpaused", "missingSeal":
             expectedFailure = "pause hold lacks unchanged frozen evidence"
         case "frozenFrameChanged": expectedFailure = "frame advanced during pause"
         default: expectedFailure = "pause hold lacks same-overlay pixel reference"
         }
         do {
             let reference = try LifecycleTimelineJudge.pauseHoldReference(
-                events, scene: "photo", frame: "frame", afterNext: afterNext, hiddenReference: hiddenReference,
+                events,
+                afterNextState: events[mutation == "frameFrozen one frame late still selects barHidden" ? 4 : 2],
+                afterNext: afterNext, hiddenReference: hiddenReference,
                 afterHold: finalCapture, holdStart: 5, holdDeadline: targetUptime)
             #expect(expectedFailure == nil)
-            #expect(reference == (["hidden", "atHoldStart", "atDeadline"].contains(mutation) ? .barHidden : .afterNext))
+            #expect(
+                reference
+                    == (["hidden", "atHoldStart", "atDeadline", "frameFrozen one frame late still selects barHidden"]
+                        .contains(mutation) ? .barHidden : .afterNext))
         } catch let error as LifecycleTimelineJudge.Failure {
             #expect(error.description == "App timeline: \(expectedFailure ?? "unexpected failure")")
         }

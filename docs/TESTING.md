@@ -982,18 +982,23 @@ transition finishes. A failed/empty snapshot, a reappearing button or a visible 
 checkpoint resets the observed stability period; a late observation is rejected.
 There is no fixed sleep or extra hold window. Its bracketing checkpoints must agree
 on hidden controls and the same known EXIF state as `timeline-after-hold`.
-The first approximately eight seconds are guarded by the App timeline (`frameFrozen`
-before the after-Next request, unchanged paused scene/frame, no `frozenFrameChanged`
-through the final capture's seal), rather than by pixels. Hold start, its T+2 target
-and hold end do not move; reference polling and capture spend that existing window.
+The first approximately eight seconds are guarded by the App's layer fingerprint
+(scene, opacity and motionActiveTime), rather than by pixels. The chain starts at
+the after-Next capture's own paused `frameFrozen` or stable, paused `sceneStable`
+event; only unchanged paused `frameFrozen`, checkpoint and clock-handshake events
+may follow through the final capture's seal. `frozenFrameChanged` still vetoes it.
+Hold start and its T+2 target stay fixed; reference polling and capture spend that
+existing window. An AX snapshot or screenshot admitted before the target can
+overrun it by one in-flight call, so the hold-end checkpoint may occur later.
 A capture crossing the target cannot become the hidden reference. If no usable
 hidden reference completes in time, compare after-Next with after-hold only when
 both captures have identical, known control-bar and EXIF states. Otherwise fail red
 with `App timeline: pause hold lacks same-overlay pixel reference`; missing or changed
 frozen evidence fails red with `App timeline: pause hold lacks unchanged frozen evidence`.
-The verdict records the selected reference, hold checkpoint sequences, original deadline
-the AX-hidden stability start and reference request/return offsets from hold start; its selected PNG and frozen-reference
-pair are hash-bound by the host reader. Legacy receipts remain readable.
+The verdict records the selected reference, hold checkpoint sequences, original
+deadline, the AX-hidden stability start and reference request/return offsets from
+hold start; its selected PNG and frozen-reference pair are hash-bound by the host
+reader. Legacy receipts remain readable.
 The iOS Debug pause-timeline test
 keeps the product's eight-second auto-hide: hiding during the T+2 hold, waking
 before final Continue and hiding after Continue remain inputs to its exact timing

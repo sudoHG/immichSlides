@@ -27,8 +27,13 @@ within the same original T+2 hold. The AX absence uses the existing 0.6-second
 opacity transition after AX removal. Failed/empty snapshots, reappearing controls
 or visible checkpoints reset that observed period. Late observations are rejected;
 no fixed sleep or renewed deadline is used. The first approximately eight seconds
-are guarded by a prior `frameFrozen` anchor and unchanged paused scene/frame
-evidence, including the `frozenFrameChanged` veto, through the final capture seal.
+are guarded by the App's layer fingerprint (scene, opacity and motionActiveTime),
+rather than by pixels. The chain starts at the after-Next capture's own paused
+`frameFrozen` or stable, paused `sceneStable` event. Only unchanged paused
+`frameFrozen`, checkpoint and clock-handshake events may follow through the final
+capture seal; `frozenFrameChanged` still vetoes the chain. Hold start and its T+2
+target stay fixed. An AX snapshot or screenshot admitted before the target can
+overrun it by one in-flight call, so the hold-end checkpoint may occur later.
 If a hidden reference cannot complete before the original hold target, after-Next
 may be compared with after-hold only when both recorded control-bar and EXIF
 states are known and identical. Otherwise the fixed mapped error

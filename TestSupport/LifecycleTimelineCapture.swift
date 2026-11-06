@@ -14,6 +14,24 @@ final class LifecycleTimelineCapture {
     private var frozenPixelTolerances: [[String: Any]] = []
     private var timelineApp: XCUIApplication?
 
+    struct HiddenControlStability {
+        private var hiddenSince: TimeInterval?
+
+        mutating func observe(
+            isPaused: Bool, controlBarVisible: Bool?, hasNoControls: Bool?, at uptime: TimeInterval
+        ) -> TimeInterval? {
+            guard isPaused, controlBarVisible == false, hasNoControls == true else {
+                hiddenSince = nil
+                return nil
+            }
+            if hiddenSince == nil { hiddenSince = uptime }
+            guard let hiddenSince,
+                uptime >= hiddenSince + AccessLifecycleContract.hiddenControlStabilitySeconds
+            else { return nil }
+            return hiddenSince
+        }
+    }
+
     private enum Visibility: String {
         case visible, hidden, unknown
 
@@ -288,23 +306,17 @@ final class LifecycleTimelineCapture {
         expectedScene: String, deadline: TimeInterval
     ) throws -> ContentCapture? {
         guard let app = timelineApp else { throw LifecycleTimelineJudge.Failure("missing conclusive content proof") }
-        var hiddenSince: TimeInterval?
+        var stability = HiddenControlStability()
         while ProcessInfo.processInfo.systemUptime < deadline {
             guard let state = try checkpointBeforeDeadline(deadline) else { return nil }
-            guard state.isPaused, state.controlBarVisible == false else {
-                hiddenSince = nil
-                continue
-            }
-            let hasNoControls = hasNoControlsInSnapshot(app)
+            let hasNoControls =
+                state.isPaused && state.controlBarVisible == false ? hasNoControlsInSnapshot(app) : nil
             let observed = ProcessInfo.processInfo.systemUptime
             guard observed < deadline else { return nil }
-            guard hasNoControls == true else {
-                hiddenSince = nil
-                continue
-            }
-            if hiddenSince == nil { hiddenSince = observed }
-            guard let hiddenSince,
-                observed >= hiddenSince + AccessLifecycleContract.hiddenControlStabilitySeconds
+            guard
+                let hiddenSince = stability.observe(
+                    isPaused: state.isPaused, controlBarVisible: state.controlBarVisible,
+                    hasNoControls: hasNoControls, at: observed)
             else { continue }
             guard
                 var capture = try captureTimelineContentBeforeDeadline(
@@ -365,7 +377,7 @@ final class LifecycleTimelineCapture {
         let heldCapture = try captureTimelineContent("timeline-after-hold", expectedScene: nextScene.scene)
         let heldEndPNG = try Data(contentsOf: directory.appendingPathComponent("timeline-after-hold.png"))
         let referenceChoice = try LifecycleTimelineJudge.pauseHoldReference(
-            readTimelineEvents(), scene: nextScene.scene, frame: nextScene.frame,
+            readTimelineEvents(), afterNextState: nextCapture.state,
             afterNext: nextCapture.observation, hiddenReference: hiddenReference?.observation,
             afterHold: heldCapture.observation, holdStart: holdStart.uptime, holdDeadline: holdDeadline)
         let referenceName: String

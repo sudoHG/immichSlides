@@ -59,19 +59,19 @@ enum LifecycleTimelineJudge {
 
     /// The early hold stays covered by App evidence even when its pixel reference is taken later.
     static func pauseHoldReference(
-        _ events: [LifecycleTimelineEvent], scene: String, frame: String,
+        _ events: [LifecycleTimelineEvent], afterNextState anchor: LifecycleTimelineEvent,
         afterNext: PauseHoldCapture, hiddenReference: PauseHoldCapture?, afterHold: PauseHoldCapture,
         holdStart: TimeInterval, holdDeadline: TimeInterval
     ) throws -> PauseHoldReference {
         try validate(events)
         guard
-            let anchor = events.last(where: {
-                $0.kind == "frameFrozen" && $0.uptime <= afterNext.request && $0.isPaused
-                    && $0.scene == scene && $0.frame == frame
-            }), let seal = events.first(where: { $0.uptime >= afterHold.returned }),
-            events.filter({ $0.sequence >= anchor.sequence && $0.sequence <= seal.sequence }).allSatisfy({
+            events.contains(anchor), anchor.uptime <= afterNext.request, anchor.isPaused,
+            !anchor.scene.isEmpty, !anchor.frame.isEmpty,
+            anchor.kind == "frameFrozen" || (anchor.kind == "sceneStable" && anchor.isStable),
+            let seal = events.first(where: { $0.uptime >= afterHold.returned }), seal.sequence >= anchor.sequence,
+            events.filter({ $0.sequence > anchor.sequence && $0.sequence <= seal.sequence }).allSatisfy({
                 ["frameFrozen", "checkpoint", "clockHandshake"].contains($0.kind)
-                    && $0.isPaused && $0.scene == scene && $0.frame == frame
+                    && $0.isPaused && $0.scene == anchor.scene && $0.frame == anchor.frame
             })
         else { throw Failure("pause hold lacks unchanged frozen evidence") }
         if let reference = hiddenReference,
