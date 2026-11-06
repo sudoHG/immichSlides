@@ -1239,7 +1239,7 @@ class ReporterTests(unittest.TestCase):
                                run={**plan["run"], "tier": "ui", "job": "ui-" + device, "shard": shard})
                 outcome = "failed" if device == "appletv" and shard == "visual" else "passed"
                 summary["population"].update(declared=[test], compiled=[test], observed=[observation(
-                    test, outcome, 2, message="private-runner-failure-text" if outcome == "failed" else None,
+                    test, outcome, None if outcome == "failed" else 2, message="private-runner-failure-text" if outcome == "failed" else None,
                     reason="private-runner-reason" if outcome == "failed" else None)])
                 summaries.append(summary)
                 members[(f"ui-{device}-{shard}-10-1", "summary.json")] = summary
@@ -1274,6 +1274,11 @@ class ReporterTests(unittest.TestCase):
             self.assertEqual(9, report["diagnostics"]["counts"]["ui_executed"])
             failed = [item for item in report["observed"] if item["outcome"] == "failed"]
             self.assertEqual("appletv", failed[0]["identity"]["dimensions"]["device"])
+            self.assertIsNone(failed[0]["duration_seconds"])
+            self.assertIsNone(report["health"]["test_duration_seconds"])
+            self.assertEqual("failed", report["status"])
+            compact_failure = ci_report.compact_entry(report, set())
+            self.assertIsNone(next(row for row in compact_failure["observed"] if row["outcome"] == "failed")["duration_seconds"])
             self.assertEqual("open", issue_decision(None, failed[0]["identity"], [report], registry_referenced=False)["action"])
             self.assertEqual(9, report["diagnostics"]["counts"]["declared"])
             # The same bound fixture method can carry a v5 tool failure, without CPU samples.
@@ -1292,6 +1297,7 @@ class ReporterTests(unittest.TestCase):
             self.assertIsNotNone(proof)
             row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
             node = {"nodeType": "Test Case", "nodeIdentifier": row["identity"]["key"] + "()", "result": "Failed",
+                    "durationInSeconds": 2,
                     "failure_phase": "unknown", "failure_class": "process_lifetime", "failure_messages": messages,
                     "children": [{"nodeType": "Failure Message", "name": message} for message in messages]}
             official_tests = {("appletv", "visual"): {"testNodes": [node]}}
@@ -1309,7 +1315,7 @@ class ReporterTests(unittest.TestCase):
                 self.assertEqual(("environment-limited", 1),
                     (yellow_report["status"], yellow_report["diagnostics"]["counts"]["environment-limited"]))
                 self.assertIn(messages[0], render_entry(yellow_report))
-                for mutation in ("missing-messages", "mixed", "duplicate-method", "raw-count"):
+                for mutation in ("missing-messages", "mixed", "duplicate-method", "raw-count", "missing-duration"):
                     original_node = copy.deepcopy(node)
                     if mutation == "missing-messages":
                         node.pop("failure_messages")
@@ -1317,6 +1323,8 @@ class ReporterTests(unittest.TestCase):
                         node["failure_messages"] = [*messages, "App timeline:"]
                     elif mutation == "duplicate-method":
                         official_tests[("appletv", "visual")]["testNodes"].append(copy.deepcopy(node))
+                    elif mutation == "missing-duration":
+                        node.pop("durationInSeconds")
                     else:
                         node["children"].pop()
                     with self.subTest(v5_official=mutation), self.assertRaisesRegex(ContractError,

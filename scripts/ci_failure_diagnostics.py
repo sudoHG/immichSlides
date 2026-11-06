@@ -441,6 +441,7 @@ def validate_environment_limit_v5(proof):
 
 def environment_limit_evidence_v5(summary, entry, resources, *, runner_hosted):
     from ci_summary import require
+    require(entry["duration_seconds"] is not None, "environment limit: unknown test duration")
     require(runner_hosted is True and summary["source"]["workflow_path"] == ".github/workflows/ci-nightly.yml"
             and summary["source"]["event"] in {"schedule", "workflow_dispatch"}
             and (summary["run"]["tier"], summary["run"]["job"]) in {
@@ -472,6 +473,7 @@ def environment_limit_evidence_v5(summary, entry, resources, *, runner_hosted):
 def bind_ui_environment_limits(summary, official):
     """Recheck each yellow method against its complete original official failure list."""
     from ci_summary import require
+    from ci_flaky import official_ui_duration
     nodes = {}
     def visit(node):
         require(isinstance(node, dict), "environment limit: invalid official UI node")
@@ -491,6 +493,7 @@ def bind_ui_environment_limits(summary, official):
         if ENVIRONMENT_LIMIT_FIELD not in entry:
             continue
         node = nodes.get(entry["identity"]["key"], {})
+        require(official_ui_duration(node) is not None, "environment limit: unknown official UI duration")
         require(node.get("result") == "Failed" and node.get(FAILURE_MESSAGES_FIELD) == entry[FAILURE_MESSAGES_FIELD]
                 and all(node.get(key) == entry.get(key) for key in DIAGNOSTIC_FIELDS),
                 "environment limit: official UI failure messages differ")

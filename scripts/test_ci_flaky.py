@@ -139,6 +139,51 @@ class RegistryTests(unittest.TestCase):
 
 
 class RetryTests(unittest.TestCase):
+    def test_failed_official_case_without_duration_is_retained_red_and_never_retried(self):
+        from ci_flaky import read_xcode_observations
+        identity = registry()["entries"][0]["identity"]
+        # The hosted tests export omits both duration fields for a terminated case.
+        node = {"nodeType": "Test Case", "nodeIdentifier": identity["key"] + "()", "result": "Failed",
+                "children": [{"name": "Test crashed with signal term.", "nodeType": "Failure Message"}]}
+        command = ["xcodebuild", "test-without-building", "-resultBundlePath", "first/result.xcresult"]
+        for defect in (None, "assertion", "passed", "skipped", "strict", "display-only", "null", -1, float("nan"), float("inf"), "1s", True):
+            with self.subTest(defect=defect):
+                case = copy.deepcopy(node)
+                if defect in {"passed", "skipped"}:
+                    case["result"] = defect.capitalize()
+                elif defect == "display-only":
+                    case["duration"] = "1s"
+                elif defect not in {None, "assertion", "strict"}:
+                    case["durationInSeconds"] = None if defect == "null" else defect
+                tests = {"testNodes": [{"nodeType": "UI test bundle", "name": "immichSlidesUITests", "children": [case]}]}
+                issues = {"issues": {"testFailureSummaries": {"_values": [{
+                    "testCaseName": {"_value": identity["key"].replace("/", ".") + "()"},
+                    "issueType": {"_value": "Assertion Failure" if defect == "assertion" else "Crash"},
+                    "message": {"_value": "Test crashed with signal term."}}]}}}
+                def exported(call, **kwargs):
+                    return subprocess.CompletedProcess(call, 0, json.dumps(issues if "--legacy" in call else tests))
+                expected = test_identity("strict", identity["key"], device="iphone", configuration="Debug",
+                    suite="smoke", scenario="normal", fixture="a") if defect == "strict" else identity
+                with mock.patch("ci_flaky.subprocess.run", side_effect=exported):
+                    result = run_xcode_attempts(command, registry(), tier="ui", environment="hermetic",
+                        today=date(2026, 10, 8), identity_for_key=lambda key: expected,
+                        reset=lambda: self.fail("unknown duration must not retry"), execute=lambda call: (65, 42),
+                        allocate_bundle=lambda: self.fail("unknown duration must not retry"), read=read_xcode_observations)
+                self.assertEqual(65, result["exit_code"])
+                if defect in {None, "assertion"}:
+                    self.assertEqual([], result["infrastructure"])
+                    row, = result["observed"]
+                    self.assertEqual("failed" if defect == "assertion" else "crashed", row["outcome"])
+                    self.assertIsNone(row["duration_seconds"])
+                    self.assertIsNone(row["attempts"][0]["duration_seconds"])
+                    self.assertEqual(65, row["attempts"][0]["exit_code"])
+                    if defect == "assertion":
+                        with self.assertRaisesRegex(ContractError, "^retry requires a known first duration$"):
+                            merge_retry(row, observation(identity, "passed", 1))
+                else:
+                    self.assertEqual([], result["observed"])
+                    self.assertEqual("ContractError: duration must be finite and nonnegative", result["infrastructure"][0]["message"])
+
     def test_result_read_error_and_timeout_preserve_completed_cases_and_fail_closed(self):
         from ci_bounded_diagnostics import MAX_DIAGNOSTIC_SECONDS
         from ci_flaky import read_xcode_observations
@@ -146,7 +191,7 @@ class RetryTests(unittest.TestCase):
         other = dict(identity, key="ExampleTests/testInterrupted")
         tests = {"testNodes": [{"nodeType": "UI test bundle", "name": "immichSlidesUITests", "children": [
             {"nodeType": "Test Case", "nodeIdentifier": identity["key"] + "()", "result": "Passed", "durationInSeconds": 1},
-            {"nodeType": "Test Case", "nodeIdentifier": other["key"] + "()", "result": "Failed"}]}]}
+            {"nodeType": "Test Case", "nodeIdentifier": other["key"] + "()", "result": "Failed", "durationInSeconds": None}]}]}
         command = ["xcodebuild", "test-without-building", "-resultBundlePath", "first/result.xcresult"]
         for code, failure, elapsed, phase in ((65, ValueError("bad official details"), 0, "legacy-read"),
                 (124, None, 0, "legacy-read"),
@@ -489,6 +534,9 @@ class RetryTests(unittest.TestCase):
                 self.assertEqual(actual["outcome"], "flaky-passed" if outcome == "passed" else "failed")
                 self.assertEqual(len(actual["attempts"]), 2)
         self.assertEqual(merge_retry(first, None)["outcome"], "failed")
+        unknown_retry = merge_retry(first, observation(identity, "failed", None, exit_code=65))
+        self.assertEqual("failed", unknown_retry["outcome"])
+        self.assertIsNone(unknown_retry["duration_seconds"])
         wrong = observation(dict(identity, key="ExampleTests/testOther"), "passed", 2)
         with self.assertRaises(ContractError):
             merge_retry(first, wrong)

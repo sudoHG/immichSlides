@@ -26,7 +26,8 @@ from ci_population import ui_identities
 from ci_summary import ContractError, observation, require, write_summary
 from ci_ui_shards import DEVICES, default_plan_population, shard_populations
 from ci_verdict import evaluate_population, parse_policy, tier_approved
-from ci_flaky import OfficialResultReadError, load_registry, registry_revision, run_xcode_attempts, read_xcode_observations, official_result_step
+from ci_flaky import (OfficialResultReadError, load_registry, registry_revision, run_xcode_attempts,
+                      read_xcode_observations, official_result_step, official_ui_duration)
 from run_host_checks import run_identity, source_metadata, toolchain
 from run_offline_unit_tests import CommandError as OfflineCommandError, _stop_process_group
 from run_strict_e2e import (export_private_result_bundle, finalize_private_result_bundle,
@@ -122,19 +123,6 @@ def declared_tests(files, platform, plan, selectors):
     return declared
 
 
-def duration_seconds(value):
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        seconds = float(value)
-    else:
-        require(isinstance(value, str), "missing test duration")
-        parts = re.findall(r"([0-9]+(?:\.[0-9]+)?)\s*(ms|s|m|h)", value)
-        require(parts and not re.sub(r"([0-9]+(?:\.[0-9]+)?)\s*(ms|s|m|h)", "", value).strip(),
-                "invalid test duration")
-        seconds = sum(float(amount) * {"ms": .001, "s": 1, "m": 60, "h": 3600}[unit] for amount, unit in parts)
-    require(math.isfinite(seconds) and seconds >= 0, "invalid test duration")
-    return seconds
-
-
 def coverage_rows(declared, compiled, official, device):
     from ci_failure_diagnostics import test_node_diagnostics, unknown_diagnostics
     diagnostics = test_node_diagnostics(official)
@@ -152,7 +140,7 @@ def coverage_rows(declared, compiled, official, device):
             require(node.get("result") in outcomes, "unknown official test outcome")
             outcome = outcomes[node["result"]]
             observed[key] = {"identity": expected[key], "device": device, "outcome": outcome,
-                             "duration_seconds": duration_seconds(node["durationInSeconds"]),
+                             "duration_seconds": official_ui_duration(node),
                              "reason": None if outcome == "passed" else "Official XCTest " + node["result"]}
             if outcome == "failed":
                 observed[key].update(diagnostics.get(key, unknown_diagnostics()))
@@ -854,7 +842,8 @@ def main(argv=None, *, simulator_prepared=False):
                                              if row["outcome"] == "passed"]})
             table = "| Test | Device | Outcome | Seconds | Reason |\n|---|---|---|---:|---|\n"
             table += "".join(f"| `{row['identity']['key']}` | {args.device} | {row['outcome']} | "
-                             f"{row['duration_seconds']:.2f} | {(row['reason'] or '').replace('|', '/').replace(chr(10), ' ')} |\n"
+                             + ("unknown" if row['duration_seconds'] is None else f"{row['duration_seconds']:.2f}")
+                             + f" | {(row['reason'] or '').replace('|', '/').replace(chr(10), ' ')} |\n"
                              for row in rows)
             (output / "fixture-coverage.md").write_text(table)
             active().attach(summary)

@@ -825,6 +825,17 @@ An observed entry contains `identity`, `outcome`, `duration_seconds` and a nonem
 `attempts` array. An attempt contains consecutive positive `number`, `outcome`,
 nonnegative finite `duration_seconds`, integer or null `exit_code`, string or null
 `reason` and `message`. Total duration accounts for every attempt.
+For a failed or crashed UI result only, `duration_seconds` may be null on the
+observation and its failed/crashed attempts when the official Test Case omits
+both `durationInSeconds` and `duration`. Explicit null, strings, negative or
+nonfinite official values remain invalid, as does missing duration on a passed
+or skipped case. If any attempt has unknown duration, the observation's total
+and aggregate health duration are null; Markdown displays `unknown`. No
+invocation elapsed time or zero is substituted. Unknown duration cannot start a
+listed retry or carry an environment-limit proof, and the result stays red.
+Scoped official discovery binds missing duration to null and rejects numeric
+substitutions. Execution/export budgets, first-failure timing and resource clocks
+remain independent and unchanged.
 
 | Optional observation / attempt field | Type and meaning |
 | --- | --- |

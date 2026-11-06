@@ -8,6 +8,7 @@ import math
 import re
 
 from ci_summary import fields, identity_key, observation, require, test_identity
+from ci_flaky import official_ui_duration
 
 DISCOVERY_MODE = "official-result-discovery-v1"
 DISCOVERY_INTENT = "--compiled-from-official-results"
@@ -75,9 +76,7 @@ def official_discovery(payload, device, device_id, *, allow_empty=False):
                 key = identifier[:-2]
                 require(key not in cases, "duplicate official discovery method")
                 require(node.get("result") in {"Passed", "Failed", "Skipped"}, "unknown official discovery result")
-                seconds = node.get("durationInSeconds")
-                require(type(seconds) in {int, float} and math.isfinite(seconds) and seconds >= 0,
-                        "invalid official discovery duration")
+                seconds = official_ui_duration(node)
                 cases[key] = {"identity": test_identity("ui", key, platform=platform, device=device),
                               "result": node["result"], "duration_seconds": seconds}
             visit(node.get("children", []), owner)
@@ -161,7 +160,9 @@ def validate_discovery_summary(summary):
         case = cases[entry["identity"]["key"]]
         allowed = {"passed"} if case["result"] == "Passed" else {"skipped"} if case["result"] == "Skipped" else {
             "failed", "crashed", "timed-out"}
-        require(first["outcome"] in allowed and abs(first["duration_seconds"] - case["duration_seconds"]) <= 0.000001,
+        actual, recorded = first["duration_seconds"], case["duration_seconds"]
+        same_duration = actual is recorded if actual is None or recorded is None else abs(actual - recorded) <= 0.000001
+        require(first["outcome"] in allowed and same_duration,
                 "official discovery and first observed outcome differ")
         require(first["exit_code"] == (0 if first["outcome"] == "passed" else code),
                 "official discovery and observed raw exits differ")
