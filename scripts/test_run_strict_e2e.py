@@ -170,7 +170,8 @@ class StrictE2ERunnerTests(StrictE2ERunnerTestsCasesConfiguration, StrictE2ERunn
     def test_app_timeline_signature_requires_bound_events_clock_and_every_content_proof(self):
         import hashlib
         from strict_e2e_runner_support import app_timeline_verdict
-        for defect in (None, "missing", "hash", "nonce", "sequence", "clock", "content", "png", "judgment", "schema", "boolean-schema", "frozen", "frozen-png"):
+        for defect in (None, "missing", "hash", "nonce", "sequence", "clock", "content", "png", "judgment", "schema", "boolean-schema", "frozen", "frozen-png",
+                       "hidden", "hidden-png", "hidden-frozen-png", "hidden-proof", "reference-name", "fallback"):
             with self.subTest(defect=defect), tempfile.TemporaryDirectory() as raw:
                 root = Path(raw)
                 kinds = ("timelineStarted", "clockHandshake", "continueReceived", "renderFadeStarted", "sceneStable", "checkpoint")
@@ -193,6 +194,21 @@ class StrictE2ERunnerTests(StrictE2ERunnerTestsCasesConfiguration, StrictE2ERunn
                 receipt = dict(schema_version=1, suite="lifecycle-pause-app-timeline", verdict="PASS", event_count=len(events),
                                case_nonce="case", launch_nonce="launch", timeline_sha256=hashlib.sha256(lines).hexdigest(),
                                judgment=dict(continueSequence=3, onsetSequence=4, stableSequence=5), content_checks=proofs)
+                if defect in {"hidden", "hidden-png", "hidden-frozen-png", "hidden-proof", "reference-name", "fallback"}:
+                    reference_name = "timeline-after-next" if defect == "fallback" else "timeline-hold-hidden-reference"
+                    receipt["pause_hold"] = dict(reference=reference_name)
+                    if defect == "reference-name":
+                        receipt["pause_hold"]["reference"] = "unknown-reference"
+                    if reference_name != "timeline-after-next":
+                        (root / (reference_name + ".png")).write_bytes(
+                            b"changed-hidden-frame" if defect == "hidden-png" else b"bound-public-content")
+                        proofs.append(dict(name=reference_name, status="FROZEN", request=5, **{"return": 5.5},
+                                           png_sha256=hashlib.sha256(b"bound-public-content").hexdigest(),
+                                           frozen_proof=dict(frozen_reference_sha256=hashlib.sha256(b"frozen-frame").hexdigest())))
+                        (root / (reference_name + "-frozen-reference.png")).write_bytes(
+                            b"changed-hidden-reference" if defect == "hidden-frozen-png" else b"frozen-frame")
+                        if defect == "hidden-proof":
+                            proofs.pop()
                 if defect == "hash":
                     receipt["timeline_sha256"] = "0" * 64
                 if defect == "clock":
@@ -214,8 +230,8 @@ class StrictE2ERunnerTests(StrictE2ERunnerTestsCasesConfiguration, StrictE2ERunn
                         b"changed-frame" if defect == "frozen-png" else b"frozen-frame")
                 if defect != "missing":
                     (root / "app-timeline-verdict.json").write_text(json.dumps(receipt))
-                self.assertEqual("PASS" if defect in {None, "frozen"} else "UNVERIFIED", app_timeline_verdict(root))
-                if defect not in {None, "frozen"}:
+                self.assertEqual("PASS" if defect in {None, "frozen", "hidden", "fallback"} else "UNVERIFIED", app_timeline_verdict(root))
+                if defect not in {None, "frozen", "hidden", "fallback"}:
                     with self.assertRaisesRegex(CommandError, "^App timeline: missing or invalid signed evidence$"):
                         require_visual_identity(root, "ios-lifecycle-pause-timeline")
                     report = json.loads((root / "visual-identity-runner.json").read_text())
@@ -2493,8 +2509,11 @@ class FailureDiagnosticsTests(unittest.TestCase):
                     if prefix == "The control bar is not hidden yet; cannot verify the first wake.":
                         from ci_failure_diagnostics import FIRST_WAKE_HIDDEN_STABILITY_SECONDS
                         calibration = (root / "immichSlidesUITests/AccessLifecycleIOSUITests.swift").read_text()
+                        self.assertRegex(calibration, r'hiddenControlStabilitySeconds\s*=\s*'
+                                         r'AccessLifecycleContract\.hiddenControlStabilitySeconds')
+                        shared = (root / "TestSupport/AccessLifecycleContract.swift").read_text()
                         stability = re.search(r'hiddenControlStabilitySeconds:\s*TimeInterval\s*=\s*'
-                            r'TestWait\.seconds\(\.product\(([0-9.]+)\)\)', calibration)
+                            r'TestWait\.seconds\(\.product\(([0-9.]+)\)\)', shared)
                         self.assertIsNotNone(stability)
                         self.assertEqual(float(stability[1]), FIRST_WAKE_HIDDEN_STABILITY_SECONDS)
                 elif prefix in failure_prefixes:

@@ -39,6 +39,7 @@ APP_TIMELINE_FAILURE_REASONS = frozenset({
     "content contradicts stable or frozen timeline", "missing frozen content anchor",
     "frozen photo pixels changed", "unreadable photo pixels", "missing conclusive content proof",
     "Next did not change photo", "pause hold shorter than T+2", "missing stable event", "missing SIGSTOP handshake",
+    "pause hold lacks unchanged frozen evidence", "pause hold lacks same-overlay pixel reference",
     "paused manual transition exceeded one target", "automatic change during paused manual navigation",
     "missing timelineStarted", "noncontiguous sequence", "nonce mismatch", "nonmonotonic uptime",
     "pause exception misuse", "frame advanced during pause", "missing Continue receipt",
@@ -91,7 +92,7 @@ FAILURE_MESSAGES_FIELD = "failure_messages"
 MAX_FAILURE_MESSAGES = 16
 UNRECOGNIZED_FAILURE_MESSAGE = "[unrecognized XCTest failure]"
 ENVIRONMENT_IDLE_MAX_PERCENT = 5
-# Bound to AccessLifecycleIOSUITestsCalibration.hiddenControlStabilitySeconds by the source audit.
+# Bound to AccessLifecycleContract.hiddenControlStabilitySeconds by the source audit.
 FIRST_WAKE_HIDDEN_STABILITY_SECONDS = 0.6
 ENVIRONMENT_ALBUM_SETTLING_PHASES = frozenset({"transition", "incomingFromLoading"})
 # Retained v1/v2 UI waits keep their original interpretation.

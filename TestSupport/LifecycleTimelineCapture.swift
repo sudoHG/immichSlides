@@ -12,6 +12,25 @@ final class LifecycleTimelineCapture {
     private var proofs: [[String: Any]] = []
     private var actions: [[String: Any]] = []
     private var frozenPixelTolerances: [[String: Any]] = []
+    private var timelineApp: XCUIApplication?
+
+    struct HiddenControlStability {
+        private var hiddenSince: TimeInterval?
+
+        mutating func observe(
+            isPaused: Bool, controlBarVisible: Bool?, hasNoControls: Bool?, at uptime: TimeInterval
+        ) -> TimeInterval? {
+            guard isPaused, controlBarVisible == false, hasNoControls == true else {
+                hiddenSince = nil
+                return nil
+            }
+            if hiddenSince == nil { hiddenSince = uptime }
+            guard let hiddenSince,
+                uptime >= hiddenSince + AccessLifecycleContract.hiddenControlStabilitySeconds
+            else { return nil }
+            return hiddenSince
+        }
+    }
 
     private enum Visibility: String {
         case visible, hidden, unknown
@@ -33,6 +52,27 @@ final class LifecycleTimelineCapture {
             controlBar = Visibility(before: before.controlBarVisible, after: after.controlBarVisible)
             exif = Visibility(before: before.exifVisible, after: after.exifVisible)
         }
+
+        func observation(request: TimeInterval, returned: TimeInterval) -> LifecycleTimelineJudge.PauseHoldCapture {
+            LifecycleTimelineJudge.PauseHoldCapture(
+                request: request, returned: returned,
+                controlBarVisible: controlBar == .unknown ? nil : controlBar == .visible,
+                exifVisible: exif == .unknown ? nil : exif == .visible)
+        }
+    }
+
+    private struct ContentCapture {
+        let state: LifecycleTimelineEvent
+        let overlays: CaptureOverlays
+        let request: TimeInterval
+        let returned: TimeInterval
+        var controlsHiddenSince: TimeInterval?
+
+        var observation: LifecycleTimelineJudge.PauseHoldCapture {
+            var observation = overlays.observation(request: request, returned: returned)
+            observation.controlsHiddenSince = controlsHiddenSince
+            return observation
+        }
     }
 
     init() throws {
@@ -50,6 +90,7 @@ final class LifecycleTimelineCapture {
         ]
         FirstFailureContext.mark("launch-app", element: "app-window")
         FirstFailureContext.action("launch") { app.launch() }
+        timelineApp = app
         return app
     }
 
@@ -104,6 +145,27 @@ final class LifecycleTimelineCapture {
         return event
     }
 
+    /// A missed optional reference cannot move the hold deadline or suppress the later pixel comparison.
+    private func checkpointBeforeDeadline(_ deadline: TimeInterval) throws -> LifecycleTimelineEvent? {
+        let request = "checkpoint-" + UUID().uuidString
+        let issued = ProcessInfo.processInfo.systemUptime
+        guard issued < deadline else { return nil }
+        try request.write(
+            to: directory.appendingPathComponent("playback-lifecycle-request"), atomically: true, encoding: .utf8)
+        while ProcessInfo.processInfo.systemUptime < deadline {
+            let events = try readTimelineEvents()
+            let returned = ProcessInfo.processInfo.systemUptime
+            if let event = events.first(where: { $0.request == request }) {
+                guard issued <= event.uptime, event.uptime <= returned else {
+                    throw LifecycleTimelineJudge.Failure("runner and App uptime domains do not align")
+                }
+                return returned <= deadline ? event : nil
+            }
+            waitUntilUptime(min(deadline, returned + TestWait.seconds(.infrastructure(0.05))))
+        }
+        return nil
+    }
+
     private func performTimelineAction(_ name: String, perform: () throws -> Void) throws -> LifecycleTimelineEvent {
         let baseline = try readTimelineEvents().last?.sequence ?? 0
         let issued = ProcessInfo.processInfo.systemUptime
@@ -122,16 +184,43 @@ final class LifecycleTimelineCapture {
 
     private func captureTimelineContent(
         _ name: String, expectedScene: String? = nil, excludingScene: String? = nil
-    ) throws -> (state: LifecycleTimelineEvent, overlays: CaptureOverlays) {
-        let waiting = TestWait.hangGuard()
+    ) throws -> ContentCapture {
+        guard
+            let capture = try captureTimelineContentBeforeDeadline(
+                name, expectedScene: expectedScene, excludingScene: excludingScene)
+        else { throw LifecycleTimelineJudge.Failure("missing conclusive content proof") }
+        return capture
+    }
+
+    private func captureTimelineContentBeforeDeadline(
+        _ name: String, expectedScene: String? = nil, excludingScene: String? = nil,
+        deadline: TimeInterval? = nil
+    ) throws -> ContentCapture? {
+        let waiting = TestWait.hangGuard(
+            timeoutSeconds: deadline.map { max(0, $0 - ProcessInfo.processInfo.systemUptime) } ?? 60)
         var frozenReference: (frame: String, png: Data, request: TimeInterval, overlays: CaptureOverlays)?
         repeat {
-            let beforeCapture = try checkpoint(guardWait: waiting)
+            if let deadline, ProcessInfo.processInfo.systemUptime >= deadline { return nil }
+            let beforeCapture: LifecycleTimelineEvent
+            if let deadline {
+                guard let checkpoint = try checkpointBeforeDeadline(deadline) else { return nil }
+                beforeCapture = checkpoint
+            } else {
+                beforeCapture = try checkpoint(guardWait: waiting)
+            }
             let requested = ProcessInfo.processInfo.systemUptime
+            if let deadline, requested >= deadline { return nil }
             let screenshot = XCUIScreen.main.screenshot()
             let returned = ProcessInfo.processInfo.systemUptime
+            if let deadline, returned > deadline { return nil }
             let png = screenshot.pngRepresentation
-            let afterCapture = try checkpoint(guardWait: waiting)
+            let afterCapture: LifecycleTimelineEvent
+            if let deadline {
+                guard let checkpoint = try checkpointBeforeDeadline(deadline) else { return nil }
+                afterCapture = checkpoint
+            } else {
+                afterCapture = try checkpoint(guardWait: waiting)
+            }
             let overlays = CaptureOverlays(before: beforeCapture, after: afterCapture)
             let events = try readTimelineEvents()
             if let state = try LifecycleTimelineJudge.contentState(events, request: requested, returned: returned),
@@ -205,12 +294,52 @@ final class LifecycleTimelineCapture {
                     "overlay_checkpoints": [beforeCapture.sequence, afterCapture.sequence],
                     "frozen_proof": frozenProof
                 ])
-                return (state, overlays)
+                return ContentCapture(state: state, overlays: overlays, request: requested, returned: returned)
             }
             // Crossing a transition is inconclusive; every requested proof must still obtain a conclusive capture.
             RunLoop.current.run(until: Date().addingTimeInterval(TestWait.seconds(.infrastructure(0.1))))
         } while waiting.remainingSeconds > 0
-        throw LifecycleTimelineJudge.Failure("missing conclusive content proof")
+        return nil
+    }
+
+    private func captureHiddenPauseHoldReference(
+        expectedScene: String, deadline: TimeInterval
+    ) throws -> ContentCapture? {
+        guard let app = timelineApp else { throw LifecycleTimelineJudge.Failure("missing conclusive content proof") }
+        var stability = HiddenControlStability()
+        while ProcessInfo.processInfo.systemUptime < deadline {
+            guard let state = try checkpointBeforeDeadline(deadline) else { return nil }
+            let hasNoControls =
+                state.isPaused && state.controlBarVisible == false ? hasNoControlsInSnapshot(app) : nil
+            let observed = ProcessInfo.processInfo.systemUptime
+            guard observed < deadline else { return nil }
+            guard
+                let hiddenSince = stability.observe(
+                    isPaused: state.isPaused, controlBarVisible: state.controlBarVisible,
+                    hasNoControls: hasNoControls, at: observed)
+            else { continue }
+            guard
+                var capture = try captureTimelineContentBeforeDeadline(
+                    "timeline-hold-hidden-reference", expectedScene: expectedScene, deadline: deadline)
+            else { return nil }
+            capture.controlsHiddenSince = hiddenSince
+            return capture
+        }
+        return nil
+    }
+
+    private func hasNoControlsInSnapshot(_ app: XCUIApplication) -> Bool? {
+        guard let root = try? app.snapshot(), !root.children.isEmpty else { return nil }
+        let identifiers: Set<String> = [
+            "slideshow.control.settings.button", "slideshow.control.previous.button",
+            "slideshow.control.playPause.button", "slideshow.control.next.button"
+        ]
+        var pending = [root]
+        while let node = pending.popLast() {
+            if node.elementType == .button, identifiers.contains(node.identifier) { return false }
+            pending.append(contentsOf: node.children)
+        }
+        return true
     }
 
     func exercisePauseContinueTimeline(
@@ -237,22 +366,43 @@ final class LifecycleTimelineCapture {
             throw LifecycleTimelineJudge.Failure("Next did not change photo")
         }
         let holdStart = try checkpoint()
-        waitUntilUptime(holdStart.uptime + Double(interval) + 2)
+        let holdDeadline = holdStart.uptime + Double(interval) + TestWait.seconds(.product(2))
+        let hiddenReference = try captureHiddenPauseHoldReference(
+            expectedScene: nextScene.scene, deadline: holdDeadline)
+        waitUntilUptime(holdDeadline)
         let holdEnd = try checkpoint()
         guard holdEnd.uptime - holdStart.uptime >= Double(interval) + 2 else {
             throw LifecycleTimelineJudge.Failure("pause hold shorter than T+2")
         }
         let heldCapture = try captureTimelineContent("timeline-after-hold", expectedScene: nextScene.scene)
         let heldEndPNG = try Data(contentsOf: directory.appendingPathComponent("timeline-after-hold.png"))
+        let referenceChoice = try LifecycleTimelineJudge.pauseHoldReference(
+            readTimelineEvents(), afterNextState: nextCapture.state,
+            afterNext: nextCapture.observation, hiddenReference: hiddenReference?.observation,
+            afterHold: heldCapture.observation, holdStart: holdStart.uptime, holdDeadline: holdDeadline)
+        let referenceName: String
+        let referenceCapture: ContentCapture
+        if referenceChoice == .barHidden, let hiddenReference {
+            referenceName = "timeline-hold-hidden-reference"
+            referenceCapture = hiddenReference
+        } else {
+            referenceName = "timeline-after-next"
+            referenceCapture = nextCapture
+        }
+        let isHiddenReferenceSelected = referenceChoice == .barHidden
+        let referencePNG =
+            isHiddenReferenceSelected
+            ? try Data(contentsOf: directory.appendingPathComponent(referenceName + ".png")) : heldPhotoPNG
+        let referenceRequest = isHiddenReferenceSelected ? referenceCapture.request : heldPhotoRequest
         var pixelDiagnostic = ""
-        guard let heldPhotoRequest, let heldEnd = proofs.last?["return"] as? TimeInterval,
+        guard let referenceRequest, let heldEnd = proofs.last?["return"] as? TimeInterval,
             try Self.frozenPhotoPixelsEqual(
-                heldPhotoPNG, heldEndPNG, events: readTimelineEvents(), scene: nextScene.scene,
-                frame: nextScene.frame, request: heldPhotoRequest, returned: heldEnd,
+                referencePNG, heldEndPNG, events: readTimelineEvents(), scene: nextScene.scene,
+                frame: nextScene.frame, request: referenceRequest, returned: heldEnd,
                 onDifferenceMeasured: { maximum, count, mean in
                     pixelDiagnostic = Self.pixelDiagnostic(
                         site: "pause-hold", maximum: maximum, count: count, mean: mean,
-                        before: nextCapture.overlays, after: heldCapture.overlays)
+                        before: referenceCapture.overlays, after: heldCapture.overlays)
                 },
                 onToleranceApplied: { maximum in
                     self.frozenPixelTolerances.append([
@@ -289,6 +439,14 @@ final class LifecycleTimelineCapture {
                     try Data(contentsOf: directory.appendingPathComponent("playback-lifecycle-timeline.jsonl"))
                         .split(separator: 10).prefix(finalEvents.count).reduce(into: Data()) { $0 += $1 + Data([10]) }),
                 "interval": interval, "judgment": judgmentObject, "actions": actions, "content_checks": proofs,
+                "pause_hold": [
+                    "reference": referenceName, "hold_start_sequence": holdStart.sequence,
+                    "hold_end_sequence": holdEnd.sequence, "deadline": holdDeadline,
+                    "controls_hidden_since": referenceCapture.controlsHiddenSince.map { $0 as Any } ?? NSNull(),
+                    "hidden_stability_seconds": AccessLifecycleContract.hiddenControlStabilitySeconds,
+                    "reference_request_seconds": referenceCapture.request - holdStart.uptime,
+                    "reference_return_seconds": referenceCapture.returned - holdStart.uptime
+                ],
                 "frozen_pixel_tolerances": frozenPixelTolerances
             ], name: "app-timeline-verdict.json")
     }

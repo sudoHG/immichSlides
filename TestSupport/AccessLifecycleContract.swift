@@ -6,6 +6,8 @@ import Foundation
 enum AccessLifecycleContract {
     static let sha256HexCharacterCount: Int = 64
     static let timingToleranceSeconds: TimeInterval = TestWait.seconds(.product(0.001))
+    // AX removes the controls before their 0.3-second opacity transition has finished.
+    static let hiddenControlStabilitySeconds: TimeInterval = TestWait.seconds(.product(0.6))
     static let luminanceTolerance: Double = 0.001
     static let minimumBaselineLuminance: Double = 0.1
     static let maximumPressReturnDelaySeconds: TimeInterval = TestWait.seconds(.product(2))
