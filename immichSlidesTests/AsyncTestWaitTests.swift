@@ -108,7 +108,8 @@ struct AsyncTestWaitTests {
     }
 
     @Test(arguments: [
-        "late-query", "expired-query", "late-action", "missing-outcome", "single-action", "shared-deadline", "probe"
+        "late-query", "expired-query", "late-action", "missing-outcome", "single-action", "shared-deadline", "probe",
+        "focused-late-query", "unfocused-late-query", "expired-focus-query"
     ])
     func `hang guards accept in flight success without starting expired work or repeating actions`(scenario: String) {
         var now = 10.0
@@ -124,6 +125,21 @@ struct AsyncTestWaitTests {
             })
         let transaction = navigation.transaction()
         switch scenario {
+        case "focused-late-query", "unfocused-late-query", "expired-focus-query":
+            if scenario == "expired-focus-query" { now = 12.1 }
+            let isReady = transaction.until {
+                queries += 1
+                now = 13
+                return scenario != "unfocused-late-query"
+            }
+            #expect(isReady == (scenario == "focused-late-query"))
+            #expect(queries == (scenario == "expired-focus-query" ? 0 : 1))
+            #expect(
+                !transaction.probe {
+                    queries += 1; return true
+                })
+            #expect(queries == (scenario == "expired-focus-query" ? 0 : 1))
+            #expect(actions == 0)
         case "late-query":
             #expect(
                 transaction.until {

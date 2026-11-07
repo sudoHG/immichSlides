@@ -1524,6 +1524,11 @@ unknown target. These surface checks supplement every other timing/evidence gate
 | `process_lifetime`, `snapshot_query` | None in the ordinary branch. | Only the exact tool messages below have the separate exception; App process loss and other snapshot errors stay red. |
 | `fixture_response`, `exif_visibility`, `exif_correspondence`, `unknown`, any future class | None. | Red by default. |
 
+Credential keyboard-focus failures remain red even with an exhausted wait and
+complete firstboot surface evidence. The shared gate's fixed assertion and Apple's
+fixed `Neither element nor any descendant has keyboard focus` event-synthesis
+prefix are explicitly excluded from both v5 exceptions; no event tree is published.
+
 The existing failure-window starvation gate is unchanged: at least two ordered,
 distinct samples within inclusive ±5 seconds of the same case's first failure,
 strictly before and after it, every retained idle value measured and at most 5%.

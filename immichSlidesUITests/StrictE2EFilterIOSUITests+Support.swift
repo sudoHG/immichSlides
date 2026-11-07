@@ -117,11 +117,13 @@ extension StrictE2EFilterIOSUITests {
     func replaceText(
         in field: XCUIElement,
         app: XCUIApplication,
+        identifier: String,
         with value: String,
         evidenceName: String,
         shouldRequireExactValue: Bool
     ) {
-        field.tapForFailureEvidence()
+        guard IOSFirstBootNavigation(app: app).focusTextField(field, identifier: identifier) != nil
+        else { return }
         clearTextFieldOrFail(field, app: app, evidenceName: evidenceName)
         field.typeForFailureEvidence(value)
         guard shouldRequireExactValue else { return }

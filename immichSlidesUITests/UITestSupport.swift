@@ -472,6 +472,37 @@ extension XCUIApplication {
 struct IOSFirstBootNavigation {
     let app: XCUIApplication
 
+    func focusTextField(_ field: XCUIElement, identifier: String) -> XCUIElementSnapshot? {
+        field.tapForFailureEvidence()
+        // Tap delivery can be slow; focus arrival has its own window after the sole tap returns.
+        let timeout = UITestSupportWaitTiming.elementAppearanceTimeoutSeconds
+        let started = ProcessInfo.processInfo.systemUptime
+        let readiness = TestWait.hangGuard(
+            timeoutSeconds: UITestSupportWaitTiming.elementAppearanceTimeoutSeconds)
+        FirstFailureContext.mark("focus", element: identifier)
+        FirstFailureContext.beginWait(seconds: timeout)
+        defer {
+            FirstFailureContext.endWait()
+            print(
+                "First-boot focus readiness: element=\(identifier) elapsedSeconds=\(ProcessInfo.processInfo.systemUptime - started) timeoutSeconds=\(timeout)"
+            )
+        }
+        // XCTest's keyboard focus also supports a connected hardware keyboard; UI hasFocus does not.
+        let focusedField = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier == %@ AND hasKeyboardFocus == true", identifier)
+        ).firstMatch
+        var focusedSnapshot: XCUIElementSnapshot?
+        // No guard action is issued: only queries admitted before expiry may return ready late.
+        let isReady = readiness.transaction().until(pollIntervalSeconds: UITestSupportWaitTiming.identityPollSeconds) {
+            guard let focused = try? focusedField.snapshot(), focused.isEnabled else { return false }
+            focusedSnapshot = focused
+            return true
+        }
+        if isReady { return focusedSnapshot }
+        XCTFail("First-boot input must have keyboard focus before typing.")
+        return nil
+    }
+
     enum ModeModalSource: String {
         case none
         case appAlert = "app-alert"

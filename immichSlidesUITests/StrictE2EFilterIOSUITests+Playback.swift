@@ -146,14 +146,16 @@ extension StrictE2EFilterIOSUITests {
                 "firstboot.serverURL.field", timeout: TestWait.seconds(.infrastructure(20))),
             "A fresh install must open the normal first-boot page.")
         replaceText(
-            in: serverField, app: app, with: input.serverURL, evidenceName: "firstboot-url-replace",
+            in: serverField, app: app, identifier: "firstboot.serverURL.field", with: input.serverURL,
+            evidenceName: "firstboot-url-replace",
             shouldRequireExactValue: true)
         let apiKeyField = app.secureTextFields["firstboot.apiKey.field"]
         XCTAssertTrue(
             apiKeyField.waitForPublicElement("firstboot.apiKey.field", timeout: TestWait.seconds(.infrastructure(8))),
             "First-boot page must show the API Key field.")
         replaceText(
-            in: apiKeyField, app: app, with: input.publicKey, evidenceName: "firstboot-apikey-replace",
+            in: apiKeyField, app: app, identifier: "firstboot.apiKey.field", with: input.publicKey,
+            evidenceName: "firstboot-apikey-replace",
             shouldRequireExactValue: false)
         XCTAssertTrue(
             waitUntil(timeout: TestWait.seconds(.product(3))) { self.hasSecureFieldEnteredValue(apiKeyField) },

@@ -34,6 +34,15 @@ class NavigationWaitTests(unittest.TestCase):
         self.assertEqual([], conv.check_navigation_waits('immichSlidesUITests/Flow.swift', valid))
         valid = 'if let timeout { waitUntil(timeout: timeout, condition: condition) } else { let wait = TestWait.hangGuard() }'
         self.assertEqual([], conv.check_navigation_waits('immichSlidesUITests/Flow.swift', valid))
+        focus_path = 'immichSlidesUITests/UITestSupport.swift'
+        focus = ('func focusTextField() { let readiness = TestWait.hangGuard('
+                 'timeoutSeconds: UITestSupportWaitTiming.elementAppearanceTimeoutSeconds) }')
+        self.assertEqual([], conv.check_navigation_waits(focus_path, focus))
+        for path, source in ((focus_path, focus.replace('elementAppearanceTimeoutSeconds', 'identityPollSeconds')),
+                             (focus_path, focus.replace('focusTextField', 'otherNavigation')),
+                             ('immichSlidesUITests/Flow.swift', focus)):
+            with self.subTest(path=path, source=source):
+                self.assertEqual(['hang-guard-duration'], rules(conv.check_navigation_waits(path, source)))
 
 
 class ForbiddenNameTests(unittest.TestCase):

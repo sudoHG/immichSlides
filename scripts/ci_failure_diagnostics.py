@@ -326,6 +326,12 @@ def environment_timing_v5(failure, failure_class, messages):
     if failure["source"] != "xctest" or failure["app"] != "running-foreground" or len(messages) != 1:
         return False
     message = messages[0]
+    # Credential focus failures are always red, even with a complete exhausted-wait receipt.
+    if message in {
+        "First-boot input must have keyboard focus before typing.",
+        "Failed to synthesize event: Neither element nor any descendant has keyboard focus.",
+    }:
+        return False
     step = failure["step"]
     if (failure["scene_status"] in {"BLACK", "BLANK"} or failure["surface"] == "unknown"
             or failure_class == "hidden_controls" and failure["control_bar"] == "visible"):
@@ -1263,6 +1269,8 @@ PREFIX_RULES = (
     ("The rotation isolation interval must match the displayed playback setting.", "interval_setup", "interval_readback"),
     ("Orientation API: after setting ", "unknown", "navigation"),
     ("Fresh install must open the normal first-boot page.", "firstboot_setup", "navigation"),
+    ("First-boot input must have keyboard focus before typing.", "unknown", "focus"),
+    ("Failed to synthesize event: Neither element nor any descendant has keyboard focus.", "unknown", "focus"),
     ("First-boot page must show the API Key field.", "firstboot_setup", "navigation"),
     ("The API Key must be entered into the secure field.", "firstboot_setup", "control_state"),
     ("First-boot page must show Test Connection.", "firstboot_setup", "navigation"),

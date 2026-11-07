@@ -54,7 +54,7 @@ final class StrictE2ESmokeUITests: XCTestCase {
                 "firstboot.serverURL.field", timeout: TestWait.seconds(.infrastructure(12))),
             "Fresh install must open the normal first-launch page")
         #if os(iOS)
-        replaceText(in: serverField, with: input.serverURL)
+        replaceText(in: serverField, app: app, identifier: "firstboot.serverURL.field", with: input.serverURL)
         #else
         replaceFocusedTVOSText(in: serverField, app: app, with: input.serverURL)
         #endif
@@ -64,7 +64,7 @@ final class StrictE2ESmokeUITests: XCTestCase {
             apiKeyField.waitForPublicElement("firstboot.apiKey.field", timeout: TestWait.seconds(.infrastructure(8))),
             "First-launch page must show the API Key field.")
         #if os(iOS)
-        replaceText(in: apiKeyField, with: input.publicKey)
+        replaceText(in: apiKeyField, app: app, identifier: "firstboot.apiKey.field", with: input.publicKey)
         #else
         moveTVOSFocusDown(to: apiKeyField, message: "After closing the URL keyboard, focus should go down to API Key.")
         replaceFocusedTVOSText(in: apiKeyField, app: app, with: input.publicKey)
@@ -110,9 +110,11 @@ final class StrictE2ESmokeUITests: XCTestCase {
     }
 
     #if os(iOS)
-    private func replaceText(in field: XCUIElement, with value: String) {
-        field.tapForFailureEvidence()
-        if let existingValue = field.value as? String, !existingValue.isEmpty {
+    @MainActor
+    private func replaceText(in field: XCUIElement, app: XCUIApplication, identifier: String, with value: String) {
+        guard let focused = IOSFirstBootNavigation(app: app).focusTextField(field, identifier: identifier)
+        else { return }
+        if let existingValue = focused.value as? String, !existingValue.isEmpty {
             field.typeForFailureEvidence(String(repeating: XCUIKeyboardKey.delete.rawValue, count: existingValue.count))
         }
         field.typeForFailureEvidence(value)

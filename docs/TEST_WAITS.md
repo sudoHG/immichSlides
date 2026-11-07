@@ -46,6 +46,23 @@ independent infrastructure budget at the call site. The first assertion after a
 tap or key press, route probes, absence observations and sampling cadence stay
 product; discovering a control before the timed action can be infrastructure.
 
+### Approved post-tap focus readback exception
+
+Hogan approved decision D1 for PR #690 on 2026-11-06: iOS credential focus
+readiness after the sole tap uses HangGuard readback semantics instead of the
+ordinary post-predicate product deadline rule above. After the tap returns,
+`IOSFirstBootNavigation.focusTextField` starts the existing unscaled 5-second
+element-appearance budget independently of field discovery. A focused, enabled
+field returned by a query admitted before expiry is ready even if that native
+query returns after expiry. No query is admitted at or after the deadline.
+The readback transaction issues no action, so it cannot claim HangGuard's extra
+post-action observation. No focus means a fixed red assertion and no typing.
+The worst case remains 5 seconds plus one in-flight native query, without a new
+window, another tap, a software-keyboard requirement or a v5 failure exception.
+The conventions check admits this explicit duration only in that helper and only
+with the existing element-appearance constant; other UI navigation keeps the
+default HangGuard duration.
+
 ## Runner factor and recording
 
 The factor defaults to `1` locally. Runners accept `--wait-factor`, require a

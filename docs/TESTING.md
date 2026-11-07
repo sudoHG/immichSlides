@@ -192,6 +192,24 @@ action, recognizes playback independently of auto-hidden controls, then wakes
 hidden controls within that same guard. EXIF diagnostic return paths and capture refresh
 helpers retain their existing windows.
 
+Before iOS first-boot credential typing, `IOSFirstBootNavigation.focusTextField`
+issues exactly one field tap. Only after that native tap returns does it start
+the existing `UITestSupportWaitTiming.elementAppearanceTimeoutSeconds` window,
+independent of field appearance. Each poll takes one fallible snapshot of the
+identifier-matched `hasKeyboardFocus` predicate result. It does not traverse an
+App snapshot or require a software keyboard; hardware-keyboard focus is valid.
+No query starts at or after the monotonic deadline. A query issued before it
+may return ready late if the snapshot confirms a focused, enabled field, using
+HangGuard readback semantics without issuing a guard action or gaining another
+read. This is the [Hogan-approved D1 exception](TEST_WAITS.md#approved-post-tap-focus-readback-exception)
+to ordinary post-tap product timing; the worst case is 5 seconds plus one
+in-flight native query.
+Timeout returns nil after the fixed red assertion; callers never type without
+a focused result and retain their existing clearing strategy. Readiness
+logs contain only the field identifier and elapsed/budget seconds. Onboarding,
+AccessLifecycle, `IOSDriver`, connection smoke and Strict Filter share this gate;
+Strict Filter also uses it for its existing server-settings replacement path.
+
 For iOS first-boot paths that type and save server credentials, use
 `IOSFirstBootNavigation` in `UITestSupport`, including the interactive visual-audit
 pack. Use `selectMode` for selection-only screenshots and `selectModeAndContinue`

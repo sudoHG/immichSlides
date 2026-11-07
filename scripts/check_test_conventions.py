@@ -1019,6 +1019,13 @@ def check_navigation_waits(path: str, source: str) -> list[Violation]:
             reject(match.start(), "hang-guard-probe", "a probe must not poll, sleep or invoke another wait")
     if path.startswith("immichSlidesUITests/"):
         for match in re.finditer(r"\bTestWait\.hangGuard\s*\(\s*[^)\s]", code):
+            # Hogan's D1 approval keeps post-tap focus readback on its existing five-second budget.
+            if (path == "immichSlidesUITests/UITestSupport.swift"
+                    and enclosing_function_name(code, match.start()) == "focusTextField"
+                    and re.match(r"TestWait\.hangGuard\s*\(\s*timeoutSeconds\s*:\s*"
+                                 r"UITestSupportWaitTiming\.elementAppearanceTimeoutSeconds\s*\)",
+                                 code[match.start():])):
+                continue
             reject(match.start(), "hang-guard-duration", "UI navigation uses the default unscaled hang guard")
     return violations
 
