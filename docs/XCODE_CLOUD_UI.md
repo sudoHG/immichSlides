@@ -1,13 +1,19 @@
 # Xcode Cloud fixture UI
 
-The historical **UI - Apple TV (overflow)** workflow ran the same pull-request Apple TV
+The **UI - Apple TV (overflow)** workflow contract covers the same pull-request Apple TV
 fixture methods as the GitHub UI shards. It is test-only, accepts an API or manual
 start on a branch, and uses the `immichSlides-tvOS` scheme with the
-`XcodeCloud-UI-tvOS` plan on Apple TV 4K (3rd generation), tvOS 27.0. Workflow
+`XcodeCloud-UI-tvOS` plan on Apple TV 4K (3rd generation), tvOS 27.2. Workflow
 configuration belongs to the maintainer. Only the trusted main router and API
 importer described below can replace GitHub's pull-request evidence. Grouped
 routing requires a reviewed main registry with `routing_enabled: true`, a
 confirmed allowance cap and billing anchor, and a measured billing factor.
+
+The tvOS destination now follows the [27.2 runtime pin](CI_TOOLCHAIN.md). Before
+Cloud evidence can qualify, the maintainer must update the external ASC
+destination and refresh the reviewed workflow-attribute fingerprints in the
+registry. A repository pin change does not update ASC settings or authorize
+acceptance of the old 27.0 destination.
 
 ## Grouped evidence reader (v2)
 
@@ -800,7 +806,7 @@ The API reader proves membership in overflow workflow
 Developer keys cannot read a build run's nonexistent workflow relationship.
 It requires one completed successful `XcodeCloud-UI-tvOS - tvOS` test action and
 all paginated method results. Every exact method must occur once with `SUCCESS`
-on exactly Apple TV 4K (3rd generation), tvOS 27.0. Missing, extra, duplicate,
+on exactly Apple TV 4K (3rd generation), tvOS 27.2. Missing, extra, duplicate,
 failed, skipped, partial or unknown results are refused. Pagination cycles,
 cross-host links, oversized payloads and unavailable API data are refusals too.
 

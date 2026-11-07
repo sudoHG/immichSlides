@@ -848,8 +848,10 @@ blending and round-to-nearest RGB; the measured texture sample supports this
 model, but opacity compositing was not verified. NEAREST can miss a raw band
 entirely, as noted above.
 
-The pinned Apple TV 4K (3rd generation), tvOS 27.0, produces **3840x2160** PNGs.
-Scanner-approved frames measured the A2/A3 seam at x=1382 and the A5/A3 seam at
+The pinned Apple TV 4K (3rd generation) now uses tvOS 27.2 (24K150) and requires
+**3840x2160** PNGs. The geometry below was measured on tvOS 27.0 and remains
+unchanged; a runtime migration does not authorize recalibration or wider masks.
+Scanner-approved 27.0 frames measured the A2/A3 seam at x=1382 and the A5/A3 seam at
 x=1536. The entry hint and playback controls fit inside (1256,1436)-(2580,1925),
 including a four-pixel margin; tvOS has no home indicator. Only measured scene
 captures exclude that bounded rectangle from palette and glyph evidence. It

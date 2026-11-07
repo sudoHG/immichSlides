@@ -139,7 +139,7 @@ def validate_evidence(record, run, route, evidence, checks, *, approved):
         require(test["status"] == "SUCCESS", "cloud method failed, skipped or has unknown outcome")
         destinations = test["destinations"]
         require(isinstance(destinations, list) and len(destinations) == 1
-                and destinations[0] == {"device": DEVICE_NAME, "os": "27.0", "status": "SUCCESS"},
+                and destinations[0] == {"device": DEVICE_NAME, "os": "27.2", "status": "SUCCESS"},
                 "cloud method has missing, extra, failed or unexpected destinations")
     require(len(set(keys)) == len(keys) and len(set(result_ids)) == len(result_ids), "duplicate cloud method results")
     require(set(keys) == {entry["key"] for entry in population}, "cloud executed population differs from admission")
