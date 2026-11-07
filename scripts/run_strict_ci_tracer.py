@@ -188,23 +188,46 @@ class RunnerGroupCleanupError(RuntimeError):
 def runner_group_members(group_id):
     """A failure-only ps projection: no arguments, paths, PIDs or arbitrary names survive."""
     try:
-        table = subprocess.check_output(["ps", "-axo", "pid=,ppid=,pgid=,stat=,comm="],
-            text=True, stderr=subprocess.DEVNULL, timeout=RUNNER_MEMBER_PROBE_TIMEOUT_SECONDS)
-        if len(table.encode()) > MAX_RUNNER_PROCESS_TABLE_BYTES:
-            return None, False
-        rows = [line.split(None, 4) for line in table.splitlines()]
-        rows = {row[0]: row for row in rows if len(row) == 5 and all(value.isdecimal() for value in row[:3])}
+        deadline = time.monotonic() + RUNNER_MEMBER_PROBE_TIMEOUT_SECONDS
+        table_bytes = 0
+        def read_rows(selection):
+            nonlocal table_bytes
+            command = ["ps", *selection, "-o", "pid=,ppid=,pgid=,stat=,comm="]
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(command, 0)
+            try:
+                table = subprocess.check_output(command, text=True, stderr=subprocess.PIPE, timeout=remaining)
+            except subprocess.CalledProcessError as error:
+                if selection[0] in {"-g", "-p"} and error.returncode == 1 and error.output == "" and error.stderr == "":
+                    return {}
+                raise
+            table_bytes += len(table.encode())
+            if table_bytes > MAX_RUNNER_PROCESS_TABLE_BYTES:
+                raise ValueError("runner process table exceeds parse limit")
+            rows = [line.split(None, 4) for line in table.splitlines()]
+            return {row[0]: row for row in rows if len(row) == 5 and all(value.isdecimal() for value in row[:3])}
+
+        # Darwin's -g selects a process group; procps uses it for sessions instead.
+        rows = read_rows(["-g", str(group_id)] if sys.platform == "darwin" else ["-ax"])
+        live = [row for row in rows.values() if row[2] == str(group_id) and not row[3].startswith("Z")]
+        parents = sorted({row[1] for row in live[:MAX_PROCESSES] if row[1] != "0" and row[1] not in rows})
+        if parents:
+            try:
+                rows.update(read_rows(["-p", ",".join(parents)]))
+            except (OSError, ValueError, subprocess.SubprocessError):
+                # Parent lookup is optional; keep the known survivors if its remaining budget runs out.
+                pass
         members = []
-        for row in rows.values():
-            if row[2] != str(group_id) or row[3].startswith("Z"):
-                continue
+        for row in live[:MAX_PROCESSES]:
             parent = rows.get(row[1])
             members.append({"name": public_runner_process_name(row[4]),
                 "parent": public_runner_process_name(parent[4]) if parent else "unknown",
                 "state": "exiting" if "E" in row[3] else {"R": "running", "S": "sleeping", "I": "sleeping", "U": "uninterruptible",
                           "D": "uninterruptible", "T": "stopped"}.get(row[3][:1], "unknown")})
-        return members[:MAX_PROCESSES], len(members) > MAX_PROCESSES
-    except (OSError, ValueError, subprocess.SubprocessError):
+        return members, len(live) > MAX_PROCESSES
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        print("Runner member probe unavailable: " + type(error).__name__, file=sys.stderr, flush=True)
         return None, False
 
 
@@ -302,10 +325,22 @@ def run_runner(command, repo_root, log_path, *, timeout_seconds, truncation_seen
             try:
                 stop_group(process)
                 deadline = time.monotonic() + GROUP_TERM_GRACE_SECONDS
-                while group_has_live_members(process.pid):
+                alive = group_has_live_members(process.pid)
+                if alive:
+                    # Cover survivors appearing after the shared helper's last group observation.
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    except PermissionError:
+                        if group_has_live_members(process.pid):
+                            raise
+                    alive = group_has_live_members(process.pid)
+                while alive:
                     if time.monotonic() >= deadline:
                         raise RuntimeError("Runner process group still has live members")
                     time.sleep(0.05)
+                    alive = group_has_live_members(process.pid)
             except BaseException as error:
                 reason = ("RuntimeError: Runner process group still has live members" if str(error) == "Runner process group still has live members"
                           else type(error).__name__)
@@ -457,6 +492,7 @@ def main(argv=None):
     trace["started_epoch"] = time.time()
     results = []
     can_cleanup = True
+    runner_cleanup_error = None
     completed = False
     simulator_prepared = False
     preparation_failure = None
@@ -508,6 +544,7 @@ def main(argv=None):
         write_summary(summary, records)
 
     def invoke(case, evidence, derived, warm):
+        nonlocal runner_cleanup_error
         native_allowance = native_budget.reserve_case() if warm else 0
         command = [sys.executable, "-B", str(ROOT / "scripts/run_strict_e2e.py"),
                    "--platform", args.platform, "--destination", args.destination, "--suite", case["suite"],
@@ -532,6 +569,9 @@ def main(argv=None):
                                  if warm else args.cold_timeout_seconds) + 240)
             return phase
         except BaseException as error:
+            if isinstance(error, RunnerGroupCleanupError):
+                # Remember before finalizers: another cancellation cannot authorize deleting live inputs.
+                runner_cleanup_error = error
             phase["exit_code"] = 124 if isinstance(error, subprocess.TimeoutExpired) else 130 if isinstance(error, KeyboardInterrupt) else 1
             raise
         finally:
@@ -666,6 +706,8 @@ def main(argv=None):
             checkpoint()
         completed = True
     except BaseException as error:
+        if runner_cleanup_error is not None:
+            error = runner_cleanup_error
         can_cleanup = not isinstance(error, RunnerGroupCleanupError)
         if not can_cleanup:
             (output / "runner-group-cleanup-failed").touch()

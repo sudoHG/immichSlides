@@ -7106,6 +7106,64 @@ raise SystemExit(65)
                     self.assertEqual(error.members_truncated, events[-1]["runner_group_truncated"])
                     self.assertIn("sample", (output / "records/summary.md").read_text())
 
+    def test_runner_escalates_late_survivors_in_its_own_group_and_verifies_their_exit(self):
+        import run_strict_ci_tracer as tracer
+        from types import SimpleNamespace
+        for states, expected in (([False], []), ([True, True, False], [mock.call(42, signal.SIGKILL)])):
+            with self.subTest(states=states), tempfile.TemporaryDirectory() as raw, \
+                    mock.patch.object(tracer.subprocess, "Popen", return_value=SimpleNamespace(pid=42, wait=lambda **kwargs: 0)) as spawn, \
+                    mock.patch.object(tracer, "stop_group"), \
+                    mock.patch.object(tracer, "group_has_live_members", side_effect=states), \
+                    mock.patch.object(tracer.os, "killpg") as kill, \
+                    mock.patch.object(tracer.time, "sleep"):
+                self.assertEqual(0, tracer.run_runner(["unused"], Path(raw), Path(raw) / "runner.log", timeout_seconds=2))
+                self.assertEqual(expected, kill.call_args_list)
+                self.assertTrue(spawn.call_args.kwargs["start_new_session"])
+        for error in (ProcessLookupError(), PermissionError()):
+            with self.subTest(signal_error=type(error).__name__), tempfile.TemporaryDirectory() as raw, \
+                    mock.patch.object(tracer.subprocess, "Popen", return_value=SimpleNamespace(pid=42, wait=lambda **kwargs: 0)), \
+                    mock.patch.object(tracer, "stop_group"), \
+                    mock.patch.object(tracer, "group_has_live_members", side_effect=[True, False, False]), \
+                    mock.patch.object(tracer.os, "killpg", side_effect=error) as kill:
+                self.assertEqual(0, tracer.run_runner(["unused"], Path(raw), Path(raw) / "runner.log", timeout_seconds=2))
+                kill.assert_called_once_with(42, signal.SIGKILL)
+        with tempfile.TemporaryDirectory() as raw, \
+                mock.patch.object(tracer.subprocess, "Popen", return_value=SimpleNamespace(pid=42, wait=lambda **kwargs: 0)), \
+                mock.patch.object(tracer, "stop_group"), \
+                mock.patch.object(tracer, "group_has_live_members", return_value=True), \
+                mock.patch.object(tracer.os, "killpg", side_effect=PermissionError()), \
+                mock.patch.object(tracer, "runner_group_members", return_value=([], False)):
+            with self.assertRaisesRegex(tracer.RunnerGroupCleanupError, "cleanup failed: PermissionError"):
+                tracer.run_runner(["unused"], Path(raw), Path(raw) / "runner.log", timeout_seconds=2)
+
+    def test_macos_survivor_probe_targets_the_group_and_missing_parents_with_one_deadline(self):
+        import run_strict_ci_tracer as tracer
+        clock = [0.0]
+        def probe(command, **kwargs):
+            if "-axo" in command:
+                raise subprocess.TimeoutExpired(command, 3)
+            if "-g" in command:
+                self.assertEqual(["ps", "-g", "42", "-o", "pid=,ppid=,pgid=,stat=,comm="], command)
+                self.assertEqual(3, kwargs["timeout"])
+                clock[0] += 2
+                return "88 1 42 SE /Xcode/SWBBuildService\n89 1 42 Z /private/tool\n"
+            self.assertEqual(["ps", "-p", "1", "-o", "pid=,ppid=,pgid=,stat=,comm="], command)
+            self.assertEqual(1, kwargs["timeout"], "parent lookup must share the three-second allowance")
+            return "1 0 1 S /sbin/launchd\n"
+        with mock.patch.object(tracer.sys, "platform", "darwin"), \
+                mock.patch.object(tracer.time, "monotonic", side_effect=lambda: clock[0]), \
+                mock.patch.object(tracer.subprocess, "check_output", side_effect=probe):
+            self.assertEqual(([{"name": "SWBBuildService", "parent": "launchd", "state": "exiting"}], False),
+                             tracer.runner_group_members(42))
+        for parent_error in (subprocess.TimeoutExpired("ps", 1),
+                subprocess.CalledProcessError(1, ["ps"], output="", stderr="")):
+            with self.subTest(parent_error=type(parent_error).__name__), \
+                    mock.patch.object(tracer.sys, "platform", "darwin"), \
+                    mock.patch.object(tracer.subprocess, "check_output", side_effect=[
+                        "88 1 42 SE /Xcode/SWBBuildService\n", parent_error]):
+                self.assertEqual(([{"name": "SWBBuildService", "parent": "unknown", "state": "exiting"}], False),
+                                 tracer.runner_group_members(42))
+
     def test_runner_cleanup_error_identifies_survivors_without_private_process_metadata(self):
         import run_strict_ci_tracer as tracer
         from types import SimpleNamespace
@@ -7118,6 +7176,7 @@ raise SystemExit(65)
                 mock.patch.object(tracer.subprocess, "check_output", return_value=table), \
                 mock.patch.object(tracer, "stop_group"), \
                 mock.patch.object(tracer, "group_has_live_members", return_value=True), \
+                mock.patch.object(tracer.os, "killpg"), \
                 mock.patch.object(tracer, "GROUP_TERM_GRACE_SECONDS", 0):
             with self.assertRaisesRegex(tracer.RunnerGroupCleanupError, "Runner process group still has live members") as raised:
                 tracer.run_runner(["unused"], Path(raw), Path(raw) / "runner.log", timeout_seconds=2)
@@ -7138,14 +7197,19 @@ raise SystemExit(65)
                         {"side_effect": output} if isinstance(output, Exception) else {"return_value": output})), \
                     mock.patch.object(tracer, "stop_group"), \
                     mock.patch.object(tracer, "group_has_live_members", return_value=True), \
+                    mock.patch.object(tracer.os, "killpg"), \
+                    mock.patch.object(tracer.sys, "stderr", io.StringIO()) as stderr, \
                     mock.patch.object(tracer, "GROUP_TERM_GRACE_SECONDS", 0):
                 with self.assertRaisesRegex(tracer.RunnerGroupCleanupError, "Runner process group still has live members") as raised:
                     tracer.run_runner(["unused"], Path(raw), Path(raw) / "runner.log", timeout_seconds=2)
-                self.assertEqual(3, tracer.subprocess.check_output.call_args.kwargs["timeout"])
+                self.assertGreater(tracer.subprocess.check_output.call_args.kwargs["timeout"], 0)
+                self.assertLessEqual(tracer.subprocess.check_output.call_args.kwargs["timeout"], 3)
             self.assertEqual(truncated, raised.exception.members_truncated)
             if count is None:
                 self.assertIsNone(raised.exception.members)
                 self.assertIn("live members: unavailable", str(raised.exception))
+                self.assertEqual("Runner member probe unavailable: "
+                    + (type(output).__name__ if isinstance(output, Exception) else "ValueError") + "\n", stderr.getvalue())
             elif count:
                 self.assertEqual(count, len(raised.exception.members))
                 self.assertEqual({"python3.9"}, {member["parent"] for member in raised.exception.members})
@@ -7154,6 +7218,41 @@ raise SystemExit(65)
             else:
                 self.assertEqual([], raised.exception.members)
                 self.assertIn("live members: none", str(raised.exception))
+
+    def test_interrupted_cleanup_checkpoint_cannot_delete_live_build_inputs(self):
+        import run_strict_ci_tracer as tracer
+        identity = {"schema_version": 1, "event": "local", "repository": "sudoHG/immichSlides",
+                    "commit_sha": "0" * 40, "tree_sha": "0" * 40, "dirty": False}
+        original_write = tracer.write_json
+        interrupted = []
+        with tempfile.TemporaryDirectory() as raw:
+            output = Path(raw) / "trace"
+            def invoke(*args, **kwargs):
+                for name in ("derived", "SourcePackages"):
+                    (output / name).mkdir()
+                    (output / name / "owned").touch()
+                raise tracer.RunnerGroupCleanupError("Runner process group still has live members",
+                    members=[{"name": "SWBBuildService", "parent": "launchd", "state": "exiting"}])
+            def interrupt_checkpoint(path, payload):
+                if path.name == "trace.json" and payload["cold"] and not interrupted:
+                    interrupted.append(True)
+                    raise KeyboardInterrupt()
+                return original_write(path, payload)
+            with mock.patch.object(tracer, "run_runner", side_effect=invoke), \
+                    mock.patch.object(tracer, "write_json", side_effect=interrupt_checkpoint), \
+                    mock.patch.object(tracer, "workspace_preflight"), \
+                    mock.patch.object(tracer, "run_identity", return_value=identity), \
+                    mock.patch.object(tracer, "source_metadata", return_value=(None, False)), \
+                    mock.patch.object(tracer.shutil, "disk_usage", return_value=mock.Mock(total=200 * 1024**3, free=100 * 1024**3)), \
+                    mock.patch.object(tracer, "toolchain", return_value={"versions": {"python": "test"}, "signing_mode": "not-applicable"}):
+                self.assertEqual(1, tracer.main(["--platform", "ios", "--destination", "unused", "--output-dir", str(output)]))
+            self.assertEqual([True], interrupted)
+            for name in ("derived", "SourcePackages"):
+                self.assertTrue((output / name / "owned").is_file(), "checkpoint interruption must retain live build inputs")
+            self.assertTrue((output / "runner-group-cleanup-failed").is_file())
+            summary = json.loads((output / "records/summary.json").read_text())
+            self.assertIn("RunnerGroupCleanupError", summary["infrastructure"][0]["message"])
+            self.assertEqual("SWBBuildService", summary["bounded_diagnostics"]["events"][-1]["runner_group_members"][0]["name"])
 
     def test_interrupted_survivor_probe_preserves_cleanup_error_and_retains_build_paths(self):
         import run_strict_ci_tracer as tracer
@@ -7173,6 +7272,7 @@ raise SystemExit(65)
                         mock.patch.object(tracer.subprocess, "Popen", return_value=SimpleNamespace(pid=42, wait=lambda **kwargs: 0)), \
                         mock.patch.object(tracer, "stop_group"), \
                         mock.patch.object(tracer, "group_has_live_members", return_value=True), \
+                        mock.patch.object(tracer.os, "killpg"), \
                         mock.patch.object(tracer, "GROUP_TERM_GRACE_SECONDS", 0), \
                         mock.patch.object(tracer, "runner_group_members", side_effect=interruption), \
                         mock.patch.object(tracer, "workspace_preflight"), \

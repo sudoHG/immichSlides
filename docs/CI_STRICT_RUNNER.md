@@ -1490,7 +1490,14 @@ Only a complete observed set with every automated check passing permits a non-fa
 status. Cancellation and unexpected exceptions record failed status, an `interrupted`
 infrastructure entry and every unfinished case as `not-run`. Each runner starts in
 its own process group; timeout/cancellation terminates and waits for that whole group
-before deleting build inputs. Shared group-probe behavior is documented in the
+before deleting build inputs. The shared stop sends SIGTERM and escalates to SIGKILL
+after its existing five-second grace. If the tracer's subsequent probe still sees
+live members, it explicitly sends SIGKILL to that same runner-owned group and
+rechecks within its existing five-second verification allowance. No process outside
+that group is signalled; Xcode daemons, including those marked `exiting`, receive no
+liveness exemption. Unverifiable cleanup stays red and retains build inputs, even
+if a second interruption occurs during checkpoint finalization.
+Shared group-probe behavior is documented in the
 [host contract](CI_SUMMARY.md). The runner's final `CommandError` is printed in the job log.
 Official summary and selected-method exports are read even after runner failure;
 nonzero exits remain failures. Filter-person combines its three session exports
