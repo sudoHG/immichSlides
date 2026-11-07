@@ -10,9 +10,9 @@ a persisted boolean `false` alone does not prove the new OS honours the key.
 
 Xcode 27.0 (27A266a) and iOS 27.0 (24A434) retain the
 [hosted Vision probe](https://github.com/sudoHG/immichSlides/actions/runs/37592421181)
-baseline. tvOS now pins 27.2 (24K150), runtime
-`com.apple.CoreSimulator.SimRuntime.tvOS-27-2`, on both local acceptance runs and
-hosted jobs. The hosted
+baseline. Hosted jobs now pin tvOS 27.2 (24K150), runtime
+`com.apple.CoreSimulator.SimRuntime.tvOS-27-2`. Local acceptance runs select the
+same runtime explicitly. The hosted
 [`xcode-27-arm64` image `20261104.0337.1`](https://github.com/actions/runner-images/blob/xcode-27-arm64/20261104.0337/images/macos/xcode-27-arm64-Readme.md#installed-simulators)
 lists both tvOS runtimes, but some runners intermittently reject 27.0. In
 [this unit job](https://github.com/sudoHG/immichSlides/actions/runs/42046649172/job/127384908352),
@@ -22,7 +22,7 @@ the failure is not universal.
 An installed or available 27.0 entry alone does not prove that it can boot with
 the image's supported-runtime profile. Device types, Xcode and iOS pins stay
 unchanged; runtime selection remains exact and fails closed without 27.2.
-The [Xcode Cloud destination contract](XCODE_CLOUD_UI.md) also requires tvOS 27.2;
+The [v2 Xcode Cloud destination contract](XCODE_CLOUD_UI.md) also requires tvOS 27.2;
 its externally configured workflow must match before its evidence can qualify.
 Python 3.9.6 and Pillow 11.3.0 match the contributor verification baseline. The workflow
 uses Xcode's `/usr/bin/python3` explicitly and verifies its version; a different version

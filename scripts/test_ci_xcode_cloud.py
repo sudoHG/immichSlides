@@ -1954,7 +1954,7 @@ class CloudEvidenceTests(unittest.TestCase):
                                       "finished": "2026-10-09T16:20:00Z", "tests": [{
                                           "id": "result-one", "class": "ExampleTests", "method": "testExample()",
                                           "status": "SUCCESS", "destinations": [{"device": cloud.DEVICE_NAME,
-                                                                                      "os": "27.2", "status": "SUCCESS"}]}]}]}
+                                                                                      "os": "27.0", "status": "SUCCESS"}]}]}]}
         self.check = {"app": {"id": cloud.APP_ID, "slug": "xcode-cloud"}, "head_sha": "a" * 40,
                       "id": 1,
                       "name": cloud.CHECK_NAME, "status": "completed", "conclusion": "success",
@@ -2064,11 +2064,6 @@ class CloudEvidenceTests(unittest.TestCase):
                     self.evidence["actions"].append(copy.deepcopy(action))
                 with self.assertRaises(ContractError):
                     self.validate()
-
-        self.evidence = copy.deepcopy(original)
-        self.evidence["actions"][0]["tests"][0]["destinations"][0]["os"] = "27.0"
-        with self.assertRaisesRegex(ContractError, "^cloud method has missing, extra, failed or unexpected destinations$"):
-            self.validate()
 
     def test_wrong_head_workflow_attempt_tree_fork_and_unrouted_proof_are_refused(self):
         for target, field, value in ((self.evidence, "head_sha", "e" * 40),

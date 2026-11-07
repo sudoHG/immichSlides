@@ -1,19 +1,26 @@
 # Xcode Cloud fixture UI
 
-The **UI - Apple TV (overflow)** workflow contract covers the same pull-request Apple TV
-fixture methods as the GitHub UI shards. It is test-only, accepts an API or manual
-start on a branch, and uses the `immichSlides-tvOS` scheme with the
-`XcodeCloud-UI-tvOS` plan on Apple TV 4K (3rd generation), tvOS 27.2. Workflow
-configuration belongs to the maintainer. Only the trusted main router and API
+The historical **UI - Apple TV (overflow)** workflow ran the same pull-request Apple TV
+fixture methods as the GitHub UI shards. Its test-only v1 contract uses the
+`immichSlides-tvOS` scheme with the `XcodeCloud-UI-tvOS` plan on Apple TV 4K
+(3rd generation), tvOS 27.0. New v1 routing is disabled; its reader preserves
+historical 27.0 evidence. Workflow configuration belongs to the maintainer.
+Only the trusted main router and API
 importer described below can replace GitHub's pull-request evidence. Grouped
 routing requires a reviewed main registry with `routing_enabled: true`, a
 confirmed allowance cap and billing anchor, and a measured billing factor.
 
-The tvOS destination now follows the [27.2 runtime pin](CI_TOOLCHAIN.md). Before
-Cloud evidence can qualify, the maintainer must update the external ASC
-destination and refresh the reviewed workflow-attribute fingerprints in the
-registry. A repository pin change does not update ASC settings or authorize
-acceptance of the old 27.0 destination.
+The **v2 tvOS group** follows the [27.2 runtime pin](CI_TOOLCHAIN.md). Before v2
+Cloud evidence can qualify, the maintainer must update ASC workflow
+`72574ec0-c168-4317-b469-d3090357ab21`, action `XcodeCloud-UI-tvOS - tvOS`, to
+Apple TV 4K (3rd generation) on tvOS 27.2, keeping Xcode 27.0 and macOS 27.0
+fixed rather than Latest. Whether Cloud offers tvOS 27.2 under Xcode 27.0 is
+`NOT_VERIFIED`; if unavailable, stop and report. After reading back ASC, a
+follow-up repository PR must refresh both the workflow's
+`account_workflow_attributes_sha256` entry and `groups.tvos.workflow_attributes_sha256`
+in the [registry](../scripts/ci-xcode-cloud-groups.json). Do not set
+`CI_XCC_ROUTING_OVERRIDE` for tvOS until the ASC change and fingerprint refresh
+are done. These v2 requirements do not change the historical v1 27.0 contract.
 
 ## Grouped evidence reader (v2)
 
@@ -801,12 +808,12 @@ TestAction pre/post actions. Redirected or ambiguous plan resolution is refused.
 API `isPullRequestBuild` must be explicitly false: only the tree-bound branch
 execution is accepted, never an unbound cloud pull-request merge build.
 
-The API reader proves membership in overflow workflow
+The historical v1 API reader proves membership in overflow workflow
 `72574ec0-c168-4317-b469-d3090357ab21` through its paginated build-run collection;
 Developer keys cannot read a build run's nonexistent workflow relationship.
 It requires one completed successful `XcodeCloud-UI-tvOS - tvOS` test action and
 all paginated method results. Every exact method must occur once with `SUCCESS`
-on exactly Apple TV 4K (3rd generation), tvOS 27.2. Missing, extra, duplicate,
+on exactly Apple TV 4K (3rd generation), tvOS 27.0. Missing, extra, duplicate,
 failed, skipped, partial or unknown results are refused. Pagination cycles,
 cross-host links, oversized payloads and unavailable API data are refusals too.
 
