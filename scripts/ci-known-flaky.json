@@ -4,6 +4,81 @@
     {
       "identity": {
         "kind": "strict",
+        "key": "StrictE2EFilterIOSUITests/testFilterPersonNormalMatch",
+        "dimensions": {
+          "device": "iphone",
+          "configuration": "Debug",
+          "suite": "filter-person",
+          "scenario": "normal",
+          "fixture": "a"
+        }
+      },
+      "scope": {
+        "tier": "strict",
+        "environment": "hermetic"
+      },
+      "issue": "https://github.com/sudoHG/immichSlides/issues/133",
+      "owner": "sudoHG",
+      "review_by": "2026-11-07",
+      "added_on": "2026-10-08",
+      "symptom": "Person filter page must open; failed in 3/8 candidate and 1/8 baseline runs.",
+      "evidence": [
+        "https://github.com/sudoHG/immichSlides/issues/133 (2026-10-06/07 verification excerpts and coordinator classification)"
+      ]
+    },
+    {
+      "identity": {
+        "kind": "strict",
+        "key": "StrictE2EFilterIOSUITests/testFilterEditSwitchKeepsFilteredModeAndClearReturnsRandom",
+        "dimensions": {
+          "device": "iphone",
+          "configuration": "Release",
+          "suite": "filter-edit-switch",
+          "scenario": "normal",
+          "fixture": "a"
+        }
+      },
+      "scope": {
+        "tier": "strict",
+        "environment": "hermetic"
+      },
+      "issue": "https://github.com/sudoHG/immichSlides/issues/134",
+      "owner": "sudoHG",
+      "review_by": "2026-11-07",
+      "added_on": "2026-10-08",
+      "symptom": "Save Password dismissal or Continue remains on mode page during filter editing.",
+      "evidence": [
+        "https://github.com/sudoHG/immichSlides/issues/134 (2026-10-06/07 verification excerpts and coordinator classification)"
+      ]
+    },
+    {
+      "identity": {
+        "kind": "strict",
+        "key": "StrictE2ELateImageIOSUITests/testLateImageKeepsCurrentSceneAfterLateRequest",
+        "dimensions": {
+          "device": "iphone",
+          "configuration": "Debug",
+          "suite": "late-image",
+          "scenario": "out-of-order",
+          "fixture": "a"
+        }
+      },
+      "scope": {
+        "tier": "strict",
+        "environment": "hermetic"
+      },
+      "issue": "https://github.com/sudoHG/immichSlides/issues/135",
+      "owner": "sudoHG",
+      "review_by": "2026-11-07",
+      "added_on": "2026-10-08",
+      "symptom": "Next must be tappable twice; state-sensitive first run failed and fresh simulator passed.",
+      "evidence": [
+        "https://github.com/sudoHG/immichSlides/issues/135 (2026-10-06/07 verification excerpts and coordinator classification)"
+      ]
+    },
+    {
+      "identity": {
+        "kind": "strict",
         "key": "StrictE2ETVOSFlowUITests/testTVOSFirstBootModeSelectionAndCorePlayback",
         "dimensions": {
           "device": "tv",
@@ -19,13 +94,36 @@
       },
       "issue": "https://github.com/sudoHG/immichSlides/issues/136",
       "owner": "sudoHG",
-      "review_by": "2026-12-07",
+      "review_by": "2026-11-07",
       "added_on": "2026-10-08",
       "symptom": "History first Next intermittently fails on both baseline and candidate.",
       "evidence": [
-        "https://github.com/sudoHG/immichSlides/issues/136 (2026-10-06/07 verification excerpts and coordinator classification)",
-        "https://github.com/sudoHG/immichSlides/actions/runs/42108210881 (2026-11-05 tv/Debug/tvos-flow/normal/a failed with history_navigation/probe_readback after the history-entry fix in PR #682)",
-        "https://github.com/sudoHG/immichSlides/actions/runs/42356874948 (2026-11-07 the exact method still failed, exit 65; public failure is unrecognized, so its cause and retry eligibility are not established)"
+        "https://github.com/sudoHG/immichSlides/issues/136 (2026-10-06/07 verification excerpts and coordinator classification)"
+      ]
+    },
+    {
+      "identity": {
+        "kind": "strict",
+        "key": "StrictE2EFilterTVOSUITests/testTVOSSmartFillDisplayPolicyChangesMultiToSingle",
+        "dimensions": {
+          "device": "tv",
+          "configuration": "Release",
+          "suite": "tvos-display-policy",
+          "scenario": "normal",
+          "fixture": "a"
+        }
+      },
+      "scope": {
+        "tier": "strict",
+        "environment": "hermetic"
+      },
+      "issue": "https://github.com/sudoHG/immichSlides/issues/137",
+      "owner": "sudoHG",
+      "review_by": "2026-11-07",
+      "added_on": "2026-10-08",
+      "symptom": "Settings lookup after Pause races the control bar auto-hide.",
+      "evidence": [
+        "https://github.com/sudoHG/immichSlides/issues/137 (2026-10-06/07 verification excerpts and coordinator classification)"
       ]
     },
     {
@@ -46,13 +144,11 @@
       },
       "issue": "https://github.com/sudoHG/immichSlides/issues/138",
       "owner": "sudoHG",
-      "review_by": "2026-12-07",
+      "review_by": "2026-11-07",
       "added_on": "2026-10-08",
       "symptom": "Returning from the person page to the filter summary intermittently fails.",
       "evidence": [
-        "https://github.com/sudoHG/immichSlides/issues/138 (2026-10-06/07 verification excerpts and coordinator classification)",
-        "https://github.com/sudoHG/immichSlides/actions/runs/42287320724 (2026-11-06 tv/Debug/tvos-person/normal/a: exact official method failed, exit 65, after PR #683; public failure is unrecognized and its cause is unknown)",
-        "https://github.com/sudoHG/immichSlides/actions/runs/42356874948 (2026-11-07 exact tuple passed; one recovery sample does not establish a fix, and PR #692 runtime-pin recovery is not yet verified)"
+        "https://github.com/sudoHG/immichSlides/issues/138 (2026-10-06/07 verification excerpts and coordinator classification)"
       ]
     },
     {
@@ -73,13 +169,11 @@
       },
       "issue": "https://github.com/sudoHG/immichSlides/issues/139",
       "owner": "sudoHG",
-      "review_by": "2026-12-07",
+      "review_by": "2026-11-07",
       "added_on": "2026-10-08",
       "symptom": "No new stable frame appeared before going to the background.",
       "evidence": [
-        "https://github.com/sudoHG/immichSlides/issues/139 (2026-10-06/07 verification excerpts and coordinator classification)",
-        "https://github.com/sudoHG/immichSlides/actions/runs/42287320724 (2026-11-06 iphone/Release/ios-lifecycle-background/normal/a passed)",
-        "https://github.com/sudoHG/immichSlides/actions/runs/42356874948 (2026-11-07 exact official method failed, exit 65, with interval_setup/interval_readback after PR #690; this is a different symptom from the original stable-frame failure and no fix is established)"
+        "https://github.com/sudoHG/immichSlides/issues/139 (2026-10-06/07 verification excerpts and coordinator classification)"
       ]
     }
   ]
