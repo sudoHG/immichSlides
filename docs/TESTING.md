@@ -847,6 +847,14 @@ python3 -B -m unittest discover -s scripts -p 'test_*.py'
 
 App runs need macOS, a selected Xcode installation and the platform's installed Simulator runtime. Python prerequisites and interpreter setup are described in [CONTRIBUTING](../CONTRIBUTING.md#setup). Before any build, check `df -h /System/Volumes/Data`; the runners require at least 80 GiB available by default. Use `--min-free-gib N` with a non-negative integer to change this local safety threshold, and install any required Simulator runtime through Xcode. Pick a local simulator UDID with `xcrun simctl list devices available`.
 
+Acceptance runs use the exact [CI pins](../scripts/ci-pins.json): iPhone 17e and
+iPad Air 11-inch (M4) on iOS 27.0 (24A434), and Apple TV 4K (3rd generation)
+on tvOS 27.2 (24K150). The TV device type is
+`com.apple.CoreSimulator.SimDeviceType.Apple-TV-4K-3rd-generation-4K`, with
+3840x2160 screenshots. Xcode remains 27.0 (27A266a). Local reproduction and
+hosted setup reject missing or mismatched runtime pins; neither may select a
+different installed runtime. See [the toolchain contract](CI_TOOLCHAIN.md).
+
 ```bash
 python3 scripts/run_strict_e2e.py --platform ios --destination 'platform=iOS Simulator,id=<UDID>' --suite journey-a --evidence-dir '<outside-repo>/first-connection'
 python3 scripts/run_strict_e2e.py --platform ios --destination 'platform=iOS Simulator,id=<UDID>' --suite firstboot-failure --scenario auth-401 --evidence-dir '<outside-repo>/connection-failure'

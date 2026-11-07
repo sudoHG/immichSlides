@@ -19,7 +19,7 @@ class ToolchainProbeTests(unittest.TestCase):
             "version": "27.0", "build": "test-build", "developer_dir": "/synthetic/Xcode.app/Contents/Developer"},
             "simulators": {
                 "ios": {"runtime": "ios-runtime", "version": "27.0", "build": "ios-build"},
-                "tvos": {"runtime": "tvos-runtime", "version": "27.0", "build": "tvos-build"}}}
+                "tvos": {"runtime": "tvos-runtime", "version": "27.2", "build": "tvos-build"}}}
 
     def announcement(self, breaking, title="[macOS] Xcode removal"):
         return {"title": title, "body": "### Breaking changes\n" + breaking +

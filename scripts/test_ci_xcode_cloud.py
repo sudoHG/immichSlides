@@ -305,7 +305,7 @@ class GroupEvidenceTests(unittest.TestCase):
         tv_registration = {"workflow_id": "33333333-3333-3333-3333-333333333333", "actions": [{
             "name": "Functional - tvOS", "check_name": "Registered tvOS check", "plan_path": "Cloud-tvOS.xctestplan",
             "scheme_path": "Project.xcodeproj/xcshareddata/xcschemes/tvOS.xcscheme",
-            "devices": {"appletv": {"device": cloud.DEVICE_NAME, "os": "27.0"}}}]}
+            "devices": {"appletv": {"device": cloud.DEVICE_NAME, "os": "27.2"}}}]}
         record["cloud_v2_inputs"]["registry"]["groups"]["tvos"] = tv_registration
         record["cloud_v2_inputs"]["plans"]["Cloud-tvOS.xctestplan"] = copy.deepcopy(record["cloud_v2_inputs"]["plans"]["Cloud-iOS.xctestplan"])
         names, _, _, metadata = workflow_contract(source, self.run, metadata=True)

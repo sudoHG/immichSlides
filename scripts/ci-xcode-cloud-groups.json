@@ -62,7 +62,7 @@
           "plan_path": "XcodeCloud-UI-tvOS.xctestplan",
           "scheme_path": "immichSlides.xcodeproj/xcshareddata/xcschemes/immichSlides-tvOS.xcscheme",
           "devices": {
-            "appletv": { "device": "Apple TV 4K (3rd generation)", "os": "27.0" }
+            "appletv": { "device": "Apple TV 4K (3rd generation)", "os": "27.2" }
           }
         }
       ]
