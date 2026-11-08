@@ -421,22 +421,36 @@ class ProcessSamplingBudget:
     def __init__(self):
         self.remaining_seconds = float(SAMPLER_WALL_BUDGET_SECONDS)
         self.loan = 0.0
+        self.inherited_process_seconds = None
 
-    def reserve_case(self):
+    @staticmethod
+    def ledger_process_seconds(recorder):
+        if recorder is None or "xcode" in recorder.unavailable:
+            return None
+        if recorder.process_sampler_wall_seconds is not None:
+            return recorder.process_sampler_wall_seconds
+        costs = [case["sampler_wall_seconds"] for case in recorder.case_resources]
+        if any(cost is None for cost in costs):
+            return None
+        if not costs and any(event["phase"] == "test-execution" for event in recorder.events):
+            return None  # A dropped unfinished sampler cannot masquerade as an unused ledger.
+        return sum(costs)
+
+    def reserve_case(self, *, recorder=None):
         if self.loan:
             return 0.0
+        self.inherited_process_seconds = self.ledger_process_seconds(recorder)
         self.loan, self.remaining_seconds = self.remaining_seconds, 0.0
         return self.loan
 
     def settle_case(self, receipt, *, invocations, recorder=None, prepaid=None):
         loan, self.loan = self.loan, 0.0
+        inherited, self.inherited_process_seconds = self.inherited_process_seconds, None
         if prepaid is False and recorder is not None and "xcode" not in recorder.unavailable:
-            spent = recorder.process_sampler_wall_seconds
-            if spent is None:
-                spent = sum(case["sampler_wall_seconds"] if case["sampler_wall_seconds"] is not None
-                    else SAMPLER_WALL_BUDGET_SECONDS for case in recorder.case_resources)
-            # A healthy child uses the original split accounting, even without a public case receipt.
-            self.remaining_seconds = max(0, SAMPLER_WALL_BUDGET_SECONDS - spent)
+            spent = self.ledger_process_seconds(recorder)
+            # Charge this child only; a stale ledger may omit work already paid by earlier loans.
+            if inherited is not None and spent is not None and spent >= inherited:
+                self.remaining_seconds = max(0, loan - (spent - inherited))
             return
         try:
             validate_receipt(receipt)
@@ -794,6 +808,9 @@ class CaseSampler:
                 self.previous_process_spent = sum(case["sampler_wall_seconds"] if case["sampler_wall_seconds"] is not None
                     else SAMPLER_WALL_BUDGET_SECONDS for case in self.recorder.case_resources)
         self.reserved = max(0, SAMPLER_WALL_BUDGET_SECONDS - self.previous_process_spent)
+        remaining = getattr(self.recorder, "process_sampling_remaining_seconds", None)
+        if remaining is not None:
+            self.reserved = min(self.reserved, remaining)
         if "xcode" in self.recorder.unavailable and not getattr(self.recorder, "prepaid_process_sampling", False):
             self.reserved = 0.0
         if self.reserved <= SAMPLE_COMMAND_TIMEOUT_SECONDS:
@@ -922,6 +939,9 @@ class CaseSampler:
                 if self.thread is not None and not self.finished:
                     self.truncated = True
                 self.recorder.process_sampler_wall_seconds = self.previous_process_spent + self.spent if self.finished else None
+                remaining = getattr(self.recorder, "process_sampling_remaining_seconds", None)
+                if remaining is not None:
+                    self.recorder.process_sampling_remaining_seconds = max(0, remaining - self.spent) if self.finished else 0
         if self.recorder is not None:
             try:
                 self.publish()

@@ -1002,6 +1002,94 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                 self.assertEqual(65, code, stderr)
                 self.assertIs(False, json.loads((Path(raw) / "evidence/case-manifest.json").read_text())["process_sampling_prepaid"])
 
+    def test_healthy_child_cannot_renew_the_passed_loan_between_fixture_sessions(self):
+        import ci_execution_diagnostics as diagnostics
+        import strict_e2e_resource_diagnostics as resources
+
+        original_stop = resources.CaseSampler.stop
+        for allowance in (None, 160, 10, 0):
+            with self.subTest(allowance=allowance), tempfile.TemporaryDirectory() as raw, diagnostics.session() as recorder:
+                recorder.process_sampler_wall_seconds = 20
+                recorder.app_hang_capture_attempts = 2
+                reservations = []
+                def finish(sampler):
+                    if not sampler.closed:
+                        reservations.append(sampler.reserved)
+                        sampler.spent = min((4, 3, 3)[len(reservations) - 1], sampler.reserved)
+                        sampler.finished = True
+                    return original_stop(sampler)
+                with mock.patch.object(resources.CaseSampler, "_run"), \
+                        mock.patch.object(resources.CaseSampler, "stop", autospec=True, side_effect=finish):
+                    code, _, stderr, _ = self._run_p2_main(Path(raw) / "evidence", suite="filter-person", platform="ios",
+                        model="iPhone", warm=True, process_sampling_allowance_seconds=allowance)
+                self.assertEqual(0, code, stderr)
+                expected = [160, 156, 153] if allowance in (None, 160) else [10, 6, 3] if allowance else [0, 0, 0]
+                self.assertEqual(expected, reservations)
+                self.assertEqual(2, recorder.app_hang_capture_attempts)
+                self.assertFalse(recorder.prepaid_process_sampling)
+
+    def test_lost_loan_spending_and_manifest_cannot_be_renewed_by_a_stale_healthy_ledger(self):
+        import ci_execution_diagnostics as diagnostics
+        import strict_e2e_resource_diagnostics as resources
+        from types import SimpleNamespace
+
+        original_stop = resources.CaseSampler.stop
+        def immediate_io(*, target, daemon):
+            return SimpleNamespace(start=target, join=lambda timeout: None)
+        for missing_manifest in (False, True):
+            with self.subTest(missing_manifest=missing_manifest), tempfile.TemporaryDirectory() as raw, \
+                    mock.patch.object(diagnostics.threading, "Thread", side_effect=immediate_io), \
+                    mock.patch.object(resources.CaseSampler, "_run"):
+                ledger = Path(raw) / "job.json"
+                initial = diagnostics.Recorder()
+                initial.process_sampler_wall_seconds = 0
+                initial.app_hang_capture_attempts = 2
+                initial.save(ledger)
+                parent = diagnostics.Recorder()
+                budget = resources.ProcessSamplingBudget()
+                loans, reservations, costs = [], [], []
+                children = [(False, 20), (True, 150), *([(True, None)] if missing_manifest else []),
+                            (False, 5), (False, 5), (False, 0)]
+                for index, (read_fails, cost) in enumerate(children):
+                    parent.load(ledger)
+                    allowance = budget.reserve_case(recorder=parent)
+                    loans.append(allowance)
+                    with diagnostics.session() as child:
+                        if read_fails:
+                            with mock.patch.object(child, "ledger_io", return_value=None):
+                                child.load(ledger)
+                        else:
+                            child.load(ledger)
+                        child.reserve(ledger)
+                        receipt, prepaid = None, False
+                        if cost is not None:
+                            def finish(sampler):
+                                if not sampler.closed:
+                                    reservations.append(sampler.reserved)
+                                    sampler.spent = min(cost, sampler.reserved)
+                                    costs.append(sampler.spent)
+                                    sampler.finished = True
+                                return original_stop(sampler)
+                            evidence = Path(raw) / f"child-{index}"
+                            with mock.patch.object(resources.CaseSampler, "stop", autospec=True, side_effect=finish):
+                                code, _, stderr, _ = self._run_p2_main(evidence, suite="smoke", platform="ios",
+                                    model="iPhone", warm=True, process_sampling_allowance_seconds=allowance)
+                            self.assertEqual(0, code, stderr)
+                            manifest = json.loads((evidence / "case-manifest.json").read_text())
+                            receipt, prepaid = manifest["bounded_diagnostics"], manifest["process_sampling_prepaid"]
+                            self.assertEqual(read_fails, prepaid)
+                        child.save(ledger)
+                    parent.load(ledger)
+                    budget.settle_case(receipt, invocations=1, recorder=parent, prepaid=prepaid)
+                    if index == 1:
+                        self.assertEqual(20, parent.process_sampler_wall_seconds, "the failed loan child leaves the old ledger")
+                self.assertEqual([180, 160, *([10] if missing_manifest else []), 10, 5, 0], loans)
+                self.assertEqual([180, 160, 10, 5, 0], reservations)
+                self.assertEqual([20, 150, 5, 5, 0], costs)
+                self.assertEqual(180, sum(costs))
+                self.assertEqual(30, parent.process_sampler_wall_seconds, "the parent pool must include costs missing from this ledger")
+                self.assertEqual(0, budget.reserve_case(recorder=parent))
+
     def test_loan_path_cannot_renew_lost_app_hang_capture_attempts(self):
         import ci_execution_diagnostics as diagnostics
         import strict_e2e_resource_diagnostics as resources
@@ -6676,6 +6764,28 @@ raise SystemExit(65)
             self.assertEqual(180, budget.reserve_case())
             budget.settle_case(candidate, invocations=1, recorder=stale, prepaid=True)
             self.assertEqual(0 if candidate is None else 173, budget.reserve_case())
+        # An unfinished healthy collector can lose its case projection without proving zero work.
+        recorder = diagnostics.Recorder()
+        recorder.process_sampler_wall_seconds = 0
+        budget = resources.ProcessSamplingBudget()
+        self.assertEqual(180, budget.reserve_case(recorder=recorder))
+        with mock.patch.object(resources.threading, "Thread"), \
+                mock.patch.object(resources, "validate_case_resources", side_effect=ValueError("invalid measurement")):
+            resources.CaseSampler(recorder, "device").start().stop()
+        self.assertIsNone(recorder.process_sampler_wall_seconds)
+        self.assertEqual([], recorder.case_resources)
+        budget.settle_case(None, invocations=1, recorder=recorder, prepaid=False)
+        self.assertEqual(0, budget.reserve_case(recorder=recorder))
+        recorder = diagnostics.Recorder()
+        recorder.process_sampler_wall_seconds = 0
+        budget = resources.ProcessSamplingBudget()
+        self.assertEqual(180, budget.reserve_case(recorder=recorder))
+        recorder.process_sampler_wall_seconds = 20
+        budget.settle_case(None, invocations=1, recorder=recorder, prepaid=False)
+        self.assertEqual(160, budget.reserve_case(recorder=recorder))
+        recorder.process_sampler_wall_seconds = 19
+        budget.settle_case(None, invocations=1, recorder=recorder, prepaid=False)
+        self.assertEqual(0, budget.reserve_case(recorder=recorder), "a rolled-back ledger cannot supply a negative charge")
 
     def test_native_allowance_precharges_timeouts_and_stops_after_twenty_seconds(self):
         import strict_e2e_resource_diagnostics as resources

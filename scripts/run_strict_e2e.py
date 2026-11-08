@@ -802,6 +802,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
     if active() is not None:
         active().native_activity_budget = NativeActivityBudget(arguments.native_diagnostics_allowance_seconds)
         active().prepaid_process_sampling = False
+        active().process_sampling_remaining_seconds = allowance
         if allowance is not None and "xcode" in active().unavailable:
             active().prepaid_process_sampling = True
             active().process_sampler_wall_seconds = SAMPLER_WALL_BUDGET_SECONDS - allowance

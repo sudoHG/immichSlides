@@ -358,24 +358,31 @@ Old ledgers without this balance conservatively charge all persisted
 `sampler_wall_seconds` costs; an unknown predecessor cost exhausts the allowance.
 An invalid private balance makes the inherited ledger unavailable. The strict
 tracer pre-reserves a fallback allowance in parent memory before each serial
-warm child, retaining no spendable balance while that child runs. The child
-uses this `--process-sampling-allowance-seconds` loan only when its inherited
-Xcode diagnostic ledger is unavailable at startup. A healthy child ignores
-the loan and preserves the original split host/process accounting and capture
-attempt count. The existing private case manifest records the startup Boolean
+warm child, retaining no spendable balance while that child runs. Every supplied
+`--process-sampling-allowance-seconds` loan caps the child's total process/capture
+work across all its sessions. Each completed sampler deducts its active process
+cost from that child's remaining loan; an unfinished sampler exhausts it.
+Only a child with an unavailable inherited Xcode ledger initializes its process
+balance from the loan and disables unknown stack attempts. Healthy children
+preserve split host/process ledger accounting and the accurate capture-attempt
+count, with reservations additionally capped by the unspent loan. In an
+all-healthy chain the two bounds are identical. The private case manifest records the startup Boolean
 `process_sampling_prepaid`; the tracer reads it without copying it into public
 trace/summary records. A child cannot begin sampling before writing that manifest.
-After collection, the parent's existing checkpoint reloads the ledger before
-settling: a non-loan child and healthy balance supply the original process-only
-cost even without a public case receipt, so a child without a result bundle
-cannot exhaust a healthy pool merely by omitting that receipt.
+Before launching a child, the parent records its known inherited ledger process
+cost. Its existing checkpoint reloads the ledger before settling: for a non-prepaid
+child with healthy accounting, it subtracts only `ledger end - inherited cost`
+from the reserved loan, even without a public case receipt. It never resets the
+pool from the ledger's total, which can omit work already paid by earlier loans.
+Unknown or decreasing process accounting spends the loan conservatively.
 For a loan child, or when the checkpoint ledger is unavailable, a complete validated case receipt
 with the expected invocation count refunds only the loan minus its measured
 `sampler_wall_seconds` total. Only this fallback conservatively charges combined
 host/process/capture cost; missing, malformed, unfinished or incomplete receipts
 spend the whole loan. A collection exception leaves the loan unrefunded.
-A loan child cannot use a stale healthy checkpoint balance to renew its allowance
-after its final ledger write failed. An unrecognized startup fact remains conservative.
+A stale healthy ledger after failed loan-child IO cannot renew this or a later
+child's allowance. A child that exits before writing its manifest cannot enlarge
+the parent's existing pool. An unrecognized startup fact remains conservative.
 The loan initializes the child's process balance, permits process snapshots,
 and marks the unknown App-hang attempt count exhausted; it cannot grant new
 stack captures. An unfinished prepaid sampler's unknown process cost exhausts
@@ -385,7 +392,8 @@ ledger disables process snapshots, while idle/load ticks continue.
 Hosted preparation ledger IO
 has a 0.1-second cap; an IO timeout can make inherited Xcode accounting unavailable
 even on a Release lifecycle shard that has not sampled yet. No
-fresh allowance is granted per case. This preserves the existing 10-second
+fresh allowance is granted per case, including after a loan child's read or
+reserve-write failure leaves an older healthy ledger. This preserves the existing 10-second
 Xcode diagnostic pool for anomaly diagnostics, and keeps
 host sampler independent of process-pool exhaustion. The independent host cap remains
 ten seconds per invocation and at most 64 invocations per receipt; CPU work is
@@ -397,7 +405,8 @@ Combined charging could spend 100 seconds on host reads and leave only about 80�
 Healthy ledger accounting preserves the full process allowance without raising it;
 only unavailable-ledger fallback refunds conservatively include completed host
 reads, so that fallback can exhaust process sampling earlier. The
-per-job sampling bound is 180 + 10 × N seconds for N ≤ 64 sampled invocations
+parent pool and each child's shared loan remain monotonic, so the per-job sampling
+bound remains 180 + 10 × N seconds for N ≤ 64 sampled invocations
 (280 seconds for the current longest shard).
 The optional stack projection is additive in schema version 1. Old nights without
 it remain readable; verdict and environment-limit eligibility rules are unchanged.

@@ -550,7 +550,7 @@ def main(argv=None):
     def invoke(case, evidence, derived, warm):
         nonlocal runner_cleanup_error
         native_allowance = native_budget.reserve_case() if warm else 0
-        process_allowance = process_budget.reserve_case() if warm else 0
+        process_allowance = process_budget.reserve_case(recorder=diagnostics) if warm else 0
         command = [sys.executable, "-B", str(ROOT / "scripts/run_strict_e2e.py"),
                    "--platform", args.platform, "--destination", args.destination, "--suite", case["suite"],
                    "--configuration", case["configuration"], "--scenario", case["scenario"], "--fixture-set", case["fixture"],
