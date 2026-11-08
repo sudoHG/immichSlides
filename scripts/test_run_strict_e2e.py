@@ -615,7 +615,8 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
         recording_process = mock.Mock(pid=9876)
         invocations = []
         attempt_environments = []
-        from test_ci_flaky import registry
+        from datetime import date
+        from test_ci_flaky import REGISTRY_TODAY, registry
         from ci_summary import test_identity
         retry_registry = registry()
         retry_registry["entries"][0]["scope"]["tier"] = "strict"
@@ -730,6 +731,8 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
             stack.enter_context(mock.patch("ci_flaky.read_xcode_observations", side_effect=retry_results))
             stack.enter_context(mock.patch("ci_flaky.registry_revision", return_value="b" * 40))
             stack.enter_context(mock.patch("ci_flaky.load_registry", return_value=(retry_registry, "a" * 64)))
+            clock = stack.enter_context(mock.patch.object(strict_runner, "date", wraps=date))
+            clock.today.return_value = date.fromisoformat(REGISTRY_TODAY)
             exit_code = runner_main(
                 [
                     "--platform",

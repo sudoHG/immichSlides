@@ -7,7 +7,7 @@ import os
 import subprocess
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, timedelta
 from argparse import Namespace
 from contextlib import ExitStack, redirect_stderr
 from pathlib import Path
@@ -18,12 +18,15 @@ from ci_flaky import (eligible_entry, enumerated_ui_keys, load_registry, merge_r
                       retry_observations, validate_registry_population)
 
 
+REGISTRY_TODAY = "2026-10-08"
+
+
 def registry():
     identity = test_identity("ui", "ExampleTests/testNavigation", platform="ios")
     return {"schema_version": 1, "entries": [{
         "identity": identity, "scope": {"tier": "ui", "environment": "hermetic"},
         "issue": "https://github.com/sudoHG/immichSlides/issues/123",
-        "owner": "sudoHG", "review_by": "2026-11-07", "added_on": "2026-10-07",
+        "owner": "sudoHG", "review_by": (date.fromisoformat(REGISTRY_TODAY) + timedelta(days=30)).isoformat(), "added_on": "2026-10-07",
         "symptom": "Navigation occasionally stays on the prior screen",
         "evidence": ["Repeated failure and pass on 2026-10-07; see tracking issue"],
     }]}
@@ -384,6 +387,8 @@ class RetryTests(unittest.TestCase):
             }
             for target, options in patches.items():
                 stack.enter_context(mock.patch(target, **options))
+            clock = stack.enter_context(mock.patch("ci_flaky.date", wraps=date))
+            clock.today.return_value = date.fromisoformat(REGISTRY_TODAY)
             args = Namespace(root=checkout, output_dir=output, registry_ref=None, platform="ios", only_testing=[],
                 xctestrun=root / "built.xctestrun", destination="platform=iOS Simulator,id=00000000-0000-0000-0000-000000000000",
                 timeout_seconds=300, min_free_gib=30)
