@@ -351,14 +351,27 @@ first high reading, then eight seconds to confirm it); host descheduling can del
 it further. Shorter hangs, including those within eight-second control waits, may
 end before a capture starts. Process snapshots share a separate
 180-second active-wall allowance shared across
-the job ledger. A private `process_sampler_wall_seconds` balance carries only
+the job ledger. For standalone ledger callers, a private
+`process_sampler_wall_seconds` balance carries only
 completed process-snapshot and App stack capture cost across serial case processes; host reads remain
 included in the public `sampler_wall_seconds` total without reducing this pool.
 Old ledgers without this balance conservatively charge all persisted
 `sampler_wall_seconds` costs; an unknown predecessor cost exhausts the allowance.
-An invalid private balance makes the inherited ledger unavailable. An
-unavailable inherited diagnostic ledger disables process snapshots instead of granting
-a fresh allowance, while idle/load ticks continue. Hosted preparation ledger IO
+An invalid private balance makes the inherited ledger unavailable. The strict
+tracer prepays each serial warm child's process allowance in parent memory,
+independently of this optional IO ledger. It lends only the remaining part of
+the existing 180-second job pool before starting the child, retaining no
+spendable balance while that child runs. A complete, validated case receipt with
+the expected invocation count refunds only the loan minus its measured
+`sampler_wall_seconds` total. This conservatively charges host reads as well as
+process/capture work on the prepaid path. Missing, malformed, unfinished or
+incomplete receipts spend the whole loan; another case cannot renew it.
+The explicit `--process-sampling-allowance-seconds` child argument initializes
+the sampler's inherited balance and permits snapshots even when ordinary Xcode
+diagnostic accounting is unavailable. Standalone callers without that loan
+retain ledger accounting: an unavailable inherited ledger disables process
+snapshots instead of granting a fresh allowance, while idle/load ticks continue.
+Hosted preparation ledger IO
 has a 0.1-second cap; an IO timeout can make inherited Xcode accounting unavailable
 even on a Release lifecycle shard that has not sampled yet. No
 fresh allowance is granted per case. This preserves the existing 10-second
@@ -370,7 +383,9 @@ strict shards (`iphone`/`ipad` Debug shard 1) expand six suite entries into ten
 sampled invocations: each of the two `filter-person` entries has three sessions.
 Combined charging could spend 100 seconds on host reads and leave only about 80–90 of
 180 seconds for process snapshots (versus about 130 with the old host allowance).
-Separate accounting preserves the full process allowance without raising it; the
+Standalone ledger accounting preserves the full process allowance without raising it;
+the prepaid tracer path conservatively also charges completed host reads when refunding
+each child, so a long shard can exhaust process sampling earlier. The
 per-job sampling bound is 180 + 10 × N seconds for N ≤ 64 sampled invocations
 (280 seconds for the current longest shard).
 The optional stack projection is additive in schema version 1. Old nights without

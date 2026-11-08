@@ -1438,6 +1438,14 @@ Local disk preflight requires 80 GiB.
 
 ## Tracer, budgets and results
 
+The tracer prepays the existing process-sampling pool for each serial warm child
+in parent memory, so a timeout of the optional diagnostic ledger does not itself
+disable simulator CPU evidence. The loan is refunded only from a complete,
+validated per-case receipt; missing or unfinished measurements spend it fully.
+See [the sampling accounting contract](CI_SUMMARY.md#bounded-infrastructure-diagnostics).
+This does not guarantee a sample when the host or process query is unavailable,
+and does not change test verdicts, deadlines or environment-limit eligibility.
+
 ```bash
 python3 -B scripts/run_strict_ci_tracer.py --platform ios \
     --destination 'platform=iOS Simulator,id=<UDID>' \

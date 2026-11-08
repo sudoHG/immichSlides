@@ -606,6 +606,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
         native_failure_epoch=None,
         warm_timeout_seconds: int | None = None,
         official_tool=None,
+        process_sampling_allowance_seconds=None,
     ) -> tuple[int, str, str, dict[str, mock.Mock]]:
         destination = f"platform={'tvOS' if platform == 'tvos' else 'iOS'} Simulator,id={P2_UDID}"
         selector = (
@@ -750,6 +751,8 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                     *(["--simulator-boot-submitted"] if boot_submitted else []),
                     *(["--warm-timeout-seconds", "600"] if timeout_phase == "xcodebuild" else []),
                     *(["--warm-timeout-seconds", str(warm_timeout_seconds)] if warm_timeout_seconds is not None else []),
+                    *(["--process-sampling-allowance-seconds", str(process_sampling_allowance_seconds)]
+                      if process_sampling_allowance_seconds is not None else []),
                 ],
                 stdout=stdout,
                 stderr=stderr,
@@ -939,6 +942,48 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                 self.assertIsNone(exported["collection_seconds"]["xcode"])
                 from ci_bounded_diagnostics import render_receipt
                 self.assertIn("official-export", render_receipt(exported))
+
+    def test_prepaid_process_sampling_survives_unavailable_xcode_accounting(self):
+        import ci_execution_diagnostics as diagnostics
+        import strict_e2e_resource_diagnostics as resources
+        import threading
+        from types import SimpleNamespace
+
+        original_start = resources.CaseSampler.start
+        for allowance in (0, 120):
+            with self.subTest(allowance=allowance), tempfile.TemporaryDirectory() as raw, diagnostics.session() as recorder:
+                recorder.unavailable.add("xcode")
+                recorder.process_sampler_wall_seconds = None
+                recorder.charged["xcode"] = diagnostics.COLLECTION_BUDGET_SECONDS["xcode"]
+                ready, samplers = threading.Event(), []
+                def start(sampler):
+                    samplers.append(sampler)
+                    return original_start(sampler)
+                def read_host():
+                    if samplers[0].samples:
+                        ready.set()
+                    return {"idle_percent": 0, "load_1m": 3, "cpu_percent": dict.fromkeys(resources.RESOURCE_CATEGORIES)}
+                def process_sample(device, timeout, **kwargs):
+                    kwargs["simulator_snapshots"].append({"diagnosticd": 51, "other": 2})
+                    return dict(app=12, simulator_daemons=53, test_tools=5, other=0)
+                with mock.patch.object(resources, "SAMPLE_INTERVAL_SECONDS", 0.001), \
+                        mock.patch.object(resources.CaseSampler, "start", start), \
+                        mock.patch.object(resources, "HostProbe", return_value=SimpleNamespace(sample=read_host,
+                            close=lambda: None, unavailable=False, spent=0, request_count=1)), \
+                        mock.patch.object(resources, "process_sample", side_effect=process_sample) as ps:
+                    code, _, stderr, _ = self._run_p2_main(Path(raw) / "evidence", suite="smoke", platform="ios",
+                        model="iPhone", warm=True, xcodebuild_exit=65,
+                        process_sampling_allowance_seconds=allowance,
+                        late_image_attempt=lambda *_: self.assertTrue(ready.wait(2)))
+                self.assertEqual(65, code, stderr)
+                case = json.loads((Path(raw) / "evidence/case-manifest.json").read_text())["bounded_diagnostics"]["case_resources"][0]
+                self.assertGreater(case["sample_count"], 0)
+                self.assertEqual(allowance > 0, ps.called)
+                self.assertEqual(allowance == 0, case["simulator_processes"]["unavailable"])
+                self.assertEqual(0, case["idle_percent_min"])
+                if allowance:
+                    self.assertEqual(("diagnosticd", 51), (case["simulator_processes"]["entries"][0]["name"],
+                        case["simulator_processes"]["entries"][0]["mean"]))
 
     def test_warm_test_inputs_do_not_prevent_private_bundle_disposal(self):
         import ci_execution_diagnostics as diagnostics
@@ -3710,9 +3755,16 @@ class StrictCITracerTests(unittest.TestCase):
                         return 1 if failure == "cold" else 0
                     order.append("warm")
                     self.assertEqual("2", command[command.index("--native-diagnostics-allowance-seconds") + 1])
+                    self.assertEqual(180 if order.count("warm") == 1 else 173,
+                        float(command[command.index("--process-sampling-allowance-seconds") + 1]))
                     self.assertIn("--simulator-boot-submitted", command)
                     evidence = Path(command[command.index("--evidence-dir") + 1])
                     evidence.mkdir(parents=True)
+                    from test_ci_summary import bounded_diagnostics_receipt
+                    receipt = bounded_diagnostics_receipt(resources=True)
+                    receipt["case_resources"][0]["sampler_wall_seconds"] = 7
+                    receipt["collection_seconds"] = dict.fromkeys(receipt["collection_seconds"])
+                    (evidence / "case-manifest.json").write_text(json.dumps({"bounded_diagnostics": receipt}))
                     suite = command[command.index("--suite") + 1]
                     bundle, method = tracer.resolve_suite_selector("ios", suite).split("/", 1)
                     (evidence / "xcodebuild.log").write_text("test-without-building\n")
@@ -6505,6 +6557,48 @@ raise SystemExit(65)
         self.assertAlmostEqual(diagnostics.LEDGER_ALLOWANCE_SECONDS - 0.005, recorder.ledger_remaining)
         self.assertAlmostEqual(0.005, recorder.cost["preparation"])
         self.assertFalse(recorder.truncated)
+
+    def test_process_sampling_allowance_rejects_unbounded_loans_before_preparation(self):
+        from contextlib import redirect_stderr
+        for allowance in ("-1", "181", "nan", "inf"):
+            with self.subTest(allowance=allowance), mock.patch.object(strict_runner, "prepare_simulator") as prepare:
+                stderr = io.StringIO()
+                with redirect_stderr(stderr), self.assertRaises(SystemExit) as error:
+                    runner_main(["--platform", "ios", "--destination", "platform=iOS Simulator,id=TEST",
+                        "--evidence-dir", "/unused", "--process-sampling-allowance-seconds=" + allowance])
+                self.assertEqual(2, error.exception.code)
+                self.assertIn("process sampling allowance must be finite and within the job sampling budget", stderr.getvalue())
+                prepare.assert_not_called()
+
+    def test_process_sampling_loans_refund_only_complete_case_measurements(self):
+        import strict_e2e_resource_diagnostics as resources
+        from test_ci_summary import bounded_diagnostics_receipt
+
+        receipt = bounded_diagnostics_receipt(resources=True)
+        receipt["case_resources"][0]["sampler_wall_seconds"] = 7
+        receipt["collection_seconds"] = dict.fromkeys(receipt["collection_seconds"])
+        for defect in (None, "missing", "unfinished", "wrong-count", "invalid", "over-budget"):
+            with self.subTest(defect=defect):
+                budget = resources.ProcessSamplingBudget()
+                self.assertEqual(180, budget.reserve_case())
+                self.assertEqual(0, budget.reserve_case(), "a pending child cannot obtain another loan")
+                candidate = json.loads(json.dumps(receipt))
+                if defect == "missing":
+                    candidate = None
+                elif defect == "unfinished":
+                    candidate["case_resources"][0]["sampler_wall_seconds"] = None
+                elif defect == "wrong-count":
+                    candidate["case_resources"] = []
+                elif defect == "invalid":
+                    candidate["case_resources"][0]["sampler_wall_seconds"] = "private-value"
+                elif defect == "over-budget":
+                    candidate["case_resources"][0]["sampler_wall_seconds"] = 181
+                budget.settle_case(candidate, invocations=1)
+                expected = 173 if defect is None else 0
+                self.assertEqual(expected, budget.reserve_case())
+                # Once the next child owns the loan, a missing result spends it fully.
+                budget.settle_case(None, invocations=1)
+                self.assertEqual(0, budget.reserve_case())
 
     def test_native_allowance_precharges_timeouts_and_stops_after_twenty_seconds(self):
         import strict_e2e_resource_diagnostics as resources

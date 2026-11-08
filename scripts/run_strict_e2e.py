@@ -770,6 +770,8 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         help="local diagnostic exercise: capture once after the first App CPU read; ignored in CI")
     parser.add_argument("--native-diagnostics-allowance-seconds", type=int, choices=range(3), default=2,
                         help="prepaid native failure-extraction allowance supplied by the job coordinator")
+    parser.add_argument("--process-sampling-allowance-seconds", type=float,
+                        help="prepaid process-sampling allowance supplied by the serial job coordinator")
     parser.add_argument("--simulator-boot-submitted", action="store_true",
                         help="Reuse a dedicated device's submitted boot; still require bootstatus, readiness and resets")
     parser.add_argument("--fixture-set", choices=("a", "b"), default="a")
@@ -793,9 +795,15 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         help=f"minimum free GiB required before xcodebuild (default: {MIN_DATA_GIB})",
     )
     arguments = parser.parse_args(argv)
-    from strict_e2e_resource_diagnostics import NativeActivityBudget
+    from strict_e2e_resource_diagnostics import NativeActivityBudget, SAMPLER_WALL_BUDGET_SECONDS
+    allowance = arguments.process_sampling_allowance_seconds
+    if allowance is not None and not 0 <= allowance <= SAMPLER_WALL_BUDGET_SECONDS:
+        parser.error("process sampling allowance must be finite and within the job sampling budget")
     if active() is not None:
         active().native_activity_budget = NativeActivityBudget(arguments.native_diagnostics_allowance_seconds)
+        if allowance is not None:
+            active().prepaid_process_sampling = True
+            active().process_sampler_wall_seconds = SAMPLER_WALL_BUDGET_SECONDS - allowance
     if arguments.listed_retry_device and not arguments.test_without_building:
         parser.error("listed-only retry requires --test-without-building")
     if arguments.listed_retry_device and (arguments.platform == "tvos") != (arguments.listed_retry_device == "tv"):

@@ -25,7 +25,7 @@ from ci_bounded_diagnostics import (MAX_DIAGNOSTIC_SECONDS,
     MAX_INTEGER, public_stack_symbol, validate_app_hang_stack)
 from ci_bounded_diagnostics import (MAX_CONTINUE_WATCH_BYTES, MAX_CONTINUE_WATCH_FRAMES,
                                     CONTINUE_WATCH_STATUSES, validate_continue_watch)
-from ci_bounded_diagnostics import SIMULATOR_PROCESS_NAMES, validate_simulator_processes
+from ci_bounded_diagnostics import SIMULATOR_PROCESS_NAMES, validate_simulator_processes, validate_receipt
 from ci_bounded_diagnostics import PAUSE_WINDOW_ASSERTION_PREFIXES
 from ci_bounded_diagnostics import MAX_FAILURE_LOCATIONS, public_failure_locations
 from ci_execution_diagnostics import finite
@@ -415,6 +415,32 @@ class AppHangCapture:
         return self.charge if self.wall_seconds is None else self.wall_seconds
 
 
+class ProcessSamplingBudget:
+    """Prepay serial child sampling without depending on the optional IO ledger."""
+
+    def __init__(self):
+        self.remaining_seconds = float(SAMPLER_WALL_BUDGET_SECONDS)
+        self.loan = 0.0
+
+    def reserve_case(self):
+        if self.loan:
+            return 0.0
+        self.loan, self.remaining_seconds = self.remaining_seconds, 0.0
+        return self.loan
+
+    def settle_case(self, receipt, *, invocations):
+        loan, self.loan = self.loan, 0.0
+        try:
+            validate_receipt(receipt)
+            cases = receipt.get("case_resources", [])
+            if len(cases) != invocations or not cases or any(case["sampler_wall_seconds"] is None for case in cases):
+                return
+            # Combined process/capture/host cost overcharges rather than renewing an unknown balance.
+            self.remaining_seconds = max(0, loan - sum(case["sampler_wall_seconds"] for case in cases))
+        except (ValueError, TypeError, KeyError):
+            pass  # Missing or unfinished child accounting spends the entire prepaid loan.
+
+
 class NativeActivityBudget:
     """Precharge child loans and bound native reads without trusting the diagnostic ledger."""
 
@@ -757,7 +783,7 @@ class CaseSampler:
             self.previous_process_spent = sum(case["sampler_wall_seconds"] if case["sampler_wall_seconds"] is not None
                 else SAMPLER_WALL_BUDGET_SECONDS for case in self.recorder.case_resources)
         self.reserved = max(0, SAMPLER_WALL_BUDGET_SECONDS - self.previous_process_spent)
-        if "xcode" in self.recorder.unavailable:
+        if "xcode" in self.recorder.unavailable and not getattr(self.recorder, "prepaid_process_sampling", False):
             self.reserved = 0.0
         if self.reserved <= SAMPLE_COMMAND_TIMEOUT_SECONDS:
             self.truncated = True

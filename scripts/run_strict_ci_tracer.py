@@ -498,8 +498,9 @@ def main(argv=None):
     preparation_failure = None
     exit_code = 1
     environment_rejections = {}
-    from strict_e2e_resource_diagnostics import NativeActivityBudget
+    from strict_e2e_resource_diagnostics import NativeActivityBudget, ProcessSamplingBudget
     native_budget = NativeActivityBudget()
+    process_budget = ProcessSamplingBudget()
 
     def checkpoint():
         nonlocal exit_code
@@ -546,12 +547,14 @@ def main(argv=None):
     def invoke(case, evidence, derived, warm):
         nonlocal runner_cleanup_error
         native_allowance = native_budget.reserve_case() if warm else 0
+        process_allowance = process_budget.reserve_case() if warm else 0
         command = [sys.executable, "-B", str(ROOT / "scripts/run_strict_e2e.py"),
                    "--platform", args.platform, "--destination", args.destination, "--suite", case["suite"],
                    "--configuration", case["configuration"], "--scenario", case["scenario"], "--fixture-set", case["fixture"],
                    "--evidence-dir", str(evidence), "--derived-data-path", str(derived),
                    "--diagnostics-receipt", str(diagnostics_path),
                    "--native-diagnostics-allowance-seconds", str(native_allowance),
+                   "--process-sampling-allowance-seconds", str(process_allowance),
                    "--cloned-source-packages-path", str(output / "SourcePackages"),
                    "--cold-timeout-seconds", str(args.cold_timeout_seconds), "--warm-timeout-seconds", str(args.warm_timeout_seconds),
                    "--min-free-gib", str(args.min_free_gib), "--test-without-building" if warm else "--warm-up-only"]
@@ -578,6 +581,7 @@ def main(argv=None):
             phase["duration_seconds"] = time.monotonic() - started
             if warm:
                 collect_result(case, evidence, phase)
+                process_budget.settle_case(phase.get("bounded_diagnostics"), invocations=invocations)
             trace["warm" if warm else "cold"].append(phase)
             checkpoint()
 
