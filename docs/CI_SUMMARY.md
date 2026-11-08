@@ -1045,8 +1045,12 @@ The `runner_group_*` fields belong to summary-level `events`, not `case_resource
 and are not copied into `environment_limit.resources`; that 90-day rule does not
 apply to them.
 
-On a strict runner process-group cleanup failure, the tracer takes one additional
-`ps` read (three-second timeout, 2 MiB parse limit after reading) and retains at most 64 live members in
+On a strict runner process-group cleanup failure, the tracer queries `ps` within
+one three-second allowance and a combined 2 MiB parse limit after reading. On macOS,
+`ps -g <group>` selects only the runner's group; one optional `ps -p` lookup resolves
+missing parents of the first 64 live members using the remaining allowance.
+Other platforms retain the full-system group projection because procps `-g` selects
+sessions. The tracer retains at most 64 live members in
 `events[].runner_group_members`. Each entry has only `name`, `parent` and `state`;
 the event is restricted to `xcode/unknown/after-reap`. Executable and parent names
 are public tool basenames from a fixed allowlist (plus versioned Python names),
@@ -1057,14 +1061,18 @@ use their own closed vocabulary, including `exiting` when macOS reports the `E` 
 the ordinary sampler's `processes[].state` vocabulary remains unchanged.
 Paths, arguments, PIDs and device identifiers
 are discarded; zombies and other process groups are excluded. A failed probe is
-null, distinct from an empty observed group. A member can exit between the last
+null, distinct from an empty observed group; its exception type is logged without
+command output or exception text. A failed optional parent lookup keeps known
+survivors with `parent: unknown`. A member can exit between the last
 group check and this probe, so `none` is a later empty observation and does not
 cancel the cleanup error. Optional `runner_group_truncated` is true when more than
 64 members were observed; the exception and Markdown show the truncation too.
 Old events without this flag remain accepted. Inner exception text is deliberately
 dropped for privacy; only its type is retained. Any probe failure, including
 KeyboardInterrupt or SystemExit, still raises `RunnerGroupCleanupError` with an
-unavailable projection so live build inputs are retained. This failure-only read
+unavailable projection so live build inputs are retained. A second interruption
+during the invocation's result/checkpoint finalizers cannot replace that cleanup
+error or authorize deleting DerivedData or package inputs. This failure-only read
 does not extend the group grace or change a case verdict, retry, deadline or yellow qualification.
 
 <a id="prepared-hosted-strict-environment-limits"></a>
