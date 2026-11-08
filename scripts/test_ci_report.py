@@ -1783,7 +1783,8 @@ class ReporterTests(unittest.TestCase):
                         raise AssertionError("filtered workflow-run searches truncate at 1000 results")
                     page = int(query["page"][0])
                     if self.split_pages:
-                        return {"workflow_runs": [runs[20], *[{**runs[20], "id": number} for number in range(21, 120)]]
+                        return {"workflow_runs": [runs[20], *[{**runs[20], "id": number, "updated_at": day + "T09:30:00Z"}
+                                for number in range(21, 120)]]
                                 if page == 1 else [runs[10]]}
                     return {"workflow_runs": [runs[20], runs[10]]}
                 if path.startswith("actions/runs/") and path.endswith("/artifacts?per_page=100&page=1"):
@@ -1907,6 +1908,121 @@ class ReporterTests(unittest.TestCase):
             self.assertNotEqual("close", decision["action"])
             state = decision["state"]
         self.assertEqual("close", self.transition(state, entry("2026-10-04", "passed", 14))["action"])
+
+    def test_sync_defers_only_closures_until_completed_nightlies_are_collected(self):
+        from urllib.parse import parse_qs, urlparse
+        identities = {number: {**IDENTITY, "key": f"ExampleUITests/testPlayback{number}"}
+                      for number in (136, 138, 139)}
+        def report(day, outcome, run, selected):
+            value = entry(day, outcome, run)
+            value.update(created_at=day + "T00:00:00Z", conclusion="failure" if outcome == "failed" else "success")
+            value["observed"] = [observation(identities[number], outcome, 1,
+                exit_code=65 if outcome == "failed" else 0) for number in selected]
+            return value
+        initial = report("2026-10-28", "failed", 1, identities)
+        passes = [report(day, "passed", run, (136,)) for day, run in
+                  (("2026-10-29", 2), ("2026-10-30", 3), ("2026-11-02", 4))]
+        recent = report("2026-11-07", "failed", 70, (138, 139))
+        recent["observed"].append(observation(identities[136], "passed", 1, exit_code=0))
+        states = {number: issue_decision(None, identity, [initial, *passes], registry_referenced=True)["state"]
+                  for number, identity in identities.items()}
+        states[139]["closed"] = True
+        issues = {number: {"number": number, "state": "closed" if state["closed"] else "open",
+            "body": ci_report.issue_body(None, state, "sudoHG/immichSlides"), "labels": [{"name": ci_report.LABEL}]}
+            for number, state in states.items()}
+        def run_metadata(value):
+            return {"id": value["run"]["id"], "run_attempt": value["run"]["attempt"],
+                "path": ci_report.NIGHTLY_PATH, "head_branch": "main", "event": "schedule", "status": "completed",
+                "repository": {"full_name": "sudoHG/immichSlides"}, "head_repository": {"full_name": "sudoHG/immichSlides"},
+                "created_at": value["created_at"], "conclusion": value["conclusion"]}
+        for variant in ("missing", "pending", "new-attempt", "missing-conclusion", "wrong-event", "wrong-creation",
+                        "wrong-repository", "complete", "complete-failure",
+                        "outside-window", "window-start", "in-progress", "empty", "truncated", "duplicate",
+                        "bad-count", "wrong-workflow", "unavailable"):
+            saved = report("2026-11-06", "passed", 60, ())
+            listed = [run_metadata(saved), run_metadata(recent)]
+            reports = [initial, *passes, recent]
+            if variant in {"pending", "new-attempt", "missing-conclusion", "wrong-event", "wrong-creation",
+                           "wrong-repository", "complete", "complete-failure"}:
+                if variant == "pending":
+                    saved.update(status="pending", conclusion=None)
+                elif variant == "new-attempt":
+                    listed[0]["run_attempt"] = 2
+                elif variant == "missing-conclusion":
+                    saved.pop("conclusion")
+                elif variant == "wrong-event":
+                    saved["source"]["event"] = "workflow_dispatch"
+                elif variant == "wrong-creation":
+                    saved["created_at"] = "2026-11-06T00:00:01Z"
+                elif variant == "wrong-repository":
+                    saved["source"]["repository"] = "example/other"
+                elif variant == "complete-failure":
+                    saved = report("2026-11-06", "failed", 60, (136,))
+                    listed[0] = run_metadata(saved)
+                reports.append(saved)
+            elif variant == "outside-window":
+                listed[0]["created_at"] = "2026-11-01T23:59:59Z"
+            elif variant == "window-start":
+                listed[0]["created_at"] = "2026-11-02T00:00:00Z"
+            elif variant == "in-progress":
+                listed[0]["status"] = "in_progress"
+            elif variant == "empty":
+                listed = []
+            elif variant == "duplicate":
+                listed = [listed[1], listed[1]]
+            elif variant == "wrong-workflow":
+                listed[0]["path"] = ci_report.PRODUCER_PATHS[0]
+            response = {"total_count": len(listed), "workflow_runs": listed}
+            if variant == "truncated":
+                response["total_count"] = 101
+            elif variant == "bad-count":
+                response["total_count"] = True
+            class API(ci_report.ReportGitHub):
+                def __init__(self):
+                    super().__init__("sudoHG/immichSlides", "")
+                    self.issues, self.calls, self.listings, self.patches = copy.deepcopy(issues), [], [], []
+                def _request(self, path, **options):
+                    self.calls.append(path)
+                    if "/actions/workflows/ci-nightly.yml/runs?" in path:
+                        self.listings.append(path)
+                        if variant == "unavailable":
+                            raise ContractError("synthetic unavailable metadata")
+                        return copy.deepcopy(response)
+                    if "/labels/" in path:
+                        return {}
+                    number = int(path.rsplit("/", 1)[-1])
+                    if options["method"] == "PATCH":
+                        self.patches.append((number, copy.deepcopy(options["payload"])))
+                        self.issues[number].update(options["payload"])
+                    return copy.deepcopy(self.issues[number])
+            api = API()
+            with self.subTest(variant=variant), tempfile.TemporaryDirectory() as temporary:
+                output = Path(temporary)
+                snapshot = ci_report.merge_snapshot(None, reports, date(2026, 11, 8))
+                snapshot.update(api_budget={"requests": 30, "remaining": 4900, "limit": 5000},
+                    issue_index={identity_token(identities[139]): 139})
+                ci_report.write_report(output, snapshot, [], {"entries": []}, {}, stopped=False, now=date(2026, 11, 8),
+                    inventory=[issues[136], issues[138]])
+                with patch("ci_report.check_context"), patch("ci_report.ReportGitHub", return_value=api), \
+                        patch.dict("os.environ", {"CI_REPORT_TOKEN": "synthetic-test-token", "GITHUB_REPOSITORY": api.repository}), \
+                        patch("ci_report.datetime", wraps=datetime) as clock:
+                    clock.now.return_value = datetime(2026, 11, 8, tzinfo=timezone.utc)
+                    self.assertEqual(0, ci_report.main(["--phase", "sync", "--output-dir", str(output)]))
+                can_close = variant in {"complete", "outside-window", "in-progress", "empty"}
+                self.assertEqual("closed" if can_close else "open", api.issues[136]["state"])
+                self.assertEqual("open", api.issues[138]["state"])
+                self.assertEqual("open", api.issues[139]["state"])
+                self.assertEqual("2026-11-07", read_state(api.issues[138])["last_failure"])
+                self.assertEqual("2026-11-07", read_state(api.issues[139])["last_failure"])
+                if not can_close and variant != "complete-failure":
+                    self.assertEqual(3, len(read_state(api.issues[136])["explicit_pass_nights"]))
+                    self.assertIn("2026-11-07", read_state(api.issues[136])["explicit_pass_nights"])
+                    self.assertTrue(all("state" not in payload for number, payload in api.patches if number == 136))
+                self.assertEqual(1, len(api.listings))
+                self.assertEqual({"branch": ["main"], "status": ["completed"], "per_page": ["100"], "page": ["1"],
+                    "created": ["2026-11-02T00:00:00Z..2026-11-08T23:59:59Z"]}, parse_qs(urlparse(api.listings[0]).query))
+                self.assertEqual(30 + len(api.calls), api.request_count)
+                self.assertLessEqual(api.request_count, ci_report.REQUEST_BUDGET)
 
     def test_flaky_skipped_missing_and_infrastructure_nights_cannot_close(self):
         for outcome in ("flaky-passed", "skipped", "not-run", "failed"):

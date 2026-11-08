@@ -353,6 +353,18 @@ once; any registry reference, including an expired one, blocks closure. A manual
 closed issue reopens only for a new verified failure, never by replaying its old
 failure or delivering passing nights. Closed issues are not rewritten on passing nights.
 
+Before synchronization, one GET lists up to 100 completed main nightlies from the
+same seven UTC dates, within the shared API budget. Each listed eligible run's
+current attempt must have a nonpending snapshot entry with matching completion,
+creation time and event. Missing attempts or unavailable/incomplete metadata defer
+all CLOSE decisions in that synchronization. New failures, updates and reopen
+decisions continue unchanged; deferred closures still retain updated pass history.
+A completion therefore cannot close issues on stale saved passes while newer
+completed nights await scheduled collection. Once those nights are collected,
+the ordinary three-pass-night and registry rules apply again. A scheduled
+collection's API-budget stop is separate: it can defer all issue writes, rather
+than being the closure-specific protection.
+
 The managed state keeps lifetime first/last failure dates and failure-night count,
 recent replay bookkeeping and nights since the last failure. At most three older pass
 nights are needed for closure; newer attempts inside the evidence window can revoke

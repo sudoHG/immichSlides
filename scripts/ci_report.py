@@ -1143,7 +1143,47 @@ def wait_for_issue_visibility(api, number, label):
         time.sleep(min(2, max(0, deadline - time.monotonic())))
 
 
-def sync_identity(api, token, identity, entries, registry_issues, registry_tokens, by_number, by_token, label):
+def completed_nightlies_collected(api, snapshot_path, now):
+    """One bounded GET must establish coverage before saved passes can close issues."""
+    from urllib.parse import urlencode
+    cutoff = (now - timedelta(days=EVIDENCE_DAYS - 1)).isoformat()
+    try:
+        response = api.repo("actions/workflows/ci-nightly.yml/runs?" + urlencode({
+            "branch": "main", "status": "completed", "per_page": 100, "page": 1,
+            "created": cutoff + "T00:00:00Z.." + now.isoformat() + "T23:59:59Z"}))
+        total, runs = response["total_count"], response["workflow_runs"]
+        if type(total) is not int or not 0 <= total <= 100 or not isinstance(runs, list) or len(runs) != total:
+            return False
+        snapshot = decode(snapshot_path.read_text())
+        saved = {entry["run"]["id"]: entry for rollup in snapshot["days"].values() for entry in rollup["entries"]
+                 if entry["source"]["workflow_path"] == NIGHTLY_PATH}
+        seen = set()
+        for run in runs:
+            if type(run["id"]) is not int or run["id"] <= 0 or run["id"] in seen:
+                return False
+            seen.add(run["id"])
+            if run["path"] != NIGHTLY_PATH:
+                return False
+            if run["status"] != "completed" or not eligible_run(run, api.repository):
+                continue
+            day = utc_timestamp(run["created_at"]).date().isoformat()
+            if not cutoff <= day <= now.isoformat():
+                continue
+            previous = saved.get(run["id"])
+            if (type(run["run_attempt"]) is not int or run["run_attempt"] <= 0 or not previous
+                    or previous["run"]["attempt"] != run["run_attempt"] or previous["status"] == "pending"
+                    or previous.get("conclusion") != run["conclusion"] or not run["conclusion"]
+                    or previous.get("created_at") != run["created_at"] or previous["source"]["event"] != run["event"]
+                    or previous["source"]["repository"] != api.repository):
+                return False
+        return True
+    except RateLimitLow:
+        raise
+    except (ContractError, KeyError, TypeError, ValueError, OSError, EOFError, http.client.HTTPException):
+        return False
+
+
+def sync_identity(api, token, identity, entries, registry_issues, registry_tokens, by_number, by_token, label, *, allow_closures=True):
     issue = by_token.get(token)
     registered = registry_tokens.get(token)
     if registered:
@@ -1156,10 +1196,16 @@ def sync_identity(api, token, identity, entries, registry_issues, registry_token
     state = read_state(issue) if issue else None
     require(not state or state["token"] == token, "tracking identity changed before synchronization")
     decision = issue_decision(state, identity, entries, registry_referenced=bool(issue and issue["number"] in registry_issues))
+    deferred_close = decision["action"] == "close" and not allow_closures
+    if deferred_close:
+        decision["state"]["closed"] = False
+        decision["action"] = "update" if decision["state"] != state else "none"
     if decision["action"] == "none":
         return None
     state = decision["state"]
     payload = {"body": issue_body(issue, state, api.repository), "state": "closed" if state["closed"] else "open"}
+    if deferred_close:
+        payload.pop("state")
     if issue:
         labels = [item["name"] for item in issue.get("labels", [])]
         if label not in labels:
@@ -1173,7 +1219,8 @@ def sync_identity(api, token, identity, entries, registry_issues, registry_token
     return {"issue": issue["number"], "action": decision["action"], "token": token}
 
 
-def synchronize_issues(api, entries, registry, *, label=LABEL, errors=None, inventory=None, issue_index=None, post_merge_since=None):
+def synchronize_issues(api, entries, registry, *, label=LABEL, errors=None, inventory=None, issue_index=None, post_merge_since=None,
+                       allow_closures=True):
     entries = [entry for entry in notification_entries(entries, post_merge_since)
                if issue_eligible(entry) and entry["source"]["repository"] == api.repository]
     if not entries:
@@ -1227,7 +1274,8 @@ def synchronize_issues(api, entries, registry, *, label=LABEL, errors=None, inve
                     by_token[token] = matches[0]
                     by_number[matches[0]["number"]] = matches[0]
             require(token not in invalid_tokens, "duplicate tracking identity")
-            receipt = sync_identity(api, token, identity, entries, registry_issues, registry_tokens, by_number, by_token, label)
+            receipt = sync_identity(api, token, identity, entries, registry_issues, registry_tokens, by_number, by_token, label,
+                                    allow_closures=allow_closures)
             if receipt:
                 receipts.append(receipt)
         except RateLimitLow:
@@ -1766,9 +1814,10 @@ def main(argv=None):
         return 0
     errors = []
     try:
+        allow_closures = completed_nightlies_collected(api, output / "daily/history.json", datetime.now(timezone.utc).date())
         receipts, states = synchronize_issues(api, plan["entries"], plan["registry"], errors=errors,
                                             inventory=plan.get("issue_inventory", []), issue_index=plan.get("issue_index", {}),
-                                            post_merge_since=plan.get("post_merge_since"))
+                                            post_merge_since=plan.get("post_merge_since"), allow_closures=allow_closures)
     except RateLimitLow:
         receipts, states = [], {}
         errors.append({"code": "api-budget-low"})
