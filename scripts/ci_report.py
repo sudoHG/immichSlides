@@ -1463,7 +1463,7 @@ def discover_runs(api, event_name, event, now):
         if workflow is None:
             continue
         require(workflow["path"] == path, "producer workflow path mismatch")
-        start = (now - timedelta(days=1)).isoformat()
+        start = (now - timedelta(days=EVIDENCE_DAYS - 1)).isoformat()
         for run in api.pages(f"actions/workflows/{workflow['id']}/runs", "workflow_runs",
                              branch="main", **({"event": "push"} if path != NIGHTLY_PATH else {}),
                              created=start + "T00:00:00Z.." + now.isoformat() + "T23:59:59Z"):
@@ -1475,23 +1475,35 @@ def discover_runs(api, event_name, event, now):
     return sorted(runs.values(), key=lambda item: item["id"])
 
 
-def snapshot_artifacts(api):
-    # Consume GitHub's newest-first listing only until trusted history is found.
-    for page in range(1, 101):
-        batch = api.repo(f"actions/artifacts?per_page=100&page={page}")["artifacts"]
-        artifacts = []
-        for artifact in batch:
+def snapshot_artifacts(api, workflow):
+    def metadata(path, collection=None, **filters):
+        previous = getattr(api, "retry_reads", False)
+        api.retry_reads = True
+        try:
+            return api.pages(path, collection, **filters)
+        finally:
+            api.retry_reads = previous
+
+    # An old run can upload the newest snapshot on rerun, even across listing pages.
+    # Workflow-run search filters silently cap the listing at 1000 results.
+    uploaders = metadata(f"actions/workflows/{workflow['id']}/runs", "workflow_runs")
+    uploaders.sort(key=lambda run: utc_timestamp(run["updated_at"]), reverse=True)
+    artifacts = []
+    for uploader in uploaders:
+        upper = utc_timestamp(uploader["updated_at"])
+        artifacts.sort(key=lambda item: item[:3], reverse=True)
+        # Serialized reporter jobs cannot upload newer bytes after this metadata read.
+        while artifacts and artifacts[0][0] > upper:
+            yield artifacts.pop(0)
+        for artifact in metadata(f"actions/runs/{uploader['id']}/artifacts", "artifacts"):
             match = re.fullmatch(r"ci-report-daily-([1-9][0-9]*)-([1-9][0-9]*)", artifact["name"])
             if not match or artifact.get("workflow_run", {}).get("head_branch") != "main":
                 continue
             created = datetime.fromisoformat(artifact["created_at"].replace("Z", "+00:00"))
             require(created.tzinfo is not None and created.utcoffset() == timedelta(0), "invalid snapshot creation time")
-            require(artifact["workflow_run"]["id"] == int(match[1]), "snapshot artifact run mismatch")
+            require(artifact["workflow_run"]["id"] == int(match[1]) == uploader["id"], "snapshot artifact run mismatch")
             artifacts.append((created, int(match[1]), int(match[2]), artifact))
-        yield from sorted(artifacts, key=lambda item: item[:3], reverse=True)
-        if len(batch) < 100:
-            return
-    raise ContractError("GitHub pagination limit reached; publication refused")
+    yield from sorted(artifacts, key=lambda item: item[:3], reverse=True)
 
 
 def read_snapshot(api):
@@ -1501,7 +1513,7 @@ def read_snapshot(api):
         return None
     require(workflow["path"] == REPORT_PATH, "reporter workflow path mismatch")
     runs = {}
-    for created, run_id, attempt, artifact in snapshot_artifacts(api):
+    for created, run_id, attempt, artifact in snapshot_artifacts(api, workflow):
         run = runs.setdefault(run_id, None)
         if run is None:
             run = runs[run_id] = api.repo(f"actions/runs/{run_id}")
