@@ -25,8 +25,10 @@ reporter jobs and are also excluded by collection and issue synchronization.
 Producer selection uses `workflow_run.path`, so custom run names cannot suppress a
 nightly completion report. Workflow policy rejects name-based conditions in consumers
 of producers with `run-name`.
-Daily scheduled/manual collection finds recent main pushes and nightlies, skips completed attempts already in the snapshot
-and revisits pending runs. It never repeats two days of artifact reads per completion.
+Daily scheduled/manual collection finds main pushes and nightlies from the seven
+most recent UTC dates, so an outage does not strand still-eligible backlog. It skips
+completed attempts already in the snapshot and revisits pending runs. A completion
+does not enumerate that discovery window.
 Branch diagnostic nightlies, including historical #158 probes, remain excluded.
 An explicit read-only diagnostic command can inspect a same-repository branch
 `workflow_dispatch` run without adding it to trusted history or synchronizing issues:
@@ -171,10 +173,12 @@ This reader must be merged before a producer emits version 2, following
 not activate UI execution, alter live scope or implement offline performance.
 
 The latest trusted snapshot is merged, rather than rebuilding historical days from
-producer artifacts. Snapshot discovery reads the newest artifact pages only until a
-trusted snapshot is found, then checks its exact name through GitHub's filtered
-artifact listing to reject duplicates across pages. It does not enumerate older,
-unrelated artifacts before reading that snapshot; pagination and API budgets remain bounded.
+producer artifacts. Snapshot discovery pages through `ci-report` workflow runs
+and reads each run's own artifacts, then checks the candidate's exact name through
+GitHub's filtered artifact listing to reject duplicates across uploaders. It never
+enumerates the repository's unfiltered artifact inventory. Unrelated artifact volume
+and failures of that large listing therefore cannot hide readable reporter history;
+pagination and API budgets remain bounded.
 Only new evidence from the seven most recent UTC dates may drive
 issues or post-merge notifications. Expired artifacts preserve saved results, cannot
 create infrastructure notifications, and cannot provide new closure evidence. Verified
@@ -220,11 +224,21 @@ its run's saved entry; older deliveries cannot overwrite it. A nightly entry als
 compact `attempt_history` so the first failure survives reruns. Conflicting identities
 or provenance are refused.
 
-Search repository artifacts page by page in GitHub's listing order (newest IDs first) and
-stop at the first trusted reporter snapshot; candidates are ordered by creation time only
-within a page, which matches upload order because reporter runs are serialized. Discovery
-still depends on the snapshot staying within the listing's 100-page limit, so a reporter
-outage of one to two weeks would again refuse until a per-run lookup replaces it. A verified
+Read reporter-run metadata in GitHub's listing order, 100 runs per page, within
+the existing 100-page and shared request/quota caps. Omit run search filters:
+[GitHub limits filtered workflow-run searches to 1,000 results](https://docs.github.com/en/rest/actions/workflow-runs#list-workflow-runs-for-a-workflow),
+which could hide an older run's recent upload. Snapshot validation still requires
+main provenance. Order uploaders by
+`updated_at`, an upper bound on their snapshot uploads under serialized reporter
+jobs. Read a run's own artifacts only while that bound could beat the pending
+candidate, then validate candidates in upload order and stop at the first trusted
+snapshot. This preserves a newer upload from an older run across metadata pages,
+including earlier attempts of an interrupted rerun. Run creation age adds no
+rejection boundary: an old run can upload a new, unexpired snapshot. The small discovery reads use the existing bounded GET retry
+policy and shared request/quota budgets; evidence validation is never retried or
+bypassed. The 100-page discovery ceiling applies to reporter runs rather than
+unrelated artifacts. An API-budget stop before history verification still refuses
+publication, rather than resetting or substituting history. A verified
 upload from an earlier attempt remains usable if a later rerun is interrupted. Consume
 the newest available snapshot only after verifying its repository,
 workflow ID/path, main ancestry, uploader run/attempt and embedded provenance. The daily
@@ -338,6 +352,18 @@ passes for that identity and no registry reference. Multiple runs on one night c
 once; any registry reference, including an expired one, blocks closure. A manually
 closed issue reopens only for a new verified failure, never by replaying its old
 failure or delivering passing nights. Closed issues are not rewritten on passing nights.
+
+Before synchronization, one GET lists up to 100 completed main nightlies from the
+same seven UTC dates, within the shared API budget. Each listed eligible run's
+current attempt must have a nonpending snapshot entry with matching completion,
+creation time and event. Missing attempts or unavailable/incomplete metadata defer
+all CLOSE decisions in that synchronization. New failures, updates and reopen
+decisions continue unchanged; deferred closures still retain updated pass history.
+A completion therefore cannot close issues on stale saved passes while newer
+completed nights await scheduled collection. Once those nights are collected,
+the ordinary three-pass-night and registry rules apply again. A scheduled
+collection's API-budget stop is separate: it can defer all issue writes, rather
+than being the closure-specific protection.
 
 The managed state keeps lifetime first/last failure dates and failure-night count,
 recent replay bookkeeping and nights since the last failure. At most three older pass
