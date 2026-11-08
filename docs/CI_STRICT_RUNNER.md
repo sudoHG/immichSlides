@@ -1438,10 +1438,18 @@ Local disk preflight requires 80 GiB.
 
 ## Tracer, budgets and results
 
-The tracer prepays the existing process-sampling pool for each serial warm child
-in parent memory, so a timeout of the optional diagnostic ledger does not itself
-disable simulator CPU evidence. The loan is refunded only from a complete,
-validated per-case receipt; missing or unfinished measurements spend it fully.
+The tracer pre-reserves a fallback process-sampling loan for each serial warm
+child in parent memory. Only a child whose inherited Xcode diagnostic ledger is
+unavailable at startup uses it, restoring simulator CPU evidence while treating
+its unknown App-hang stack-attempt count as exhausted. Healthy children preserve
+the original split host/process balance and capture count; the parent reloads
+that ledger at its existing checkpoint, so a missing public case receipt does
+not drain a healthy pool. The private case manifest binds the child's startup
+loan choice, so a stale healthy checkpoint cannot refund a loan child.
+For loan children or an unavailable checkpoint ledger, refunds require
+a complete validated case receipt; missing or unfinished measurements spend the
+loan fully, including an unfinished sampler whose invalid measurement was dropped.
+An exception collecting results leaves the loan unrefunded.
 See [the sampling accounting contract](CI_SUMMARY.md#bounded-infrastructure-diagnostics).
 This does not guarantee a sample when the host or process query is unavailable,
 and does not change test verdicts, deadlines or environment-limit eligibility.

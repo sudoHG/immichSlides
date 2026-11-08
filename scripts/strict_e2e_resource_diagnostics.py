@@ -428,8 +428,16 @@ class ProcessSamplingBudget:
         self.loan, self.remaining_seconds = self.remaining_seconds, 0.0
         return self.loan
 
-    def settle_case(self, receipt, *, invocations):
+    def settle_case(self, receipt, *, invocations, recorder=None, prepaid=None):
         loan, self.loan = self.loan, 0.0
+        if prepaid is False and recorder is not None and "xcode" not in recorder.unavailable:
+            spent = recorder.process_sampler_wall_seconds
+            if spent is None:
+                spent = sum(case["sampler_wall_seconds"] if case["sampler_wall_seconds"] is not None
+                    else SAMPLER_WALL_BUDGET_SECONDS for case in recorder.case_resources)
+            # A healthy child uses the original split accounting, even without a public case receipt.
+            self.remaining_seconds = max(0, SAMPLER_WALL_BUDGET_SECONDS - spent)
+            return
         try:
             validate_receipt(receipt)
             cases = receipt.get("case_resources", [])
@@ -780,8 +788,11 @@ class CaseSampler:
         # Older ledgers lack process-only accounting; retain their conservative combined charge.
         self.previous_process_spent = self.recorder.process_sampler_wall_seconds
         if self.previous_process_spent is None:
-            self.previous_process_spent = sum(case["sampler_wall_seconds"] if case["sampler_wall_seconds"] is not None
-                else SAMPLER_WALL_BUDGET_SECONDS for case in self.recorder.case_resources)
+            if getattr(self.recorder, "prepaid_process_sampling", False):
+                self.previous_process_spent = SAMPLER_WALL_BUDGET_SECONDS
+            else:
+                self.previous_process_spent = sum(case["sampler_wall_seconds"] if case["sampler_wall_seconds"] is not None
+                    else SAMPLER_WALL_BUDGET_SECONDS for case in self.recorder.case_resources)
         self.reserved = max(0, SAMPLER_WALL_BUDGET_SECONDS - self.previous_process_spent)
         if "xcode" in self.recorder.unavailable and not getattr(self.recorder, "prepaid_process_sampling", False):
             self.reserved = 0.0

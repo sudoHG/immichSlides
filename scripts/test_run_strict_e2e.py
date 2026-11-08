@@ -985,6 +985,48 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                     self.assertEqual(("diagnosticd", 51), (case["simulator_processes"]["entries"][0]["name"],
                         case["simulator_processes"]["entries"][0]["mean"]))
 
+    def test_prepaid_allowance_preserves_healthy_ledger_process_and_capture_accounting(self):
+        import ci_execution_diagnostics as diagnostics
+
+        for allowance in (None, 0, 120):
+            with self.subTest(allowance=allowance), tempfile.TemporaryDirectory() as raw, diagnostics.session() as recorder:
+                recorder.process_sampler_wall_seconds = 50
+                recorder.app_hang_capture_attempts = 2
+                def execute(*_args):
+                    self.assertEqual(50, recorder.process_sampler_wall_seconds)
+                    self.assertEqual(2, recorder.app_hang_capture_attempts)
+                    self.assertFalse(getattr(recorder, "prepaid_process_sampling", False))
+                code, _, stderr, _ = self._run_p2_main(Path(raw) / "evidence", suite="smoke", platform="ios",
+                    model="iPhone", warm=True, xcodebuild_exit=65, late_image_attempt=execute,
+                    process_sampling_allowance_seconds=allowance)
+                self.assertEqual(65, code, stderr)
+                self.assertIs(False, json.loads((Path(raw) / "evidence/case-manifest.json").read_text())["process_sampling_prepaid"])
+
+    def test_loan_path_cannot_renew_lost_app_hang_capture_attempts(self):
+        import ci_execution_diagnostics as diagnostics
+        import strict_e2e_resource_diagnostics as resources
+        import threading
+
+        with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted"}), \
+                mock.patch.object(resources, "capture_main_thread", return_value={
+                    "status": "failure", "sample_count": 0, "frames": []}) as capture:
+            for child in range(4):
+                with self.subTest(child=child), tempfile.TemporaryDirectory() as raw, diagnostics.session() as recorder:
+                    recorder.load(Path(raw) / "absent-ledger.json")
+                    def execute(*_args):
+                        probe = resources.AppHangCapture(recorder, threading.Event(), device="device")
+                        for elapsed in (0, 2, 4, 6, 8, 10):
+                            probe.observe(42, 90, elapsed, remaining_seconds=120)
+                        if probe.worker is not None:
+                            probe.worker.join(timeout=1)
+                        self.assertFalse(probe.attempted)
+                    code, _, stderr, _ = self._run_p2_main(Path(raw) / "evidence", suite="smoke", platform="ios",
+                        model="iPhone", warm=True, xcodebuild_exit=65, late_image_attempt=execute,
+                        process_sampling_allowance_seconds=120)
+                    self.assertEqual(65, code, stderr)
+                    self.assertIs(True, json.loads((Path(raw) / "evidence/case-manifest.json").read_text())["process_sampling_prepaid"])
+            capture.assert_not_called()
+
     def test_warm_test_inputs_do_not_prevent_private_bundle_disposal(self):
         import ci_execution_diagnostics as diagnostics
         with tempfile.TemporaryDirectory() as raw, diagnostics.session() as recorder:
@@ -3731,9 +3773,10 @@ class StrictCITracerTests(unittest.TestCase):
 
         identity = {"schema_version": 1, "event": "local", "repository": "sudoHG/immichSlides",
                     "commit_sha": "0" * 40, "tree_sha": "0" * 40, "dirty": False}
-        for failure in (None, "readiness", "service", "cold", "hard-timeout"):
-            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as raw:
-                root, order, clock = Path(raw), [], [0.0]
+        for failure, has_receipt in ((None, True), (None, False), ("readiness", True),
+                                    ("service", True), ("cold", True), ("hard-timeout", True)):
+            with self.subTest(failure=failure, has_receipt=has_receipt), tempfile.TemporaryDirectory() as raw:
+                root, order, clock, loans = Path(raw), [], [0.0], []
                 case = dict(platform="ios", device="ipad", configuration="Debug", suite="journey-a",
                             scenario="normal", fixture="a")
                 manifest = root / "manifest.json"
@@ -3755,8 +3798,7 @@ class StrictCITracerTests(unittest.TestCase):
                         return 1 if failure == "cold" else 0
                     order.append("warm")
                     self.assertEqual("2", command[command.index("--native-diagnostics-allowance-seconds") + 1])
-                    self.assertEqual(180 if order.count("warm") == 1 else 173,
-                        float(command[command.index("--process-sampling-allowance-seconds") + 1]))
+                    loans.append(float(command[command.index("--process-sampling-allowance-seconds") + 1]))
                     self.assertIn("--simulator-boot-submitted", command)
                     evidence = Path(command[command.index("--evidence-dir") + 1])
                     evidence.mkdir(parents=True)
@@ -3764,7 +3806,13 @@ class StrictCITracerTests(unittest.TestCase):
                     receipt = bounded_diagnostics_receipt(resources=True)
                     receipt["case_resources"][0]["sampler_wall_seconds"] = 7
                     receipt["collection_seconds"] = dict.fromkeys(receipt["collection_seconds"])
-                    (evidence / "case-manifest.json").write_text(json.dumps({"bounded_diagnostics": receipt}))
+                    (evidence / "case-manifest.json").write_text(json.dumps({"process_sampling_prepaid": False,
+                        **({"bounded_diagnostics": receipt} if has_receipt else {})}))
+                    child = diagnostics.Recorder()
+                    ledger = Path(command[command.index("--diagnostics-receipt") + 1])
+                    child.load(ledger)
+                    child.process_sampler_wall_seconds = 3 * order.count("warm") if has_receipt else 0
+                    child.save(ledger)
                     suite = command[command.index("--suite") + 1]
                     bundle, method = tracer.resolve_suite_selector("ios", suite).split("/", 1)
                     (evidence / "xcodebuild.log").write_text("test-without-building\n")
@@ -3804,6 +3852,7 @@ class StrictCITracerTests(unittest.TestCase):
                     self.assertEqual(0, code)
                     self.assertEqual("passed", summary["status"])
                     self.assertEqual(["cold", "bootstatus", "spawn", "warm", "warm"], order)
+                    self.assertEqual([180, 177 if has_receipt else 180], loans)
                 else:
                     self.assertEqual(1, code)
                     self.assertNotIn("warm", order)
@@ -6558,6 +6607,25 @@ raise SystemExit(65)
         self.assertAlmostEqual(0.005, recorder.cost["preparation"])
         self.assertFalse(recorder.truncated)
 
+    def test_unfinished_prepaid_sampler_cannot_renew_its_loan_after_dropped_measurements(self):
+        import ci_execution_diagnostics as diagnostics
+        import strict_e2e_resource_diagnostics as resources
+
+        recorder = diagnostics.Recorder()
+        recorder.unavailable.add("xcode")
+        recorder.prepaid_process_sampling = True
+        recorder.process_sampler_wall_seconds = 150
+        with mock.patch.object(resources.threading, "Thread"), \
+                mock.patch.object(resources, "validate_case_resources", side_effect=ValueError("invalid measurement")):
+            first = resources.CaseSampler(recorder, "device").start()
+            self.assertEqual(30, first.reserved)
+            first.stop()
+            self.assertIsNone(recorder.process_sampler_wall_seconds)
+            self.assertEqual([], recorder.case_resources)
+            successor = resources.CaseSampler(recorder, "device").start()
+            self.assertEqual(0, successor.reserved, "unknown predecessor cost cannot reclaim the prepaid baseline")
+            successor.stop()
+
     def test_process_sampling_allowance_rejects_unbounded_loans_before_preparation(self):
         from contextlib import redirect_stderr
         for allowance in ("-1", "181", "nan", "inf"):
@@ -6571,6 +6639,7 @@ raise SystemExit(65)
                 prepare.assert_not_called()
 
     def test_process_sampling_loans_refund_only_complete_case_measurements(self):
+        import ci_execution_diagnostics as diagnostics
         import strict_e2e_resource_diagnostics as resources
         from test_ci_summary import bounded_diagnostics_receipt
 
@@ -6599,6 +6668,14 @@ raise SystemExit(65)
                 # Once the next child owns the loan, a missing result spends it fully.
                 budget.settle_case(None, invocations=1)
                 self.assertEqual(0, budget.reserve_case())
+        # A child that used its loan may leave an older healthy ledger when final IO also fails.
+        stale = diagnostics.Recorder()
+        stale.process_sampler_wall_seconds = 0
+        for candidate in (None, receipt):
+            budget = resources.ProcessSamplingBudget()
+            self.assertEqual(180, budget.reserve_case())
+            budget.settle_case(candidate, invocations=1, recorder=stale, prepaid=True)
+            self.assertEqual(0 if candidate is None else 173, budget.reserve_case())
 
     def test_native_allowance_precharges_timeouts_and_stops_after_twenty_seconds(self):
         import strict_e2e_resource_diagnostics as resources

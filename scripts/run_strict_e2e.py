@@ -795,15 +795,18 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         help=f"minimum free GiB required before xcodebuild (default: {MIN_DATA_GIB})",
     )
     arguments = parser.parse_args(argv)
-    from strict_e2e_resource_diagnostics import NativeActivityBudget, SAMPLER_WALL_BUDGET_SECONDS
+    from strict_e2e_resource_diagnostics import NativeActivityBudget, SAMPLER_WALL_BUDGET_SECONDS, APP_HANG_JOB_CAP
     allowance = arguments.process_sampling_allowance_seconds
     if allowance is not None and not 0 <= allowance <= SAMPLER_WALL_BUDGET_SECONDS:
         parser.error("process sampling allowance must be finite and within the job sampling budget")
     if active() is not None:
         active().native_activity_budget = NativeActivityBudget(arguments.native_diagnostics_allowance_seconds)
-        if allowance is not None:
+        active().prepaid_process_sampling = False
+        if allowance is not None and "xcode" in active().unavailable:
             active().prepaid_process_sampling = True
             active().process_sampler_wall_seconds = SAMPLER_WALL_BUDGET_SECONDS - allowance
+            # Unknown inherited attempts cannot grant another job-wide stack capture allowance.
+            active().app_hang_capture_attempts = APP_HANG_JOB_CAP
     if arguments.listed_retry_device and not arguments.test_without_building:
         parser.error("listed-only retry requires --test-without-building")
     if arguments.listed_retry_device and (arguments.platform == "tvos") != (arguments.listed_retry_device == "tv"):
@@ -927,6 +930,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             private_bundles.append((result_bundle_path, ""))
         case_manifest = {
             "source_sha": read_source_sha(REPO_ROOT),
+            "process_sampling_prepaid": bool(getattr(active(), "prepaid_process_sampling", False)),
             "platform": arguments.platform,
             "destination": arguments.destination,
             "os": "iOS Simulator" if arguments.platform == "ios" else "tvOS Simulator",
