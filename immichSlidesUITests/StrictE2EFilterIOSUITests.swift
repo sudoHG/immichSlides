@@ -36,7 +36,8 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
             // Serialize read-only diagnostics after the entire judged flow, never between Next actions.
             for (name, capture) in albumCaptureReadbacks {
                 if let diagnostic = capture.diagnostics.projection(
-                    observation: capture.observation, previousScene: capture.previous)
+                    observation: capture.observation, previousScene: capture.previous,
+                    inputs: FirstFailureContext.albumDiagnosticInputs())
                 {
                     StrictE2EVisualEvidence.writeJSON(diagnostic, name: "\(name)-diagnostics.json")
                 }

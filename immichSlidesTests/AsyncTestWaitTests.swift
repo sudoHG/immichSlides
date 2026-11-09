@@ -5,6 +5,47 @@ import Testing
 @Suite
 struct AsyncTestWaitTests {
     @Test(arguments: [
+        "poll-order", "pause-return", "pause-observation", "pause-missing-request", "probe",
+        "window", "settle", "fixture", "member"
+    ])
+    func `album diagnostics omit data that the public reader cannot accept`(scenario: String) {
+        var inputs = (
+            fixture: "a", labels: ["known": "A1"],
+            pause: ["requested_seconds": 99.2, "returned_seconds": 99.8, "observed_seconds": 99.99]
+        )
+        let observation = ["manifest": "ledgerSceneAssets=known"]
+        let validSpans = (capture: 4.8, settle: 0.8)
+        var diagnostic = AlbumCaptureDiagnostics(
+            startedAtUptime: 100, windowSeconds: validSpans.capture, settleSeconds: validSpans.settle,
+            site: "album-play-1", probe: "frameSynchronized")
+        diagnostic.observed(requestedAtUptime: 101, returnedAtUptime: 101.1)
+        #expect(diagnostic.projection(observation: observation, previousScene: nil, inputs: inputs) != nil)
+        switch scenario {
+        case "poll-order":
+            diagnostic.observed(requestedAtUptime: 100.8, returnedAtUptime: 100.9)
+        case "pause-return": inputs.pause["returned_seconds"] = 99.1
+        case "pause-observation": inputs.pause["observed_seconds"] = 99.7
+        case "pause-missing-request": inputs.pause["requested_seconds"] = nil
+        case "probe":
+            diagnostic = AlbumCaptureDiagnostics(
+                startedAtUptime: 100, windowSeconds: validSpans.capture, settleSeconds: validSpans.settle,
+                site: "album-play-1", probe: "unreadable")
+        case "window":
+            diagnostic = AlbumCaptureDiagnostics(
+                startedAtUptime: 100, windowSeconds: .zero, settleSeconds: validSpans.settle,
+                site: "album-play-1", probe: "frameSynchronized")
+        case "settle":
+            diagnostic = AlbumCaptureDiagnostics(
+                startedAtUptime: 100, windowSeconds: validSpans.capture, settleSeconds: 5,
+                site: "album-play-1", probe: "frameSynchronized")
+        case "fixture": inputs.fixture = "unreadable"
+        case "member": inputs.labels["known"] = "A6"
+        default: break
+        }
+        #expect(diagnostic.projection(observation: observation, previousScene: nil, inputs: inputs) == nil)
+    }
+
+    @Test(arguments: [
         ("phase", "loading", "phase"), ("layerRoles", "incoming", "layer-roles"),
         ("loadingVisible", "true", "loading-visible"), ("layerOpacities", "1|1", "opacity-count"),
         ("layerOpacities", "0.999", "opacity-value"), ("layerOpacities", "missing", "opacity-value"),

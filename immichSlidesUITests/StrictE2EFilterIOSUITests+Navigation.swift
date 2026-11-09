@@ -309,6 +309,8 @@ extension StrictE2EFilterIOSUITests {
         }
         var pauseTapIssuedAt = "notIssued"
         var pauseTapReturnedAt = "notReturned"
+        var pauseTapIssuedUptime: TimeInterval?
+        var pauseTapReturnedUptime: TimeInterval?
         if (button.value as? String)?.lowercased() == "pause" {
             FirstFailureContext.mark("select", element: identifier)
             // Use the stable observation's target once; no re-resolution or Pause retry.
@@ -318,10 +320,13 @@ extension StrictE2EFilterIOSUITests {
                     dy: button.frame.midY - prepared.windowFrame.minY)
             )
             pauseTapIssuedAt = String(Date().timeIntervalSince1970)
+            pauseTapIssuedUptime = ProcessInfo.processInfo.systemUptime
             target.tapForFailureEvidence()
+            pauseTapReturnedUptime = ProcessInfo.processInfo.systemUptime
             pauseTapReturnedAt = String(Date().timeIntervalSince1970)
         }
         var after = before
+        var pauseReadbackReturnedUptime: TimeInterval?
         FirstFailureContext.mark("wait-scene", element: identifier)
         let isPaused = TestWait.until(.product(4)) {
             guard let controls = try? app.slideshowControlBarButtonObservation(identifier: identifier) else {
@@ -329,14 +334,15 @@ extension StrictE2EFilterIOSUITests {
             }
             after = self.albumSceneObservation(
                 snapshots: controls.snapshots, shouldUseFrameSynchronizedRender: isFunctionalCapture)
+            pauseReadbackReturnedUptime = ProcessInfo.processInfo.systemUptime
             return SharedSceneEvidenceManifest.parseKeyValueFields(after["render"] ?? "")["playbackPaused"] == "true"
                 && after["playPauseValue"] == "play"
         }
         after["pause_tap_issued_unix"] = pauseTapIssuedAt
         after["pause_tap_returned_unix"] = pauseTapReturnedAt
         FirstFailureContext.recordAlbumPause(
-            requested: Double(pauseTapIssuedAt), returned: Double(pauseTapReturnedAt),
-            observed: isPaused ? after["observed_unix"].flatMap(Double.init) : nil)
+            requestedUptime: pauseTapIssuedUptime, returnedUptime: pauseTapReturnedUptime,
+            observedUptime: isPaused ? pauseReadbackReturnedUptime : nil)
         attachStrictSceneObservation(before: before, after: after, name: "album-pause")
         guard isPaused else {
             if after["playPauseValue"] != "play" {
@@ -363,12 +369,14 @@ extension StrictE2EFilterIOSUITests {
         #if DEBUG
         // Retained EXIF can still fade after the scene probe settles; preserve the old minimum settle time.
         let windowStartedAt = Date()
+        let windowStartedUptime = ProcessInfo.processInfo.systemUptime
         let settleDeadline = windowStartedAt.addingTimeInterval(TestWait.seconds(.product(0.8)))
         let deadline = settleDeadline.addingTimeInterval(TestWait.seconds(.product(4)))
         var diagnostics: AlbumCaptureDiagnostics? =
             isFunctionalCapture && FirstFailureContext.isEnabled
             ? AlbumCaptureDiagnostics(
-                startedAt: windowStartedAt, deadline: deadline, settleDeadline: settleDeadline, site: name,
+                startedAtUptime: windowStartedUptime, windowSeconds: deadline.timeIntervalSince(windowStartedAt),
+                settleSeconds: settleDeadline.timeIntervalSince(windowStartedAt), site: name,
                 probe: "frameSynchronized") : nil
         let captureGuard = TestWait.hangGuard()
         var before: [String: String] = [:]
@@ -379,9 +387,12 @@ extension StrictE2EFilterIOSUITests {
         FirstFailureContext.mark("wait-scene", element: "slideshow.scenePresentation.contract.summary")
         let observeScene: () -> Bool = {
             guard Date() >= settleDeadline else { return false }
-            let requestedAt = diagnostics == nil ? nil : Date()
+            let requestedAtUptime = diagnostics == nil ? nil : ProcessInfo.processInfo.systemUptime
             before = self.albumSceneObservation(app: app, shouldUseFrameSynchronizedRender: isFunctionalCapture)
-            if let requestedAt { diagnostics?.observed(requestedAt: requestedAt, returnedAt: Date()) }
+            if let requestedAtUptime {
+                diagnostics?.observed(
+                    requestedAtUptime: requestedAtUptime, returnedAtUptime: ProcessInfo.processInfo.systemUptime)
+            }
             let render = SharedSceneEvidenceManifest.parseKeyValueFields(before["render"] ?? "")
             didAdvanceHistory =
                 Int(previousRender["historyCount"] ?? "").flatMap { previousCount in
@@ -418,7 +429,8 @@ extension StrictE2EFilterIOSUITests {
                     ? nil : didChangeLayers,
                 manifestComplete: isManifestComplete,
                 phase: .init(rawValue: render["phase"] ?? "") ?? .unknown)
-            gate.diagnostics = diagnostics?.projection(observation: before, previousScene: previousScene)
+            gate.diagnostics = diagnostics?.projection(
+                observation: before, previousScene: previousScene, inputs: FirstFailureContext.albumDiagnosticInputs())
             FirstFailureContext.withAlbumCaptureGate(gate) {
                 if previousScene == nil, rejectFrozenAlbumTransition(before) { return }
                 if previousScene != nil, !hasObservedHistoryAdvance, !didChangeLayers {

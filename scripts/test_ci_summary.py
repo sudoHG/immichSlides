@@ -256,6 +256,52 @@ def album_capture_gate_rejections(receipt):
 
 
 class SummaryContractTests(unittest.TestCase):
+    def test_invalid_album_diagnostics_leave_the_valid_gate_and_v5_proof_unchanged(self):
+        from ci_failure_diagnostics import (collect_first_failure_spool, environment_limit_evidence,
+            public_first_failure, scan_diagnostic_json)
+        summary, resource = hosted_album_timeout_summary()
+        row = summary["population"]["observed"][0]
+        messages = ["Album capture preparation must reach a complete paused scene within the playback capture budget."]
+        row["failure_messages"] = row["attempts"][0]["failure_messages"] = messages
+        legacy = row["first_failure"]
+        legacy["screenshot"] = {"status": "unavailable", "width": None, "height": None, "bytes": None}
+        expected = environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=5)
+        method = "StrictE2EFilterIOSUITests/testFilterAlbumTargetMembers"
+        for defect in ("poll-order", "pause-order", "private-field", "old-gate"):
+            receipt = copy.deepcopy(legacy)
+            receipt["album_capture"] = album_capture_diagnostic()
+            if defect == "poll-order":
+                receipt["album_capture"]["polls"] = [[1.0, 1.1], [0.8, 0.9]]
+            elif defect == "pause-order":
+                receipt["album_capture"]["pause"]["observed_seconds"] = -1
+            else:
+                receipt["album_capture"]["raw_probe"] = "PRIVATE_SENTINEL"
+                if defect == "old-gate":
+                    receipt["gate"]["stable"] = "invalid"
+            with self.subTest(defect=defect), tempfile.TemporaryDirectory() as raw:
+                directory = Path(raw)
+                (directory / "0.json").write_text(json.dumps(receipt))
+                node = {"nodeIdentifier": method, "result": "Failed"}
+                collect_first_failure_spool(directory, [method], [node], directory / "images")
+                if defect == "old-gate":
+                    self.assertNotIn("first_failure", node)
+                    self.assertIsNone(public_first_failure(receipt))
+                    continue
+                self.assertEqual(legacy, node.get("first_failure"))
+                self.assertEqual(legacy, public_first_failure(receipt))
+                self.assertIn("album_capture", receipt, "Projection must not mutate the raw evidence.")
+                self.assertNotIn("PRIVATE_SENTINEL", json.dumps(node))
+                changed = copy.deepcopy(summary)
+                changed_row = changed["population"]["observed"][0]
+                changed_row["first_failure"] = changed_row["attempts"][0]["first_failure"] = node["first_failure"]
+                self.assertEqual(expected, environment_limit_evidence(
+                    changed, changed_row, [resource], runner_hosted=True, policy_version=5))
+                self.assertEqual(changed, ci_summary.parse_summary(json.dumps(changed)))
+                reason = {"poll-order": "invalid poll times", "pause-order": "invalid pause ordering",
+                    "private-field": "invalid fields"}[defect]
+                with self.assertRaisesRegex(ci_summary.ContractError, "^album capture diagnostic: " + reason + "$"):
+                    scan_diagnostic_json(json.dumps({"first_failure": receipt}).encode())
+
     def test_album_capture_diagnostics_round_trip_without_changing_failure_or_legacy_projection(self):
         from ci_failure_diagnostics import environment_failure_projection, scan_diagnostic_json
         summary, _ = hosted_album_timeout_summary()

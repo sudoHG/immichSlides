@@ -1056,9 +1056,10 @@ method; native tap categories use only its already-read legacy official failure.
 Summary validation forbids both extensions in UI or any other suite. Required
 gate/UI producers and their trusted base reader receive no new field. Candidate
 strict runs use the candidate reader, nightly runs use their checkout, and the
-main reporter has that reader before a main producer emits. Install reader and
-scanner acceptance before activating either producer; old receipts remain valid
-without them. Neither extension enters the environment-limit failure projection
+main reporter has that reader before a main producer emits. Under this scoped
+exception, reader/scanner acceptance and both producers ship together in the
+same change; old receipts remain valid without them. Neither extension enters
+the environment-limit failure projection
 or changes any classification, judge, deadline, retry or result. Their closed
 fields and local success-sidecar boundary are defined in the
 [strict first-failure contract](CI_STRICT_RUNNER.md#first-failure-evidence).

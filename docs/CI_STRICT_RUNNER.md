@@ -1761,7 +1761,7 @@ are unchanged; a first capture still has null advance/layer facts.
 | `window_seconds`, `settle_seconds` | Original positive window and shorter nonnegative settle duration, at most 86,400 seconds; producers retain the existing 4.8-second window and 0.8-second settle |
 | `baseline` | Exactly `history` and `layers`, each `no-baseline`, `valid` or `unreadable`; first capture never claims an invented advance |
 | `pause` | Exactly `requested_seconds`, `returned_seconds`, `observed_seconds`; nullable, ordered offsets from window start in −86,400…86,400 seconds, from the existing Pause tap and paused readback; negative offsets are expected |
-| `members`, `unmapped_member_count` | At most 64 public manifest labels (`A1`…`A5` for fixture A, `A1`…`A8` for B) in slot order, and 0–64 unmatched references; references themselves are never exported |
+| `members`, `unmapped_member_count` | At most 64 public manifest labels (`A1`…`A5` for fixture A, `A1`…`A8` for B) in slot order of mapped members, and 0–64 unmatched references; references themselves are never exported |
 
 Labels are mapped only from the already-loaded frozen public member manifest,
 checking the fixture/label/ID correspondence before mapping. They describe App
@@ -1769,6 +1769,28 @@ manifest claims, not screenshot identity or target-album acceptance. Missing
 references or a partial mapping cannot establish membership. Every poll uses
 the same single existing App snapshot; the functional probe is frame-synchronized,
 although the retained failure element marker names the contract summary.
+Producers emit only `probe=frameSynchronized`; readers also accept `contract`
+without requiring historical receipts to be rewritten. Poll and Pause timing
+uses `ProcessInfo.systemUptime`, relative to a monotonic anchor sampled beside
+the existing capture-window start. The original product clock, 4.8-second
+deadline and 0.8-second settle are unchanged. All retained polls require the
+previous return to precede or equal the next request. Known Pause times require
+request ≤ return ≤ paused-readback observation; missing request cannot accompany
+a known return. Frame 2/3 Pause offsets still refer to the single Pause before
+frame 1, not additional Pause actions, so larger negative offsets are expected.
+The pure producer projection checks the reader's bounds and ordering and omits
+itself on invalid data. Other closed fields are constructed from fixed
+vocabularies and the already-validated public member mapping.
+
+The public first-failure projection also isolates an invalid `album_capture`:
+it removes only that field and revalidates the complete remaining receipt,
+including the pre-existing gate and unchanged 8 KiB bound. The spool collector
+uses this projection, preserving valid old evidence and its original v5
+eligibility. Invalid old fields still reject the record. Raw spool size,
+JSON/duplicate-key validation and public scanner/summary validation remain
+strict; oversized or undecodable input cannot be salvaged by this fallback.
+Invalid new fields are never published verbatim.
+
 Rejection analysis and fixture mapping do not run inside the judged polling loop.
 Successful readbacks stay in memory and are optionally written as
 `album-play-N-diagnostics.json` only after the complete three-frame flow, outside

@@ -100,7 +100,7 @@ enum FirstFailureContext {
     private static var gate: AlbumCaptureGate?
     private static var albumFixture: String?
     private static var albumMemberLabels: [String: String] = [:]
-    private static var albumPauseTimes: [String: Double] = [:]
+    private static var albumPauseUptimes: [String: Double] = [:]
 
     static func reset() {
         guard isEnabled else { return }
@@ -112,7 +112,7 @@ enum FirstFailureContext {
         gate = nil
         albumFixture = nil
         albumMemberLabels = [:]
-        albumPauseTimes = [:]
+        albumPauseUptimes = [:]
     }
 
     /// Only the already-loaded frozen public member manifest can name diagnostic members.
@@ -143,13 +143,13 @@ enum FirstFailureContext {
         lock.unlock()
     }
 
-    static func recordAlbumPause(requested: Double?, returned: Double?, observed: Double?) {
+    static func recordAlbumPause(requestedUptime: Double?, returnedUptime: Double?, observedUptime: Double?) {
         guard isEnabled else { return }
         lock.lock()
-        albumPauseTimes = [:]
-        albumPauseTimes["requested_seconds"] = requested
-        albumPauseTimes["returned_seconds"] = returned
-        albumPauseTimes["observed_seconds"] = observed
+        albumPauseUptimes = [:]
+        albumPauseUptimes["requested_seconds"] = requestedUptime
+        albumPauseUptimes["returned_seconds"] = returnedUptime
+        albumPauseUptimes["observed_seconds"] = observedUptime
         lock.unlock()
     }
 
@@ -157,7 +157,7 @@ enum FirstFailureContext {
         lock.lock()
         defer { lock.unlock() }
         guard let albumFixture else { return nil }
-        return (albumFixture, albumMemberLabels, albumPauseTimes)
+        return (albumFixture, albumMemberLabels, albumPauseUptimes)
     }
 
     static func snapshot() -> (timeline: FirstFailureTimeline, step: String, element: String, gate: AlbumCaptureGate?) {

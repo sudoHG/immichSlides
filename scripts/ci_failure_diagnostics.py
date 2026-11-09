@@ -791,9 +791,8 @@ def collect_first_failure_spool(directory, selectors, failed_nodes, output):
         try:
             if not path.is_file() or path.is_symlink() or path.stat().st_size > FIRST_FAILURE_MAX_BYTES:
                 continue
-            receipt = decode(path.read_text())
-            validate_first_failure(receipt)
-            if receipt["source"] != "xctest":
+            receipt = public_first_failure(decode(path.read_text()))
+            if receipt is None or receipt["source"] != "xctest":
                 continue
             image_data = None
             if receipt["screenshot"]["status"] == "captured":
@@ -1095,7 +1094,15 @@ def public_first_failure(receipt):
     try:
         validate_first_failure(receipt)
     except (ValueError, TypeError, OverflowError):
-        return None
+        if not isinstance(receipt, dict) or "album_capture" not in receipt:
+            return None
+        # An optional projection cannot erase independently valid pre-existing gate evidence.
+        core = {key: value for key, value in receipt.items() if key != "album_capture"}
+        try:
+            validate_first_failure(core)
+        except (ValueError, TypeError, OverflowError):
+            return None
+        return core
     return receipt
 
 # Fixed raise arguments and _require_named_png messages from the reviewed public contracts.

@@ -97,42 +97,58 @@ enum StrictE2ESceneCapture {
 /// Bounded timing of existing reads. No observation, delay or verdict is introduced here.
 struct AlbumCaptureDiagnostics {
     private static let maximumPolls = 16
-    let startedAt: Date
-    let deadline: Date
-    let settleDeadline: Date
+    let startedAtUptime: TimeInterval
+    let windowSeconds: TimeInterval
+    let settleSeconds: TimeInterval
     let site: String
     let probe: String
     private(set) var pollCount = 0
     private var polls: [[Double]] = []
 
-    init(startedAt: Date, deadline: Date, settleDeadline: Date, site: String, probe: String) {
-        self.startedAt = startedAt
-        self.deadline = deadline
-        self.settleDeadline = settleDeadline
+    init(
+        startedAtUptime: TimeInterval, windowSeconds: TimeInterval, settleSeconds: TimeInterval,
+        site: String, probe: String
+    ) {
+        self.startedAtUptime = startedAtUptime
+        self.windowSeconds = windowSeconds
+        self.settleSeconds = settleSeconds
         self.site = site
         self.probe = probe
     }
 
-    mutating func observed(requestedAt: Date, returnedAt: Date) {
+    mutating func observed(requestedAtUptime: TimeInterval, returnedAtUptime: TimeInterval) {
         pollCount += 1
         if polls.count == Self.maximumPolls { polls.removeFirst() }
-        polls.append([requestedAt.timeIntervalSince(startedAt), returnedAt.timeIntervalSince(startedAt)])
+        polls.append([requestedAtUptime - startedAtUptime, returnedAtUptime - startedAtUptime])
     }
 
-    func projection(observation: [String: String], previousScene: [String: String]?) -> [String: Any]? {
+    func projection(
+        observation: [String: String], previousScene: [String: String]?,
+        inputs: (fixture: String, labels: [String: String], pause: [String: Double])?
+    ) -> [String: Any]? {
         guard ["album-play-1", "album-play-2", "album-play-3"].contains(site),
-            let inputs = FirstFailureContext.albumDiagnosticInputs(), pollCount <= Int(Int32.max),
-            polls.allSatisfy({
-                $0.count == 2 && $0.allSatisfy { $0.isFinite && (0...86_400).contains($0) }
-                    && $0[0] <= $0[1]
-            })
+            ["frameSynchronized", "contract"].contains(probe),
+            let inputs, ["a", "b"].contains(inputs.fixture),
+            startedAtUptime.isFinite, startedAtUptime >= 0,
+            (0...Int(Int32.max)).contains(pollCount), polls.count == min(pollCount, Self.maximumPolls),
+            windowSeconds.isFinite, windowSeconds > 0, windowSeconds <= 86_400,
+            settleSeconds.isFinite, settleSeconds >= 0, settleSeconds < windowSeconds
         else { return nil }
+        var previousReturnSeconds = Double.zero
+        for poll in polls {
+            guard poll.count == 2, poll.allSatisfy({ $0.isFinite && (0...86_400).contains($0) }),
+                previousReturnSeconds <= poll[0], poll[0] <= poll[1]
+            else { return nil }
+            previousReturnSeconds = poll[1]
+        }
         let render = SharedSceneEvidenceManifest.parseKeyValueFields(observation["render"] ?? "")
         let previous = SharedSceneEvidenceManifest.parseKeyValueFields(previousScene?["render"] ?? "")
         let manifest = SharedSceneEvidenceManifest.parseKeyValueFields(observation["manifest"] ?? "")
         let refs = manifest["ledgerSceneAssets"]?.components(separatedBy: ",") ?? []
         guard refs.count <= 64 else { return nil }
         let members = refs.compactMap { inputs.labels[$0] }
+        let allowedMembers = Set((1...(inputs.fixture == "a" ? 5 : 8)).map { "A\($0)" })
+        guard members.allSatisfy({ allowedMembers.contains($0) }) else { return nil }
         let historyBaseline =
             previousScene == nil
             ? "no-baseline"
@@ -145,20 +161,23 @@ struct AlbumCaptureDiagnostics {
                 ? "valid" : "unreadable")
         var pause: [String: Any] = [:]
         for key in ["requested_seconds", "returned_seconds", "observed_seconds"] {
-            if let epoch = inputs.pause[key] {
-                let offset = epoch - startedAt.timeIntervalSince1970
+            if let uptime = inputs.pause[key] {
+                let offset = uptime - startedAtUptime
                 guard offset.isFinite, (-86_400...86_400).contains(offset) else { return nil }
                 pause[key] = offset
             } else {
                 pause[key] = NSNull()
             }
         }
+        if let returned = inputs.pause["returned_seconds"] {
+            guard let requested = inputs.pause["requested_seconds"], requested <= returned else { return nil }
+            if let observed = inputs.pause["observed_seconds"], returned > observed { return nil }
+        }
         return [
             "schema_version": 1, "site": site, "probe": probe, "fixture": inputs.fixture,
             "rejections": StrictE2ESceneCapture.stableWindowRejections(observation),
             "poll_count": pollCount, "polls": polls, "polls_truncated": pollCount > Self.maximumPolls,
-            "window_seconds": deadline.timeIntervalSince(startedAt),
-            "settle_seconds": settleDeadline.timeIntervalSince(startedAt),
+            "window_seconds": windowSeconds, "settle_seconds": settleSeconds,
             "baseline": ["history": historyBaseline, "layers": layersBaseline], "pause": pause,
             "members": members, "unmapped_member_count": refs.count - members.count
         ]
