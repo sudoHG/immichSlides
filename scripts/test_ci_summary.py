@@ -271,6 +271,10 @@ class SummaryContractTests(unittest.TestCase):
         self.assertEqual(environment_failure_projection(legacy), environment_failure_projection(row["first_failure"]))
         self.assertIn("album-play-1/frameSynchronized", ci_summary.render_markdown(read))
         scan_diagnostic_json(json.dumps({"nested": [read]}).encode())
+        mismatched = copy.deepcopy(summary)
+        mismatched["population"]["observed"][0]["first_failure"]["album_capture"]["fixture"] = "b"
+        with self.assertRaisesRegex(ci_summary.ContractError, "^album capture diagnostic: fixture differs from strict identity$"):
+            ci_summary.parse_summary(mismatched)
         row["first_failure"].pop("album_capture")
         self.assertEqual(summary, ci_summary.parse_summary(json.dumps(summary)))
 

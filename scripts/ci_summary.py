@@ -190,6 +190,9 @@ def validate_observation(entry):
             require(entry["identity"]["kind"] == "strict"
                 and entry["identity"]["dimensions"].get("suite") == "filter-album",
                 "album diagnostics require strict filter-album identity")
+            if "album_capture" in receipt:
+                require(receipt["album_capture"]["fixture"] == entry["identity"]["dimensions"].get("fixture"),
+                    "album capture diagnostic: fixture differs from strict identity")
         if item["duration_seconds"] is None:
             require(entry["identity"]["kind"] == "ui" and item["outcome"] in {"failed", "crashed"}
                     and ENVIRONMENT_LIMIT_FIELD not in entry,

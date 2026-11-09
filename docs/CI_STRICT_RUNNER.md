@@ -1781,7 +1781,8 @@ on Next can emit it, from one already-read legacy official failure message.
 Unknown, mixed or missing messages omit it. Original messages, phase/class,
 outcome and exit code are unchanged; there is no extra AX query, xcresult export,
 wait, tap or retry. Summary readers reject either extension outside strict
-`filter-album`. The public scanner checks the closed objects and the unchanged
+`filter-album`, and bind the album diagnostic's fixture to the strict identity.
+The public scanner checks the closed objects and the unchanged
 8 KiB receipt cap.
 
 Native activity support follows the
