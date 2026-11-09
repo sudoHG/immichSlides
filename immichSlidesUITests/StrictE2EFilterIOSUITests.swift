@@ -2,6 +2,11 @@ import XCTest
 
 #if os(iOS)
 final class StrictE2EFilterIOSUITests: XCTestCase {
+    var albumCaptureReadbacks:
+        [String: (
+            observation: [String: String], previous: [String: String]?, diagnostics: AlbumCaptureDiagnostics
+        )] = [:]
+
     override func invokeTest() {
         FirstFailureContext.reset()
         super.invokeTest()
@@ -13,6 +18,7 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
     }
 
     override func setUpWithError() throws {
+        albumCaptureReadbacks = [:]
         continueAfterFailure = false
         FirstFailureOrientation.set(.portrait)
     }
@@ -24,8 +30,19 @@ final class StrictE2EFilterIOSUITests: XCTestCase {
         let input = try requireStrictE2EInput()
         let manifest = try loadEvidenceManifest()
         let albumID = try stringValue(manifest, keyPath: ["target_album", "id"])
+        FirstFailureContext.configureAlbumDiagnostics(manifest: manifest)
         let app = try launchStrictE2EApp(recordSceneSequence: true)
-        defer { app.terminateForFailureEvidence() }
+        defer {
+            // Serialize read-only diagnostics after the entire judged flow, never between Next actions.
+            for (name, capture) in albumCaptureReadbacks {
+                if let diagnostic = capture.diagnostics.projection(
+                    observation: capture.observation, previousScene: capture.previous)
+                {
+                    StrictE2EVisualEvidence.writeJSON(diagnostic, name: "\(name)-diagnostics.json")
+                }
+            }
+            app.terminateForFailureEvidence()
+        }
 
         try completeFirstBootToModeSelection(app: app, input: input, evidencePrefix: "filter-album")
         enterFilterSummary(app: app)

@@ -353,6 +353,8 @@ def export_private_result_bundle(
                 directory, selectors = first_failure_spool
                 collect_first_failure_spool(directory, selectors, failed,
                     first_failure_images or evidence_dir / ("first-failure" + suffix))
+                from ci_failure_diagnostics import attach_native_tap_failure
+                attach_native_tap_failure(failed, raw_messages)
             if resource_sampler is not None:
                 from strict_e2e_resource_diagnostics import (
                     collect_native_activity, attach_pause_window_assertions, attach_failure_locations)

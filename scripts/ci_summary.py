@@ -185,6 +185,11 @@ def validate_observation(entry):
                 "validator failure message requires a failed strict observation")
     require(isinstance(entry["attempts"], list) and bool(entry["attempts"]), "attempts must be nonempty")
     for item in (entry, *entry["attempts"]):
+        receipt = item.get(FIRST_FAILURE_FIELD, {})
+        if {"album_capture", "native_tap_failure"} & receipt.keys():
+            require(entry["identity"]["kind"] == "strict"
+                and entry["identity"]["dimensions"].get("suite") == "filter-album",
+                "album diagnostics require strict filter-album identity")
         if item["duration_seconds"] is None:
             require(entry["identity"]["kind"] == "ui" and item["outcome"] in {"failed", "crashed"}
                     and ENVIRONMENT_LIMIT_FIELD not in entry,

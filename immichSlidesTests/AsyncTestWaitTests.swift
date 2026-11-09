@@ -5,6 +5,36 @@ import Testing
 @Suite
 struct AsyncTestWaitTests {
     @Test(arguments: [
+        ("phase", "loading", "phase"), ("layerRoles", "incoming", "layer-roles"),
+        ("loadingVisible", "true", "loading-visible"), ("layerOpacities", "1|1", "opacity-count"),
+        ("layerOpacities", "0.999", "opacity-value"), ("layerOpacities", "missing", "opacity-value"),
+        ("motionRawProgress", "0|0", "motion-progress-count"),
+        ("motionRawProgress", "1.01", "motion-progress-range"),
+        ("motionRawProgress", "nan", "motion-progress-range"), ("manifest", "", "manifest")
+    ])
+    func `stability diagnostics explain rejected observations without changing their judge`(
+        field: String, value: String, reason: String
+    ) {
+        var render = [
+            "phase": "stablePhoto", "layerRoles": "stable", "loadingVisible": "false",
+            "layerOpacities": "1", "motionRawProgress": "0.5"
+        ]
+        var manifest =
+            "sceneType=single;slotCount=1;slotReadiness=ready;canvasCoverage=1;emptyCanvasRatio=0;gapPixelCount=0;overlapPixelCount=0"
+        func observation() -> [String: String] {
+            [
+                "render": render.sorted(by: { $0.key < $1.key }).map { "\($0.key)=\($0.value)" }.joined(separator: ";"),
+                "manifest": manifest
+            ]
+        }
+        #expect(StrictE2ESceneCapture.isStableWindow(observation()))
+        #expect(StrictE2ESceneCapture.stableWindowRejections(observation()).isEmpty)
+        if field == "manifest" { manifest = value } else { render[field] = value }
+        #expect(!StrictE2ESceneCapture.isStableWindow(observation()))
+        #expect(StrictE2ESceneCapture.stableWindowRejections(observation()) == [reason])
+    }
+
+    @Test(arguments: [
         "complete", "extended-progress", "missing-render", "missing-opacity", "missing-progress",
         "invalid-progress", "negative-progress", "wrong-phase", "wrong-role",
         "not-ready", "missing-readiness", "empty-reference", "coverage", "gap", "overlap",

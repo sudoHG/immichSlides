@@ -1049,6 +1049,20 @@ candidate tracer checks use their producer checkout's reader, nightly aggregatio
 uses the run checkout, and the trusted reporter checks out `main`, which contains
 the optional reader before a main producer can emit this field. The extension does
 not activate a field in required gate/UI records. Old nights and old stack projections remain accepted.
+The same consumer boundary permits the strict `filter-album`-only
+`first_failure.album_capture` and `first_failure.native_tap_failure` diagnostics
+to ship with their readers. Album details are enabled only for that strict
+method; native tap categories use only its already-read legacy official failure.
+Summary validation forbids both extensions in UI or any other suite. Required
+gate/UI producers and their trusted base reader receive no new field. Candidate
+strict runs use the candidate reader, nightly runs use their checkout, and the
+main reporter has that reader before a main producer emits. Install reader and
+scanner acceptance before activating either producer; old receipts remain valid
+without them. Neither extension enters the environment-limit failure projection
+or changes any classification, judge, deadline, retry or result. Their closed
+fields and local success-sidecar boundary are defined in the
+[strict first-failure contract](CI_STRICT_RUNNER.md#first-failure-evidence).
+
 This exception relies on that consumer boundary: introducing the field into a
 base-read publication path or reading it with an older revision requires a separate
 reader rollout first. The PR must document this transition analysis.

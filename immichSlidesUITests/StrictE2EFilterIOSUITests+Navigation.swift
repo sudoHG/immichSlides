@@ -334,6 +334,9 @@ extension StrictE2EFilterIOSUITests {
         }
         after["pause_tap_issued_unix"] = pauseTapIssuedAt
         after["pause_tap_returned_unix"] = pauseTapReturnedAt
+        FirstFailureContext.recordAlbumPause(
+            requested: Double(pauseTapIssuedAt), returned: Double(pauseTapReturnedAt),
+            observed: isPaused ? after["observed_unix"].flatMap(Double.init) : nil)
         attachStrictSceneObservation(before: before, after: after, name: "album-pause")
         guard isPaused else {
             if after["playPauseValue"] != "play" {
@@ -362,6 +365,11 @@ extension StrictE2EFilterIOSUITests {
         let windowStartedAt = Date()
         let settleDeadline = windowStartedAt.addingTimeInterval(TestWait.seconds(.product(0.8)))
         let deadline = settleDeadline.addingTimeInterval(TestWait.seconds(.product(4)))
+        var diagnostics: AlbumCaptureDiagnostics? =
+            isFunctionalCapture && FirstFailureContext.isEnabled
+            ? AlbumCaptureDiagnostics(
+                startedAt: windowStartedAt, deadline: deadline, settleDeadline: settleDeadline, site: name,
+                probe: "frameSynchronized") : nil
         let captureGuard = TestWait.hangGuard()
         var before: [String: String] = [:]
         let previousRender = SharedSceneEvidenceManifest.parseKeyValueFields(previousScene?["render"] ?? "")
@@ -371,7 +379,9 @@ extension StrictE2EFilterIOSUITests {
         FirstFailureContext.mark("wait-scene", element: "slideshow.scenePresentation.contract.summary")
         let observeScene: () -> Bool = {
             guard Date() >= settleDeadline else { return false }
+            let requestedAt = diagnostics == nil ? nil : Date()
             before = self.albumSceneObservation(app: app, shouldUseFrameSynchronizedRender: isFunctionalCapture)
+            if let requestedAt { diagnostics?.observed(requestedAt: requestedAt, returnedAt: Date()) }
             let render = SharedSceneEvidenceManifest.parseKeyValueFields(before["render"] ?? "")
             didAdvanceHistory =
                 Int(previousRender["historyCount"] ?? "").flatMap { previousCount in
@@ -398,7 +408,7 @@ extension StrictE2EFilterIOSUITests {
                 .isCompleteVisibleScene
             let facts =
                 "historyAdvanced=\(hasObservedHistoryAdvance ? "true" : didAdvanceHistory.map { String($0) } ?? "unknown"), layersChanged=\(didChangeLayers), phase=\(render["phase"] ?? "unknown"), paused=\(render["playbackPaused"] ?? "unknown"), manifestComplete=\(isManifestComplete.map { String($0) } ?? "unknown")"
-            let gate = FirstFailureContext.AlbumCaptureGate(
+            var gate = FirstFailureContext.AlbumCaptureGate(
                 stable: render.isEmpty ? nil : StrictE2ESceneCapture.isStableWindow(before),
                 paused: render["playbackPaused"].flatMap(Bool.init),
                 entryHintHidden: before["entryHintVisible"].flatMap(Bool.init).map { !$0 },
@@ -408,6 +418,7 @@ extension StrictE2EFilterIOSUITests {
                     ? nil : didChangeLayers,
                 manifestComplete: isManifestComplete,
                 phase: .init(rawValue: render["phase"] ?? "") ?? .unknown)
+            gate.diagnostics = diagnostics?.projection(observation: before, previousScene: previousScene)
             FirstFailureContext.withAlbumCaptureGate(gate) {
                 if previousScene == nil, rejectFrozenAlbumTransition(before) { return }
                 if previousScene != nil, !hasObservedHistoryAdvance, !didChangeLayers {
@@ -462,6 +473,9 @@ extension StrictE2EFilterIOSUITests {
                 && beforeManifest["ledgerSceneAssets"] == afterManifest["ledgerSceneAssets"]
                 && beforeManifest["scenePublishTimestamp"] == afterManifest["scenePublishTimestamp"],
             "Visual ID failed \(name): the single capture must retain the complete paused scene")
+        if let diagnostics {
+            albumCaptureReadbacks[name] = (before, previousScene, diagnostics)
+        }
         return before
         #else
         _ = try captureAlbumPlaybackPNG(app: app, name: name)
