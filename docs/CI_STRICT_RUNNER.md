@@ -1438,6 +1438,24 @@ Local disk preflight requires 80 GiB.
 
 ## Tracer, budgets and results
 
+The tracer pre-reserves a fallback process-sampling loan for each serial warm
+child in parent memory. All supplied loans cap process/capture work across the
+child's sessions. Only a child whose inherited Xcode diagnostic ledger is
+unavailable at startup initializes its ledger balance from it, restoring CPU evidence while treating
+its unknown App-hang stack-attempt count as exhausted. Healthy children preserve
+the original split host/process balance and capture count. The parent records
+the inherited process cost and subtracts only that child's ledger delta from its
+reserved loan at the existing checkpoint, even without a public case receipt.
+The private case manifest binds the startup choice. Neither an older healthy
+ledger nor a later child lacking a manifest can restore already-spent loan time.
+For loan children or an unavailable checkpoint ledger, refunds require
+a complete validated case receipt; missing or unfinished measurements spend the
+loan fully, including an unfinished sampler whose invalid measurement was dropped.
+An exception collecting results leaves the loan unrefunded.
+See [the sampling accounting contract](CI_SUMMARY.md#bounded-infrastructure-diagnostics).
+This does not guarantee a sample when the host or process query is unavailable,
+and does not change test verdicts, deadlines or environment-limit eligibility.
+
 ```bash
 python3 -B scripts/run_strict_ci_tracer.py --platform ios \
     --destination 'platform=iOS Simulator,id=<UDID>' \

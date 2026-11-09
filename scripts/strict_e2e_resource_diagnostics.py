@@ -25,7 +25,7 @@ from ci_bounded_diagnostics import (MAX_DIAGNOSTIC_SECONDS,
     MAX_INTEGER, public_stack_symbol, validate_app_hang_stack)
 from ci_bounded_diagnostics import (MAX_CONTINUE_WATCH_BYTES, MAX_CONTINUE_WATCH_FRAMES,
                                     CONTINUE_WATCH_STATUSES, validate_continue_watch)
-from ci_bounded_diagnostics import SIMULATOR_PROCESS_NAMES, validate_simulator_processes
+from ci_bounded_diagnostics import SIMULATOR_PROCESS_NAMES, validate_simulator_processes, validate_receipt
 from ci_bounded_diagnostics import PAUSE_WINDOW_ASSERTION_PREFIXES
 from ci_bounded_diagnostics import MAX_FAILURE_LOCATIONS, public_failure_locations
 from ci_execution_diagnostics import finite
@@ -415,6 +415,54 @@ class AppHangCapture:
         return self.charge if self.wall_seconds is None else self.wall_seconds
 
 
+class ProcessSamplingBudget:
+    """Prepay serial child sampling without depending on the optional IO ledger."""
+
+    def __init__(self):
+        self.remaining_seconds = float(SAMPLER_WALL_BUDGET_SECONDS)
+        self.loan = 0.0
+        self.inherited_process_seconds = None
+
+    @staticmethod
+    def ledger_process_seconds(recorder):
+        if recorder is None or "xcode" in recorder.unavailable:
+            return None
+        if recorder.process_sampler_wall_seconds is not None:
+            return recorder.process_sampler_wall_seconds
+        costs = [case["sampler_wall_seconds"] for case in recorder.case_resources]
+        if any(cost is None for cost in costs):
+            return None
+        if not costs and any(event["phase"] == "test-execution" for event in recorder.events):
+            return None  # A dropped unfinished sampler cannot masquerade as an unused ledger.
+        return sum(costs)
+
+    def reserve_case(self, *, recorder=None):
+        if self.loan:
+            return 0.0
+        self.inherited_process_seconds = self.ledger_process_seconds(recorder)
+        self.loan, self.remaining_seconds = self.remaining_seconds, 0.0
+        return self.loan
+
+    def settle_case(self, receipt, *, invocations, recorder=None, prepaid=None):
+        loan, self.loan = self.loan, 0.0
+        inherited, self.inherited_process_seconds = self.inherited_process_seconds, None
+        if prepaid is False and recorder is not None and "xcode" not in recorder.unavailable:
+            spent = self.ledger_process_seconds(recorder)
+            # Charge this child only; a stale ledger may omit work already paid by earlier loans.
+            if inherited is not None and spent is not None and spent >= inherited:
+                self.remaining_seconds = max(0, loan - (spent - inherited))
+            return
+        try:
+            validate_receipt(receipt)
+            cases = receipt.get("case_resources", [])
+            if len(cases) != invocations or not cases or any(case["sampler_wall_seconds"] is None for case in cases):
+                return
+            # Combined process/capture/host cost overcharges rather than renewing an unknown balance.
+            self.remaining_seconds = max(0, loan - sum(case["sampler_wall_seconds"] for case in cases))
+        except (ValueError, TypeError, KeyError):
+            pass  # Missing or unfinished child accounting spends the entire prepaid loan.
+
+
 class NativeActivityBudget:
     """Precharge child loans and bound native reads without trusting the diagnostic ledger."""
 
@@ -754,10 +802,16 @@ class CaseSampler:
         # Older ledgers lack process-only accounting; retain their conservative combined charge.
         self.previous_process_spent = self.recorder.process_sampler_wall_seconds
         if self.previous_process_spent is None:
-            self.previous_process_spent = sum(case["sampler_wall_seconds"] if case["sampler_wall_seconds"] is not None
-                else SAMPLER_WALL_BUDGET_SECONDS for case in self.recorder.case_resources)
+            if getattr(self.recorder, "prepaid_process_sampling", False):
+                self.previous_process_spent = SAMPLER_WALL_BUDGET_SECONDS
+            else:
+                self.previous_process_spent = sum(case["sampler_wall_seconds"] if case["sampler_wall_seconds"] is not None
+                    else SAMPLER_WALL_BUDGET_SECONDS for case in self.recorder.case_resources)
         self.reserved = max(0, SAMPLER_WALL_BUDGET_SECONDS - self.previous_process_spent)
-        if "xcode" in self.recorder.unavailable:
+        remaining = getattr(self.recorder, "process_sampling_remaining_seconds", None)
+        if remaining is not None:
+            self.reserved = min(self.reserved, remaining)
+        if "xcode" in self.recorder.unavailable and not getattr(self.recorder, "prepaid_process_sampling", False):
             self.reserved = 0.0
         if self.reserved <= SAMPLE_COMMAND_TIMEOUT_SECONDS:
             self.truncated = True
@@ -885,6 +939,9 @@ class CaseSampler:
                 if self.thread is not None and not self.finished:
                     self.truncated = True
                 self.recorder.process_sampler_wall_seconds = self.previous_process_spent + self.spent if self.finished else None
+                remaining = getattr(self.recorder, "process_sampling_remaining_seconds", None)
+                if remaining is not None:
+                    self.recorder.process_sampling_remaining_seconds = max(0, remaining - self.spent) if self.finished else 0
         if self.recorder is not None:
             try:
                 self.publish()

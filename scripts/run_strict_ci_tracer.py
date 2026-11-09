@@ -498,12 +498,16 @@ def main(argv=None):
     preparation_failure = None
     exit_code = 1
     environment_rejections = {}
-    from strict_e2e_resource_diagnostics import NativeActivityBudget
+    from strict_e2e_resource_diagnostics import NativeActivityBudget, ProcessSamplingBudget
     native_budget = NativeActivityBudget()
+    process_budget = ProcessSamplingBudget()
 
-    def checkpoint():
+    def checkpoint(*, process_case=None, invocations=1, prepaid=None):
         nonlocal exit_code
         diagnostics.load(diagnostics_path)
+        if process_case is not None:
+            process_budget.settle_case(process_case.get("bounded_diagnostics"), invocations=invocations,
+                                      recorder=diagnostics, prepaid=prepaid)
         if cleanup_event is not None and cleanup_event not in diagnostics.events:
             diagnostics.retain(cleanup_event)
         if child_truncated.is_set():
@@ -546,12 +550,14 @@ def main(argv=None):
     def invoke(case, evidence, derived, warm):
         nonlocal runner_cleanup_error
         native_allowance = native_budget.reserve_case() if warm else 0
+        process_allowance = process_budget.reserve_case(recorder=diagnostics) if warm else 0
         command = [sys.executable, "-B", str(ROOT / "scripts/run_strict_e2e.py"),
                    "--platform", args.platform, "--destination", args.destination, "--suite", case["suite"],
                    "--configuration", case["configuration"], "--scenario", case["scenario"], "--fixture-set", case["fixture"],
                    "--evidence-dir", str(evidence), "--derived-data-path", str(derived),
                    "--diagnostics-receipt", str(diagnostics_path),
                    "--native-diagnostics-allowance-seconds", str(native_allowance),
+                   "--process-sampling-allowance-seconds", str(process_allowance),
                    "--cloned-source-packages-path", str(output / "SourcePackages"),
                    "--cold-timeout-seconds", str(args.cold_timeout_seconds), "--warm-timeout-seconds", str(args.warm_timeout_seconds),
                    "--min-free-gib", str(args.min_free_gib), "--test-without-building" if warm else "--warm-up-only"]
@@ -560,8 +566,9 @@ def main(argv=None):
         started = time.monotonic()
         print(f"{'warm' if warm else 'cold'} {case['suite']}", flush=True)
         phase = {"identity": identities[cases.index(case)]} if warm else {"shard": derived.name}
+        invocations = len(FILTER_PERSON_SESSIONS) if warm and case["suite"] == "filter-person" else 1
+        prepaid = None
         try:
-            invocations = len(FILTER_PERSON_SESSIONS) if warm and case["suite"] == "filter-person" else 1
             phase["exit_code"] = run_runner(command, ROOT, output / "runner.log",
                 truncation_seen=child_truncated,
                 failure_report=lambda reason: phase.update(runner_failure_reason=reason),
@@ -577,9 +584,10 @@ def main(argv=None):
         finally:
             phase["duration_seconds"] = time.monotonic() - started
             if warm:
-                collect_result(case, evidence, phase)
+                # Collection failure leaves the prepaid loan unrefunded rather than guessing its cost.
+                prepaid = collect_result(case, evidence, phase)
             trace["warm" if warm else "cold"].append(phase)
-            checkpoint()
+            checkpoint(process_case=phase if warm else None, invocations=invocations, prepaid=prepaid)
 
     def collect_result(case, evidence, phase):
         manifest_path = evidence / "case-manifest.json"
@@ -647,6 +655,9 @@ def main(argv=None):
         results.append(phase)
         if official is not None and official["totalTestCount"] > 0:
             summary["population"]["compiled"].append(phase["identity"])
+        # No manifest means the child failed before sampling could start; otherwise require its startup fact.
+        prepaid = details.get("process_sampling_prepaid") if manifest_path.is_file() else False
+        return prepaid if type(prepaid) is bool else None
 
     def cancel(signum, _frame):
         raise KeyboardInterrupt(f"Received signal {signum}")
