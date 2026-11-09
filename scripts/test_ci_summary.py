@@ -131,6 +131,16 @@ def first_failure_receipt(*, native=False, gate=False):
     return receipt
 
 
+def album_capture_diagnostic():
+    return {"schema_version": 1, "site": "album-play-1", "probe": "frameSynchronized", "fixture": "a",
+        "rejections": ["motion-progress-range"], "poll_count": 2,
+        "polls": [[0.801, 0.91], [1.02, 1.11]], "polls_truncated": False,
+        "window_seconds": 4.8, "settle_seconds": 0.8,
+        "baseline": {"history": "no-baseline", "layers": "no-baseline"},
+        "pause": {"requested_seconds": -0.8, "returned_seconds": -0.2, "observed_seconds": -0.01},
+        "members": ["A2", "A1"], "unmapped_member_count": 0}
+
+
 def hosted_timeout_summary():
     summary = valid_summary()
     summary["identity"].update(event="schedule", ref="refs/heads/main")
@@ -246,6 +256,143 @@ def album_capture_gate_rejections(receipt):
 
 
 class SummaryContractTests(unittest.TestCase):
+    def test_invalid_album_diagnostics_leave_the_valid_gate_and_v5_proof_unchanged(self):
+        from ci_failure_diagnostics import (collect_first_failure_spool, environment_limit_evidence,
+            public_first_failure, scan_diagnostic_json)
+        summary, resource = hosted_album_timeout_summary()
+        row = summary["population"]["observed"][0]
+        messages = ["Album capture preparation must reach a complete paused scene within the playback capture budget."]
+        row["failure_messages"] = row["attempts"][0]["failure_messages"] = messages
+        legacy = row["first_failure"]
+        legacy["screenshot"] = {"status": "unavailable", "width": None, "height": None, "bytes": None}
+        expected = environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=5)
+        method = "StrictE2EFilterIOSUITests/testFilterAlbumTargetMembers"
+        for defect in ("poll-order", "pause-order", "private-field", "old-gate"):
+            receipt = copy.deepcopy(legacy)
+            receipt["album_capture"] = album_capture_diagnostic()
+            if defect == "poll-order":
+                receipt["album_capture"]["polls"] = [[1.0, 1.1], [0.8, 0.9]]
+            elif defect == "pause-order":
+                receipt["album_capture"]["pause"]["observed_seconds"] = -1
+            else:
+                receipt["album_capture"]["raw_probe"] = "PRIVATE_SENTINEL"
+                if defect == "old-gate":
+                    receipt["gate"]["stable"] = "invalid"
+            with self.subTest(defect=defect), tempfile.TemporaryDirectory() as raw:
+                directory = Path(raw)
+                (directory / "0.json").write_text(json.dumps(receipt))
+                node = {"nodeIdentifier": method, "result": "Failed"}
+                collect_first_failure_spool(directory, [method], [node], directory / "images")
+                if defect == "old-gate":
+                    self.assertNotIn("first_failure", node)
+                    self.assertIsNone(public_first_failure(receipt))
+                    continue
+                self.assertEqual(legacy, node.get("first_failure"))
+                self.assertEqual(legacy, public_first_failure(receipt))
+                self.assertIn("album_capture", receipt, "Projection must not mutate the raw evidence.")
+                self.assertNotIn("PRIVATE_SENTINEL", json.dumps(node))
+                changed = copy.deepcopy(summary)
+                changed_row = changed["population"]["observed"][0]
+                changed_row["first_failure"] = changed_row["attempts"][0]["first_failure"] = node["first_failure"]
+                self.assertEqual(expected, environment_limit_evidence(
+                    changed, changed_row, [resource], runner_hosted=True, policy_version=5))
+                self.assertEqual(changed, ci_summary.parse_summary(json.dumps(changed)))
+                reason = {"poll-order": "invalid poll times", "pause-order": "invalid pause ordering",
+                    "private-field": "invalid fields"}[defect]
+                with self.assertRaisesRegex(ci_summary.ContractError, "^album capture diagnostic: " + reason + "$"):
+                    scan_diagnostic_json(json.dumps({"first_failure": receipt}).encode())
+
+    def test_album_capture_diagnostics_round_trip_without_changing_failure_or_legacy_projection(self):
+        from ci_failure_diagnostics import environment_failure_projection, scan_diagnostic_json
+        summary, _ = hosted_album_timeout_summary()
+        for identity in summary["population"]["declared"]:
+            identity.update(key="filter-album")
+            identity["dimensions"]["suite"] = "filter-album"
+        row = summary["population"]["observed"][0]
+        legacy = copy.deepcopy(row["first_failure"])
+        row["first_failure"]["album_capture"] = album_capture_diagnostic()
+        read = ci_summary.parse_summary(json.dumps(summary))
+        self.assertEqual(summary, read)
+        self.assertEqual("failed", read["population"]["observed"][0]["outcome"])
+        self.assertEqual(environment_failure_projection(legacy), environment_failure_projection(row["first_failure"]))
+        self.assertIn("album-play-1/frameSynchronized", ci_summary.render_markdown(read))
+        scan_diagnostic_json(json.dumps({"nested": [read]}).encode())
+        mismatched = copy.deepcopy(summary)
+        mismatched["population"]["observed"][0]["first_failure"]["album_capture"]["fixture"] = "b"
+        with self.assertRaisesRegex(ci_summary.ContractError, "^album capture diagnostic: fixture differs from strict identity$"):
+            ci_summary.parse_summary(mismatched)
+        row["first_failure"].pop("album_capture")
+        self.assertEqual(summary, ci_summary.parse_summary(json.dumps(summary)))
+
+    def test_album_capture_diagnostics_reject_private_unbounded_and_misbound_fields(self):
+        from ci_failure_diagnostics import scan_diagnostic_json, unavailable_first_failure
+        receipt = first_failure_receipt(gate=True)
+        receipt["album_capture"] = album_capture_diagnostic()
+        cases = [
+            (("raw_probe",), "private", "invalid fields"),
+            (("schema_version",), 2, "invalid version"),
+            (("site",), "private.png", "invalid site"),
+            (("probe",), "private", "invalid probe"),
+            (("fixture",), "private", "invalid fixture"),
+            (("rejections",), ["private"], "invalid rejections"),
+            (("rejections",), ["phase", "phase"], "invalid rejections"),
+            (("poll_count",), True, "invalid poll count"),
+            (("polls",), [[0.8, 0.9]] * 17, "invalid polls"),
+            (("polls",), [[0.9, 0.8], [1, 1.1]], "invalid poll times"),
+            (("polls",), [[0.8, float("inf")], [1, 1.1]], "invalid poll times"),
+            (("polls",), [[0.8], [1, 1.1]], "invalid poll times"),
+            (("polls",), [[1, 1.1], [0.8, 0.9]], "invalid poll times"),
+            (("polls_truncated",), True, "invalid poll retention"),
+            (("window_seconds",), 0, "invalid window"),
+            (("settle_seconds",), 5, "invalid settle"),
+            (("baseline",), {}, "invalid baseline"),
+            (("baseline", "history"), "private", "invalid baseline"),
+            (("pause",), {}, "invalid pause"),
+            (("pause", "requested_seconds"), "private", "invalid pause"),
+            (("pause", "returned_seconds"), -1, "invalid pause ordering"),
+            (("pause", "observed_seconds"), -1, "invalid pause ordering"),
+            (("members",), ["asset-private"], "invalid members"),
+            (("members",), ["A6"], "invalid members"),
+            (("unmapped_member_count",), 65, "invalid member count"),
+        ]
+        for path, value, reason in cases:
+            changed = copy.deepcopy(receipt)
+            target = changed["album_capture"]
+            for key in path[:-1]:
+                target = target[key]
+            target[path[-1]] = value
+            with self.subTest(path=path, value=value), self.assertRaisesRegex(ci_summary.ContractError,
+                    "^album capture diagnostic: " + reason + "$"):
+                scan_diagnostic_json(json.dumps({"first_failure": changed}).encode())
+        changed = unavailable_first_failure("xctest")
+        changed["album_capture"] = album_capture_diagnostic()
+        with self.assertRaisesRegex(ci_summary.ContractError, "^album capture diagnostic: requires capture gate$"):
+            scan_diagnostic_json(json.dumps({"first_failure": changed}).encode())
+
+    def test_album_diagnostic_extensions_are_strict_only_and_native_tap_is_closed(self):
+        from ci_failure_diagnostics import scan_diagnostic_json
+        summary, _ = hosted_album_timeout_summary()
+        row = summary["population"]["observed"][0]
+        receipt = row["first_failure"]
+        receipt.pop("gate")
+        receipt.update(step="select", element="slideshow.control.next.button", action="tap",
+            native_tap_failure="event-synthesis")
+        with self.assertRaisesRegex(ci_summary.ContractError, "^album diagnostics require strict filter-album identity$"):
+            ci_summary.parse_summary(summary)
+        for identity in summary["population"]["declared"]:
+            identity.update(key="filter-album")
+            identity["dimensions"]["suite"] = "filter-album"
+        for native in ("event-synthesis", "snapshot-timeout", "application-process"):
+            receipt["native_tap_failure"] = native
+            self.assertEqual(summary, ci_summary.parse_summary(summary))
+            self.assertIn("native-tap=" + native, ci_summary.render_markdown(summary))
+        for key, value, message in (("native_tap_failure", "private", "invalid native tap failure"),
+                ("step", "wait-scene", "native tap requires Next tap context")):
+            changed = copy.deepcopy(receipt)
+            changed[key] = value
+            with self.subTest(key=key), self.assertRaisesRegex(ci_summary.ContractError, "^first failure: " + message + "$"):
+                scan_diagnostic_json(json.dumps({"first_failure": changed}).encode())
+
     def test_unknown_ui_failure_duration_stays_red_and_cannot_supply_a_total_or_yellow_proof(self):
         from ci_health import observation_metrics
         summary = archive_download_summary()

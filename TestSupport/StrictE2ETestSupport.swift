@@ -69,6 +69,119 @@ enum StrictE2ESceneCapture {
         return SharedSceneEvidenceManifest.manifestObservation(from: observation["manifest"] ?? "")?
             .isCompleteVisibleScene == true
     }
+
+    /// Failure diagnostics only: the stable-window judge above remains authoritative.
+    static func stableWindowRejections(_ observation: [String: String]) -> [String] {
+        let render = SharedSceneEvidenceManifest.parseKeyValueFields(observation["render"] ?? "")
+        var reasons: [String] = []
+        if render["phase"] != "stablePhoto" { reasons.append("phase") }
+        if render["layerRoles"] != "stable" { reasons.append("layer-roles") }
+        if render["loadingVisible"] != "false" { reasons.append("loading-visible") }
+        let opacities = render["layerOpacities"].map { $0.components(separatedBy: "|") } ?? []
+        if opacities.count != 1 { reasons.append("opacity-count") }
+        if opacities.count == 1, Double(opacities[0]) != 1 { reasons.append("opacity-value") }
+        let progress = render["motionRawProgress"].map { $0.components(separatedBy: "|") } ?? []
+        if progress.count != 1 { reasons.append("motion-progress-count") }
+        if progress.count == 1, Double(progress[0]).map({ (0...1).contains($0) }) != true {
+            reasons.append("motion-progress-range")
+        }
+        if SharedSceneEvidenceManifest.manifestObservation(from: observation["manifest"] ?? "")?
+            .isCompleteVisibleScene != true
+        {
+            reasons.append("manifest")
+        }
+        return reasons
+    }
+}
+
+/// Bounded timing of existing reads. No observation, delay or verdict is introduced here.
+struct AlbumCaptureDiagnostics {
+    private static let maximumPolls = 16
+    let startedAtUptime: TimeInterval
+    let windowSeconds: TimeInterval
+    let settleSeconds: TimeInterval
+    let site: String
+    let probe: String
+    private(set) var pollCount = 0
+    private var polls: [[Double]] = []
+
+    init(
+        startedAtUptime: TimeInterval, windowSeconds: TimeInterval, settleSeconds: TimeInterval,
+        site: String, probe: String
+    ) {
+        self.startedAtUptime = startedAtUptime
+        self.windowSeconds = windowSeconds
+        self.settleSeconds = settleSeconds
+        self.site = site
+        self.probe = probe
+    }
+
+    mutating func observed(requestedAtUptime: TimeInterval, returnedAtUptime: TimeInterval) {
+        pollCount += 1
+        if polls.count == Self.maximumPolls { polls.removeFirst() }
+        polls.append([requestedAtUptime - startedAtUptime, returnedAtUptime - startedAtUptime])
+    }
+
+    func projection(
+        observation: [String: String], previousScene: [String: String]?,
+        inputs: (fixture: String, labels: [String: String], pause: [String: Double])?
+    ) -> [String: Any]? {
+        guard ["album-play-1", "album-play-2", "album-play-3"].contains(site),
+            ["frameSynchronized", "contract"].contains(probe),
+            let inputs, ["a", "b"].contains(inputs.fixture),
+            startedAtUptime.isFinite, startedAtUptime >= 0,
+            (0...Int(Int32.max)).contains(pollCount), polls.count == min(pollCount, Self.maximumPolls),
+            windowSeconds.isFinite, windowSeconds > 0, windowSeconds <= 86_400,
+            settleSeconds.isFinite, settleSeconds >= 0, settleSeconds < windowSeconds
+        else { return nil }
+        var previousReturnSeconds = Double.zero
+        for poll in polls {
+            guard poll.count == 2, poll.allSatisfy({ $0.isFinite && (0...86_400).contains($0) }),
+                previousReturnSeconds <= poll[0], poll[0] <= poll[1]
+            else { return nil }
+            previousReturnSeconds = poll[1]
+        }
+        let render = SharedSceneEvidenceManifest.parseKeyValueFields(observation["render"] ?? "")
+        let previous = SharedSceneEvidenceManifest.parseKeyValueFields(previousScene?["render"] ?? "")
+        let manifest = SharedSceneEvidenceManifest.parseKeyValueFields(observation["manifest"] ?? "")
+        let refs = manifest["ledgerSceneAssets"]?.components(separatedBy: ",") ?? []
+        guard refs.count <= 64 else { return nil }
+        let members = refs.compactMap { inputs.labels[$0] }
+        let allowedMembers = Set((1...(inputs.fixture == "a" ? 5 : 8)).map { "A\($0)" })
+        guard members.allSatisfy({ allowedMembers.contains($0) }) else { return nil }
+        let historyBaseline =
+            previousScene == nil
+            ? "no-baseline"
+            : (Int(previous["historyCount"] ?? "") != nil && Int(render["historyCount"] ?? "") != nil
+                ? "valid" : "unreadable")
+        let layersBaseline =
+            previousScene == nil
+            ? "no-baseline"
+            : ([previous["layerIDs"], render["layerIDs"]].allSatisfy { $0?.isEmpty == false && $0 != "none" }
+                ? "valid" : "unreadable")
+        var pause: [String: Any] = [:]
+        for key in ["requested_seconds", "returned_seconds", "observed_seconds"] {
+            if let uptime = inputs.pause[key] {
+                let offset = uptime - startedAtUptime
+                guard offset.isFinite, (-86_400...86_400).contains(offset) else { return nil }
+                pause[key] = offset
+            } else {
+                pause[key] = NSNull()
+            }
+        }
+        if let returned = inputs.pause["returned_seconds"] {
+            guard let requested = inputs.pause["requested_seconds"], requested <= returned else { return nil }
+            if let observed = inputs.pause["observed_seconds"], returned > observed { return nil }
+        }
+        return [
+            "schema_version": 1, "site": site, "probe": probe, "fixture": inputs.fixture,
+            "rejections": StrictE2ESceneCapture.stableWindowRejections(observation),
+            "poll_count": pollCount, "polls": polls, "polls_truncated": pollCount > Self.maximumPolls,
+            "window_seconds": windowSeconds, "settle_seconds": settleSeconds,
+            "baseline": ["history": historyBaseline, "layers": layersBaseline], "pause": pause,
+            "members": members, "unmapped_member_count": refs.count - members.count
+        ]
+    }
 }
 
 struct StrictE2EInput {

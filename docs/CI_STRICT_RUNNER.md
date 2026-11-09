@@ -1745,6 +1745,68 @@ from leaking across tests. Normal return clears the facts too, but XCTest aborts
 with `continueAfterFailure = false` can skip that `defer`. Successful
 captures and post-capture assertions omit the field.
 
+Strict iOS `filter-album` adds two optional diagnostic-only first-failure fields.
+Neither is copied into `environment_limit.failure`, consulted by a judge, or
+emitted by required gate/UI producers. Historical receipts omit both and remain
+valid. The existing `gate` shape, Boolean/null meanings and policy v1–v5 rules
+are unchanged; a first capture still has null advance/layer facts.
+
+`album_capture` accompanies only an album timeout `gate` and has exactly:
+
+| Field | Public vocabulary and bounds |
+| --- | --- |
+| `schema_version`, `site`, `probe`, `fixture` | `1`; `album-play-1`/`album-play-2`/`album-play-3`; `frameSynchronized`/`contract`; `a`/`b` |
+| `rejections` | Unique entries from `phase`, `layer-roles`, `loading-visible`, `opacity-count`, `opacity-value`, `motion-progress-count`, `motion-progress-range`, `manifest`; these explain the unchanged stable-window predicate |
+| `poll_count`, `polls`, `polls_truncated` | Total existing scene reads (0–2^31−1), last at most 16 ordered `[request, return]` pairs, and whether earlier pairs were dropped; finite offsets from original capture-window start, 0–86,400 seconds; an in-flight return may exceed the deadline |
+| `window_seconds`, `settle_seconds` | Original positive window and shorter nonnegative settle duration, at most 86,400 seconds; producers retain the existing 4.8-second window and 0.8-second settle |
+| `baseline` | Exactly `history` and `layers`, each `no-baseline`, `valid` or `unreadable`; first capture never claims an invented advance |
+| `pause` | Exactly `requested_seconds`, `returned_seconds`, `observed_seconds`; nullable, ordered offsets from window start in −86,400…86,400 seconds, from the existing Pause tap and paused readback; negative offsets are expected |
+| `members`, `unmapped_member_count` | At most 64 public manifest labels (`A1`…`A5` for fixture A, `A1`…`A8` for B) in slot order of mapped members, and 0–64 unmatched references; references themselves are never exported |
+
+Labels are mapped only from the already-loaded frozen public member manifest,
+checking the fixture/label/ID correspondence before mapping. They describe App
+manifest claims, not screenshot identity or target-album acceptance. Missing
+references or a partial mapping cannot establish membership. Every poll uses
+the same single existing App snapshot; the functional probe is frame-synchronized,
+although the retained failure element marker names the contract summary.
+Producers emit only `probe=frameSynchronized`; readers also accept `contract`
+without requiring historical receipts to be rewritten. Poll and Pause timing
+uses `ProcessInfo.systemUptime`, relative to a monotonic anchor sampled beside
+the existing capture-window start. The original product clock, 4.8-second
+deadline and 0.8-second settle are unchanged. All retained polls require the
+previous return to precede or equal the next request. Known Pause times require
+request ≤ return ≤ paused-readback observation; missing request cannot accompany
+a known return. Frame 2/3 Pause offsets still refer to the single Pause before
+frame 1, not additional Pause actions, so larger negative offsets are expected.
+The pure producer projection checks the reader's bounds and ordering and omits
+itself on invalid data. Other closed fields are constructed from fixed
+vocabularies and the already-validated public member mapping.
+
+The public first-failure projection also isolates an invalid `album_capture`:
+it removes only that field and revalidates the complete remaining receipt,
+including the pre-existing gate and unchanged 8 KiB bound. The spool collector
+uses this projection, preserving valid old evidence and its original v5
+eligibility. Invalid old fields still reject the record. Raw spool size,
+JSON/duplicate-key validation and public scanner/summary validation remain
+strict; oversized or undecodable input cannot be salvaged by this fallback.
+Invalid new fields are never published verbatim.
+
+Rejection analysis and fixture mapping do not run inside the judged polling loop.
+Successful readbacks stay in memory and are optionally written as
+`album-play-N-diagnostics.json` only after the complete three-frame flow, outside
+all capture/Next intervals. Those local sidecars are not public passing receipts
+or P2 packages. Optional write failure cannot fail the test.
+
+`native_tap_failure` is `event-synthesis`, `snapshot-timeout` or
+`application-process`. Only the strict filter-album method's XCTest `select`/`tap`
+on Next can emit it, from one already-read legacy official failure message.
+Unknown, mixed or missing messages omit it. Original messages, phase/class,
+outcome and exit code are unchanged; there is no extra AX query, xcresult export,
+wait, tap or retry. Summary readers reject either extension outside strict
+`filter-album`, and bind the album diagnostic's fixture to the strict identity.
+The public scanner checks the closed objects and the unchanged
+8 KiB receipt cap.
+
 Native activity support follows the
 [reader-first merge](CI_SUMMARY.md#reader-first-evolution). Strict-runner failure
 exports inspect the existing private xcresult and emit the numeric projection.

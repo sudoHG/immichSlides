@@ -58,6 +58,10 @@ FIRST_FAILURE_MAX_IMAGE_SIDE = 1536
 ALBUM_CAPTURE_GATE_BOOLEANS = ("stable", "paused", "entry_hint_hidden", "advanced", "layers_changed", "manifest_complete")
 ALBUM_CAPTURE_GATE_PHASES = ("unknown", "empty", "stablePhoto", "grace", "transition", "loading",
                              "incomingFromLoading", "paused", "sourceError")
+ALBUM_CAPTURE_REJECTIONS = ("phase", "layer-roles", "loading-visible", "opacity-count", "opacity-value",
+                            "motion-progress-count", "motion-progress-range", "manifest")
+ALBUM_CAPTURE_MAX_POLLS = 16
+NATIVE_TAP_FAILURE_CLASSES = ("event-synthesis", "snapshot-timeout", "application-process")
 # The only reviewed element table. Fixture runners supply this vocabulary to the test-only recorder.
 FIRST_FAILURE_ELEMENTS = (
     "unknown", "app-window", "system.reduce-motion", "simulator",
@@ -787,9 +791,8 @@ def collect_first_failure_spool(directory, selectors, failed_nodes, output):
         try:
             if not path.is_file() or path.is_symlink() or path.stat().st_size > FIRST_FAILURE_MAX_BYTES:
                 continue
-            receipt = decode(path.read_text())
-            validate_first_failure(receipt)
-            if receipt["source"] != "xctest":
+            receipt = public_first_failure(decode(path.read_text()))
+            if receipt is None or receipt["source"] != "xctest":
                 continue
             image_data = None
             if receipt["screenshot"]["status"] == "captured":
@@ -879,6 +882,71 @@ def validate_ui_first_failure_images(directory, summary):
             validate_first_failure_image(path, receipt)
 
 
+def attach_native_tap_failure(nodes, messages):
+    """Strict-only projection from the already-read legacy failures; never a verdict input."""
+    method = "StrictE2EFilterIOSUITests/testFilterAlbumTargetMembers"
+    for node in nodes:
+        key = first_failure_test_key(node.get("nodeIdentifier", ""))
+        receipt = node.get(FIRST_FAILURE_FIELD)
+        raw = messages.get(key, [])
+        if (key != method or not isinstance(receipt, dict) or len(raw) != 1
+                or receipt.get("source") != "xctest" or receipt.get("step") != "select"
+                or receipt.get("element") != "slideshow.control.next.button" or receipt.get("action") != "tap"):
+            continue
+        text = raw[0]
+        tool = xctest_tool_class(text)
+        category = ("event-synthesis" if isinstance(text, str) and text.startswith("Failed to synthesize event:") else
+            "snapshot-timeout" if tool == "snapshot_query" else
+            "application-process" if tool == "process_lifetime" else None)
+        if category is not None:
+            receipt["native_tap_failure"] = category
+
+
+def validate_album_capture_diagnostic(value):
+    from ci_summary import require
+    def check(condition, reason):
+        require(condition, "album capture diagnostic: " + reason)
+    def numeric(number, *, minimum=0, maximum=FIRST_FAILURE_MAX_SECONDS):
+        return type(number) in (int, float) and math.isfinite(number) and minimum <= number <= maximum
+    check(isinstance(value, dict) and set(value) == {"schema_version", "site", "probe", "fixture", "rejections",
+        "poll_count", "polls", "polls_truncated", "window_seconds", "settle_seconds", "baseline", "pause",
+        "members", "unmapped_member_count"}, "invalid fields")
+    check(type(value["schema_version"]) is int and value["schema_version"] == 1, "invalid version")
+    check(value["site"] in ("album-play-1", "album-play-2", "album-play-3"), "invalid site")
+    check(value["probe"] in ("frameSynchronized", "contract"), "invalid probe")
+    check(value["fixture"] in ("a", "b"), "invalid fixture")
+    reasons = value["rejections"]
+    check(isinstance(reasons, list) and all(isinstance(item, str) and item in ALBUM_CAPTURE_REJECTIONS for item in reasons)
+        and len(reasons) == len(set(reasons)), "invalid rejections")
+    count, polls = value["poll_count"], value["polls"]
+    check(type(count) is int and 0 <= count <= 2**31 - 1, "invalid poll count")
+    check(isinstance(polls, list) and len(polls) <= ALBUM_CAPTURE_MAX_POLLS, "invalid polls")
+    previous = 0
+    for poll in polls:
+        check(isinstance(poll, list) and len(poll) == 2 and all(numeric(n) for n in poll)
+            and previous <= poll[0] <= poll[1], "invalid poll times")
+        previous = poll[1]
+    check(type(value["polls_truncated"]) is bool and value["polls_truncated"] == (count > ALBUM_CAPTURE_MAX_POLLS)
+        and len(polls) == min(count, ALBUM_CAPTURE_MAX_POLLS), "invalid poll retention")
+    check(numeric(value["window_seconds"], minimum=0) and value["window_seconds"] > 0, "invalid window")
+    check(numeric(value["settle_seconds"]) and value["settle_seconds"] < value["window_seconds"], "invalid settle")
+    baseline = value["baseline"]
+    check(isinstance(baseline, dict) and set(baseline) == {"history", "layers"}
+        and all(item in ("no-baseline", "valid", "unreadable") for item in baseline.values()), "invalid baseline")
+    pause = value["pause"]
+    check(isinstance(pause, dict) and set(pause) == {"requested_seconds", "returned_seconds", "observed_seconds"}
+        and all(n is None or numeric(n, minimum=-FIRST_FAILURE_MAX_SECONDS) for n in pause.values()), "invalid pause")
+    requested, returned, observed = (pause[key] for key in ("requested_seconds", "returned_seconds", "observed_seconds"))
+    check((returned is None or requested is not None and requested <= returned)
+        and (observed is None or returned is None or returned <= observed), "invalid pause ordering")
+    members = value["members"]
+    allowed = {"A" + str(n) for n in range(1, 6 if value["fixture"] == "a" else 9)}
+    check(isinstance(members, list) and len(members) <= 64
+        and all(isinstance(item, str) and item in allowed for item in members), "invalid members")
+    check(type(value["unmapped_member_count"]) is int and 0 <= value["unmapped_member_count"] <= 64,
+        "invalid member count")
+
+
 def validate_first_failure(receipt):
     """Validate a fixed public projection, never a raw assertion, AX tree or probe."""
     from ci_summary import require
@@ -890,7 +958,7 @@ def validate_first_failure(receipt):
         require(value is None or (type(value) in ((int,) if integral else (int, float))
                 and minimum <= value <= maximum and math.isfinite(value)), where + ": invalid number")
     fields = {"schema_version", "source", "step", "element", "action", "timing", "state", "validator", "screenshot"}
-    for optional in ("native_activity_seconds", "gate"):
+    for optional in ("native_activity_seconds", "gate", "album_capture", "native_tap_failure"):
         if isinstance(receipt, dict) and optional in receipt:
             fields.add(optional)
     exact(receipt, fields, "first failure")
@@ -899,6 +967,14 @@ def validate_first_failure(receipt):
     choice(receipt["step"], FIRST_FAILURE_STEPS, "step")
     choice(receipt["element"], FIRST_FAILURE_ELEMENTS, "element")
     choice(receipt["action"], FIRST_FAILURE_ACTIONS, "action")
+    if "album_capture" in receipt:
+        require("gate" in receipt, "album capture diagnostic: requires capture gate")
+        validate_album_capture_diagnostic(receipt["album_capture"])
+    if "native_tap_failure" in receipt:
+        choice(receipt["native_tap_failure"], NATIVE_TAP_FAILURE_CLASSES, "native tap failure")
+        require(receipt["source"] == "xctest" and receipt["step"] == "select"
+            and receipt["element"] == "slideshow.control.next.button" and receipt["action"] == "tap",
+            "first failure: native tap requires Next tap context")
     if "gate" in receipt:
         gate = receipt["gate"]
         exact(gate, {"kind", "phase", *ALBUM_CAPTURE_GATE_BOOLEANS}, "first failure gate")
@@ -993,6 +1069,13 @@ def render_first_failure(receipt):
         rendered += "; gate=" + gate["kind"] + ": " + ", ".join(
             key + "=" + json.dumps(gate[key]) for key in ALBUM_CAPTURE_GATE_BOOLEANS)
         rendered += ", phase=" + gate["phase"]
+    if "album_capture" in receipt:
+        diagnostic = receipt["album_capture"]
+        rendered += (f"; album={diagnostic['site']}/{diagnostic['probe']}; "
+            f"rejected={','.join(diagnostic['rejections']) or 'none'}; polls={diagnostic['poll_count']}; "
+            f"baseline={diagnostic['baseline']['history']}/{diagnostic['baseline']['layers']}")
+    if "native_tap_failure" in receipt:
+        rendered += "; native-tap=" + receipt["native_tap_failure"]
     if "native_activity_seconds" in receipt:
         native = receipt["native_activity_seconds"]
         if all(value is None for value in native.values()):
@@ -1011,7 +1094,15 @@ def public_first_failure(receipt):
     try:
         validate_first_failure(receipt)
     except (ValueError, TypeError, OverflowError):
-        return None
+        if not isinstance(receipt, dict) or "album_capture" not in receipt:
+            return None
+        # An optional projection cannot erase independently valid pre-existing gate evidence.
+        core = {key: value for key, value in receipt.items() if key != "album_capture"}
+        try:
+            validate_first_failure(core)
+        except (ValueError, TypeError, OverflowError):
+            return None
+        return core
     return receipt
 
 # Fixed raise arguments and _require_named_png messages from the reviewed public contracts.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import copy
 from contextlib import ExitStack
 from pathlib import Path
 
@@ -1757,6 +1758,60 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
 
 
 class FailureDiagnosticsTests(unittest.TestCase):
+    def test_native_next_tap_projection_uses_existing_unique_official_failure_without_changing_verdict(self):
+        from ci_failure_diagnostics import attach_native_tap_failure, unavailable_first_failure
+        key = "StrictE2EFilterIOSUITests/testFilterAlbumTargetMembers"
+        receipt = unavailable_first_failure("xctest", step="select", element="slideshow.control.next.button")
+        receipt["action"] = "tap"
+        for text, expected in (("Failed to synthesize event: PRIVATE_SENTINEL", "event-synthesis"),
+                ("Failed to get matching snapshots: Timed out while evaluating UI query", "snapshot-timeout"),
+                ("Application 'com.331works.immichSlides' does not have a process ID", "application-process"),
+                ("PRIVATE_SENTINEL", None), ("Assertion failed - Failed to synthesize event: PRIVATE_SENTINEL", None)):
+            node = {"nodeIdentifier": key, "first_failure": copy.deepcopy(receipt), "result": "Failed",
+                "failure_class": "unknown", "failure_phase": "unknown"}
+            attach_native_tap_failure([node], {key: [text]})
+            with self.subTest(text=text):
+                self.assertEqual(expected, node["first_failure"].get("native_tap_failure"))
+                self.assertEqual(("Failed", "unknown", "unknown"),
+                    (node["result"], node["failure_class"], node["failure_phase"]))
+                self.assertNotIn("PRIVATE_SENTINEL", json.dumps(node))
+        for mutation in ("multiple", "other-method", "other-element", "not-tap"):
+            node = {"nodeIdentifier": key, "first_failure": copy.deepcopy(receipt)}
+            messages = {key: ["Failed to synthesize event: PRIVATE_SENTINEL"]}
+            if mutation == "multiple":
+                messages[key] *= 2
+            elif mutation == "other-method":
+                node["nodeIdentifier"] = "Other/testOther"
+            elif mutation == "other-element":
+                node["first_failure"]["element"] = "slideshow.control.previous.button"
+            else:
+                node["first_failure"]["action"] = "none"
+            attach_native_tap_failure([node], messages)
+            with self.subTest(mutation=mutation):
+                self.assertNotIn("native_tap_failure", node["first_failure"])
+        # Exercise the real exporter/collector boundary, including its existing export count.
+        with tempfile.TemporaryDirectory() as raw:
+            evidence = Path(raw)
+            spool = evidence / "spool"
+            spool.mkdir()
+            (spool / "0.json").write_text(json.dumps(receipt))
+            official = {"testNodes": [{"nodeType": "Test Case", "nodeIdentifier": key, "result": "Failed"}]}
+            legacy = {"issues": {"testFailureSummaries": {"_values": [{
+                "testCaseName": {"_value": key.replace("/", ".") + "()"},
+                "message": {"_value": "Failed to synthesize event: PRIVATE_SENTINEL"}}]}}}
+            with mock.patch("run_strict_e2e.subprocess.run", side_effect=lambda command, **kwargs:
+                    subprocess.CompletedProcess(command, 0, json.dumps(
+                        legacy if "--legacy" in command else official).encode(), b"")) as exports, \
+                    mock.patch("run_strict_e2e.read_official_test_results_summary",
+                        return_value=TestResultsSummary(1, 0, 1, 0, "Failed")):
+                strict_runner.export_private_result_bundle(evidence / "private.xcresult", evidence,
+                    ["PRIVATE_SENTINEL"], enrich_failure_diagnostics=True, first_failure_spool=(spool, [key]))
+            public = json.loads((evidence / "official-tests.json").read_text())["testNodes"][0]
+            self.assertEqual("event-synthesis", public["first_failure"]["native_tap_failure"])
+            self.assertEqual("Failed", public["result"])
+            self.assertNotIn("PRIVATE_SENTINEL", json.dumps(public))
+            self.assertEqual(2, exports.call_count)
+
     def test_system_reduce_motion_throw_sites_are_source_bound_and_stay_red(self):
         from ci_failure_diagnostics import classify_messages, public_failure_messages, environment_timing_v5
         from ui_test_inventory import blank_comments_and_strings, literal_or_comment_end
