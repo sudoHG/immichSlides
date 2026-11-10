@@ -617,6 +617,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
         )
         recording_process = mock.Mock(pid=9876)
         invocations = []
+        invocation_timeouts = []
         attempt_environments = []
         from datetime import date
         from test_ci_flaky import REGISTRY_TODAY, registry
@@ -631,6 +632,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
         def fake_run_command(command: list[str], **kwargs: object) -> int:
             kwargs["log_path"].write_text("test run\n", encoding="utf-8")
             invocations.append(command)
+            invocation_timeouts.append(kwargs["timeout_seconds"])
             if "-xctestrun" in command:
                 import plistlib
                 payload = plistlib.loads(Path(command[command.index("-xctestrun") + 1]).read_bytes())
@@ -774,6 +776,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
             "invocations": invocations,
             "attempt_environments": attempt_environments,
             "motion": motion,
+            "invocation_timeouts": invocation_timeouts,
         }
 
     def test_warm_runner_reuses_submitted_boot_for_every_reset(self):
@@ -3922,11 +3925,12 @@ class StrictCITracerTests(unittest.TestCase):
 
         identity = {"schema_version": 1, "event": "local", "repository": "sudoHG/immichSlides",
                     "commit_sha": "0" * 40, "tree_sha": "0" * 40, "dirty": False}
-        for failure, has_receipt in ((None, True), (None, False), ("readiness", True),
+        for failure, has_receipt in ((None, True), (None, False), ("motion", True), ("readiness", True),
                                     ("service", True), ("cold", True), ("hard-timeout", True)):
             with self.subTest(failure=failure, has_receipt=has_receipt), tempfile.TemporaryDirectory() as raw:
                 root, order, clock, loans = Path(raw), [], [0.0], []
-                case = dict(platform="ios", device="ipad", configuration="Debug", suite="journey-a",
+                case = dict(platform="ios", device="iphone" if failure == "motion" else "ipad", configuration="Debug",
+                            suite="p2-reduce-motion" if failure == "motion" else "journey-a",
                             scenario="normal", fixture="a")
                 manifest = root / "manifest.json"
                 manifest.write_text(json.dumps({"cases": [case, dict(case, suite="journey-b")], "exclusions": []}))
@@ -3946,6 +3950,12 @@ class StrictCITracerTests(unittest.TestCase):
                         (derived / "strict-warm-build.json").write_text(json.dumps({"signing_mode": "adhoc"}))
                         return 1 if failure == "cold" else 0
                     order.append("warm")
+                    suite = command[command.index("--suite") + 1]
+                    if suite == "p2-reduce-motion":
+                        command_cap = support.SIMULATOR_COMMAND_TIMEOUT_SECONDS
+                        # Host start (5), two UI transitions (16), and join + restore (9).
+                        self.assertEqual(600 + support.SIMULATOR_READINESS_TIMEOUT_SECONDS + 240 + 30 * command_cap,
+                                         _kwargs["timeout_seconds"])
                     self.assertEqual("2", command[command.index("--native-diagnostics-allowance-seconds") + 1])
                     loans.append(float(command[command.index("--process-sampling-allowance-seconds") + 1]))
                     self.assertIn("--simulator-boot-submitted", command)
@@ -3997,9 +4007,10 @@ class StrictCITracerTests(unittest.TestCase):
                     code = tracer.main(["--platform", "ios", "--destination", "platform=iOS Simulator,id=TEST",
                         "--manifest", str(manifest), "--output-dir", str(output), "--simulator-boot-submitted"])
                 summary = parse_summary((output / "records/summary.json").read_text())
-                if failure is None:
-                    self.assertEqual(0, code)
-                    self.assertEqual("passed", summary["status"])
+                if failure is None or failure == "motion":
+                    # The motion branch deliberately provides no raw P2 evidence, so it must remain red.
+                    self.assertEqual(1 if failure == "motion" else 0, code)
+                    self.assertEqual("failed" if failure == "motion" else "passed", summary["status"])
                     self.assertEqual(["cold", "bootstatus", "spawn", "warm", "warm"], order)
                     self.assertEqual([180, 177 if has_receipt else 180], loans)
                 else:

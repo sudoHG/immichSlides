@@ -105,6 +105,8 @@ suite on both iOS and tvOS through the shared synchronized folder. With
 state/notifications and SwiftUI's Reduce Motion environment in `motion-app-evidence.json`.
 It never writes preferences or feeds playback state; the existing platform views
 remain the reducer's Reduce Motion source. See the [host handshake](CI_STRICT_RUNNER.md#reduce-motion-command-handshake).
+The evidence-directory key is exempt from Debug XCTest-mode detection, so enabling
+this probe preserves the normal Keychain and Info.plist configuration paths.
 
 The separate DEBUG-only `PlaybackLifecycleTimeline` observes lifecycle receipts
 and committed render ticks for the Debug pause timing suites. It writes sparse

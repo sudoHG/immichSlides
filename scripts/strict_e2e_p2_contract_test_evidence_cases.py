@@ -65,9 +65,9 @@ from strict_e2e_p2_contract_test_fixtures import (
 class RawEvidenceTestsCases:
     def test_command_motion_requires_app_state_notification_and_failure_safe_restore(self):
         from strict_e2e_p2_contract_test_fixtures import command_motion_evidence
-        for original in (False, True):
-            with self.subTest(original=original), tempfile.TemporaryDirectory() as directory:
-                evidence = command_motion_evidence(Path(directory), original=original)
+        for original, was_present in ((False, False), (False, True), (True, True)):
+            with self.subTest(original=original, was_present=was_present), tempfile.TemporaryDirectory() as directory:
+                evidence = command_motion_evidence(Path(directory), original=original, was_present=was_present)
                 raw = validate_raw_evidence(evidence, "p2-reduce-motion", "a")
                 self.assertEqual(raw["verdict"], RAW_VERDICT)
                 self.assertEqual(set(raw["artifacts"]), {
@@ -106,6 +106,19 @@ class RawEvidenceTestsCases:
                 _write_json(evidence / name, payload)
                 with self.assertRaisesRegex(P2ContractError, "Motion command:"):
                     validate_raw_evidence(evidence, "p2-reduce-motion", "a")
+
+    def test_motion_on_requires_a_new_notification_even_with_structurally_valid_counts(self):
+        from strict_e2e_p2_contract_test_fixtures import command_motion_evidence
+        with tempfile.TemporaryDirectory() as directory:
+            # Restoring an original true value needs no notification, isolating the off-to-on requirement.
+            evidence = command_motion_evidence(Path(directory), original=True)
+            app = _read_json(evidence / "motion-app-evidence.json")
+            app["samples"] = [s for s in app["samples"] if s["reason"] != "notification"]
+            for index, sample in enumerate(app["samples"], 1):
+                sample.update(sequence=index, notification_count=0)
+            _write_json(evidence / "motion-app-evidence.json", app)
+            with self.assertRaisesRegex(P2ContractError, "^Motion command: missing App notification confirmation\\.$"):
+                validate_raw_evidence(evidence, "p2-reduce-motion", "a")
 
     def test_complete_raw_evidence_is_only_ever_review_required(self) -> None:
         with tempfile.TemporaryDirectory() as raw_directory:

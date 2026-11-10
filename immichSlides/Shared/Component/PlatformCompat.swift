@@ -79,6 +79,7 @@ enum PlatformCompat {
                 $0.hasPrefix("UI_TEST_") && $0 != "UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE"
                     && $0 != "UI_TEST_PAUSE_AT_AUTOMATIC_FADE_MIDPOINT"
                     && $0 != "UI_TEST_PAUSE_ON_INITIAL_STABLE_SCENE"
+                    && $0 != "UI_TEST_REDUCE_MOTION_EVIDENCE_DIR"
             }
     }
 

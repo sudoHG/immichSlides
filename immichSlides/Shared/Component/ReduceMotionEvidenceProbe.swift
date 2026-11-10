@@ -38,7 +38,7 @@ private final class ReduceMotionEvidenceRecorder {
     private var notificationCount = 0
 
     func record(_ reason: String, swiftUI: Bool) {
-        guard let directory = PlatformCompat.reduceMotionEvidenceDirectoryForTesting, samples.count <= 128 else {
+        guard let directory = PlatformCompat.reduceMotionEvidenceDirectoryForTesting, samples.count < 128 else {
             return
         }
         if reason == "notification" { notificationCount += 1 }

@@ -210,7 +210,7 @@ def _write_review(
     )
 
 
-def command_motion_evidence(root: Path, *, original: bool = False) -> Path:
+def command_motion_evidence(root: Path, *, original: bool = False, was_present: bool = True) -> Path:
     evidence = build_evidence(root, "p2-reduce-motion", "iphone", review=False)
     steps = _read_json(evidence / STEPS_FILE)
     for step in steps["steps"]:
@@ -229,7 +229,7 @@ def command_motion_evidence(root: Path, *, original: bool = False) -> Path:
         "schema": "strict-e2e-motion-command-v1", "mechanism": "simctl-defaults-notify",
         "domain": "com.apple.Accessibility", "key": "ReduceMotionEnabled",
         "notification": "com.apple.accessibility.reduce.motion.status",
-        "original": {"is_enabled": original, "was_present": True, "wall_time": 999.0}, "changes": changes,
+        "original": {"is_enabled": original, "was_present": was_present, "wall_time": 999.0}, "changes": changes,
     })
     samples = []
     for wall_time, reason, ui_kit, swift_ui, count in (
