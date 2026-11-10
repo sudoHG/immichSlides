@@ -164,6 +164,7 @@
         "immichSlides/iOS/Core/SlideShowViewIOS*.swift",
         "immichSlides/tvOS/Core/SlideShowViewTV*.swift",
         "immichSlides/Shared/Component/DebugOverlayView.swift",
+        "immichSlides/Shared/Component/ReduceMotionEvidenceProbe.swift",
         "immichSlides/Shared/Component/Exif*.swift",
         "immichSlides/Shared/Component/SceneVisibleFrameReporter.swift",
         "immichSlides/Shared/Component/SlideItemView.swift",

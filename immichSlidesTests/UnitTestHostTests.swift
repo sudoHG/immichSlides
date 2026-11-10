@@ -5,7 +5,8 @@ import Testing
 struct UnitTestHostTests {
     @Test(arguments: [
         ["UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE": "1"],
-        ["UI_TEST_PAUSE_ON_INITIAL_STABLE_SCENE": "1"]
+        ["UI_TEST_PAUSE_ON_INITIAL_STABLE_SCENE": "1"],
+        ["UI_TEST_REDUCE_MOTION_EVIDENCE_DIR": "/tmp/motion-evidence"]
     ])
     func `strict scene launch flags do not activate XCTest mode`(_ probe: [String: String]) {
         #expect(!PlatformCompat.isRunningXCTest(environment: probe))

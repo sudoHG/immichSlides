@@ -27,12 +27,14 @@ final class ReduceMotionUITests: XCTestCase {
         FirstFailureOrientation.set(.portrait)
         let input = try requireStrictE2EInput()
         let evidence = Evidence()
-        let restore = try recordOriginalAndDisable(IOSReduceMotionSetting(), evidence: evidence)
-        let app = try launchStrictE2EApp()
+        let system = try HostReduceMotionSetting()
+        let original = try system.originalValue()
+        try evidence.markStep("motion-system-original")
+        let app = try launchStrictE2EApp(recordReduceMotion: true)
         defer { app.terminateForFailureEvidence() }
         let driver = IOSDriver(app: app)
         driver.launchToPlayback(input: input)
-        try runMotionSegments(driver, system: IOSReduceMotionSetting(), evidence: evidence, restore: restore)
+        try runMotionSegments(driver, system: system, evidence: evidence, original: original)
     }
 
     @MainActor
@@ -46,12 +48,14 @@ final class ReduceMotionUITests: XCTestCase {
     func testSystemReduceMotionTVOS() throws {
         let input = try requireStrictE2EInput()
         let evidence = Evidence()
-        let restore = try recordOriginalAndDisable(TVReduceMotionSetting(), evidence: evidence)
-        let app = try launchStrictE2EApp()
+        let system = try HostReduceMotionSetting()
+        let original = try system.originalValue()
+        try evidence.markStep("motion-system-original")
+        let app = try launchStrictE2EApp(recordReduceMotion: true)
         defer { app.terminateForFailureEvidence() }
         let driver = TVDriver(app: app)
         driver.launchToPlayback(input: input)
-        try runMotionSegments(driver, system: TVReduceMotionSetting(), evidence: evidence, restore: restore)
+        try runMotionSegments(driver, system: system, evidence: evidence, original: original)
     }
 
     @MainActor
@@ -60,35 +64,18 @@ final class ReduceMotionUITests: XCTestCase {
     }
     #endif
 
-    // If the original value is on, turn it off and capture the off state first so the positive control means
-    // something; register the restore as soon as the original value is read.
-    @MainActor
-    private func recordOriginalAndDisable<System: ReduceMotionSystemSetting>(
-        _ system: System,
-        evidence: Evidence
-    ) throws -> ReduceMotionRestore {
-        let isOriginallyOn = try system.read()
-        let restore = registerRestore(System.self, isOriginallyOn: isOriginallyOn)
-        try evidence.record(
-            "motion-system-original", png: system.screenshot(), capturedAt: Date(), orientation: .notApplicable)
-        if isOriginallyOn {
-            try system.set(false)
-            try evidence.record(
-                "motion-system-disabled", png: system.screenshot(), capturedAt: Date(), orientation: .notApplicable)
-        }
-        return restore
-    }
-
     // The order matches the p2-reduce-motion contract. With the setting on, the first SmartFill segment should
     // still show the scene from before it was turned on (no timing in the background), and the first single-photo
     // segment is the scene rebuilt in place after switching back to single photo. Both are checked on the recording.
     @MainActor
     private func runMotionSegments(
         _ driver: some PlaybackDriver,
-        system: some ReduceMotionSystemSetting,
+        system: HostReduceMotionSetting,
         evidence: Evidence,
-        restore: ReduceMotionRestore
+        original: Bool
     ) throws {
+        let offNotifications = try system.confirm(
+            in: driver.app, isOn: false, phase: "disabled", minimumNotifications: 0)
         driver.applyPlaybackSettings([.interval30Seconds, .displayMode(isSinglePhoto: true)])
         driver.next()
         try recordSegment(
@@ -98,10 +85,11 @@ final class ReduceMotionUITests: XCTestCase {
         try recordSegment(
             "motion-off-smartfill", in: driver.app, evidence: evidence, hold: MotionTiming.positiveControlHold)
 
-        try system.set(true)
-        try evidence.record(
-            "motion-system-enabled", png: system.screenshot(), capturedAt: Date(), orientation: .notApplicable)
+        try system.change("enabled", whileBackgrounding: driver.app)
+        try evidence.markStep("motion-system-enabled")
         try bringToForeground(driver.app)
+        let onNotifications = try system.confirm(
+            in: driver.app, isOn: true, phase: "enabled", minimumNotifications: offNotifications + 1)
         try recordSegment(
             "motion-on-smartfill", in: driver.app, evidence: evidence, hold: MotionTiming.reducedMotionHold)
         driver.next()
@@ -113,10 +101,12 @@ final class ReduceMotionUITests: XCTestCase {
         try recordSegment(
             "motion-on-single-next", in: driver.app, evidence: evidence, hold: MotionTiming.reducedMotionHold)
 
-        try system.set(restore.isOriginallyOn)
-        try evidence.record(
-            "motion-system-restored", png: system.screenshot(), capturedAt: Date(), orientation: .notApplicable)
-        restore.isSettled = true
+        try system.change("restored", whileBackgrounding: driver.app)
+        try bringToForeground(driver.app)
+        _ = try system.confirm(
+            in: driver.app, isOn: original, phase: "restored",
+            minimumNotifications: onNotifications + (original ? 0 : 1))
+        try evidence.markStep("motion-system-restored")
     }
 
     // Pixel-difference thresholds cannot replace human review of the recording.
@@ -135,7 +125,7 @@ final class ReduceMotionUITests: XCTestCase {
     private func bringToForeground(_ app: XCUIApplication) throws {
         app.activateForFailureEvidence()
         guard app.wait(for: .runningForeground, timeout: MotionTiming.foregroundTimeout) else {
-            throw Failure("The app did not return to the foreground after leaving system settings.")
+            throw Failure("The app did not return to the foreground after changing system Reduce Motion.")
         }
     }
 
@@ -188,6 +178,112 @@ final class ReduceMotionUITests: XCTestCase {
             }
         }
         return restore
+    }
+}
+
+// XCTest cannot execute host commands. These files share the strict runner's fresh evidence directory;
+// the host owns original-value capture and finally restoration even if XCTest exits before teardown.
+@MainActor
+private struct HostReduceMotionSetting {
+    private let original: Bool
+    private let requestTimeoutSeconds: TimeInterval
+
+    private enum HostFailureReason: String {
+        case write, notify, readback, timeout
+        case requestInvalid = "request-invalid"
+    }
+
+    init() throws {
+        guard let ready = Self.response(sequence: 0),
+            ready["succeeded"] as? Bool == true, ready["failure_reason"] is NSNull,
+            let original = ready["original"] as? Bool,
+            let timeout = ready["request_timeout_seconds"] as? Double, timeout.isFinite, timeout > 0
+        else { throw Failure("System Reduce Motion command: original value is unavailable.") }
+        self.original = original
+        requestTimeoutSeconds = timeout
+    }
+
+    private static func read(_ name: String) -> [String: Any]? {
+        guard let directory = StrictE2EVisualEvidence.directory() else { return nil }
+        return read(name, in: directory)
+    }
+
+    private nonisolated static func read(_ name: String, in directory: URL) -> [String: Any]? {
+        guard let bytes = try? Data(contentsOf: directory.appendingPathComponent(name)), bytes.count <= 65536
+        else { return nil }
+        return (try? JSONSerialization.jsonObject(with: bytes)) as? [String: Any]
+    }
+
+    func originalValue() throws -> Bool {
+        original
+    }
+
+    func change(_ phase: String, whileBackgrounding app: XCUIApplication) throws {
+        FirstFailureContext.mark("settings-readback", element: "system.reduce-motion")
+        let background = TestWait.hangGuard()
+        let step = background.transaction()
+        guard
+            step.perform("press", { XCUIDevice.shared.press(.home) }),
+            step.until({
+                let state = app.state
+                return state == .runningBackground || state == .runningBackgroundSuspended
+            })
+        else { throw Failure("System Reduce Motion command: App did not enter the background.") }
+        let sequence = phase == "enabled" ? 1 : 2
+        try StrictE2EVisualEvidence.writeRequiredJSON(
+            ["sequence": sequence, "phase": phase, "app_state": "background"], name: "motion-command-request.json")
+        guard let reply = Self.response(sequence: sequence, timeoutSeconds: requestTimeoutSeconds) else {
+            throw Failure("System Reduce Motion command: timeout.")
+        }
+        guard reply["succeeded"] as? Bool == true, reply["failure_reason"] is NSNull else {
+            let reason =
+                (reply["failure_reason"] as? String).flatMap(HostFailureReason.init(rawValue:)) ?? .requestInvalid
+            throw Failure("System Reduce Motion command: \(reason.rawValue).")
+        }
+    }
+
+    private static func response(sequence: Int, timeoutSeconds: TimeInterval? = nil) -> [String: Any]? {
+        guard let directory = StrictE2EVisualEvidence.directory() else { return nil }
+        let timeout = timeoutSeconds ?? TestWait.hangGuard().remainingSeconds
+        // This waits only for host file IO; UI navigation retains its separate default HangGuard.
+        let ready = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in
+                Self.read("motion-command-response.json", in: directory)?["sequence"] as? Int == sequence
+            }, object: nil)
+        FirstFailureContext.beginWait(seconds: timeout)
+        defer { FirstFailureContext.endWait() }
+        guard XCTWaiter.wait(for: [ready], timeout: timeout) == .completed,
+            let response = read("motion-command-response.json"), response["sequence"] as? Int == sequence
+        else { return nil }
+        return response
+    }
+
+    func confirm(
+        in app: XCUIApplication, isOn: Bool, phase: String, minimumNotifications: Int
+    ) throws -> Int {
+        FirstFailureContext.mark("settings-readback", element: "system.reduce-motion")
+        let guardWait = TestWait.hangGuard()
+        guard let changes = Self.read("motion-system-command.json")?["changes"] as? [[String: Any]],
+            let completed = changes.last(where: { $0["phase"] as? String == phase })?["completed_wall_time"] as? Double
+        else { throw Failure("App Reduce Motion: command timestamp is unavailable.") }
+        var notificationCount: Int?
+        let confirmed = guardWait.transaction().until {
+            guard app.state == .runningForeground,
+                let samples = Self.read("motion-app-evidence.json")?["samples"] as? [[String: Any]],
+                let sample = samples.last, let count = sample["notification_count"] as? Int,
+                let wallTime = sample["wall_time"] as? Double,
+                wallTime >= completed, sample["app_state"] as? String == "active",
+                sample["ui_kit"] as? Bool == isOn, sample["swift_ui"] as? Bool == isOn,
+                count >= minimumNotifications
+            else { return false }
+            notificationCount = count
+            return true
+        }
+        guard confirmed, let notificationCount else {
+            throw Failure(
+                "App Reduce Motion: UIKit and SwiftUI did not confirm the system change with its notification.")
+        }
+        return notificationCount
     }
 }
 

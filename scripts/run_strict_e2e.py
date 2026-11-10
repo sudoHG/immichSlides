@@ -62,12 +62,14 @@ from strict_e2e_photo_identity import (
 )
 from access_lifecycle_contract import logical_bytes_contain
 from strict_e2e_server import PUBLIC_API_KEY, fixture_manifest
+from strict_e2e_reduce_motion import MotionCommandSession
 
 from strict_e2e_runner_support import (
     EXAMPLE_XCCONFIG,
     TASK_XCCONFIG,
     MIN_DATA_GIB,
     XCODEBUILD_TIMEOUT_SECONDS,
+    REDUCE_MOTION_XCODE_ALLOWANCE_SECONDS,
     RECORDING_START_TIMEOUT_SECONDS,
     RECORDING_STOP_TIMEOUT_SECONDS,
     WRONG_PUBLIC_API_KEY,
@@ -770,6 +772,8 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
     parser.add_argument("--diagnostics-receipt", type=Path, help="shared job measurement ledger")
     parser.add_argument("--local-force-app-hang-capture", action="store_true",
         help="local diagnostic exercise: capture once after the first App CPU read; ignored in CI")
+    parser.add_argument("--local-force-reduce-motion-failure", action="store_true",
+        help="local restoration exercise: fail after enabling Reduce Motion; ignored in CI")
     parser.add_argument("--native-diagnostics-allowance-seconds", type=int, choices=range(3), default=2,
                         help="prepaid native failure-extraction allowance supplied by the job coordinator")
     parser.add_argument("--process-sampling-allowance-seconds", type=float,
@@ -788,7 +792,8 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
     parser.add_argument("--listed-retry-device", choices=("iphone", "ipad", "tv"),
                         help="Enable base-registry listed-only retries for this exact strict device class; requires warm reuse")
     parser.add_argument("--cold-timeout-seconds", type=parse_non_negative_int, help="explicit warm-up budget (default: 300 seconds)")
-    parser.add_argument("--warm-timeout-seconds", type=parse_non_negative_int, help="explicit reuse budget (default: 300 seconds)")
+    parser.add_argument("--warm-timeout-seconds", type=parse_non_negative_int,
+                        help="base reuse budget before P2 command-channel reserves (default: 300 seconds)")
     parser.add_argument(
         "--min-free-gib",
         type=parse_non_negative_int,
@@ -826,6 +831,9 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
     arguments.warm_timeout_seconds = XCODEBUILD_TIMEOUT_SECONDS if arguments.warm_timeout_seconds is None else arguments.warm_timeout_seconds
     if not arguments.cold_timeout_seconds or not arguments.warm_timeout_seconds:
         parser.error("cold and warm timeouts must be positive")
+    execution_timeout_seconds = (arguments.warm_timeout_seconds if arguments.test_without_building else XCODEBUILD_TIMEOUT_SECONDS)
+    if arguments.suite == "p2-reduce-motion":
+        execution_timeout_seconds += REDUCE_MOTION_XCODE_ALLOWANCE_SECONDS
     if (arguments.warm_up_only or arguments.test_without_building) and not arguments.derived_data_path:
         parser.error("warm-up/reuse requires --derived-data-path")
     if arguments.derived_data_path and not (arguments.warm_up_only or arguments.test_without_building):
@@ -887,6 +895,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
     app_hang_case_state = {}
     official_tests_digests: dict[str, str] = {}
     official_export_budgets = {}
+    motion_session = None
     recorder = active()
     case_start_sequence = recorder.sequence if recorder is not None else 0
 
@@ -1104,8 +1113,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                 sampler = CaseSampler(active(), simulator_udid,
                     force_app_hang_capture=arguments.local_force_app_hang_capture,
                     app_hang_case_state=app_hang_case_state,
-                    duration_limit_seconds=arguments.warm_timeout_seconds if warm_receipt is not None
-                    else XCODEBUILD_TIMEOUT_SECONDS).start()
+                    duration_limit_seconds=execution_timeout_seconds).start()
                 resource_samplers[bundle] = sampler
                 try:
                     return operation()
@@ -1201,13 +1209,13 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             started = time.monotonic()
             code = measured_run(command, lambda: run_command(
                 command, cwd=REPO_ROOT, environment=environment, log_path=log_path,
-                timeout_seconds=arguments.warm_timeout_seconds if warm_receipt is not None else XCODEBUILD_TIMEOUT_SECONDS))
+                timeout_seconds=execution_timeout_seconds))
             if warm_receipt is not None:
                 validate_warm_products(derived_data_path, warm_receipt)
                 from strict_e2e_build import write_json
                 write_json(arguments.evidence_dir / (log_path.stem + "-reuse.json"), {
                     "duration_seconds": time.monotonic() - started, "exit_code": code,
-                    "timeout_seconds": arguments.warm_timeout_seconds,
+                    "timeout_seconds": execution_timeout_seconds,
                     "action": "test-without-building", "products_unchanged": True,
                 })
             return code
@@ -1323,7 +1331,19 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                     arguments.evidence_dir / RECORDING_FILE,
                     arguments.evidence_dir / "screen-recording.log",
                 )
-            exit_code = execute_case(command, arguments.evidence_dir / "xcodebuild.log")
+            if arguments.suite == "p2-reduce-motion":
+                motion_session = MotionCommandSession(simulator_udid, arguments.evidence_dir,
+                    force_failure_after_enable=arguments.local_force_reduce_motion_failure and not os.environ.get("CI"))
+            try:
+                if motion_session is not None:
+                    motion_session.start()
+                exit_code = execute_case(command, arguments.evidence_dir / "xcodebuild.log")
+                primary_exit_code = exit_code
+            finally:
+                if motion_session is not None:
+                    cleanup_failures.extend(run_cleanup_actions([("restore_reduce_motion", motion_session.close)]))
+            if motion_session is not None and motion_session.failure and exit_code == 0:
+                raise CommandError("System Reduce Motion command handshake failed.", code=2)
             if arguments.listed_retry_device:
                 result_bundle_path = effective_result_bundle
             primary_exit_code = exit_code
@@ -1514,6 +1534,8 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             ("close_unreachable_reservation", close_unreachable_reservation),
             ("write_service_lifecycle", write_lifecycle),
         ]
+        if motion_session is not None:
+            actions.insert(0, ("restore_reduce_motion", motion_session.close))
         if did_create_config:
             actions.append(
                 (

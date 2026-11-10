@@ -1327,6 +1327,9 @@ def public_validator_failure_message(value):
 # Source locations and enum meanings: docs/CI_STRICT_RUNNER.md#reviewed-prefix-table.
 # No activity marker exists in these flows. Suffixes (including values) are discarded.
 PREFIX_RULES = (
+    ("System Reduce Motion command: ", "settings_navigation", "control_state"),
+    ("App Reduce Motion: ", "settings_navigation", "control_state"),
+    ("The app did not return to the foreground after changing system Reduce Motion.", "settings_navigation", "control_state"),
     ("App timeline:", "continue_timing", "evidence_capture"),
     ("System settings: Reduce Motion read back after the tap is not ", "settings_navigation", "control_state"),
     ("System settings: Reduce Motion switch is not ready for system evidence.", "settings_navigation", "control_state"),

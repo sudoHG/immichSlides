@@ -9,6 +9,16 @@ recording time slices use the existing [P2 sign-off contract](../scripts/strict_
 Automated success remains `needs-human-review`; exporting a package never produces
 a human PASS or changes the nightly's release eligibility.
 
+Reduce Motion command packages replace the three `motion-system-*` Settings PNGs
+with `motion-system-command.json` and `motion-app-evidence.json`. The review page
+shows original/disabled/enabled/restored command values and timestamps, the App's
+UIKit and SwiftUI values, and UIKit notification counts from one live launch.
+Enabling and restoration occur while the App is backgrounded. Confirm these facts
+as separate signed items, then review all six unchanged recording segments.
+The legacy PNG contract and `p2-review.html` remain supported; command packages use
+`p2-motion-review.html`. Retained embedded manifests remain readable after media
+expiry, with the same signature, hash and verdict requirements.
+
 ## The maintainer's review
 
 1. Inspect all items. A blank frame, bad crop, missing photo or unexpected fallback

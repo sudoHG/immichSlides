@@ -31,6 +31,7 @@ from strict_e2e_build import build_settings, write_json
 from strict_e2e_p2_contract import P2_CASES, RAW_VERDICT, official_tests_facts
 from strict_e2e_server import PUBLIC_API_KEY
 from strict_e2e_runner_support import (IOS_LIFECYCLE_PAUSE_SUITE, SIMULATOR_READINESS_TIMEOUT_SECONDS,
+                                     REDUCE_MOTION_CASE_ALLOWANCE_SECONDS,
                                      SIMULATOR_PREPARATION_TIMEOUT_SECONDS,
                                      POST_TEST_PHASE_PREFIX, POST_TEST_FAILURE_REASONS,
                                      destination_udid, pause_visual_verdict, prepare_simulator)
@@ -573,7 +574,8 @@ def main(argv=None):
                 truncation_seen=child_truncated,
                 failure_report=lambda reason: phase.update(runner_failure_reason=reason),
                 timeout_seconds=((args.warm_timeout_seconds + SIMULATOR_READINESS_TIMEOUT_SECONDS) * invocations
-                                 if warm else args.cold_timeout_seconds) + 240)
+                                 if warm else args.cold_timeout_seconds) + 240
+                                 + (REDUCE_MOTION_CASE_ALLOWANCE_SECONDS if warm and case["suite"] == "p2-reduce-motion" else 0))
             return phase
         except BaseException as error:
             if isinstance(error, RunnerGroupCleanupError):

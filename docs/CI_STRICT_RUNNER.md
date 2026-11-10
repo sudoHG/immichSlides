@@ -123,8 +123,9 @@ reset/export/cleanup allowance rather than a separate reservation.
 Raising each read independently to 180 seconds
 would instead add 60 minutes to the largest shard's documented 198-minute bound
 and exceed the 215-minute job timeout; this implementation does not do that.
-The existing 240-second per-case overhead, warm child caps and 215-minute job
-cap are unchanged. The documented 198-minute bound retains its 17-minute margin
+The official-export change retains the 240-second per-case overhead and 215-minute job
+cap. Reduce Motion has the separate control-channel allowances documented below.
+The documented 198-minute bound retains its 17-minute margin
 (600 seconds of preparation plus seven minutes for diagnostics/setup/upload/
 cleanup). This is scheduling headroom, not a guarantee under starvation; reaching
 any outer cap remains red. Device runs for this runner-only change: `NOT_RUN`.
@@ -1153,13 +1154,93 @@ stay empty. Every warm invocation uses `test-without-building`; Products are has
 before and after. Recordings begin after that preparation and contain no build.
 The existing filter-person sessions each reuse this build and still reset separately.
 
-The cold budget applies only to warm-up; the warm budget applies per reused Xcode
-invocation. The runner's local defaults remain 300 seconds for both, and the
-default mode remains the existing single `test` call with its fixed 300-second limit
+The cold budget applies only to warm-up; the warm budget is the base per reused Xcode
+invocation, before the Reduce Motion control-channel reserve below. The runner's local
+base defaults remain 300 seconds for both, and the
+default mode remains a single `test` call with a 300-second base limit
 with disposable DerivedData in evidence. Explicit cold/warm timeout options are
 rejected in that default mode. Explicit shard DerivedData is retained
 until its owner finishes all cases. Package resolution stays locked and simulator
 signing stays **Sign to Run Locally**, verified as `adhoc` by `codesign` after warm-up.
+
+## Reduce Motion command handshake
+
+`p2-reduce-motion` records the same six motion segments and nine ordered markers
+on iPhone and Apple TV. It changes the simulator's real preference with:
+
+```text
+xcrun simctl spawn <udid> defaults read com.apple.Accessibility ReduceMotionEnabled
+xcrun simctl spawn <udid> defaults write com.apple.Accessibility ReduceMotionEnabled -bool true
+xcrun simctl spawn <udid> notifyutil -p com.apple.accessibility.reduce.motion.status
+```
+
+The notification name was verified on the pinned iOS 27.0 and tvOS 27.2 runtimes:
+a running SwiftUI App received `UIAccessibility.reduceMotionStatusDidChangeNotification`,
+`UIAccessibility.isReduceMotionEnabled` changed, and SwiftUI's
+`accessibilityReduceMotion` followed, for both on and off. The similarly named
+`com.apple.accessibility.cache.reduce.motion` did not update the running iOS App.
+Command success alone is never App confirmation. These simulator implementation
+details are pinned-runtime evidence, not a promised public Apple preference API.
+
+`MotionCommandSession` captures the original value before its first write. A
+missing key is the system's default off; restoration deletes a key that was
+originally absent and otherwise writes the original Boolean, then posts the same
+notification and reads it back. Each `simctl spawn` uses the shared
+`SIMULATOR_COMMAND_TIMEOUT_SECONDS` (`C = 60 seconds`), not a shorter cap.
+XCTest writes one sequence-bound request after Home has put the App in the
+background; the host processes only enabled then restored, using atomic sidecar
+responses in the fresh evidence directory. One change shares `4C = 240 seconds`
+across read-before, write/delete, notify and read-after; each command gets at most
+`C` and the remaining change budget. The ready response advertises `5C = 300 seconds`
+to XCTest's unscaled `XCTWaiter` file-response wait: `4C` for the serial commands
+plus `C` for delivery/polling. This is host IO, not an extended navigation HangGuard. Home/background
+readiness and the later foreground/App confirmation use independent navigation
+guards, so they cannot consume that command-response allowance. Replies carry the
+received request sequence and only the closed reasons `write`, `notify`, `readback`,
+`timeout`, or `request-invalid`; XCTest reports that reason immediately.
+
+All control-channel budgets derive from that shared constant:
+
+| Stage | Allowance | Derivation |
+|---|---|---|
+| Original read and initial disable, outside XCTest | `5C = 300 s` | One read plus one four-command change |
+| A response wait | `5C = 300 s` | Four commands plus one scheduling/delivery margin |
+| Each UI transition reserve | `8C = 480 s` | Response plus separate Home, foreground and App-readout reserves; the existing foreground limit remains 10 s (at most 40 s with the infrastructure factor) |
+| Additional XCTest allowance | `16C = 960 s` | Two transitions; the base test allowance remains available for the original flow |
+| Join then final restore, outside XCTest | `9C = 540 s` | At most `5C` to join the bounded writer, then `4C` to restore |
+| Additional outer case allowance | `30C = 1800 s` | Startup `5C` + XCTest `16C` + finalization `9C` |
+
+Only this suite receives those infrastructure reserves. Its default local Xcode
+cap is `300 + 960 = 1260 s`; with the hosted base 600 s it is 1560 s. Reuse receipts
+and resource samplers record the effective Xcode cap. The tracer adds the same
+1800-second case allowance before waiting on its child; the existing readiness and
+240-second overhead remain separate. [Nightly capacity](CI_NIGHTLY.md#population-and-capacity)
+still fits the 215-minute job cap. These hang limits add no retry and change no
+product deadline, motion segment, recording hold or tolerance.
+
+The host disables before App launch, then enables/restores while the App remains
+backgrounded. After activation, XCTest requires a fresh active-App sample with
+matching UIKit and SwiftUI values and an increased notification count for each
+actual change. The read-only `ReduceMotionEvidenceProbe`, gated by DEBUG and
+`PlatformCompat`'s `UI_TEST_REDUCE_MOTION_EVIDENCE_DIR`, emits one launch's timestamped
+samples, capped at 128. Its key is exempt from `isRunningXCTest`, preserving the
+normal Debug Keychain/Info.plist behavior; the probe writes only diagnostic evidence,
+not preferences or playback state. The host serially
+stops its command thread and restores in `finally`, before raw validation, and
+retains restoration errors as cleanup failures. Unhandled host SIGTERM and SIGKILL
+do not run Python finalizers; restoration on either signal is `NOT_VERIFIED`.
+The forced-failure exercise covers an ordinary XCTest failure, not those signals.
+
+`motion-system-command.json` and `motion-app-evidence.json` replace Settings PNGs
+for new P2 evidence. The closed reader binds original/off/on/restored values,
+background changes, App notification counts and timestamps to the existing movie
+markers. It checks cleanup restoration separately. Historical PNG evidence remains
+readable; [review packages](CI_P2_REVIEWS.md) keep separate old/new templates and
+still require signed human review. The Settings-only persistence round trips
+remain unchanged. For a local forced-failure restoration exercise, add
+`--local-force-reduce-motion-failure`: the host enables, returns a failed response,
+and restores during finalization; XCTest and the runner must remain red. This
+flag is ignored in CI.
 
 ## Fixture service startup
 
@@ -2215,9 +2296,12 @@ The iOS system Reduce Motion readiness, foreground precondition, value and
 snapshot-timeout failures below retain the existing `Failure(message:)` wrapper.
 The timeout is distinct from an observed opposite value. All map to `control_state`
 and remain red, including under policy v5; no yellow rule is added.
-The [system Settings interaction](TESTING.md#strict-end-to-end-case-identifiers)
-keeps its original page allowance and P2 motion contract. Its one single-tap
+The separate [system Settings round trip](TESTING.md#strict-end-to-end-case-identifiers)
+keeps its original page allowance. Its one single-tap
 readback budget is `2 × settingsReadbackTimeout`, equal to main's total, not longer.
+P2's `System Reduce Motion command: ` and `App Reduce Motion: ` prefixes, plus its
+fixed foreground-return failure, also map to `settings_navigation/control_state`
+and remain red. Host commands and App readouts gain no policy-v5 exception.
 
 The following additions come only from public Swift assertions in the linked source files.
 Identical text in other files has also been checked for phase consistency.
@@ -2370,6 +2454,9 @@ New enum meanings and why the previous vocabulary cannot express them:
 
 | Fixed source prefix | Phase | Class | Public source |
 |---|---|---|---|
+| `System Reduce Motion command: ` | `settings_navigation` | `control_state` | [HostReduceMotionSetting in ReduceMotionUITests.swift](../immichSlidesUITests/ReduceMotionUITests.swift) |
+| `App Reduce Motion: ` | `settings_navigation` | `control_state` | [HostReduceMotionSetting.confirm in ReduceMotionUITests.swift](../immichSlidesUITests/ReduceMotionUITests.swift) |
+| `The app did not return to the foreground after changing system Reduce Motion.` | `settings_navigation` | `control_state` | [bringToForeground in ReduceMotionUITests.swift](../immichSlidesUITests/ReduceMotionUITests.swift) |
 | `System settings: Reduce Motion read back after the tap is not ` | `settings_navigation` | `control_state` | [ReduceMotionUITests.swift](../immichSlidesUITests/ReduceMotionUITests.swift) |
 | `System settings: Reduce Motion switch is not ready for system evidence.` | `settings_navigation` | `control_state` | [ReduceMotionUITests.swift](../immichSlidesUITests/ReduceMotionUITests.swift) |
 | `System settings: Settings must be foreground before changing Reduce Motion.` | `settings_navigation` | `control_state` | [ReduceMotionUITests.swift](../immichSlidesUITests/ReduceMotionUITests.swift) |

@@ -83,6 +83,144 @@ from run_strict_e2e_test_fixtures import (
 )
 
 class StrictE2EP2RunnerTestsCases:
+    def test_motion_invocation_reserves_channel_time_without_spending_the_test_budget(self):
+        from strict_e2e_runner_support import SIMULATOR_COMMAND_TIMEOUT_SECONDS
+        for suite in ("p2-reduce-motion", "p2-exif"):
+            with self.subTest(suite=suite), tempfile.TemporaryDirectory() as directory:
+                code, _out, error, calls = self._run_p2_main(Path(directory) / "evidence", suite=suite,
+                    platform="ios", model="iPhone 17e", warm=True, warm_timeout_seconds=600)
+                self.assertEqual(code, 0, error)
+                self.assertEqual(calls["invocation_timeouts"], [
+                    600 + (16 * SIMULATOR_COMMAND_TIMEOUT_SECONDS if suite == "p2-reduce-motion" else 0)])
+
+    def motion_command_session(self, directory, *, present=False, mismatch=False, elapsed_seconds=1):
+        from contextlib import ExitStack
+        from strict_e2e_reduce_motion import MotionCommandSession
+        clock = [0.0]
+        state = dict(present=present, enabled=False)
+        calls = []
+        def spawn(command, **kwargs):
+            arguments = command[4:]
+            calls.append(arguments)
+            if kwargs["timeout"] < elapsed_seconds:
+                raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+            clock[0] += elapsed_seconds
+            output, error, code = "", "", 0
+            if arguments[:2] == ["defaults", "read"]:
+                if not state["present"]:
+                    code, error = 1, "Error: Could not find key 'ReduceMotionEnabled' in domain 'com.apple.Accessibility'."
+                else:
+                    output = "1" if state["enabled"] else "0"
+            elif arguments[:2] == ["defaults", "write"]:
+                state.update(present=True, enabled=arguments[-1] == "true")
+                if mismatch and state["enabled"]:
+                    state["enabled"] = False
+            elif arguments[:2] == ["defaults", "delete"]:
+                state.update(present=False, enabled=False)
+            return subprocess.CompletedProcess(command, code, output, error)
+        stack = ExitStack()
+        self.addCleanup(stack.close)
+        stack.enter_context(mock.patch("strict_e2e_reduce_motion.subprocess.run", side_effect=spawn))
+        stack.enter_context(mock.patch("strict_e2e_reduce_motion.time.monotonic", side_effect=lambda: clock[0]))
+        thread = stack.enter_context(mock.patch("strict_e2e_reduce_motion.threading.Thread")).return_value
+        thread.is_alive.return_value = False
+        return MotionCommandSession("SIM", Path(directory)), state, calls, thread
+
+    def serve_motion_request(self, session, sequence, phase):
+        (session.directory / "motion-command-request.json").write_text(json.dumps({
+            "sequence": sequence, "phase": phase, "app_state": "background"}))
+        with mock.patch.object(session.stop, "wait", side_effect=[False, True]):
+            session._serve()
+        return json.loads((session.directory / "motion-command-response.json").read_text())
+
+    def test_motion_slow_healthy_commands_and_missing_key_restore_use_shared_budgets(self):
+        from strict_e2e_runner_support import SIMULATOR_COMMAND_TIMEOUT_SECONDS
+        for elapsed in (11, SIMULATOR_COMMAND_TIMEOUT_SECONDS - 1):
+            with self.subTest(command_seconds=elapsed), tempfile.TemporaryDirectory() as directory:
+                session, state, calls, _thread = self.motion_command_session(directory, elapsed_seconds=elapsed)
+                session.start()
+                ready = json.loads((session.directory / "motion-command-response.json").read_text())
+                self.assertGreaterEqual(ready["request_timeout_seconds"], 5 * SIMULATOR_COMMAND_TIMEOUT_SECONDS)
+                reply = self.serve_motion_request(session, 1, "enabled")
+                self.assertEqual(reply, {"sequence": 1, "succeeded": True, "failure_reason": None})
+                self.assertTrue(state["enabled"])
+                session.close()
+                self.assertEqual(state, {"present": False, "enabled": False})
+                self.assertIn(["defaults", "delete", "com.apple.Accessibility", "ReduceMotionEnabled"], calls)
+
+    def test_motion_replies_bind_failures_to_the_received_request_sequence(self):
+        for sequence, phase, mismatch, reason in (
+            (1, "enabled", True, "readback"),
+            (2, "restored", False, "request-invalid"),
+        ):
+            with self.subTest(reason=reason), tempfile.TemporaryDirectory() as directory:
+                session, _state, _calls, _thread = self.motion_command_session(directory, mismatch=mismatch)
+                session.start()
+                reply = self.serve_motion_request(session, sequence, phase)
+                self.assertEqual(reply, {"sequence": sequence, "succeeded": False, "failure_reason": reason})
+                self.assertTrue(session.failure)
+                session.close()
+        with tempfile.TemporaryDirectory() as directory:
+            session, _state, _calls, _thread = self.motion_command_session(directory)
+            session.start()
+            self.assertTrue(self.serve_motion_request(session, 1, "enabled")["succeeded"])
+            self.assertEqual(self.serve_motion_request(session, 2, "enabled"), {
+                "sequence": 2, "succeeded": False, "failure_reason": "request-invalid"})
+            session.close()
+
+    def test_motion_command_failure_reasons_are_closed_and_immediate(self):
+        import strict_e2e_reduce_motion as motion
+        for target, reason in (("write", "write"), ("notify", "notify"), ("read", "timeout")):
+            with self.subTest(reason=reason), tempfile.TemporaryDirectory() as directory:
+                session, _state, _calls, _thread = self.motion_command_session(directory)
+                session.start()
+                healthy = motion.subprocess.run.side_effect
+                def fail(command, **kwargs):
+                    arguments = command[4:]
+                    if (target == "notify" and arguments[0] == "notifyutil"
+                        or target != "notify" and arguments[:2] == ["defaults", target]):
+                        if reason == "timeout":
+                            raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+                        return subprocess.CompletedProcess(command, 1, "", "private error must not be published")
+                    return healthy(command, **kwargs)
+                with mock.patch.object(motion.subprocess, "run", side_effect=fail):
+                    reply = self.serve_motion_request(session, 1, "enabled")
+                self.assertEqual(reply, {"sequence": 1, "succeeded": False, "failure_reason": reason})
+                session.close()
+
+    def test_motion_close_joins_the_command_writer_before_restoring(self):
+        with tempfile.TemporaryDirectory() as directory:
+            session, _state, _calls, thread = self.motion_command_session(directory)
+            session.start()
+            observed = []
+            def restore(*args, **kwargs):
+                thread.join.assert_called_once()
+                observed.append(args[0])
+            with mock.patch.object(session, "_change", side_effect=restore):
+                session.close()
+            self.assertEqual(observed, ["cleanup-restored"])
+        with tempfile.TemporaryDirectory() as directory:
+            session, _state, _calls, thread = self.motion_command_session(directory)
+            session.start()
+            thread.is_alive.return_value = True
+            with mock.patch.object(session, "_change") as restore, self.assertRaisesRegex(
+                    CommandError, "command worker did not stop; restore unverified"):
+                session.close()
+            restore.assert_not_called()
+            session.close()
+            thread.join.assert_called_once()
+
+    def test_reduce_motion_restore_failure_keeps_passed_xctest_red(self):
+        with tempfile.TemporaryDirectory() as directory:
+            evidence = Path(directory) / "motion"
+            code, _stdout, stderr, calls = self._run_p2_main(evidence, suite="p2-reduce-motion",
+                platform="ios", model="iPhone 17e", motion_restore_error=True)
+            self.assertEqual(code, 2, stderr)
+            calls["motion"].start.assert_called_once()
+            self.assertTrue(calls["motion"].close.called)
+            failures = json.loads((evidence / "cleanup-failures.json").read_text())["failures"]
+            self.assertTrue(any("restore_reduce_motion" in failure for failure in failures))
+
     def test_p2_suites_route_to_selected_method_and_record_e2e_ids(self) -> None:
         common = {
             "repo_root": Path("/repo"),

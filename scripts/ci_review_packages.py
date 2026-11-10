@@ -16,6 +16,7 @@ from pathlib import Path
 from ci_summary import decode, duration, fields, identity_key, integer, parse_summary, require, sha, validate_test_identity
 from strict_e2e_filter_contract import FROZEN_FIXTURE_SHA256
 from strict_e2e_p2_contract import (DEVICE_PLATFORM, P2_CASES, P2ContractError, RAW_VERDICT,
+                                  MOTION_FACT_FILES, validate_motion_facts,
                                   RECORDING_TIMING_FILE, REVIEW_FILE, REVIEW_SCHEMA, STEPS_FILE,
                                   evaluate_review, read_official_tests_export, require_official_execution,
                                   validate_raw_evidence)
@@ -23,6 +24,7 @@ from strict_e2e_server import PUBLIC_API_KEY, _fixture_data, fixture_manifest
 
 ROOT = Path(__file__).resolve().parent.parent
 TEMPLATE = ROOT / "scripts/p2-review.html"
+MOTION_TEMPLATE = ROOT / "scripts/p2-motion-review.html"
 SIGNATURE = "These review decisions and observations are my own."
 CONTEXT_FIELDS = {"source_sha", "tree_sha", "repository", "workflow_path", "event", "ref",
                   "run_id", "run_attempt", "shard", "matrix_sha256"}
@@ -86,9 +88,19 @@ def scan(directory, *, redact_paths=True):
         raise ValueError("sensitive scan refused publication") from None
 
 
+def review_template(manifest):
+    return MOTION_TEMPLATE if "system_motion" in manifest["facts"]["raw"] else TEMPLATE
+
+
+def review_order(suite, raw):
+    case = P2_CASES[suite]
+    return [*(MOTION_FACT_FILES if "system_motion" in raw else (name + ".png" for name in case.pngs)),
+            *(["screen-recording.mov"] if case.video else [])]
+
+
 def render_page(manifest):
     embedded = json.dumps(manifest, ensure_ascii=True, sort_keys=True).replace("<", "\\u003c")
-    return TEMPLATE.read_text().replace("__P2_PACKAGE__", embedded)
+    return review_template(manifest).read_text().replace("__P2_PACKAGE__", embedded)
 
 
 def build_package(evidence, destination, context, case):
@@ -97,7 +109,8 @@ def build_package(evidence, destination, context, case):
     require(evidence.is_dir() and not evidence.is_symlink(), "invalid evidence directory")
     suite, fixture = case["suite"], case["fixture"]
     contract = P2_CASES[suite]
-    for name in [*(name + ".png" for name in contract.pngs), STEPS_FILE,
+    motion_facts = suite == "p2-reduce-motion" and any((evidence / name).exists() for name in MOTION_FACT_FILES)
+    for name in [*(MOTION_FACT_FILES if motion_facts else (name + ".png" for name in contract.pngs)), STEPS_FILE,
                  *(["screen-recording.mov", RECORDING_TIMING_FILE] if contract.video else [])]:
         file_digest(evidence / name)
     raw = validate_raw_evidence(evidence, suite, fixture)
@@ -154,10 +167,9 @@ def build_package(evidence, destination, context, case):
         manifest = {"schema_version": 2, "context": context, "case": case, "case_sha256": digest(case),
                     "last_step_wall_time": max(step["wall_time"] for step in steps["steps"]),
                     "facts": facts, "files": {p.name: file_digest(p) for p in sorted(staged.iterdir())},
-                    "template_sha256": file_digest(TEMPLATE),
+                    "template_sha256": file_digest(MOTION_TEMPLATE if motion_facts else TEMPLATE),
                     "fixture_marks": {a["label"]: a["sha256"] for a in fixture_manifest(fixture)["assets"]},
-                    "review_order": [*(name + ".png" for name in contract.pngs),
-                                     *(["screen-recording.mov"] if contract.video else [])]}
+                    "review_order": review_order(suite, raw)}
         manifest["package_sha256"] = digest(manifest)
         write_json(staged / "package.json", manifest)
         (staged / "review.html").write_text(render_page(manifest))
@@ -194,9 +206,15 @@ def validate_manifest(manifest):
     require(facts["official_test"] == [method], "official method differs")
     raw = facts["raw"]
     extra = ({"mark_offsets"} if contract.video else set()) | ({"cache_clear"} if contract.cache_clear else set()) | ({"cache_return"} if contract.cache_return else set())
+    motion_facts = suite == "p2-reduce-motion" and "system_motion" in raw
+    if motion_facts:
+        extra.add("system_motion")
     fields(raw, {"verdict", "suite", "artifacts", "records"} | extra, "raw contract")
     require(raw["verdict"] == RAW_VERDICT and raw["suite"] == suite, "raw contract differs")
-    artifacts = {name + ".png" for name in contract.pngs} | ({"screen-recording.mov"} if contract.video else set())
+    if motion_facts:
+        fields(raw["system_motion"], {"command", "app"}, "system motion")
+        validate_motion_facts(raw["system_motion"]["command"], raw["system_motion"]["app"])
+    artifacts = set(MOTION_FACT_FILES if motion_facts else (name + ".png" for name in contract.pngs)) | ({"screen-recording.mov"} if contract.video else set())
     records = {STEPS_FILE} | ({RECORDING_TIMING_FILE} if contract.video else set())
     fields(raw["artifacts"], artifacts, "artifacts")
     fields(raw["records"], records, "records")
@@ -220,8 +238,7 @@ def validate_manifest(manifest):
     encoded_facts = (json.dumps(facts, sort_keys=True, indent=2, ensure_ascii=True, allow_nan=False) + "\n").encode()
     require(manifest["files"]["case.json"] == hashlib.sha256(encoded_facts).hexdigest(), "facts hash differs")
     require(manifest["fixture_marks"] == {a["label"]: a["sha256"] for a in fixture_manifest(fixture)["assets"]}, "fixture marks differ")
-    require(manifest["review_order"] == [*(name + ".png" for name in contract.pngs),
-            *(["screen-recording.mov"] if contract.video else [])], "review order differs from contract")
+    require(manifest["review_order"] == review_order(suite, raw), "review order differs from contract")
     return manifest
 
 
@@ -242,7 +259,7 @@ def read_package(directory):
         require(file_digest(directory / f"fixture-{asset['label']}.png") == asset["sha256"], "reference photo differs")
     require(manifest["facts"] == decode((directory / "case.json").read_text())
             and manifest["facts"]["raw"] == raw and raw["verdict"] == RAW_VERDICT, "case facts differ")
-    require(manifest["template_sha256"] == file_digest(TEMPLATE), "unsupported review page revision")
+    require(manifest["template_sha256"] == file_digest(review_template(manifest)), "unsupported review page revision")
     require(file_digest(directory / "review.html") == hashlib.sha256(render_page(manifest).encode()).hexdigest(),
             "review page differs")
     require(manifest["fixture_marks"] == {a["label"]: a["sha256"] for a in fixture_manifest(fixture)["assets"]},

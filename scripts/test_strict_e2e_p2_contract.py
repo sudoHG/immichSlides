@@ -250,9 +250,14 @@ class ReviewPackageTests(unittest.TestCase):
             with self.assertRaisesRegex(ContractError, "^nonregular first failure package input$"):
                 read_failure_package(package, summary)
 
-    def _package(self, root, fixture="a", suite="p2-cache"):
+    def _package(self, root, fixture="a", suite="p2-cache", command=False):
         from ci_review_packages import build_package
-        evidence = build_evidence(root, suite, "iphone", review=False)
+        if command:
+            from strict_e2e_p2_contract_test_fixtures import command_motion_evidence
+            evidence = command_motion_evidence(root)
+            _write_json(evidence / "visual-identity-runner.json", validate_raw_evidence(evidence, suite, fixture))
+        else:
+            evidence = build_evidence(root, suite, "iphone", review=False)
         if fixture == "b":
             (evidence / "cache-returned.png").write_bytes(_fixture_data("b")["images"]["asset-b-3"])
             _patch_json(evidence / "case-manifest.json", fixture_set="b", fixture_sha256=FROZEN_FIXTURE_SHA256["b"])
@@ -276,6 +281,35 @@ class ReviewPackageTests(unittest.TestCase):
         package = root / "package"
         build_package(evidence, package, context, case)
         return evidence, package
+
+    def test_command_motion_package_keeps_facts_signed_and_legacy_packages_readable(self):
+        from ci_review_packages import read_package, validate_manifest
+        for command in (False, True):
+            with self.subTest(command=command), tempfile.TemporaryDirectory() as directory:
+                evidence, package = self._package(Path(directory), suite="p2-reduce-motion", command=command)
+                manifest = read_package(package)
+                self.assertEqual(validate_manifest(manifest), manifest)
+                self.assertEqual("system_motion" in manifest["facts"]["raw"], command)
+                page = (package / "review.html").read_text()
+                if command:
+                    self.assertEqual(manifest["review_order"], [
+                        "motion-system-command.json", "motion-app-evidence.json", RECORDING_FILE])
+                    self.assertNotIn("motion-system-original.png", manifest["files"])
+                    self.assertIn("Recorded system and App facts", page)
+                    _write_review(evidence, "p2-reduce-motion", "iphone")
+                    review = _read_json(evidence / REVIEW_FILE)
+                    review["artifacts"] = {name: {
+                        "sha256": facts["sha256"], "observation": "synthetic validator fixture", "conclusion": "PASS"
+                    } for name, facts in manifest["facts"]["raw"]["artifacts"].items() if name.endswith(".json")} | {
+                        RECORDING_FILE: review["artifacts"][RECORDING_FILE]}
+                    _write_json(evidence / REVIEW_FILE, review)
+                    self.assertEqual(_verify(evidence, "p2-reduce-motion", "iphone")["verdict"], "PASS")
+                    review["artifacts"]["motion-system-command.json"]["conclusion"] = "PARTIAL"
+                    _write_json(evidence / REVIEW_FILE, review)
+                    with self.assertRaisesRegex(P2ContractError, "Overall verdict PASS is inconsistent"):
+                        _verify(evidence, "p2-reduce-motion", "iphone")
+                else:
+                    self.assertIn("motion-system-original.png", manifest["files"])
 
     def test_package_rejects_changed_inputs_and_exports_only_fixture_allowlist(self):
         from ci_review_packages import build_package, read_package

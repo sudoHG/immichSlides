@@ -210,6 +210,45 @@ def _write_review(
     )
 
 
+def command_motion_evidence(root: Path, *, original: bool = False, was_present: bool = True) -> Path:
+    evidence = build_evidence(root, "p2-reduce-motion", "iphone", review=False)
+    steps = _read_json(evidence / STEPS_FILE)
+    for step in steps["steps"]:
+        step.pop("png", None)
+    _write_json(evidence / STEPS_FILE, steps)
+    changes = []
+    for phase, requested, before, started, app_state in (
+        ("disabled", False, original, 999.1, "not-running"),
+        ("enabled", True, False, 1003.1, "background"),
+        ("restored", original, True, 1008.1, "background"),
+        ("cleanup-restored", original, original, 1009.1, "not-observed"),
+    ):
+        changes.append(dict(phase=phase, requested=requested, before=before, after=requested,
+                            started_wall_time=started, completed_wall_time=started + 0.1, app_state=app_state))
+    _write_json(evidence / "motion-system-command.json", {
+        "schema": "strict-e2e-motion-command-v1", "mechanism": "simctl-defaults-notify",
+        "domain": "com.apple.Accessibility", "key": "ReduceMotionEnabled",
+        "notification": "com.apple.accessibility.reduce.motion.status",
+        "original": {"is_enabled": original, "was_present": was_present, "wall_time": 999.0}, "changes": changes,
+    })
+    samples = []
+    for wall_time, reason, ui_kit, swift_ui, count in (
+        (1001.5, "initial", False, False, 0),
+        (1004.4, "notification", True, False, 1),
+        (1004.5, "environment", True, True, 1),
+        (1008.4, "notification" if not original else "active", original, True, 2 if not original else 1),
+        (1008.5, "active", original, original, 2 if not original else 1),
+    ):
+        samples.append(dict(sequence=len(samples) + 1, wall_time=wall_time, uptime=wall_time - 900,
+                            reason=reason, ui_kit=ui_kit, swift_ui=swift_ui,
+                            notification_count=count, app_state="active"))
+    _write_json(evidence / "motion-app-evidence.json", {
+        "schema": "strict-e2e-motion-app-v1", "launch_nonce": "bed48a67-4157-411e-b695-6e9ecf088541",
+        "samples": samples,
+    })
+    return evidence
+
+
 def build_evidence(root: Path, suite: str, device_class: str, *, review: bool = True) -> Path:
     """Build a tooling-complete synthetic evidence pack; it proves the contract only and shows no product screen."""
     case = P2_CASES[suite]

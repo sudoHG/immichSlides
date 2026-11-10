@@ -273,7 +273,7 @@ preserving the former three-read worst case; listed retry reads retain their own
 60-second limits. See [export measurements and capacity](CI_STRICT_RUNNER.md#hosted-export-measurements-and-capacity). Preparation/export
 timeouts name the phase in compact infrastructure entries without command arguments/output, preserve a failed
 case record, finish cleanup and quarantine raw bundles privately. Xcode cold/warm
-execution budgets are unchanged; the outer warm allowance includes readiness. The tracer
+execution budgets are unchanged outside Reduce Motion's control channel; the outer warm allowance includes readiness. The tracer
 retains these entries even when official exports are unavailable, so application/test execution and infrastructure hangs remain
 distinguishable. An xcodebuild test-execution timeout remains a failure of that case,
 without an infrastructure entry.
@@ -286,6 +286,16 @@ can publish its failed records before runner teardown. Readiness can exceed its
 scheduling deadline while the last timed-out query finishes cleanup; see the
 [shared bounds and overrun logs](CI_STRICT_RUNNER.md#shared-simulator-reset).
 Reaching the job cap is a failure; unrun cases remain unverified.
+Reduce Motion additionally reserves 1800 seconds per case for its command channel:
+startup 300 s, two XCTest transitions 960 s, and join/final restoration 540 s.
+These derive from the shared 60-second simulator-command constant; see the
+[complete derivation](CI_STRICT_RUNNER.md#reduce-motion-command-handshake).
+An ordinary six-case shard previously bounds at `24 + 6 × 19 = 138 minutes`
+(including cold-build overhead and every readiness allowance). The TV shard has
+two Reduce Motion fixtures, so its bound becomes `138 + 2 × 30 = 198 minutes`;
+each affected iPhone shard has one and bounds at 168 minutes. The person shard's
+198-minute bound and overall 215-minute cap remain unchanged, retaining the same
+17-minute margin. Matrix membership, product windows and recording holds do not change.
 If simulator creation or the separate preparation gate fails before the tracer starts,
 the workflow invokes the tracer's `--preparation-failed` accounting mode before upload.
 It writes the same bound compact schema with every planned case failed, every attempt

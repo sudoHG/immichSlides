@@ -7,6 +7,7 @@ on:
       - .github/workflows/ci-nightly.yml
       - scripts/ci_review_packages.py
       - scripts/p2-review.html
+      - scripts/p2-motion-review.html
 
 permissions:
   contents: read

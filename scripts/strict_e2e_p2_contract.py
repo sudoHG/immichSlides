@@ -15,9 +15,10 @@ import re
 import struct
 import subprocess
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Mapping, TextIO
+from uuid import UUID
 
 from strict_e2e_filter_contract import FROZEN_FIXTURE_SHA256
 from strict_e2e_photo_identity import MARKS, IdentityAssertionError, classify_screenshot
@@ -39,6 +40,9 @@ ORIENTATIONS = ("portrait", "landscape", "not_applicable")
 DEVICE_PLATFORM = {"iphone": "ios", "ipad": "ios", "tv": "tvos"}
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+MOTION_COMMAND_FILE = "motion-system-command.json"
+MOTION_APP_FILE = "motion-app-evidence.json"
+MOTION_FACT_FILES = (MOTION_COMMAND_FILE, MOTION_APP_FILE)
 
 
 class P2ContractError(Exception):
@@ -348,6 +352,94 @@ def _digest(data: bytes) -> dict[str, Any]:
     return {"sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)}
 
 
+def _motion_require(condition: bool, detail: str) -> None:
+    if not condition:
+        raise P2ContractError(f"Motion command: {detail}.")
+
+
+def validate_motion_facts(command: Any, app: Any, times: Mapping[str, float] | None = None) -> dict[str, Any]:
+    """Read command receipts and App observations; neither is a human motion verdict."""
+    def closed(value: Any, keys: set[str]) -> None:
+        _motion_require(isinstance(value, dict) and set(value) == keys, "unexpected fields")
+
+    def clock(value: Any) -> float:
+        _motion_require(type(value) in (int, float) and math.isfinite(value) and value >= 0, "invalid clock")
+        return float(value)
+
+    closed(command, {"schema", "mechanism", "domain", "key", "notification", "original", "changes"})
+    _motion_require(command["schema"] == "strict-e2e-motion-command-v1"
+        and command["mechanism"] == "simctl-defaults-notify" and command["domain"] == "com.apple.Accessibility"
+        and command["key"] == "ReduceMotionEnabled"
+        and command["notification"] == "com.apple.accessibility.reduce.motion.status", "unsupported mechanism")
+    original = command["original"]
+    closed(original, {"is_enabled", "was_present", "wall_time"})
+    _motion_require(type(original["is_enabled"]) is bool and type(original["was_present"]) is bool
+        and (original["was_present"] or not original["is_enabled"]), "invalid original value")
+    previous_time = clock(original["wall_time"])
+    changes = command["changes"]
+    phases = ("disabled", "enabled", "restored", "cleanup-restored")
+    _motion_require(isinstance(changes, list) and len(changes) == len(phases), "incomplete phase order")
+    previous_value = original["is_enabled"]
+    for change, phase, state, requested in zip(changes, phases,
+            ("not-running", "background", "background", "not-observed"),
+            (False, True, original["is_enabled"], original["is_enabled"])):
+        closed(change, {"phase", "requested", "before", "after", "started_wall_time", "completed_wall_time", "app_state"})
+        _motion_require(change["phase"] == phase, "invalid phase order")
+        _motion_require(change["app_state"] == state, "change must preserve background order")
+        _motion_require(all(type(change[key]) is bool for key in ("requested", "before", "after"))
+            and change["requested"] == change["after"] == requested and change["before"] == previous_value,
+            "invalid state chain")
+        started, completed = clock(change["started_wall_time"]), clock(change["completed_wall_time"])
+        _motion_require(previous_time <= started <= completed, "change clocks went backwards")
+        previous_time, previous_value = completed, requested
+    closed(app, {"schema", "launch_nonce", "samples"})
+    _motion_require(app["schema"] == "strict-e2e-motion-app-v1", "unsupported app schema")
+    try:
+        nonce = UUID(app["launch_nonce"])
+    except (ValueError, TypeError, AttributeError):
+        nonce = None
+    _motion_require(nonce is not None, "invalid app launch identity")
+    samples = app["samples"]
+    _motion_require(isinstance(samples, list) and 1 <= len(samples) <= 128, "invalid app sample count")
+    previous_sequence, previous_wall, previous_uptime, previous_count = 0, 0.0, 0.0, 0
+    for sample in samples:
+        closed(sample, {"sequence", "wall_time", "uptime", "reason", "ui_kit", "swift_ui", "notification_count", "app_state"})
+        _motion_require(type(sample["sequence"]) is int and sample["sequence"] > previous_sequence, "invalid app sequence")
+        wall, uptime = clock(sample["wall_time"]), clock(sample["uptime"])
+        _motion_require(wall >= previous_wall and uptime >= previous_uptime, "app clocks went backwards")
+        _motion_require(sample["reason"] in {"initial", "notification", "environment", "active"}
+            and sample["app_state"] in {"active", "inactive", "background"}, "invalid app event")
+        _motion_require(type(sample["ui_kit"]) is bool and type(sample["swift_ui"]) is bool, "invalid app boolean")
+        count = sample["notification_count"]
+        _motion_require(type(count) is int and count == previous_count + (sample["reason"] == "notification"),
+                        "invalid notification count")
+        previous_sequence, previous_wall, previous_uptime, previous_count = sample["sequence"], wall, uptime, count
+    disabled, enabled, restored, cleanup = changes
+    if times is not None:
+        _motion_require(disabled["completed_wall_time"] <= times["motion-system-original"]
+            <= times["motion-off-single"] <= times["motion-off-smartfill"] <= enabled["started_wall_time"]
+            <= enabled["completed_wall_time"] <= times["motion-system-enabled"] <= times["motion-on-smartfill"]
+            and times["motion-on-single-next"] <= restored["started_wall_time"]
+            and restored["completed_wall_time"] <= times["motion-system-restored"] <= cleanup["started_wall_time"],
+            "segment order does not bind the changes")
+    def observed(value: bool, start: float, end: float, phase: str) -> dict[str, Any]:
+        matching = [s for s in samples if start <= s["wall_time"] <= end
+                    and s["app_state"] == "active" and s["ui_kit"] == s["swift_ui"] == value]
+        _motion_require(bool(matching), f"missing {phase} App confirmation")
+        return matching[-1]
+
+    off = observed(False, disabled["completed_wall_time"],
+        times["motion-off-single"] if times is not None else enabled["started_wall_time"], "off")
+    on = observed(True, enabled["completed_wall_time"],
+        times["motion-on-smartfill"] if times is not None else restored["started_wall_time"], "on")
+    final = observed(original["is_enabled"], restored["completed_wall_time"],
+        times["motion-system-restored"] if times is not None else cleanup["started_wall_time"], "restored")
+    _motion_require(on["notification_count"] > off["notification_count"]
+        and (original["is_enabled"] or final["notification_count"] > on["notification_count"]),
+        "missing App notification confirmation")
+    return {"command": command, "app": app}
+
+
 def _validate_steps(evidence_dir: Path, case: P2Case) -> tuple[list[dict[str, Any]], dict[str, float]]:
     steps = _load_json(evidence_dir, STEPS_FILE, STEPS_SCHEMA).get("steps")
     if not isinstance(steps, list) or not steps:
@@ -387,7 +479,7 @@ def _validate_steps(evidence_dir: Path, case: P2Case) -> tuple[list[dict[str, An
         expected = case.png_orientations.get(png)
         if expected is not None and referenced[name] != expected:
             raise P2ContractError(f"{name} orientation must be {expected}, got {referenced[name]}.")
-    missing_marks = [mark for mark in case.marks if mark not in first_seen]
+    missing_marks = [mark for mark in case.step_order if mark not in first_seen]
     if missing_marks:
         raise P2ContractError(f"Step record is missing required marks: {', '.join(missing_marks)}.")
     positions = [first_seen[name][0] for name in case.step_order]
@@ -475,10 +567,21 @@ def validate_raw_evidence(evidence_dir: Path, suite: str, fixture_set: str) -> d
         raise P2ContractError(f"Unknown P2 suite: {suite}.")
     if fixture_set not in FROZEN_FIXTURE_SHA256:
         raise P2ContractError(f"Unknown fixture set: {fixture_set}.")
+    command_motion = suite == "p2-reduce-motion" and any((evidence_dir / name).exists() for name in MOTION_FACT_FILES)
+    if command_motion:
+        case = replace(case, pngs=())
     artifacts = {f"{png}.png": _digest(_require_png(evidence_dir, f"{png}.png")) for png in case.pngs}
     steps, times = _validate_steps(evidence_dir, case)
     records = {STEPS_FILE: _digest(_read_required(evidence_dir, STEPS_FILE))}
     payload: dict[str, Any] = {"verdict": RAW_VERDICT, "suite": suite, "artifacts": artifacts, "records": records}
+    if command_motion:
+        values = []
+        for name in MOTION_FACT_FILES:
+            data = _read_required(evidence_dir, name)
+            _motion_require(len(data) <= 65536, "fact file exceeds bound")
+            values.append(_load_json(evidence_dir, name))
+            artifacts[name] = _digest(data)
+        payload["system_motion"] = validate_motion_facts(*values, times)
     if case.video:
         movie, payload["mark_offsets"] = _validate_recording(evidence_dir, steps, times, case.marks)
         artifacts[RECORDING_FILE] = _digest(movie)
@@ -524,6 +627,8 @@ def evaluate_review(
             raise P2ContractError(f"Artifact changed after sign-off, or the sign-off is not for this artifact: {name}.")
         _text(entry.get("observation"), f"{name} observation")
         conclusions.append(entry.get("conclusion"))
+        if suite == "p2-reduce-motion" and name in MOTION_FACT_FILES:
+            continue
         if name == RECORDING_FILE:
             slices = entry.get("time_slices")
             if not isinstance(slices, list) or not slices:
