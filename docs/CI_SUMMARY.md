@@ -997,6 +997,46 @@ populations are complete. Producer status is not a replacement for the later tru
 evaluator. That evaluator must fail closed on missing populations, unexpected skips,
 failed/cancelled jobs, absent artifacts and other incomplete evidence.
 
+### Nightly failed-method retry
+
+The optional observation-only `nightly_retry` receipt is independently versioned:
+`schema_version: 1`, `policy_version: 1`, `runner_hosted: true` and integer
+`failed_case_count` from 1 through 3. It retains the existing two-attempt
+`flaky-passed` result, with the official assertion failure first and a passing
+retry second; the receipt makes that result yellow rather than a pass. First
+failure diagnostics, public messages and `first_failure` stay on the first
+attempt and observation. Retry failures retain both failed attempts and stay red.
+For P2 and unsigned pause evidence, a successful automated retry retains
+`needs-human-review` with failed-then-H attempts and the same tracking receipt;
+it never becomes a signed visual pass or an explicit recovery pass.
+Historical records without this extension retain their original interpretation.
+The [nightly policy](CI_NIGHTLY.md#one-failed-method-retry) defines admission,
+capacity and human-review boundaries.
+
+Reader and producer ship together behind a fail-closed runtime gate. Production
+output is enabled only when `GITHUB_ACTIONS=true`,
+`RUNNER_ENVIRONMENT=github-hosted`, event is `schedule` or `workflow_dispatch`,
+ref is `refs/heads/main`, and `GITHUB_WORKFLOW_REF` names this repository's
+`ci-nightly.yml@refs/heads/main`. The checked-out trusted `origin/main` must equal
+`GITHUB_SHA`; its Git blob `scripts/ci_summary.py` must declare
+`NIGHTLY_RETRY_READER_VERSION = 1`. Missing refs, Git errors or an older reader
+leave the producer off. Branch dispatches, local runs, PR scoped UI and the PR
+strict tracer emit no new retry claims. A dispatch must also have an empty
+`shard` input and no `live_only`, `strict_only`, `ui_only` or
+`probe_environment_refusal` flag; unavailable/invalid dispatch inputs leave it
+off. Consequently the first qualifying
+main nightly after merge can enable the producer, while an unmerged branch
+cannot outrun the trusted reader. No CI approval is granted by the gate.
+
+Strict traces retain a single first phase per declared case and nest a separate
+`retry` phase with its own official method/count and reuse facts. The exact
+`retry_selected_methods` (with the first key also in `retry_method`), original
+`retry_assertion_methods`, failed-case count and both `official_method_durations`
+and `official_method_exit_codes` maps bind filtered execution; successful person
+siblings can reuse their unchanged first evidence. Fixture UI retains
+`official-tests.json` and `official-tests-attempt-N.json` for independent reader
+validation. A producer proof does not substitute for either official attempt.
+
 ### Reader-first evolution
 
 Lifecycle pause evidence has a separate receipt version from summary versions.

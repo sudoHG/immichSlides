@@ -522,8 +522,10 @@ def main(argv=None, *, simulator_prepared=False):
         require(not any(output.iterdir()), "output directory must be fresh")
         identity = run_identity(os.environ, ci=bool(os.environ.get("GITHUB_ACTIONS")))
         workflow, fork = source_metadata(identity, os.environ, None)
+        from ci_flaky import nightly_retry_enabled
+        nightly_retry = bool(args.shard and args.total_timeout_minutes and nightly_retry_enabled(ROOT, os.environ))
         inputs_record = fixture_inputs(ROOT, args.device, args.only_testing, shard=args.shard,
-                                       shard_manifest=args.shard_manifest, mode=args.mode, listed_only_retry=args.listed_only_retry,
+                                       shard_manifest=args.shard_manifest, mode=args.mode, listed_only_retry=args.listed_only_retry or nightly_retry,
                                        scoped_plan_sha256=args.scoped_plan_sha256,
                                        policy_revision=identity["base_sha"] if args.compiled_from_official_results
                                        and identity["event"] == "pull_request" else None)
@@ -570,14 +572,29 @@ def main(argv=None, *, simulator_prepared=False):
                                       startup_timeout_seconds=SERVICE_STARTUP_TIMEOUT_SECONDS)
         print(f"Fixture preflight ready: http://{host}:{port}/api (public set C)", flush=True)
         timeout = args.timeout_minutes * 60
+        retry_reserved_export_seconds = 0
+        def allow_nightly_retry(_entry):
+            nonlocal retry_reserved_export_seconds
+            from ci_flaky import nightly_retry_reserve
+            reserve = nightly_retry_reserve(total_deadline - time.monotonic(), args.result_export_timeout_seconds,
+                                            retry_reserved_export_seconds)
+            if reserve is None:
+                return False
+            retry_reserved_export_seconds = reserve
+            return True
         def execute(command, name):
+            invocation_deadline = total_deadline
+            if nightly_retry and len(bundles) > 1:
+                invocation_deadline -= retry_reserved_export_seconds + 4 * args.result_export_timeout_seconds
+            if time.monotonic() >= invocation_deadline:
+                return 124
             disk_check(args.min_free_gib)
             require(not os.path.lexists(ROOT / "Config/env.xcconfig"), "private configuration reappeared")
             print("Running " + name, flush=True)
             with (work / (name + ".log")).open("w") as log:
                 process = subprocess.Popen(command, cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT,
                                            start_new_session=True)
-                deadline = min(time.monotonic() + timeout, total_deadline)
+                deadline = min(time.monotonic() + timeout, invocation_deadline)
                 try:
                     while time.monotonic() < deadline:
                         try:
@@ -644,7 +661,7 @@ def main(argv=None, *, simulator_prepared=False):
         command = base + selections + ["-resultBundlePath", str(bundle)] + [
             "-skip-testing:immichSlidesUITests/" + entry["identity"]["key"] for entry in deselections]
         print("Fixture test command: " + shlex.join(command), flush=True)
-        if args.listed_only_retry:
+        if args.listed_only_retry or nightly_retry:
             evaluated_on = date.today()
             registry_hash = summary["hashes"]["policies"]["known-flaky"]
             expected_by_key = {entry["key"]: entry for entry in selected}
@@ -666,7 +683,10 @@ def main(argv=None, *, simulator_prepared=False):
             def read_attempt(path, identity_for_key, elapsed, exit_code):
                 started = time.monotonic()
                 try:
-                    return read_details(path, identity_for_key, elapsed, exit_code)
+                    observed = read_details(path, identity_for_key, elapsed, exit_code)
+                    if nightly_retry and len(bundles) == 1 and {item["identity"]["key"] for item in observed} != set(expected_by_key):
+                        raise OfficialResultReadError(ContractError("First official result differs from selected cases"), observed)
+                    return observed
                 finally:
                     reads.append({"attempt": len(reads) + 1, "elapsed_seconds": time.monotonic() - started})
                     write_json(output / "export-read-timing.json", {"schema_version": 1, "attempts": reads,
@@ -694,7 +714,8 @@ def main(argv=None, *, simulator_prepared=False):
             retry_result = run_xcode_attempts(command, registry, tier="ui", environment="fixture", today=evaluated_on,
                 identity_for_key=lambda key: expected_by_key[key],
                 reset=lambda: reset_simulator_app(udid, platform=platform, boot_submitted=True),
-                execute=attempt, allocate_bundle=allocate, read=read_attempt)
+                execute=attempt, allocate_bundle=allocate, read=read_attempt, nightly_retry=nightly_retry,
+                retry_allowed=allow_nightly_retry if nightly_retry else None)
             if official_mode:
                 summary["compiled_evidence"]["first_exit_code"] = retry_result["invocations"][0]["exit_code"]
             summary["population"]["observed"] = retry_result["observed"]
@@ -748,6 +769,7 @@ def main(argv=None, *, simulator_prepared=False):
                 digests[path] = export_private_result_bundle(path, output, [PUBLIC_API_KEY], suffix=suffix,
                     summary_timeout_seconds=args.result_export_timeout_seconds, export_timeout_seconds=args.result_export_timeout_seconds,
                     enrich_failure_diagnostics=True,
+                    retry_admission=nightly_retry and number == 1,
                     first_failure_spool=first_failure_attempts.get(path),
                     first_failure_images=output / "failure-screenshots" / ("first-failure-attempt-" + str(1 if number == 1 else 2)))
             finally:
@@ -762,7 +784,7 @@ def main(argv=None, *, simulator_prepared=False):
                 record_official_discovery(summary, official)
                 compiled = summary["population"]["compiled"]
         digest = digests.get(bundle)
-        if not args.listed_only_retry:
+        if not (args.listed_only_retry or nightly_retry):
             require(bundle in digests, "official fixture result is missing")
             rows = coverage_rows(selected, compiled, official, args.device)
             for row in rows:
@@ -871,6 +893,10 @@ def main(argv=None, *, simulator_prepared=False):
             if code == 0 and not summary["infrastructure"] and verdict is not None and verdict["status"] == "environment-limited":
                 from ci_failure_diagnostics import render_environment_limit
                 for entry in summary["population"]["observed"]:
+                    if "nightly_retry" in entry:
+                        from ci_summary import render_nightly_retry
+                        print("::warning title=Flaky nightly test::" + entry["identity"]["key"]
+                              + ": " + render_nightly_retry(entry), flush=True)
                     if "environment_limit" in entry:
                         print("::warning title=Environment-limited XCTest tool::" + entry["identity"]["key"]
                               + ": " + render_environment_limit(entry["environment_limit"]), flush=True)

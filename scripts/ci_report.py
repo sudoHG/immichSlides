@@ -18,7 +18,8 @@ from pathlib import Path
 
 from ci_summary import (ARCHIVE_DOWNLOAD_FAILURES, ContractError, decode, identity_key, markdown_text, parse_identity,
                         parse_summary, require, validate_observation, validate_test_identity,
-                        NON_INFRASTRUCTURE_DIAGNOSTICS, observation, test_identity)
+                        NON_INFRASTRUCTURE_DIAGNOSTICS, observation, test_identity, validate_nightly_retry, render_nightly_retry,
+                        nightly_retry_outcome)
 from ci_publish import GitHub
 
 REPORT_PATH = ".github/workflows/ci-report.yml"
@@ -143,6 +144,7 @@ def method_observations(raw, trace, *, runner_hosted=False):
     compiled = {identity_key(item) for item in summary["population"]["compiled"]}
     outcomes = {identity_key(item["identity"]): item["outcome"] for item in summary["population"]["observed"]}
     case_records = {identity_key(item["identity"]): item for item in summary["population"]["observed"]}
+    failed_count = sum(method.get("result") == "Failed" for phase in trace["warm"] for method in phase.get("official_methods", []))
     for case in summary["population"]["declared"]:
         dimensions = case["dimensions"]
         suite = dimensions["suite"]
@@ -181,6 +183,22 @@ def method_observations(raw, trace, *, runner_hosted=False):
                     and official["failedTests"] == counts["Failed"] and official["skippedTests"] == counts["Skipped"],
                     "official method counts differ from case")
             require(identity_key(case) in compiled, "official method case was not compiled")
+        selected_retries = phase.get("retry_selected_methods", [phase.get("retry_method")])
+        retry_records = {}
+        if "retry" in phase:
+            require(isinstance(selected_retries, list) and 0 < len(selected_retries) <= 3
+                    and len(set(selected_retries)) == len(selected_retries)
+                    and set(selected_retries) == {method["identifier"] for method in methods if method["result"] == "Failed"}
+                    and set(selected_retries) <= set(phase.get("retry_assertion_methods", [])),
+                    "nightly retry: selected original failed methods differ")
+            for record in phase.get("retry_methods", []):
+                validate_observation(record)
+                key = record["identity"]["key"]
+                require(key in selected_retries and key not in retry_records and record["identity"] == wanted[key],
+                        "nightly retry: duplicate or unexpected method retry record")
+                retry_records[key] = record
+            require(not retry_records or set(retry_records) == set(selected_retries),
+                    "nightly retry: incomplete method retry records")
         for method in methods:
             outcome = {"Passed": "passed", "Failed": "failed", "Skipped": "skipped"}[method["result"]]
             if outcome == "passed" and (phase.get("build_operations") != 0 or phase.get("products_unchanged") is not True
@@ -195,7 +213,8 @@ def method_observations(raw, trace, *, runner_hosted=False):
             diagnostics = ({field: method[field] for field in DIAGNOSTIC_FIELDS}
                            if DIAGNOSTIC_FIELDS <= method.keys() else unknown_diagnostics())
             result = observation(wanted[method["identifier"]], outcome, 0,
-                exit_code=phase.get("exit_code"), reason="Official test was skipped" if outcome == "skipped" else None,
+                exit_code=phase.get("official_method_exit_codes", {}).get(method["identifier"], phase.get("exit_code")),
+                reason="Official test was skipped" if outcome == "skipped" else None,
                 failure_diagnostics=diagnostics if outcome == "failed" else None)
             if outcome == "failed" and FAILURE_MESSAGES_FIELD in method:
                 result[FAILURE_MESSAGES_FIELD] = result["attempts"][0][FAILURE_MESSAGES_FIELD] = copy.deepcopy(method[FAILURE_MESSAGES_FIELD])
@@ -217,7 +236,13 @@ def method_observations(raw, trace, *, runner_hosted=False):
                     policy_version=claimed["policy_version"])
                 require(proof == claimed, "environment limit differs from official method or case resources")
                 result["environment_limit"] = result["attempts"][0]["environment_limit"] = copy.deepcopy(proof)
+            if "retry" in phase and method["identifier"] in selected_retries:
+                result = strict_retry_observation(result, phase, case_records[identity_key(case)],
+                    wanted, failed_count, runner_hosted=runner_hosted, method_claim=retry_records.get(method["identifier"]))
             observed.append(result)
+        if "retry" in phase or "nightly_retry" in case_records.get(identity_key(case), {}):
+            require("retry" in phase and set(selected_retries) <= seen,
+                    "nightly retry: selected original failed method is missing")
         missing.extend({"identity": wanted[key], "reason": "official-method-not-observed"} for key in sorted(wanted.keys() - seen))
         case_outcome = outcomes.get(identity_key(case))
         if case_outcome in FAILURES and not counts["Failed"]:
@@ -244,6 +269,89 @@ def method_observations(raw, trace, *, runner_hosted=False):
               and phase.get("products_unchanged") is True and phase.get("log_present") is True):
             observed.append(observation(case, case_outcome, 0, exit_code=phase.get("exit_code")))
     return observed, missing
+
+
+def strict_retry_observation(first, phase, case, wanted, failed_count, *, runner_hosted, method_claim=None):
+    """Independently bind the filtered retry to both official method exports."""
+    from ci_summary import duration
+    from ci_flaky import ASSERTION_FAILURE, merge_retry
+    from ci_failure_diagnostics import DIAGNOSTIC_FIELDS
+    retry = phase["retry"]
+    key = first["identity"]["key"]
+    target = method_claim or case
+    proof = target.get("nightly_retry")
+    require(runner_hosted and 1 <= failed_count <= 3 and phase.get("retry_failed_case_count") == failed_count
+            and key in phase.get("retry_assertion_methods", []) and first["outcome"] == "failed"
+            and first["attempts"][0]["exit_code"] == 65
+            and retry.get("identity") == phase["identity"] and len(target["attempts"]) == 2
+            and (proof is None or proof["failed_case_count"] == failed_count),
+            "nightly retry: original assertion, selection or failed count differs")
+    require(not phase.get("infrastructure") and not phase.get("official_error")
+            and not phase.get("automated_contract_failed") and phase.get("log_present") is True
+            and phase.get("build_operations") == 0 and phase.get("products_unchanged") is True
+            and phase.get("exit_code") == 65, "nightly retry: original invocation evidence differs")
+    try:
+        duration(phase.get("official_method_durations", {}).get(key))
+    except ContractError as error:
+        raise ContractError("nightly retry: unknown official method duration") from error
+    first["duration_seconds"] = first["attempts"][0]["duration_seconds"] = phase["official_method_durations"][key]
+    first["attempts"][0]["reason"] = ASSERTION_FAILURE
+    first["attempts"][0]["message"] = "; ".join(first.get("failure_messages", [])) or phase.get("official_summary", {}).get("message")
+    if target["outcome"] == "failed" and proof is None:
+        # Missing retry exports remain red while preserving the verified original method failure.
+        attempt = copy.deepcopy(target["attempts"][1])
+        second = {"identity": first["identity"], "outcome": attempt["outcome"],
+                  "duration_seconds": attempt["duration_seconds"], "attempts": [{**attempt, "number": 1}]}
+        for field in ("failure_phase", "failure_class", "failure_messages", "first_failure", "validator_failure_message"):
+            if field in attempt:
+                second[field] = copy.deepcopy(attempt[field])
+        return merge_retry(first, second)
+    methods = retry.get("official_methods", [])
+    counts = Counter(item.get("result") for item in methods)
+    official = retry.get("official_summary") or {}
+    require(len(methods) == len(wanted) and {item.get("identifier") for item in methods} == set(wanted)
+            and official.get("totalTestCount") == len(methods)
+            and all(official.get(field) == counts[outcome] for field, outcome in
+                    (("passedTests", "Passed"), ("failedTests", "Failed"), ("skippedTests", "Skipped"))),
+            "nightly retry: official retry methods or counts differ")
+    for current in (phase, retry):
+        require(not current.get("infrastructure") and not current.get("official_error")
+                and not current.get("automated_contract_failed") and current.get("log_present") is True
+                and current.get("build_operations") == 0 and current.get("products_unchanged") is True,
+                "nightly retry: invocation infrastructure or warm reuse differs")
+        seconds = current.get("official_method_durations", {}).get(key)
+        try:
+            duration(seconds)
+        except ContractError as error:
+            raise ContractError("nightly retry: unknown official method duration") from error
+    require(phase.get("exit_code") == 65, "nightly retry: first invocation did not fail with an assertion")
+    selected = next(item for item in methods if item["identifier"] == key)
+    outcome = {"Passed": "passed", "Failed": "failed", "Skipped": "skipped"}.get(selected["result"])
+    require(outcome is not None, "nightly retry: unsupported retry result")
+    passing = target["outcome"] in {"flaky-passed", "needs-human-review"}
+    retry_exit = retry.get("official_method_exit_codes", {}).get(key, retry.get("exit_code"))
+    if passing:
+        require(proof is not None and retry_exit == 0 and selected["result"] == "Passed"
+                and (retry.get("exit_code") == 0 or retry.get("exit_code") == 65 and counts["Failed"] > 0),
+                "nightly retry: passing claim differs from retry evidence")
+        from strict_e2e_p2_contract import P2_CASES, RAW_VERDICT
+        if first["identity"]["dimensions"].get("suite") in P2_CASES:
+            require(retry.get("p2_verdict") == RAW_VERDICT,
+                    "nightly retry: P2 automated contract evidence is missing or invalid")
+    else:
+        require(proof is None and outcome != "passed", "nightly retry: missing passing proof or red retry outcome")
+    if outcome == "passed" and target["outcome"] == "needs-human-review":
+        outcome = "needs-human-review"
+    diagnostics = {field: selected[field] for field in DIAGNOSTIC_FIELDS} if DIAGNOSTIC_FIELDS <= selected.keys() and outcome == "failed" else None
+    second = observation(first["identity"], outcome, retry["official_method_durations"][key],
+        exit_code=retry_exit, reason="Official test was skipped" if outcome == "skipped" else
+        ASSERTION_FAILURE if outcome == "failed" else None, failure_diagnostics=diagnostics)
+    for field in ("first_failure", "failure_messages"):
+        if outcome == "failed" and field in selected:
+            second[field] = second["attempts"][0][field] = copy.deepcopy(selected[field])
+    merged = merge_retry(first, second, nightly_proof=proof)
+    require(merged["outcome"] == target["outcome"], "nightly retry: method outcome differs from case")
+    return merged
 
 
 def iso_day(value):
@@ -312,7 +420,7 @@ def summary_diagnostics(summaries, evidence_errors=()):
                 missing.append({"identity": item, "reason": "declared-not-compiled" if function not in compiled_functions else "not-observed"})
         for item in observed.values():
             counts[item["outcome"]] += 1
-            if item["outcome"] in FAILURES:
+            if item["outcome"] in FAILURES or "nightly_retry" in item:
                 failures.append(failure_details(item))
             elif item["outcome"] == "skipped":
                 # Candidate error messages are never copied into issues or history.
@@ -375,7 +483,7 @@ def issue_decision(previous, identity, entries, *, registry_referenced):
              "first_failure": None, "last_failure": None, "failure_nights": 0}
     require(state["schema_version"] == 1 and state["token"] == identity_token(identity), "wrong issue identity")
     previous_failed = set(state.get("recent_failure_days", [day for day, runs in state["nights"].items()
-                          if any(item["outcome"] == "failed" for item in runs.values())]))
+                          if any(item["outcome"] in {"failed", "flaky"} for item in runs.values())]))
     if state["last_failure"]:
         previous_failed.add(state["last_failure"])
     new_failure = False
@@ -393,18 +501,23 @@ def issue_decision(previous, identity, entries, *, registry_referenced):
         old = state["nights"].get(day, {}).get(key)
         if not matches and not old:
             continue
-        outcomes = {"environment-limited" if "environment_limit" in item and not item.get("environment_limit_escalation")
-                    else item["outcome"] for item in matches}
+        outcomes = {"failed" if item.get("environment_limit_escalation") or item.get("nightly_retry_rejection")
+                    else "flaky" if "nightly_retry" in item
+                    else "environment-limited" if "environment_limit" in item else item["outcome"] for item in matches}
         passes = {"passed"}
         if identity["kind"] == "strict" and identity["dimensions"].get("suite") in P2_CASES:
             passes.add("needs-human-review")
         outcome = ("failed" if outcomes & FAILURES else "passed" if outcomes and outcomes <= passes
+                   else "flaky" if "flaky" in outcomes and outcomes <= {"flaky", "passed", "environment-limited"}
                    else "environment-limited" if outcomes == {"environment-limited"} else "unverified")
         if entry["diagnostics"]["infrastructure"] or entry["diagnostics"]["missing"]:
             if outcome == "passed":
                 outcome = "unverified"
         night = state["nights"].setdefault(day, {})
         record = {"attempt": entry["run"]["attempt"], "outcome": outcome}
+        retries = sorted({render_nightly_retry(item) for item in matches if "nightly_retry" in item})
+        if retries:
+            record["nightly_retry_details"] = retries
         if identity == NIGHTLY_INFRASTRUCTURE:
             reasons = (set(entry["diagnostics"]["infrastructure"])
                        | set((old or {}).get("archive_failure_reasons", []))) & ARCHIVE_DOWNLOAD_FAILURES
@@ -418,10 +531,12 @@ def issue_decision(previous, identity, entries, *, registry_referenced):
             if outcome == "failed" and (old is None or old["outcome"] != "failed" or old["attempt"] < record["attempt"]):
                 new_failure |= state["last_failure"] is None or day >= state["last_failure"]
             # A red first attempt cannot become an explicit-pass night by rerunning.
-            if old and old["outcome"] == "failed":
-                record["outcome"] = "failed"
+            if old and old["outcome"] in {"failed", "flaky"}:
+                record["outcome"] = "failed" if "failed" in {old["outcome"], outcome} else "flaky"
+                if old.get("nightly_retry_details"):
+                    record["nightly_retry_details"] = sorted(set(record.get("nightly_retry_details", [])) | set(old["nightly_retry_details"]))
             night[key] = record
-    failed = sorted(day for day, runs in state["nights"].items() if any(item["outcome"] == "failed" for item in runs.values()))
+    failed = sorted(day for day, runs in state["nights"].items() if any(item["outcome"] in {"failed", "flaky"} for item in runs.values()))
     if failed:
         state["first_failure"] = min(filter(None, [state["first_failure"], failed[0]]))
         state["last_failure"] = max(filter(None, [state["last_failure"], failed[-1]]))
@@ -480,6 +595,8 @@ def failure_details(item):
         details[FIRST_FAILURE_FIELD] = copy.deepcopy(item[FIRST_FAILURE_FIELD])
     if "environment_limit" in item:
         details["environment_limit"] = copy.deepcopy(item["environment_limit"])
+    if "nightly_retry" in item:
+        details.update({key: copy.deepcopy(item[key]) for key in ("nightly_retry", "attempts", "duration_seconds")})
     if FAILURE_MESSAGES_FIELD in item:
         details[FAILURE_MESSAGES_FIELD] = copy.deepcopy(item[FAILURE_MESSAGES_FIELD])
         details.update({key: item[key] for key in ("failure_phase", "failure_class")})
@@ -501,7 +618,7 @@ def render_entry(entry):
         lines.append("Not evaluated: " + text(entry["not_evaluated_reason"]) + ".")
     lines += ["", "| Failing identity | Outcome | Exit codes | Validator failure |", "| --- | --- | --- | --- |"]
     lines.extend(f"| {text(identity_key(item['identity']))} | "
-                 f"{'failed (environment-limited; yellow)' if 'environment_limit' in item and not item.get('environment_limit_escalation') else item['outcome']} | {text(item['exit_codes'])} | "
+                 f"{'failed' if item.get('environment_limit_escalation') or item.get('nightly_retry_rejection') else nightly_retry_outcome(item) if 'nightly_retry' in item else 'failed (environment-limited; yellow)' if 'environment_limit' in item else item['outcome']} | {text(item['exit_codes'])} | "
                  f"{text(item['validator_failure_message']) if 'validator_failure_message' in item else '—'} |"
                  for item in diagnostics["failures"][:50])
     from ci_failure_diagnostics import FIRST_FAILURE_FIELD, render_first_failure
@@ -527,6 +644,10 @@ def render_entry(entry):
     lines.extend("\nRED: repeated environment limit: " + text(identity_key(item["identity"]))
                  + f"; {ENVIRONMENT_YELLOW_NIGHTS_BEFORE_RED} consecutive nights; normal failure tracking applies."
                  for item in diagnostics["failures"] if item.get("environment_limit_escalation"))
+    lines.extend("\nWARNING: " + text(identity_key(item["identity"])) + ": " + text(render_nightly_retry(item))
+                 for item in diagnostics["failures"] if "nightly_retry" in item and not item.get("environment_limit_escalation"))
+    lines.extend("\nRED: " + text(identity_key(item["identity"])) + ": " + item["nightly_retry_rejection"]
+                 for item in diagnostics["failures"] if item.get("nightly_retry_rejection"))
     if diagnostics.get("skipped"):
         lines.append("Skipped identities (policy acceptance recorded separately): " + text(diagnostics["skipped"][:50]))
     for item in diagnostics.get("deselected", [])[:50]:
@@ -669,7 +790,7 @@ def nightly_ui_attempt(api, run, attempt, artifacts, raw):
     if matches[0]["expired"]:
         raise EvidenceExpired("nightly UI aggregate expired")
     require(json_member(api, matches[0], "nightly-ui.json") == ui, "nightly UI aggregate binding differs")
-    summaries, official_tests = [], {}
+    summaries, official_tests, retry_tests = [], {}, {}
     hosted_jobs = None
     for shard in plan["shards"]:
         name = f"ui-{shard['device']}-{shard['shard']}-{run['id']}-{attempt}"
@@ -684,15 +805,25 @@ def nightly_ui_attempt(api, run, attempt, artifacts, raw):
                 and summary["run"] == {**plan["run"], "tier": "ui", "job": "ui-" + shard["device"], "shard": shard["shard"]}
                 and summary["hashes"] == plan["hashes"][shard["device"]], "nightly UI shard source binding differs")
         summaries.append(summary)
-        if any("environment_limit" in item for item in summary["population"]["observed"]):
+        environment = any("environment_limit" in item for item in summary["population"]["observed"])
+        flaky = any("nightly_retry" in item for item in summary["population"]["observed"])
+        if environment or flaky:
             from ci_publish import complete_attempt_jobs
             if hosted_jobs is None:
                 hosted_jobs = complete_attempt_jobs(api, {**run, "run_attempt": attempt})
             matching = [job for job in hosted_jobs if job["name"] == f"ui-{shard['device']}-{shard['shard']}"]
             require(len(matching) == 1 and matching[0].get("runner_group_name") == "GitHub Actions"
                     and "self-hosted" not in matching[0].get("labels", []),
-                    "environment limit requires a verified GitHub-hosted UI job")
+                    "environment limit requires a verified GitHub-hosted UI job" if environment else
+                    "nightly retry: requires a verified GitHub-hosted UI job")
             official_tests[(shard["device"], shard["shard"])] = json_member(api, matches[0], "official-tests.json")
+        if flaky:
+            calls = json_member(api, matches[0], "retry-invocations.json")["invocations"]
+            require(2 <= len(calls) <= 4 and calls[0].get("exit_code") == 65,
+                    "nightly retry: invalid UI invocation count or initial exit")
+            retry_tests[(shard["device"], shard["shard"])] = [
+                {"official_tests": json_member(api, matches[0], f"official-tests-attempt-{number}.json"), "invocation": call}
+                for number, call in enumerate(calls[1:], 2)]
     values = {}
     for name, path in (("policy", "scripts/ci-test-policy.json"), ("registry", "scripts/ci-known-flaky.json")):
         content = blob(path)
@@ -700,7 +831,8 @@ def nightly_ui_attempt(api, run, attempt, artifacts, raw):
         require(all(hashes["policies"][label] == hashlib.sha256(content).hexdigest() for hashes in plan["hashes"].values()),
                 "nightly UI policy differs from tested source")
         values[name] = decode(content.decode())
-    validate_ui_record(ui, summaries, **values, evaluated_on=date.fromisoformat(run["created_at"][:10]), official_tests=official_tests)
+    validate_ui_record(ui, summaries, **values, evaluated_on=date.fromisoformat(run["created_at"][:10]),
+                       official_tests=official_tests, retry_tests=retry_tests)
     require(raw["tiers"]["ui"] == ui["verdict"]["status"]
             and (ui["verdict"]["status"] != "failed" or raw["status"] == "failed"), "nightly UI status differs")
     verdict = copy.deepcopy(ui["verdict"])
@@ -837,11 +969,14 @@ def nightly_attempt(api, run, attempt, artifacts):
                  release_ineligible_reasons=raw["release_ineligible_reasons"], diagnostic_shard=raw.get("diagnostic_shard"))
     require(entry["diagnostic_shard"] is None or run["event"] == "workflow_dispatch"
             and isinstance(entry["diagnostic_shard"], str) and bool(entry["diagnostic_shard"]), "invalid nightly diagnostic")
+    require(not entry["diagnostic_shard"] or not any("nightly_retry" in item for item in [
+        *raw["observed"], *raw.get("ui", {}).get("verdict", {}).get("observed", [])]),
+        "nightly retry: requires a full nightly run")
     observed, missing = [], []
     case_keys = {identity_key(item["identity"]) for item in raw["observed"]}
     informational = {identity_key(item["identity"]) for item in raw["informational"]}
     shards = {item["shard"] for item in raw["capacity"]["shard_intervals"]}
-    summary_cases, yellow_cases = set(), {}
+    summary_cases, yellow_cases, flaky_cases = set(), {}, {}
     jobs = None
     for shard in sorted(shards):
         name = f"nightly-strict-{shard}-{run['id']}-{attempt}"
@@ -860,16 +995,19 @@ def nightly_attempt(api, run, attempt, artifacts):
         summary["population"]["declared"] = [item for item in declared if identity_key(item) not in informational]
         trace = json_member(api, matches[0], "trace.json")
         yellow = [item for item in summary["population"]["observed"] if "environment_limit" in item]
+        flaky = [item for item in summary["population"]["observed"] if "nightly_retry" in item]
         hosted = False
-        if yellow:
+        if yellow or flaky or any("retry" in phase for phase in trace.get("warm", [])):
             from ci_publish import complete_attempt_jobs
             if jobs is None:
                 jobs = complete_attempt_jobs(api, {**run, "run_attempt": attempt})
             matching = [job for job in jobs if job["name"] == "nightly-strict-" + shard]
             hosted = (len(matching) == 1 and matching[0].get("runner_group_name") == "GitHub Actions"
                       and "self-hosted" not in matching[0].get("labels", []))
-            require(hosted, "environment limit requires a verified GitHub-hosted strict job")
+            require(hosted, "environment limit requires a verified GitHub-hosted strict job" if yellow else
+                    "nightly retry: requires a verified GitHub-hosted strict job")
             yellow_cases.update({identity_key(item["identity"]): item["environment_limit"] for item in yellow})
+            flaky_cases.update({identity_key(item["identity"]): item["nightly_retry"] for item in flaky})
         methods, absent = method_observations(summary, trace, runner_hosted=hosted)
         observed.extend(methods)
         missing.extend(absent)
@@ -906,28 +1044,37 @@ def nightly_attempt(api, run, attempt, artifacts):
     raw_yellow = {identity_key(item["identity"]): item["environment_limit"] for item in raw["observed"]
                   if "environment_limit" in item}
     strict_yellow = bool(yellow_cases)
+    strict_flaky = bool(flaky_cases)
+    raw_flaky = {identity_key(item["identity"]): item["nightly_retry"] for item in raw["observed"] if "nightly_retry" in item}
     if ui is not None:
         ui_yellow = {identity_key(item["identity"]): item["environment_limit"] for item in ui["observed"]
                      if "environment_limit" in item}
         yellow_cases.update(ui_yellow)
         raw_yellow.update(ui_yellow)
+        ui_flaky = {identity_key(item["identity"]): item["nightly_retry"] for item in ui["observed"] if "nightly_retry" in item}
+        flaky_cases.update(ui_flaky)
+        raw_flaky.update(ui_flaky)
     require(raw_yellow == yellow_cases and len(raw.get("environment_limited", [])) == len(raw_yellow) and set(raw_yellow) == {
         identity_key(item) for item in raw.get("environment_limited", [])}, "nightly environment limit bindings differ")
+    require(raw_flaky == flaky_cases and len(raw.get("flaky", [])) == len(raw_flaky) and set(raw_flaky) == {
+        identity_key(item) for item in raw.get("flaky", [])}, "nightly retry: aggregate bindings differ")
     if raw["status"] == "environment-limited":
-        require(bool(yellow_cases) and not raw["errors"] and not infrastructure and not missing
+        require(bool(yellow_cases or flaky_cases) and not raw["errors"] and not infrastructure and not missing
                 and not any(item["outcome"] in FAILURES and "environment_limit" not in item for item in observed)
                 and all(item["outcome"] in {"passed", "flaky-passed", "needs-human-review"}
                         or "environment_limit" in item for item in raw["observed"]),
                 "nightly environment limit cannot conceal red or incomplete evidence")
-    require(raw["status"] != "passed" or not yellow_cases, "environment-limited nightly cannot count as passed")
-    if yellow_cases:
-        if strict_yellow:
+    require(raw["status"] != "passed" or not (yellow_cases or flaky_cases), "environment-limited nightly cannot count as passed")
+    if yellow_cases or flaky_cases:
+        if strict_yellow or strict_flaky:
             require(raw["tiers"]["strict"] in {"failed", "environment-limited"}, "environment-limited strict tier cannot count as passed")
-        if ui is not None and ui.get("environment_limited"):
+        if ui is not None and (ui.get("environment_limited") or ui.get("flaky")):
             require(raw["tiers"]["ui"] in {"failed", "environment-limited"}, "environment-limited UI tier cannot count as passed")
         counts["environment-limited"] = sum("environment_limit" in item for item in observed)
+    if any("nightly_retry" in item for item in observed):
+        counts["flaky"] = sum("nightly_retry" in item for item in observed)
     entry.update(observed=observed, diagnostics={"counts": dict(counts), "missing": missing, "infrastructure": infrastructure,
-        "failures": [failure_details(item) for item in observed if item["outcome"] in FAILURES]})
+        "failures": [failure_details(item) for item in observed if item["outcome"] in FAILURES or "nightly_retry" in item]})
     # The strict aggregate accepts explicit passes/flaky-passes only, not skips.
     accepted_skips = sum(len(item["verdict"].get("expected_skips", [])) for item in ui["shards"]) if ui is not None else 0
     entry["health"] = observation_metrics(observed, unexpected_skips=counts["skipped"] - accepted_skips)
@@ -1107,12 +1254,16 @@ def issue_body(issue, state, repository):
              "Explicit pass nights after the last failure: " + ", ".join(state["explicit_pass_nights"]) + ".",
              "Closure requires three distinct UTC nights with explicit passes and no registry reference.", "",
              "| UTC night | Run | Outcome |" + archive_header, "| --- | --- | --- |" + archive_separator]
+    retry_details = []
     for day, runs in sorted(state["nights"].items()):
         for run, item in sorted(runs.items()):
             reasons = sorted(set(item.get("archive_failure_reasons", [])) & ARCHIVE_DOWNLOAD_FAILURES)
             early = sorted(set(item.get("early_failure_reasons", [])) & EARLY_FAILURE_REASONS)
             archive_cell = " " + (", ".join(reasons) or "—") + " | " + (", ".join(early) or "—") + " |" if archive_column else ""
             lines.append(f"| {day} | [Run {run}, attempt {item['attempt']}](https://github.com/{repository}/actions/runs/{run}) | {item['outcome']} |" + archive_cell)
+            retry_details.extend(f"\nUTC {day}, run {run}: " + text(detail) + "."
+                                 for detail in item.get("nightly_retry_details", []))
+    lines.extend(retry_details)
     lines.append(MARKER + json.dumps(state, sort_keys=True, separators=(",", ":")) + " -->")
     body = existing + SECTION + "\n".join(lines)
     require(len(body.encode()) < 65000, "issue history exceeds GitHub limit; human reconciliation needed")
@@ -1196,6 +1347,9 @@ def sync_identity(api, token, identity, entries, registry_issues, registry_token
     state = read_state(issue) if issue else None
     require(not state or state["token"] == token, "tracking identity changed before synchronization")
     decision = issue_decision(state, identity, entries, registry_referenced=bool(issue and issue["number"] in registry_issues))
+    if issue and issue["state"] == "closed" and state is None and decision["action"] == "open" and not any(
+            record["outcome"] == "failed" for runs in decision["state"]["nights"].values() for record in runs.values()):
+        return None  # Adopting a closed issue does not turn a flaky event into a new verified red failure.
     deferred_close = decision["action"] == "close" and not allow_closures
     if deferred_close:
         decision["state"]["closed"] = False
@@ -1336,8 +1490,14 @@ def environment_history(entries):
     by_case = {}
     for report in reports:
         rejected = set()
+        rejected_retries = set()
         items = [*report.get("observed", []), *report.get("diagnostics", {}).get("failures", [])]
         for item in items:
+            if "nightly_retry" in item:
+                try:
+                    validate_nightly_retry(item)
+                except (ValueError, TypeError, KeyError, AttributeError):
+                    rejected_retries.add(identity_token(item["identity"]))
             if "environment_limit" not in item:
                 continue
             try:
@@ -1359,6 +1519,10 @@ def environment_history(entries):
             except (ValueError, TypeError, KeyError, AttributeError):
                 rejected.add(identity_token(item["identity"]))
         for item in items:
+            if identity_token(item["identity"]) in rejected_retries:
+                item.pop("nightly_retry", None)
+                item["outcome"] = "failed"
+                item["nightly_retry_rejection"] = "RED: invalid or obsolete nightly-retry proof under the current policy"
             if identity_token(item["identity"]) in rejected:
                 item.pop("environment_limit", None)
                 item["environment_limit_rejection"] = "RED: invalid or obsolete environment-limit proof under the current policy"
@@ -1371,47 +1535,49 @@ def environment_history(entries):
                             target["failure_messages"] = [UNRECOGNIZED_FAILURE_MESSAGE]
                 for attempt in item.get("attempts", []):
                     attempt.pop("environment_limit", None)
-        if rejected:
+        if rejected or rejected_retries:
             report["status"] = "failed"
             for item in items:
-                if identity_token(item["identity"]) in rejected and item["identity"]["kind"] in report.get("tiers", {}):
+                if identity_token(item["identity"]) in rejected | rejected_retries and item["identity"]["kind"] in report.get("tiers", {}):
                     report["tiers"][item["identity"]["kind"]] = "failed"
         if not issue_eligible(report) or report["source"]["workflow_path"] != NIGHTLY_PATH:
             continue
         for item in report["observed"]:
-            token = identity_token(item["identity"])
+            token = identity_key(item["identity"])
             by_case.setdefault(token, {}).setdefault(report["day"], []).append(item)
     for nights in by_case.values():
         streak, previous_day = 0, None
         for day, items in sorted(nights.items()):
             current = date.fromisoformat(day)
-            yellow = all("environment_limit" in item for item in items)
+            yellow = any("environment_limit" in item or "nightly_retry" in item for item in items)
             streak = (streak + 1 if previous_day == current - timedelta(days=1) else 1) if yellow else 0
             previous_day = current
             if streak >= ENVIRONMENT_YELLOW_NIGHTS_BEFORE_RED:
                 for item in items:
                     item["environment_limit_escalation"] = True
     for report in reports:
-        escalated = {identity_token(item["identity"]) for item in report.get("observed", [])
+        escalated = {identity_key(item["identity"]) for item in report.get("observed", [])
                      if item.get("environment_limit_escalation")}
         for item in report.get("diagnostics", {}).get("failures", []):
-            if identity_token(item["identity"]) in escalated:
+            if identity_key(item["identity"]) in escalated:
                 item["environment_limit_escalation"] = True
         if escalated:
             report["status"] = "failed"
             for item in report.get("observed", []):
                 if item.get("environment_limit_escalation") and item["identity"]["kind"] in report.get("tiers", {}):
                     report["tiers"][item["identity"]["kind"]] = "failed"
-        if any("environment_limit_rejection" in item or "environment_limit_escalation" in item
+        if any("environment_limit_rejection" in item or "environment_limit_escalation" in item or "nightly_retry_rejection" in item
                for item in report.get("observed", [])):
             report["diagnostics"]["counts"]["environment-limited"] = sum(
                 "environment_limit" in item and not item.get("environment_limit_escalation") for item in report["observed"])
+            report["diagnostics"]["counts"]["flaky"] = sum(
+                "nightly_retry" in item and not item.get("environment_limit_escalation") for item in report["observed"])
     return result
 
 
 def compact_entry(entry, tracked):
     tracked = tracked | {identity_token(item["identity"]) for attempt in entry.get("attempt_history", [entry])
-                         for item in attempt["observed"] if item["outcome"] in FAILURES}
+                         for item in attempt["observed"] if item["outcome"] in FAILURES or "nightly_retry" in item}
     result = {key: copy.deepcopy(value) for key, value in entry.items() if key in {
         "schema_version", "day", "source", "run", "identity", "hashes", "status", "release_eligible",
         "tiers", "release_ineligible_reasons", "pushed_sha", "evidence_expired", "diagnostic_shard", "first_execution_health",
@@ -1422,7 +1588,7 @@ def compact_entry(entry, tracked):
                              for key in ("counts", "failures", "missing", "infrastructure")}
     result["observed"] = [copy.deepcopy(item) for item in entry["observed"]
                           if entry["source"]["workflow_path"] == NIGHTLY_PATH
-                          and (item["outcome"] in FAILURES or identity_token(item["identity"]) in tracked)]
+                          and (item["outcome"] in FAILURES or "nightly_retry" in item or identity_token(item["identity"]) in tracked)]
     if "evaluation" in entry:
         result["evaluation"] = {key: entry["evaluation"][key] for key in ("state", "description") if key in entry["evaluation"]}
     if "attempt_history" in entry:

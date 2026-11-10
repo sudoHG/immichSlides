@@ -484,7 +484,7 @@ def export_shard(input_dir, output_dir):
         suite = dimensions["suite"]
         case = {**dimensions, "platform": DEVICE_PLATFORM[dimensions["device"]]}
         entry = observed.get(json.dumps(item, sort_keys=True))
-        if entry is not None and entry["outcome"] in {"failed", "crashed", "timed-out", "flaky-passed"}:
+        if entry is not None and (entry["outcome"] in {"failed", "crashed", "timed-out", "flaky-passed"} or "nightly_retry" in entry):
             try:
                 export_failure_diagnostic(input_dir / "cases" / f"{index:03d}-{suite}", output_dir, summary, entry)
             except (ValueError, OSError, TypeError, KeyError):
@@ -497,7 +497,8 @@ def export_shard(input_dir, output_dir):
             continue
         relative = Path(context["source_sha"]) / suite / dimensions["device"] / dimensions["fixture"]
         try:
-            manifest = build_package(input_dir / "cases" / f"{index:03d}-{suite}", output_dir / relative, context, case)
+            evidence = input_dir / ("retries" if "nightly_retry" in entry else "cases") / f"{index:03d}-{suite}"
+            manifest = build_package(evidence, output_dir / relative, context, case)
             bindings.append({"identity": item, "context": context, "case_sha256": manifest["case_sha256"],
                              "package_sha256": manifest["package_sha256"]})
             packages.append(relative.as_posix())

@@ -464,7 +464,8 @@ compiled identity fails only that entry as `declared-not-compiled`; other observ
 outcomes remain available. Attempted failures count as execution. A failed entry whose
 attempts are all `not-run` does not count, just like a synthetic `not-run` placeholder.
 Every entry has an outcome. Missing artifacts, failed/cancelled jobs,
-infrastructure failures and matrix discrepancies are red. There is no automatic retry.
+infrastructure failures and matrix discrepancies are red. Hosted main runs can use
+the bounded failed-method retry below; branch diagnostics retain the original behavior.
 Only Actions **Re-run all jobs** is supported: artifact provenance is bound to one
 run attempt. Re-running only failed jobs cannot reuse successful shards from an earlier
 attempt, and the aggregate fails for their missing artifacts.
@@ -504,6 +505,69 @@ issue recovery. Informational Vision outcomes are listed separately and excluded
 health, with one exception: an informational failure can turn an otherwise
 environment-limited night red (see
 [prepared hosted strict environment limits](CI_SUMMARY.md#prepared-hosted-strict-environment-limits)).
+
+### One failed-method retry
+
+Hogan approved option A on 2026-11-10: an official XCTest case that fails once
+and passes one filtered retry is `flaky` (yellow). This is separate from the v5
+starvation/tool exception. It applies only to GitHub-hosted full-nightly strict
+and fixture UI on main, after the [trusted reader gate](CI_SUMMARY.md#nightly-failed-method-retry).
+PR scoped UI and the PR strict tracer retain their existing behavior.
+Informational strict suites retain their existing non-gating interpretation and
+receive no new retry claim.
+
+The strict tracer finishes the shard's first pass before deciding whether to
+retry. Fixture UI reads the complete first invocation. At most three failed
+official methods per shard qualify; more than three starts no retry. Only
+official assertion failures with known durations and complete selected-method
+evidence qualify, regardless of the known-flaky registry. Preparation, build,
+infrastructure, cancellation, crashes, incomplete/missing exports, unclassified
+failures and failed evidence/contract checks grant no retry. A failed retry stays
+red with both attempts. There is never a third attempt or a whole-shard rerun.
+
+Retries reuse the same dedicated simulator and immutable Products after the
+existing tier's app, keychain and privacy reset. Each Xcode invocation selects
+one exact failed method. `filter-person` collects all three independent first
+sessions, continuing after an official exit-65 failure while retaining normal
+infrastructure stops. Successful session evidence is retained for the unchanged
+full validator while only failed sessions execute again, once each. Missing
+sessions stay red; mixed retry outcomes retain per-method yellow/red and the
+strict case stays red. Both original and retry official counts, method outcomes, durations and
+public failure diagnostics remain available; a passing retry cannot erase the
+first failure. P2 and unsigned pause timing still require human review.
+
+No job timeout or product window grows. Strict retries are admitted only if
+their existing full case bound fits within 198 minutes from tracer start,
+leaving the original 17-minute margin of the 215-minute job. One ordinary case
+costs `600 + 300 + 240 = 1140 seconds` (19 minutes); the conservative
+three-session person bound is `3 × (600 + 300) + 240 = 2940 seconds`
+(49 minutes), even when only one session executes. Reduce Motion adds the
+existing 1800 seconds. Thus a fully consumed 198-minute shard gets no retry;
+three ordinary retries require at least 57 minutes of unused capacity.
+Insufficient capacity preserves red and prints `retry not run`.
+
+UI retains its 85-minute aggregate Xcode deadline and 65-minute invocation cap.
+A retry requires more than `720 + 8 × 180 = 2160 seconds` (36 minutes)
+remaining for existing preparation/reset, four possible result reads and four
+final exports (including failure attachments), plus 720 seconds reserved for each already admitted retry's final
+exports. Its Xcode call is clamped to the remaining original deadline after
+reserving those reads and exports. The 110-minute job still accounts
+for `85 + 2 + 10 + 13` minutes. Exports outside the existing total deadline
+continue to spend its surrounding-step margin; as before, that margin is not
+a proof that every possible export/cleanup delay fits. Exhaustion remains red.
+
+The reporter tracks first failures and passing retries as yellow events. They
+never count as explicit passing recovery nights, and yellow alone does not
+reopen a closed issue. The same complete identity (including UI device) being
+yellow on two adjacent UTC dates
+becomes red, combining flaky, starvation and native-tool yellows. A globally red
+night does not clear a yellow identity; multiple runs on a UTC date count once,
+and any yellow observation on that date retains that date's yellow evidence.
+A date with only red, only pass, no execution or missing evidence cannot supply
+a yellow date; a missing date breaks adjacency. A red observation stays red.
+The completion target is three nights without red, while every yellow remains
+visible; this does not change issue closure's explicit-pass requirement.
+Release eligibility remains disabled for the nightly skeleton, including yellow.
 
 Yellow means a retained failure, never a pass. Producers now emit
 [v5 timing and XCTest tool exceptions](CI_SUMMARY.md#policy-v5-reader-preparation),

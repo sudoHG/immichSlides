@@ -129,6 +129,42 @@ class VerifyCommandLineTests(VerifyCommandLineTestsCases, unittest.TestCase):
 
 
 class ReviewPackageTests(unittest.TestCase):
+    def test_nightly_retry_with_pending_human_review_exports_the_successful_retry_package(self):
+        from ci_flaky import merge_retry
+        from ci_nightly import case_identity
+        from ci_review_packages import export_shard, read_package
+        from ci_summary import observation
+        from test_ci_summary import valid_summary
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            evidence, package = self._package(root)
+            manifest = read_package(package)
+            context = manifest["context"]
+            item = case_identity(manifest["case"])
+            summary = valid_summary()
+            summary["identity"] = {"schema_version": 1, "event": context["event"], "repository": context["repository"],
+                "tree_sha": context["tree_sha"], "commit_sha": context["source_sha"], "ref": context["ref"]}
+            summary["source"].update(repository=context["repository"], event=context["event"],
+                workflow_path=context["workflow_path"], fork_originated=False)
+            summary["run"].update(id=context["run_id"], attempt=context["run_attempt"], tier="strict", job="nightly-strict", shard=context["shard"])
+            summary["hashes"] = {"manifests": {"nightly-matrix": context["matrix_sha256"]}, "policies": {}}
+            merged = merge_retry(observation(item, "failed", 1, reason="Official XCTest assertion failure", exit_code=65),
+                observation(item, "needs-human-review", 2, reason="P2 contract requires signed human review", exit_code=0),
+                nightly_proof={"schema_version": 1, "policy_version": 1, "runner_hosted": True, "failed_case_count": 1})
+            summary["population"].update(declared=[item], compiled=[item], observed=[merged])
+            summary["status"] = "failed"
+            source = root / "shard"
+            (source / "records").mkdir(parents=True)
+            (source / "retries").mkdir()
+            _write_json(source / "records/summary.json", summary)
+            evidence.rename(source / "retries/000-p2-cache")
+            self.assertEqual(export_shard(source, root / "published"), 0)
+            bindings = _read_json(source / "records/p2-review-bindings.json")["review_packages"]
+            self.assertEqual(len(bindings), 1)
+            exported = read_package(root / "published" / SOURCE_SHA / "p2-cache/iphone/a")
+            self.assertEqual(bindings[0]["package_sha256"], exported["package_sha256"])
+            self.assertEqual(merged["outcome"], "needs-human-review")
+
     def test_failure_diagnostic_reader_binds_one_bounded_image_to_the_failed_attempt(self):
         import copy
         from PIL import Image

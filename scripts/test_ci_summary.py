@@ -41,6 +41,23 @@ def valid_summary():
     }
 
 
+def nightly_retry_summary(kind="strict"):
+    from ci_flaky import ASSERTION_FAILURE, merge_retry
+    summary = valid_summary()
+    summary["identity"].pop("dirty")
+    summary["identity"].update(event="schedule", ref="refs/heads/main")
+    summary["source"].update(event="schedule", workflow_path=".github/workflows/ci-nightly.yml")
+    identity = (ci_summary.test_identity("strict", "smoke", device="iphone", configuration="Debug",
+        suite="smoke", scenario="normal", fixture="a") if kind == "strict" else
+        ci_summary.test_identity("ui", "SettingsUITests/testOpen", platform="ios", device="iphone"))
+    summary["run"].update(id="10", tier=kind, job="nightly-strict" if kind == "strict" else "ui-iphone", shard="a")
+    row = merge_retry(ci_summary.observation(identity, "failed", 1, exit_code=65,
+        reason=ASSERTION_FAILURE, message="First playback assertion failed"), ci_summary.observation(identity, "passed", 2))
+    row["nightly_retry"] = {"schema_version": 1, "policy_version": 1, "runner_hosted": True, "failed_case_count": 1}
+    summary["population"].update(declared=[identity], compiled=[identity], observed=[row])
+    return summary
+
+
 def discovery_summary():
     summary = valid_summary()
     summary.update(schema_version=2, identity={"schema_version": 1, "event": "pull_request",
@@ -256,6 +273,142 @@ def album_capture_gate_rejections(receipt):
 
 
 class SummaryContractTests(unittest.TestCase):
+    def test_nightly_retry_retained_reader_needs_no_image_or_runner_dependencies(self):
+        from ci_flaky import P2_REVIEW_SUITES, IOS_PENDING_REVIEW_SUITE
+        from strict_e2e_p2_contract import P2_CASES
+        from strict_e2e_runner_support import IOS_LIFECYCLE_PAUSE_SUITE
+        self.assertEqual(set(P2_CASES), P2_REVIEW_SUITES)
+        self.assertEqual(IOS_LIFECYCLE_PAUSE_SUITE, IOS_PENDING_REVIEW_SUITE)
+        payloads = [nightly_retry_summary()]
+        for suite in ("p2-exif", IOS_PENDING_REVIEW_SUITE):
+            summary = nightly_retry_summary()
+            row = summary["population"]["observed"][0]
+            row["identity"]["key"] = row["identity"]["dimensions"]["suite"] = suite
+            row["outcome"] = row["attempts"][1]["outcome"] = "needs-human-review"
+            summary["population"].update(declared=[row["identity"]], compiled=[row["identity"]])
+            summary["status"] = "unverified"
+            payloads.append(summary)
+        code = """import json, sys
+sys.path.insert(0, sys.argv[1])
+from ci_summary import parse_summary
+for item in json.load(sys.stdin):
+    parse_summary(item)
+assert not any(name == 'PIL' or name.startswith('PIL.') for name in sys.modules)
+assert 'strict_e2e_p2_contract' not in sys.modules
+assert 'strict_e2e_runner_support' not in sys.modules
+print('parsed 3 nightly retry records without image or runner dependencies')
+"""
+        completed = subprocess.run([sys.executable, "-S", "-B", "-c", code, str(Path(__file__).resolve().parent)],
+            input=json.dumps(payloads), capture_output=True, text=True, timeout=30)
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        self.assertIn("parsed 3 nightly retry records", completed.stdout)
+
+    def test_failed_then_review_pending_retry_keeps_review_and_cannot_supply_a_recovery_night(self):
+        import ci_report
+        from ci_nightly import aggregate_nightly
+        from test_ci_report import entry
+        summary = nightly_retry_summary()
+        identity = ci_summary.test_identity("strict", "p2-exif", device="iphone", configuration="Debug",
+            suite="p2-exif", scenario="normal", fixture="a")
+        summary["population"].update(declared=[identity], compiled=[identity])
+        row = summary["population"]["observed"][0]
+        row.update(identity=identity, outcome="needs-human-review")
+        row["attempts"][1].update(outcome="needs-human-review", reason="P2 contract requires signed human review")
+        row["first_failure"] = row["attempts"][0]["first_failure"] = first_failure_receipt()
+        summary["status"] = "unverified"
+        self.assertEqual(summary, ci_summary.parse_summary(summary))
+        result = aggregate_nightly([identity], [summary], live_in_scope=False)
+        self.assertEqual(("environment-limited", [identity], [identity]),
+                         (result["status"], result["needs_human_review"], result["flaky"]))
+        self.assertIn("needs-human-review (flaky; yellow)", ci_summary.render_markdown(summary))
+        report = entry()
+        report.update(status="environment-limited", observed=[row])
+        report["diagnostics"]["failures"] = [ci_report.failure_details(row)]
+        decision = ci_report.issue_decision(None, identity, [report], registry_referenced=False)
+        self.assertEqual(("open", []), (decision["action"], decision["state"]["explicit_pass_nights"]))
+        from run_strict_e2e import resolve_suite_selector
+        from strict_e2e_p2_contract import RAW_VERDICT
+        method = resolve_suite_selector("ios", "p2-exif").split("/", 1)[1]
+        phase = {"identity": identity, "exit_code": 65, "log_present": True, "build_operations": 0, "products_unchanged": True,
+            "retry_method": method, "retry_failed_case_count": 1, "retry_assertion_methods": [method],
+            "official_method_durations": {method: 1}, "official_methods": [{"identifier": method, "result": "Failed"}],
+            "official_summary": {"totalTestCount": 1, "passedTests": 0, "failedTests": 1, "skippedTests": 0}}
+        phase["retry"] = {**phase, "exit_code": 0, "p2_verdict": RAW_VERDICT,
+            "official_method_durations": {method: 2}, "official_methods": [{"identifier": method, "result": "Passed"}],
+            "official_summary": {"totalTestCount": 1, "passedTests": 1, "failedTests": 0, "skippedTests": 0}}
+        methods, missing = ci_report.method_observations(summary, {"warm": [phase]}, runner_hosted=True)
+        self.assertEqual(("needs-human-review", []), (methods[0]["outcome"], missing))
+        phase["retry"].pop("p2_verdict")
+        with self.assertRaisesRegex(ci_summary.ContractError, "^nightly retry: P2 automated contract evidence is missing or invalid$"):
+            ci_report.method_observations(summary, {"warm": [phase]}, runner_hosted=True)
+        for mutation in ("ui", "ordinary-strict", "missing-proof", "p2-auto-pass"):
+            changed = copy.deepcopy(summary)
+            target = changed["population"]["observed"][0]
+            if mutation == "missing-proof":
+                target.pop("nightly_retry")
+            elif mutation == "p2-auto-pass":
+                target["outcome"] = "flaky-passed"
+                target["attempts"][1]["outcome"] = "passed"
+            elif mutation == "ordinary-strict":
+                target["identity"]["dimensions"]["suite"] = "smoke"
+            else:
+                target["identity"] = ci_summary.test_identity("ui", "ExampleUITests/testOpen", platform="ios", device="iphone")
+            with self.subTest(mutation=mutation), self.assertRaisesRegex(ci_summary.ContractError,
+                    "nightly retry:|first failure requires"):
+                ci_summary.parse_summary(changed)
+
+    def test_hosted_nightly_retry_is_closed_scoped_and_retains_the_first_failure(self):
+        for kind in ("strict", "ui"):
+            summary = nightly_retry_summary(kind)
+            row = summary["population"]["observed"][0]
+            row["failure_messages"] = row["attempts"][0]["failure_messages"] = ["App timeline:"]
+            with self.subTest(kind=kind):
+                self.assertEqual(summary, ci_summary.parse_summary(summary))
+                rendered = ci_summary.render_markdown(summary)
+                self.assertIn("flaky (yellow)", rendered)
+                self.assertIn("First playback assertion failed", rendered)
+            for field, value in (("schema_version", True), ("policy_version", 2), ("runner_hosted", False),
+                                 ("failed_case_count", 0), ("failed_case_count", 4), ("failed_case_count", True),
+                                 ("extra", "unknown")):
+                changed = copy.deepcopy(summary)
+                changed["population"]["observed"][0]["nightly_retry"][field] = value
+                with self.subTest(field=field, value=value), self.assertRaisesRegex(ci_summary.ContractError, "^nightly retry:"):
+                    ci_summary.parse_summary(changed)
+            for mutation in ("workflow", "event", "ref", "tier", "fork", "first-exit", "last-exit",
+                             "reason", "attempt-proof", "failure-messages"):
+                changed = copy.deepcopy(summary)
+                target = changed["population"]["observed"][0]
+                if mutation == "workflow":
+                    changed["source"]["workflow_path"] = ".github/workflows/ci-ui.yml"
+                elif mutation == "event":
+                    changed["identity"].update(event="workflow_dispatch", ref="refs/heads/topic")
+                    changed["source"]["event"] = "workflow_dispatch"
+                elif mutation == "ref":
+                    changed["identity"].update(event="workflow_dispatch", ref="refs/tags/v1")
+                    changed["source"]["event"] = "workflow_dispatch"
+                elif mutation == "tier":
+                    changed["run"]["tier"] = "host"
+                elif mutation == "fork":
+                    changed["source"]["fork_originated"] = True
+                elif mutation == "first-exit":
+                    target["attempts"][0]["exit_code"] = 124
+                elif mutation == "last-exit":
+                    target["attempts"][1]["exit_code"] = None
+                elif mutation == "reason":
+                    target["attempts"][0]["reason"] = "Preparation failed"
+                elif mutation == "attempt-proof":
+                    target["attempts"][0]["nightly_retry"] = target["nightly_retry"]
+                else:
+                    target["attempts"][0]["failure_messages"] = ["App timeline:", "App timeline:"]
+                with self.subTest(mutation=mutation), self.assertRaisesRegex(ci_summary.ContractError,
+                        "nightly retry:|failure messages require"):
+                    ci_summary.parse_summary(changed)
+            legacy = copy.deepcopy(summary)
+            legacy["population"]["observed"][0].pop("nightly_retry")
+            legacy["population"]["observed"][0].pop("failure_messages")
+            legacy["population"]["observed"][0]["attempts"][0].pop("failure_messages")
+            self.assertEqual(legacy, ci_summary.parse_summary(legacy))
+
     def test_invalid_album_diagnostics_leave_the_valid_gate_and_v5_proof_unchanged(self):
         from ci_failure_diagnostics import (collect_first_failure_spool, environment_limit_evidence,
             public_first_failure, scan_diagnostic_json)

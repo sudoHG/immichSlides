@@ -29,12 +29,48 @@ FORBIDDEN_FLAGS = {"-retry-tests-on-failure", "-run-tests-until-failure", "-test
                    "-maximum-test-iterations", "-test-repetition-relaunch-enabled"}
 METHOD = re.compile(r"[A-Za-z_]\w*/test[A-Za-z_]\w*")
 ASSERTION_FAILURE = "Official XCTest assertion failure"
+NIGHTLY_RETRY_FAILURE_LIMIT = 3
 # Keep recording eligibility dependency-free for the isolated base reader.
 # The strict runner and P2 contract import these same suite declarations.
 SERVER_SWITCH_RECORDING_SUITES = ("filter-switch", "tvos-switch")
 P2_RECORDING_SUITES = frozenset({"p2-reduce-motion", "p2-rotation"})
+P2_REVIEW_SUITES = P2_RECORDING_SUITES | frozenset({"p2-exif", "p2-cache", "p2-cache-smoke", "p2-ipad-layout",
+                                                  "p2-orientation-selfcheck"})
+IOS_PENDING_REVIEW_SUITE = "ios-lifecycle-pause"
 
 
+def nightly_retry_reserve(remaining_seconds, export_timeout_seconds, reserved_export_seconds):
+    """Reserve reset, reads and pending final exports before a filtered UI invocation."""
+    reserve = reserved_export_seconds + 4 * export_timeout_seconds
+    return reserve if remaining_seconds > 720 + 4 * export_timeout_seconds + reserve else None
+
+
+def nightly_retry_enabled(root, environment):
+    """Emit the successor only from hosted main after its trusted reader is installed."""
+    repository = environment.get("GITHUB_REPOSITORY")
+    if not (environment.get("GITHUB_ACTIONS") == "true"
+            and environment.get("RUNNER_ENVIRONMENT") == "github-hosted"
+            and environment.get("GITHUB_EVENT_NAME") in {"schedule", "workflow_dispatch"}
+            and environment.get("GITHUB_REF") == "refs/heads/main" and repository
+            and environment.get("GITHUB_WORKFLOW_REF") == repository + "/.github/workflows/ci-nightly.yml@refs/heads/main"):
+        return False
+    try:
+        if environment.get("GITHUB_EVENT_NAME") == "workflow_dispatch":
+            event = json.loads(Path(environment["GITHUB_EVENT_PATH"]).read_text())
+            inputs = event.get("inputs", {})
+            if (not isinstance(inputs, dict) or inputs.get("shard")
+                    or any(inputs.get(key) not in {None, False, "false", ""}
+                           for key in ("live_only", "strict_only", "ui_only", "probe_environment_refusal"))):
+                return False
+        trusted = subprocess.check_output(["git", "rev-parse", "refs/remotes/origin/main"], cwd=root,
+                                          text=True, stderr=subprocess.DEVNULL, timeout=30).strip()
+        if trusted != environment.get("GITHUB_SHA"):
+            return False
+        reader = subprocess.check_output(["git", "show", trusted + ":scripts/ci_summary.py"], cwd=root,
+                                         text=True, stderr=subprocess.DEVNULL, timeout=30)
+        return re.search(r"^NIGHTLY_RETRY_READER_VERSION = 1$", reader, re.MULTILINE) is not None
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        return False
 def require_retryable_strict_suite(suite):
     require(suite not in SERVER_SWITCH_RECORDING_SUITES and suite not in P2_RECORDING_SUITES,
             "recording suites cannot use listed-only retry")
@@ -129,7 +165,7 @@ def eligible_entry(registry, identity, *, tier, environment, today):
                  and calendar_date(entry["review_by"]) >= today), None)
 
 
-def merge_retry(first, second):
+def merge_retry(first, second, *, nightly_proof=None):
     validate_observation(first)
     require("environment_limit" not in first, "environment-limited failure is not a product flake")
     require(first["outcome"] == "failed" and len(first["attempts"]) == 1, "retry requires one failed first attempt")
@@ -143,23 +179,34 @@ def merge_retry(first, second):
     merged["duration_seconds"] = (first["duration_seconds"] + second["duration_seconds"]
                                   if second["duration_seconds"] is not None else None)
     merged["outcome"] = "flaky-passed" if second["outcome"] == "passed" else "failed"
+    if nightly_proof is not None and second["outcome"] in {"passed", "needs-human-review"}:
+        merged["nightly_retry"] = copy.deepcopy(nightly_proof)
+        if second["outcome"] == "needs-human-review":
+            merged["outcome"] = "needs-human-review"
     validate_observation(merged)
     return merged
 
 
-def retry_observations(first, registry, *, tier, environment, today, reset, execute, infrastructure=None):
+def retry_observations(first, registry, *, tier, environment, today, reset, execute, infrastructure=None,
+                       nightly_retry=False, retry_allowed=None):
     from strict_e2e_runner_support import CommandError
     seen = set()
     merged = []
+    failures = sum(record["outcome"] in {"failed", "crashed", "timed-out"} for record in first)
+    if nightly_retry and (failures > NIGHTLY_RETRY_FAILURE_LIMIT or infrastructure):
+        return first
     for index, record in enumerate(first):
         validate_observation(record)
         token = identity_key(record["identity"])
         require(token not in seen, "duplicate first-attempt identity")
         seen.add(token)
+        if nightly_retry and infrastructure:
+            return merged + first[index:]
         if (record["outcome"] == "failed" and record["duration_seconds"] is not None
                 and "environment_limit" not in record and len(record["attempts"]) == 1
                 and record["attempts"][0]["reason"] == ASSERTION_FAILURE
-                and eligible_entry(registry, record["identity"], tier=tier, environment=environment, today=today)):
+                and (nightly_retry or eligible_entry(registry, record["identity"], tier=tier, environment=environment, today=today))
+                and (retry_allowed is None or retry_allowed(record))):
             try:
                 reset()
             except (CommandError, OSError, subprocess.SubprocessError):
@@ -167,7 +214,9 @@ def retry_observations(first, registry, *, tier, environment, today, reset, exec
                     raise
                 infrastructure.append({"code": "retry-reset-failed", "message": "App reset failed before listed retry"})
                 return merged + first[index:]
-            record = merge_retry(record, execute(record["identity"]))
+            proof = {"schema_version": 1, "policy_version": 1, "runner_hosted": True,
+                     "failed_case_count": failures} if nightly_retry else None
+            record = merge_retry(record, execute(record["identity"]), nightly_proof=proof)
         merged.append(record)
     return merged
 
@@ -421,7 +470,8 @@ def read_xcode_observations(bundle, identity_for_key, elapsed, invocation_exit, 
 
 
 def run_xcode_attempts(command, registry, *, tier, environment, today, identity_for_key,
-                       reset, execute, allocate_bundle, read=read_xcode_observations):
+                       reset, execute, allocate_bundle, read=read_xcode_observations,
+                       nightly_retry=False, retry_allowed=None):
     """Execute once, then retry each eligible assertion failure once; retain both calls.
 
     execute(command) returns (exit_code, elapsed_seconds). allocate_bundle()
@@ -482,7 +532,8 @@ def run_xcode_attempts(command, registry, *, tier, environment, today, identity_
     # Exit 65 with official assertion failures is retryable. Infrastructure exits
     # and first-call skips/crashes/missing results never obtain a second call.
     observed = retry_observations(first, registry, tier=tier, environment=environment, today=today,
-                                  reset=reset, execute=retry, infrastructure=infrastructure) if first_exit == 65 and not infrastructure else first
+                                  reset=reset, execute=retry, infrastructure=infrastructure,
+                                  nightly_retry=nightly_retry, retry_allowed=retry_allowed) if first_exit == 65 and not infrastructure else first
     successful = not infrastructure and bool(observed) and all(item["outcome"] in {"passed", "flaky-passed"} for item in observed)
     code = 0 if successful and (first_exit == 0 or (first_exit == 65 and len(invocations) > 1)) else first_exit or 1
     return {"exit_code": code, "observed": observed, "invocations": invocations,

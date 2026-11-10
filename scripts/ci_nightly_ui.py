@@ -20,6 +20,66 @@ from ci_verdict import evaluate_population, tokens
 WORKFLOW = ".github/workflows/ci-nightly.yml"
 
 
+def bind_ui_nightly_retries(summary, official, retries):
+    """A yellow retry needs the original failure and one complete filtered official pass."""
+    from ci_flaky import official_ui_duration
+    def cases(payload):
+        require(isinstance(payload, dict) and isinstance(payload.get("testNodes"), list),
+                "nightly retry: missing official UI evidence")
+        found = {}
+        def visit(node):
+            require(isinstance(node, dict), "nightly retry: invalid official UI node")
+            if node.get("nodeType") == "Test Case":
+                key = str(node.get("nodeIdentifier", "")).removesuffix("()").removeprefix("immichSlidesUITests/")
+                require(key not in found, "nightly retry: duplicate official UI method")
+                found[key] = node
+            for child in node.get("children", []):
+                visit(child)
+        for node in payload["testNodes"]:
+            visit(node)
+        return found
+    initial = cases(official)
+    require(set(initial) == {entry["identity"]["key"] for entry in summary["population"]["observed"]}
+            and all(node.get("result") in {"Passed", "Failed", "Skipped"} for node in initial.values()),
+            "nightly retry: incomplete original official UI population")
+    failed_count = sum(node.get("result") == "Failed" for node in initial.values())
+    require(isinstance(retries, list) and 0 < len(retries) <= 3, "nightly retry: missing filtered UI exports")
+    second, calls = {}, {}
+    for raw in retries:
+        require(isinstance(raw, dict) and set(raw) == {"official_tests", "invocation"},
+                "nightly retry: missing UI invocation evidence")
+        selected = cases(raw["official_tests"])
+        require(len(selected) == 1 and not (second.keys() & selected.keys()),
+                "nightly retry: retry must export exactly one unique selected UI method")
+        second.update(selected)
+        calls.update({key: raw["invocation"] for key in selected})
+    for entry in summary["population"]["observed"]:
+        if "nightly_retry" not in entry:
+            continue
+        key = entry["identity"]["key"]
+        first, last = initial.get(key, {}), second.get(key, {})
+        call = calls.get(key, {})
+        require(isinstance(call, dict) and isinstance(call.get("command"), list)
+                and all(isinstance(arg, str) for arg in call["command"]),
+                "nightly retry: missing UI invocation evidence")
+        selections = [arg for arg in call.get("command", []) if arg.startswith("-only-testing:")]
+        require(call.get("exit_code") == 0 and selections == ["-only-testing:immichSlidesUITests/" + key],
+                "nightly retry: UI retry exit or filtered selection differs")
+        require(entry["nightly_retry"]["failed_case_count"] == failed_count and first.get("result") == "Failed"
+                and first.get("retry_assertion") is True and last.get("result") == "Passed",
+                "nightly retry: official UI assertion, failed count or passing retry differs")
+        for node, attempt in zip((first, last), entry["attempts"]):
+            try:
+                seconds = official_ui_duration(node)
+            except ContractError as error:
+                raise ContractError("nightly retry: official UI duration differs or is unknown") from error
+            require(seconds is not None and seconds == attempt["duration_seconds"],
+                    "nightly retry: official UI duration differs or is unknown")
+        if "failure_messages" in entry:
+            require(first.get("failure_messages") == entry["failure_messages"],
+                    "nightly retry: official UI first failure messages differ")
+
+
 def parse_ui_plan(raw):
     plan = decode(raw)
     fields(plan, {"schema_version", "identity", "source", "run", "hashes", "shards", "max_parallel", "started_epoch"},
@@ -65,7 +125,7 @@ def parse_ui_plan(raw):
     return plan
 
 
-def judge_ui(raw_plan, raw_summaries, *, policy, registry, evaluated_on, matrix_job_result, official_tests=None):
+def judge_ui(raw_plan, raw_summaries, *, policy, registry, evaluated_on, matrix_job_result, official_tests=None, retry_tests=None):
     plan = parse_ui_plan(raw_plan)
     result = {"status": "failed", "matrix": {}, "shards": [], "observed": [], "deselected": [], "errors": []}
     wanted = {(item["device"], item["shard"]): item for item in plan["shards"]}
@@ -82,6 +142,8 @@ def judge_ui(raw_plan, raw_summaries, *, policy, registry, evaluated_on, matrix_
             if any("environment_limit" in item for item in summary["population"]["observed"]):
                 from ci_failure_diagnostics import bind_ui_environment_limits
                 bind_ui_environment_limits(summary, (official_tests or {}).get(pair))
+            if any("nightly_retry" in item for item in summary["population"]["observed"]):
+                bind_ui_nightly_retries(summary, (official_tests or {}).get(pair), (retry_tests or {}).get(pair))
             summaries[pair] = summary
         except (ContractError, KeyError, TypeError, ValueError) as error:
             result["errors"].append("invalid UI shard: " + str(error))
@@ -119,18 +181,22 @@ def judge_ui(raw_plan, raw_summaries, *, policy, registry, evaluated_on, matrix_
     yellow = [item["identity"] for item in result["observed"] if "environment_limit" in item]
     if yellow:
         result["environment_limited"] = yellow
+    flaky = [item["identity"] for item in result["observed"] if "nightly_retry" in item]
+    if flaky:
+        result["flaky"] = flaky
+    if yellow or flaky:
         if not result["errors"]:
             result["status"] = "environment-limited"
     return result
 
 
-def validate_ui_record(raw, summaries, *, policy, registry, evaluated_on, official_tests=None):
+def validate_ui_record(raw, summaries, *, policy, registry, evaluated_on, official_tests=None, retry_tests=None):
     record = decode(raw)
     fields(record, {"schema_version", "plan", "verdict", "matrix_job_result", "capacity"}, "nightly UI aggregate")
     require(type(record["schema_version"]) is int and record["schema_version"] == 1, "unsupported nightly UI aggregate")
     require(record["matrix_job_result"] in {"success", "failure", "cancelled", "skipped"}, "invalid UI job result")
     expected = judge_ui(record["plan"], summaries, policy=policy, registry=registry, evaluated_on=evaluated_on,
-                        matrix_job_result=record["matrix_job_result"], official_tests=official_tests)
+                        matrix_job_result=record["matrix_job_result"], official_tests=official_tests, retry_tests=retry_tests)
     require(record["verdict"] == expected, "nightly UI aggregate differs from bound shard evidence")
     capacity = record["capacity"]
     fields(capacity, {"max_parallel", "shards", "minimum_shard_waves", "start_order_waves", "shard_intervals", "wall_seconds"},
@@ -195,7 +261,7 @@ def current_plan(root):
 
 def aggregate_ui(plan, records, *, matrix_job_result, root):
     from ci_summary import duration
-    summaries, intervals, errors, official_tests = [], [], [], {}
+    summaries, intervals, errors, official_tests, retry_tests = [], [], [], {}, {}
     expected = {f"ui-{item['device']}-{item['shard']}-{plan['run']['id']}-{plan['run']['attempt']}" for item in plan["shards"]}
     actual = {path.name for path in records.iterdir()} if records.is_dir() else set()
     require(actual <= expected, "unexpected nightly UI artifact directories")
@@ -205,8 +271,15 @@ def aggregate_ui(plan, records, *, matrix_job_result, root):
             continue
         try:
             summaries.append(parse_summary((directory / "summary.json").read_text()))
-            if any("environment_limit" in row for row in summaries[-1]["population"]["observed"]):
+            if any("environment_limit" in row or "nightly_retry" in row for row in summaries[-1]["population"]["observed"]):
                 official_tests[(item["device"], item["shard"])] = decode((directory / "official-tests.json").read_text())
+            if any("nightly_retry" in row for row in summaries[-1]["population"]["observed"]):
+                calls = decode((directory / "retry-invocations.json").read_text())["invocations"]
+                require(2 <= len(calls) <= 4 and calls[0].get("exit_code") == 65,
+                        "nightly retry: invalid UI invocation count or initial exit")
+                retry_tests[(item["device"], item["shard"])] = [
+                    {"official_tests": decode((directory / f"official-tests-attempt-{number}.json").read_text()), "invocation": call}
+                    for number, call in enumerate(calls[1:], 2)]
             timing = decode((directory / "shard-timing.json").read_text())
             require(timing["device"] == item["device"] and timing["shard"] == item["shard"], "UI timing differs from shard")
             for key in ("started_epoch", "finished_epoch"):
@@ -227,14 +300,15 @@ def aggregate_ui(plan, records, *, matrix_job_result, root):
         require(run["head_sha"] == plan["identity"]["commit_sha"], "UI evaluation date source differs")
         evaluated_on = date.fromisoformat(run["created_at"][:10])
     verdict = judge_ui(plan, summaries, policy=policy, registry=registry, evaluated_on=evaluated_on,
-                       matrix_job_result=matrix_job_result, official_tests=official_tests)
+                       matrix_job_result=matrix_job_result, official_tests=official_tests, retry_tests=retry_tests)
     ordered = sorted(intervals, key=lambda item: item["started_epoch"])
     parallel, count = plan["max_parallel"], len(plan["shards"])
     record = {"schema_version": 1, "plan": plan, "verdict": verdict, "matrix_job_result": matrix_job_result,
               "capacity": {"max_parallel": parallel, "shards": count, "minimum_shard_waves": (count + parallel - 1) // parallel, "shard_intervals": intervals,
                            "start_order_waves": [[item["shard"] for item in ordered[index:index + parallel]] for index in range(0, len(ordered), parallel)],
                            "wall_seconds": time.time() - plan["started_epoch"]}}
-    validate_ui_record(record, summaries, policy=policy, registry=registry, evaluated_on=evaluated_on, official_tests=official_tests)
+    validate_ui_record(record, summaries, policy=policy, registry=registry, evaluated_on=evaluated_on,
+                       official_tests=official_tests, retry_tests=retry_tests)
     return record
 
 
@@ -271,6 +345,11 @@ def main(argv=None):
              f"{capacity['shards']} shards; max-parallel {capacity['max_parallel']}; minimum {capacity['minimum_shard_waves']} waves; observed start-order waves {len(capacity['start_order_waves'])}; wall {capacity['wall_seconds']:.1f}s.", "",
              "| Device | Shard | Verdict |", "|---|---|---|"]
     lines.extend(f"| {item['device']} | {item['shard']} | {item['verdict']['status']} |" for item in verdict["shards"])
+    if verdict.get("flaky"):
+        from ci_summary import markdown_text, render_nightly_retry
+        lines.extend("\nWARNING: " + markdown_text(identity_key(item["identity"])) + ": "
+                     + markdown_text(render_nightly_retry(item))
+                     for item in verdict["observed"] if "nightly_retry" in item)
     if verdict.get("environment_limited"):
         from ci_failure_diagnostics import render_environment_limit
         from ci_summary import markdown_text

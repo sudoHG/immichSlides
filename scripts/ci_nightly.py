@@ -15,7 +15,7 @@ from pathlib import Path
 
 from ci_build_archive import file_hash, workspace_preflight
 from ci_summary import (ContractError, decode, fields, identity_key, integer, observation,
-                        parse_identity, parse_summary, require, string, test_identity)
+                        parse_identity, parse_summary, require, string, test_identity, nightly_retry_outcome)
 from ci_verdict import tokens
 from run_host_checks import run_identity, source_metadata
 
@@ -194,7 +194,7 @@ def aggregate_nightly(scheduled, summaries, *, live_in_scope, informational=(), 
             result["observed"].extend(observed)
             if summary["infrastructure"]:
                 result["errors"].append("producer infrastructure failure: " + str(summary["infrastructure"]))
-            yellow = [entry for entry in observed if "environment_limit" in entry]
+            yellow = [entry for entry in observed if "environment_limit" in entry or "nightly_retry" in entry]
             if summary["status"] == "failed" and not (yellow and all(
                     entry["outcome"] in {"passed", "flaky-passed", "needs-human-review"}
                     or "environment_limit" in entry for entry in observed)):
@@ -221,6 +221,10 @@ def aggregate_nightly(scheduled, summaries, *, live_in_scope, informational=(), 
         yellow = [entry["identity"] for entry in result["observed"] if "environment_limit" in entry]
         if yellow:
             result["environment_limited"] = yellow
+        flaky = [entry["identity"] for entry in result["observed"] if "nightly_retry" in entry]
+        if flaky:
+            result["flaky"] = flaky
+        if yellow or flaky:
             if not result["errors"]:
                 result["status"] = "environment-limited"
         result["tiers"]["strict"] = result["status"]
@@ -253,6 +257,10 @@ def bind_ui_aggregate(result, ui):
     yellow = ui["verdict"].get("environment_limited", [])
     if yellow:
         result.setdefault("environment_limited", []).extend(copy.deepcopy(yellow))
+    flaky = ui["verdict"].get("flaky", [])
+    if flaky:
+        result.setdefault("flaky", []).extend(copy.deepcopy(flaky))
+    if yellow or flaky:
         if result["status"] != "failed":
             result["status"] = "environment-limited"
 
@@ -431,9 +439,14 @@ def main(argv=None):
     lines.extend(["", f"Contracts needing human review (P2 and pause timing): {len(result['needs_human_review'])}.",
                   f"Informational Vision outcomes: {len(result['informational'])}.", "", "| Case | Outcome |", "|---|---|"])
     lines.extend(f"| {identity_key(item['identity'])} | "
-                 f"{'failed (environment-limited; yellow)' if 'environment_limit' in item else item['outcome']} |" for item in result["observed"])
+                 f"{nightly_retry_outcome(item) if 'nightly_retry' in item else 'failed (environment-limited; yellow)' if 'environment_limit' in item else item['outcome']} |" for item in result["observed"])
     from ci_failure_diagnostics import render_environment_limit
     yellow_observed = [*result["observed"], *result.get("ui", {}).get("verdict", {}).get("observed", [])]
+    if result.get("flaky"):
+        from ci_summary import markdown_text, render_nightly_retry
+        lines.extend("\nWARNING: " + markdown_text(identity_key(item["identity"])) + ": "
+                     + markdown_text(render_nightly_retry(item)) for item in yellow_observed if "nightly_retry" in item)
+        print(f"::warning title=Flaky nightly cases::{len(result['flaky'])} case(s) failed once and passed one retry; yellow, never passes.")
     if result.get("environment_limited"):
         has_tool = any(item.get("environment_limit", {}).get("kind") == "xctest-tool" for item in yellow_observed)
         category = "timing or XCTest/Apple tool" if has_tool else "timing"

@@ -15,6 +15,32 @@ from test_ci_summary import valid_summary
 
 
 class NightlyVerdictTests(unittest.TestCase):
+    def test_failed_then_passed_nightly_retry_is_yellow_and_infrastructure_stays_red(self):
+        from ci_nightly import aggregate_nightly, bind_ui_aggregate
+        from test_ci_summary import nightly_retry_summary
+        for kind in ("strict", "ui"):
+            summary = nightly_retry_summary(kind)
+            identity = summary["population"]["declared"][0]
+            if kind == "strict":
+                result = aggregate_nightly([identity], [summary], live_in_scope=False)
+                self.assertFalse(result["release_eligible"])
+            else:
+                result = evaluate_population(summary, [identity], policy(), environment="fixture")
+            with self.subTest(kind=kind):
+                self.assertEqual("environment-limited", result["status"])
+                self.assertEqual([identity], result["flaky"])
+                self.assertEqual([], result["errors"])
+            if kind == "ui":
+                strict = aggregate_nightly([], [], live_in_scope=False)
+                strict.update(status="passed", errors=[])
+                bind_ui_aggregate(strict, {"verdict": result})
+                self.assertEqual(("environment-limited", [identity]), (strict["status"], strict["flaky"]))
+            changed = copy.deepcopy(summary)
+            changed["infrastructure"] = [{"code": "cleanup-failed", "message": "Cleanup failed"}]
+            result = (aggregate_nightly([identity], [changed], live_in_scope=False) if kind == "strict" else
+                      evaluate_population(changed, [identity], policy(), environment="fixture"))
+            self.assertEqual("failed", result["status"])
+
     def test_fixture_ui_starts_after_archives_and_aggregates_wait_for_consumed_inputs(self):
         import yaml
         root = Path(__file__).parent.parent

@@ -39,6 +39,219 @@ def entry(day="2026-10-01", outcome="failed", run=10, attempt=1):
 
 
 class ReporterTests(unittest.TestCase):
+    def test_strict_retry_reader_recomputes_both_official_attempts_and_rejects_missing_proof(self):
+        from test_ci_summary import nightly_retry_summary
+        summary = nightly_retry_summary()
+        case = summary["population"]["declared"][0]
+        method = "StrictE2ESmokeUITests/testIOSStrictE2EConnectionSmoke"
+        first = {"identity": case, "exit_code": 65, "build_operations": 0, "products_unchanged": True,
+            "log_present": True, "duration_seconds": 1, "retry_method": method, "retry_failed_case_count": 1,
+            "retry_assertion_methods": [method], "official_method_durations": {method: 1},
+            "official_methods": [{"identifier": method, "result": "Failed"}],
+            "official_summary": {"totalTestCount": 1, "passedTests": 0, "failedTests": 1, "skippedTests": 0}}
+        second = {**copy.deepcopy(first), "exit_code": 0, "duration_seconds": 2,
+            "official_method_durations": {method: 2}, "official_methods": [{"identifier": method, "result": "Passed"}],
+            "official_summary": {"totalTestCount": 1, "passedTests": 1, "failedTests": 0, "skippedTests": 0}}
+        first["retry"] = second
+        observed, missing = ci_report.method_observations(summary, {"warm": [first]}, runner_hosted=True)
+        self.assertEqual([], missing)
+        self.assertEqual("flaky-passed", observed[0]["outcome"])
+        self.assertEqual(["failed", "passed"], [item["outcome"] for item in observed[0]["attempts"]])
+        self.assertEqual([65, 0], [item["exit_code"] for item in observed[0]["attempts"]])
+        from ci_nightly import aggregate_nightly
+        aggregate = aggregate_nightly([case], [summary], live_in_scope=False)
+        aggregate.update(identity=summary["identity"], source=summary["source"], run={"id": "10", "attempt": 1},
+                         hashes=summary["hashes"], capacity={"shard_intervals": [{"shard": "a"}]})
+        api = type("API", (), {"repository": "sudoHG/immichSlides"})()
+        run = {"id": 10, "workflow_id": 123, "run_attempt": 1, "created_at": "2026-10-01T10:00:00Z",
+               "head_sha": "a" * 40, "path": ci_report.NIGHTLY_PATH, "event": "schedule", "head_branch": "main",
+               "head_repository": {"full_name": api.repository}, "status": "completed", "conclusion": "success"}
+        artifacts = [{"name": name, "expired": False} for name in ("nightly-aggregate-10-1", "nightly-strict-a-10-1")]
+        jobs = [{"name": "nightly-strict-a", "runner_group_name": "GitHub Actions", "labels": []}]
+        with patch("ci_publish.json_member", side_effect=[aggregate, summary, {"warm": [first]}]), patch(
+                "ci_publish.complete_attempt_jobs", return_value=jobs):
+            report = ci_report.nightly_attempt(api, run, 1, artifacts)
+        self.assertEqual(("environment-limited", 1), (report["status"], report["diagnostics"]["counts"]["flaky"]))
+        self.assertIn("one retry passed", render_entry(report))
+        diagnostic = copy.deepcopy(aggregate)
+        diagnostic["identity"]["event"] = diagnostic["source"]["event"] = "workflow_dispatch"
+        diagnostic["diagnostic_shard"] = "strict-only"
+        with patch("ci_publish.json_member", return_value=diagnostic), self.assertRaisesRegex(ContractError,
+                "^nightly retry: requires a full nightly run$"):
+            ci_report.nightly_attempt(api, {**run, "event": "workflow_dispatch"}, 1, artifacts)
+        red = copy.deepcopy(summary)
+        row = red["population"]["observed"][0]
+        row.pop("nightly_retry")
+        row["outcome"] = row["attempts"][1]["outcome"] = "failed"
+        row["attempts"][1]["exit_code"] = 65
+        failed = copy.deepcopy(first)
+        failed["retry"]["exit_code"] = 65
+        failed["retry"]["official_methods"][0]["result"] = "Failed"
+        failed["retry"]["official_summary"].update(passedTests=0, failedTests=1)
+        failed_rows, _ = ci_report.method_observations(red, {"warm": [failed]}, runner_hosted=True)
+        self.assertEqual(("failed", [65, 65]), (failed_rows[0]["outcome"], [item["exit_code"] for item in failed_rows[0]["attempts"]]))
+        for defect in ("post-test", "products-changed", "missing-export"):
+            trace = copy.deepcopy(first)
+            raw = copy.deepcopy(red)
+            raw["population"]["observed"][0]["attempts"][1].update(exit_code=2, reason="Strict post-test checks failed")
+            trace["retry"]["exit_code"] = 2
+            if defect == "products-changed":
+                trace["retry"]["products_unchanged"] = False
+            elif defect == "missing-export":
+                trace["retry"].pop("official_methods")
+                trace["retry"].pop("official_summary")
+            rows, missing = ci_report.method_observations(raw, {"warm": [trace]}, runner_hosted=True)
+            with self.subTest(red_retry=defect):
+                self.assertEqual([], missing)
+                self.assertEqual(("failed", [65, 2]), (rows[0]["outcome"], [item["exit_code"] for item in rows[0]["attempts"]]))
+                self.assertEqual("Strict post-test checks failed", rows[0]["attempts"][1]["reason"])
+        from ci_flaky import ASSERTION_FAILURE, merge_retry
+        from run_strict_e2e import FILTER_PERSON_SESSIONS
+        names = [session["selector"].split("/", 1)[1] for session in FILTER_PERSON_SESSIONS]
+        person = copy.deepcopy(red)
+        person_case = test_identity("strict", "filter-person", **{**case["dimensions"], "suite": "filter-person"})
+        person["population"].update(declared=[person_case], compiled=[person_case])
+        person_row = person["population"]["observed"][0]
+        person_row.update(identity=person_case, duration_seconds=13)
+        person_row["attempts"][0]["duration_seconds"] = 5
+        person_row["attempts"][1]["duration_seconds"] = 8
+        phases = copy.deepcopy(first)
+        phases.update(identity=person_case, duration_seconds=5, retry_selected_methods=names[:2], retry_method=names[0],
+            retry_assertion_methods=names[:2], retry_failed_case_count=2,
+            official_method_durations={name: 1 for name in names},
+            official_method_exit_codes={name: 65 if name in names[:2] else 0 for name in names},
+            official_methods=[{"identifier": name, "result": "Failed" if name in names[:2] else "Passed"} for name in names],
+            official_summary={"totalTestCount": 3, "passedTests": 1, "failedTests": 2, "skippedTests": 0})
+        phases["retry"].update(identity=person_case, duration_seconds=8, exit_code=65,
+            official_method_durations={name: 2 for name in names},
+            official_method_exit_codes={name: 65 if name == names[1] else 0 for name in names},
+            official_methods=[{"identifier": name, "result": "Failed" if name == names[1] else "Passed"} for name in names],
+            official_summary={"totalTestCount": 3, "passedTests": 2, "failedTests": 1, "skippedTests": 0})
+        phases["retry_methods"] = []
+        for name in names[:2]:
+            identity = dict(person_case, key=name)
+            proof = {"schema_version": 1, "policy_version": 1, "runner_hosted": True, "failed_case_count": 2} if name == names[0] else None
+            phases["retry_methods"].append(merge_retry(observation(identity, "failed", 1, exit_code=65, reason=ASSERTION_FAILURE),
+                observation(identity, "passed" if proof else "failed", 2, exit_code=0 if proof else 65), nightly_proof=proof))
+        rows, missing = ci_report.method_observations(person, {"warm": [phases]}, runner_hosted=True)
+        self.assertEqual([], missing)
+        self.assertEqual(["flaky-passed", "failed", "passed"], [row["outcome"] for row in rows])
+        self.assertEqual([0, 65], [row["attempts"][1]["exit_code"] for row in rows[:2]])
+        self.assertIn("nightly_retry", rows[0])
+        self.assertNotIn("nightly_retry", rows[1])
+        aggregate = aggregate_nightly([person_case], [person], live_in_scope=False)
+        aggregate.update(identity=person["identity"], source=person["source"], run={"id": "10", "attempt": 1},
+                         hashes=person["hashes"], capacity={"shard_intervals": [{"shard": "a"}]})
+        with patch("ci_publish.json_member", side_effect=[aggregate, person, {"warm": [phases]}]), patch(
+                "ci_publish.complete_attempt_jobs", return_value=jobs):
+            partial = ci_report.nightly_attempt(api, run, 1, artifacts)
+        self.assertEqual(("failed", 1), (partial["status"], partial["diagnostics"]["counts"]["flaky"]))
+        self.assertEqual(["flaky-passed", "failed"], [row["outcome"] for row in partial["diagnostics"]["failures"]])
+        for mutation in ("hosted", "retry-exit", "retry-log", "retry-counts", "unknown-duration", "selection", "first-assertion", "count", "claim"):
+            changed = copy.deepcopy(first)
+            raw = copy.deepcopy(summary)
+            if mutation == "retry-exit":
+                changed["retry"]["exit_code"] = 65
+            elif mutation == "retry-log":
+                changed["retry"]["log_present"] = False
+            elif mutation == "retry-counts":
+                changed["retry"]["official_summary"]["passedTests"] = 0
+            elif mutation == "unknown-duration":
+                changed["retry"]["official_method_durations"][method] = None
+            elif mutation == "selection":
+                changed["retry_method"] = "Other/testMethod"
+            elif mutation == "first-assertion":
+                changed["retry_assertion_methods"] = []
+            elif mutation == "count":
+                changed["retry_failed_case_count"] = 2
+            elif mutation == "claim":
+                raw["population"]["observed"][0].pop("nightly_retry")
+            with self.subTest(mutation=mutation), self.assertRaisesRegex(ContractError, "^nightly retry:"):
+                ci_report.method_observations(raw, {"warm": [changed]}, runner_hosted=mutation != "hosted")
+
+    def test_nightly_flaky_events_are_tracked_never_recovery_and_only_red_reopens(self):
+        from test_ci_summary import nightly_retry_summary
+        summary = nightly_retry_summary()
+        row = summary["population"]["observed"][0]
+        row["identity"] = copy.deepcopy(IDENTITY)
+        report = entry()
+        report.update(status="environment-limited", observed=[row])
+        report["diagnostics"]["failures"] = [ci_report.failure_details(row)]
+        compact = ci_report.compact_entry(report, set())
+        self.assertEqual([row], compact["observed"])
+        decision = issue_decision(None, IDENTITY, [compact], registry_referenced=False)
+        self.assertEqual("open", decision["action"])
+        self.assertEqual("flaky", decision["state"]["nights"][report["day"]]["10"]["outcome"])
+        body = ci_report.issue_body(None, decision["state"], "sudoHG/immichSlides")
+        self.assertIn("First playback assertion failed", body)
+        self.assertIn("one retry passed", body)
+        self.assertIn("flaky (yellow)", render_entry(report))
+        self.assertEqual([], decision["state"]["explicit_pass_nights"])
+        closed = copy.deepcopy(decision["state"])
+        closed["closed"] = True
+        later = copy.deepcopy(compact)
+        later.update(day="2026-10-03", run={"id": 11, "attempt": 1})
+        self.assertEqual("none", issue_decision(closed, IDENTITY, [later], registry_referenced=False)["action"])
+        adopted = {"number": 1, "state": "closed", "body": "Maintainer issue", "labels": []}
+        api = Mock(repository="sudoHG/immichSlides")
+        api.repo.return_value = adopted
+        self.assertIsNone(ci_report.sync_identity(api, identity_token(IDENTITY), IDENTITY, [later], set(), {},
+            {1: adopted}, {identity_token(IDENTITY): adopted}, ci_report.LABEL))
+        self.assertEqual(1, api.repo.call_count)
+        following = copy.deepcopy(later)
+        following.update(day="2026-10-04", run={"id": 12, "attempt": 1})
+        self.assertEqual("reopen", issue_decision(closed, IDENTITY, [later, following], registry_referenced=False)["action"])
+
+    def test_flaky_and_starvation_yellows_share_one_streak_without_red_erasing_it(self):
+        from test_ci_summary import nightly_retry_summary, hosted_timeout_summary
+        from ci_failure_diagnostics import environment_limit_evidence
+        summary = nightly_retry_summary()
+        row = summary["population"]["observed"][0]
+        row["identity"] = copy.deepcopy(IDENTITY)
+        flaky = entry()
+        flaky.update(status="environment-limited", observed=[row])
+        flaky["diagnostics"]["failures"] = [ci_report.failure_details(row)]
+        timeout, resource = hosted_timeout_summary()
+        yellow = timeout["population"]["observed"][0]
+        proof = environment_limit_evidence(timeout, yellow, [resource], runner_hosted=True)
+        yellow["environment_limit"] = yellow["attempts"][0]["environment_limit"] = proof
+        yellow["identity"] = copy.deepcopy(IDENTITY)
+        starvation = entry("2026-10-02", run=11)
+        starvation.update(status="environment-limited", observed=[yellow])
+        starvation["diagnostics"]["failures"] = [ci_report.failure_details(yellow)]
+        red = entry(run=12)
+        history = ci_report.environment_history([flaky, red, starvation])
+        self.assertEqual(["environment-limited", "failed", "failed"], [item["status"] for item in history])
+        self.assertTrue(history[-1]["observed"][0]["environment_limit_escalation"])
+        for intervening in ("passed", "not-run"):
+            changed = copy.deepcopy(starvation)
+            changed["day"] = "2026-10-03"
+            history = ci_report.environment_history([flaky, entry("2026-10-02", intervening), changed])
+            self.assertEqual("environment-limited", history[-1]["status"])
+        same_day_pass = entry(outcome="passed", run=13)
+        history = ci_report.environment_history([flaky, same_day_pass, starvation])
+        self.assertEqual("failed", history[-1]["status"])
+        phone = copy.deepcopy(flaky)
+        phone["observed"][0]["identity"] = test_identity("ui", "ExampleUITests/testOpen", platform="ios", device="iphone")
+        phone["diagnostics"]["failures"] = [ci_report.failure_details(phone["observed"][0])]
+        pad = copy.deepcopy(phone)
+        pad.update(day="2026-10-02", run={"id": 14, "attempt": 1})
+        pad["observed"][0]["identity"]["dimensions"]["device"] = "ipad"
+        pad["diagnostics"]["failures"] = [ci_report.failure_details(pad["observed"][0])]
+        self.assertEqual("environment-limited", ci_report.environment_history([phone, pad])[-1]["status"])
+        next_phone = copy.deepcopy(phone)
+        next_phone.update(day="2026-10-02", run={"id": 15, "attempt": 1})
+        pad_pass = copy.deepcopy(pad)
+        pad_pass["observed"] = [observation(pad["observed"][0]["identity"], "passed", 1)]
+        history = ci_report.environment_history([phone, next_phone, pad_pass])
+        self.assertEqual(("failed", "environment-limited"), (history[1]["status"], history[2]["status"]))
+        for defect in (2, False):
+            changed = copy.deepcopy(flaky)
+            changed["observed"][0]["nightly_retry"]["policy_version"] = defect
+            rejected = ci_report.environment_history([changed])[0]
+            self.assertEqual("failed", rejected["status"])
+            self.assertIn("invalid or obsolete nightly-retry proof", render_entry(rejected))
+
     def test_v5_strict_methods_recheck_message_binding_and_retained_starvation_proof(self):
         from ci_failure_diagnostics import environment_limit_evidence
         from ci_nightly import aggregate_nightly
@@ -1124,6 +1337,49 @@ class ReporterTests(unittest.TestCase):
                         evaluated_on=date(2026, 10, 1), matrix_job_result="success")
         self.assertEqual("passed", good["status"])
         self.assertEqual(9, good["matrix"]["executed"])
+        from test_ci_summary import nightly_retry_summary
+        retry_summary = nightly_retry_summary("ui")
+        retry_row = retry_summary["population"]["observed"][0]
+        retry_row["identity"] = copy.deepcopy(summaries[0]["population"]["declared"][0])
+        retried = copy.deepcopy(summaries)
+        retried[0]["population"]["observed"] = [retry_row]
+        key = retry_row["identity"]["key"]
+        official = {("iphone", "default"): {"testNodes": [{"nodeType": "Test Case", "nodeIdentifier": key + "()",
+            "result": "Failed", "durationInSeconds": 1, "retry_assertion": True}]}}
+        retries = {("iphone", "default"): [{"official_tests": {"testNodes": [{"nodeType": "Test Case", "nodeIdentifier": key + "()",
+            "result": "Passed", "durationInSeconds": 2}]}, "invocation": {"exit_code": 0,
+            "command": ["xcodebuild", "-only-testing:immichSlidesUITests/" + key]}}]}
+        args = dict(policy=policy, registry={"schema_version": 1, "entries": []},
+                    evaluated_on=date(2026, 10, 1), matrix_job_result="success", official_tests=official)
+        flaky = judge_ui(plan, retried, **args, retry_tests=retries)
+        self.assertEqual(("environment-limited", [retry_row["identity"]]), (flaky["status"], flaky["flaky"]))
+        for mutation in ("missing", "first-passed", "first-count", "first-crashed", "retry-failed", "duration", "duplicate", "wrong-method", "exit", "selection"):
+            original = copy.deepcopy(official)
+            second = copy.deepcopy(retries)
+            if mutation == "missing":
+                second = {}
+            elif mutation == "first-passed":
+                original[("iphone", "default")]["testNodes"][0]["result"] = "Passed"
+            elif mutation == "first-count":
+                original[("iphone", "default")]["testNodes"].append({"nodeType": "Test Case", "nodeIdentifier": "Other/testCase()", "result": "Failed"})
+            elif mutation == "first-crashed":
+                original[("iphone", "default")]["testNodes"][0]["retry_assertion"] = False
+            elif mutation == "retry-failed":
+                second[("iphone", "default")][0]["official_tests"]["testNodes"][0]["result"] = "Failed"
+            elif mutation == "duration":
+                second[("iphone", "default")][0]["official_tests"]["testNodes"][0]["durationInSeconds"] = None
+            elif mutation == "duplicate":
+                second[("iphone", "default")].append(copy.deepcopy(second[("iphone", "default")][0]))
+            elif mutation == "wrong-method":
+                second[("iphone", "default")][0]["official_tests"]["testNodes"][0]["nodeIdentifier"] = "Other/testCase()"
+            elif mutation == "exit":
+                second[("iphone", "default")][0]["invocation"]["exit_code"] = 65
+            else:
+                second[("iphone", "default")][0]["invocation"]["command"] = ["xcodebuild"]
+            result = judge_ui(plan, retried, **(args | {"official_tests": original}), retry_tests=second)
+            with self.subTest(retry=mutation):
+                self.assertEqual("failed", result["status"])
+                self.assertTrue(any("nightly retry:" in error for error in result["errors"]), result)
         expanded, expanded_summaries = copy.deepcopy(plan), copy.deepcopy(summaries)
         for device, platform in (("iphone", "ios"), ("ipad", "ios"), ("appletv", "tvos")):
             next(item for item in expanded["shards"] if item["device"] == device and item["shard"] == "visual")["shard"] = "visual-1"
@@ -1281,6 +1537,42 @@ class ReporterTests(unittest.TestCase):
             self.assertIsNone(next(row for row in compact_failure["observed"] if row["outcome"] == "failed")["duration_seconds"])
             self.assertEqual("open", issue_decision(None, failed[0]["identity"], [report], registry_referenced=False)["action"])
             self.assertEqual(9, report["diagnostics"]["counts"]["declared"])
+            # A filtered passing retry is independently bound to its public invocation and both exports.
+            from test_ci_summary import nightly_retry_summary
+            from ci_nightly import bind_ui_aggregate
+            original_ui = dict(ui)
+            original_raw = dict(raw)
+            original_summary = {**summaries[-1], "population": dict(summaries[-1]["population"])}
+            retry_row = nightly_retry_summary("ui")["population"]["observed"][0]
+            retry_row["identity"] = copy.deepcopy(failed[0]["identity"])
+            summaries[-1]["population"]["observed"] = [retry_row]
+            summaries[-1]["status"] = "passed"
+            key = retry_row["identity"]["key"]
+            first_export = {"testNodes": [{"nodeType": "Test Case", "nodeIdentifier": key + "()", "result": "Failed",
+                                          "durationInSeconds": 1, "retry_assertion": True}]}
+            second_export = {"testNodes": [{"nodeType": "Test Case", "nodeIdentifier": key + "()", "result": "Passed", "durationInSeconds": 2}]}
+            call = {"exit_code": 0, "command": ["xcodebuild", "-only-testing:immichSlidesUITests/" + key]}
+            members[("ui-appletv-visual-10-1", "official-tests.json")] = first_export
+            members[("ui-appletv-visual-10-1", "official-tests-attempt-2.json")] = second_export
+            members[("ui-appletv-visual-10-1", "retry-invocations.json")] = {"invocations": [{"exit_code": 65}, call]}
+            ui.update(matrix_job_result="success", verdict=judge_ui(plan, summaries, policy=policy, registry=registry,
+                evaluated_on=date(2026, 10, 1), matrix_job_result="success",
+                official_tests={("appletv", "visual"): first_export},
+                retry_tests={("appletv", "visual"): [{"official_tests": second_export, "invocation": call}]}))
+            raw.update(status="passed", tiers={**raw["tiers"], "strict": "passed"})
+            bind_ui_aggregate(raw, ui)
+            jobs = [{"name": "ui-appletv-visual", "runner_group_name": "GitHub Actions", "labels": []}]
+            with patch("ci_publish.complete_attempt_jobs", return_value=jobs):
+                flaky_report = ci_report.nightly_attempt(api, run, 1, artifacts)
+            self.assertEqual(("environment-limited", 1), (flaky_report["status"], flaky_report["diagnostics"]["counts"]["flaky"]))
+            self.assertIn("First playback assertion failed", render_entry(flaky_report))
+            ui.clear()
+            ui.update(original_ui)
+            raw.clear()
+            raw.update(original_raw)
+            raw["ui"] = ui
+            summaries[-1].clear()
+            summaries[-1].update(original_summary)
             # The same bound fixture method can carry a v5 tool failure, without CPU samples.
             from ci_failure_diagnostics import environment_limit_evidence
             from ci_nightly import bind_ui_aggregate
@@ -2319,7 +2611,7 @@ class ReporterTests(unittest.TestCase):
             [compact, same_night], registry_referenced=False)["action"])
         same_day_pass = copy.deepcopy(passed)
         same_day_pass["run"]["id"] = 12
-        self.assertEqual("none", issue_decision(None, report["observed"][0]["identity"],
+        self.assertEqual("open", issue_decision(None, report["observed"][0]["identity"],
             [compact, following, same_day_pass], registry_referenced=False)["action"])
         consecutive = ci_report.merge_snapshot(None, [compact, following], date(2026, 10, 2))
         escalated = consecutive["days"]["2026-10-02"]["entries"][0]

@@ -272,6 +272,7 @@ def export_private_result_bundle(
     first_failure_spool=None,
     first_failure_images=None,
     resource_sampler=None,
+    retry_admission: bool = False,
 ) -> str:
     from ci_flaky import official_result_step
     timeout = (export_budget.remaining("official-tests-export") if export_budget is not None else 60)
@@ -342,6 +343,21 @@ def export_private_result_bundle(
                 pass
             for node in failed:
                 key = first_failure_test_key(node.get("nodeIdentifier", ""))
+                if retry_admission:
+                    from ci_flaky import official_failure_outcomes, official_assertion_details, official_ui_duration
+                    kind = official_failure_outcomes(legacy_root).get(key)
+                    eligible = kind == "assertion"
+                    if kind == "uncategorized":
+                        try:
+                            timeout = export_budget.remaining("official-tests-export") if export_budget is not None else 60
+                            with measured_official_export(export_budget):
+                                detail = subprocess.run(["xcrun", "xcresulttool", "get", "test-results", "test-details",
+                                    "--path", str(bundle), "--test-id", node["nodeIdentifier"], "--compact"],
+                                    capture_output=True, check=True, timeout=min(60, timeout))
+                            eligible = official_assertion_details(json.loads(detail.stdout), node["nodeIdentifier"])
+                        except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError, InfrastructureTimeout):
+                            eligible = False
+                    node["retry_assertion"] = eligible and official_ui_duration(node) is not None
                 node.update(diagnostics.get(key, unknown_diagnostics()))
                 messages = public_failure_messages(raw_messages.get(key))
                 if messages is not None and official_failure_count(node) == len(messages):
@@ -791,6 +807,8 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
     parser.add_argument("--configuration", choices=("Debug", "Release"), help="explicit shard configuration; defaults to the existing suite setting")
     parser.add_argument("--listed-retry-device", choices=("iphone", "ipad", "tv"),
                         help="Enable base-registry listed-only retries for this exact strict device class; requires warm reuse")
+    parser.add_argument("--nightly-retry-method", action="append", default=[], help="Run only admitted failed methods; no internal retry")
+    parser.add_argument("--nightly-retry-source", type=Path, help="First-attempt public evidence for a filtered person session")
     parser.add_argument("--cold-timeout-seconds", type=parse_non_negative_int, help="explicit warm-up budget (default: 300 seconds)")
     parser.add_argument("--warm-timeout-seconds", type=parse_non_negative_int,
                         help="base reuse budget before P2 command-channel reserves (default: 300 seconds)")
@@ -802,6 +820,16 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         help=f"minimum free GiB required before xcodebuild (default: {MIN_DATA_GIB})",
     )
     arguments = parser.parse_args(argv)
+    from ci_flaky import nightly_retry_enabled
+    nightly_retry = nightly_retry_enabled(REPO_ROOT, os.environ)
+    if arguments.nightly_retry_method:
+        allowed = ([session["selector"].split("/", 1)[1] for session in FILTER_PERSON_SESSIONS]
+                   if arguments.suite == "filter-person" else [resolve_suite_selector(arguments.platform, arguments.suite).split("/", 1)[1]])
+        if not (nightly_retry and arguments.test_without_building and not arguments.listed_retry_device
+                and len(set(arguments.nightly_retry_method)) == len(arguments.nightly_retry_method)
+                and all(method in allowed for method in arguments.nightly_retry_method)
+                and (arguments.suite != "filter-person" or arguments.nightly_retry_source)):
+            parser.error("nightly retry requires hosted main, warm reuse and one exact failed suite method")
     from strict_e2e_resource_diagnostics import NativeActivityBudget, SAMPLER_WALL_BUDGET_SECONDS, APP_HANG_JOB_CAP
     allowance = arguments.process_sampling_allowance_seconds
     if allowance is not None and not 0 <= allowance <= SAMPLER_WALL_BUDGET_SECONDS:
@@ -937,6 +965,15 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                 )
         prepare_evidence_directory(arguments.evidence_dir)
         owns_evidence_directory = True
+        if arguments.suite == "filter-person" and arguments.nightly_retry_method:
+            source = arguments.nightly_retry_source
+            first_manifest = json.loads((source / "case-manifest.json").read_text())
+            if not (first_manifest["source_sha"] == read_source_sha(REPO_ROOT)
+                    and first_manifest["suite"] == arguments.suite and first_manifest["fixture_set"] == arguments.fixture_set):
+                raise CommandError("Filtered person retry source identity differs from this case.")
+            for path in [*source.glob("*.png"), source / "person-results.json"]:
+                if path.is_file():
+                    shutil.copy2(path, arguments.evidence_dir / path.name)
         if arguments.suite != "filter-person":
             result_bundle_path = prepare_private_result_bundle_path(arguments.suite)
             private_bundles.append((result_bundle_path, ""))
@@ -1243,6 +1280,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             encoding="utf-8",
         )
         person_summaries: list[TestResultsSummary] | None = None
+        person_failed_exit = 0
         # Give each person rule a clean install and first launch; clearing the selection is not an intermediate state, or playback mode reverts to random.
         if arguments.suite == "filter-person":
             reset_logs = [reset_log]
@@ -1250,6 +1288,17 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             summaries: list[TestResultsSummary] = []
             log_parts: list[str] = []
             for index, session in enumerate(FILTER_PERSON_SESSIONS):
+                if arguments.nightly_retry_method and session["selector"].split("/", 1)[1] not in arguments.nightly_retry_method:
+                    source = arguments.nightly_retry_source
+                    payload = json.loads((source / f"official-summary-{session['name']}.json").read_text())
+                    cached = TestResultsSummary(payload["totalTestCount"], payload["passedTests"], payload["failedTests"],
+                                                payload["skippedTests"], payload["result"])
+                    require_official_single_pass(cached)
+                    summaries.append(cached)
+                    for prefix in ("official-summary", "official-tests"):
+                        path = source / f"{prefix}-{session['name']}.json"
+                        shutil.copy2(path, arguments.evidence_dir / path.name)
+                    continue
                 if index > 0:
                     reset_logs.append(reset_simulator_app(simulator_udid, platform=arguments.platform, boot_submitted=True))
                     with (arguments.evidence_dir / "simulator-reset.log").open("a") as log:
@@ -1287,10 +1336,15 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                     (arguments.evidence_dir / "xcodebuild-command.txt").write_text(
                         "\n".join(commands) + "\n", encoding="utf-8"
                     )
-                    raise CommandError(f"xcodebuild strict E2E failed with exit {exit_code}.", code=exit_code)
+                    if not nightly_retry or exit_code != 65:
+                        raise CommandError(f"xcodebuild strict E2E failed with exit {exit_code}.", code=exit_code)
+                    person_failed_exit = 65
                 export_budget = official_export_budgets.setdefault(session_bundle, OfficialExportBudget())
                 summary = read_official_test_results_summary(session_bundle, export_budget=export_budget)
-                require_official_single_pass(summary)
+                if exit_code == 0:
+                    require_official_single_pass(summary)
+                elif (summary.total_test_count, summary.passed_tests, summary.failed_tests, summary.skipped_tests, summary.result) != (1, 0, 1, 0, "Failed"):
+                    raise CommandError("Nightly person official failure summary is incomplete.")
                 summaries.append(summary)
                 log_parts.append(session_log.read_text(encoding="utf-8"))
             (arguments.evidence_dir / "xcodebuild-command.txt").write_text(
@@ -1301,6 +1355,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                 write_case_manifest(arguments.evidence_dir, case_manifest)
             (arguments.evidence_dir / "xcodebuild.log").write_text("\n".join(log_parts), encoding="utf-8")
             person_summaries = summaries
+            primary_exit_code = person_failed_exit
         else:
             command = build_xcodebuild_command(
                 repo_root=REPO_ROOT,
@@ -1400,6 +1455,8 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         (arguments.evidence_dir / "official-summary.json").write_text(
             json.dumps(summary_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
+        if person_failed_exit:
+            raise CommandError("xcodebuild strict E2E person session failed with exit 65.", code=65)
         from ci_failure_diagnostics import public_fixture_validator_scope
         print(POST_TEST_PHASE_PREFIX + "contract", file=stdout, flush=True)
         with public_fixture_validator_scope(arguments.evidence_dir, screenshots=True):
@@ -1457,6 +1514,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                     export_budget=official_export_budgets.setdefault(bundle, OfficialExportBudget()),
                     first_failure_spool=first_failure_spools[bundle][:2] if bundle in first_failure_spools else None,
                     resource_sampler=resource_samplers.get(bundle),
+                    retry_admission=nightly_retry and not arguments.nightly_retry_method,
                 )
             except InfrastructureTimeout as error:
                 record_timeout(error)
