@@ -85,11 +85,12 @@ final class ReduceMotionUITests: XCTestCase {
         try recordSegment(
             "motion-off-smartfill", in: driver.app, evidence: evidence, hold: MotionTiming.positiveControlHold)
 
-        try system.change("enabled", whileBackgrounding: driver.app)
+        let enabledWait = try system.change("enabled", whileBackgrounding: driver.app)
         try evidence.markStep("motion-system-enabled")
         try bringToForeground(driver.app)
         let onNotifications = try system.confirm(
-            in: driver.app, isOn: true, phase: "enabled", minimumNotifications: offNotifications + 1)
+            in: driver.app, isOn: true, phase: "enabled", minimumNotifications: offNotifications + 1,
+            guardWait: enabledWait)
         try recordSegment(
             "motion-on-smartfill", in: driver.app, evidence: evidence, hold: MotionTiming.reducedMotionHold)
         driver.next()
@@ -101,11 +102,11 @@ final class ReduceMotionUITests: XCTestCase {
         try recordSegment(
             "motion-on-single-next", in: driver.app, evidence: evidence, hold: MotionTiming.reducedMotionHold)
 
-        try system.change("restored", whileBackgrounding: driver.app)
+        let restoredWait = try system.change("restored", whileBackgrounding: driver.app)
         try bringToForeground(driver.app)
         _ = try system.confirm(
             in: driver.app, isOn: original, phase: "restored",
-            minimumNotifications: onNotifications + (original ? 0 : 1))
+            minimumNotifications: onNotifications + (original ? 0 : 1), guardWait: restoredWait)
         try evidence.markStep("motion-system-restored")
     }
 
@@ -199,12 +200,13 @@ private struct HostReduceMotionSetting {
         return original
     }
 
-    func change(_ phase: String, whileBackgrounding app: XCUIApplication) throws {
+    func change(_ phase: String, whileBackgrounding app: XCUIApplication) throws -> TestWait.HangGuard {
         FirstFailureContext.mark("settings-readback", element: "system.reduce-motion")
-        FirstFailureContext.action("press") { XCUIDevice.shared.press(.home) }
         let background = TestWait.hangGuard()
+        let step = background.transaction()
         guard
-            background.until({
+            step.perform("press", { XCUIDevice.shared.press(.home) }),
+            step.until({
                 let state = app.state
                 return state == .runningBackground || state == .runningBackgroundSuspended
             })
@@ -212,15 +214,16 @@ private struct HostReduceMotionSetting {
         let sequence = phase == "enabled" ? 1 : 2
         try StrictE2EVisualEvidence.writeRequiredJSON(
             ["sequence": sequence, "phase": phase, "app_state": "background"], name: "motion-command-request.json")
-        guard response(sequence: sequence)?["succeeded"] as? Bool == true else {
+        guard response(sequence: sequence, guardWait: background)?["succeeded"] as? Bool == true else {
             throw Failure("System Reduce Motion command: host did not confirm the requested change.")
         }
+        return background
     }
 
-    private func response(sequence: Int) -> [String: Any]? {
-        let guardWait = TestWait.hangGuard()
+    private func response(sequence: Int, guardWait: TestWait.HangGuard? = nil) -> [String: Any]? {
+        let guardWait = guardWait ?? TestWait.hangGuard()
         var matched: [String: Any]?
-        _ = guardWait.until {
+        _ = guardWait.transaction().until {
             guard let response = read("motion-command-response.json"), response["sequence"] as? Int == sequence else {
                 return false
             }
@@ -230,14 +233,17 @@ private struct HostReduceMotionSetting {
         return matched
     }
 
-    func confirm(in app: XCUIApplication, isOn: Bool, phase: String, minimumNotifications: Int) throws -> Int {
+    func confirm(
+        in app: XCUIApplication, isOn: Bool, phase: String, minimumNotifications: Int,
+        guardWait: TestWait.HangGuard? = nil
+    ) throws -> Int {
         FirstFailureContext.mark("settings-readback", element: "system.reduce-motion")
+        let guardWait = guardWait ?? TestWait.hangGuard()
         guard let changes = read("motion-system-command.json")?["changes"] as? [[String: Any]],
             let completed = changes.last(where: { $0["phase"] as? String == phase })?["completed_wall_time"] as? Double
         else { throw Failure("App Reduce Motion: command timestamp is unavailable.") }
-        let guardWait = TestWait.hangGuard()
         var notificationCount: Int?
-        let confirmed = guardWait.until {
+        let confirmed = guardWait.transaction().until {
             guard app.state == .runningForeground,
                 let samples = read("motion-app-evidence.json")?["samples"] as? [[String: Any]],
                 let sample = samples.last, let count = sample["notification_count"] as? Int,
