@@ -63,6 +63,50 @@ from strict_e2e_p2_contract_test_fixtures import (
 )
 
 class RawEvidenceTestsCases:
+    def test_command_motion_requires_app_state_notification_and_failure_safe_restore(self):
+        from strict_e2e_p2_contract_test_fixtures import command_motion_evidence
+        for original in (False, True):
+            with self.subTest(original=original), tempfile.TemporaryDirectory() as directory:
+                evidence = command_motion_evidence(Path(directory), original=original)
+                raw = validate_raw_evidence(evidence, "p2-reduce-motion", "a")
+                self.assertEqual(raw["verdict"], RAW_VERDICT)
+                self.assertEqual(set(raw["artifacts"]), {
+                    "motion-system-command.json", "motion-app-evidence.json", RECORDING_FILE})
+                self.assertEqual(raw["system_motion"]["command"]["original"]["is_enabled"], original)
+                self.assertEqual(set(raw["mark_offsets"]), set(P2_CASES["p2-reduce-motion"].marks))
+        mutations = (
+            ("mechanism", "motion-system-command.json", lambda p: p.update(notification="wrong")),
+            ("fields", "motion-system-command.json", lambda p: p.update(private_path="not-allowed")),
+            ("original", "motion-system-command.json", lambda p: p["original"].update(is_enabled=0)),
+            ("phase order", "motion-system-command.json", lambda p: p["changes"].pop()),
+            ("state chain", "motion-system-command.json", lambda p: p["changes"][1].update(after=False)),
+            ("background", "motion-system-command.json", lambda p: p["changes"][1].update(app_state="active")),
+            ("clock", "motion-system-command.json", lambda p: p["changes"][1].update(completed_wall_time=float("nan"))),
+            ("segment order", "motion-system-command.json", lambda p: p["changes"][2].update(started_wall_time=1007.9)),
+            ("app schema", "motion-app-evidence.json", lambda p: p.update(schema="unknown")),
+            ("app fields", "motion-app-evidence.json", lambda p: p["samples"][0].update(extra=True)),
+            ("app sequence", "motion-app-evidence.json", lambda p: p["samples"][1].update(sequence=1)),
+            ("app launch", "motion-app-evidence.json", lambda p: p.update(launch_nonce="invalid")),
+            ("app samples", "motion-app-evidence.json", lambda p: p.update(samples=[])),
+            ("app bound", "motion-app-evidence.json", lambda p: p.update(samples=p["samples"] * 27)),
+            ("app event", "motion-app-evidence.json", lambda p: p["samples"][0].update(reason="wrong")),
+            ("app ordering", "motion-app-evidence.json", lambda p: p["samples"][1].update(wall_time=1)),
+            ("app clock", "motion-app-evidence.json", lambda p: p["samples"][1].update(uptime=-1)),
+            ("app boolean", "motion-app-evidence.json", lambda p: p["samples"][2].update(ui_kit=1)),
+            ("off App", "motion-app-evidence.json", lambda p: p["samples"][0].update(ui_kit=True)),
+            ("on App", "motion-app-evidence.json", lambda p: p["samples"][2].update(swift_ui=False)),
+            ("restored App", "motion-app-evidence.json", lambda p: p["samples"][-1].update(swift_ui=True)),
+            ("notification", "motion-app-evidence.json", lambda p: [s.update(notification_count=0) for s in p["samples"]]),
+        )
+        for label, name, mutate in mutations:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
+                evidence = command_motion_evidence(Path(directory))
+                payload = _read_json(evidence / name)
+                mutate(payload)
+                _write_json(evidence / name, payload)
+                with self.assertRaisesRegex(P2ContractError, "Motion command:"):
+                    validate_raw_evidence(evidence, "p2-reduce-motion", "a")
+
     def test_complete_raw_evidence_is_only_ever_review_required(self) -> None:
         with tempfile.TemporaryDirectory() as raw_directory:
             for suite, case in P2_CASES.items():

@@ -1067,6 +1067,16 @@ fields and local success-sidecar boundary are defined in the
 This exception relies on that consumer boundary: introducing the field into a
 base-read publication path or reading it with an older revision requires a separate
 reader rollout first. The PR must document this transition analysis.
+
+The P2 Reduce Motion command-fact reader follows the same candidate/run/main
+boundary. Its raw contract and review-package readers execute from the candidate
+checkout for local/PR probes, the run checkout for nightly aggregation, and main
+for retained reviews. They never enter the trusted-base gate/UI publication path.
+Reader/validator support therefore ships before producer activation within the
+same PR. Historical `motion-system-*` PNG evidence and its unchanged review-page
+template retain their original interpretation; command facts select a separate
+template and closed validator. Both formats still require signed human review.
+Any future trusted-base consumer requires a separate reader rollout first.
 `pause_window_assertions` is emitted only through the strict resource sampler for
 the exact failed `StrictE2EFirstBatchIOSUITests/testSinglePhotoOutgoingPauseWindowCapture`
 official method and its existing resource sequence. Generic UI exports have no strict
