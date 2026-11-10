@@ -299,14 +299,15 @@ extension XCTestCase {
     @MainActor
     func launchStrictE2EApp(
         recordSceneSequence: Bool = false, disablePlaybackEntryHint: Bool = false,
-        playbackIntervalSeconds: Int? = nil, pauseOnInitialStableScene: Bool = false
+        playbackIntervalSeconds: Int? = nil, pauseOnInitialStableScene: Bool = false, recordReduceMotion: Bool = false
     ) throws
         -> XCUIApplication
     {
         let app = XCUIApplication()
         try prepareStrictE2ELaunch(
             app, recordSceneSequence: recordSceneSequence, disablePlaybackEntryHint: disablePlaybackEntryHint,
-            playbackIntervalSeconds: playbackIntervalSeconds, pauseOnInitialStableScene: pauseOnInitialStableScene)
+            playbackIntervalSeconds: playbackIntervalSeconds, pauseOnInitialStableScene: pauseOnInitialStableScene,
+            recordReduceMotion: recordReduceMotion)
         FirstFailureContext.mark("launch-app", element: "app-window")
         FirstFailureContext.action("launch") { app.launch() }
         return app
@@ -333,9 +334,12 @@ extension XCTestCase {
     @MainActor
     private func prepareStrictE2ELaunch(
         _ app: XCUIApplication, recordSceneSequence: Bool = false, disablePlaybackEntryHint: Bool = false,
-        playbackIntervalSeconds: Int? = nil, pauseOnInitialStableScene: Bool = false
+        playbackIntervalSeconds: Int? = nil, pauseOnInitialStableScene: Bool = false, recordReduceMotion: Bool = false
     ) throws {
         app.launchEnvironment = [:]
+        if recordReduceMotion, let directory = StrictE2EVisualEvidence.directory() {
+            app.launchEnvironment["UI_TEST_REDUCE_MOTION_EVIDENCE_DIR"] = directory.path
+        }
         if recordSceneSequence {
             // Read-only probes expose the rendered scene; onboarding still uses the real UI.
             app.launchEnvironment["UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE"] = "1"

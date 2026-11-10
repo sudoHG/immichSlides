@@ -19,6 +19,11 @@ PRODUCTION_DIR = "immichSlides"
 
 # Identifiers that exist only for debugging or UI tests. Every code occurrence must sit in an `#if DEBUG` branch.
 DEBUG_ONLY_MARKERS = (
+    "ReduceMotionEvidenceProbe",
+    "ReduceMotionEvidenceRecorder",
+    "reduceMotionEvidenceDirectoryForTesting",
+    "UI_TEST_REDUCE_MOTION_EVIDENCE_DIR",
+    "motion-app-evidence.json",
     "PlaybackLifecycleTimeline",
     "lifecycleTimeline",
     "UI_TEST_PLAYBACK_LIFECYCLE_",

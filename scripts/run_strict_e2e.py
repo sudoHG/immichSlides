@@ -62,6 +62,7 @@ from strict_e2e_photo_identity import (
 )
 from access_lifecycle_contract import logical_bytes_contain
 from strict_e2e_server import PUBLIC_API_KEY, fixture_manifest
+from strict_e2e_reduce_motion import MotionCommandSession
 
 from strict_e2e_runner_support import (
     EXAMPLE_XCCONFIG,
@@ -770,6 +771,8 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
     parser.add_argument("--diagnostics-receipt", type=Path, help="shared job measurement ledger")
     parser.add_argument("--local-force-app-hang-capture", action="store_true",
         help="local diagnostic exercise: capture once after the first App CPU read; ignored in CI")
+    parser.add_argument("--local-force-reduce-motion-failure", action="store_true",
+        help="local restoration exercise: fail after enabling Reduce Motion; ignored in CI")
     parser.add_argument("--native-diagnostics-allowance-seconds", type=int, choices=range(3), default=2,
                         help="prepaid native failure-extraction allowance supplied by the job coordinator")
     parser.add_argument("--process-sampling-allowance-seconds", type=float,
@@ -887,6 +890,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
     app_hang_case_state = {}
     official_tests_digests: dict[str, str] = {}
     official_export_budgets = {}
+    motion_session = None
     recorder = active()
     case_start_sequence = recorder.sequence if recorder is not None else 0
 
@@ -1323,7 +1327,19 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                     arguments.evidence_dir / RECORDING_FILE,
                     arguments.evidence_dir / "screen-recording.log",
                 )
-            exit_code = execute_case(command, arguments.evidence_dir / "xcodebuild.log")
+            if arguments.suite == "p2-reduce-motion":
+                motion_session = MotionCommandSession(simulator_udid, arguments.evidence_dir,
+                    force_failure_after_enable=arguments.local_force_reduce_motion_failure and not os.environ.get("CI"))
+            try:
+                if motion_session is not None:
+                    motion_session.start()
+                exit_code = execute_case(command, arguments.evidence_dir / "xcodebuild.log")
+                primary_exit_code = exit_code
+            finally:
+                if motion_session is not None:
+                    cleanup_failures.extend(run_cleanup_actions([("restore_reduce_motion", motion_session.close)]))
+            if motion_session is not None and motion_session.failure and exit_code == 0:
+                raise CommandError("System Reduce Motion command handshake failed.", code=2)
             if arguments.listed_retry_device:
                 result_bundle_path = effective_result_bundle
             primary_exit_code = exit_code
@@ -1514,6 +1530,8 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             ("close_unreachable_reservation", close_unreachable_reservation),
             ("write_service_lifecycle", write_lifecycle),
         ]
+        if motion_session is not None:
+            actions.insert(0, ("restore_reduce_motion", motion_session.close))
         if did_create_config:
             actions.append(
                 (

@@ -83,6 +83,17 @@ from run_strict_e2e_test_fixtures import (
 )
 
 class StrictE2EP2RunnerTestsCases:
+    def test_reduce_motion_restore_failure_keeps_passed_xctest_red(self):
+        with tempfile.TemporaryDirectory() as directory:
+            evidence = Path(directory) / "motion"
+            code, _stdout, stderr, calls = self._run_p2_main(evidence, suite="p2-reduce-motion",
+                platform="ios", model="iPhone 17e", motion_restore_error=True)
+            self.assertEqual(code, 2, stderr)
+            calls["motion"].start.assert_called_once()
+            self.assertTrue(calls["motion"].close.called)
+            failures = json.loads((evidence / "cleanup-failures.json").read_text())["failures"]
+            self.assertTrue(any("restore_reduce_motion" in failure for failure in failures))
+
     def test_p2_suites_route_to_selected_method_and_record_e2e_ids(self) -> None:
         common = {
             "repo_root": Path("/repo"),

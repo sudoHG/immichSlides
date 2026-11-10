@@ -633,6 +633,9 @@ struct SlideShowViewIOS: View {
         .onChange(of: accessibilityReduceMotion) { _, isEnabled in
             viewModel.updateSmartFillMotionReduceMotionEnabled(isEnabled)
         }
+        #if DEBUG
+        .background { ReduceMotionEvidenceProbe() }
+        #endif
         .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in
             // Resync playback settings once after returning from Settings.
             refreshPlaybackRelatedSettings()

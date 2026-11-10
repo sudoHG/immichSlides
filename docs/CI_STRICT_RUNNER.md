@@ -1161,6 +1161,56 @@ rejected in that default mode. Explicit shard DerivedData is retained
 until its owner finishes all cases. Package resolution stays locked and simulator
 signing stays **Sign to Run Locally**, verified as `adhoc` by `codesign` after warm-up.
 
+## Reduce Motion command handshake
+
+`p2-reduce-motion` records the same six motion segments and nine ordered markers
+on iPhone and Apple TV. It changes the simulator's real preference with:
+
+```text
+xcrun simctl spawn <udid> defaults read com.apple.Accessibility ReduceMotionEnabled
+xcrun simctl spawn <udid> defaults write com.apple.Accessibility ReduceMotionEnabled -bool true
+xcrun simctl spawn <udid> notifyutil -p com.apple.accessibility.reduce.motion.status
+```
+
+The notification name was verified on the pinned iOS 27.0 and tvOS 27.2 runtimes:
+a running SwiftUI App received `UIAccessibility.reduceMotionStatusDidChangeNotification`,
+`UIAccessibility.isReduceMotionEnabled` changed, and SwiftUI's
+`accessibilityReduceMotion` followed, for both on and off. The similarly named
+`com.apple.accessibility.cache.reduce.motion` did not update the running iOS App.
+Command success alone is never App confirmation. These simulator implementation
+details are pinned-runtime evidence, not a promised public Apple preference API.
+
+`MotionCommandSession` captures the original value before its first write. A
+missing key is the system's default off; restoration deletes a key that was
+originally absent and otherwise writes the original Boolean, then posts the same
+notification and reads it back. Each `simctl spawn` has a ten-second hang cap.
+XCTest writes one sequence-bound request after Home has put the App in the
+background; the host processes only enabled then restored, using atomic sidecar
+responses in the fresh evidence directory. Each handshake and App readout uses
+the existing 60-second monotonic navigation hang guard. These are hang limits;
+they add no retry and change no product or recording hold window.
+
+The host disables before App launch, then enables/restores while the App remains
+backgrounded. After activation, XCTest requires a fresh active-App sample with
+matching UIKit and SwiftUI values and an increased notification count for each
+actual change. The read-only `ReduceMotionEvidenceProbe`, gated by DEBUG and
+`PlatformCompat`'s `UI_TEST_REDUCE_MOTION_EVIDENCE_DIR`, emits one launch's timestamped
+samples. It writes no setting and drives no playback state. The host serially
+stops its command thread and restores in `finally`, before raw validation, and
+retains restoration errors as cleanup failures. Abrupt host SIGKILL cannot run
+finalizers and remains unverified, as with other process cleanup.
+
+`motion-system-command.json` and `motion-app-evidence.json` replace Settings PNGs
+for new P2 evidence. The closed reader binds original/off/on/restored values,
+background changes, App notification counts and timestamps to the existing movie
+markers. It checks cleanup restoration separately. Historical PNG evidence remains
+readable; [review packages](CI_P2_REVIEWS.md) keep separate old/new templates and
+still require signed human review. The Settings-only persistence round trips
+remain unchanged. For a local forced-failure restoration exercise, add
+`--local-force-reduce-motion-failure`: the host enables, returns a failed response,
+and restores during finalization; XCTest and the runner must remain red. This
+flag is ignored in CI.
+
 ## Fixture service startup
 
 Fixture service health uses a separate 60-second infrastructure budget by default
@@ -2215,9 +2265,12 @@ The iOS system Reduce Motion readiness, foreground precondition, value and
 snapshot-timeout failures below retain the existing `Failure(message:)` wrapper.
 The timeout is distinct from an observed opposite value. All map to `control_state`
 and remain red, including under policy v5; no yellow rule is added.
-The [system Settings interaction](TESTING.md#strict-end-to-end-case-identifiers)
-keeps its original page allowance and P2 motion contract. Its one single-tap
+The separate [system Settings round trip](TESTING.md#strict-end-to-end-case-identifiers)
+keeps its original page allowance. Its one single-tap
 readback budget is `2 × settingsReadbackTimeout`, equal to main's total, not longer.
+P2's `System Reduce Motion command: ` and `App Reduce Motion: ` prefixes, plus its
+fixed foreground-return failure, also map to `settings_navigation/control_state`
+and remain red. Host commands and App readouts gain no policy-v5 exception.
 
 The following additions come only from public Swift assertions in the linked source files.
 Identical text in other files has also been checked for phase consistency.

@@ -595,6 +595,9 @@ struct SlideShowViewTV: View {
         .onChange(of: accessibilityReduceMotion) { _, isEnabled in
             viewModel.updateSmartFillMotionReduceMotionEnabled(isEnabled)
         }
+        #if DEBUG
+        .background { ReduceMotionEvidenceProbe() }
+        #endif
         .onMoveCommand { _ in
             // Arrow keys only wake the control bar and reset the countdown; they don't change the index directly.
 

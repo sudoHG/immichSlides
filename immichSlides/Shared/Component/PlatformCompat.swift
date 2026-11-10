@@ -26,6 +26,13 @@ enum PlatformCompat {
     }
 
     #if DEBUG
+    static var reduceMotionEvidenceDirectoryForTesting: URL? {
+        guard let path = ProcessInfo.processInfo.environment["UI_TEST_REDUCE_MOTION_EVIDENCE_DIR"], !path.isEmpty else {
+            return nil
+        }
+        return URL(fileURLWithPath: path, isDirectory: true)
+    }
+
     static let lifecycleTimelineConfigurationForTesting: (directory: URL, nonce: String)? = {
         let environment = ProcessInfo.processInfo.environment
         guard environment["UI_TEST_PLAYBACK_LIFECYCLE_TIMELINE"] == "1",

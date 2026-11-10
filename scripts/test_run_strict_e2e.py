@@ -608,6 +608,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
         warm_timeout_seconds: int | None = None,
         official_tool=None,
         process_sampling_allowance_seconds=None,
+        motion_restore_error: bool = False,
     ) -> tuple[int, str, str, dict[str, mock.Mock]]:
         destination = f"platform={'tvOS' if platform == 'tvos' else 'iOS'} Simulator,id={P2_UDID}"
         selector = (
@@ -726,6 +727,10 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
         ), mock.patch("strict_e2e_build.validate_warm_products"), mock.patch(
             "strict_e2e_build.prepare_test_run", side_effect=fake_test_run
         ), ExitStack() as stack:
+            motion = stack.enter_context(mock.patch("run_strict_e2e.MotionCommandSession")).return_value
+            motion.failure = False
+            if motion_restore_error:
+                motion.close.side_effect = CommandError("Synthetic Reduce Motion restoration failure.")
             def device_class(*args):
                 prepare.assert_called_once()
                 return "iphone"
@@ -768,6 +773,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
             "recording_process": recording_process,
             "invocations": invocations,
             "attempt_environments": attempt_environments,
+            "motion": motion,
         }
 
     def test_warm_runner_reuses_submitted_boot_for_every_reset(self):
