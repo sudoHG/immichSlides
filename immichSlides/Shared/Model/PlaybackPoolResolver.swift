@@ -119,6 +119,7 @@ final class PlaybackPoolResolver {
     }
     #if DEBUG
     var randomAssetProviderForTesting: RandomAssetProviderForTesting?
+    var albumsProviderForTesting: (() async throws -> [Album])?
     var personAssetsCountProviderForTesting: PersonAssetsCountProviderForTesting?
     var soloApprovalProviderForTesting: SoloApprovalProviderForTesting?
     private(set) var strictSoloDebugEventsForTesting: [PlaybackSequenceDebugEventInput] = []
@@ -500,7 +501,16 @@ final class PlaybackPoolResolver {
         guard !albumIds.isEmpty else { return [:] }
         let albumIdSet = Set(albumIds)
         do {
-            let allAlbums = try await apiService.getAllAlbums()
+            let allAlbums: [Album]
+            #if DEBUG
+            if let albumsProviderForTesting {
+                allAlbums = try await albumsProviderForTesting()
+            } else {
+                allAlbums = try await apiService.getAllAlbums()
+            }
+            #else
+            allAlbums = try await apiService.getAllAlbums()
+            #endif
             var result: [String: Int] = [:]
             for album in allAlbums where albumIdSet.contains(album.id) {
                 result[album.id] = album.assetCount
