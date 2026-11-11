@@ -10,7 +10,6 @@ import UIKit
 
 private enum PlaybackViewMetrics {
     static let controlBarProtectionHeightPoints: Double = 150
-    static let controlBarAutoHideDelaySeconds: Int = 8
     static let largeSafeAreaThresholdPoints: CGFloat = 80
 }
 
@@ -46,12 +45,18 @@ struct SlideShowViewIOS: View {
 
     @State private var isAccessProtectionRecoveryAlertPresented: Bool = false
 
-    @State private var isPlaybackEntryHintVisible: Bool = false
+    @StateObject private var controlsState = PlaybackControlsState()
+    private var isPlaybackEntryHintVisible: Bool {
+        get { controlsState.isPlaybackEntryHintVisible }
+        nonmutating set { controlsState.isPlaybackEntryHintVisible = newValue }
+    }
     private let playbackEntryHintStore = PlaybackEntryHintStore()
 
-    @State var isControlBarVisible: Bool = true
+    var isControlBarVisible: Bool {
+        get { controlsState.isControlBarVisible }
+        nonmutating set { controlsState.isControlBarVisible = newValue }
+    }
 
-    @State private var autoHideBarTask: Task<Void, Never>? = nil
     @State var smartFillMotionTraceLines: [String] = []
     @State var smartFillMotionTraceBuffer = SmartFillMotionTraceBuffer()
     @State var smartFillMotionTraceStatus: String = "idle"
@@ -596,8 +601,7 @@ struct SlideShowViewIOS: View {
         }
         .onDisappear {
             PlatformCompat.setIdleTimerDisabled(false)
-            autoHideBarTask?.cancel()
-            autoHideBarTask = nil
+            controlsState.cancelAutoHideTimer()
             isPlaybackEntryHintVisible = false
             #if DEBUG
             viewModel.clearVisionFaceAuditState()
@@ -611,8 +615,7 @@ struct SlideShowViewIOS: View {
             // Do not auto-hide the control bar while the tip bubble is showing.
 
             if isPlaybackEntryHintVisible {
-                autoHideBarTask?.cancel()
-                autoHideBarTask = nil
+                controlsState.cancelAutoHideTimer()
             } else {
                 resetAutoHideTimer()
             }
@@ -709,40 +712,33 @@ struct SlideShowViewIOS: View {
         // The control bar must stay visible while the tip bubble is showing.
 
         guard !isPlaybackEntryHintVisible else { return }
-        autoHideBarTask?.cancel()
-        autoHideBarTask = nil
+        controlsState.cancelAutoHideTimer()
         #if DEBUG
         guard !PlatformCompat.shouldHoldControlsForInitialSettingsForTesting else { return }
-        let delaySeconds =
-            PlatformCompat.controlBarAutoHideDelaySecondsForTesting
-            ?? PlaybackViewMetrics.controlBarAutoHideDelaySeconds
+        let delay =
+            PlatformCompat.controlBarAutoHideDelaySecondsForTesting.map { Duration.seconds($0) }
+            ?? PlaybackControlsState.autoHideDelay
+        controlsState.resetAutoHideTimer(after: delay)
         #else
-        let delaySeconds = PlaybackViewMetrics.controlBarAutoHideDelaySeconds
+        controlsState.resetAutoHideTimer()
         #endif
-        autoHideBarTask = Task {
-
-            try? await Task.sleep(for: .seconds(delaySeconds))
-
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                isControlBarVisible = false
-            }
-        }
     }
 
     private func maybePresentPlaybackEntryHintIfNeeded() {
-        guard shouldShowOnboardingPlaybackHint else { return }
-        guard !isPlaybackEntryHintDisabledForUITests else { return }
-        guard !isPlaybackEntryHintVisible else { return }
-        guard !playbackEntryHintStore.hasShownPlaybackEntryHint else { return }
-        guard !viewModel.isLoading else { return }
-        guard !viewModel.assets.isEmpty else { return }
-        guard viewModel.emptyPlaybackMessage == nil else { return }
-        guard viewModel.autoPlayRecoveryMessage == nil else { return }
+        guard
+            controlsState.canPresentEntryHint(
+                isOnboarding: shouldShowOnboardingPlaybackHint,
+                isDisabled: isPlaybackEntryHintDisabledForUITests,
+                hasShown: playbackEntryHintStore.hasShownPlaybackEntryHint,
+                isLoading: viewModel.isLoading,
+                hasAssets: !viewModel.assets.isEmpty,
+                hasEmptyMessage: viewModel.emptyPlaybackMessage != nil,
+                hasRecoveryMessage: viewModel.autoPlayRecoveryMessage != nil
+            )
+        else { return }
 
         playbackEntryHintStore.markPlaybackEntryHintShown()
-        autoHideBarTask?.cancel()
-        autoHideBarTask = nil
+        controlsState.cancelAutoHideTimer()
 
         withAnimation(.easeInOut(duration: 0.24)) {
             isControlBarVisible = true
@@ -758,7 +754,7 @@ struct SlideShowViewIOS: View {
         }
 
         withAnimation(.easeInOut(duration: 0.20)) {
-            isPlaybackEntryHintVisible = false
+            controlsState.dismissEntryHint()
         }
 
         resetAutoHideTimer()
