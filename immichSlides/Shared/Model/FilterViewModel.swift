@@ -13,8 +13,8 @@ import OSLog
 protocol FilterAPIService {
     func getAllAlbums(size: Int?) async throws -> [Album]
     func getAllPeople(size: Int?) async throws -> [People]
-    func getThumbnailURL(id: String, size: ThumbnailSize) throws -> URL
-    func getPeopleThumbnailURL(id: String) throws -> URL
+    func getThumbnailURL(id: String, size: ThumbnailSize) async throws -> URL
+    func getPeopleThumbnailURL(id: String) async throws -> URL
     func getPersonAssetsCount(id: String) async throws -> Int
 }
 

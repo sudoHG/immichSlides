@@ -208,8 +208,8 @@ private final class FilterPickerAPIService: FilterAPIService {
     func getAllPeople(size: Int?) async throws -> [People] {
         Array(fixture.people.prefix(size ?? fixture.people.count))
     }
-    func getThumbnailURL(id: String, size: ThumbnailSize) throws -> URL { throw URLError(.unsupportedURL) }
-    func getPeopleThumbnailURL(id: String) throws -> URL { throw URLError(.unsupportedURL) }
+    func getThumbnailURL(id: String, size: ThumbnailSize) async throws -> URL { throw URLError(.unsupportedURL) }
+    func getPeopleThumbnailURL(id: String) async throws -> URL { throw URLError(.unsupportedURL) }
     func getPersonAssetsCount(id: String) async throws -> Int {
         countRequests.append(id)
         return fixture.assets.filter { $0.people?.contains(where: { $0.id == id }) == true }.count
