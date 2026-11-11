@@ -4336,7 +4336,7 @@ class StrictCITracerTests(unittest.TestCase):
         import copy
         import ci_report
         import run_strict_ci_tracer as tracer
-        from ci_nightly import aggregate_nightly, case_identity, parse_manifest, shards
+        from ci_nightly import aggregate_nightly, case_identity, contract_population, parse_manifest, shards
         from test_ci_summary import bounded_diagnostics_receipt
 
         signed = {"name": "first_transition_start", "status": "detected", "official_signed": True,
@@ -4364,6 +4364,8 @@ class StrictCITracerTests(unittest.TestCase):
                     case = dict(platform="ios", device=device, configuration="Release", suite="ios-lifecycle-pause",
                                 scenario="normal", fixture="a")
                     matrix = json.loads((tracer.ROOT / "scripts/nightly-matrix.json").read_text())
+                    if case not in matrix["cases"]:
+                        matrix.update(schema_version=1, cases=contract_population(schema_version=1)[0])
                     matrix["shard_size"] = 1
                     selected = next(shard for shard in shards(parse_manifest(matrix)) if shard["cases"] == [case])
                     manifest = root / "manifest.json"
@@ -5099,8 +5101,10 @@ class StrictCITracerTests(unittest.TestCase):
         manifest.write_text(json.dumps({"cases": [case], "exclusions": []}))
         options = []
         if nightly:
-            from ci_nightly import parse_manifest, shards
+            from ci_nightly import contract_population, parse_manifest, shards
             matrix = json.loads((tracer.ROOT / "scripts/nightly-matrix.json").read_text())
+            if case not in matrix["cases"]:
+                matrix.update(schema_version=1, cases=contract_population(schema_version=1)[0])
             matrix["shard_size"] = 1
             selected = next(shard for shard in shards(parse_manifest(matrix)) if shard["cases"] == [case])
             manifest.write_text(json.dumps(matrix))
@@ -5654,7 +5658,8 @@ raise SystemExit(65)
         identity = {"schema_version": 1, "event": "local", "repository": "sudoHG/immichSlides",
                     "commit_sha": "0" * 40, "tree_sha": "0" * 40, "dirty": False}
         selected = next(shard for shard in shards(parse_manifest(tracer.ROOT.joinpath("scripts/nightly-matrix.json").read_text()))
-                        if shard["id"] == "ipad-immichSlides-iOS-debug-4")
+                        if shard["device"] == "ipad" and len(shard["cases"]) == 6
+                        and all(case["configuration"] == "Debug" for case in shard["cases"]))
         expected = [case_identity(case) for case in selected["cases"]]
         with tempfile.TemporaryDirectory() as raw, mock.patch.object(tracer, "run_runner") as runner, \
                 mock.patch.object(tracer, "workspace_preflight"), mock.patch.object(tracer, "run_identity", return_value=identity), \
