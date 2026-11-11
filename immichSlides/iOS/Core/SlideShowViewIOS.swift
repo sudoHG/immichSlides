@@ -49,13 +49,19 @@ struct SlideShowViewIOS: View {
     @StateObject private var controlsState = PlaybackControlsState()
     private var isPlaybackEntryHintVisible: Bool {
         get { controlsState.isPlaybackEntryHintVisible }
-        nonmutating set { controlsState.isPlaybackEntryHintVisible = newValue }
+        nonmutating set {
+            guard controlsState.isPlaybackEntryHintVisible != newValue else { return }
+            controlsState.isPlaybackEntryHintVisible = newValue
+        }
     }
     private let playbackEntryHintStore = PlaybackEntryHintStore()
 
     var isControlBarVisible: Bool {
         get { controlsState.isControlBarVisible }
-        nonmutating set { controlsState.isControlBarVisible = newValue }
+        nonmutating set {
+            guard controlsState.isControlBarVisible != newValue else { return }
+            controlsState.isControlBarVisible = newValue
+        }
     }
 
     @State var smartFillMotionTraceLines: [String] = []

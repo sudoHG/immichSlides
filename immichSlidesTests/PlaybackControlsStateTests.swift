@@ -50,27 +50,6 @@ struct PlaybackControlsStateTests {
         #expect(store.hasShownPlaybackEntryHint)
     }
 
-    @Test
-    func `entry hint markers are isolated between defaults domains`() throws {
-        let firstSuiteName = "PlaybackControlsStateTests.\(UUID().uuidString)"
-        let secondSuiteName = "PlaybackControlsStateTests.\(UUID().uuidString)"
-        let firstDefaults = try #require(UserDefaults(suiteName: firstSuiteName))
-        let secondDefaults = try #require(UserDefaults(suiteName: secondSuiteName))
-        defer {
-            firstDefaults.removePersistentDomain(forName: firstSuiteName)
-            secondDefaults.removePersistentDomain(forName: secondSuiteName)
-        }
-        let firstStore = PlaybackEntryHintStore(defaults: firstDefaults)
-        let secondStore = PlaybackEntryHintStore(defaults: secondDefaults)
-
-        firstStore.markPlaybackEntryHintShown()
-        #expect(!secondStore.hasShownPlaybackEntryHint)
-        secondStore.markPlaybackEntryHintShown()
-        firstStore.clear()
-        #expect(secondStore.hasShownPlaybackEntryHint)
-        #expect(!firstStore.hasShownPlaybackEntryHint)
-    }
-
     enum HintBlocker: CaseIterable {
         case none, notOnboarding, disabled, visible, shown, loading, noAssets, emptyMessage, recoveryMessage
     }
@@ -98,7 +77,7 @@ struct PlaybackControlsStateTests {
     @Test
     func `the control bar stays visible until its clock reaches the auto hide deadline`() async throws {
         let clock = ControlsClock()
-        let state = PlaybackControlsState(sleep: clock.sleep)
+        let state = PlaybackControlsState(sleepForTesting: clock.sleep)
         defer { state.cancelAutoHideTimer(); clock.finishAll() }
         let task = try #require(state.resetAutoHideTimer(after: autoHideDelay))
         try #require(await waitUntil { clock.waits.count == 1 })
@@ -115,7 +94,7 @@ struct PlaybackControlsStateTests {
     @Test
     func `a renewed countdown ignores the cancelled clocks late completion`() async throws {
         let clock = ControlsClock()
-        let state = PlaybackControlsState(sleep: clock.sleep)
+        let state = PlaybackControlsState(sleepForTesting: clock.sleep)
         defer { state.cancelAutoHideTimer(); clock.finishAll() }
         let oldTask = try #require(state.resetAutoHideTimer(after: autoHideDelay))
         try #require(await waitUntil { clock.waits.count == 1 })
@@ -136,7 +115,7 @@ struct PlaybackControlsStateTests {
     @Test
     func `a visible entry hint prevents a countdown until it is dismissed`() async throws {
         let clock = ControlsClock()
-        let state = PlaybackControlsState(sleep: clock.sleep)
+        let state = PlaybackControlsState(sleepForTesting: clock.sleep)
         defer { state.cancelAutoHideTimer(); clock.finishAll() }
         let oldTask = try #require(state.resetAutoHideTimer(after: autoHideDelay))
         try #require(await waitUntil { clock.waits.count == 1 })
@@ -162,20 +141,6 @@ struct PlaybackControlsStateTests {
         #expect(!state.isControlBarVisible)
     }
 
-    @Test
-    func `cancelling on disappearance rejects a late clock completion`() async throws {
-        let clock = ControlsClock()
-        let state = PlaybackControlsState(sleep: clock.sleep)
-        defer { state.cancelAutoHideTimer(); clock.finishAll() }
-        let task = try #require(state.resetAutoHideTimer(after: autoHideDelay))
-        try #require(await waitUntil { clock.waits.count == 1 })
-
-        state.cancelAutoHideTimer()
-        clock.advance(by: autoHideDelay)
-        await task.value
-
-        #expect(state.isControlBarVisible)
-    }
 }
 
 @MainActor

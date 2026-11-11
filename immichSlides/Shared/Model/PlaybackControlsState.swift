@@ -9,8 +9,8 @@ final class PlaybackControlsState: ObservableObject {
     private var autoHideTask: Task<Void, Never>?
     private let sleep: @MainActor (Duration) async throws -> Void
 
-    init(sleep: @escaping @MainActor (Duration) async throws -> Void = { try await Task.sleep(for: $0) }) {
-        self.sleep = sleep
+    init(sleepForTesting: @escaping @MainActor (Duration) async throws -> Void = { try await Task.sleep(for: $0) }) {
+        self.sleep = sleepForTesting
     }
 
     func canPresentEntryHint(
