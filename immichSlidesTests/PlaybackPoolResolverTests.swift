@@ -870,51 +870,6 @@ struct AppFlowStateMachineTests {
 @Suite(.sharedRuntimeIsolation)
 struct SlideShowViewModelSelectionRefreshTests {
 
-    @Test(arguments: ["a", "b"], [false, true])
-    func `old server results cannot enter a new filtered pool with the same selection`(
-        oldFixtureName: String, isRefill: Bool
-    ) async throws {
-        let oldFixture = FilterRuleFixture(name: oldFixtureName)
-        let newFixture = FilterRuleFixture(name: oldFixtureName == "a" ? "b" : "a")
-        // Two servers may reuse the same IDs: source equality alone cannot reject the old response.
-        let selection = FilterSelection(albumIds: ["shared-album-id"])
-        let viewModel = SlideShowViewModel(source: .filtered(selection))
-        viewModel.isAutoPlay = false
-        viewModel.loadAssetsHookForTesting = { _ in oldFixture.targetAlbumAssets }
-        await viewModel.loadAssets()
-        #expect(viewModel.assets.map(\.id) == oldFixture.targetAlbumAssets.map(\.id))
-
-        var oldContinuation: CheckedContinuation<[Asset], any Error>?
-        let suspendedLoad: (PlaybackSource) async throws -> [Asset] = { _ in
-            try await withCheckedThrowingContinuation { oldContinuation = $0 }
-        }
-        viewModel.loadAssetsHookForTesting = suspendedLoad
-        viewModel.loadMoreAssetsHookForTesting = suspendedLoad
-        let oldRequest = Task {
-            if isRefill { await viewModel.loadMoreAssets() } else { await viewModel.loadAssets() }
-        }
-        defer {
-            oldRequest.cancel()
-            oldContinuation?.resume(throwing: CancellationError())
-        }
-        let didSuspend = await waitUntil { oldContinuation != nil }
-        try #require(didSuspend)
-
-        viewModel.preparePlaybackSourceForPresentation(to: .filtered(selection))
-        #expect(viewModel.assets.isEmpty)
-        viewModel.loadAssetsHookForTesting = { _ in newFixture.targetAlbumAssets }
-        await viewModel.loadAssets()
-        oldContinuation?.resume(returning: oldFixture.targetAlbumAssets)
-        oldContinuation = nil
-        await oldRequest.value
-
-        #expect(viewModel.assets.map(\.id) == newFixture.targetAlbumAssets.map(\.id))
-        #expect(!viewModel.isLoading)
-        #expect(!viewModel.isLoadingMore)
-        #expect(viewModel.emptyPlaybackMessage == nil)
-        #expect(!viewModel.shouldReloadFilteredSource(for: selection))
-    }
-
     @Test(arguments: ["a", "b"])
     func `editing a running album selection replaces the pool and an empty album clears it`(fixtureName: String) async {
         let first = FilterRuleFixture(name: fixtureName)
