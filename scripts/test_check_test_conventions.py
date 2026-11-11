@@ -3,6 +3,7 @@ import unittest
 import copy
 import json
 import tempfile
+from unittest.mock import patch
 from pathlib import Path
 
 
@@ -950,6 +951,7 @@ class RepositoryTests(unittest.TestCase):
             ('unsupported version', lambda p: p.update(schema_version=2), 'tier-plan-version'),
             ('accidental activation', lambda p: p.update(mode='active'), 'tier-plan-mode'),
             ('changed retry policy', lambda p: p['migration'].update(yellow_and_retry='expanded'), 'tier-plan-migration'),
+            ('nonboolean removal flag', lambda p: p['migration'].update(wave_one_removes_ui_tests=0), 'tier-plan-migration'),
             ('missing smoke', lambda p: p['smoke_flows'].pop(), 'tier-plan-smoke-population'),
             ('duplicate smoke', lambda p: p['smoke_flows'].__setitem__(0, p['smoke_flows'][1]), 'tier-plan-smoke-population'),
             ('missing UI method', lambda p: p['inventory'].pop(), 'tier-plan-inventory'),
@@ -978,7 +980,7 @@ class RepositoryTests(unittest.TestCase):
             with self.subTest(mutation=label):
                 changed = copy.deepcopy(plan)
                 mutate(changed)
-                self.assertIn(expected, conv.validate_test_tier_plan(changed, *context))
+                self.assertIn(expected, [e.split(':', 1)[0] for e in conv.validate_test_tier_plan(changed, *context)])
         self.assertEqual([], conv.check_test_tier_plan(REPO_ROOT))
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -991,8 +993,150 @@ class RepositoryTests(unittest.TestCase):
             (root / "immichSlidesUITests/Flow.swift").write_text('func testUnowned() {}')
             violations = conv.check_test_tier_plan(root)
             self.assertEqual(["tier-plan-input"], rules(violations))
-            self.assertEqual("Flow.swift: testUnowned() is not a member of a direct XCTestCase subclass",
+            self.assertEqual("immichSlidesUITests/Flow.swift: testUnowned() is not a member of a direct XCTestCase subclass",
                              violations[0].detail)
+
+    def test_target_tier_plan_reports_each_bad_row_and_accepts_proven_replacements(self):
+        plan = json.loads((REPO_ROOT / conv.TEST_TIER_PLAN_PATH).read_text())
+        context = conv.test_tier_context(REPO_ROOT)
+        row_id = plan['inventory'][0]['identifier']
+
+        def reject(mutate, rule, *details):
+            changed = copy.deepcopy(plan)
+            mutate(changed)
+            errors = conv.validate_test_tier_plan(changed, *context)
+            matching = [e for e in errors if e.startswith(rule + ':')]
+            self.assertTrue(matching, errors)
+            for detail in details:
+                self.assertTrue(any(detail in e for e in matching), errors)
+
+        reject(lambda p: p['inventory'][0].pop('status'), 'tier-plan-shape', row_id, 'missing', 'status')
+        reject(lambda p: p['inventory'][0].update(typo=[]), 'tier-plan-shape', row_id, 'extra', 'typo')
+        reject(lambda p: p['inventory'][0].update(replacement_tests=['MissingTests/unknown']),
+               'tier-plan-replacement', row_id, 'MissingTests/unknown')
+        reject(lambda p: p['inventory'][0].update(human_review_groups=['tv-focus']),
+               'tier-plan-review-device', row_id, 'tv-focus')
+        reject(lambda p: p['inventory'][0].update(identifier='malformed'),
+               'tier-plan-identifier', 'malformed')
+        reject(lambda p: p['inventory'][0].update(identifier='a||iphone|Debug|a'),
+               'tier-plan-identifier', 'a||iphone|Debug|a')
+        reject(lambda p: p['smoke_flows'][0].update(id=[]), 'tier-plan-shape', 'id')
+        reject(lambda p: p['smoke_flows'][0].update(peer_fixture='b'), 'tier-plan-smoke-contract', 'peer_fixture')
+        reject(lambda p: p['migration'].update(nightly_budget_minutes=''), 'tier-plan-shape', 'nightly_budget_minutes')
+        for field in ('smoke_flows', 'inventory', 'release_full_set'):
+            reject(lambda p: p.update({field: {}}), 'tier-plan-shape', field)
+        for field in ('replacement_tests', 'smoke_flows', 'human_review_groups', 'mutation_proof'):
+            for value in ('', {}, [None]):
+                with self.subTest(field=field, value=value):
+                    reject(lambda p: p['inventory'][0].update({field: value}),
+                           'tier-plan-shape', row_id, field)
+        for section, field in (('smoke_flows', 'must_not_assert'), ('release_full_set', 'smoke_flows'),
+                               ('release_full_set', 'human_review_groups'), ('release_full_set', 'configurations'),
+                               ('release_full_set', 'visual_variants'), ('release_full_set', 'additional_review')):
+            reject(lambda p: p[section][0].update({field: ''}), 'tier-plan-shape', field)
+        for field in ('devices', 'screenshots', 'recordings', 'look_for'):
+            reject(lambda p: p['weekly_human_review']['groups'][0].update({field: {}}),
+                   'tier-plan-shape', field)
+        for index in range(len(plan['smoke_flows'])):
+            with self.subTest(flow=plan['smoke_flows'][index]['id']):
+                reject(lambda p: p['smoke_flows'][index]['source'].update(identifier='different'),
+                       'tier-plan-smoke-source', plan['smoke_flows'][index]['id'], 'different')
+                flow = plan['smoke_flows'][index]
+                alternative = next((key, case) for key, case in context[1].items()
+                                   if all(case[k] == flow[k] for k in ('device', 'configuration', 'fixture'))
+                                   and key != flow['source']['identifier'])
+                reject(lambda p: p['smoke_flows'][index].update(source=dict(
+                    kind='strict', identifier=alternative[0], selector=alternative[1]['selector'])),
+                    'tier-plan-smoke-source', flow['id'], alternative[0])
+        for key, value in (('owner', 'unassigned'), ('escalate_to', 'unassigned')):
+            reject(lambda p: p['weekly_human_review'].update({key: value}), 'tier-plan-human-review', key)
+        reject(lambda p: p['release_full_set'][0].update(owner='unassigned'), 'tier-plan-release', 'owner')
+        pr_smoke = context[3]
+        for identifier in pr_smoke:
+            reject(lambda p: next(r for r in p['inventory'] if r['identifier'] == identifier).update(target_home='unit'),
+                   'tier-plan-pr-smoke', identifier, 'pr-smoke')
+            reject(lambda p: p['inventory'].remove(next(r for r in p['inventory'] if r['identifier'] == identifier)),
+                   'tier-plan-pr-smoke', identifier, 'missing')
+
+        changed = copy.deepcopy(plan)
+        changed['inventory'][0].pop('status')
+        changed['inventory'][1]['replacement_tests'] = ['MissingTests/second row']
+        errors = conv.validate_test_tier_plan(changed, *context)
+        self.assertTrue(any(row_id in e and 'status' in e for e in errors), errors)
+        self.assertTrue(any(changed['inventory'][1]['identifier'] in e and 'MissingTests/second row' in e
+                            for e in errors), errors)
+
+        changed = copy.deepcopy(plan)
+        row = changed['inventory'][0]
+        row['target_home'] = 'unit'
+        row['human_review_groups'] = []
+        row['smoke_flows'] = ['iphone-first-boot']
+        changed['smoke_flows'][0]['must_not_assert'].append('extra-exclusion')
+        self.assertEqual([], conv.validate_test_tier_plan(changed, *context))
+        del row['human_review_groups']
+        self.assertEqual([], conv.validate_test_tier_plan(changed, *context))
+        row['status'] = 'covered'
+        row['mutation_proof'] = [dict(pr='https://github.com/sudoHG/immichSlides/pull/719', test=test,
+                                     mutation='Ignore the input rule', failed_then_passed_on=['ios', 'tvos'])
+                                 for test in row['replacement_tests']]
+        self.assertEqual([], conv.validate_test_tier_plan(changed, *context))
+        for field in ('pr', 'test', 'mutation', 'failed_then_passed_on'):
+            bad = copy.deepcopy(changed)
+            bad['inventory'][0]['mutation_proof'][0].pop(field)
+            self.assertTrue(any('mutation_proof' in e and field in e
+                                for e in conv.validate_test_tier_plan(bad, *context)))
+        for field, value in (('pr', 'unreviewed'), ('test', 'MissingTests/unknown'),
+                             ('mutation', ''), ('failed_then_passed_on', ['ios'])):
+            bad = copy.deepcopy(changed)
+            bad['inventory'][0]['mutation_proof'][0][field] = value
+            self.assertTrue(any(e.startswith('tier-plan-coverage:') and 'mutation_proof' in e
+                                for e in conv.validate_test_tier_plan(bad, *context)))
+        for replacements, proofs in ((row['replacement_tests'], []), ([], row['mutation_proof']),
+                                     (['MissingTests/unknown'], row['mutation_proof'])):
+            bad = copy.deepcopy(changed)
+            bad['inventory'][0].update(replacement_tests=replacements, mutation_proof=proofs)
+            self.assertTrue(any(e.startswith('tier-plan-coverage:') for e in
+                                conv.validate_test_tier_plan(bad, *context)))
+
+    def test_target_tier_context_reads_nested_sources_and_reports_invalid_inputs(self):
+        from strict_e2e_runner_support import CommandError
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for folder in ('scripts', 'immichSlidesUITests/Nested', 'immichSlidesTests/Nested'):
+                (root / folder).mkdir(parents=True)
+            (root / 'scripts/nightly-matrix.json').write_text('{"cases": []}')
+            (root / 'scripts/ci-ui-areas.json').write_text('{"functional_smoke": []}')
+            (root / 'immichSlidesUITests/Flow.swift').write_text('class RootUITests: XCTestCase { func testRoot() {} }')
+            (root / 'immichSlidesUITests/Nested/Flow.swift').write_text('class NestedUITests: XCTestCase { func testNested() {} }')
+            (root / 'immichSlidesTests/Rule.swift').write_text('struct RootTests { @Test func `root rule`() {} }')
+            (root / 'immichSlidesTests/Nested/Rule.swift').write_text('struct NestedTests { @Test func `nested rule`() {} }')
+            ui, _, units, _ = conv.test_tier_context(root)
+            self.assertEqual({'RootUITests/testRoot', 'NestedUITests/testNested'}, set(ui))
+            self.assertEqual({'RootTests/root rule', 'NestedTests/nested rule'}, units)
+            plan = json.loads((REPO_ROOT / conv.TEST_TIER_PLAN_PATH).read_text())
+            (root / conv.TEST_TIER_PLAN_PATH).write_text(json.dumps(plan))
+            with patch('run_strict_e2e.resolve_suite_selector', side_effect=CommandError('unknown suite')):
+                (root / 'scripts/nightly-matrix.json').write_text(json.dumps({'cases': [dict(
+                    suite='unknown', scenario='normal', device='iphone', configuration='Debug', fixture='a', platform='ios')]}))
+                errors = conv.check_test_tier_plan(root)
+                self.assertEqual(['tier-plan-input'], rules(errors))
+                self.assertIn('unknown suite', errors[0].detail)
+                self.assertIn('unknown|normal|iphone|Debug|a', errors[0].detail)
+            with patch.object(conv, 'test_tier_context', side_effect=CommandError('context failure')):
+                errors = conv.check_test_tier_plan(root)
+                self.assertEqual(['tier-plan-input'], rules(errors))
+                self.assertIn('context failure', errors[0].detail)
+            with patch('run_strict_e2e.resolve_suite_selector', return_value='malformed'):
+                errors = conv.check_test_tier_plan(root)
+                self.assertEqual(['tier-plan-input'], rules(errors))
+                self.assertIn('malformed', errors[0].detail)
+            (root / conv.TEST_TIER_PLAN_PATH).write_text(
+                '{"inventory":[{"identifier":"offending-row","status":"covered","status":"pending"}]}')
+            errors = conv.check_test_tier_plan(root)
+            self.assertEqual(['tier-plan-input'], rules(errors))
+            self.assertIn('duplicate', errors[0].detail)
+            self.assertIn('status', errors[0].detail)
+            self.assertIn('offending-row', errors[0].detail)
 
     def test_every_direct_ui_case_forwards_the_first_failure_before_xctest(self):
         import tempfile

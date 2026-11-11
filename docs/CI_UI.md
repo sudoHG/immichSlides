@@ -7,6 +7,10 @@ short nightly smoke flows. The versioned
 does not select or deselect UI tests. The populations and producer/reader protocol
 below continue unchanged until a separately reviewed switch after replacement
 coverage and shadow execution. No new yellow or retry exception is part of migration.
+The existing `functional_smoke` methods in `ci-ui-areas.json` retain their per-PR
+selection and explicit `pr-smoke` target tier, separate from the 23 nightly flows.
+The planning file remains untrusted and must become CI-trusted before it selects tests.
+Review ownership is defined in [Testing conventions](TESTING.md#approved-target-tiers-planning-only).
 
 `ci-ui` runs on pull requests and pushes to `main`, independently of `ci-gate`.
 It is informational: only the [trusted publisher](CI_PUBLISHER.md) writes its

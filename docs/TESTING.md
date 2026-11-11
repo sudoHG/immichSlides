@@ -30,6 +30,8 @@ match; see [the nightly guide](CI_NIGHTLY.md).
 `target-tiers-v1`, records the approved migration target. It is data for review and
 host validation, **not an execution manifest**. Existing test plans, strict matrix,
 workflows, selectors, runners and verdicts remain authoritative for what runs today.
+The plan is intentionally not CI-trusted while it only records targets. It must
+become CI-trusted before any reader uses it to select execution.
 Wave one removes no UI methods, strict rows or assertions and changes no App behavior.
 The current inventory is 386 UI source methods and 135 strict matrix rows, separately
 identified; it is not 521 nightly executions. The current complete nightly schedules
@@ -39,6 +41,7 @@ A strict row may invoke more than one XCTest method.
 | Target tier | Responsibility | Frequency |
 |---|---|---|
 | Deterministic App unit and no-UI interface tests | Playback, pause/resume, history, late callbacks, filters, settings, server errors, cache and PIN rules through production code; fake clocks, in-memory stores, controlled continuations, loopback HTTP or URLProtocol | Every PR, on iOS and tvOS |
+| Existing per-PR functional UI smoke (`pr-smoke`) | Keep the `functional_smoke` methods in `ci-ui-areas.json`, including the iOS keyboard and tvOS first-boot form checks; the iOS method runs on iPhone and iPad | Every applicable PR on each selected device, under the unchanged UI selection policy |
 | Short real-App smoke | Keyboard, remote/focus, native controls, navigation, relaunch and background wiring; one user purpose per bounded flow | Nightly: exactly 23 device flows |
 | Human visual review | Screenshots and short recordings, including actual paused and transitional output, crops, text and focus appearance | Weekly, affected visual PRs and before release |
 | Existing safety and build gates | Privacy, release isolation, localization, official-result completeness, source identity and exact-head approval | Keep the existing gates |
@@ -63,15 +66,26 @@ do not prove production Keychain behavior, and injected face counts do not prove
 Vision integration ([#80](https://github.com/sudoHG/immichSlides/issues/80)).
 
 The plan's `inventory` accounts for every current UI method and strict matrix row.
-`target_home` is `unit`, `smoke`, `human-review` or `delete`; `replacement_tests`
+`target_home` is `unit`, `smoke`, `pr-smoke`, `human-review` or `delete`; `replacement_tests`
 contains exact existing unit identities when known, while `smoke_flows` and
 `human_review_groups` link the remaining responsibilities. Existing unit references
 are candidates, not evidence that every assertion in the old flow is covered.
 An empty replacement list means the exact replacement is unknown. All entries are
-`pending` in this planning revision; `covered` is reserved for a later implementation
-revision with per-assertion proof. Even `delete` is a conditional destination, never
+`pending` in this planning revision. A later `covered` row requires every replacement
+test to exist and a `mutation_proof` entry for each test: `pr` (the implementation PR URL),
+`test` (the exact replacement identity), `mutation` (the concrete defect), and
+`failed_then_passed_on` (both `ios` and `tvos`). The checker validates the receipt
+structure and references; reviewers still verify the actual failure/pass evidence.
+Even `delete` is a conditional destination, never
 an instruction to delete now. A source method can anchor several device flows without
-creating additional smoke executions.
+creating additional smoke executions. Rows may link additional valid smoke flows
+that absorb their interactions; anchors must retain their links. Human-review groups
+are optional for `unit`, `delete` and `pr-smoke` rows, and each linked group must apply
+to the strict row's device or the UI method's compiled platform. TV focus routing
+belongs to `tv-focus`; iPhone rotation belongs to playback review, while iPad rotation
+and split view retain their separate group. A flow may forbid more than the three
+mandatory assertion exclusions. The checker reports row identities, malformed fields,
+missing/extra keys and unknown references independently, and rejects duplicate JSON keys.
 
 Before retiring an E2E rule assertion, map that assertion to a production App unit or
 no-UI interface test, name a concrete App mutation, show that test failing under the
@@ -87,8 +101,9 @@ Yellow and retry rules are frozen: add no new exceptions.
 The plan defines six weekly human-review groups: first boot/Settings; filters;
 playback/pause/transitions; theme/long locale/large text; iPad rotation/split view;
 and TV focus. Each group lists representative screenshots, short recordings and
-visible failure checks. A maintainer or explicitly named human reviewer must inspect
-the material and record the source SHA, device/settings, result and unresolved defects.
+visible failure checks. Claude, the coordinator, reviews the weekly material and
+escalates suspicious items to Hogan, recording the source SHA, device/settings, result
+and unresolved defects. Hogan personally reviews the full three-device release set.
 Until that happens the result is `NEEDS_HUMAN_REVIEW`; generating media is not sign-off.
 Rotate locales weekly and cover all shipped locales before release. Visual changes
 also retain the same-device before/after requirement.
