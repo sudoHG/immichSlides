@@ -270,13 +270,14 @@ Predictions do **not** establish a 30-minute pass.
 Gate queue time, real test duration and runner overhead still require hosted
 measurement. Full/nightly runs retain every existing duration-balanced v2 shard.
 
-With the updated frozen weights, iOS settings selects 29/29/0 methods in 2/2/0
+In the pre-removal packing calibration, iOS settings selected 29/29/0 methods in 2/2/0
 jobs, with a 25:17 push-to-status estimate and 67.5 UI runner-minutes. Apple TV
 filter selects 0/0/26 in 0/0/1: 23:33 and 17.5 UI runner-minutes. Shared settings
 selects 29/29/34 in 2/1/2: 30:24 and 94.3 UI runner-minutes, so its plan explicitly
 misses the target. These include modeled build readiness, this PR's gate unit
 occupancy and publication, and assume no external queue. They are estimates,
-not hosted acceptance. Core still selects all 51/51/60 functional methods.
+not hosted acceptance or a new measurement after duplicate removal. Core now
+selects all 48/48/54 functional methods.
 
 [`scripts/ci-ui-durations.json`](../scripts/ci-ui-durations.json) supplies frozen,
 per-device method seconds. The initial weights are the maximum observed duration
