@@ -261,6 +261,10 @@ def _method_observations(raw, trace, *, runner_hosted=False):
             from ci_failure_diagnostics import environment_limit_evidence, VALIDATOR_FAILURE_FIELD
             claimed = case_record.get("environment_limit")
             if claimed is not None and outcome == "failed":
+                if claimed["policy_version"] == 5 and suite == "filter-person":
+                    from strict_e2e_runner_support import filter_person_first_attempt_complete
+                    require(filter_person_first_attempt_complete(methods),
+                            "environment limit requires a main-observable filter-person first attempt")
                 require(not phase.get("infrastructure") and not phase.get("official_error")
                         and phase.get("exit_code") not in {124, 130} and phase.get("log_present") is True
                         and phase.get("build_operations") == 0 and phase.get("products_unchanged") is True

@@ -276,6 +276,7 @@ def export_private_result_bundle(
     retry_admission: bool = False,
 ) -> str:
     from ci_flaky import official_result_step
+    admission_deadline = time.monotonic() + (export_timeout_seconds or 60) if retry_admission else None
     timeout = (export_budget.remaining("official-tests-export") if export_budget is not None else 60)
     if export_timeout_seconds is not None:
         timeout = min(timeout, export_timeout_seconds) if export_budget is not None else export_timeout_seconds
@@ -350,15 +351,21 @@ def export_private_result_bundle(
                     eligible = kind == "assertion"
                     if kind == "uncategorized":
                         try:
-                            timeout = export_budget.remaining("official-tests-export") if export_budget is not None else 60
-                            with measured_official_export(export_budget):
-                                detail = subprocess.run(["xcrun", "xcresulttool", "get", "test-results", "test-details",
-                                    "--path", str(bundle), "--test-id", node["nodeIdentifier"], "--compact"],
-                                    capture_output=True, check=True, timeout=min(60, timeout))
-                            eligible = official_assertion_details(json.loads(detail.stdout), node["nodeIdentifier"])
+                            available = (export_budget.remaining("official-tests-export") if export_budget is not None
+                                         else admission_deadline - time.monotonic())
+                            timeout = min(60, export_timeout_seconds or 60)
+                            if available >= timeout:
+                                with measured_official_export(export_budget), official_result_step("details-read"):
+                                    detail = subprocess.run(["xcrun", "xcresulttool", "get", "test-results", "test-details",
+                                        "--path", str(bundle), "--test-id", node["nodeIdentifier"], "--compact"],
+                                        capture_output=True, check=True, timeout=timeout)
+                                eligible = official_assertion_details(json.loads(detail.stdout), node["nodeIdentifier"])
                         except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError, InfrastructureTimeout):
                             eligible = False
-                    node["retry_assertion"] = eligible and official_ui_duration(node) is not None
+                    try:
+                        node["retry_assertion"] = eligible and official_ui_duration(node) is not None
+                    except (ValueError, TypeError, OverflowError):
+                        node["retry_assertion"] = False
                 node.update(diagnostics.get(key, unknown_diagnostics()))
                 messages = public_failure_messages(raw_messages.get(key))
                 if messages is not None and official_failure_count(node) == len(messages):
@@ -1337,7 +1344,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                     (arguments.evidence_dir / "xcodebuild-command.txt").write_text(
                         "\n".join(commands) + "\n", encoding="utf-8"
                     )
-                    if not nightly_retry or exit_code != 65:
+                    if not arguments.nightly_retry_method or exit_code != 65:
                         raise CommandError(f"xcodebuild strict E2E failed with exit {exit_code}.", code=exit_code)
                     person_failed_exit = 65
                 export_budget = official_export_budgets.setdefault(session_bundle, OfficialExportBudget())

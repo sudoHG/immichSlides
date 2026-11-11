@@ -141,6 +141,15 @@ FILTER_PERSON_SESSIONS = (
         "visual_step": "no_faces",
     },
 )
+
+
+def filter_person_first_attempt_complete(methods):
+    expected = [session["selector"].split("/", 1)[1] for session in FILTER_PERSON_SESSIONS]
+    outcomes = {method["identifier"]: method["result"] for method in methods}
+    return (len(methods) == len(expected) and set(outcomes) == set(expected)
+            and all(outcomes[key] == "Passed" for key in expected[:-1]))
+
+
 IOS_FILTER_SUITES = {
     "display-policy": "immichSlidesUITests/StrictE2EFilterIOSUITests/testSmartFillDisplayPolicyChangesMultiToSingle",
     "filter-album": "immichSlidesUITests/StrictE2EFilterIOSUITests/testFilterAlbumTargetMembers",

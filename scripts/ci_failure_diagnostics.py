@@ -855,7 +855,9 @@ def validate_ui_first_failure_images(directory, summary):
     observed = {entry["identity"]["key"]: entry for entry in summary["population"]["observed"]}
     expected = set()
     for index, identity in enumerate(declared):
-        for attempt in observed.get(identity["key"], {}).get("attempts", []):
+        entry = observed.get(identity["key"], {})
+        attempts = entry.get("attempts", []) + ([entry["retry_failure"]] if "retry_failure" in entry else [])
+        for attempt in attempts:
             receipt = attempt.get(FIRST_FAILURE_FIELD)
             if receipt is None or receipt["screenshot"]["status"] != "captured":
                 continue

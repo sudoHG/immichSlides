@@ -1048,6 +1048,15 @@ siblings can reuse their unchanged first evidence. Fixture UI retains
 validation. Both the aggregate and the reporter bind a flaky claim to the
 original and retry evidence. They use the first verdict if the retry claim
 cannot be bound, and discard any unbound supplementary failure evidence.
+For `filter-person`, a first-attempt v5 claim requires the first two sessions
+to have passed. The ordinary runner stops at its first failed session.
+Optional retry-admission detail reads share the existing export allowance and
+are skipped when it cannot fit the existing per-read cap of up to 60 seconds.
+A malformed optional method duration disables retry admission while preserving
+the official export.
+UI attempt-2 screenshots with a captured first-failure receipt remain attached
+to `retry_failure`. The upload gate validates their dimensions, byte count,
+canonical PNG content and exact declared file set alongside the original attempt.
 
 ### Reader-first evolution
 

@@ -909,7 +909,7 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                 self.assertGreaterEqual(receipt["duration_seconds"], 0)
             self.assertEqual([json.loads(path.read_text())["exit_code"] for path in receipts], [0, 0, 0, 65])
 
-    def test_nightly_person_first_pass_collects_later_sessions_without_retrying_the_failed_one(self):
+    def test_nightly_person_first_pass_stops_at_the_first_failed_session_like_main(self):
         with tempfile.TemporaryDirectory() as directory:
             evidence = Path(directory) / "evidence"
             code, _, stderr, calls = self._run_p2_main(evidence, suite="filter-person", platform="ios", model="iPhone",
@@ -918,14 +918,13 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
                                     TestResultsSummary(1, 1, 0, 0, "Passed"), TestResultsSummary(1, 1, 0, 0, "Passed")])
             self.assertEqual(code, 65, stderr)
             self.assertEqual([next(arg for arg in call if arg.startswith("-only-testing:")) for call in calls["invocations"]],
-                             ["-only-testing:" + session["selector"] for session in FILTER_PERSON_SESSIONS])
-            summary = json.loads((evidence / "official-summary.json").read_text())
-            self.assertEqual((summary["totalTestCount"], summary["failedTests"], summary["passedTests"]), (3, 1, 2))
+                             ["-only-testing:" + FILTER_PERSON_SESSIONS[0]["selector"]])
+            self.assertFalse((evidence / "official-summary.json").exists())
             code, _, stderr, calls = self._run_p2_main(Path(directory) / "invalid", suite="filter-person", platform="ios", model="iPhone",
                 warm=True, nightly=True, xcodebuild_exit=65, failure_session="normal", create_result_bundle=False,
                 official_summaries=[TestResultsSummary(1, 1, 0, 0, "Passed")])
             self.assertEqual(code, 65)
-            self.assertIn("Nightly person official failure summary is incomplete.", stderr)
+            self.assertIn("xcodebuild strict E2E failed with exit 65.", stderr)
             self.assertEqual(len(calls["invocations"]), 1)
 
     def test_nightly_person_filtered_retry_executes_only_failed_sessions(self):
@@ -3859,6 +3858,44 @@ class FailureDiagnosticsTests(unittest.TestCase):
 
 
 class StrictCITracerTests(unittest.TestCase):
+    def test_person_v5_requires_main_to_reach_the_last_first_attempt_session(self):
+        from ci_summary import parse_summary
+        from run_strict_ci_tracer import evaluate_tracer, produce_environment_limits
+        from test_ci_summary import hosted_v5_summary
+
+        for failed_index in range(3):
+            for retry in ("failed", "problem", "budget-skipped"):
+                with self.subTest(failed_index=failed_index, retry=retry):
+                    summary, _ = hosted_v5_summary()
+                    entry = summary["population"]["observed"][0]
+                    identity = entry["identity"]
+                    identity["key"] = identity["dimensions"]["suite"] = "filter-person"
+                    ledger = summary["strict_case_evidence"][0]["bounded_diagnostics"]
+                    methods = []
+                    for index, session in enumerate(FILTER_PERSON_SESSIONS):
+                        method = {"identifier": session["selector"].split("/", 1)[1],
+                                  "result": "Failed" if index == failed_index else "Passed"}
+                        if index == failed_index:
+                            method.update({key: copy.deepcopy(entry[key]) for key in (
+                                "failure_phase", "failure_class", "failure_messages", "first_failure")})
+                        methods.append(method)
+                    phase = {"identity": identity, "duration_seconds": 12, "exit_code": 65, "log_present": True,
+                        "build_operations": 0, "products_unchanged": True, "official_methods": methods,
+                        "bounded_diagnostics": ledger, "first_failure": entry["first_failure"],
+                        "official_summary": {"result": "Failed", "totalTestCount": 3, "passedTests": 2,
+                                             "failedTests": 1, "skippedTests": 0}}
+                    if retry != "budget-skipped":
+                        phase.update(retry_failed_case_count=1, retry_method=methods[failed_index]["identifier"],
+                                     retry_selected_methods=[methods[failed_index]["identifier"]])
+                        phase["retry"] = {key: copy.deepcopy(value) for key, value in phase.items()
+                                          if not key.startswith("retry")}
+                        if retry == "problem":
+                            phase["retry"].update(exit_code=124, retry_collection_failed=True)
+                    summary["population"]["observed"], summary["status"] = evaluate_tracer([identity], [phase])
+                    self.assertEqual(produce_environment_limits(summary, [phase]), 0 if failed_index == 2 else 1)
+                    actual = parse_summary(summary)["population"]["observed"][0]
+                    self.assertEqual("environment_limit" in actual, failed_index == 2)
+
     def test_nightly_retry_phase_problems_preserve_the_first_strict_shard_verdict(self):
         from test_ci_summary import hosted_v5_summary
 
@@ -3917,7 +3954,11 @@ class StrictCITracerTests(unittest.TestCase):
         method = "StrictE2ESmokeUITests/testIOSStrictE2EConnectionSmoke"
         for kind, seconds, expected in (("Assertion Failure", 2, True), ("Crash", 2, False),
                                         ("Uncaught Exception", 2, False), ("Unknown", 2, False),
-                                        ("Assertion Failure", None, False)):
+                                        ("Assertion Failure", None, False), ("Assertion Failure", "invalid", False),
+                                        ("Assertion Failure", -1, False), ("Assertion Failure", True, False),
+                                        ("Assertion Failure", float("nan"), False),
+                                        ("Assertion Failure", float("inf"), False),
+                                        ("Assertion Failure", 10 ** 400, False)):
             with self.subTest(kind=kind, seconds=seconds), tempfile.TemporaryDirectory() as directory:
                 evidence = Path(directory)
                 node = {"nodeType": "Test Case", "nodeIdentifier": method + "()", "result": "Failed", "children": []}
@@ -3934,6 +3975,47 @@ class StrictCITracerTests(unittest.TestCase):
                         enrich_failure_diagnostics=True, retry_admission=True)
                 actual = json.loads((evidence / "official-tests.json").read_text())["testNodes"][0]["children"][0]
                 self.assertEqual(actual["retry_assertion"], expected)
+
+    def test_nightly_retry_admission_details_stay_inside_the_existing_export_budget(self):
+        methods = [f"ExampleTests/testCase{index}" for index in range(3)]
+        nodes = [{"nodeType": "Test Case", "nodeIdentifier": method + "()", "result": "Failed",
+                  "durationInSeconds": 4, "children": []} for method in methods]
+        legacy = {"issues": {"testFailureSummaries": {"_values": [
+            {"testCaseName": {"_value": method.replace("/", ".") + "()"},
+             "issueType": {"_value": "Uncategorized"}, "message": {"_value": "Synthetic failure"}} for method in methods]}}}
+        for shared in (True, False):
+            for short in (True, False):
+                with self.subTest(shared=shared, short=short), tempfile.TemporaryDirectory() as directory:
+                    clock, details = [0.0], []
+                    budget = strict_runner.OfficialExportBudget() if shared else None
+                    limit = 80 if short else 180
+                    if budget is not None:
+                        budget.spent_seconds = 180 - limit
+                    def export(command, **kwargs):
+                        clock[0] += 20
+                        if "test-details" in command:
+                            details.append(kwargs["timeout"])
+                            clock[0] += kwargs["timeout"] - 20
+                            payload = {"testIdentifier": command[command.index("--test-id") + 1], "testResult": "Failed",
+                                "testRuns": [{"nodeType": "Failure Message", "name": "XCTAssertTrue failed - synthetic",
+                                              "sourceLocation": {"lineNumber": 1}}]}
+                        elif "--legacy" in command:
+                            payload = legacy
+                        else:
+                            payload = {"testNodes": copy.deepcopy(nodes)}
+                        return subprocess.CompletedProcess(command, 0, json.dumps(payload).encode(), b"")
+                    root = Path(directory)
+                    (root / "official-summary.json").write_text("{}")
+                    options = {"export_budget": budget} if shared else {"export_timeout_seconds": limit}
+                    with mock.patch.object(strict_runner.subprocess, "run", side_effect=export), \
+                            mock.patch.object(strict_runner.time, "monotonic", side_effect=lambda: clock[0]):
+                        strict_runner.export_private_result_bundle(root / "private.xcresult", root, [],
+                            enrich_failure_diagnostics=True, retry_admission=True, **options)
+                    self.assertLessEqual(clock[0], limit)
+                    self.assertEqual(details, [] if short else [60, 60])
+                    actual = json.loads((root / "official-tests.json").read_text())["testNodes"]
+                    self.assertEqual([node["retry_assertion"] for node in actual],
+                                     [False] * 3 if short else [True, True, False])
 
     def test_nightly_retry_selection_counts_the_whole_shard_and_excludes_incomplete_cases(self):
         from ci_summary import test_identity

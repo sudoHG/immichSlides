@@ -333,6 +333,42 @@ class ReporterTests(unittest.TestCase):
         self.assertEqual("failed", rejected["observed"][0]["outcome"])
         self.assertEqual(passing_pad, rejected["observed"][1])
 
+    def test_person_v5_claim_requires_the_main_first_attempt_sessions(self):
+        from ci_failure_diagnostics import environment_limit_evidence
+        from run_strict_e2e import FILTER_PERSON_SESSIONS
+        from test_ci_summary import hosted_v5_summary
+        names = [session["selector"].split("/", 1)[1] for session in FILTER_PERSON_SESSIONS]
+        for failed_session, defect in ((0, None), (1, None), (2, None), (2, "missing"), (2, "skipped")):
+            with self.subTest(failed_session=failed_session, defect=defect):
+                summary, resource = hosted_v5_summary(tool=True)
+                row = summary["population"]["observed"][0]
+                case = test_identity("strict", "filter-person", **{**row["identity"]["dimensions"], "suite": "filter-person"})
+                row["identity"] = case
+                summary["population"].update(declared=[case], compiled=[case])
+                summary["strict_case_evidence"][0]["identity"] = case
+                proof = environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=5)
+                row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
+                methods = [{"identifier": name, "result": "Failed" if index == failed_session else "Passed",
+                    **({key: row[key] for key in ("failure_phase", "failure_class", "failure_messages")}
+                       if index == failed_session else {})} for index, name in enumerate(names)]
+                if defect == "missing":
+                    methods.pop(0)
+                elif defect == "skipped":
+                    methods[0]["result"] = "Skipped"
+                phase = {"identity": case, "exit_code": 65, "build_operations": 0, "products_unchanged": True,
+                    "log_present": True, "official_methods": methods, "bounded_diagnostics": {"case_resources": [resource]},
+                    "official_summary": {"totalTestCount": len(methods), "passedTests": sum(method["result"] == "Passed" for method in methods),
+                        "failedTests": 1, "skippedTests": int(defect == "skipped")}}
+                if failed_session == 2 and defect is None:
+                    observed, missing = ci_report.method_observations(summary, {"warm": [phase]}, runner_hosted=True)
+                    self.assertEqual([], missing)
+                    self.assertEqual(["passed", "passed", "failed"], [item["outcome"] for item in observed])
+                    self.assertEqual(proof, observed[-1]["environment_limit"])
+                else:
+                    with self.assertRaisesRegex(ContractError,
+                            "^environment limit requires a main-observable filter-person first attempt$"):
+                        ci_report.method_observations(summary, {"warm": [phase]}, runner_hosted=True)
+
     def test_v5_strict_methods_recheck_message_binding_and_retained_starvation_proof(self):
         from ci_failure_diagnostics import environment_limit_evidence
         from ci_nightly import aggregate_nightly

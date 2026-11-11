@@ -20,7 +20,8 @@ from run_fixture_ui_tests import clean_environment, compiled_tests, coverage_row
 
 class FixtureCoverageTests(unittest.TestCase):
     def test_nightly_retry_artifact_failures_use_the_original_tool_verdict(self):
-        for phase, outcome in (("export", "timed-out"), ("disposal", "not-run")):
+        for phase, outcome in (("failed-retry", "failed"), ("export", "timed-out"),
+                               ("disposal", "not-run"), ("failed-retry-disposal", "failed")):
             with self.subTest(phase=phase):
                 self._assert_nightly_retry_artifact_failure(phase, outcome)
 
@@ -28,19 +29,33 @@ class FixtureCoverageTests(unittest.TestCase):
         from types import SimpleNamespace
         from ci_flaky import ASSERTION_FAILURE
         from ci_summary import observation, parse_summary
-        from test_ci_summary import hosted_v5_summary
+        from test_ci_summary import hosted_v5_summary, first_failure_receipt
+        from PIL import Image
+        import ci_ui_tests
 
         seed, _ = hosted_v5_summary(ui=True, tool=True)
         row = seed["population"]["observed"][0]
         identity = row["identity"]
         diagnostics = {key: row[key] for key in ("failure_phase", "failure_class")}
         first = observation(identity, "failed", 12, exit_code=65, reason=ASSERTION_FAILURE, failure_diagnostics=diagnostics)
-        second = observation(identity, "passed", 9, exit_code=0)
+        retry_failed = phase.startswith("failed-retry")
+        second = observation(identity, "failed" if retry_failed else "passed", 9, exit_code=65 if retry_failed else 0)
+        receipts, images = [], []
+        for size, color in (((64, 32), "blue"), ((48, 24), "red")):
+            pixels = io.BytesIO()
+            Image.new("RGB", size, color).save(pixels, format="PNG")
+            receipt = first_failure_receipt()
+            receipt["screenshot"].update(width=size[0], height=size[1], bytes=len(pixels.getvalue()))
+            receipts.append(receipt)
+            images.append(pixels.getvalue())
+        receipts[1]["step"] = "capture-frame"
         official = {"testNodes": [{"nodeType": "Test Case", "nodeIdentifier": identity["key"] + "()",
             "result": "Failed", "durationInSeconds": 12, "failure_messages": row["failure_messages"], **diagnostics,
+            "first_failure": receipts[0],
             "children": [{"nodeType": "Failure Message", "name": "failure"}]}]}
         retry_official = {"testNodes": [{"nodeType": "Test Case", "nodeIdentifier": identity["key"] + "()",
-            "result": "Passed", "durationInSeconds": 9}]}
+            "result": "Failed" if retry_failed else "Passed", "durationInSeconds": 9,
+            **({"first_failure": receipts[1]} if retry_failed else {})}]}
         policy = {"schema_version": 1, "approval_records": [], "expected_skips": [], "deselections": []}
         inputs = {"hashes": seed["hashes"], "population": dict(seed["population"], compiled=[], observed=[]),
             "policy": policy, "discovery_policy": policy, "deselections": [], "registry": {"schema_version": 1, "entries": []},
@@ -59,9 +74,15 @@ class FixtureCoverageTests(unittest.TestCase):
                     enumeration = {"errors": [], "values": [{"enabledTests": [
                         {"identifier": "immichSlidesUITests/" + identity["key"]}]}]}
                     Path(command[command.index("-test-enumeration-output-path") + 1]).write_text(json.dumps(enumeration))
+                    return SimpleNamespace(wait=lambda **_kwargs: 0, pid=42)
                 first_run = str(bundles[0]) in command
-                return SimpleNamespace(wait=lambda **_kwargs: 65 if first_run else 0, pid=42)
-            def export(path, *_args, **_kwargs):
+                return SimpleNamespace(wait=lambda **_kwargs: 65 if first_run or retry_failed else 0, pid=42)
+            def export(path, *_args, **kwargs):
+                number = bundles.index(path)
+                if number == 0 or retry_failed or phase == "export":
+                    image = kwargs["first_failure_images"] / "0.png"
+                    image.parent.mkdir(parents=True, exist_ok=True)
+                    image.write_bytes(images[number])
                 if path == bundles[1]:
                     if phase == "export":
                         raise subprocess.TimeoutExpired(["xcresulttool", "get"], 180)
@@ -82,7 +103,7 @@ class FixtureCoverageTests(unittest.TestCase):
                     ("stop_exact_process", None), ("write_sensitive_scan", None)):
                 stack.enter_context(patch.object(runner, name, return_value=value))
             stack.enter_context(patch.object(runner, "finalize_fixture_run", side_effect=lambda path, *_args, **_kwargs:
-                ["Synthetic quarantine failure"] if phase == "disposal" and path == bundles[1] else []))
+                ["Synthetic quarantine failure"] if phase.endswith("disposal") and path == bundles[1] else []))
             stack.enter_context(patch.object(runner, "prepare_fixture_result_bundle", side_effect=bundles))
             stack.enter_context(patch.object(runner, "read_xcode_observations", side_effect=[[first], [second]]))
             stack.enter_context(patch.object(runner, "export_private_result_bundle", side_effect=export))
@@ -97,6 +118,20 @@ class FixtureCoverageTests(unittest.TestCase):
             self.assertEqual(observed["retry_failure"]["outcome"], outcome)
             self.assertIn("environment_limit", observed)
             self.assertNotIn("nightly_retry", observed)
+            self.assertEqual(("failed", 12, 1), (observed["outcome"], observed["duration_seconds"], len(observed["attempts"])))
+            self.assertEqual(receipts[0], observed["attempts"][0]["first_failure"])
+            self.assertEqual("environment-limited", json.loads((output / "coverage-verdict.json").read_text())["status"])
+            if retry_failed:
+                self.assertEqual(receipts[1], observed["retry_failure"]["first_failure"])
+            self.assertEqual(retry_failed, (output / "failure-screenshots/first-failure-attempt-2/0.png").exists())
+            with patch.object(ci_ui_tests, "output"), contextlib.redirect_stderr(io.StringIO()) as errors:
+                self.assertEqual(0, ci_ui_tests.main(["check-upload", "--output-dir", str(output)]), errors.getvalue())
+            if retry_failed:
+                retry_image = output / "failure-screenshots/first-failure-attempt-2/0.png"
+                retry_image.write_bytes(images[0])
+                with patch.object(ci_ui_tests, "output"), contextlib.redirect_stderr(io.StringIO()) as errors:
+                    self.assertEqual(1, ci_ui_tests.main(["check-upload", "--output-dir", str(output)]))
+                self.assertIn("first failure package image differs", errors.getvalue())
             self.assertIn("Environment-limited XCTest tool", stdout.getvalue())
 
     def test_nightly_retry_phase_problems_leave_the_first_ui_verdict(self):

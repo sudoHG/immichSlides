@@ -34,7 +34,8 @@ from strict_e2e_runner_support import (IOS_LIFECYCLE_PAUSE_SUITE, SIMULATOR_READ
                                      REDUCE_MOTION_CASE_ALLOWANCE_SECONDS,
                                      SIMULATOR_PREPARATION_TIMEOUT_SECONDS,
                                      POST_TEST_PHASE_PREFIX, POST_TEST_FAILURE_REASONS,
-                                     destination_udid, pause_visual_verdict, prepare_simulator)
+                                     destination_udid, pause_visual_verdict, prepare_simulator,
+                                     filter_person_first_attempt_complete)
 
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = ROOT / "scripts/strict-tracer.json"
@@ -354,6 +355,10 @@ def produce_environment_limits(summary, results, *, informational=(), policy_ver
                 or phase.get("exit_code") in {None, 124, 130} or phase.get("log_present") is not True
                 or phase.get("build_operations") != 0 or phase.get("products_unchanged") is not True):
             reject("invocation-not-verified")
+            continue
+        if (policy_version == 5 and entry["identity"]["dimensions"]["suite"] == "filter-person"
+                and not filter_person_first_attempt_complete(phase.get("official_methods", []))):
+            reject("first-person-session-incomplete")
             continue
         rejection_reason = "invalid-bounded-receipt"
         try:

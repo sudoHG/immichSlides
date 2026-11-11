@@ -534,13 +534,14 @@ be retried at most once.
 
 Retries reuse the same dedicated simulator and immutable Products after the
 existing tier's app, keychain and privacy reset. Each Xcode invocation selects
-one exact failed method. `filter-person` collects all three independent first
-sessions, continuing after an official exit-65 failure while retaining normal
-infrastructure stops. Only verified passing siblings' official records and
-their named screenshots are copied to the retry directory. Retried sessions
-produce their own screenshots and shared person-result JSON for the full
-validator. Missing sessions stay red. Mixed retry outcomes retain per-method
-yellow/red and the strict case stays red. Both official counts, method outcomes,
+one exact failed method. `filter-person` stops its first attempt at the first
+failed session, matching the ordinary strict runner. If an earlier session fails,
+later sessions have no official results and the case stays red. A v5 proof
+requires both preceding sessions to have passed before the final `nofaces`
+session fails. Producer and reader both enforce this boundary. Only verified
+passing siblings' official records and named screenshots are copied to a retry
+directory. Retried sessions produce their own screenshots and shared person-result
+JSON for the full validator. Both attempts' official counts, method outcomes,
 durations and public failure diagnostics remain available. P2 and unsigned pause
 timing still require human review.
 
