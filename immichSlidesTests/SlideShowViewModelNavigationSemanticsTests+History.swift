@@ -155,10 +155,10 @@ extension SlideShowViewModelNavigationSemanticsTests {
         #expect(vm.canRequestPreviousScene == false)
     }
 
-    @Test
-    func `two nexts then two previouses return to the first scene, and previous at the start does not change assets`()
-        async throws
-    {
+    @Test(arguments: [false, true])
+    func `two nexts then two previouses return to the first scene, and previous at the start does not change assets`(
+        isPaused: Bool
+    ) async throws {
         let vm = SlideShowViewModel(source: .random)
         resetDownloadManagerState(vm.downloadManager)
         let assets = (0..<4).map { makeAsset(id: "asset-\($0)", width: 6000, height: 4000) }
@@ -168,7 +168,10 @@ extension SlideShowViewModelNavigationSemanticsTests {
         }
         vm.backgroundPreloadHookForTesting = { _, _, _ in }
         vm.scenePresentationTimestampProviderForTesting = { 0 }
-        vm.isAutoPlay = false
+        if isPaused {
+            vm.toggleAutoPlayFromUserInteraction()
+        }
+        #expect(vm.isAutoPlay == !isPaused)
         vm.replacePlaybackAssetsForTesting(assets)
         completeCurrentScenePresentation(vm)
 
@@ -218,6 +221,8 @@ extension SlideShowViewModelNavigationSemanticsTests {
         try expectHistory(vm, assetIds: ["asset-0"], cursor: 0)
         await settleManualRequest()
         #expect(vm.safeCurrentScene?.primaryAssetId == "asset-1")
+        #expect(vm.isAutoPlay == !isPaused)
+        #expect(vm.sceneRenderSnapshot.phase == (isPaused ? .paused : .stablePhoto))
         try expectHistory(vm, assetIds: ["asset-0", "asset-1"], cursor: 1)
         #expect(displayedSceneLines.count == 1)
         vm.incomingBecameVisible(vm.scenePresentationLayerIdentity(for: hiddenLayer))
@@ -227,6 +232,8 @@ extension SlideShowViewModelNavigationSemanticsTests {
         vm.requestNextScene()
         await settleManualRequest()
         #expect(vm.safeCurrentScene?.primaryAssetId == "asset-2")
+        #expect(vm.isAutoPlay == !isPaused)
+        #expect(vm.sceneRenderSnapshot.phase == (isPaused ? .paused : .stablePhoto))
         try expectHistory(vm, assetIds: ["asset-0", "asset-1", "asset-2"], cursor: 2)
 
         vm.requestPreviousScene()
