@@ -544,6 +544,9 @@ directory. Retried sessions produce their own screenshots and shared person-resu
 JSON for the full validator. Both attempts' official counts, method outcomes,
 durations and public failure diagnostics remain available. P2 and unsigned pause
 timing still require human review.
+If a P2 retry's review package cannot be published, the exporter saves the first
+verdict and the aggregate applies the same fallback for a missing retry binding.
+The [review-package policy](CI_P2_REVIEWS.md) defines the binding requirements.
 
 Strict retries are admitted only if their existing full case bound fits within
 198 minutes from tracer start. The tracer clock includes the cold build,

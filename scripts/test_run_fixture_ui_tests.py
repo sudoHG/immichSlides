@@ -20,12 +20,13 @@ from run_fixture_ui_tests import clean_environment, compiled_tests, coverage_row
 
 class FixtureCoverageTests(unittest.TestCase):
     def test_nightly_retry_artifact_failures_use_the_original_tool_verdict(self):
-        for phase, outcome in (("failed-retry", "failed"), ("export", "timed-out"),
-                               ("disposal", "not-run"), ("failed-retry-disposal", "failed")):
-            with self.subTest(phase=phase):
-                self._assert_nightly_retry_artifact_failure(phase, outcome)
+        for phase, outcome, tool in (("failed-retry", "failed", True), ("export", "timed-out", True),
+                                    ("disposal", "not-run", True), ("failed-retry-disposal", "failed", True),
+                                    ("failed-retry-disposal", "not-run", False)):
+            with self.subTest(phase=phase, tool=tool):
+                self._assert_nightly_retry_artifact_failure(phase, outcome, tool=tool)
 
-    def _assert_nightly_retry_artifact_failure(self, phase, outcome):
+    def _assert_nightly_retry_artifact_failure(self, phase, outcome, *, tool):
         from types import SimpleNamespace
         from ci_flaky import ASSERTION_FAILURE
         from ci_summary import observation, parse_summary
@@ -33,7 +34,7 @@ class FixtureCoverageTests(unittest.TestCase):
         from PIL import Image
         import ci_ui_tests
 
-        seed, _ = hosted_v5_summary(ui=True, tool=True)
+        seed, _ = hosted_v5_summary(ui=True, tool=tool)
         row = seed["population"]["observed"][0]
         identity = row["identity"]
         diagnostics = {key: row[key] for key in ("failure_phase", "failure_class")}
@@ -113,26 +114,27 @@ class FixtureCoverageTests(unittest.TestCase):
                 "--output-dir", str(output), "--xctestrun", str(source), "--shard", "navigation", "--mode", "measure",
                 "--shard-manifest", str(root / "manifest.json"), "--total-timeout-minutes", "85"])
             actual = parse_summary((output / "summary.json").read_text())
-            self.assertEqual((code, actual["infrastructure"]), (0, []))
+            self.assertEqual((code, actual["infrastructure"]), (0 if tool else 65, []))
             observed = actual["population"]["observed"][0]
             self.assertEqual(observed["retry_failure"]["outcome"], outcome)
-            self.assertIn("environment_limit", observed)
+            self.assertEqual(tool, "environment_limit" in observed)
             self.assertNotIn("nightly_retry", observed)
             self.assertEqual(("failed", 12, 1), (observed["outcome"], observed["duration_seconds"], len(observed["attempts"])))
             self.assertEqual(receipts[0], observed["attempts"][0]["first_failure"])
-            self.assertEqual("environment-limited", json.loads((output / "coverage-verdict.json").read_text())["status"])
-            if retry_failed:
+            self.assertEqual("environment-limited" if tool else "failed",
+                             json.loads((output / "coverage-verdict.json").read_text())["status"])
+            if retry_failed and tool:
                 self.assertEqual(receipts[1], observed["retry_failure"]["first_failure"])
-            self.assertEqual(retry_failed, (output / "failure-screenshots/first-failure-attempt-2/0.png").exists())
             with patch.object(ci_ui_tests, "output"), contextlib.redirect_stderr(io.StringIO()) as errors:
                 self.assertEqual(0, ci_ui_tests.main(["check-upload", "--output-dir", str(output)]), errors.getvalue())
-            if retry_failed:
+            self.assertEqual(retry_failed and tool, (output / "failure-screenshots/first-failure-attempt-2/0.png").exists())
+            if retry_failed and tool:
                 retry_image = output / "failure-screenshots/first-failure-attempt-2/0.png"
                 retry_image.write_bytes(images[0])
                 with patch.object(ci_ui_tests, "output"), contextlib.redirect_stderr(io.StringIO()) as errors:
                     self.assertEqual(1, ci_ui_tests.main(["check-upload", "--output-dir", str(output)]))
                 self.assertIn("first failure package image differs", errors.getvalue())
-            self.assertIn("Environment-limited XCTest tool", stdout.getvalue())
+            self.assertEqual(tool, "Environment-limited XCTest tool" in stdout.getvalue())
 
     def test_nightly_retry_phase_problems_leave_the_first_ui_verdict(self):
         from datetime import date

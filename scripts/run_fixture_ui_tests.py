@@ -557,6 +557,21 @@ def main(argv=None, *, simulator_prepared=False):
                          + f" | {(row['reason'] or '').replace('|', '/').replace(chr(10), ' ')} |\n"
                          for row in rows)
         (output / "fixture-coverage.md").write_text(table)
+
+    def retain_first_failure_images():
+        retained_images = {(attempt["number"], first_failure_selectors.index(entry["identity"]["key"]))
+            for entry in summary["population"]["observed"]
+            for attempt in entry["attempts"] + ([entry["retry_failure"]] if "retry_failure" in entry else [])
+            if attempt.get("first_failure", {}).get("screenshot", {}).get("status") == "captured"}
+        for number in (1, 2):
+            folder = output / "failure-screenshots" / ("first-failure-attempt-" + str(number))
+            if folder.is_dir():
+                for image in folder.glob("*.png"):
+                    if image.stem.isdigit() and (number, int(image.stem)) not in retained_images:
+                        image.unlink()
+                if not any(folder.iterdir()):
+                    folder.rmdir()
+
     try:
         waits = wait_configuration(args.wait_factor)
         require(math.isfinite(args.timeout_minutes) and args.timeout_minutes > 0, "timeout must be finite and positive")
@@ -866,17 +881,7 @@ def main(argv=None, *, simulator_prepared=False):
             path = output / ("official-tests" + suffix + ".json")
             if path.is_file() and (not nightly_retry or number == 1 or bundles[number - 1] in digests):
                 attach_first_failures(summary["population"]["observed"], json.loads(path.read_text()), 1 if number == 1 else 2)
-        retained_images = {(attempt["number"], first_failure_selectors.index(entry["identity"]["key"]))
-            for entry in summary["population"]["observed"] for attempt in entry["attempts"]
-            if attempt.get("first_failure", {}).get("screenshot", {}).get("status") == "captured"}
-        for number in (1, 2):
-            folder = output / "failure-screenshots" / ("first-failure-attempt-" + str(number))
-            if folder.is_dir():
-                for image in folder.glob("*.png"):
-                    if image.stem.isdigit() and (number, int(image.stem)) not in retained_images:
-                        image.unlink()
-                if not any(folder.iterdir()):
-                    folder.rmdir()
+        retain_first_failure_images()
         if code == 0:
             summary["status"] = "unverified" if any(row["outcome"] == "skipped" for row in rows) else "passed"
         if official_mode:
@@ -958,6 +963,7 @@ def main(argv=None, *, simulator_prepared=False):
                     failures.extend(attempt_failures)
             if changed_retry and judge is not None:
                 verdict, code = judge()
+                retain_first_failure_images()
                 write_coverage_rows()
                 write_json(output / "coverage-verdict.json", verdict)
                 code = write_fixture_summary(summary, output) or code

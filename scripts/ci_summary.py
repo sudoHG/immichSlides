@@ -228,6 +228,25 @@ def validate_retry_failure(entry):
         raise ContractError("retry failure: " + message) from error
 
 
+def fallback_nightly_retry(entry):
+    """Copy the original verdict for callers to bind independently to first-attempt evidence."""
+    retained = entry
+    if NIGHTLY_RETRY_FIRST_FIELD in entry:
+        try:
+            validate_nightly_retry_first(entry)
+            retained = entry[NIGHTLY_RETRY_FIRST_FIELD]
+        except (ContractError, KeyError, TypeError, AttributeError):
+            pass
+    first = copy.deepcopy(retained)
+    for field in (NIGHTLY_RETRY_FIELD, NIGHTLY_RETRY_FIRST_FIELD, RETRY_FAILURE_FIELD):
+        first.pop(field, None)
+    first["attempts"] = first["attempts"][:1]
+    first["duration_seconds"] = first["attempts"][0]["duration_seconds"]
+    first["outcome"] = "failed"
+    validate_observation(first)
+    return first
+
+
 def validate_nightly_retry_first(entry):
     first = entry[NIGHTLY_RETRY_FIRST_FIELD]
     require(NIGHTLY_RETRY_FIELD in entry and isinstance(first, dict)

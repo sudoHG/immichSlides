@@ -13,7 +13,8 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ci_summary import decode, duration, fields, identity_key, integer, parse_summary, require, sha, validate_test_identity
+from ci_summary import (decode, duration, fields, identity_key, integer, parse_summary, require, sha,
+                        validate_test_identity, write_summary)
 from strict_e2e_filter_contract import FROZEN_FIXTURE_SHA256
 from strict_e2e_p2_contract import (DEVICE_PLATFORM, P2_CASES, P2ContractError, RAW_VERDICT,
                                   MOTION_FACT_FILES, validate_motion_facts,
@@ -478,6 +479,7 @@ def export_shard(input_dir, output_dir):
     require(not os.path.lexists(output_dir), "shard package directory must be fresh")
     output_dir.mkdir(parents=True)
     packages, missing, bindings = [], [], []
+    restored_first = False
     observed = {json.dumps(e["identity"], sort_keys=True): e for e in summary["population"]["observed"]}
     for index, item in enumerate(summary["population"]["declared"]):
         dimensions = item["dimensions"]
@@ -503,12 +505,27 @@ def export_shard(input_dir, output_dir):
                              "package_sha256": manifest["package_sha256"]})
             packages.append(relative.as_posix())
         except (ValueError, OSError, P2ContractError):
-            missing.append({"case": case, "reason": "package validation or sensitive scan refused publication"})
+            reason = "package validation or sensitive scan refused publication"
+            if "nightly_retry" in entry:
+                from ci_summary import fallback_nightly_retry, public_retry_failure
+                first = fallback_nightly_retry(entry)
+                first["retry_failure"] = public_retry_failure({
+                    "outcome": "not-run", "duration_seconds": entry["attempts"][1]["duration_seconds"],
+                    "exit_code": entry["attempts"][1]["exit_code"]})
+                entry.clear()
+                entry.update(first)
+                summary["status"] = "failed"
+                restored_first = True
+                reason = "retry package unavailable; first attempt retained"
+            missing.append({"case": case, "reason": reason})
+    if restored_first:
+        write_summary(summary, input_dir / "records")
     write_json(output_dir / "index.json", {"schema_version": 1, "packages": packages, "unavailable": missing})
     write_json(input_dir / "records/p2-review-bindings.json", {"schema_version": 1, "review_packages": bindings})
     scan(output_dir)
     print(f"P2 packages: {len(packages)}; unavailable: {len(missing)}. Human review remains pending.")
-    return 1 if any(m["reason"] != "automated contract did not pass" for m in missing) else 0
+    return 1 if any(m["reason"] not in {"automated contract did not pass",
+                    "retry package unavailable; first attempt retained"} for m in missing) else 0
 
 
 def main(argv=None):

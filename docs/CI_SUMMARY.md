@@ -1016,6 +1016,8 @@ Free-form attempt text is excluded. A passing retry can carry
 For P2 and unsigned pause evidence, a successful automated retry retains
 `needs-human-review` with failed-then-H attempts and the same tracking receipt;
 it never becomes a signed visual pass or an explicit recovery pass.
+P2 retry package publication must succeed to retain that review-pending claim.
+A refused package or missing retry binding falls back to the first observation.
 Historical records without this extension retain their original interpretation.
 The [nightly policy](CI_NIGHTLY.md#one-failed-method-retry) defines admission,
 capacity and human-review boundaries.

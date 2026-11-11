@@ -323,6 +323,19 @@ class SummaryContractTests(unittest.TestCase):
         retried["nightly_retry_first"] = original
         summary["population"]["observed"] = [retried]
         self.assertEqual(summary, ci_summary.parse_summary(summary))
+        for retained_v5 in (True, False):
+            candidate = copy.deepcopy(retried)
+            if not retained_v5:
+                candidate.pop("nightly_retry_first")
+            before = copy.deepcopy(candidate)
+            fallback = ci_summary.fallback_nightly_retry(candidate)
+            self.assertEqual(original if retained_v5 else ordinary, fallback)
+            ci_summary.validate_observation(fallback)
+            fallback["attempts"][0]["duration_seconds"] = 999
+            self.assertEqual(before, candidate)
+        invalid_backup = copy.deepcopy(retried)
+        invalid_backup["nightly_retry_first"]["identity"]["key"] = "unrelated"
+        self.assertEqual(ordinary, ci_summary.fallback_nightly_retry(invalid_backup))
         for key in ("identity", "duration", "ledger", "without-proof", "recursive"):
             changed = copy.deepcopy(summary)
             row = changed["population"]["observed"][0]

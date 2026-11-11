@@ -129,6 +129,69 @@ class VerifyCommandLineTests(VerifyCommandLineTestsCases, unittest.TestCase):
 
 
 class ReviewPackageTests(unittest.TestCase):
+    def test_retry_p2_package_failure_restores_the_first_nightly_verdict(self):
+        import copy
+        from ci_nightly import aggregate_nightly
+        from ci_report import method_observations
+        from ci_review_packages import export_shard, validate_bindings
+        from ci_summary import parse_summary
+        from run_strict_ci_tracer import evaluate_tracer, produce_environment_limits
+        from run_strict_e2e import resolve_suite_selector
+        from test_ci_summary import hosted_v5_summary
+
+        for starved in (True, False):
+            for failure in (ValueError, OSError, P2ContractError):
+                with self.subTest(starved=starved, failure=failure.__name__), tempfile.TemporaryDirectory() as directory:
+                    summary, _ = hosted_v5_summary()
+                    initial = summary["population"]["observed"][0]
+                    identity = initial["identity"]
+                    identity["key"] = identity["dimensions"]["suite"] = "p2-cache"
+                    summary["hashes"]["manifests"]["nightly-matrix"] = "c" * 64
+                    ledger = summary["strict_case_evidence"][0]["bounded_diagnostics"]
+                    if not starved:
+                        ledger["case_resources"][0]["failure_samples"][0]["idle_percent"] = 50
+                    key = resolve_suite_selector("ios", "p2-cache").split("/", 1)[1]
+                    method = {"identifier": key, "result": "Failed", **{field: copy.deepcopy(initial[field])
+                        for field in ("failure_phase", "failure_class", "failure_messages", "first_failure")}}
+                    phase = {"identity": identity, "duration_seconds": 12, "exit_code": 65, "log_present": True,
+                        "build_operations": 0, "products_unchanged": True, "official_methods": [method],
+                        "official_method_durations": {key: 12}, "bounded_diagnostics": ledger,
+                        "first_failure": initial["first_failure"], "retry_method": key,
+                        "retry_selected_methods": [key], "retry_assertion_methods": [key], "retry_failed_case_count": 1,
+                        "official_summary": {"result": "Failed", "totalTestCount": 1,
+                                             "passedTests": 0, "failedTests": 1, "skippedTests": 0}}
+                    retry = {field: copy.deepcopy(value) for field, value in phase.items() if not field.startswith("retry")}
+                    retry.update(duration_seconds=9, exit_code=0, official_methods=[{"identifier": key, "result": "Passed"}],
+                        official_method_durations={key: 9}, p2_verdict=RAW_VERDICT,
+                        official_summary={"result": "Passed", "totalTestCount": 1,
+                                          "passedTests": 1, "failedTests": 0, "skippedTests": 0})
+                    phase["retry"] = retry
+                    summary["population"]["observed"], summary["status"] = evaluate_tracer([identity], [phase])
+                    produce_environment_limits(summary, [phase])
+                    summary["status"] = "failed"
+                    before = summary["population"]["observed"][0]
+                    self.assertEqual(before["outcome"], "needs-human-review")
+                    self.assertEqual("nightly_retry_first" in before, starved)
+                    source, published = Path(directory, "shard"), Path(directory, "published")
+                    (source / "records").mkdir(parents=True)
+                    _write_json(source / "records/summary.json", summary)
+                    with mock.patch("ci_review_packages.build_package", side_effect=failure("Synthetic retry package refusal")):
+                        self.assertEqual(export_shard(source, published), 0)
+                    retained = parse_summary(_read_json(source / "records/summary.json"))
+                    actual = retained["population"]["observed"][0]
+                    self.assertEqual((actual["outcome"], actual["duration_seconds"], len(actual["attempts"])), ("failed", 12, 1))
+                    self.assertEqual("environment_limit" in actual, starved)
+                    self.assertEqual(actual["retry_failure"]["outcome"], "not-run")
+                    self.assertNotIn("nightly_retry", actual)
+                    self.assertNotIn("needs-human-review", (source / "records/summary.md").read_text())
+                    bindings = _read_json(source / "records/p2-review-bindings.json")["review_packages"]
+                    self.assertEqual(validate_bindings(bindings, retained), [])
+                    verdict = aggregate_nightly([identity], [retained], live_in_scope=False, review_packages=bindings)
+                    self.assertEqual(verdict["status"], "environment-limited" if starved else "failed")
+                    observed, missing = method_observations(retained, {"warm": [phase]}, runner_hosted=True)
+                    self.assertEqual(missing, [])
+                    self.assertEqual("environment_limit" in observed[0], starved)
+
     def test_nightly_retry_with_pending_human_review_exports_the_successful_retry_package(self):
         from ci_flaky import merge_retry
         from ci_nightly import case_identity

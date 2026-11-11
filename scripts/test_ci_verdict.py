@@ -15,6 +15,90 @@ from test_ci_summary import valid_summary
 
 
 class NightlyVerdictTests(unittest.TestCase):
+    def test_p2_retry_without_package_binding_restores_the_bound_first_verdict(self):
+        import contextlib
+        import io
+        import os
+        import tempfile
+        import time
+        import ci_report
+        from ci_failure_diagnostics import environment_limit_evidence
+        from ci_flaky import ASSERTION_FAILURE, merge_retry
+        from ci_nightly import main
+        from run_strict_e2e import resolve_suite_selector
+        from strict_e2e_p2_contract import RAW_VERDICT
+        from test_ci_summary import hosted_v5_summary
+        for retained_v5, retry in ((True, True), (False, True), (False, False)):
+            with self.subTest(retained_v5=retained_v5, retry=retry), tempfile.TemporaryDirectory() as directory:
+                summary, resource = hosted_v5_summary(tool=True)
+                summary["run"]["shard"] = "a"
+                first = summary["population"]["observed"][0]
+                case = ci_summary.test_identity("strict", "p2-cache", **{**first["identity"]["dimensions"], "suite": "p2-cache"})
+                first["identity"] = case
+                first["attempts"][0]["reason"] = ASSERTION_FAILURE
+                summary["population"].update(declared=[case], compiled=[case])
+                summary["strict_case_evidence"][0]["identity"] = case
+                retried = merge_retry(first, ci_summary.observation(case, "needs-human-review", 9, exit_code=0),
+                    nightly_proof={"schema_version": 1, "policy_version": 1, "runner_hosted": True, "failed_case_count": 1})
+                if retained_v5:
+                    proof = environment_limit_evidence(summary, first, [resource], runner_hosted=True, policy_version=5)
+                    first["environment_limit"] = first["attempts"][0]["environment_limit"] = proof
+                    retried["nightly_retry_first"] = first
+                if not retry:
+                    retried = ci_summary.observation(case, "needs-human-review", 9, exit_code=0)
+                summary["population"]["observed"] = [retried]
+                summary["status"] = "unverified"
+                method = resolve_suite_selector("ios", "p2-cache").split("/", 1)[1]
+                phase = {"identity": case, "exit_code": 65, "build_operations": 0, "products_unchanged": True,
+                    "log_present": True, "retry_method": method, "retry_failed_case_count": 1, "retry_assertion_methods": [method],
+                    "official_method_durations": {method: 12}, "bounded_diagnostics": {"case_resources": [resource]},
+                    "official_methods": [{"identifier": method, "result": "Failed", **{key: first[key] for key in
+                        ("failure_phase", "failure_class", "failure_messages")}}],
+                    "official_summary": {"totalTestCount": 1, "passedTests": 0, "failedTests": 1, "skippedTests": 0}}
+                phase["retry"] = {**phase, "exit_code": 0, "p2_verdict": RAW_VERDICT,
+                    "official_method_durations": {method: 9}, "official_methods": [{"identifier": method, "result": "Passed"}],
+                    "official_summary": {"totalTestCount": 1, "passedTests": 1, "failedTests": 0, "skippedTests": 0}}
+                trace = {"started_epoch": time.time() - 10, "finished_epoch": time.time(), "warm": [phase]}
+                planned = [{"id": "a", "cases": [{"platform": "ios", **case["dimensions"]}]}]
+                summary["hashes"] = {"manifests": {"nightly-matrix": "a" * 64}, "policies": {"nightly": "a" * 64}}
+                root = Path(directory)
+                records = root / "records/nightly-strict-a-10-1"
+                records.mkdir(parents=True)
+                (records / "summary.json").write_text(json.dumps(summary))
+                (records / "trace.json").write_text(json.dumps(trace))
+                (records / "p2-review-bindings.json").write_text(json.dumps({"schema_version": 1, "review_packages": []}))
+                (root / "plan.json").write_text(json.dumps({"identity": summary["identity"], "hashes": summary["hashes"],
+                    "run": {"id": "10", "attempt": 1}, "shards": planned, "started_epoch": time.time() - 20, "max_parallel": 2}))
+                output = root / "output"
+                with patch("ci_nightly.workspace_preflight"), patch("ci_nightly.run_identity", return_value=summary["identity"]), patch(
+                        "ci_nightly.source_metadata", return_value=(summary["source"]["workflow_path"], False)), patch(
+                        "ci_nightly.file_hash", return_value="a" * 64), patch("ci_nightly.shards", return_value=planned), patch(
+                        "ci_nightly.read_policy", return_value={"live_tier_in_scope": False, "built_tiers": ["strict"]}), patch.dict(
+                        os.environ, GITHUB_RUN_ID="10", GITHUB_RUN_ATTEMPT="1", RUNNER_ENVIRONMENT="github-hosted"), contextlib.redirect_stdout(io.StringIO()):
+                    code = main(["aggregate", "--output-dir", str(output), "--plan", str(root / "plan.json"),
+                                 "--records-dir", str(root / "records"), "--matrix-job-result", "success"])
+                result = json.loads((output / "nightly.json").read_text())
+                if not retry:
+                    self.assertEqual((1, "failed"), (code, result["status"]))
+                    self.assertIn("a: completed P2 package bindings are missing or unexpected", result["errors"])
+                    continue
+                self.assertEqual((0 if retained_v5 else 1, "environment-limited" if retained_v5 else "failed"), (code, result["status"]))
+                self.assertTrue(result["matrix"]["equal"])
+                self.assertEqual(first, result["observed"][0])
+                self.assertFalse(result["needs_human_review"])
+                api = type("API", (), {"repository": "sudoHG/immichSlides"})()
+                run = {"id": 10, "workflow_id": 123, "run_attempt": 1, "created_at": "2026-10-01T10:00:00Z",
+                    "head_sha": "a" * 40, "path": ci_report.NIGHTLY_PATH, "event": "schedule", "head_branch": "main",
+                    "head_repository": {"full_name": api.repository}, "status": "completed", "conclusion": "success"}
+                artifacts = [{"name": name, "expired": False} for name in ("nightly-aggregate-10-1", "nightly-strict-a-10-1")]
+                members = {"nightly.json": result, "summary.json": summary, "trace.json": trace}
+                with patch("ci_publish.json_member", side_effect=lambda _api, _artifact, name: members[name]), patch(
+                        "ci_publish.complete_attempt_jobs", return_value=[{"name": "nightly-strict-a", "runner_group_name": "GitHub Actions", "labels": []}]):
+                    report = ci_report.nightly_attempt(api, run, 1, artifacts)
+                self.assertEqual(result["status"], report["status"])
+                self.assertEqual([], report["diagnostics"]["missing"])
+                self.assertEqual(("failed", retained_v5), (report["observed"][0]["outcome"], "environment_limit" in report["observed"][0]))
+
     def test_strict_workflow_aggregate_binds_the_retry_claim_to_the_official_trace(self):
         import contextlib
         import io

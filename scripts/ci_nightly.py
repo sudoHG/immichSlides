@@ -375,7 +375,6 @@ def main(argv=None):
             binding_record = decode(binding_path.read_text())
             fields(binding_record, {"schema_version", "review_packages"}, "shard package bindings")
             require(type(binding_record["schema_version"]) is int and binding_record["schema_version"] == 1, "unknown binding schema")
-            bindings = validate_bindings(binding_record["review_packages"], summary)
             trace = decode((paths[0].parent / "trace.json").read_text())
             require(all(type(trace[key]) in (int, float) and math.isfinite(trace[key]) for key in ("started_epoch", "finished_epoch")),
                     "invalid shard clock")
@@ -385,10 +384,16 @@ def main(argv=None):
                 require(not plan.get("diagnostic_shard"), "nightly retry: requires a full nightly run")
                 verified = {}
                 _, missing = method_observations(summary, trace,
-                    runner_hosted=os.environ.get("RUNNER_ENVIRONMENT") == "github-hosted", verified_cases=verified)
+                    runner_hosted=os.environ.get("RUNNER_ENVIRONMENT") == "github-hosted", verified_cases=verified,
+                    review_bindings=binding_record["review_packages"])
                 require(not missing, "nightly retry: strict official method evidence is incomplete")
                 summary["population"]["observed"] = [verified[identity_key(item["identity"])]
                                                        for item in summary["population"]["observed"]]
+                if summary["status"] == "unverified" and not any(item["outcome"] == "needs-human-review"
+                        for item in summary["population"]["observed"]):
+                    summary["status"] = "failed"
+            bindings = validate_bindings(binding_record["review_packages"], summary)
+            if needs_retry_trace:
                 summaries.append(summary)
             review_packages.extend(bindings)
             traces.append({"shard": shard["id"], "started_epoch": trace["started_epoch"], "finished_epoch": trace["finished_epoch"]})

@@ -20,7 +20,7 @@ from ci_summary import (ARCHIVE_DOWNLOAD_FAILURES, ContractError, decode, identi
                         parse_summary, require, validate_observation, validate_test_identity,
                         NON_INFRASTRUCTURE_DIAGNOSTICS, observation, test_identity, validate_nightly_retry, render_nightly_retry,
                         nightly_retry_outcome, public_retry_failure, render_retry_failure, validate_retry_failure,
-                        parse_nightly_summary)
+                        parse_nightly_summary, fallback_nightly_retry)
 from ci_publish import GitHub
 
 REPORT_PATH = ".github/workflows/ci-report.yml"
@@ -133,15 +133,22 @@ def historical_strict_population(summary):
     return {identity_key(case) for case in decode(matrix.decode("utf-8"))["cases"]}
 
 
-def method_observations(raw, trace, *, runner_hosted=False, verified_cases=None):
+def method_observations(raw, trace, *, runner_hosted=False, verified_cases=None, review_bindings=None):
     summary = parse_nightly_summary(raw)
     population = summary["population"]
     phases = trace["warm"]
     discarded = set()
+    from strict_e2e_p2_contract import P2_CASES
+    bound_reviews = None if review_bindings is None else {identity_key(item["identity"]) for item in review_bindings}
     for index, row in enumerate(population["observed"]):
         backup = row.get("nightly_retry_first")
         supplemental = row.get("retry_failure")
         key = identity_key(row["identity"])
+        if (bound_reviews is not None and key not in bound_reviews and "nightly_retry" in row
+                and row["outcome"] == "needs-human-review" and row["identity"]["dimensions"]["suite"] in P2_CASES):
+            population["observed"][index] = fallback_nightly_retry(row)
+            discarded.add(key)
+            continue
         if backup is None and supplemental is None:
             if len(row["attempts"]) == 1:
                 discarded.add(key)
@@ -1121,12 +1128,13 @@ def nightly_attempt(api, run, attempt, artifacts):
             require(hosted, "environment limit requires a verified GitHub-hosted strict job" if yellow else
                     "nightly retry: requires a verified GitHub-hosted strict job")
         verified = {}
-        methods, absent = method_observations(summary, trace, runner_hosted=hosted, verified_cases=verified)
+        methods, absent = method_observations(summary, trace, runner_hosted=hosted, verified_cases=verified,
+                                              review_bindings=raw.get("review_packages", []))
         yellow_cases.update({key: item["environment_limit"] for key, item in verified.items() if "environment_limit" in item})
         flaky_cases.update({key: item["nightly_retry"] for key, item in verified.items() if "nightly_retry" in item})
         for claim in flaky:
             key = identity_key(claim["identity"])
-            if key in verified and "environment_limit" in verified[key]:
+            if key in verified and "nightly_retry" not in verified[key]:
                 restored[key] = claim["nightly_retry"]
         observed.extend(methods)
         missing.extend(absent)
@@ -1186,10 +1194,14 @@ def nightly_attempt(api, run, attempt, artifacts):
     for key, claim in restored.items():
         if raw_flaky.get(key) == claim:
             raw_flaky.pop(key)
-            raw_yellow[key] = yellow_cases[key]
+            if key in yellow_cases:
+                raw_yellow[key] = yellow_cases[key]
     require(raw_yellow == yellow_cases, "nightly environment limit bindings differ")
     require(raw_flaky == flaky_cases, "nightly retry: aggregate bindings differ")
-    if raw["status"] == "environment-limited":
+    if any(key not in yellow_cases for key in restored):
+        entry["status"] = "failed"
+        entry["tiers"] = {**entry["tiers"], "strict": "failed"}
+    if raw["status"] == "environment-limited" and entry["status"] == "environment-limited":
         require(bool(yellow_cases or flaky_cases) and not raw["errors"] and not infrastructure and not missing
                 and not any(item["outcome"] in FAILURES and "environment_limit" not in item for item in observed)
                 and all(item["outcome"] in {"passed", "flaky-passed", "needs-human-review"}
