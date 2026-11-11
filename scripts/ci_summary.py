@@ -4,12 +4,17 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import math
 import re
 from pathlib import Path
 
 SCHEMA_VERSION = 1
+NIGHTLY_RETRY_READER_VERSION = 1
+NIGHTLY_RETRY_FIELD = "nightly_retry"
+NIGHTLY_RETRY_FIRST_FIELD = "nightly_retry_first"
+RETRY_FAILURE_FIELD = "retry_failure"
 BOUNDED_DIAGNOSTICS_FIELD = "bounded_diagnostics"
 OUTCOMES = {"passed", "failed", "skipped", "flaky-passed", "crashed", "timed-out", "not-run", "needs-human-review"}
 ATTEMPT_OUTCOMES = OUTCOMES - {"flaky-passed"}
@@ -146,6 +151,125 @@ def observation(identity, outcome, duration_seconds, *, reason=None, message=Non
     return entry
 
 
+def validate_nightly_retry(entry):
+    proof = entry[NIGHTLY_RETRY_FIELD]
+    fields(proof, {"schema_version", "policy_version", "runner_hosted", "failed_case_count"}, "nightly retry: proof")
+    require(type(proof["schema_version"]) is int and proof["schema_version"] == 1,
+            "nightly retry: unsupported schema version")
+    require(type(proof["policy_version"]) is int and proof["policy_version"] == 1,
+            "nightly retry: unsupported policy version")
+    require(proof["runner_hosted"] is True, "nightly retry: requires GitHub-hosted runner")
+    require(type(proof["failed_case_count"]) is int and 1 <= proof["failed_case_count"] <= 3,
+            "nightly retry: failed case count must be 1 through 3")
+    from ci_flaky import ASSERTION_FAILURE, P2_REVIEW_SUITES, IOS_PENDING_REVIEW_SUITE
+    attempts = entry.get("attempts", [])
+    review_pending = False
+    p2 = False
+    if entry["identity"]["kind"] == "strict":
+        p2 = entry["identity"]["dimensions"].get("suite") in P2_REVIEW_SUITES
+        review_pending = (entry.get("outcome") == "needs-human-review"
+                          and (p2 or entry["identity"]["dimensions"].get("suite") == IOS_PENDING_REVIEW_SUITE))
+    require((entry.get("outcome") == "flaky-passed" or review_pending) and entry["identity"]["kind"] in {"strict", "ui"}
+            and (not p2 or review_pending)
+            and len(attempts) == 2 and attempts[0]["outcome"] == "failed" and attempts[0]["exit_code"] == 65
+            and attempts[0]["reason"] == ASSERTION_FAILURE
+            and attempts[1]["outcome"] == ("needs-human-review" if review_pending else "passed")
+            and type(attempts[1]["exit_code"]) is int and attempts[1]["exit_code"] == 0
+            and "environment_limit" not in entry and all(NIGHTLY_RETRY_FIELD not in attempt for attempt in attempts),
+            "nightly retry: requires exactly one assertion failure then one passing retry")
+
+
+def public_nightly_retry_failure(entry):
+    from ci_failure_diagnostics import validate_failure_messages
+    from ci_flaky import ASSERTION_FAILURE
+    messages = entry.get("failure_messages") or entry["attempts"][0].get("failure_messages")
+    try:
+        validate_failure_messages(messages)
+    except ContractError:
+        return ASSERTION_FAILURE
+    return "; ".join(messages)
+
+
+def render_nightly_retry(entry):
+    return f"{nightly_retry_outcome(entry)}: first failure: {public_nightly_retry_failure(entry)}. One retry passed."
+
+
+def nightly_retry_outcome(entry):
+    return "needs-human-review (flaky; yellow)" if entry["outcome"] == "needs-human-review" else "flaky (yellow)"
+
+
+def public_retry_failure(attempt):
+    """Retain the second nonpassing attempt's structured evidence without runner text."""
+    from ci_failure_diagnostics import DIAGNOSTIC_FIELDS, FAILURE_MESSAGES_FIELD, FIRST_FAILURE_FIELD, VALIDATOR_FAILURE_FIELD
+    optional = DIAGNOSTIC_FIELDS | {FAILURE_MESSAGES_FIELD, FIRST_FAILURE_FIELD, VALIDATOR_FAILURE_FIELD}
+    return {"number": 2, "outcome": attempt["outcome"], "duration_seconds": attempt["duration_seconds"],
+            "exit_code": attempt["exit_code"], "message": None,
+            "reason": "Official test was skipped" if attempt["outcome"] == "skipped" else None,
+            **{key: attempt[key] for key in optional & attempt.keys()}}
+
+
+def validate_retry_failure(entry):
+    require(entry.get("outcome") == "failed" and entry["identity"]["kind"] in {"strict", "ui"}
+            and ("attempts" not in entry or len(entry["attempts"]) == 1 and entry["attempts"][0]["outcome"] == "failed"),
+            "retry failure: requires one failed strict or UI attempt")
+    retry = entry[RETRY_FAILURE_FIELD]
+    try:
+        require(isinstance(retry, dict) and type(retry.get("number")) is int and retry["number"] == 2
+                and retry == public_retry_failure(retry), "expected one sanitized second attempt")
+        require(retry["outcome"] in {"failed", "skipped", "crashed", "timed-out", "not-run"}, "expected a nonpassing retry")
+        standalone = {"identity": entry["identity"], "outcome": retry["outcome"],
+                      "duration_seconds": retry["duration_seconds"], "attempts": [{**retry, "number": 1}]}
+        for key in ("failure_messages", "first_failure", "validator_failure_message"):
+            if key in retry:
+                standalone[key] = retry[key]
+        validate_observation(standalone)
+    except (ContractError, KeyError, TypeError) as error:
+        message = str(error) if isinstance(error, ContractError) else "invalid second attempt"
+        raise ContractError("retry failure: " + message) from error
+
+
+def fallback_nightly_retry(entry):
+    """Copy the original verdict for callers to bind independently to first-attempt evidence."""
+    retained = entry
+    if NIGHTLY_RETRY_FIRST_FIELD in entry:
+        try:
+            validate_nightly_retry_first(entry)
+            retained = entry[NIGHTLY_RETRY_FIRST_FIELD]
+        except (ContractError, KeyError, TypeError, AttributeError):
+            pass
+    first = copy.deepcopy(retained)
+    for field in (NIGHTLY_RETRY_FIELD, NIGHTLY_RETRY_FIRST_FIELD, RETRY_FAILURE_FIELD):
+        first.pop(field, None)
+    first["attempts"] = first["attempts"][:1]
+    first["duration_seconds"] = first["attempts"][0]["duration_seconds"]
+    first["outcome"] = "failed"
+    validate_observation(first)
+    return first
+
+
+def validate_nightly_retry_first(entry):
+    first = entry[NIGHTLY_RETRY_FIRST_FIELD]
+    require(NIGHTLY_RETRY_FIELD in entry and isinstance(first, dict)
+            and not {NIGHTLY_RETRY_FIELD, NIGHTLY_RETRY_FIRST_FIELD, RETRY_FAILURE_FIELD} & first.keys(),
+            "nightly retry first: requires a passing retry and a standalone first observation")
+    validate_observation(first)
+    primary = entry["attempts"][0]
+    require(first["identity"] == entry["identity"] and first["outcome"] == "failed"
+            and first.get("environment_limit", {}).get("policy_version") == 5
+            and all(first["attempts"][0][field] == primary[field] for field in ("duration_seconds", "exit_code")),
+            "nightly retry first: v5 observation differs from the original attempt")
+
+
+def render_retry_failure(attempt):
+    seconds = attempt["duration_seconds"]
+    elapsed = "unknown" if seconds is None else f"{seconds:.3f}s"
+    details = [*attempt.get("failure_messages", [])]
+    if "validator_failure_message" in attempt:
+        details.append(attempt["validator_failure_message"])
+    label = f"Retry outcome {attempt['outcome']}, exit {attempt['exit_code']}, duration {elapsed}."
+    return " ".join([label, *details])
+
+
 def validate_observation(entry):
     from ci_failure_diagnostics import DIAGNOSTIC_FIELDS, VALIDATOR_FAILURE_FIELD, FIRST_FAILURE_FIELD, validate_diagnostic_fields
     require(isinstance(entry, dict), "observation must be an object")
@@ -154,10 +278,18 @@ def validate_observation(entry):
     except ValueError as error:
         raise ContractError(str(error)) from error
     from ci_failure_diagnostics import ENVIRONMENT_LIMIT_FIELD, FAILURE_MESSAGES_FIELD, validate_environment_limit
-    optional = DIAGNOSTIC_FIELDS | {VALIDATOR_FAILURE_FIELD, FIRST_FAILURE_FIELD, ENVIRONMENT_LIMIT_FIELD, FAILURE_MESSAGES_FIELD}
-    fields(entry, {"identity", "outcome", "duration_seconds", "attempts"} | (optional & entry.keys()), "observation")
+    optional = DIAGNOSTIC_FIELDS | {VALIDATOR_FAILURE_FIELD, FIRST_FAILURE_FIELD, ENVIRONMENT_LIMIT_FIELD, FAILURE_MESSAGES_FIELD,
+                                    NIGHTLY_RETRY_FIELD}
+    fields(entry, {"identity", "outcome", "duration_seconds", "attempts"}
+           | ((optional | {RETRY_FAILURE_FIELD, NIGHTLY_RETRY_FIRST_FIELD}) & entry.keys()), "observation")
     validate_test_identity(entry["identity"])
     require(entry["outcome"] in OUTCOMES, "invalid outcome")
+    if NIGHTLY_RETRY_FIELD in entry:
+        validate_nightly_retry(entry)
+    if NIGHTLY_RETRY_FIRST_FIELD in entry:
+        validate_nightly_retry_first(entry)
+    if RETRY_FAILURE_FIELD in entry:
+        validate_retry_failure(entry)
     if ENVIRONMENT_LIMIT_FIELD in entry:
         validate_environment_limit(entry[ENVIRONMENT_LIMIT_FIELD])
         require((entry["identity"]["kind"] == "strict" or entry["identity"]["kind"] == "ui"
@@ -173,12 +305,14 @@ def validate_observation(entry):
                     for key in (*DIAGNOSTIC_FIELDS, FIRST_FAILURE_FIELD, FAILURE_MESSAGES_FIELD)),
                     "environment limit: v5 attempt differs from observation")
     if FAILURE_MESSAGES_FIELD in entry:
-        require(entry["identity"]["kind"] in {"strict", "ui"} and entry["outcome"] == "failed"
-                and len(entry["attempts"]) == 1 and entry["attempts"][0].get(FAILURE_MESSAGES_FIELD) == entry[FAILURE_MESSAGES_FIELD],
+        require(entry["identity"]["kind"] in {"strict", "ui"}
+                and (entry["outcome"] == "failed" or NIGHTLY_RETRY_FIELD in entry)
+                and entry["attempts"][0].get(FAILURE_MESSAGES_FIELD) == entry[FAILURE_MESSAGES_FIELD],
                 "failure messages require one matching failed attempt")
     if FIRST_FAILURE_FIELD in entry:
         require(entry["identity"]["kind"] in {"strict", "ui"}
-                and entry["outcome"] in {"failed", "flaky-passed", "crashed", "timed-out", "not-run"},
+                and (entry["outcome"] in {"failed", "flaky-passed", "crashed", "timed-out", "not-run"}
+                     or entry["outcome"] == "needs-human-review" and NIGHTLY_RETRY_FIELD in entry),
                 "first failure requires a failing strict or UI observation")
     if VALIDATOR_FAILURE_FIELD in entry:
         require(entry["identity"]["kind"] == "strict" and entry["outcome"] == "failed",
@@ -203,6 +337,7 @@ def validate_observation(entry):
         require(isinstance(attempt, dict), "attempt must be an object")
         fields(attempt, {"number", "outcome", "duration_seconds", "exit_code", "reason", "message"}
                | (optional & attempt.keys()), "attempt")
+        require(NIGHTLY_RETRY_FIELD not in attempt, "nightly retry: proof belongs to observation only")
         if FIRST_FAILURE_FIELD in attempt:
             require(entry["identity"]["kind"] in {"strict", "ui"}
                     and attempt["outcome"] in {"failed", "crashed", "timed-out", "not-run"},
@@ -235,9 +370,10 @@ def validate_observation(entry):
         require(FIRST_FAILURE_FIELD in entry and FIRST_FAILURE_FIELD in first
                 and entry[FIRST_FAILURE_FIELD] == first[FIRST_FAILURE_FIELD],
                 "first failure must match the first failing attempt")
-    if entry["outcome"] == "flaky-passed":
+    if entry["outcome"] == "flaky-passed" or entry["outcome"] == "needs-human-review" and NIGHTLY_RETRY_FIELD in entry:
         require(len(entry["attempts"]) == 2 and entry["attempts"][0]["outcome"] == "failed"
-                and entry["attempts"][1]["outcome"] == "passed", "flaky pass requires failed then passed attempts")
+                and entry["attempts"][1]["outcome"] == ("needs-human-review" if entry["outcome"] == "needs-human-review" else "passed"),
+                "flaky pass requires failed then passed attempts")
     elif entry["outcome"] == "failed":
         require(entry["attempts"][-1]["outcome"] in {"failed", "skipped", "crashed", "timed-out", "not-run"},
                 "failed aggregate requires a nonpassing final attempt")
@@ -370,6 +506,16 @@ def validate_summary_v1(payload):
         validate_receipt(case[BOUNDED_DIAGNOSTICS_FIELD])
         evidence_by_case[token] = case[BOUNDED_DIAGNOSTICS_FIELD]
     for entry in population["observed"]:
+        if NIGHTLY_RETRY_FIELD in entry or RETRY_FAILURE_FIELD in entry:
+            require(source["workflow_path"] == ".github/workflows/ci-nightly.yml"
+                    and identity["event"] in {"schedule", "workflow_dispatch"} and identity["ref"] == "refs/heads/main"
+                    and source["fork_originated"] is False and run["tier"] == entry["identity"]["kind"]
+                    and ((run["tier"] == "strict" and run["job"] == "nightly-strict") or
+                         (run["tier"] == "ui" and run["job"] in {"ui-iphone", "ui-ipad", "ui-appletv"}))
+                    and bool(run["shard"]),
+                    "nightly retry: requires a main nightly shard")
+    for row in population["observed"]:
+        entry = row.get(NIGHTLY_RETRY_FIRST_FIELD, row)
         if ENVIRONMENT_LIMIT_FIELD in entry:
             proof = entry[ENVIRONMENT_LIMIT_FIELD]
             require(environment_limit_evidence(payload, entry, [] if proof["resources"] is None else [proof["resources"]], runner_hosted=proof["runner_hosted"],
@@ -428,6 +574,28 @@ def parse_summary(raw):
     return parse_record(raw, SUMMARY_READERS)
 
 
+def parse_nightly_summary(raw):
+    """Validate the producer record independently of optional retry evidence."""
+    payload = copy.deepcopy(decode(raw))
+    backups = []
+    for entry in payload["population"]["observed"]:
+        if RETRY_FAILURE_FIELD in entry:
+            try:
+                validate_retry_failure(entry)
+            except (ValueError, KeyError, TypeError, AttributeError):
+                entry.pop(RETRY_FAILURE_FIELD)
+        if NIGHTLY_RETRY_FIRST_FIELD in entry:
+            backups.append((entry, entry.pop(NIGHTLY_RETRY_FIRST_FIELD)))
+    parse_summary(payload)
+    for entry, backup in backups:
+        entry[NIGHTLY_RETRY_FIRST_FIELD] = backup
+        try:
+            parse_summary(payload)
+        except (ValueError, KeyError, TypeError, AttributeError):
+            entry.pop(NIGHTLY_RETRY_FIRST_FIELD)
+    return payload
+
+
 def markdown_text(value):
     # Keep candidate-controlled text inside table cells; never render raw HTML.
     return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("|", "&#124;").replace("\n", " ").replace("`", "&#96;")
@@ -452,7 +620,10 @@ def render_markdown(payload):
                             for detail in (attempt["reason"], attempt["message"]) if detail)
         if "failure_messages" in entry:
             message = "; ".join(filter(None, [message, *entry["failure_messages"]]))
-        outcome = "failed (environment-limited; yellow)" if "environment_limit" in entry else entry["outcome"]
+        if NIGHTLY_RETRY_FIELD in entry:
+            message = public_nightly_retry_failure(entry)
+        outcome = (nightly_retry_outcome(entry) if NIGHTLY_RETRY_FIELD in entry else
+                   "failed (environment-limited; yellow)" if "environment_limit" in entry else entry["outcome"])
         hints = []
         if payload.get("strict_case_evidence"):
             from ci_bounded_diagnostics import render_app_hang_hint, render_continue_watch
@@ -487,6 +658,9 @@ def render_markdown(payload):
                     for entry in population["observed"]) else "timing")
         lines.append(f"\n> **WARNING: hosted {category} failures are environment-limited (yellow), never passes.**")
     for entry in population["observed"]:
+        if NIGHTLY_RETRY_FIELD in entry:
+            lines.append("\nWARNING: " + markdown_text(entry["identity"]["key"]) + ": "
+                         + markdown_text(render_nightly_retry(entry)) + "\n")
         if "first_failure" in entry:
             from ci_failure_diagnostics import render_first_failure
             lines.append("\nFirst failure: " + markdown_text(entry["identity"]["key"]) + ": "
@@ -495,6 +669,8 @@ def render_markdown(payload):
             from ci_failure_diagnostics import render_environment_limit
             lines.append("\n" + markdown_text(entry["identity"]["key"]) + ": "
                          + markdown_text(render_environment_limit(entry["environment_limit"])) + "\n")
+        if RETRY_FAILURE_FIELD in entry:
+            lines.append(markdown_text(entry["identity"]["key"] + ": " + render_retry_failure(entry[RETRY_FAILURE_FIELD])))
     for entry in payload["infrastructure"]:
         category = NON_INFRASTRUCTURE_DIAGNOSTICS.get(entry["code"], "Infrastructure")
         lines.append(f"\n{category}: {markdown_text(entry['code'])}: {markdown_text(entry['message'])}")

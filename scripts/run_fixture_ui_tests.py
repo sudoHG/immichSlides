@@ -374,28 +374,43 @@ def write_fixture_summary(summary, output):
 
 
 def finish_fixture_coverage(summary, official, expected, policy, *, exit_code, runner_hosted,
-                            base_registry=None, evaluated_on=None):
+                            base_registry=None, evaluated_on=None, nightly_retry=False):
     """Keep failed producer status while a clean, fully bound tool-yellow invocation exits zero."""
     from ci_failure_diagnostics import (attach_failure_messages, environment_limit_evidence,
         bind_ui_environment_limits, EMITTED_ENVIRONMENT_POLICY_VERSION)
+    from ci_flaky import first_nightly_attempt, split_failed_nightly_retry
     attach_failure_messages(summary["population"]["observed"], official)
     if any(entry["outcome"] == "failed" for entry in summary["population"]["observed"]):
         summary["status"] = "failed"
     clean = exit_code in {0, 65} and not summary["infrastructure"]
-    if clean:
-        for index, entry in enumerate(summary["population"]["observed"]):
-            proof = environment_limit_evidence(summary, entry, [], runner_hosted=runner_hosted,
-                policy_version=EMITTED_ENVIRONMENT_POLICY_VERSION)
-            if proof is None:
-                continue
-            candidate = copy.deepcopy(summary)
-            target = candidate["population"]["observed"][index]
-            target["environment_limit"] = target["attempts"][0]["environment_limit"] = proof
-            try:
-                bind_ui_environment_limits(candidate, official)
-            except (ValueError, TypeError, KeyError, AttributeError):
-                continue
-            entry["environment_limit"] = entry["attempts"][0]["environment_limit"] = proof
+    for index, entry in enumerate(summary["population"]["observed"]):
+        split = split_failed_nightly_retry(entry) if nightly_retry else None
+        passing_retry = nightly_retry and "nightly_retry" in entry
+        if not clean and split is None:
+            continue
+        first, retry_failure = split if split is not None else (entry, None)
+        if passing_retry:
+            first = first_nightly_attempt(entry)
+        if first is not entry:
+            attach_failure_messages([first], official)
+        proof = environment_limit_evidence(summary, first, [], runner_hosted=runner_hosted,
+            policy_version=EMITTED_ENVIRONMENT_POLICY_VERSION)
+        if proof is None:
+            continue
+        candidate = copy.deepcopy(summary)
+        target = copy.deepcopy(first)
+        candidate["population"]["observed"][index] = target
+        target["environment_limit"] = target["attempts"][0]["environment_limit"] = proof
+        try:
+            bind_ui_environment_limits(candidate, official)
+        except (ValueError, TypeError, KeyError, AttributeError):
+            continue
+        if passing_retry:
+            entry["nightly_retry_first"] = target
+            continue
+        if retry_failure is not None:
+            target["retry_failure"] = retry_failure
+        entry.update(target)
     verdict = evaluate_population(summary, expected, policy, environment="fixture",
         base_registry=base_registry, evaluated_on=evaluated_on)
     yellow = clean and verdict["status"] == "environment-limited"
@@ -507,6 +522,56 @@ def main(argv=None, *, simulator_prepared=False):
     first_failure_root = None
     rows = []
     bundles, digests = [], {}
+    retry_invocations = []
+    judge = None
+
+    def mark_retry_problem(path, *, timed_out=False):
+        nonlocal code
+        from ci_flaky import record_nightly_retry_failure
+        call = next((item for item in retry_invocations[1:] if item["result_bundle"] == str(path)), None)
+        if call is None:
+            return False
+        selector = call["command"][-1].removeprefix("-only-testing:immichSlidesUITests/")
+        for index, entry in enumerate(summary["population"]["observed"]):
+            if entry["identity"]["key"] != selector or "retry_failure" in entry:
+                continue
+            first = record_nightly_retry_failure(entry, outcome="timed-out" if timed_out else "not-run",
+                duration_seconds=call["duration_seconds"], exit_code=124 if timed_out else call["exit_code"])
+            summary["population"]["observed"][index] = first
+            for row in rows:
+                if row["identity"]["key"] == selector:
+                    row.update(outcome="failed", duration_seconds=first["duration_seconds"],
+                               reason=first["attempts"][0]["reason"])
+            if code == 0:
+                code = retry_invocations[0]["exit_code"]
+            return True
+        return False
+
+    def write_coverage_rows():
+        write_json(output / "fixture-coverage.json", {"schema_version": 1, "device": args.device, "tests": rows,
+                   "covered_selectors": ["immichSlidesUITests/" + row["identity"]["key"] for row in rows
+                                         if row["outcome"] == "passed"]})
+        table = "| Test | Device | Outcome | Seconds | Reason |\n|---|---|---|---:|---|\n"
+        table += "".join(f"| `{row['identity']['key']}` | {args.device} | {row['outcome']} | "
+                         + ("unknown" if row['duration_seconds'] is None else f"{row['duration_seconds']:.2f}")
+                         + f" | {(row['reason'] or '').replace('|', '/').replace(chr(10), ' ')} |\n"
+                         for row in rows)
+        (output / "fixture-coverage.md").write_text(table)
+
+    def retain_first_failure_images():
+        retained_images = {(attempt["number"], first_failure_selectors.index(entry["identity"]["key"]))
+            for entry in summary["population"]["observed"]
+            for attempt in entry["attempts"] + ([entry["retry_failure"]] if "retry_failure" in entry else [])
+            if attempt.get("first_failure", {}).get("screenshot", {}).get("status") == "captured"}
+        for number in (1, 2):
+            folder = output / "failure-screenshots" / ("first-failure-attempt-" + str(number))
+            if folder.is_dir():
+                for image in folder.glob("*.png"):
+                    if image.stem.isdigit() and (number, int(image.stem)) not in retained_images:
+                        image.unlink()
+                if not any(folder.iterdir()):
+                    folder.rmdir()
+
     try:
         waits = wait_configuration(args.wait_factor)
         require(math.isfinite(args.timeout_minutes) and args.timeout_minutes > 0, "timeout must be finite and positive")
@@ -522,8 +587,10 @@ def main(argv=None, *, simulator_prepared=False):
         require(not any(output.iterdir()), "output directory must be fresh")
         identity = run_identity(os.environ, ci=bool(os.environ.get("GITHUB_ACTIONS")))
         workflow, fork = source_metadata(identity, os.environ, None)
+        from ci_flaky import nightly_retry_enabled
+        nightly_retry = bool(args.shard and args.total_timeout_minutes and nightly_retry_enabled(ROOT, os.environ))
         inputs_record = fixture_inputs(ROOT, args.device, args.only_testing, shard=args.shard,
-                                       shard_manifest=args.shard_manifest, mode=args.mode, listed_only_retry=args.listed_only_retry,
+                                       shard_manifest=args.shard_manifest, mode=args.mode, listed_only_retry=args.listed_only_retry or nightly_retry,
                                        scoped_plan_sha256=args.scoped_plan_sha256,
                                        policy_revision=identity["base_sha"] if args.compiled_from_official_results
                                        and identity["event"] == "pull_request" else None)
@@ -570,14 +637,29 @@ def main(argv=None, *, simulator_prepared=False):
                                       startup_timeout_seconds=SERVICE_STARTUP_TIMEOUT_SECONDS)
         print(f"Fixture preflight ready: http://{host}:{port}/api (public set C)", flush=True)
         timeout = args.timeout_minutes * 60
+        retry_reserved_export_seconds = 0
+        def allow_nightly_retry(_entry):
+            nonlocal retry_reserved_export_seconds
+            from ci_flaky import nightly_retry_reserve
+            reserve = nightly_retry_reserve(total_deadline - time.monotonic(), args.result_export_timeout_seconds,
+                                            retry_reserved_export_seconds)
+            if reserve is None:
+                return False
+            retry_reserved_export_seconds = reserve
+            return True
         def execute(command, name):
+            invocation_deadline = total_deadline
+            if nightly_retry and len(bundles) > 1:
+                invocation_deadline -= retry_reserved_export_seconds + 4 * args.result_export_timeout_seconds
+            if time.monotonic() >= invocation_deadline:
+                return 124
             disk_check(args.min_free_gib)
             require(not os.path.lexists(ROOT / "Config/env.xcconfig"), "private configuration reappeared")
             print("Running " + name, flush=True)
             with (work / (name + ".log")).open("w") as log:
                 process = subprocess.Popen(command, cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT,
                                            start_new_session=True)
-                deadline = min(time.monotonic() + timeout, total_deadline)
+                deadline = min(time.monotonic() + timeout, invocation_deadline)
                 try:
                     while time.monotonic() < deadline:
                         try:
@@ -644,7 +726,7 @@ def main(argv=None, *, simulator_prepared=False):
         command = base + selections + ["-resultBundlePath", str(bundle)] + [
             "-skip-testing:immichSlidesUITests/" + entry["identity"]["key"] for entry in deselections]
         print("Fixture test command: " + shlex.join(command), flush=True)
-        if args.listed_only_retry:
+        if args.listed_only_retry or nightly_retry:
             evaluated_on = date.today()
             registry_hash = summary["hashes"]["policies"]["known-flaky"]
             expected_by_key = {entry["key"]: entry for entry in selected}
@@ -666,7 +748,10 @@ def main(argv=None, *, simulator_prepared=False):
             def read_attempt(path, identity_for_key, elapsed, exit_code):
                 started = time.monotonic()
                 try:
-                    return read_details(path, identity_for_key, elapsed, exit_code)
+                    observed = read_details(path, identity_for_key, elapsed, exit_code)
+                    if nightly_retry and len(bundles) == 1 and {item["identity"]["key"] for item in observed} != set(expected_by_key):
+                        raise OfficialResultReadError(ContractError("First official result differs from selected cases"), observed)
+                    return observed
                 finally:
                     reads.append({"attempt": len(reads) + 1, "elapsed_seconds": time.monotonic() - started})
                     write_json(output / "export-read-timing.json", {"schema_version": 1, "attempts": reads,
@@ -694,11 +779,14 @@ def main(argv=None, *, simulator_prepared=False):
             retry_result = run_xcode_attempts(command, registry, tier="ui", environment="fixture", today=evaluated_on,
                 identity_for_key=lambda key: expected_by_key[key],
                 reset=lambda: reset_simulator_app(udid, platform=platform, boot_submitted=True),
-                execute=attempt, allocate_bundle=allocate, read=read_attempt)
+                execute=attempt, allocate_bundle=allocate, read=read_attempt, nightly_retry=nightly_retry,
+                retry_allowed=allow_nightly_retry if nightly_retry else None)
             if official_mode:
                 summary["compiled_evidence"]["first_exit_code"] = retry_result["invocations"][0]["exit_code"]
             summary["population"]["observed"] = retry_result["observed"]
             summary["infrastructure"].extend(retry_result["infrastructure"])
+            if nightly_retry:
+                retry_invocations = retry_result["invocations"]
             write_json(output / "retry-invocations.json", dict(retry_result, registry_revision=revision, registry_sha256=registry_hash))
             code = retry_result["exit_code"]
             invocation_codes = [invocation["exit_code"] for invocation in retry_result["invocations"]]
@@ -732,9 +820,7 @@ def main(argv=None, *, simulator_prepared=False):
             collected, omitted = collect_crash_reports(udid, crash_reports_before,
                                                        output / "failure-screenshots" / "crash-logs", crash_directories)
             print(f"Crash reports for this simulator: {len(collected)} collected, {len(omitted)} omitted", flush=True)
-        for number, path in enumerate(bundles, 1):
-            if not path.exists():
-                continue
+        def export_attempt(number, path):
             suffix = "" if number == 1 else "-attempt-" + str(number)
             if args.failure_screenshots:
                 attachment_root = output / "failure-screenshots" / ("attempt-" + str(number))
@@ -748,6 +834,7 @@ def main(argv=None, *, simulator_prepared=False):
                 digests[path] = export_private_result_bundle(path, output, [PUBLIC_API_KEY], suffix=suffix,
                     summary_timeout_seconds=args.result_export_timeout_seconds, export_timeout_seconds=args.result_export_timeout_seconds,
                     enrich_failure_diagnostics=True,
+                    retry_admission=nightly_retry and number == 1,
                     first_failure_spool=first_failure_attempts.get(path),
                     first_failure_images=output / "failure-screenshots" / ("first-failure-attempt-" + str(1 if number == 1 else 2)))
             finally:
@@ -758,11 +845,26 @@ def main(argv=None, *, simulator_prepared=False):
                 "official_export_seconds": time.monotonic() - export_started, "timeout_seconds": args.result_export_timeout_seconds})
             official = json.loads((output / ("official-tests" + suffix + ".json")).read_text())
             verify_official_device(official, udid, args.device)
+            return official
+
+        for number, path in enumerate(bundles, 1):
+            if not path.exists():
+                if nightly_retry and number > 1:
+                    mark_retry_problem(path)
+                continue
+            try:
+                official = export_attempt(number, path)
+            except (OSError, ValueError, TypeError, KeyError, CommandError, OfflineCommandError, subprocess.SubprocessError) as error:
+                if not nightly_retry or number == 1:
+                    raise
+                digests.pop(path, None)
+                mark_retry_problem(path, timed_out=isinstance(error, subprocess.TimeoutExpired))
+                continue
             if official_mode and number == 1:
                 record_official_discovery(summary, official)
                 compiled = summary["population"]["compiled"]
         digest = digests.get(bundle)
-        if not args.listed_only_retry:
+        if not (args.listed_only_retry or nightly_retry):
             require(bundle in digests, "official fixture result is missing")
             rows = coverage_rows(selected, compiled, official, args.device)
             for row in rows:
@@ -777,19 +879,9 @@ def main(argv=None, *, simulator_prepared=False):
         for number in range(1, len(bundles) + 1):
             suffix = "" if number == 1 else "-attempt-" + str(number)
             path = output / ("official-tests" + suffix + ".json")
-            if path.is_file():
+            if path.is_file() and (not nightly_retry or number == 1 or bundles[number - 1] in digests):
                 attach_first_failures(summary["population"]["observed"], json.loads(path.read_text()), 1 if number == 1 else 2)
-        retained_images = {(attempt["number"], first_failure_selectors.index(entry["identity"]["key"]))
-            for entry in summary["population"]["observed"] for attempt in entry["attempts"]
-            if attempt.get("first_failure", {}).get("screenshot", {}).get("status") == "captured"}
-        for number in (1, 2):
-            folder = output / "failure-screenshots" / ("first-failure-attempt-" + str(number))
-            if folder.is_dir():
-                for image in folder.glob("*.png"):
-                    if image.stem.isdigit() and (number, int(image.stem)) not in retained_images:
-                        image.unlink()
-                if not any(folder.iterdir()):
-                    folder.rmdir()
+        retain_first_failure_images()
         if code == 0:
             summary["status"] = "unverified" if any(row["outcome"] == "skipped" for row in rows) else "passed"
         if official_mode:
@@ -798,9 +890,12 @@ def main(argv=None, *, simulator_prepared=False):
         measured_policy = {"schema_version": 1, "approval_records": [], "expected_skips": [], "deselections": []}
         first_export = output / "official-tests.json"
         first_official = json.loads(first_export.read_text()) if first_export.is_file() else {"testNodes": []}
-        verdict, code = finish_fixture_coverage(summary, first_official, declared, policy if args.mode == "pr" else measured_policy,
-            exit_code=code, runner_hosted=os.environ.get("RUNNER_ENVIRONMENT") == "github-hosted",
-            base_registry=registry, evaluated_on=evaluated_on)
+        def judge():
+            return finish_fixture_coverage(summary, first_official, declared, policy if args.mode == "pr" else measured_policy,
+                exit_code=code, runner_hosted=os.environ.get("RUNNER_ENVIRONMENT") == "github-hosted",
+                base_registry=registry, evaluated_on=evaluated_on, nightly_retry=nightly_retry)
+
+        verdict, code = judge()
         write_json(output / "coverage-verdict.json", verdict)
     except KeyboardInterrupt:
         code = 130
@@ -837,15 +932,7 @@ def main(argv=None, *, simulator_prepared=False):
                     code = code or 1
                     summary["status"] = "failed"
                     summary["infrastructure"].append({"code": "discovery-invalid", "message": str(error)[:200]})
-            write_json(output / "fixture-coverage.json", {"schema_version": 1, "device": args.device, "tests": rows,
-                       "covered_selectors": ["immichSlidesUITests/" + row["identity"]["key"] for row in rows
-                                             if row["outcome"] == "passed"]})
-            table = "| Test | Device | Outcome | Seconds | Reason |\n|---|---|---|---:|---|\n"
-            table += "".join(f"| `{row['identity']['key']}` | {args.device} | {row['outcome']} | "
-                             + ("unknown" if row['duration_seconds'] is None else f"{row['duration_seconds']:.2f}")
-                             + f" | {(row['reason'] or '').replace('|', '/').replace(chr(10), ' ')} |\n"
-                             for row in rows)
-            (output / "fixture-coverage.md").write_text(table)
+            write_coverage_rows()
             active().attach(summary)
             code = write_fixture_summary(summary, output) or code
             try:
@@ -856,13 +943,30 @@ def main(argv=None, *, simulator_prepared=False):
                 summary["infrastructure"].append({"code": "sensitive-scan-failed", "message": str(error)[:200]})
                 write_fixture_summary(summary, output)
             failures = []
+            changed_retry = False
             if first_failure_root is not None:
                 shutil.rmtree(first_failure_root, ignore_errors=True)
             for number, path in reversed(list(enumerate(bundles, 1))):
                 disposal_output = output if number == 1 else output / ("disposal-attempt-" + str(number))
-                disposal_output.mkdir(exist_ok=True)
-                failures.extend(finalize_fixture_run(path, disposal_output, digests.get(path),
-                                                    successful=code == 0 and summary["status"] == "passed"))
+                retry_disposal = number > 1 and bool(retry_invocations)
+                try:
+                    disposal_output.mkdir(exist_ok=True)
+                    attempt_failures = finalize_fixture_run(path, disposal_output, digests.get(path),
+                                                           successful=code == 0 and summary["status"] == "passed")
+                except OSError:
+                    if not retry_disposal:
+                        raise
+                    attempt_failures = ["Retry bundle disposal failed"]
+                if attempt_failures and retry_disposal:
+                    changed_retry = mark_retry_problem(path) or changed_retry
+                else:
+                    failures.extend(attempt_failures)
+            if changed_retry and judge is not None:
+                verdict, code = judge()
+                retain_first_failure_images()
+                write_coverage_rows()
+                write_json(output / "coverage-verdict.json", verdict)
+                code = write_fixture_summary(summary, output) or code
             if failures:
                 code = code or 1
                 summary["status"] = "failed"
@@ -871,6 +975,10 @@ def main(argv=None, *, simulator_prepared=False):
             if code == 0 and not summary["infrastructure"] and verdict is not None and verdict["status"] == "environment-limited":
                 from ci_failure_diagnostics import render_environment_limit
                 for entry in summary["population"]["observed"]:
+                    if "nightly_retry" in entry:
+                        from ci_summary import render_nightly_retry
+                        print("::warning title=Flaky nightly test::" + entry["identity"]["key"]
+                              + ": " + render_nightly_retry(entry), flush=True)
                     if "environment_limit" in entry:
                         print("::warning title=Environment-limited XCTest tool::" + entry["identity"]["key"]
                               + ": " + render_environment_limit(entry["environment_limit"]), flush=True)

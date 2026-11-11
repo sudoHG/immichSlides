@@ -997,6 +997,69 @@ populations are complete. Producer status is not a replacement for the later tru
 evaluator. That evaluator must fail closed on missing populations, unexpected skips,
 failed/cancelled jobs, absent artifacts and other incomplete evidence.
 
+### Nightly failed-method retry
+
+The optional observation-only `nightly_retry` receipt is independently versioned:
+`schema_version: 1`, `policy_version: 1`, `runner_hosted: true` and integer
+`failed_case_count` from 1 through 3. It retains the existing two-attempt
+`flaky-passed` result, with the official assertion failure first and a passing
+retry second; the receipt makes that result yellow rather than a pass. First
+failure diagnostics, public messages and `first_failure` stay on the first
+attempt and observation. A failed retry leaves the first verdict in effect. For
+a v5 yellow first failure, the one-attempt proof and duration remain intact.
+The optional observation-only `retry_failure` retains attempt 2, including its
+nonpassing outcome, exit code, duration and validated diagnostics. Retry-phase
+reset, execution and evidence problems use this field alongside the original
+failed attempt. A clean failed retry can retain the two-attempt red result.
+Free-form attempt text is excluded. A passing retry can carry
+`nightly_retry_first` with the independently verifiable v5 first observation.
+For P2 and unsigned pause evidence, a successful automated retry retains
+`needs-human-review` with failed-then-H attempts and the same tracking receipt;
+it never becomes a signed visual pass or an explicit recovery pass.
+P2 retry package publication must succeed to retain that review-pending claim.
+A refused package or missing retry binding falls back to the first observation.
+Historical records without this extension retain their original interpretation.
+The [nightly policy](CI_NIGHTLY.md#one-failed-method-retry) defines admission,
+capacity and human-review boundaries.
+
+Reader and producer ship together behind a fail-closed runtime gate. Production
+output is enabled only when `GITHUB_ACTIONS=true`,
+`RUNNER_ENVIRONMENT=github-hosted`, event is `schedule` or `workflow_dispatch`,
+ref is `refs/heads/main`, and `GITHUB_WORKFLOW_REF` names this repository's
+`ci-nightly.yml@refs/heads/main`. The checked-out trusted `origin/main` must equal
+`GITHUB_SHA`; its Git blob `scripts/ci_summary.py` must declare
+`NIGHTLY_RETRY_READER_VERSION = 1`. Checkout sets the remote-tracking ref to the
+tested commit in this job, so the gate checks that the **same commit** on main
+carries reader v1. It implements the same-PR rollout exception. Missing refs,
+Git errors or an older reader leave the producer off. Branch dispatches,
+local runs, PR scoped UI and the PR
+strict tracer emit no new retry claims. A dispatch must also have an empty
+`shard` input and no `live_only`, `strict_only`, `ui_only` or
+`probe_environment_refusal` flag; unavailable/invalid dispatch inputs leave it
+off. Consequently the first qualifying
+main nightly after merge can enable the producer, while an unmerged branch
+cannot outrun the trusted reader. No CI approval is granted by the gate.
+
+Strict traces retain a single first phase per declared case and nest a separate
+`retry` phase with its own official method/count and reuse facts. The exact
+`retry_selected_methods` (with the first key also in `retry_method`), original
+`retry_assertion_methods`, failed-case count and both `official_method_durations`
+and `official_method_exit_codes` maps bind filtered execution; successful person
+siblings can reuse their unchanged first evidence. Fixture UI retains
+`official-tests.json` and `official-tests-attempt-N.json` for independent reader
+validation. Both the aggregate and the reporter bind a flaky claim to the
+original and retry evidence. They use the first verdict if the retry claim
+cannot be bound, and discard any unbound supplementary failure evidence.
+For `filter-person`, a first-attempt v5 claim requires the first two sessions
+to have passed. The ordinary runner stops at its first failed session.
+Optional retry-admission detail reads share the existing export allowance and
+are skipped when it cannot fit the existing per-read cap of up to 60 seconds.
+A malformed optional method duration disables retry admission while preserving
+the official export.
+UI attempt-2 screenshots with a captured first-failure receipt remain attached
+to `retry_failure`. The upload gate validates their dimensions, byte count,
+canonical PNG content and exact declared file set alongside the original attempt.
+
 ### Reader-first evolution
 
 Lifecycle pause evidence has a separate receipt version from summary versions.

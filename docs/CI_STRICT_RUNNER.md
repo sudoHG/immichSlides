@@ -1544,7 +1544,9 @@ python3 -B scripts/run_strict_ci_tracer.py --platform ios \
 ```
 
 Repeat with `--platform tvos` and its destination. The tracer groups its cases,
-builds each shard once, then runs each case without building. It does not retry.
+builds each shard once, then runs each case without building. PR tracing does not
+retry; hosted main nightly additionally supports the
+[bounded failed-method retry](CI_NIGHTLY.md#one-failed-method-retry).
 The hosted workflow uses an initial 1,200-second cold budget, 600-second warm budget,
 and a 20 GiB disk preflight, matching the nightly strict floor ([CI_NIGHTLY](CI_NIGHTLY.md)). Each runner segment has an additional 240-second outer
 allowance for reset/export/cleanup; warm segments also allow 300 seconds of readiness

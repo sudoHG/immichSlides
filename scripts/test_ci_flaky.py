@@ -33,6 +33,98 @@ def registry():
 
 
 class RegistryTests(unittest.TestCase):
+    def test_nightly_retry_requires_hosted_main_and_the_trusted_main_reader(self):
+        from ci_flaky import nightly_retry_enabled
+        environment = {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted",
+                       "GITHUB_EVENT_NAME": "schedule", "GITHUB_REF": "refs/heads/main",
+                       "GITHUB_REPOSITORY": "sudoHG/immichSlides", "GITHUB_SHA": "a" * 40,
+                       "GITHUB_WORKFLOW_REF": "sudoHG/immichSlides/.github/workflows/ci-nightly.yml@refs/heads/main"}
+        for reader, enabled in (("SCHEMA_VERSION = 1\n", False),
+                                ("NIGHTLY_RETRY_READER_VERSION = 1\n", True)):
+            with self.subTest(reader=reader), mock.patch("ci_flaky.subprocess.check_output",
+                    side_effect=["a" * 40, reader]):
+                self.assertEqual(nightly_retry_enabled(Path("."), environment), enabled)
+        for changed in ({"GITHUB_REF": "refs/heads/candidate"}, {"GITHUB_EVENT_NAME": "pull_request"},
+                        {"RUNNER_ENVIRONMENT": "self-hosted"}, {"GITHUB_ACTIONS": "false"},
+                        {"GITHUB_WORKFLOW_REF": "sudoHG/immichSlides/.github/workflows/ci-ui.yml@refs/heads/main"}):
+            with self.subTest(changed=changed), mock.patch("ci_flaky.subprocess.check_output") as git:
+                self.assertFalse(nightly_retry_enabled(Path("."), environment | changed))
+                git.assert_not_called()
+        with mock.patch("ci_flaky.subprocess.check_output", return_value="b" * 40):
+            self.assertFalse(nightly_retry_enabled(Path("."), environment))
+        with tempfile.TemporaryDirectory() as directory:
+            event_path = Path(directory) / "event.json"
+            for inputs, enabled in (({}, True), ({"shard": "iphone-shard"}, False), ({"strict_only": "true"}, False),
+                                    ({"ui_only": True}, False), ({"live_only": "true"}, False)):
+                event_path.write_text(json.dumps({"inputs": inputs}))
+                with self.subTest(inputs=inputs), mock.patch("ci_flaky.subprocess.check_output",
+                        side_effect=["a" * 40, "NIGHTLY_RETRY_READER_VERSION = 1\n"]):
+                    self.assertEqual(nightly_retry_enabled(Path("."), environment | {
+                        "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_EVENT_PATH": str(event_path)}), enabled)
+
+    def test_nightly_filtered_retry_is_bounded_and_does_not_need_a_registry_entry(self):
+        command = ["xcodebuild", "test-without-building", "-resultBundlePath", "first.xcresult"]
+        for count, retry_outcome, first_exit, eligible in ((1, "passed", 65, True), (3, "passed", 65, True),
+                (4, "passed", 65, False), (1, "failed", 65, True), (1, "passed", 124, False),
+                (1, "passed", 130, False), (1, "passed", 1, False)):
+            with self.subTest(count=count, retry=retry_outcome, first_exit=first_exit):
+                identities = [test_identity("ui", f"ExampleTests/testCase{index}", platform="ios") for index in range(count)]
+                first = [observation(identity, "failed", 1, reason="Official XCTest assertion failure", exit_code=65)
+                         for identity in identities]
+                calls, resets = [], []
+                def execute(call):
+                    calls.append(call)
+                    return (first_exit if len(calls) == 1 else 0 if retry_outcome == "passed" else 65), 1
+                def read(path, identify, elapsed, code):
+                    if len(calls) == 1:
+                        return copy.deepcopy(first)
+                    key = calls[-1][-1].removeprefix("-only-testing:immichSlidesUITests/")
+                    return [observation(identify(key), retry_outcome, 1, exit_code=code)]
+                actual = run_xcode_attempts(command, {"schema_version": 1, "entries": []}, tier="ui",
+                    environment="fixture", today=date(2026, 11, 10), identity_for_key=lambda key: next(i for i in identities if i["key"] == key),
+                    reset=lambda: resets.append(True), execute=execute, read=read,
+                    allocate_bundle=lambda: Path(f"retry-{len(calls)}") / "result.xcresult", nightly_retry=True)
+                self.assertEqual(len(calls), 1 + count if eligible else 1)
+                self.assertEqual(len(resets), count if eligible else 0)
+                self.assertEqual([item["outcome"] for item in actual["observed"]],
+                                 ["flaky-passed" if eligible and retry_outcome == "passed" else "failed"] * count)
+                self.assertEqual(actual["exit_code"] == 0, eligible and retry_outcome == "passed")
+
+    def test_nightly_retry_does_not_start_when_the_remaining_budget_is_insufficient(self):
+        identity = test_identity("ui", "ExampleTests/testCase", platform="ios")
+        failed = observation(identity, "failed", 1, reason="Official XCTest assertion failure", exit_code=65)
+        result = retry_observations([failed], {"schema_version": 1, "entries": []}, tier="ui", environment="fixture",
+            today=date(2026, 11, 10), reset=lambda: self.fail("budget denial must precede reset"),
+            execute=lambda _: self.fail("budget denial must precede XCTest"), nightly_retry=True,
+            retry_allowed=lambda _: False)
+        self.assertEqual(result, [failed])
+
+    def test_nightly_retry_reserves_reads_and_all_pending_exports_inside_the_original_deadline(self):
+        from ci_flaky import nightly_retry_reserve
+        self.assertIsNone(nightly_retry_reserve(2160, 180, 0))
+        self.assertEqual(nightly_retry_reserve(2161, 180, 0), 720)
+        self.assertIsNone(nightly_retry_reserve(2880, 180, 720))
+        self.assertEqual(nightly_retry_reserve(2881, 180, 720), 1440)
+
+    def test_nightly_retry_stops_after_a_retry_export_failure(self):
+        identities = [test_identity("ui", f"ExampleTests/testCase{index}", platform="ios") for index in range(2)]
+        first = [observation(identity, "failed", 1, reason="Official XCTest assertion failure", exit_code=65)
+                 for identity in identities]
+        calls = []
+        def read(*_args):
+            if len(calls) == 1:
+                return first
+            raise ContractError("retry official evidence missing")
+        result = run_xcode_attempts(["xcodebuild", "test-without-building", "-resultBundlePath", "first.xcresult"],
+            {"schema_version": 1, "entries": []}, tier="ui", environment="fixture", today=date(2026, 11, 10),
+            identity_for_key=lambda key: next(item for item in identities if item["key"] == key),
+            reset=lambda: None, execute=lambda call: (calls.append(call) or (65, 1)), read=read,
+            allocate_bundle=lambda: Path(f"attempt-{len(calls)}") / "result.xcresult", nightly_retry=True)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual([len(item["attempts"]) for item in result["observed"]], [1, 1])
+        self.assertEqual(result["observed"][0]["retry_failure"]["outcome"], "not-run")
+        self.assertEqual(result["infrastructure"], [])
+
     def test_branch_registry_is_available_only_to_bound_nightly_fixture_ui_dispatch(self):
         environment = {"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_SHA": "a" * 40,
                        "GITHUB_REF": "refs/heads/candidate", "GITHUB_REPOSITORY": "owner/repo", "GITHUB_JOB": "ui-shards",

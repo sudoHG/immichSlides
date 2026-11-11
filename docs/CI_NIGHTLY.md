@@ -280,10 +280,12 @@ without an infrastructure entry.
 The person shard contains both fixtures: two three-session cases and four single-session
 cases require ten invocations. Cold/warm/reset/export allowances total 148 minutes
 (24 cold plus 124 warm), with up to 50 more minutes if every invocation consumes
-its readiness budget: 198 minutes total. The 215-minute job cap leaves the original
-17-minute margin for initial preparation, setup, uploads and final cleanup, so a slow shard
-can publish its failed records before runner teardown. Readiness can exceed its
-scheduling deadline while the last timed-out query finishes cleanup; see the
+its readiness budget: 198 minutes for those allowances. The job cap is 215
+minutes. The nominal difference of 17 minutes also pays for checkout, Python
+environment and toolchain setup, simulator creation and early boot submission,
+the post-build gate, review-package export, uploads and final cleanup. It is
+an upper bound on time available to publish records. Readiness can exceed its
+scheduling deadline while the last timed-out query finishes cleanup. See the
 [shared bounds and overrun logs](CI_STRICT_RUNNER.md#shared-simulator-reset).
 Reaching the job cap is a failure; unrun cases remain unverified.
 Reduce Motion additionally reserves 1800 seconds per case for its command channel:
@@ -293,9 +295,8 @@ These derive from the shared 60-second simulator-command constant; see the
 An ordinary six-case shard previously bounds at `24 + 6 × 19 = 138 minutes`
 (including cold-build overhead and every readiness allowance). The TV shard has
 two Reduce Motion fixtures, so its bound becomes `138 + 2 × 30 = 198 minutes`;
-each affected iPhone shard has one and bounds at 168 minutes. The person shard's
-198-minute bound and overall 215-minute cap remain unchanged, retaining the same
-17-minute margin. Matrix membership, product windows and recording holds do not change.
+each affected iPhone shard has one and bounds at 168 minutes. These are case and
+build allowances within the 215-minute job cap, with the same surrounding steps.
 If simulator creation or the separate preparation gate fails before the tracer starts,
 the workflow invokes the tracer's `--preparation-failed` accounting mode before upload.
 It writes the same bound compact schema with every planned case failed, every attempt
@@ -464,7 +465,8 @@ compiled identity fails only that entry as `declared-not-compiled`; other observ
 outcomes remain available. Attempted failures count as execution. A failed entry whose
 attempts are all `not-run` does not count, just like a synthetic `not-run` placeholder.
 Every entry has an outcome. Missing artifacts, failed/cancelled jobs,
-infrastructure failures and matrix discrepancies are red. There is no automatic retry.
+infrastructure failures and matrix discrepancies are red. Hosted main runs can use
+the bounded failed-method retry below; branch diagnostics retain the original behavior.
 Only Actions **Re-run all jobs** is supported: artifact provenance is bound to one
 run attempt. Re-running only failed jobs cannot reuse successful shards from an earlier
 attempt, and the aggregate fails for their missing artifacts.
@@ -504,6 +506,85 @@ issue recovery. Informational Vision outcomes are listed separately and excluded
 health, with one exception: an informational failure can turn an otherwise
 environment-limited night red (see
 [prepared hosted strict environment limits](CI_SUMMARY.md#prepared-hosted-strict-environment-limits)).
+
+### One failed-method retry
+
+Hogan approved option A on 2026-11-10: an official XCTest case that fails once
+and passes one filtered retry is `flaky` (yellow). This is separate from the v5
+starvation/tool exception. It applies only to GitHub-hosted full-nightly strict
+and fixture UI on main, after the [trusted reader gate](CI_SUMMARY.md#nightly-failed-method-retry).
+PR scoped UI and the PR strict tracer retain their existing behavior.
+Informational strict suites retain their existing non-gating interpretation and
+receive no new retry claim.
+
+The strict tracer finishes the shard's first pass before deciding whether to
+retry. Fixture UI reads the complete first invocation. At most three failed
+official methods per shard qualify; more than three starts no retry. Only
+official assertion failures with known durations and complete selected-method
+evidence qualify, regardless of the known-flaky registry. Preparation, build,
+infrastructure, cancellation, crashes, incomplete/missing exports, unclassified
+failures and failed evidence/contract checks in the first invocation grant no
+retry. A clean retry pass with both official results bound is flaky yellow.
+Otherwise the first invocation supplies the verdict. A first failure that
+qualifies under v5 keeps its yellow proof and duration. A red first failure
+stays red. Reset, execution and result-collection problems during retry are
+supplementary evidence and do not affect the shard verdict or exit status.
+The aggregate discards supplementary evidence it cannot bind. Each case can
+be retried at most once.
+
+Retries reuse the same dedicated simulator and immutable Products after the
+existing tier's app, keychain and privacy reset. Each Xcode invocation selects
+one exact failed method. `filter-person` stops its first attempt at the first
+failed session, matching the ordinary strict runner. If an earlier session fails,
+later sessions have no official results and the case stays red. A v5 proof
+requires both preceding sessions to have passed before the final `nofaces`
+session fails. Producer and reader both enforce this boundary. Only verified
+passing siblings' official records and named screenshots are copied to a retry
+directory. Retried sessions produce their own screenshots and shared person-result
+JSON for the full validator. Both attempts' official counts, method outcomes,
+durations and public failure diagnostics remain available. P2 and unsigned pause
+timing still require human review.
+If a P2 retry's review package cannot be published, the exporter saves the first
+verdict and the aggregate applies the same fallback for a missing retry binding.
+The [review-package policy](CI_P2_REVIEWS.md) defines the binding requirements.
+
+Strict retries are admitted only if their existing full case bound fits within
+198 minutes from tracer start. The tracer clock includes the cold build,
+post-build simulator gate, case execution and in-tracer export. The 215-minute
+job also charges checkout, Python/toolchain setup, simulator creation and early
+boot before that clock, and review-package export, uploads and cleanup after it.
+At the 198-minute tracer ceiling, the budget left for the steps after the tracer
+is `17 minutes − elapsed pre-tracer steps`. One ordinary case costs
+`600 + 300 + 240 = 1140 seconds` (19 minutes). The conservative
+three-session person bound is `3 × (600 + 300) + 240 = 2940 seconds`
+(49 minutes), even when only one session executes. Reduce Motion adds the
+existing 1800 seconds. Thus a fully consumed 198-minute shard gets no retry;
+three ordinary retries require at least 57 minutes of unused capacity.
+Insufficient capacity keeps the first verdict and prints `retry not run`.
+
+UI retains its 85-minute aggregate Xcode deadline and 65-minute invocation cap.
+A retry requires more than `720 + 8 × 180 = 2160 seconds` (36 minutes)
+remaining for existing preparation/reset, four possible result reads and four
+final exports (including failure attachments), plus 720 seconds reserved for each already admitted retry's final
+exports. Its Xcode call is clamped to the remaining original deadline after
+reserving those reads and exports. The 110-minute job still accounts
+for `85 + 2 + 10 + 13` minutes. Exports outside the existing total deadline
+continue to spend its surrounding-step margin. Exhausting the retry budget
+keeps the first verdict. The surrounding job cap still applies to the entire
+job, including publication and cleanup.
+
+The reporter tracks first failures and passing retries as yellow events. They
+never count as explicit passing recovery nights, and yellow alone does not
+reopen a closed issue. The reporter uses the existing issue identity, which
+groups UI observations by method and platform across devices. A UTC date
+counts as yellow only when every observed row for that identity is flaky,
+starvation yellow or native-tool yellow. The second adjacent yellow date turns
+red. A same-day pass or red row prevents that date from counting. Missing
+shards contribute no rows. A date with no observations for the identity breaks
+adjacency. Failures for other identities have no effect on the streak.
+The completion target is three nights without red, while every yellow remains
+visible; this does not change issue closure's explicit-pass requirement.
+Release eligibility remains disabled for the nightly skeleton, including yellow.
 
 Yellow means a retained failure, never a pass. Producers now emit
 [v5 timing and XCTest tool exceptions](CI_SUMMARY.md#policy-v5-reader-preparation),

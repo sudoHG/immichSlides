@@ -8,6 +8,25 @@ authority. See [trusted publication](CI_PUBLISHER.md) for admission and approval
 
 ## Collection and retention
 
+The [nightly failed-method retry](CI_SUMMARY.md#nightly-failed-method-retry)
+reader accepts the version-1 `nightly_retry` extension alongside unchanged old
+summaries. Its producer is enabled only by the exact hosted-main trusted-reader
+gate documented there; branch dispatches emit no new claims, and the first
+qualifying main nightly after merge enables it automatically. The reader checks
+both official attempts before accepting a flaky yellow. An unbound retry
+falls back to the first verdict. For a v5 yellow followed by a failed retry,
+the first proof and duration remain authoritative. The second attempt is
+supplementary evidence. Compact history and issue
+details retain structured outcomes, exit codes, durations and allowlisted failure
+messages. The issue's state stores the retry details once.
+`flaky` is a yellow tracked event: it can open/update its tracking issue, supplies
+no explicit-pass night and does not reopen a closed issue as a fresh failure.
+Its yellow dates join v5 starvation/tool dates for the existing second-adjacent-UTC-
+date escalation. A red overall night never clears another identity's yellow
+evidence. The exact per-identity/date rule and capacity refusal are defined in
+[the nightly policy](CI_NIGHTLY.md#one-failed-method-retry). Release policy and
+P2 human-review requirements remain unchanged.
+
 Readers accept active [yellow policy v5](CI_SUMMARY.md#policy-v5-reader-preparation)
 alongside unchanged v1–v4 history for the full 90-day window. V5 native tool
 claims in nightly strict and fixture UI bind complete original official-method

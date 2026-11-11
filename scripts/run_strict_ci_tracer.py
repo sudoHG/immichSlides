@@ -34,7 +34,8 @@ from strict_e2e_runner_support import (IOS_LIFECYCLE_PAUSE_SUITE, SIMULATOR_READ
                                      REDUCE_MOTION_CASE_ALLOWANCE_SECONDS,
                                      SIMULATOR_PREPARATION_TIMEOUT_SECONDS,
                                      POST_TEST_PHASE_PREFIX, POST_TEST_FAILURE_REASONS,
-                                     destination_udid, pause_visual_verdict, prepare_simulator)
+                                     destination_udid, pause_visual_verdict, prepare_simulator,
+                                     filter_person_first_attempt_complete)
 
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = ROOT / "scripts/strict-tracer.json"
@@ -42,6 +43,73 @@ SIMULATOR_PREPARATION_HARD_TIMEOUT_SECONDS = SIMULATOR_PREPARATION_TIMEOUT_SECON
 RUNNER_MEMBER_PROBE_TIMEOUT_SECONDS = 3
 MAX_RUNNER_PROCESS_TABLE_BYTES = 2 * 1024 * 1024
 BUILD_OPERATIONS = re.compile(r"^(?:SwiftCompile|SwiftEmitModule|CompileC|Ld |CompileAssetCatalog|CodeSign |ProcessInfoPlistFile )", re.MULTILINE)
+NIGHTLY_EXECUTION_BUDGET_SECONDS = 198 * 60
+
+
+def nightly_retry_candidates(results, *, informational=()):
+    """Finish the shard's first attempt before admitting any filtered second attempt."""
+    failed_count = sum(method["result"] == "Failed" for phase in results for method in phase.get("official_methods", []))
+    if failed_count > 3 or any(phase.get("infrastructure") for phase in results):
+        return []
+    candidates = []
+    for phase in results:
+        if phase["identity"]["dimensions"]["suite"] in informational:
+            continue
+        methods = phase.get("official_methods", [])
+        expected = len(FILTER_PERSON_SESSIONS) if phase["identity"]["dimensions"]["suite"] == "filter-person" else 1
+        official = phase.get("official_summary") or {}
+        failed = [method for method in methods if method["result"] == "Failed"]
+        if (phase.get("exit_code") == 65 and phase.get("log_present") is True and phase.get("build_operations") == 0
+                and phase.get("products_unchanged") is True and not phase.get("official_error")
+                and not phase.get("automated_contract_failed") and len(methods) == expected
+                and official.get("totalTestCount") == expected and official.get("skippedTests") == 0
+                and failed and all(method["identifier"] in phase.get("retry_assertion_methods", []) for method in failed)):
+            candidates.append((phase, [method["identifier"] for method in failed], failed_count))
+    return candidates
+
+
+def strict_retry_problem(phase):
+    if phase["exit_code"] == 124:
+        return "timed-out"
+    official = phase.get("official_summary") or {}
+    if (phase.get("infrastructure") or phase.get("retry_collection_failed") or phase.get("official_error")
+            or (phase["exit_code"] == 0 and phase.get("automated_contract_failed"))
+            or not official or not phase.get("official_methods") or phase.get("log_present") is not True
+            or phase.get("build_operations") != 0 or phase.get("products_unchanged") is not True):
+        return "not-run"
+    if phase["exit_code"] != 0 and official.get("result") == "Passed":
+        return "crashed"
+    return None
+
+
+def strict_method_retry(first, second, method):
+    """Join the selected method's official evidence without promoting a failed contract."""
+    from ci_flaky import ASSERTION_FAILURE, merge_retry
+    from ci_failure_diagnostics import DIAGNOSTIC_FIELDS
+    identity = dict(first["identity"], key=method)
+    def row(phase, *, initial):
+        official = next(item for item in phase.get("official_methods", []) if item["identifier"] == method)
+        case_rows, _ = evaluate_tracer([phase["identity"]], [phase])
+        outcome = "failed" if initial else case_rows[0]["outcome"]
+        method_exit = phase.get("official_method_exit_codes", {}).get(method, phase["exit_code"])
+        if (not initial and official["result"] == "Passed" and method_exit == 0
+                and phase.get("exit_code") == 65 and any(item["result"] == "Failed" for item in phase["official_methods"])
+                and not phase.get("infrastructure") and not phase.get("automated_contract_failed")
+                and phase.get("products_unchanged") is True and phase.get("build_operations") == 0 and phase.get("log_present") is True):
+            outcome = "passed"
+        diagnostics = {field: official[field] for field in DIAGNOSTIC_FIELDS if field in official}
+        entry = observation(identity, outcome, phase["official_method_durations"][method],
+            reason=ASSERTION_FAILURE if outcome == "failed" and official["result"] == "Failed" else
+                   case_rows[0]["attempts"][0]["reason"],
+            exit_code=method_exit if outcome in {"passed", "needs-human-review"} else phase["exit_code"],
+            failure_diagnostics=diagnostics or None)
+        for field in ("first_failure", "failure_messages"):
+            if outcome == "failed" and field in official:
+                entry[field] = entry["attempts"][0][field] = copy.deepcopy(official[field])
+        return entry
+    return merge_retry(row(first, initial=True), row(second, initial=False),
+        nightly_proof={"schema_version": 1, "policy_version": 1, "runner_hosted": True,
+                       "failed_case_count": first["retry_failed_case_count"]})
 
 
 def read_case_official(evidence, suite):
@@ -165,6 +233,23 @@ def evaluate_tracer(declared, results, *, interrupted=False, informational=()):
         messages = failed_methods[0].get("failure_messages") if len(failed_methods) == 1 else None
         if outcome == "failed" and isinstance(messages, list) and 0 < len(messages) <= MAX_FAILURE_MESSAGES:
             observed[-1]["failure_messages"] = observed[-1]["attempts"][0]["failure_messages"] = copy.deepcopy(messages)
+    for index, result in enumerate(results):
+        if "retry" not in result:
+            continue
+        retry = result["retry"]
+        from ci_flaky import merge_retry, record_nightly_retry_failure
+        first = observed[index]
+        problem = strict_retry_problem(retry)
+        if problem is not None:
+            observed[index] = record_nightly_retry_failure(first, outcome=problem,
+                duration_seconds=retry["duration_seconds"], exit_code=retry["exit_code"])
+            continue
+        second, _ = evaluate_tracer([result["identity"]], [retry])
+        # The proof retains the original assertion, even though suite failure reasons are broader.
+        first["attempts"][0]["reason"] = "Official XCTest assertion failure"
+        merged = merge_retry(first, second[0], nightly_proof={"schema_version": 1, "policy_version": 1,
+                             "runner_hosted": True, "failed_case_count": result["retry_failed_case_count"]})
+        observed[index] = merged
     declared_keys = {identity_key(item) for item in declared}
     observed_keys = {identity_key(item["identity"]) for item in observed}
     complete = bool(declared) and declared_keys == observed_keys and len(results) == len(declared)
@@ -237,11 +322,13 @@ def produce_environment_limits(summary, results, *, informational=(), policy_ver
     from ci_failure_diagnostics import (ENVIRONMENT_LIMIT_FIELD, environment_limit_evidence,
         EMITTED_ENVIRONMENT_POLICY_VERSION, xctest_tool_class)
     from ci_bounded_diagnostics import validate_receipt
+    from ci_flaky import split_failed_nightly_retry
     policy_version = EMITTED_ENVIRONMENT_POLICY_VERSION if policy_version is None else policy_version
     summary.pop("strict_case_evidence", None)
     if rejections is not None:
         rejections.clear()
-    for index, entry in enumerate(summary["population"]["observed"]):
+    for index, original in enumerate(summary["population"]["observed"]):
+        entry = original
         def reject(reason):
             if rejections is not None and entry["outcome"] == "failed":
                 rejections[identity_key(entry["identity"])] = reason
@@ -254,10 +341,24 @@ def produce_environment_limits(summary, results, *, informational=(), policy_ver
             reject("phase-count")
             continue
         phase = phases[0]
+        retry_failure = entry.get("retry_failure")
+        passing_retry = "nightly_retry" in entry
+        if policy_version == 5 and "retry" in phase:
+            split = split_failed_nightly_retry(entry)
+            if split is not None:
+                _, retry_failure = split
+            if retry_failure is not None or passing_retry:
+                phase = {key: value for key, value in phase.items() if key != "retry"}
+                first_observed, _ = evaluate_tracer([entry["identity"]], [phase])
+                entry = first_observed[0]
         if (phase.get("infrastructure") or phase.get("official_error")
                 or phase.get("exit_code") in {None, 124, 130} or phase.get("log_present") is not True
                 or phase.get("build_operations") != 0 or phase.get("products_unchanged") is not True):
             reject("invocation-not-verified")
+            continue
+        if (policy_version == 5 and entry["identity"]["dimensions"]["suite"] == "filter-person"
+                and not filter_person_first_attempt_complete(phase.get("official_methods", []))):
+            reject("first-person-session-incomplete")
             continue
         rejection_reason = "invalid-bounded-receipt"
         try:
@@ -281,7 +382,8 @@ def produce_environment_limits(summary, results, *, informational=(), policy_ver
                 continue
             # Validate hosting, attempt shape and original case binding through the merged reader.
             candidate = copy.deepcopy(summary)
-            target = candidate["population"]["observed"][index]
+            target = copy.deepcopy(entry)
+            candidate["population"]["observed"][index] = target
             target[ENVIRONMENT_LIMIT_FIELD] = target["attempts"][0][ENVIRONMENT_LIMIT_FIELD] = proof
             candidate.setdefault("strict_case_evidence", []).append({"identity": entry["identity"],
                 "bounded_diagnostics": ledger})
@@ -302,7 +404,14 @@ def produce_environment_limits(summary, results, *, informational=(), policy_ver
         except (ValueError, TypeError, KeyError, AttributeError, IndexError):
             reject(rejection_reason)
             continue
-        entry[ENVIRONMENT_LIMIT_FIELD] = entry["attempts"][0][ENVIRONMENT_LIMIT_FIELD] = proof
+        if passing_retry:
+            original["nightly_retry_first"] = target
+        elif retry_failure is not None:
+            target["retry_failure"] = retry_failure
+            original.clear()
+            original.update(target)
+        else:
+            original[ENVIRONMENT_LIMIT_FIELD] = original["attempts"][0][ENVIRONMENT_LIMIT_FIELD] = proof
         summary["strict_case_evidence"] = candidate["strict_case_evidence"]
     if summary["status"] != "failed":
         return 0
@@ -420,6 +529,8 @@ def main(argv=None):
     output.mkdir(parents=True)
     manifest = decode(args.manifest.read_text())
     nightly = args.shard is not None
+    from ci_flaky import nightly_retry_enabled
+    nightly_retry = nightly and nightly_retry_enabled(ROOT, os.environ)
     if nightly:
         from ci_nightly import parse_manifest, shards
         manifest = parse_manifest(manifest)
@@ -491,6 +602,7 @@ def main(argv=None):
              "budgets_seconds": {"cold": args.cold_timeout_seconds, "warm": args.warm_timeout_seconds},
              "min_free_gib": args.min_free_gib}
     trace["started_epoch"] = time.time()
+    execution_started = time.monotonic()
     results = []
     can_cleanup = True
     runner_cleanup_error = None
@@ -535,6 +647,12 @@ def main(argv=None):
         exit_code = produce_environment_limits(summary, results,
             informational=[entry["suite"] for entry in manifest.get("informational", [])],
             rejections=environment_rejections)
+        if nightly_retry and not summary["infrastructure"] and completed:
+            failures = [entry for entry in summary["population"]["observed"] if entry["outcome"] == "failed"
+                        and "environment_limit" not in entry]
+            if not failures and any("nightly_retry" in entry for entry in summary["population"]["observed"]):
+                summary["status"] = "failed"
+                exit_code = 0
         # Retain the existing case/receipt join for diagnostic hints even when a case is not yellow.
         bound = {identity_key(case["identity"]) for case in summary.get("strict_case_evidence", [])}
         for phase in results:
@@ -548,8 +666,8 @@ def main(argv=None):
                 bound.add(identity_key(phase["identity"]))
         write_summary(summary, records)
 
-    def invoke(case, evidence, derived, warm):
-        nonlocal runner_cleanup_error
+    def invoke(case, evidence, derived, warm, *, retry_of=None):
+        nonlocal runner_cleanup_error, can_cleanup
         native_allowance = native_budget.reserve_case() if warm else 0
         process_allowance = process_budget.reserve_case(recorder=diagnostics) if warm else 0
         command = [sys.executable, "-B", str(ROOT / "scripts/run_strict_e2e.py"),
@@ -564,6 +682,10 @@ def main(argv=None):
                    "--min-free-gib", str(args.min_free_gib), "--test-without-building" if warm else "--warm-up-only"]
         if warm and simulator_prepared:
             command.append("--simulator-boot-submitted")
+        if retry_of is not None:
+            for method in retry_of["retry_selected_methods"]:
+                command.extend(["--nightly-retry-method", method])
+            command.extend(["--nightly-retry-source", str(output / "cases" / (f"{cases.index(case):03d}-" + case["suite"]))])
         started = time.monotonic()
         print(f"{'warm' if warm else 'cold'} {case['suite']}", flush=True)
         phase = {"identity": identities[cases.index(case)]} if warm else {"shard": derived.name}
@@ -578,20 +700,33 @@ def main(argv=None):
                                  + (REDUCE_MOTION_CASE_ALLOWANCE_SECONDS if warm and case["suite"] == "p2-reduce-motion" else 0))
             return phase
         except BaseException as error:
-            if isinstance(error, RunnerGroupCleanupError):
+            if isinstance(error, RunnerGroupCleanupError) and retry_of is not None:
+                can_cleanup = False
+                (output / "runner-group-cleanup-failed").write_text("retry\n")
+            elif isinstance(error, RunnerGroupCleanupError):
                 # Remember before finalizers: another cancellation cannot authorize deleting live inputs.
                 runner_cleanup_error = error
             phase["exit_code"] = 124 if isinstance(error, subprocess.TimeoutExpired) else 130 if isinstance(error, KeyboardInterrupt) else 1
-            raise
+            if retry_of is None or not isinstance(error, (RunnerGroupCleanupError, CommandError, OSError, subprocess.SubprocessError)):
+                raise
+            phase["retry_collection_failed"] = True
         finally:
             phase["duration_seconds"] = time.monotonic() - started
             if warm:
                 # Collection failure leaves the prepaid loan unrefunded rather than guessing its cost.
-                prepaid = collect_result(case, evidence, phase)
-            trace["warm" if warm else "cold"].append(phase)
+                try:
+                    prepaid = collect_result(case, evidence, phase, retry_of=retry_of)
+                except (OSError, ValueError, KeyError, TypeError, CommandError, subprocess.SubprocessError):
+                    if retry_of is None:
+                        raise
+                    phase["retry_collection_failed"] = True
+            if retry_of is None:
+                trace["warm" if warm else "cold"].append(phase)
+            else:
+                retry_of["retry"] = phase
             checkpoint(process_case=phase if warm else None, invocations=invocations, prepaid=prepaid)
 
-    def collect_result(case, evidence, phase):
+    def collect_result(case, evidence, phase, *, retry_of=None):
         manifest_path = evidence / "case-manifest.json"
         details = decode(manifest_path.read_text()) if manifest_path.is_file() else {}
         if "bounded_diagnostics" in details:
@@ -605,13 +740,21 @@ def main(argv=None):
         require(isinstance(infrastructure, list) and all(isinstance(entry, dict)
                 and set(entry) == {"code", "message"} and all(isinstance(value, str) for value in entry.values())
                 for entry in infrastructure), "invalid case infrastructure entries")
-        phase["infrastructure"] = infrastructure
-        summary["infrastructure"].extend(infrastructure)
+        if retry_of is None:
+            phase["infrastructure"] = infrastructure
+            summary["infrastructure"].extend(infrastructure)
+        elif infrastructure:
+            phase["retry_collection_failed"] = True
         log_path = evidence / "xcodebuild.log"
         builds = BUILD_OPERATIONS.findall(log_path.read_text()) if log_path.is_file() else []
         reuse_paths = ([evidence / f"xcodebuild-{session['name']}-reuse.json" for session in FILTER_PERSON_SESSIONS]
                        if case["suite"] == "filter-person" else [evidence / "xcodebuild-reuse.json"])
         unchanged = all(path.is_file() and decode(path.read_text())["products_unchanged"] is True for path in reuse_paths)
+        if retry_of is not None and case["suite"] == "filter-person":
+            selected = [session for session in FILTER_PERSON_SESSIONS
+                        if session["selector"].split("/", 1)[1] in retry_of["retry_selected_methods"]]
+            paths = [evidence / f"xcodebuild-{session['name']}-reuse.json" for session in selected]
+            unchanged = all(path.is_file() and decode(path.read_text())["products_unchanged"] is True for path in paths)
         official = None
         phase["official_methods"] = []
         try:
@@ -619,8 +762,33 @@ def main(argv=None):
             if official is not None and official["totalTestCount"] > 0:
                 phase["official_methods"] = validate_case_export(evidence, args.platform, case["suite"], official)
         except (ValueError, OSError) as error:
-            phase["official_error"] = str(error)
+            phase["official_error"] = str(error) if retry_of is None else "Retry official evidence is invalid"
             official = None
+        if nightly_retry:
+            if retry_of is None:
+                phase["retry_assertion_methods"] = []
+            phase["official_method_durations"] = {}
+            phase["official_method_exit_codes"] = {}
+            for path in evidence.glob("official-tests*.json"):
+                def visit(nodes):
+                    for node in nodes:
+                        if node.get("nodeType") == "Test Case":
+                            key = node["nodeIdentifier"].removesuffix("()")
+                            phase["official_method_durations"][key] = node.get("durationInSeconds")
+                            if retry_of is None and node.get("retry_assertion") is True:
+                                phase["retry_assertion_methods"].append(key)
+                        visit(node.get("children", []))
+                visit(decode(path.read_text()).get("testNodes", []))
+            sessions = [(session["selector"].split("/", 1)[1], evidence / f"xcodebuild-{session['name']}-reuse.json")
+                        for session in FILTER_PERSON_SESSIONS] if case["suite"] == "filter-person" else [
+                        (resolve_suite_selector(args.platform, case["suite"]).split("/", 1)[1], evidence / "xcodebuild-reuse.json")]
+            for key, path in sessions:
+                if path.is_file():
+                    code = decode(path.read_text()).get("exit_code")
+                    if type(code) is int:
+                        phase["official_method_exit_codes"][key] = code
+                elif retry_of is not None and key not in retry_of["retry_selected_methods"]:
+                    phase["official_method_exit_codes"][key] = retry_of["official_method_exit_codes"][key]
         contract_path = evidence / "visual-identity-runner.json"
         contract = decode(contract_path.read_text()) if contract_path.is_file() else {}
         contract_failed = contract.get("suite") == case["suite"] and contract.get("verdict") == "FAIL"
@@ -654,8 +822,9 @@ def main(argv=None):
                 receipt = None
             if receipt is not None and receipt["source"] == "validator":
                 phase[FIRST_FAILURE_FIELD] = receipt
-        results.append(phase)
-        if official is not None and official["totalTestCount"] > 0:
+        if retry_of is None:
+            results.append(phase)
+        if retry_of is None and official is not None and official["totalTestCount"] > 0:
             summary["population"]["compiled"].append(phase["identity"])
         # No manifest means the child failed before sampling could start; otherwise require its startup fact.
         prepaid = details.get("process_sampling_prepaid") if manifest_path.is_file() else False
@@ -717,12 +886,40 @@ def main(argv=None):
             if outcome == "failed":
                 print(f"{case['suite']}: {observed[0]['attempts'][0]['reason']}", file=sys.stderr, flush=True)
             checkpoint()
+        if nightly_retry and len(results) == len(cases) and not summary["infrastructure"]:
+            for first, methods, failed_count in nightly_retry_candidates(results,
+                    informational=[entry["suite"] for entry in manifest.get("informational", [])]):
+                case = cases[identities.index(first["identity"])]
+                invocations = len(FILTER_PERSON_SESSIONS) if case["suite"] == "filter-person" else 1
+                bound = (args.warm_timeout_seconds + SIMULATOR_READINESS_TIMEOUT_SECONDS) * invocations + 240
+                if case["suite"] == "p2-reduce-motion":
+                    bound += REDUCE_MOTION_CASE_ALLOWANCE_SECONDS
+                if time.monotonic() - execution_started + bound > NIGHTLY_EXECUTION_BUDGET_SECONDS:
+                    print(case["suite"] + ": retry not run: remaining shard budget cannot fit its existing bound", flush=True)
+                    continue
+                first["retry_method"] = methods[0]
+                first["retry_selected_methods"] = methods
+                first["retry_failed_case_count"] = failed_count
+                evidence = output / "retries" / (f"{cases.index(case):03d}-" + case["suite"])
+                scheme, _plan, configuration = build_settings(args.platform, case["suite"], case["configuration"])
+                invoke(case, evidence, output / "derived" / (scheme + "-" + configuration), True, retry_of=first)
+                if strict_retry_problem(first["retry"]) is not None:
+                    first["retry_methods"] = []
+                    checkpoint()
+                    break
+                source = {key: value for key, value in first.items() if key != "retry"}
+                first["retry_methods"] = [strict_method_retry(source, first["retry"], method) for method in methods
+                    if first["retry"].get("official_method_durations", {}).get(method) is not None
+                    and any(item["identifier"] == method for item in first["retry"].get("official_methods", []))]
+                checkpoint()
+                if summary["infrastructure"]:
+                    break
         completed = True
     except BaseException as error:
         if runner_cleanup_error is not None:
             error = runner_cleanup_error
-        can_cleanup = not isinstance(error, RunnerGroupCleanupError)
-        if not can_cleanup:
+        if isinstance(error, RunnerGroupCleanupError):
+            can_cleanup = False
             (output / "runner-group-cleanup-failed").touch()
             cleanup_event = {"scope": "xcode", "phase": "unknown", "state": "after-reap", "sequence": 0,
                 "elapsed_seconds": min(MAX_DIAGNOSTIC_SECONDS, max(0, time.time() - trace["started_epoch"])),
@@ -761,6 +958,10 @@ def main(argv=None):
         for key, reason in environment_rejections.items():
             print(f"{key}: environment-limit: not eligible ({reason})", flush=True)
     for entry in summary["population"]["observed"]:
+        if "nightly_retry" in entry:
+            from ci_summary import render_nightly_retry
+            print("::warning title=Flaky nightly test::" + identity_key(entry["identity"])
+                  + ": " + render_nightly_retry(entry), flush=True)
         if "environment_limit" in entry:
             title = "Environment-limited XCTest tool" if entry["environment_limit"].get("kind") == "xctest-tool" else "Environment-limited strict timing"
             print("::warning title=" + title + "::" + identity_key(entry["identity"])

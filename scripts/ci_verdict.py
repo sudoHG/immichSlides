@@ -178,6 +178,7 @@ def evaluate_population(raw, expected, policy, *, environment, base_registry=Non
         observed = {identity_key(entry["identity"]): entry for entry in population["observed"]}
         yellow = [entry["identity"] for entry in population["observed"]
                   if entry.get("environment_limit", {}).get("policy_version") == 5]
+        flaky = [entry["identity"] for entry in population["observed"] if "nightly_retry" in entry]
         deselected = {identity_key(entry["identity"]): entry for entry in population["deselected"]}
         tier = summary["run"]["tier"]
         approved = tier_approved(policy, tier)
@@ -224,6 +225,8 @@ def evaluate_population(raw, expected, policy, *, environment, base_registry=Non
                 errors.append(skip_error)
             elif expected_skip:
                 result["expected_skips"].append(identity)
+            elif "nightly_retry" in entry:
+                pass  # parse_summary has validated the hosted nightly's one-retry claim.
             elif (entry["outcome"] == "flaky-passed" and entry["attempts"][0]["exit_code"] == 65
                   and entry["attempts"][0]["reason"] == ASSERTION_FAILURE
                   and entry["attempts"][1]["exit_code"] == 0 and eligible_entry(
@@ -236,11 +239,14 @@ def evaluate_population(raw, expected, policy, *, environment, base_registry=Non
         for entry in summary["infrastructure"]:
             category = NON_INFRASTRUCTURE_DIAGNOSTICS.get(entry["code"], "Infrastructure").lower()
             errors.append(f"{category} {entry['code']}: {entry['message']}")
-        if (summary["status"] == "failed" and not yellow) or (summary["status"] == "unverified" and not result["expected_skips"]):
+        if (summary["status"] == "failed" and not (yellow or flaky)) or (summary["status"] == "unverified" and not result["expected_skips"]):
             errors.append(f"producer status is {summary['status']}")
         result["status"] = "failed" if errors else "passed"
         if yellow:
             result["environment_limited"] = yellow
+        if flaky:
+            result["flaky"] = flaky
+        if yellow or flaky:
             if not errors:
                 result["status"] = "environment-limited"
     except (ContractError, TypeError, KeyError, ValueError) as error:

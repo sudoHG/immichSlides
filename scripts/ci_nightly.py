@@ -15,7 +15,8 @@ from pathlib import Path
 
 from ci_build_archive import file_hash, workspace_preflight
 from ci_summary import (ContractError, decode, fields, identity_key, integer, observation,
-                        parse_identity, parse_summary, require, string, test_identity)
+                        parse_identity, parse_summary, require, string, test_identity, nightly_retry_outcome,
+                        markdown_text, render_nightly_retry, render_retry_failure, parse_nightly_summary)
 from ci_verdict import tokens
 from run_host_checks import run_identity, source_metadata
 
@@ -194,7 +195,7 @@ def aggregate_nightly(scheduled, summaries, *, live_in_scope, informational=(), 
             result["observed"].extend(observed)
             if summary["infrastructure"]:
                 result["errors"].append("producer infrastructure failure: " + str(summary["infrastructure"]))
-            yellow = [entry for entry in observed if "environment_limit" in entry]
+            yellow = [entry for entry in observed if "environment_limit" in entry or "nightly_retry" in entry]
             if summary["status"] == "failed" and not (yellow and all(
                     entry["outcome"] in {"passed", "flaky-passed", "needs-human-review"}
                     or "environment_limit" in entry for entry in observed)):
@@ -221,6 +222,10 @@ def aggregate_nightly(scheduled, summaries, *, live_in_scope, informational=(), 
         yellow = [entry["identity"] for entry in result["observed"] if "environment_limit" in entry]
         if yellow:
             result["environment_limited"] = yellow
+        flaky = [entry["identity"] for entry in result["observed"] if "nightly_retry" in entry]
+        if flaky:
+            result["flaky"] = flaky
+        if yellow or flaky:
             if not result["errors"]:
                 result["status"] = "environment-limited"
         result["tiers"]["strict"] = result["status"]
@@ -230,7 +235,7 @@ def aggregate_nightly(scheduled, summaries, *, live_in_scope, informational=(), 
 
 
 def validate_shard(raw, identity, run, hashes, expected):
-    summary = parse_summary(raw)
+    summary = parse_nightly_summary(raw)
     require(summary["identity"] == identity, "shard tested a different tree/commit/event")
     require(summary["run"] == run, "wrong shard, run or attempt")
     require(summary["hashes"] == hashes, "shard manifest/policy mismatch")
@@ -253,6 +258,10 @@ def bind_ui_aggregate(result, ui):
     yellow = ui["verdict"].get("environment_limited", [])
     if yellow:
         result.setdefault("environment_limited", []).extend(copy.deepcopy(yellow))
+    flaky = ui["verdict"].get("flaky", [])
+    if flaky:
+        result.setdefault("flaky", []).extend(copy.deepcopy(flaky))
+    if yellow or flaky:
         if result["status"] != "failed":
             result["status"] = "environment-limited"
 
@@ -356,20 +365,43 @@ def main(argv=None):
         try:
             summary = validate_shard(paths[0].read_text(), identity,
                 {**run, "tier": "strict", "job": "nightly-strict", "shard": shard["id"]}, hashes, expected)
-            summaries.append(summary)
+            needs_retry_trace = any("nightly_retry" in item or "retry_failure" in item
+                                    for item in summary["population"]["observed"])
+            if not needs_retry_trace:
+                summaries.append(summary)
             from ci_review_packages import validate_bindings
             binding_path = paths[0].parent / "p2-review-bindings.json"
             require(binding_path.is_file() and not binding_path.is_symlink(), "missing compact P2 package bindings")
             binding_record = decode(binding_path.read_text())
             fields(binding_record, {"schema_version", "review_packages"}, "shard package bindings")
             require(type(binding_record["schema_version"]) is int and binding_record["schema_version"] == 1, "unknown binding schema")
-            review_packages.extend(validate_bindings(binding_record["review_packages"], summary))
+            bindings = binding_record["review_packages"]
             trace = decode((paths[0].parent / "trace.json").read_text())
             require(all(type(trace[key]) in (int, float) and math.isfinite(trace[key]) for key in ("started_epoch", "finished_epoch")),
                     "invalid shard clock")
             require(trace["finished_epoch"] >= trace["started_epoch"], "shard ended before it started")
+            if needs_retry_trace:
+                from ci_report import method_observations
+                require(not plan.get("diagnostic_shard"), "nightly retry: requires a full nightly run")
+                verified = {}
+                _, missing = method_observations(summary, trace,
+                    runner_hosted=os.environ.get("RUNNER_ENVIRONMENT") == "github-hosted", verified_cases=verified,
+                    review_bindings=bindings)
+                require(not missing, "nightly retry: strict official method evidence is incomplete")
+                discarded_reviews = {identity_key(item["identity"]) for item in summary["population"]["observed"]
+                    if "nightly_retry" in item and verified[identity_key(item["identity"])]["outcome"] != "needs-human-review"}
+                bindings = [item for item in bindings if identity_key(item["identity"]) not in discarded_reviews]
+                summary["population"]["observed"] = [verified[identity_key(item["identity"])]
+                                                       for item in summary["population"]["observed"]]
+                if summary["status"] == "unverified" and not any(item["outcome"] == "needs-human-review"
+                        for item in summary["population"]["observed"]):
+                    summary["status"] = "failed"
+            bindings = validate_bindings(bindings, summary)
+            if needs_retry_trace:
+                summaries.append(summary)
+            review_packages.extend(bindings)
             traces.append({"shard": shard["id"], "started_epoch": trace["started_epoch"], "finished_epoch": trace["finished_epoch"]})
-        except (ValueError, OSError, KeyError) as error:
+        except (ValueError, OSError, KeyError, TypeError, AttributeError) as error:
             errors.append(shard["id"] + ": " + str(error))
     result = aggregate_nightly(scheduled, summaries, live_in_scope=policy["live_tier_in_scope"],
                                informational=[item["suite"] for item in manifest["informational"]], review_packages=review_packages)
@@ -431,9 +463,13 @@ def main(argv=None):
     lines.extend(["", f"Contracts needing human review (P2 and pause timing): {len(result['needs_human_review'])}.",
                   f"Informational Vision outcomes: {len(result['informational'])}.", "", "| Case | Outcome |", "|---|---|"])
     lines.extend(f"| {identity_key(item['identity'])} | "
-                 f"{'failed (environment-limited; yellow)' if 'environment_limit' in item else item['outcome']} |" for item in result["observed"])
+                 f"{nightly_retry_outcome(item) if 'nightly_retry' in item else 'failed (environment-limited; yellow)' if 'environment_limit' in item else item['outcome']} |" for item in result["observed"])
     from ci_failure_diagnostics import render_environment_limit
     yellow_observed = [*result["observed"], *result.get("ui", {}).get("verdict", {}).get("observed", [])]
+    if result.get("flaky"):
+        lines.extend("\nWARNING: " + markdown_text(identity_key(item["identity"])) + ": "
+                     + markdown_text(render_nightly_retry(item)) for item in yellow_observed if "nightly_retry" in item)
+        print(f"::warning title=Flaky nightly cases::{len(result['flaky'])} case(s) failed once and passed one retry; yellow, never passes.")
     if result.get("environment_limited"):
         has_tool = any(item.get("environment_limit", {}).get("kind") == "xctest-tool" for item in yellow_observed)
         category = "timing or XCTest/Apple tool" if has_tool else "timing"
@@ -443,6 +479,8 @@ def main(argv=None):
               f"{len(result['environment_limited'])} case(s); see the nightly summary for every case and its proof.")
     lines.extend("\nWARNING: " + identity_key(item["identity"]) + ": " + render_environment_limit(item["environment_limit"])
                  for item in yellow_observed if "environment_limit" in item)
+    lines.extend("\n" + markdown_text(identity_key(item["identity"]) + ": " + render_retry_failure(item["retry_failure"]))
+                 for item in yellow_observed if "retry_failure" in item)
     lines.extend(["", *result["errors"]])
     (output / "nightly.md").write_text("\n".join(lines) + "\n")
     print("\n".join(lines[:14]))

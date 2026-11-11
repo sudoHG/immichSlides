@@ -19,6 +19,212 @@ from run_fixture_ui_tests import clean_environment, compiled_tests, coverage_row
 
 
 class FixtureCoverageTests(unittest.TestCase):
+    def test_nightly_retry_artifact_failures_use_the_original_tool_verdict(self):
+        for phase, outcome, tool in (("failed-retry", "failed", True), ("export", "timed-out", True),
+                                    ("disposal", "not-run", True), ("failed-retry-disposal", "failed", True),
+                                    ("failed-retry-disposal", "not-run", False)):
+            with self.subTest(phase=phase, tool=tool):
+                self._assert_nightly_retry_artifact_failure(phase, outcome, tool=tool)
+
+    def _assert_nightly_retry_artifact_failure(self, phase, outcome, *, tool):
+        from types import SimpleNamespace
+        from ci_flaky import ASSERTION_FAILURE
+        from ci_summary import observation, parse_summary
+        from test_ci_summary import hosted_v5_summary, first_failure_receipt
+        from PIL import Image
+        import ci_ui_tests
+
+        seed, _ = hosted_v5_summary(ui=True, tool=tool)
+        row = seed["population"]["observed"][0]
+        identity = row["identity"]
+        diagnostics = {key: row[key] for key in ("failure_phase", "failure_class")}
+        first = observation(identity, "failed", 12, exit_code=65, reason=ASSERTION_FAILURE, failure_diagnostics=diagnostics)
+        retry_failed = phase.startswith("failed-retry")
+        second = observation(identity, "failed" if retry_failed else "passed", 9, exit_code=65 if retry_failed else 0)
+        receipts, images = [], []
+        for size, color in (((64, 32), "blue"), ((48, 24), "red")):
+            pixels = io.BytesIO()
+            Image.new("RGB", size, color).save(pixels, format="PNG")
+            receipt = first_failure_receipt()
+            receipt["screenshot"].update(width=size[0], height=size[1], bytes=len(pixels.getvalue()))
+            receipts.append(receipt)
+            images.append(pixels.getvalue())
+        receipts[1]["step"] = "capture-frame"
+        official = {"testNodes": [{"nodeType": "Test Case", "nodeIdentifier": identity["key"] + "()",
+            "result": "Failed", "durationInSeconds": 12, "failure_messages": row["failure_messages"], **diagnostics,
+            "first_failure": receipts[0],
+            "children": [{"nodeType": "Failure Message", "name": "failure"}]}]}
+        retry_official = {"testNodes": [{"nodeType": "Test Case", "nodeIdentifier": identity["key"] + "()",
+            "result": "Failed" if retry_failed else "Passed", "durationInSeconds": 9,
+            **({"first_failure": receipts[1]} if retry_failed else {})}]}
+        policy = {"schema_version": 1, "approval_records": [], "expected_skips": [], "deselections": []}
+        inputs = {"hashes": seed["hashes"], "population": dict(seed["population"], compiled=[], observed=[]),
+            "policy": policy, "discovery_policy": policy, "deselections": [], "registry": {"schema_version": 1, "entries": []},
+            "registry_revision": "b" * 40}
+        inputs["hashes"]["policies"]["known-flaky"] = "f" * 64
+        with tempfile.TemporaryDirectory() as directory, contextlib.ExitStack() as stack:
+            root, output = Path(directory, "checkout"), Path(directory, "output")
+            source = root / "Products/app.xctestrun"
+            (source.parent / "Debug-iphonesimulator/immichSlides.app").mkdir(parents=True)
+            source.touch()
+            bundles = [Path(directory, f"private/attempt-{i}/test.xcresult") for i in (1, 2)]
+            for bundle in bundles:
+                bundle.mkdir(parents=True)
+            def process(command, **_kwargs):
+                if "-enumerate-tests" in command:
+                    enumeration = {"errors": [], "values": [{"enabledTests": [
+                        {"identifier": "immichSlidesUITests/" + identity["key"]}]}]}
+                    Path(command[command.index("-test-enumeration-output-path") + 1]).write_text(json.dumps(enumeration))
+                    return SimpleNamespace(wait=lambda **_kwargs: 0, pid=42)
+                first_run = str(bundles[0]) in command
+                return SimpleNamespace(wait=lambda **_kwargs: 65 if first_run or retry_failed else 0, pid=42)
+            def export(path, *_args, **kwargs):
+                number = bundles.index(path)
+                if number == 0 or retry_failed or phase == "export":
+                    image = kwargs["first_failure_images"] / "0.png"
+                    image.parent.mkdir(parents=True, exist_ok=True)
+                    image.write_bytes(images[number])
+                if path == bundles[1]:
+                    if phase == "export":
+                        raise subprocess.TimeoutExpired(["xcresulttool", "get"], 180)
+                    (output / "official-tests-attempt-2.json").write_text(json.dumps(retry_official))
+                else:
+                    (output / "official-tests.json").write_text(json.dumps(official))
+                return "f" * 64
+            stack.enter_context(patch.dict(os.environ, {"GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1",
+                                                        "RUNNER_ENVIRONMENT": "github-hosted"}))
+            stack.enter_context(patch("ci_flaky.nightly_retry_enabled", return_value=True))
+            stack.enter_context(patch.object(runner, "ROOT", root))
+            for name, value in (("run_identity", seed["identity"]), ("source_metadata", (".github/workflows/ci-nightly.yml", False)),
+                    ("fixture_inputs", inputs), ("toolchain", seed["toolchain"]), ("prepare_simulator", None),
+                    ("verify_simulator_device", None), ("verify_official_device", None), ("simulator_inventory", {}),
+                    ("wait_for_service", ("127.0.0.1", 1234)), ("disk_check", None), ("check_products", None),
+                    ("measure_signing", "adhoc"), ("prepare_test_run", source), ("reset_simulator_app", None),
+                    ("crash_report_directories", []), ("crash_report_snapshot", {}), ("read_problem_reason", "fixture assertion"),
+                    ("stop_exact_process", None), ("write_sensitive_scan", None)):
+                stack.enter_context(patch.object(runner, name, return_value=value))
+            stack.enter_context(patch.object(runner, "finalize_fixture_run", side_effect=lambda path, *_args, **_kwargs:
+                ["Synthetic quarantine failure"] if phase.endswith("disposal") and path == bundles[1] else []))
+            stack.enter_context(patch.object(runner, "prepare_fixture_result_bundle", side_effect=bundles))
+            stack.enter_context(patch.object(runner, "read_xcode_observations", side_effect=[[first], [second]]))
+            stack.enter_context(patch.object(runner, "export_private_result_bundle", side_effect=export))
+            stack.enter_context(patch.object(runner.subprocess, "Popen", side_effect=process))
+            stdout = stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+            code = runner.main(["--device", "iphone", "--destination", "platform=iOS Simulator,id=target",
+                "--output-dir", str(output), "--xctestrun", str(source), "--shard", "navigation", "--mode", "measure",
+                "--shard-manifest", str(root / "manifest.json"), "--total-timeout-minutes", "85"])
+            actual = parse_summary((output / "summary.json").read_text())
+            self.assertEqual((code, actual["infrastructure"]), (0 if tool else 65, []))
+            observed = actual["population"]["observed"][0]
+            self.assertEqual(observed["retry_failure"]["outcome"], outcome)
+            self.assertEqual(tool, "environment_limit" in observed)
+            self.assertNotIn("nightly_retry", observed)
+            self.assertEqual(("failed", 12, 1), (observed["outcome"], observed["duration_seconds"], len(observed["attempts"])))
+            self.assertEqual(receipts[0], observed["attempts"][0]["first_failure"])
+            self.assertEqual("environment-limited" if tool else "failed",
+                             json.loads((output / "coverage-verdict.json").read_text())["status"])
+            if retry_failed and tool:
+                self.assertEqual(receipts[1], observed["retry_failure"]["first_failure"])
+            with patch.object(ci_ui_tests, "output"), contextlib.redirect_stderr(io.StringIO()) as errors:
+                self.assertEqual(0, ci_ui_tests.main(["check-upload", "--output-dir", str(output)]), errors.getvalue())
+            self.assertEqual(retry_failed and tool, (output / "failure-screenshots/first-failure-attempt-2/0.png").exists())
+            if retry_failed and tool:
+                retry_image = output / "failure-screenshots/first-failure-attempt-2/0.png"
+                retry_image.write_bytes(images[0])
+                with patch.object(ci_ui_tests, "output"), contextlib.redirect_stderr(io.StringIO()) as errors:
+                    self.assertEqual(1, ci_ui_tests.main(["check-upload", "--output-dir", str(output)]))
+                self.assertIn("first failure package image differs", errors.getvalue())
+            self.assertEqual(tool, "Environment-limited XCTest tool" in stdout.getvalue())
+
+    def test_nightly_retry_phase_problems_leave_the_first_ui_verdict(self):
+        from datetime import date
+        from ci_failure_diagnostics import failure_messages_diagnostics
+        from ci_flaky import ASSERTION_FAILURE, run_xcode_attempts
+        from ci_summary import observation
+        from strict_e2e_runner_support import CommandError
+        from test_ci_summary import hosted_v5_summary
+
+        policy = {"schema_version": 1, "approval_records": [], "expected_skips": [], "deselections": []}
+        problems = {"reset": "not-run", "timeout": "timed-out", "read": "not-run", "nonzero-pass": "crashed"}
+        for tool, problem in itertools.product((True, False), problems):
+            with self.subTest(tool=tool, problem=problem):
+                summary, _ = hosted_v5_summary(ui=True, tool=True)
+                original = summary["population"]["observed"][0]
+                identity = original["identity"]
+                messages = original["failure_messages"] if tool else ["App timeline:"]
+                diagnostics = failure_messages_diagnostics(messages)
+                first = observation(identity, "failed", 12, reason=ASSERTION_FAILURE, exit_code=65,
+                                    failure_diagnostics=diagnostics)
+                def reset():
+                    if problem == "reset":
+                        raise CommandError("Synthetic retry reset failure")
+                def execute(call):
+                    return (65 if "-only-testing:immichSlidesUITests/" + identity["key"] not in call
+                            else {"timeout": 124, "read": 0, "nonzero-pass": 1}[problem]), 9
+                def read(path, _identify, _elapsed, _exit):
+                    if path.name == "first.xcresult":
+                        return [copy.deepcopy(first)]
+                    if problem == "read":
+                        raise ContractError("Synthetic retry export failure")
+                    return [observation(identity, "passed", 9, exit_code=0)]
+                result = run_xcode_attempts(["xcodebuild", "test-without-building", "-resultBundlePath", "first.xcresult"],
+                    {"schema_version": 1, "entries": []}, tier="ui", environment="fixture", today=date(2026, 11, 11),
+                    identity_for_key=lambda _: identity, reset=reset, execute=execute, read=read,
+                    allocate_bundle=lambda: Path("retry/result.xcresult"), nightly_retry=True)
+                summary["population"]["observed"] = result["observed"]
+                summary["infrastructure"] = result["infrastructure"]
+                official = {"testNodes": [{"nodeType": "Test Case", "nodeIdentifier": identity["key"] + "()",
+                    "result": "Failed", "durationInSeconds": 12, "failure_messages": messages, **diagnostics,
+                    "children": [{"nodeType": "Failure Message", "name": "failure"}]}]}
+                verdict, code = runner.finish_fixture_coverage(summary, official, [identity], policy,
+                    exit_code=result["exit_code"], runner_hosted=True, nightly_retry=True)
+                self.assertEqual((verdict["status"], code), ("environment-limited", 0) if tool else ("failed", 65))
+                self.assertEqual(summary["infrastructure"], [])
+                actual = summary["population"]["observed"][0]
+                self.assertEqual((actual["outcome"], len(actual["attempts"]), actual["duration_seconds"]), ("failed", 1, 12))
+                self.assertEqual(actual["retry_failure"]["outcome"], problems[problem])
+                self.assertNotIn("nightly_retry", actual)
+
+    def test_nightly_failed_retry_keeps_first_tool_yellow_and_other_failures_red(self):
+        from ci_flaky import ASSERTION_FAILURE, merge_retry
+        from ci_failure_diagnostics import failure_messages_diagnostics
+        from ci_summary import observation, parse_summary
+        from test_ci_summary import hosted_v5_summary
+
+        policy = {"schema_version": 1, "approval_records": [], "expected_skips": [], "deselections": []}
+        for tool, retry_passed in ((True, False), (False, False), (True, True)):
+            with self.subTest(tool=tool, retry_passed=retry_passed):
+                summary, _ = hosted_v5_summary(ui=True, tool=True)
+                original = summary["population"]["observed"][0]
+                identity = original["identity"]
+                messages = original["failure_messages"] if tool else ["App timeline:"]
+                diagnostics = failure_messages_diagnostics(messages)
+                first = observation(identity, "failed", 12, reason=ASSERTION_FAILURE, exit_code=65,
+                                    failure_diagnostics=diagnostics)
+                second = observation(identity, "passed" if retry_passed else "failed", 9,
+                                     message=None if retry_passed else "raw retry text", exit_code=0 if retry_passed else 65)
+                summary["population"]["observed"] = [merge_retry(first, second,
+                    nightly_proof={"schema_version": 1, "policy_version": 1, "runner_hosted": True, "failed_case_count": 1})]
+                official = {"testNodes": [{"nodeType": "Test Case", "nodeIdentifier": identity["key"] + "()",
+                    "result": "Failed", "durationInSeconds": 12, "failure_messages": messages, **diagnostics,
+                    "children": [{"nodeType": "Failure Message", "name": "failure"}]}]}
+                verdict, code = runner.finish_fixture_coverage(summary, official, [identity], policy,
+                    exit_code=0 if retry_passed else 65, runner_hosted=True, nightly_retry=True)
+                actual = parse_summary(summary)["population"]["observed"][0]
+                self.assertEqual((verdict["status"], code), ("environment-limited", 0) if tool else ("failed", 65))
+                if retry_passed:
+                    self.assertEqual(actual["outcome"], "flaky-passed")
+                    self.assertIn("nightly_retry", actual)
+                    self.assertNotIn("environment_limit", actual)
+                elif tool:
+                    self.assertEqual(actual["environment_limit"]["failure_messages"], messages)
+                    self.assertEqual((len(actual["attempts"]), actual["duration_seconds"]), (1, 12))
+                    self.assertEqual(actual["retry_failure"]["exit_code"], 65)
+                    self.assertIsNone(actual["retry_failure"]["message"])
+                else:
+                    self.assertNotIn("environment_limit", actual)
+                    self.assertEqual(len(actual["attempts"]), 2)
+
     def test_nightly_tool_yellow_keeps_raw_failed_and_only_clean_complete_shards_exit_zero(self):
         from test_ci_summary import hosted_v5_summary
         from ci_summary import parse_summary
