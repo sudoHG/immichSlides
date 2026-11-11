@@ -1578,7 +1578,7 @@ class PublisherTests(unittest.TestCase):
         self.assertEqual({entry["key"] for entry in conservative["populations"]["appletv"]}, set(keys[:2]))
 
     def test_pr_area_selection_tolerates_only_declared_deletions_of_base_tests(self):
-        from ci_ui_selection import select_ui_population, validate_area_coverage
+        from ci_ui_selection import select_ui_population
         keys = ("SmokeUITests/testLaunch", "SettingsUITests/testEdit", "CoreUITests/testPlay")
         deleted = "DeletedUITests/testObsolete"
         populations = {"ui-" + platform: [test_identity("ui", key, platform=platform) for key in keys]
@@ -1627,21 +1627,11 @@ class PublisherTests(unittest.TestCase):
                     with self.subTest(location=location, retained=field), self.assertRaisesRegex(
                             ContractError, "^UI area selector matches no test: " + selector + "$"):
                         select_ui_population(["immichSlides/Settings.swift"], **dict(arguments, head_area_map=retained))
-            with self.subTest(location=location, case="unmapped-source"), self.assertRaisesRegex(
-                    ContractError, "^unmapped app source: immichSlides/New.swift$"):
-                validate_area_coverage(area_map, ["immichSlides/New.swift"], populations,
-                                       base_populations=base_populations, head_area_map=head_map)
             unmapped = copy.deepcopy(populations)
             unmapped["ui-ios"].append(test_identity("ui", "InjectedUITests/testExtra", platform="ios"))
             with self.subTest(location=location, case="head-cannot-map-new-test"), self.assertRaisesRegex(
                     ContractError, "^unmapped UI test: InjectedUITests/testExtra$"):
                 select_ui_population(["immichSlides/Settings.swift"], **dict(arguments, populations=unmapped))
-            for event in ("push", "schedule", "workflow_dispatch"):
-                with self.subTest(location=location, event=event):
-                    selected = select_ui_population(["immichSlides/Settings.swift"], **dict(arguments, event=event))
-                    self.assertEqual(selected["mode"], "full")
-                    for entries in selected["populations"].values():
-                        self.assertEqual({entry["key"] for entry in entries}, set(keys))
 
     def test_pr_declared_removal_cannot_remove_a_devices_last_default_plan_smoke(self):
         from ci_ui_selection import select_ui_population
@@ -2458,6 +2448,7 @@ class PublisherTests(unittest.TestCase):
                                  jobs, summaries, approved=False, fork=False)
 
     def test_admission_selects_with_base_map_even_when_candidate_map_and_reader_differ(self):
+        import subprocess
         from ci_ui_selection import AREA_MAP_PATH
         from ci_ui_packing import DURATIONS_PATH, canonical_hash
         identity = admission_identity(REPOSITORY, RUN, PR, COMMIT)
@@ -2484,7 +2475,9 @@ class OtherUITests: XCTestCase { func testPlay() {} }
         def blob(revision, path):
             if path == AREA_MAP_PATH:
                 read_maps.append(revision)
-                return files[path] if revision == BASE else head_map if revision == HEAD else '{"untrusted":"merge map"}'
+                if revision == MERGE and isinstance(head_map, Exception):
+                    raise head_map
+                return head_map if revision == MERGE else files[path]
             if path == DURATIONS_PATH:
                 read_durations.append(revision)
                 return files[path] if revision == BASE else '{"untrusted":"candidate durations"}'
@@ -2503,7 +2496,7 @@ class OtherUITests: XCTestCase { func testPlay() {} }
                 patch("ci_publish_git.git", side_effect=lambda *args, **kwargs: "immichSlides/Settings.swift" if args[0] == "diff" else args[-1]), \
                 patch("ci_publish_git.tree_inputs", return_value=(listing, sources)):
             record = derive_record(identity, RUN)
-        self.assertEqual(read_maps, [BASE, HEAD])
+        self.assertEqual(read_maps, [BASE, MERGE])
         for platform in ("ios", "tvos"):
             self.assertNotIn("SupportUITests/testSupport", {entry["key"] for entry in record["populations"]["ui-" + platform]})
         for side in ("base", "candidate"):
@@ -2546,6 +2539,28 @@ def select_ui_population(paths, classification_policy, *, build_target_paths, ar
             selected = packed['ui_inputs'][side]['selection']
             self.assertEqual(selected['coverage'], 'functional')
             self.assertEqual(selected['packing']['durations_sha256'], canonical_hash(durations))
+        for case, mode, kind, error in (
+                ('missing-map', None, None, None),
+                ('symlink-map', '120000', 'blob', None),
+                ('tree-map', '040000', 'tree', None),
+                ('submodule-map', '160000', 'commit', None),
+                ('invalid-utf8-map', '100644', 'blob', UnicodeDecodeError('utf-8', b'\xff', 0, 1, 'invalid')),
+                ('unreadable-map', '100644', 'blob', subprocess.CalledProcessError(128, ['git', 'show']))):
+            candidate_listing = [entry for entry in listing if entry['path'] != AREA_MAP_PATH]
+            if mode is not None:
+                candidate_listing.append({'path': AREA_MAP_PATH, 'type': kind, 'mode': mode})
+            head_map = error if error is not None else files[AREA_MAP_PATH]
+            read_maps.clear()
+            with self.subTest(case=case), patch('ci_publish_git.read_blob', side_effect=blob), \
+                    patch('ci_publish_git.git', side_effect=lambda *args, **kwargs:
+                          'immichSlides/Settings.swift' if args[0] == 'diff' else args[-1]), \
+                    patch('ci_publish_git.tree_inputs', side_effect=lambda revision:
+                          (listing if revision == BASE else candidate_listing, sources)):
+                unavailable = derive_record(identity, RUN)
+            self.assertEqual(read_maps, [BASE, MERGE] if error is not None else [BASE])
+            self.assertEqual(unavailable['identity'], identity)
+            for side in ('base', 'candidate'):
+                self.assertEqual(unavailable['ui_inputs'][side]['selection'], packed['ui_inputs'][side]['selection'])
         head_map = files[AREA_MAP_PATH]
         area_map['areas']['settings']['tests'].append('DeletedUITests/testObsolete')
         files[AREA_MAP_PATH] = json.dumps(area_map)

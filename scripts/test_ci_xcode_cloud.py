@@ -1270,7 +1270,7 @@ class GroupProducerTests(unittest.TestCase):
                         changed_paths=[changed], head_tree=self.identity["tree_sha"])
                     with patch.object(producer, "git_blob", side_effect=lambda revision, path: files[path].encode()), \
                             patch.object(producer.subprocess, "check_output", side_effect=[changed + "\n", "\n".join(members),
-                                                                                       "\n".join(members), "\n".join(ui_sources)]):
+                                                                                       "\n".join(members), "\0".join(ui_sources)]):
                         planned = producer.planned_ui_selection(self.identity, pack_scoped_ui=True, scoped_ui_v2=accelerated)
                     self.assertEqual(record["ui_inputs"]["base"]["selection"]["packing"], planned["packing"])
 

@@ -302,6 +302,7 @@ base `scripts/ci-ui-areas.json`; candidate area maps never authorize selection,
 even after exact-head approval. Both base/candidate shard-rule inputs retain
 that same map revision/hash and their derived selections. Historical bases
 without this reader/map remain full-only.
+Admission also reads the tested tree's map only as data that can confirm removals under the [PR removal rule](CI_UI.md#scheduling-the-selection).
 
 Historical unflagged shard computation and feature selection have separate failure
 boundaries. A failed selection is stored only in `selection.error`; the complete
@@ -376,6 +377,7 @@ contains exact per-device shard identities, frozen duration hash and predicted
 costs, with a canonical SHA-256 over all these fields. The
 [selection and packing rules](CI_UI.md#platform-selection-and-capacity-packing)
 define its bounded scheduling behavior. Full default-plan partitions remain v2.
+Admission also reads the tested tree's map only as data that can confirm removals under the [PR removal rule](CI_UI.md#scheduling-the-selection).
 
 For an activated scoped PR the job union must be exactly the nonempty packed
 shards, named `scoped-a` through `scoped-f`. All three device declarations remain

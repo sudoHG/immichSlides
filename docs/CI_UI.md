@@ -184,7 +184,7 @@ runs only its packed identities in the platform's archive selection record;
 CI-changing and unknown-path PRs pack all functional methods. Selection errors
 fail closed. In PR selection only, a base area, smoke or functional-smoke selector
 may match no tested-tree method only if it matched the base population and is absent
-from every selector list in the head map; that map cannot add or redirect selection,
+from every selector list in the tested tree's map; that map cannot add or redirect selection,
 and the default-plan smoke requirements still apply. Nightly and other non-PR full
 runs retain duration-balanced v2 shards and every default-plan method. A main push still skips all matrices when it reuses
 a trusted PR verdict or defers UI to nightly (see the

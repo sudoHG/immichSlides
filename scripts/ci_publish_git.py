@@ -238,7 +238,13 @@ def derive_record(identity, run, *, before=None):
                             "area_map": raw_map, "map_revision": base,
                             "map_sha256": hashlib.sha256(raw_map.encode()).hexdigest()}
         if identity["event"] == "pull_request":
-            selection_inputs["head_area_map"] = read_blob(identity["head_sha"], "scripts/ci-ui-areas.json")
+            selection_inputs["head_area_map"] = None
+            if any(entry["path"] == "scripts/ci-ui-areas.json" and entry["type"] == "blob"
+                   and entry["mode"] in {"100644", "100755"} for entry in listing):
+                try:
+                    selection_inputs["head_area_map"] = read_blob(commit, "scripts/ci-ui-areas.json")
+                except (subprocess.CalledProcessError, UnicodeDecodeError):
+                    pass  # Unavailable tested-tree data grants no removal exception.
         if "ci_ui_packing.py" in modules:
             from ci_ui_packing import DURATIONS_PATH
             base_paths = {entry["path"] for entry in base_listing if entry["type"] == "blob"
