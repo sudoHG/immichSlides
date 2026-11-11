@@ -273,6 +273,33 @@ def album_capture_gate_rejections(receipt):
 
 
 class SummaryContractTests(unittest.TestCase):
+    def test_v5_failed_retry_is_supplemental_evidence_with_a_closed_shape(self):
+        from ci_failure_diagnostics import environment_limit_evidence
+        for ui in (False, True):
+            summary, resource = hosted_v5_summary(ui=ui, tool=ui)
+            row = summary["population"]["observed"][0]
+            proof = environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=5)
+            row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
+            original = copy.deepcopy(row)
+            retry = {"number": 2, "outcome": "failed", "exit_code": 65, "duration_seconds": 3,
+                     "reason": None, "message": None, "failure_messages": ["App timeline:"]}
+            row["retry_failure"] = retry
+            with self.subTest(ui=ui):
+                parsed = ci_summary.parse_summary(summary)["population"]["observed"][0]
+                self.assertEqual(original, {key: value for key, value in parsed.items() if key != "retry_failure"})
+                self.assertEqual(retry, parsed["retry_failure"])
+            for field, value in (("number", 1), ("number", True), ("outcome", "passed"), ("duration_seconds", -1),
+                                 ("message", "private"), ("reason", "private"), ("environment_limit", proof),
+                                 ("nightly_retry", {}), ("unknown", 1)):
+                changed = copy.deepcopy(summary)
+                changed["population"]["observed"][0]["retry_failure"][field] = value
+                with self.subTest(ui=ui, field=field), self.assertRaisesRegex(ci_summary.ContractError, "^retry failure:"):
+                    ci_summary.parse_summary(changed)
+            projected = ci_summary.observation(row["identity"], "failed", 1, exit_code=65)
+            projected["retry_failure"] = retry
+            with self.assertRaisesRegex(ci_summary.ContractError, "^retry failure: requires a v5"):
+                ci_summary.validate_observation(projected)
+
     def test_nightly_retry_retained_reader_needs_no_image_or_runner_dependencies(self):
         from ci_flaky import P2_REVIEW_SUITES, IOS_PENDING_REVIEW_SUITE
         from strict_e2e_p2_contract import P2_CASES
@@ -366,7 +393,8 @@ print('parsed 3 nightly retry records without image or runner dependencies')
                 self.assertEqual(summary, ci_summary.parse_summary(summary))
                 rendered = ci_summary.render_markdown(summary)
                 self.assertIn("flaky (yellow)", rendered)
-                self.assertIn("First playback assertion failed", rendered)
+                self.assertIn("App timeline:", rendered)
+                self.assertNotIn("First playback assertion failed", rendered)
             for field, value in (("schema_version", True), ("policy_version", 2), ("runner_hosted", False),
                                  ("failed_case_count", 0), ("failed_case_count", 4), ("failed_case_count", True),
                                  ("extra", "unknown")):

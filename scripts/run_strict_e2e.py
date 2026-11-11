@@ -39,6 +39,7 @@ from strict_e2e_filter_contract import (
     evaluate_filter_visual_identity,
     write_member_manifest,
 )
+from strict_e2e_filter_manifest import FILTER_PERSON_STEPS
 from strict_e2e_out_of_order_contract import (
     OUT_OF_ORDER_VISUAL_SUITES,
     OutOfOrderContractError,
@@ -971,9 +972,6 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
             if not (first_manifest["source_sha"] == read_source_sha(REPO_ROOT)
                     and first_manifest["suite"] == arguments.suite and first_manifest["fixture_set"] == arguments.fixture_set):
                 raise CommandError("Filtered person retry source identity differs from this case.")
-            for path in [*source.glob("*.png"), source / "person-results.json"]:
-                if path.is_file():
-                    shutil.copy2(path, arguments.evidence_dir / path.name)
         if arguments.suite != "filter-person":
             result_bundle_path = prepare_private_result_bundle_path(arguments.suite)
             private_bundles.append((result_bundle_path, ""))
@@ -1298,6 +1296,9 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                     for prefix in ("official-summary", "official-tests"):
                         path = source / f"{prefix}-{session['name']}.json"
                         shutil.copy2(path, arguments.evidence_dir / path.name)
+                    screenshot = source / (FILTER_PERSON_STEPS[session["visual_step"]] + ".png")
+                    if screenshot.is_file():
+                        shutil.copy2(screenshot, arguments.evidence_dir / screenshot.name)
                     continue
                 if index > 0:
                     reset_logs.append(reset_simulator_app(simulator_udid, platform=arguments.platform, boot_submitted=True))

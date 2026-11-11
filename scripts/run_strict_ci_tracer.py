@@ -301,11 +301,13 @@ def produce_environment_limits(summary, results, *, informational=(), policy_ver
     from ci_failure_diagnostics import (ENVIRONMENT_LIMIT_FIELD, environment_limit_evidence,
         EMITTED_ENVIRONMENT_POLICY_VERSION, xctest_tool_class)
     from ci_bounded_diagnostics import validate_receipt
+    from ci_flaky import split_failed_nightly_retry
     policy_version = EMITTED_ENVIRONMENT_POLICY_VERSION if policy_version is None else policy_version
     summary.pop("strict_case_evidence", None)
     if rejections is not None:
         rejections.clear()
-    for index, entry in enumerate(summary["population"]["observed"]):
+    for index, original in enumerate(summary["population"]["observed"]):
+        entry = original
         def reject(reason):
             if rejections is not None and entry["outcome"] == "failed":
                 rejections[identity_key(entry["identity"])] = reason
@@ -318,6 +320,14 @@ def produce_environment_limits(summary, results, *, informational=(), policy_ver
             reject("phase-count")
             continue
         phase = phases[0]
+        retry_failure = None
+        if policy_version == 5 and "retry" in phase:
+            split = split_failed_nightly_retry(entry)
+            if split is not None:
+                _, retry_failure = split
+                phase = {key: value for key, value in phase.items() if key != "retry"}
+                first_observed, _ = evaluate_tracer([entry["identity"]], [phase])
+                entry = first_observed[0]
         if (phase.get("infrastructure") or phase.get("official_error")
                 or phase.get("exit_code") in {None, 124, 130} or phase.get("log_present") is not True
                 or phase.get("build_operations") != 0 or phase.get("products_unchanged") is not True):
@@ -345,7 +355,8 @@ def produce_environment_limits(summary, results, *, informational=(), policy_ver
                 continue
             # Validate hosting, attempt shape and original case binding through the merged reader.
             candidate = copy.deepcopy(summary)
-            target = candidate["population"]["observed"][index]
+            target = copy.deepcopy(entry)
+            candidate["population"]["observed"][index] = target
             target[ENVIRONMENT_LIMIT_FIELD] = target["attempts"][0][ENVIRONMENT_LIMIT_FIELD] = proof
             candidate.setdefault("strict_case_evidence", []).append({"identity": entry["identity"],
                 "bounded_diagnostics": ledger})
@@ -366,7 +377,12 @@ def produce_environment_limits(summary, results, *, informational=(), policy_ver
         except (ValueError, TypeError, KeyError, AttributeError, IndexError):
             reject(rejection_reason)
             continue
-        entry[ENVIRONMENT_LIMIT_FIELD] = entry["attempts"][0][ENVIRONMENT_LIMIT_FIELD] = proof
+        if retry_failure is not None:
+            target["retry_failure"] = retry_failure
+            original.clear()
+            original.update(target)
+        else:
+            original[ENVIRONMENT_LIMIT_FIELD] = original["attempts"][0][ENVIRONMENT_LIMIT_FIELD] = proof
         summary["strict_case_evidence"] = candidate["strict_case_evidence"]
     if summary["status"] != "failed":
         return 0

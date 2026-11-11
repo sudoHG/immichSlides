@@ -1005,7 +1005,11 @@ The optional observation-only `nightly_retry` receipt is independently versioned
 `flaky-passed` result, with the official assertion failure first and a passing
 retry second; the receipt makes that result yellow rather than a pass. First
 failure diagnostics, public messages and `first_failure` stay on the first
-attempt and observation. Retry failures retain both failed attempts and stay red.
+attempt and observation. A failed retry leaves the first verdict in effect. For
+a v5 yellow first failure, the one-attempt proof and duration remain intact.
+The optional observation-only `retry_failure` retains attempt 2, including its
+nonpassing outcome, exit code, duration and validated diagnostics. Free-form
+attempt text is excluded. Other failed retries retain the two-attempt red result.
 For P2 and unsigned pause evidence, a successful automated retry retains
 `needs-human-review` with failed-then-H attempts and the same tracking receipt;
 it never becomes a signed visual pass or an explicit recovery pass.
@@ -1019,8 +1023,11 @@ output is enabled only when `GITHUB_ACTIONS=true`,
 ref is `refs/heads/main`, and `GITHUB_WORKFLOW_REF` names this repository's
 `ci-nightly.yml@refs/heads/main`. The checked-out trusted `origin/main` must equal
 `GITHUB_SHA`; its Git blob `scripts/ci_summary.py` must declare
-`NIGHTLY_RETRY_READER_VERSION = 1`. Missing refs, Git errors or an older reader
-leave the producer off. Branch dispatches, local runs, PR scoped UI and the PR
+`NIGHTLY_RETRY_READER_VERSION = 1`. Checkout sets the remote-tracking ref to the
+tested commit in this job, so the gate checks that the **same commit** on main
+carries reader v1. It implements the same-PR rollout exception. Missing refs,
+Git errors or an older reader leave the producer off. Branch dispatches,
+local runs, PR scoped UI and the PR
 strict tracer emit no new retry claims. A dispatch must also have an empty
 `shard` input and no `live_only`, `strict_only`, `ui_only` or
 `probe_environment_refusal` flag; unavailable/invalid dispatch inputs leave it
@@ -1035,7 +1042,8 @@ Strict traces retain a single first phase per declared case and nest a separate
 and `official_method_exit_codes` maps bind filtered execution; successful person
 siblings can reuse their unchanged first evidence. Fixture UI retains
 `official-tests.json` and `official-tests-attempt-N.json` for independent reader
-validation. A producer proof does not substitute for either official attempt.
+validation. Both the aggregate and the reporter bind a flaky claim to the
+original and retry evidence.
 
 ### Reader-first evolution
 

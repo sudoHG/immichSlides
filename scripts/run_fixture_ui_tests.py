@@ -374,28 +374,37 @@ def write_fixture_summary(summary, output):
 
 
 def finish_fixture_coverage(summary, official, expected, policy, *, exit_code, runner_hosted,
-                            base_registry=None, evaluated_on=None):
+                            base_registry=None, evaluated_on=None, nightly_retry=False):
     """Keep failed producer status while a clean, fully bound tool-yellow invocation exits zero."""
     from ci_failure_diagnostics import (attach_failure_messages, environment_limit_evidence,
         bind_ui_environment_limits, EMITTED_ENVIRONMENT_POLICY_VERSION)
+    from ci_flaky import split_failed_nightly_retry
     attach_failure_messages(summary["population"]["observed"], official)
     if any(entry["outcome"] == "failed" for entry in summary["population"]["observed"]):
         summary["status"] = "failed"
     clean = exit_code in {0, 65} and not summary["infrastructure"]
-    if clean:
-        for index, entry in enumerate(summary["population"]["observed"]):
-            proof = environment_limit_evidence(summary, entry, [], runner_hosted=runner_hosted,
-                policy_version=EMITTED_ENVIRONMENT_POLICY_VERSION)
-            if proof is None:
-                continue
-            candidate = copy.deepcopy(summary)
-            target = candidate["population"]["observed"][index]
-            target["environment_limit"] = target["attempts"][0]["environment_limit"] = proof
-            try:
-                bind_ui_environment_limits(candidate, official)
-            except (ValueError, TypeError, KeyError, AttributeError):
-                continue
-            entry["environment_limit"] = entry["attempts"][0]["environment_limit"] = proof
+    for index, entry in enumerate(summary["population"]["observed"]):
+        split = split_failed_nightly_retry(entry) if nightly_retry else None
+        if not clean and split is None:
+            continue
+        first, retry_failure = split if split is not None else (entry, None)
+        if retry_failure is not None:
+            attach_failure_messages([first], official)
+        proof = environment_limit_evidence(summary, first, [], runner_hosted=runner_hosted,
+            policy_version=EMITTED_ENVIRONMENT_POLICY_VERSION)
+        if proof is None:
+            continue
+        candidate = copy.deepcopy(summary)
+        target = copy.deepcopy(first)
+        candidate["population"]["observed"][index] = target
+        target["environment_limit"] = target["attempts"][0]["environment_limit"] = proof
+        try:
+            bind_ui_environment_limits(candidate, official)
+        except (ValueError, TypeError, KeyError, AttributeError):
+            continue
+        if retry_failure is not None:
+            target["retry_failure"] = retry_failure
+        entry.update(target)
     verdict = evaluate_population(summary, expected, policy, environment="fixture",
         base_registry=base_registry, evaluated_on=evaluated_on)
     yellow = clean and verdict["status"] == "environment-limited"
@@ -822,7 +831,7 @@ def main(argv=None, *, simulator_prepared=False):
         first_official = json.loads(first_export.read_text()) if first_export.is_file() else {"testNodes": []}
         verdict, code = finish_fixture_coverage(summary, first_official, declared, policy if args.mode == "pr" else measured_policy,
             exit_code=code, runner_hosted=os.environ.get("RUNNER_ENVIRONMENT") == "github-hosted",
-            base_registry=registry, evaluated_on=evaluated_on)
+            base_registry=registry, evaluated_on=evaluated_on, nightly_retry=nightly_retry)
         write_json(output / "coverage-verdict.json", verdict)
     except KeyboardInterrupt:
         code = 130

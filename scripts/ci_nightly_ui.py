@@ -21,7 +21,7 @@ WORKFLOW = ".github/workflows/ci-nightly.yml"
 
 
 def bind_ui_nightly_retries(summary, official, retries):
-    """A yellow retry needs the original failure and one complete filtered official pass."""
+    """Match each reported retry to the original method and its filtered export."""
     from ci_flaky import official_ui_duration
     def cases(payload):
         require(isinstance(payload, dict) and isinstance(payload.get("testNodes"), list),
@@ -54,7 +54,9 @@ def bind_ui_nightly_retries(summary, official, retries):
         second.update(selected)
         calls.update({key: raw["invocation"] for key in selected})
     for entry in summary["population"]["observed"]:
-        if "nightly_retry" not in entry:
+        proof = entry.get("nightly_retry")
+        retry_failure = entry.get("retry_failure")
+        if proof is None and retry_failure is None:
             continue
         key = entry["identity"]["key"]
         first, last = initial.get(key, {}), second.get(key, {})
@@ -63,17 +65,29 @@ def bind_ui_nightly_retries(summary, official, retries):
                 and all(isinstance(arg, str) for arg in call["command"]),
                 "nightly retry: missing UI invocation evidence")
         selections = [arg for arg in call.get("command", []) if arg.startswith("-only-testing:")]
-        require(call.get("exit_code") == 0 and selections == ["-only-testing:immichSlidesUITests/" + key],
+        retry_exit = retry_failure["exit_code"] if retry_failure is not None else 0
+        require(type(call.get("exit_code")) is int and call["exit_code"] == retry_exit
+                and selections == ["-only-testing:immichSlidesUITests/" + key],
                 "nightly retry: UI retry exit or filtered selection differs")
-        require(entry["nightly_retry"]["failed_case_count"] == failed_count and first.get("result") == "Failed"
-                and first.get("retry_assertion") is True and last.get("result") == "Passed",
-                "nightly retry: official UI assertion, failed count or passing retry differs")
-        for node, attempt in zip((first, last), entry["attempts"]):
+        require(1 <= failed_count <= 3 and (proof is None or proof["failed_case_count"] == failed_count)
+                and first.get("result") == "Failed" and first.get("retry_assertion") is True,
+                "nightly retry: official UI assertion or failed count differs")
+        if retry_failure is None:
+            require(last.get("result") == "Passed", "nightly retry: official UI passing retry differs")
+        else:
+            expected = {"failed": "Failed", "crashed": "Failed", "skipped": "Skipped"}.get(retry_failure["outcome"])
+            require(expected is not None and last.get("result") == expected,
+                    "nightly retry: official UI nonpassing retry differs")
+            for field in ("failure_messages", "first_failure"):
+                if field in retry_failure:
+                    require(retry_failure[field] == last.get(field), "nightly retry: official UI retry diagnostics differ")
+        attempts = (entry["attempts"][0], retry_failure if retry_failure is not None else entry["attempts"][1])
+        for index, (node, attempt) in enumerate(zip((first, last), attempts)):
             try:
                 seconds = official_ui_duration(node)
             except ContractError as error:
                 raise ContractError("nightly retry: official UI duration differs or is unknown") from error
-            require(seconds is not None and seconds == attempt["duration_seconds"],
+            require(seconds == attempt["duration_seconds"] and (seconds is not None or index == 1 and retry_failure is not None),
                     "nightly retry: official UI duration differs or is unknown")
         if "failure_messages" in entry:
             require(first.get("failure_messages") == entry["failure_messages"],
@@ -142,7 +156,7 @@ def judge_ui(raw_plan, raw_summaries, *, policy, registry, evaluated_on, matrix_
             if any("environment_limit" in item for item in summary["population"]["observed"]):
                 from ci_failure_diagnostics import bind_ui_environment_limits
                 bind_ui_environment_limits(summary, (official_tests or {}).get(pair))
-            if any("nightly_retry" in item for item in summary["population"]["observed"]):
+            if any("nightly_retry" in item or "retry_failure" in item for item in summary["population"]["observed"]):
                 bind_ui_nightly_retries(summary, (official_tests or {}).get(pair), (retry_tests or {}).get(pair))
             summaries[pair] = summary
         except (ContractError, KeyError, TypeError, ValueError) as error:
@@ -273,7 +287,7 @@ def aggregate_ui(plan, records, *, matrix_job_result, root):
             summaries.append(parse_summary((directory / "summary.json").read_text()))
             if any("environment_limit" in row or "nightly_retry" in row for row in summaries[-1]["population"]["observed"]):
                 official_tests[(item["device"], item["shard"])] = decode((directory / "official-tests.json").read_text())
-            if any("nightly_retry" in row for row in summaries[-1]["population"]["observed"]):
+            if any("nightly_retry" in row or "retry_failure" in row for row in summaries[-1]["population"]["observed"]):
                 calls = decode((directory / "retry-invocations.json").read_text())["invocations"]
                 require(2 <= len(calls) <= 4 and calls[0].get("exit_code") == 65,
                         "nightly retry: invalid UI invocation count or initial exit")
@@ -341,22 +355,23 @@ def main(argv=None):
     record = aggregate_ui(stored, args.records_dir, matrix_job_result=args.matrix_job_result, root=root)
     (output / "nightly-ui.json").write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
     verdict, capacity = record["verdict"], record["capacity"]
+    from ci_summary import markdown_text, render_nightly_retry, render_retry_failure
     lines = ["# Nightly UI: " + verdict["status"], "", f"Scheduled {verdict['matrix']['scheduled']}; executed {verdict['matrix']['executed']}; deselected {verdict['matrix']['deselected']}; missing {len(verdict['matrix']['missing'])}.",
              f"{capacity['shards']} shards; max-parallel {capacity['max_parallel']}; minimum {capacity['minimum_shard_waves']} waves; observed start-order waves {len(capacity['start_order_waves'])}; wall {capacity['wall_seconds']:.1f}s.", "",
              "| Device | Shard | Verdict |", "|---|---|---|"]
     lines.extend(f"| {item['device']} | {item['shard']} | {item['verdict']['status']} |" for item in verdict["shards"])
     if verdict.get("flaky"):
-        from ci_summary import markdown_text, render_nightly_retry
         lines.extend("\nWARNING: " + markdown_text(identity_key(item["identity"])) + ": "
                      + markdown_text(render_nightly_retry(item))
                      for item in verdict["observed"] if "nightly_retry" in item)
     if verdict.get("environment_limited"):
         from ci_failure_diagnostics import render_environment_limit
-        from ci_summary import markdown_text
         lines.append("\n> **WARNING: hosted XCTest/Apple tool failures are environment-limited (yellow), never passes.**")
         lines.extend("\nWARNING: " + markdown_text(identity_key(item["identity"])) + ": "
                      + markdown_text(render_environment_limit(item["environment_limit"]))
                      for item in verdict["observed"] if "environment_limit" in item)
+    lines.extend("\n" + markdown_text(identity_key(item["identity"]) + ": " + render_retry_failure(item["retry_failure"]))
+                 for item in verdict["observed"] if "retry_failure" in item)
     lines.extend(["", *verdict["errors"]])
     (output / "nightly-ui.md").write_text("\n".join(lines) + "\n")
     print("\n".join(lines[:4]))

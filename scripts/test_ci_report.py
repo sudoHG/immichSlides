@@ -39,6 +39,49 @@ def entry(day="2026-10-01", outcome="failed", run=10, attempt=1):
 
 
 class ReporterTests(unittest.TestCase):
+    def test_v5_strict_retry_keeps_primary_proof_and_binds_second_method_failure(self):
+        from ci_failure_diagnostics import environment_limit_evidence
+        from ci_flaky import merge_retry
+        from test_ci_summary import hosted_v5_summary
+        summary, resource = hosted_v5_summary()
+        row = summary["population"]["observed"][0]
+        proof = environment_limit_evidence(summary, row, [resource], runner_hosted=True, policy_version=5)
+        row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
+        case = row["identity"]
+        method = "StrictE2ESmokeUITests/testIOSStrictE2EConnectionSmoke"
+        official = {"totalTestCount": 1, "passedTests": 0, "failedTests": 1, "skippedTests": 0}
+        phase = {"identity": case, "exit_code": 65, "build_operations": 0, "products_unchanged": True,
+                 "log_present": True, "official_summary": official, "bounded_diagnostics": {"case_resources": [resource]},
+                 "official_methods": [{"identifier": method, "result": "Failed", **{field: row[field] for field in
+                     ("failure_phase", "failure_class", "first_failure", "failure_messages")}}],
+                 "official_method_durations": {method: 1}}
+        original, _ = ci_report.method_observations(summary, {"warm": [phase]}, runner_hosted=True)
+        row["retry_failure"] = {"number": 2, "outcome": "failed", "exit_code": 65, "duration_seconds": 3,
+                                "reason": None, "message": None}
+        phase.update(retry_method=method, retry_assertion_methods=[method], retry_failed_case_count=1,
+                     retry={**phase, "duration_seconds": 3, "official_method_durations": {method: 2},
+                            "official_methods": [{"identifier": method, "result": "Failed"}]})
+        identity = dict(case, key=method)
+        phase["retry_methods"] = [merge_retry(observation(identity, "failed", 1, exit_code=65),
+                                             observation(identity, "failed", 2, exit_code=65, message="private retry output"))]
+        observed, missing = ci_report.method_observations(summary, {"warm": [phase]}, runner_hosted=True)
+        self.assertEqual([], missing)
+        second = observed[0]["retry_failure"]
+        self.assertEqual(original[0], {key: value for key, value in observed[0].items() if key != "retry_failure"})
+        self.assertEqual(("failed", 65, 2, None), (second["outcome"], second["exit_code"], second["duration_seconds"], second["message"]))
+        report = entry()
+        report.update(observed=observed, status="environment-limited")
+        details = ci_report.failure_details(observed[0])
+        report["diagnostics"]["failures"] = [details]
+        self.assertEqual([65, 65], details["exit_codes"])
+        self.assertEqual(second, details["retry_failure"])
+        self.assertIn("Retry outcome failed, exit 65, duration 2.000s.", render_entry(report))
+        for field, value in (("exit_code", 2), ("duration_seconds", 7)):
+            bad = copy.deepcopy(phase)
+            bad["retry"][field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(ContractError, "^retry failure: strict case evidence differs"):
+                ci_report.method_observations(summary, {"warm": [bad]}, runner_hosted=True)
+
     def test_strict_retry_reader_recomputes_both_official_attempts_and_rejects_missing_proof(self):
         from test_ci_summary import nightly_retry_summary
         summary = nightly_retry_summary()
@@ -72,7 +115,7 @@ class ReporterTests(unittest.TestCase):
                 "ci_publish.complete_attempt_jobs", return_value=jobs):
             report = ci_report.nightly_attempt(api, run, 1, artifacts)
         self.assertEqual(("environment-limited", 1), (report["status"], report["diagnostics"]["counts"]["flaky"]))
-        self.assertIn("one retry passed", render_entry(report))
+        self.assertIn("One retry passed", render_entry(report))
         diagnostic = copy.deepcopy(aggregate)
         diagnostic["identity"]["event"] = diagnostic["source"]["event"] = "workflow_dispatch"
         diagnostic["diagnostic_shard"] = "strict-only"
@@ -178,12 +221,13 @@ class ReporterTests(unittest.TestCase):
         report.update(status="environment-limited", observed=[row])
         report["diagnostics"]["failures"] = [ci_report.failure_details(row)]
         compact = ci_report.compact_entry(report, set())
-        self.assertEqual([row], compact["observed"])
+        self.assertEqual(row["identity"], compact["observed"][0]["identity"])
         decision = issue_decision(None, IDENTITY, [compact], registry_referenced=False)
         self.assertEqual("open", decision["action"])
         self.assertEqual("flaky", decision["state"]["nights"][report["day"]]["10"]["outcome"])
         body = ci_report.issue_body(None, decision["state"], "sudoHG/immichSlides")
-        self.assertIn("First playback assertion failed", body)
+        self.assertEqual(1, body.count("Official XCTest assertion failure"))
+        self.assertNotIn("First playback assertion failed", body)
         self.assertIn("one retry passed", body)
         self.assertIn("flaky (yellow)", render_entry(report))
         self.assertEqual([], decision["state"]["explicit_pass_nights"])
@@ -251,6 +295,14 @@ class ReporterTests(unittest.TestCase):
             rejected = ci_report.environment_history([changed])[0]
             self.assertEqual("failed", rejected["status"])
             self.assertIn("invalid or obsolete nightly-retry proof", render_entry(rejected))
+        # Rejection uses the device-specific evidence identity rather than the shared issue identity.
+        broken = copy.deepcopy(phone)
+        broken["observed"][0]["nightly_retry"]["policy_version"] = 2
+        passing_pad = pad_pass["observed"][0]
+        broken["observed"].append(passing_pad)
+        rejected = ci_report.environment_history([broken])[0]
+        self.assertEqual("failed", rejected["observed"][0]["outcome"])
+        self.assertEqual(passing_pad, rejected["observed"][1])
 
     def test_v5_strict_methods_recheck_message_binding_and_retained_starvation_proof(self):
         from ci_failure_diagnostics import environment_limit_evidence
@@ -1545,6 +1597,10 @@ class ReporterTests(unittest.TestCase):
             original_summary = {**summaries[-1], "population": dict(summaries[-1]["population"])}
             retry_row = nightly_retry_summary("ui")["population"]["observed"][0]
             retry_row["identity"] = copy.deepcopy(failed[0]["identity"])
+            private_message = "private-nightly-assertion --> cannot enter public state"
+            private_reason = "private-nightly-retry-reason"
+            retry_row["attempts"][0]["message"] = private_message
+            retry_row["attempts"][1]["reason"] = private_reason
             summaries[-1]["population"]["observed"] = [retry_row]
             summaries[-1]["status"] = "passed"
             key = retry_row["identity"]["key"]
@@ -1562,10 +1618,24 @@ class ReporterTests(unittest.TestCase):
             raw.update(status="passed", tiers={**raw["tiers"], "strict": "passed"})
             bind_ui_aggregate(raw, ui)
             jobs = [{"name": "ui-appletv-visual", "runner_group_name": "GitHub Actions", "labels": []}]
-            with patch("ci_publish.complete_attempt_jobs", return_value=jobs):
-                flaky_report = ci_report.nightly_attempt(api, run, 1, artifacts)
+            with patch("ci_publish.complete_attempt_jobs", return_value=jobs), patch.object(api, "pages", return_value=artifacts, create=True):
+                flaky_report = read_run(api, {**run, "conclusion": "success"}, {})
             self.assertEqual(("environment-limited", 1), (flaky_report["status"], flaky_report["diagnostics"]["counts"]["flaky"]))
-            self.assertIn("First playback assertion failed", render_entry(flaky_report))
+            compact = ci_report.compact_entry(flaky_report, set())
+            saved = ci_report.merge_snapshot(None, [compact], date(2026, 10, 1))["days"]["2026-10-01"]["entries"][0]
+            self.assertEqual("environment-limited", saved["status"])
+            rendered = render_entry(saved)
+            self.assertIn("Official XCTest assertion failure", rendered)
+            decision = issue_decision(None, retry_row["identity"], [saved], registry_referenced=False)
+            state = decision["state"]
+            self.assertEqual(("open", "flaky"), (decision["action"], state["nights"]["2026-10-01"]["10"]["outcome"]))
+            body = ci_report.issue_body(None, state, api.repository)
+            self.assertEqual(state, read_state({"body": body, "state": "open"}))
+            for value in (json.dumps(flaky_report), json.dumps(saved), rendered, body):
+                self.assertNotIn(private_message, value)
+                self.assertNotIn(private_reason, value)
+            closed = {**state, "closed": True}
+            self.assertEqual("none", issue_decision(closed, retry_row["identity"], [saved], registry_referenced=False)["action"])
             ui.clear()
             ui.update(original_ui)
             raw.clear()
@@ -1655,6 +1725,28 @@ class ReporterTests(unittest.TestCase):
                     attempt["failure_messages"] = mixed_messages
                     attempt["environment_limit"]["failure_messages"] = mixed_messages
             self.assertEqual("failed", ci_report.environment_history([mixed_history])[0]["status"])
+            # The original v5 proof remains yellow and the independent red retry stays visible.
+            row["retry_failure"] = {"number": 2, "outcome": "failed", "exit_code": 65, "duration_seconds": 3,
+                                    "reason": None, "message": None}
+            node["retry_assertion"] = True
+            last = {"nodeType": "Test Case", "nodeIdentifier": row["identity"]["key"] + "()", "result": "Failed",
+                    "durationInSeconds": 3}
+            second_export = {"testNodes": [last]}
+            retry_call = {"exit_code": 65, "command": ["xcodebuild", "-only-testing:immichSlidesUITests/" + row["identity"]["key"]]}
+            retry_tests = {("appletv", "visual"): [{"official_tests": second_export, "invocation": retry_call}]}
+            members[("ui-appletv-visual-10-1", "official-tests-attempt-2.json")] = second_export
+            members[("ui-appletv-visual-10-1", "retry-invocations.json")] = {"invocations": [{"exit_code": 65}, retry_call]}
+            ui["verdict"] = judge_ui(plan, summaries, policy=policy, registry=registry, evaluated_on=date(2026, 10, 1),
+                matrix_job_result="success", official_tests=official_tests, retry_tests=retry_tests)
+            self.assertEqual("environment-limited", ui["verdict"]["status"])
+            with patch("ci_publish.complete_attempt_jobs", return_value=jobs):
+                report = ci_report.nightly_attempt(api, run, 1, artifacts)
+                self.assertEqual([65, 65], report["diagnostics"]["failures"][0]["exit_codes"])
+                self.assertIn("Retry outcome failed, exit 65, duration 3.000s.", render_entry(report))
+                last["result"] = "Passed"
+                with self.assertRaisesRegex(ContractError, "^nightly UI aggregate differs from bound shard evidence$"):
+                    ci_report.nightly_attempt(api, run, 1, artifacts)
+            row.pop("retry_failure")
             summaries[-1]["population"]["observed"] = [original_row]
             summaries[-1]["status"] = "passed"
             raw.update(status=original_status, tiers=original_tiers)

@@ -12,6 +12,7 @@ from pathlib import Path
 SCHEMA_VERSION = 1
 NIGHTLY_RETRY_READER_VERSION = 1
 NIGHTLY_RETRY_FIELD = "nightly_retry"
+RETRY_FAILURE_FIELD = "retry_failure"
 BOUNDED_DIAGNOSTICS_FIELD = "bounded_diagnostics"
 OUTCOMES = {"passed", "failed", "skipped", "flaky-passed", "crashed", "timed-out", "not-run", "needs-human-review"}
 ATTEMPT_OUTCOMES = OUTCOMES - {"flaky-passed"}
@@ -176,14 +177,62 @@ def validate_nightly_retry(entry):
             "nightly retry: requires exactly one assertion failure then one passing retry")
 
 
+def public_nightly_retry_failure(entry):
+    from ci_failure_diagnostics import validate_failure_messages
+    from ci_flaky import ASSERTION_FAILURE
+    messages = entry.get("failure_messages") or entry["attempts"][0].get("failure_messages")
+    try:
+        validate_failure_messages(messages)
+    except ContractError:
+        return ASSERTION_FAILURE
+    return "; ".join(messages)
+
+
 def render_nightly_retry(entry):
-    first = entry["attempts"][0]
-    failure = first.get("message") or "; ".join(first.get("failure_messages", [])) or first["reason"]
-    return nightly_retry_outcome(entry) + ": first failure: " + failure + "; one retry passed"
+    return f"{nightly_retry_outcome(entry)}: first failure: {public_nightly_retry_failure(entry)}. One retry passed."
 
 
 def nightly_retry_outcome(entry):
     return "needs-human-review (flaky; yellow)" if entry["outcome"] == "needs-human-review" else "flaky (yellow)"
+
+
+def public_retry_failure(attempt):
+    """Retain the second nonpassing attempt's structured evidence without runner text."""
+    from ci_failure_diagnostics import DIAGNOSTIC_FIELDS, FAILURE_MESSAGES_FIELD, FIRST_FAILURE_FIELD, VALIDATOR_FAILURE_FIELD
+    optional = DIAGNOSTIC_FIELDS | {FAILURE_MESSAGES_FIELD, FIRST_FAILURE_FIELD, VALIDATOR_FAILURE_FIELD}
+    return {"number": 2, "outcome": attempt["outcome"], "duration_seconds": attempt["duration_seconds"],
+            "exit_code": attempt["exit_code"], "message": None,
+            "reason": "Official test was skipped" if attempt["outcome"] == "skipped" else None,
+            **{key: attempt[key] for key in optional & attempt.keys()}}
+
+
+def validate_retry_failure(entry):
+    require(entry.get("outcome") == "failed" and entry.get("environment_limit", {}).get("policy_version") == 5,
+            "retry failure: requires a v5 failed observation")
+    retry = entry[RETRY_FAILURE_FIELD]
+    try:
+        require(isinstance(retry, dict) and type(retry.get("number")) is int and retry["number"] == 2
+                and retry == public_retry_failure(retry), "expected one sanitized second attempt")
+        require(retry["outcome"] in {"failed", "skipped", "crashed", "timed-out", "not-run"}, "expected a nonpassing retry")
+        standalone = {"identity": entry["identity"], "outcome": retry["outcome"],
+                      "duration_seconds": retry["duration_seconds"], "attempts": [{**retry, "number": 1}]}
+        for key in ("failure_messages", "first_failure", "validator_failure_message"):
+            if key in retry:
+                standalone[key] = retry[key]
+        validate_observation(standalone)
+    except (ContractError, KeyError, TypeError) as error:
+        message = str(error) if isinstance(error, ContractError) else "invalid second attempt"
+        raise ContractError("retry failure: " + message) from error
+
+
+def render_retry_failure(attempt):
+    seconds = attempt["duration_seconds"]
+    elapsed = "unknown" if seconds is None else f"{seconds:.3f}s"
+    details = [*attempt.get("failure_messages", [])]
+    if "validator_failure_message" in attempt:
+        details.append(attempt["validator_failure_message"])
+    label = f"Retry outcome {attempt['outcome']}, exit {attempt['exit_code']}, duration {elapsed}."
+    return " ".join([label, *details])
 
 
 def validate_observation(entry):
@@ -196,11 +245,14 @@ def validate_observation(entry):
     from ci_failure_diagnostics import ENVIRONMENT_LIMIT_FIELD, FAILURE_MESSAGES_FIELD, validate_environment_limit
     optional = DIAGNOSTIC_FIELDS | {VALIDATOR_FAILURE_FIELD, FIRST_FAILURE_FIELD, ENVIRONMENT_LIMIT_FIELD, FAILURE_MESSAGES_FIELD,
                                     NIGHTLY_RETRY_FIELD}
-    fields(entry, {"identity", "outcome", "duration_seconds", "attempts"} | (optional & entry.keys()), "observation")
+    fields(entry, {"identity", "outcome", "duration_seconds", "attempts"}
+           | ((optional | {RETRY_FAILURE_FIELD}) & entry.keys()), "observation")
     validate_test_identity(entry["identity"])
     require(entry["outcome"] in OUTCOMES, "invalid outcome")
     if NIGHTLY_RETRY_FIELD in entry:
         validate_nightly_retry(entry)
+    if RETRY_FAILURE_FIELD in entry:
+        validate_retry_failure(entry)
     if ENVIRONMENT_LIMIT_FIELD in entry:
         validate_environment_limit(entry[ENVIRONMENT_LIMIT_FIELD])
         require((entry["identity"]["kind"] == "strict" or entry["identity"]["kind"] == "ui"
@@ -417,7 +469,7 @@ def validate_summary_v1(payload):
         validate_receipt(case[BOUNDED_DIAGNOSTICS_FIELD])
         evidence_by_case[token] = case[BOUNDED_DIAGNOSTICS_FIELD]
     for entry in population["observed"]:
-        if NIGHTLY_RETRY_FIELD in entry:
+        if NIGHTLY_RETRY_FIELD in entry or RETRY_FAILURE_FIELD in entry:
             require(source["workflow_path"] == ".github/workflows/ci-nightly.yml"
                     and identity["event"] in {"schedule", "workflow_dispatch"} and identity["ref"] == "refs/heads/main"
                     and source["fork_originated"] is False and run["tier"] == entry["identity"]["kind"]
@@ -507,6 +559,8 @@ def render_markdown(payload):
                             for detail in (attempt["reason"], attempt["message"]) if detail)
         if "failure_messages" in entry:
             message = "; ".join(filter(None, [message, *entry["failure_messages"]]))
+        if NIGHTLY_RETRY_FIELD in entry:
+            message = public_nightly_retry_failure(entry)
         outcome = (nightly_retry_outcome(entry) if NIGHTLY_RETRY_FIELD in entry else
                    "failed (environment-limited; yellow)" if "environment_limit" in entry else entry["outcome"])
         hints = []
@@ -554,6 +608,8 @@ def render_markdown(payload):
             from ci_failure_diagnostics import render_environment_limit
             lines.append("\n" + markdown_text(entry["identity"]["key"]) + ": "
                          + markdown_text(render_environment_limit(entry["environment_limit"])) + "\n")
+        if RETRY_FAILURE_FIELD in entry:
+            lines.append(markdown_text(entry["identity"]["key"] + ": " + render_retry_failure(entry[RETRY_FAILURE_FIELD])))
     for entry in payload["infrastructure"]:
         category = NON_INFRASTRUCTURE_DIAGNOSTICS.get(entry["code"], "Infrastructure")
         lines.append(f"\n{category}: {markdown_text(entry['code'])}: {markdown_text(entry['message'])}")

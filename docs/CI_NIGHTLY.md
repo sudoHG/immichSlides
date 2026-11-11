@@ -280,10 +280,12 @@ without an infrastructure entry.
 The person shard contains both fixtures: two three-session cases and four single-session
 cases require ten invocations. Cold/warm/reset/export allowances total 148 minutes
 (24 cold plus 124 warm), with up to 50 more minutes if every invocation consumes
-its readiness budget: 198 minutes total. The 215-minute job cap leaves the original
-17-minute margin for initial preparation, setup, uploads and final cleanup, so a slow shard
-can publish its failed records before runner teardown. Readiness can exceed its
-scheduling deadline while the last timed-out query finishes cleanup; see the
+its readiness budget: 198 minutes for those allowances. The job cap is 215
+minutes. The nominal difference of 17 minutes also pays for checkout, Python
+environment and toolchain setup, simulator creation and early boot submission,
+the post-build gate, review-package export, uploads and final cleanup. It is
+an upper bound on time available to publish records. Readiness can exceed its
+scheduling deadline while the last timed-out query finishes cleanup. See the
 [shared bounds and overrun logs](CI_STRICT_RUNNER.md#shared-simulator-reset).
 Reaching the job cap is a failure; unrun cases remain unverified.
 Reduce Motion additionally reserves 1800 seconds per case for its command channel:
@@ -293,9 +295,8 @@ These derive from the shared 60-second simulator-command constant; see the
 An ordinary six-case shard previously bounds at `24 + 6 × 19 = 138 minutes`
 (including cold-build overhead and every readiness allowance). The TV shard has
 two Reduce Motion fixtures, so its bound becomes `138 + 2 × 30 = 198 minutes`;
-each affected iPhone shard has one and bounds at 168 minutes. The person shard's
-198-minute bound and overall 215-minute cap remain unchanged, retaining the same
-17-minute margin. Matrix membership, product windows and recording holds do not change.
+each affected iPhone shard has one and bounds at 168 minutes. These are case and
+build allowances within the 215-minute job cap, with the same surrounding steps.
 If simulator creation or the separate preparation gate fails before the tracer starts,
 the workflow invokes the tracer's `--preparation-failed` accounting mode before upload.
 It writes the same bound compact schema with every planned case failed, every attempt
@@ -522,29 +523,37 @@ official methods per shard qualify; more than three starts no retry. Only
 official assertion failures with known durations and complete selected-method
 evidence qualify, regardless of the known-flaky registry. Preparation, build,
 infrastructure, cancellation, crashes, incomplete/missing exports, unclassified
-failures and failed evidence/contract checks grant no retry. A failed retry stays
-red with both attempts. There is never a third attempt or a whole-shard rerun.
+failures and failed evidence/contract checks grant no retry. After a nonpassing
+retry, the original invocation supplies the verdict. A first failure that
+qualifies under v5 keeps its yellow proof and duration, with the second failure
+retained separately. Other first failures stay red with both attempts. Retry
+evidence never supplies a v5 proof. Each case can be retried at most once.
 
 Retries reuse the same dedicated simulator and immutable Products after the
 existing tier's app, keychain and privacy reset. Each Xcode invocation selects
 one exact failed method. `filter-person` collects all three independent first
 sessions, continuing after an official exit-65 failure while retaining normal
-infrastructure stops. Successful session evidence is retained for the unchanged
-full validator while only failed sessions execute again, once each. Missing
-sessions stay red; mixed retry outcomes retain per-method yellow/red and the
-strict case stays red. Both original and retry official counts, method outcomes, durations and
-public failure diagnostics remain available; a passing retry cannot erase the
-first failure. P2 and unsigned pause timing still require human review.
+infrastructure stops. Only verified passing siblings' official records and
+their named screenshots are copied to the retry directory. Retried sessions
+produce their own screenshots and shared person-result JSON for the full
+validator. Missing sessions stay red. Mixed retry outcomes retain per-method
+yellow/red and the strict case stays red. Both official counts, method outcomes,
+durations and public failure diagnostics remain available. P2 and unsigned pause
+timing still require human review.
 
-No job timeout or product window grows. Strict retries are admitted only if
-their existing full case bound fits within 198 minutes from tracer start,
-leaving the original 17-minute margin of the 215-minute job. One ordinary case
-costs `600 + 300 + 240 = 1140 seconds` (19 minutes); the conservative
+Strict retries are admitted only if their existing full case bound fits within
+198 minutes from tracer start. The tracer clock includes the cold build,
+post-build simulator gate, case execution and in-tracer export. The 215-minute
+job also charges checkout, Python/toolchain setup, simulator creation and early
+boot before that clock, and review-package export, uploads and cleanup after it.
+At the 198-minute tracer ceiling, the budget left for the steps after the tracer
+is `17 minutes − elapsed pre-tracer steps`. One ordinary case costs
+`600 + 300 + 240 = 1140 seconds` (19 minutes). The conservative
 three-session person bound is `3 × (600 + 300) + 240 = 2940 seconds`
 (49 minutes), even when only one session executes. Reduce Motion adds the
 existing 1800 seconds. Thus a fully consumed 198-minute shard gets no retry;
 three ordinary retries require at least 57 minutes of unused capacity.
-Insufficient capacity preserves red and prints `retry not run`.
+Insufficient capacity keeps the first verdict and prints `retry not run`.
 
 UI retains its 85-minute aggregate Xcode deadline and 65-minute invocation cap.
 A retry requires more than `720 + 8 × 180 = 2160 seconds` (36 minutes)

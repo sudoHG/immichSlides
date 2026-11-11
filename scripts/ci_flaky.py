@@ -187,6 +187,17 @@ def merge_retry(first, second, *, nightly_proof=None):
     return merged
 
 
+def split_failed_nightly_retry(entry):
+    """Project the original failure for v5 and keep the nonpassing retry as evidence."""
+    if entry["outcome"] != "failed" or len(entry["attempts"]) != 2:
+        return None
+    from ci_summary import public_retry_failure
+    first = copy.deepcopy(entry)
+    retry = first["attempts"].pop()
+    first["duration_seconds"] = first["attempts"][0]["duration_seconds"]
+    return first, public_retry_failure(retry)
+
+
 def retry_observations(first, registry, *, tier, environment, today, reset, execute, infrastructure=None,
                        nightly_retry=False, retry_allowed=None):
     from strict_e2e_runner_support import CommandError

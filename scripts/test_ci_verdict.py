@@ -15,6 +15,56 @@ from test_ci_summary import valid_summary
 
 
 class NightlyVerdictTests(unittest.TestCase):
+    def test_strict_workflow_aggregate_binds_the_retry_claim_to_the_official_trace(self):
+        import contextlib
+        import io
+        import os
+        import tempfile
+        import time
+        from ci_nightly import main
+        from test_ci_summary import nightly_retry_summary
+        summary = nightly_retry_summary()
+        case = summary["population"]["declared"][0]
+        method = "StrictE2ESmokeUITests/testIOSStrictE2EConnectionSmoke"
+        first = {"identity": case, "exit_code": 65, "build_operations": 0, "products_unchanged": True,
+                 "log_present": True, "retry_method": method, "retry_failed_case_count": 1, "retry_assertion_methods": [method],
+                 "official_methods": [{"identifier": method, "result": "Failed"}], "official_method_durations": {method: 1},
+                 "official_summary": {"totalTestCount": 1, "passedTests": 0, "failedTests": 1, "skippedTests": 0}}
+        first["retry"] = {**first, "exit_code": 0, "official_methods": [{"identifier": method, "result": "Passed"}],
+                          "official_method_durations": {method: 2},
+                          "official_summary": {"totalTestCount": 1, "passedTests": 1, "failedTests": 0, "skippedTests": 0}}
+        planned = [{"id": "a", "cases": [{"platform": "ios", **case["dimensions"]}]}]
+        hashes = {"manifests": {"nightly-matrix": "a" * 64}, "policies": {"nightly": "a" * 64}}
+        summary["hashes"] = hashes
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            records = root / "records" / "nightly-strict-a-10-1"
+            records.mkdir(parents=True)
+            (records / "summary.json").write_text(json.dumps(summary))
+            (records / "p2-review-bindings.json").write_text(json.dumps({"schema_version": 1, "review_packages": []}))
+            plan = {"identity": summary["identity"], "run": {"id": "10", "attempt": 1}, "hashes": hashes,
+                    "shards": planned, "started_epoch": time.time() - 20, "max_parallel": 2}
+            (root / "plan.json").write_text(json.dumps(plan))
+            for exit_code in (0, 65):
+                first["retry"]["exit_code"] = exit_code
+                (records / "trace.json").write_text(json.dumps({"started_epoch": time.time() - 10,
+                    "finished_epoch": time.time(), "warm": [first]}))
+                output = root / f"output-{exit_code}"
+                with patch("ci_nightly.workspace_preflight"), patch("ci_nightly.run_identity", return_value=summary["identity"]), patch(
+                        "ci_nightly.source_metadata", return_value=(summary["source"]["workflow_path"], False)), patch(
+                        "ci_nightly.file_hash", return_value="a" * 64), patch("ci_nightly.shards", return_value=planned), patch(
+                        "ci_nightly.read_policy", return_value={"live_tier_in_scope": False, "built_tiers": ["strict"]}), patch.dict(
+                        os.environ, GITHUB_RUN_ID="10", GITHUB_RUN_ATTEMPT="1", RUNNER_ENVIRONMENT="github-hosted"), contextlib.redirect_stdout(io.StringIO()):
+                    code = main(["aggregate", "--output-dir", str(output), "--plan", str(root / "plan.json"),
+                                 "--records-dir", str(root / "records"), "--matrix-job-result", "success"])
+                result = json.loads((output / "nightly.json").read_text())
+                with self.subTest(exit_code=exit_code):
+                    if exit_code == 0:
+                        self.assertEqual((0, "environment-limited", [case]), (code, result["status"], result["flaky"]))
+                    else:
+                        self.assertEqual((1, "failed", []), (code, result["status"], result.get("flaky", [])))
+                        self.assertIn("a: nightly retry: passing claim differs from retry evidence", result["errors"])
+
     def test_failed_then_passed_nightly_retry_is_yellow_and_infrastructure_stays_red(self):
         from ci_nightly import aggregate_nightly, bind_ui_aggregate
         from test_ci_summary import nightly_retry_summary

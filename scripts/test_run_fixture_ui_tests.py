@@ -19,6 +19,46 @@ from run_fixture_ui_tests import clean_environment, compiled_tests, coverage_row
 
 
 class FixtureCoverageTests(unittest.TestCase):
+    def test_nightly_failed_retry_keeps_first_tool_yellow_and_other_failures_red(self):
+        from ci_flaky import ASSERTION_FAILURE, merge_retry
+        from ci_failure_diagnostics import failure_messages_diagnostics
+        from ci_summary import observation, parse_summary
+        from test_ci_summary import hosted_v5_summary
+
+        policy = {"schema_version": 1, "approval_records": [], "expected_skips": [], "deselections": []}
+        for tool, retry_passed in ((True, False), (False, False), (True, True)):
+            with self.subTest(tool=tool, retry_passed=retry_passed):
+                summary, _ = hosted_v5_summary(ui=True, tool=True)
+                original = summary["population"]["observed"][0]
+                identity = original["identity"]
+                messages = original["failure_messages"] if tool else ["App timeline:"]
+                diagnostics = failure_messages_diagnostics(messages)
+                first = observation(identity, "failed", 12, reason=ASSERTION_FAILURE, exit_code=65,
+                                    failure_diagnostics=diagnostics)
+                second = observation(identity, "passed" if retry_passed else "failed", 9,
+                                     message=None if retry_passed else "raw retry text", exit_code=0 if retry_passed else 65)
+                summary["population"]["observed"] = [merge_retry(first, second,
+                    nightly_proof={"schema_version": 1, "policy_version": 1, "runner_hosted": True, "failed_case_count": 1})]
+                official = {"testNodes": [{"nodeType": "Test Case", "nodeIdentifier": identity["key"] + "()",
+                    "result": "Failed", "durationInSeconds": 12, "failure_messages": messages, **diagnostics,
+                    "children": [{"nodeType": "Failure Message", "name": "failure"}]}]}
+                verdict, code = runner.finish_fixture_coverage(summary, official, [identity], policy,
+                    exit_code=0 if retry_passed else 65, runner_hosted=True, nightly_retry=True)
+                actual = parse_summary(summary)["population"]["observed"][0]
+                self.assertEqual((verdict["status"], code), ("environment-limited", 0) if tool else ("failed", 65))
+                if retry_passed:
+                    self.assertEqual(actual["outcome"], "flaky-passed")
+                    self.assertIn("nightly_retry", actual)
+                    self.assertNotIn("environment_limit", actual)
+                elif tool:
+                    self.assertEqual(actual["environment_limit"]["failure_messages"], messages)
+                    self.assertEqual((len(actual["attempts"]), actual["duration_seconds"]), (1, 12))
+                    self.assertEqual(actual["retry_failure"]["exit_code"], 65)
+                    self.assertIsNone(actual["retry_failure"]["message"])
+                else:
+                    self.assertNotIn("environment_limit", actual)
+                    self.assertEqual(len(actual["attempts"]), 2)
+
     def test_nightly_tool_yellow_keeps_raw_failed_and_only_clean_complete_shards_exit_zero(self):
         from test_ci_summary import hosted_v5_summary
         from ci_summary import parse_summary

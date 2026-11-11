@@ -128,14 +128,17 @@ FILTER_PERSON_SESSIONS = (
     {
         "name": "normal",
         "selector": "immichSlidesUITests/StrictE2EFilterIOSUITests/testFilterPersonNormalMatch",
+        "visual_step": "normal_match",
     },
     {
         "name": "conflict-normal",
         "selector": "immichSlidesUITests/StrictE2EFilterIOSUITests/testFilterPersonConflictNormal",
+        "visual_step": "conflict_normal",
     },
     {
         "name": "nofaces",
         "selector": "immichSlidesUITests/StrictE2EFilterIOSUITests/testFilterPersonNoFaces",
+        "visual_step": "no_faces",
     },
 )
 IOS_FILTER_SUITES = {

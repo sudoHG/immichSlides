@@ -938,12 +938,17 @@ class StrictE2EP2RunnerTests(StrictE2EP2RunnerTestsCases, unittest.TestCase):
             (source / f"official-summary-{cached['name']}.json").write_text(json.dumps({"totalTestCount": 1,
                 "passedTests": 1, "failedTests": 0, "skippedTests": 0, "result": "Passed"}))
             (source / f"official-tests-{cached['name']}.json").write_text(json.dumps({"testNodes": []}))
+            for name in ("person-normal-1.png", "person-conflict-normal-1.png", "person-nofaces-1.png", "unrelated.png"):
+                (source / name).write_bytes(name.encode())
+            (source / "person-results.json").write_text("{}")
             selected = [session["selector"].split("/", 1)[1] for session in FILTER_PERSON_SESSIONS[:2]]
             code, _, stderr, calls = self._run_p2_main(Path(directory) / "retry", suite="filter-person", platform="ios",
                 model="iPhone", warm=True, nightly=True, nightly_methods=selected, nightly_source=source)
             self.assertEqual(code, 0, stderr)
             self.assertEqual([next(arg for arg in call if arg.startswith("-only-testing:")) for call in calls["invocations"]],
                              ["-only-testing:" + session["selector"] for session in FILTER_PERSON_SESSIONS[:2]])
+            self.assertEqual([path.name for path in (Path(directory) / "retry").glob("*.png")], ["person-nofaces-1.png"])
+            self.assertFalse((Path(directory) / "retry/person-results.json").exists())
             (source / "case-manifest.json").write_text(json.dumps({"source_sha": "b" * 40,
                 "suite": "filter-person", "fixture_set": "a"}))
             code, _, stderr, calls = self._run_p2_main(Path(directory) / "refused", suite="filter-person", platform="ios",
@@ -4391,6 +4396,54 @@ class StrictCITracerTests(unittest.TestCase):
                 tracer.main(["--platform", "ios", "--destination", "unused", "--output-dir", str(output)])
             self.assertIs(timeout, raised.exception)
             self.assertEqual([], list(output.iterdir()))
+
+    def test_nightly_failed_retry_preserves_the_first_strict_verdict(self):
+        from ci_summary import parse_summary
+        from run_strict_ci_tracer import evaluate_tracer, produce_environment_limits
+        from test_ci_summary import hosted_v5_summary
+
+        for starved, retry_passed in ((True, False), (False, False), (True, True)):
+            with self.subTest(starved=starved, retry_passed=retry_passed):
+                summary, _ = hosted_v5_summary()
+                original = summary["population"]["observed"][0]
+                identity = original["identity"]
+                ledger = summary["strict_case_evidence"][0]["bounded_diagnostics"]
+                if not starved:
+                    ledger["case_resources"][0]["failure_samples"][0]["idle_percent"] = 50
+                method = {"identifier": "StrictE2ESmokeUITests/testIOSStrictE2EConnectionSmoke", "result": "Failed",
+                          **{key: original[key] for key in ("failure_phase", "failure_class", "failure_messages", "first_failure")}}
+                first = {"identity": identity, "duration_seconds": 12, "exit_code": 65,
+                    "log_present": True, "build_operations": 0, "products_unchanged": True,
+                    "official_methods": [method], "bounded_diagnostics": ledger, "first_failure": original["first_failure"],
+                    "official_summary": {"result": "Failed", "totalTestCount": 1, "passedTests": 0, "failedTests": 1, "skippedTests": 0}}
+                baseline = copy.deepcopy(summary)
+                baseline["population"]["observed"], baseline["status"] = evaluate_tracer([identity], [first])
+                baseline_exit = produce_environment_limits(baseline, [first])
+                second = copy.deepcopy(first)
+                second["duration_seconds"] = 9
+                second["bounded_diagnostics"]["case_resources"][0]["failure_samples"][0]["idle_percent"] = 50 if starved else 0
+                if retry_passed:
+                    second.update(exit_code=0, official_methods=[{"identifier": method["identifier"], "result": "Passed"}],
+                        official_summary=dict(first["official_summary"], result="Passed", passedTests=1, failedTests=0))
+                phase = dict(first, retry=second, retry_failed_case_count=1, retry_method=method["identifier"],
+                             retry_selected_methods=[method["identifier"]])
+                summary["population"]["observed"], summary["status"] = evaluate_tracer([identity], [phase])
+                self.assertEqual(0 if retry_passed else baseline_exit, produce_environment_limits(summary, [phase]))
+                actual = parse_summary(summary)["population"]["observed"][0]
+                if retry_passed:
+                    self.assertEqual(actual["outcome"], "flaky-passed")
+                    self.assertIn("nightly_retry", actual)
+                    self.assertNotIn("environment_limit", actual)
+                elif starved:
+                    initial = baseline["population"]["observed"][0]
+                    self.assertEqual(actual["environment_limit"], initial["environment_limit"])
+                    self.assertEqual(actual["attempts"], initial["attempts"])
+                    self.assertEqual(actual["duration_seconds"], initial["duration_seconds"])
+                    self.assertEqual((actual["retry_failure"]["number"], actual["retry_failure"]["exit_code"]), (2, 65))
+                    self.assertEqual(actual["retry_failure"]["duration_seconds"], 9)
+                else:
+                    self.assertNotIn("environment_limit", actual)
+                    self.assertEqual([attempt["exit_code"] for attempt in actual["attempts"]], [65, 65])
 
     def test_v5_producer_keeps_functional_unstarved_and_mixed_failures_red(self):
         import copy
