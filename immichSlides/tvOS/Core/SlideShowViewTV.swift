@@ -10,6 +10,7 @@ import UIKit
 
 enum PlaybackViewMetrics {
     static let controlBarProtectionHeightPoints: Double = 220
+    static let controlBarAutoHideDelaySeconds: Int = 8
     static let controlBarAnimationDurationSeconds: Double = 0.3
     static let renderSamplingRateHertz: Double = 60.0
 }
@@ -725,7 +726,7 @@ struct SlideShowViewTV: View {
     }
 
     private func resetAutoHideTimer() {
-        controlsState.resetAutoHideTimer()
+        controlsState.resetAutoHideTimer(after: .seconds(PlaybackViewMetrics.controlBarAutoHideDelaySeconds))
     }
 
     private var playbackEntryHintContent: TVSlideshowEntryHintContent {

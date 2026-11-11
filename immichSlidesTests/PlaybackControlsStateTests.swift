@@ -4,6 +4,8 @@ import Testing
 
 @MainActor
 struct PlaybackControlsStateTests {
+    private let autoHideDelay: Duration = .seconds(12)
+
     @Test
     func `dismissing the entry hint hides the control bar only for the down action`() {
         for hidesControlBar in [false, true] {
@@ -98,13 +100,13 @@ struct PlaybackControlsStateTests {
         let clock = ControlsClock()
         let state = PlaybackControlsState(sleep: clock.sleep)
         defer { state.cancelAutoHideTimer(); clock.finishAll() }
-        let task = try #require(state.resetAutoHideTimer())
+        let task = try #require(state.resetAutoHideTimer(after: autoHideDelay))
         try #require(await waitUntil { clock.waits.count == 1 })
 
-        clock.advance(by: PlaybackControlsState.autoHideDelay / 2)
+        clock.advance(by: autoHideDelay / 2)
         #expect(state.isControlBarVisible)
         #expect(clock.waits[0].continuation != nil)
-        clock.advance(by: PlaybackControlsState.autoHideDelay / 2)
+        clock.advance(by: autoHideDelay / 2)
         await task.value
 
         #expect(!state.isControlBarVisible)
@@ -115,18 +117,18 @@ struct PlaybackControlsStateTests {
         let clock = ControlsClock()
         let state = PlaybackControlsState(sleep: clock.sleep)
         defer { state.cancelAutoHideTimer(); clock.finishAll() }
-        let oldTask = try #require(state.resetAutoHideTimer())
+        let oldTask = try #require(state.resetAutoHideTimer(after: autoHideDelay))
         try #require(await waitUntil { clock.waits.count == 1 })
-        clock.advance(by: PlaybackControlsState.autoHideDelay / 2)
+        clock.advance(by: autoHideDelay / 2)
 
-        let newTask = try #require(state.resetAutoHideTimer())
+        let newTask = try #require(state.resetAutoHideTimer(after: autoHideDelay))
         try #require(await waitUntil { clock.waits.count == 2 })
-        clock.advance(by: PlaybackControlsState.autoHideDelay / 2)
+        clock.advance(by: autoHideDelay / 2)
         await oldTask.value
         #expect(state.isControlBarVisible)
         #expect(clock.waits[1].continuation != nil)
 
-        clock.advance(by: PlaybackControlsState.autoHideDelay / 2)
+        clock.advance(by: autoHideDelay / 2)
         await newTask.value
         #expect(!state.isControlBarVisible)
     }
@@ -136,26 +138,26 @@ struct PlaybackControlsStateTests {
         let clock = ControlsClock()
         let state = PlaybackControlsState(sleep: clock.sleep)
         defer { state.cancelAutoHideTimer(); clock.finishAll() }
-        let oldTask = try #require(state.resetAutoHideTimer())
+        let oldTask = try #require(state.resetAutoHideTimer(after: autoHideDelay))
         try #require(await waitUntil { clock.waits.count == 1 })
         state.isPlaybackEntryHintVisible = true
 
-        let blockedTask = state.resetAutoHideTimer()
+        let blockedTask = state.resetAutoHideTimer(after: autoHideDelay)
         #expect(blockedTask == nil)
         if let blockedTask {
             try #require(await waitUntil { clock.waits.count == 2 })
-            clock.advance(by: PlaybackControlsState.autoHideDelay)
+            clock.advance(by: autoHideDelay)
             await blockedTask.value
         }
-        clock.advance(by: PlaybackControlsState.autoHideDelay)
+        clock.advance(by: autoHideDelay)
         await oldTask.value
         #expect(state.isControlBarVisible)
 
         state.dismissEntryHint()
         let expectedWaitCount = clock.waits.count + 1
-        let resumedTask = try #require(state.resetAutoHideTimer())
+        let resumedTask = try #require(state.resetAutoHideTimer(after: autoHideDelay))
         try #require(await waitUntil { clock.waits.count == expectedWaitCount })
-        clock.advance(by: PlaybackControlsState.autoHideDelay)
+        clock.advance(by: autoHideDelay)
         await resumedTask.value
         #expect(!state.isControlBarVisible)
     }
@@ -165,11 +167,11 @@ struct PlaybackControlsStateTests {
         let clock = ControlsClock()
         let state = PlaybackControlsState(sleep: clock.sleep)
         defer { state.cancelAutoHideTimer(); clock.finishAll() }
-        let task = try #require(state.resetAutoHideTimer())
+        let task = try #require(state.resetAutoHideTimer(after: autoHideDelay))
         try #require(await waitUntil { clock.waits.count == 1 })
 
         state.cancelAutoHideTimer()
-        clock.advance(by: PlaybackControlsState.autoHideDelay)
+        clock.advance(by: autoHideDelay)
         await task.value
 
         #expect(state.isControlBarVisible)

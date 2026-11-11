@@ -10,6 +10,7 @@ import UIKit
 
 private enum PlaybackViewMetrics {
     static let controlBarProtectionHeightPoints: Double = 150
+    static let controlBarAutoHideDelaySeconds: Int = 8
     static let largeSafeAreaThresholdPoints: CGFloat = 80
 }
 
@@ -717,10 +718,10 @@ struct SlideShowViewIOS: View {
         guard !PlatformCompat.shouldHoldControlsForInitialSettingsForTesting else { return }
         let delay =
             PlatformCompat.controlBarAutoHideDelaySecondsForTesting.map { Duration.seconds($0) }
-            ?? PlaybackControlsState.autoHideDelay
+            ?? .seconds(PlaybackViewMetrics.controlBarAutoHideDelaySeconds)
         controlsState.resetAutoHideTimer(after: delay)
         #else
-        controlsState.resetAutoHideTimer()
+        controlsState.resetAutoHideTimer(after: .seconds(PlaybackViewMetrics.controlBarAutoHideDelaySeconds))
         #endif
     }
 

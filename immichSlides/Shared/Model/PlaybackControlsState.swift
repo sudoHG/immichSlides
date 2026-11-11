@@ -3,8 +3,6 @@ import Foundation
 
 @MainActor
 final class PlaybackControlsState: ObservableObject {
-    nonisolated static let autoHideDelay: Duration = .seconds(8)
-
     @Published var isControlBarVisible = true
     @Published var isPlaybackEntryHintVisible = false
 
@@ -41,7 +39,7 @@ final class PlaybackControlsState: ObservableObject {
     }
 
     @discardableResult
-    func resetAutoHideTimer(after delay: Duration = autoHideDelay) -> Task<Void, Never>? {
+    func resetAutoHideTimer(after delay: Duration) -> Task<Void, Never>? {
         cancelAutoHideTimer()
         guard !isPlaybackEntryHintVisible else { return nil }
         let task = Task {
