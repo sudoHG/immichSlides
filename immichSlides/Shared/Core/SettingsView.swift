@@ -19,6 +19,19 @@ final class SettingsPromptStore: ObservableObject {
     @Published var shouldShowFilterModeBlockedAlert = false
     @Published var shouldSwitchToFilteredAfterConfig = false
     @Published var shouldShowClearDiskCacheAlert = false
+
+    func selectDefaultPlaybackMode(
+        _ mode: DefaultPlaybackMode,
+        isFilterSelectionEmpty: Bool,
+        playbackViewModel: PlaybackSettingsViewModel
+    ) {
+        if mode == .filtered && isFilterSelectionEmpty {
+            shouldSwitchToFilteredAfterConfig = true
+            shouldShowFilterModeBlockedAlert = true
+            return
+        }
+        playbackViewModel.settings.defaultPlaybackMode = mode
+    }
 }
 
 struct SettingsView: View {

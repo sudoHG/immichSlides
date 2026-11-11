@@ -112,7 +112,12 @@ struct ImmichServer {
         return false
     }
 
-    static func tryToSaveServerConfig(serverURL: String, apiKey: String) async -> (
+    static func tryToSaveServerConfig(
+        serverURL: String,
+        apiKey: String,
+        sessionForTesting: URLSession? = nil,
+        saveServerForTesting: (@Sendable (ImmichServer) async -> Bool)? = nil
+    ) async -> (
         isSuccess: Bool, errorMessage: String?
     ) {
 
@@ -127,14 +132,15 @@ struct ImmichServer {
             return (false, validateAPIKeyResult.errorMessage)
         }
 
-        let result = await testConnection(serverURL: serverURL, apiKey: apiKey)
+        let result = await testConnection(serverURL: serverURL, apiKey: apiKey, sessionForTesting: sessionForTesting)
         if result.isSuccess {
 
             let normalizedServerURL = normalizeServerURL(serverURL)
 
             let server = ImmichServer(immichURL: normalizedServerURL, immichApiKey: apiKey)
 
-            let didSave = server.save()
+            let saveServer = saveServerForTesting ?? { $0.save() }
+            let didSave = await saveServer(server)
             guard didSave else {
                 return (false, String(localized: "Failed to read or write secure storage"))
             }
