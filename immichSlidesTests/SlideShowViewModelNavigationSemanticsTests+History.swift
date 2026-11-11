@@ -168,7 +168,8 @@ extension SlideShowViewModelNavigationSemanticsTests {
         }
         vm.backgroundPreloadHookForTesting = { _, _, _ in }
         vm.scenePresentationTimestampProviderForTesting = { 0 }
-        vm.isAutoPlay = false
+        vm.toggleAutoPlayFromUserInteraction()
+        #expect(!vm.isAutoPlay)
         vm.replacePlaybackAssetsForTesting(assets)
         completeCurrentScenePresentation(vm)
 
@@ -218,6 +219,8 @@ extension SlideShowViewModelNavigationSemanticsTests {
         try expectHistory(vm, assetIds: ["asset-0"], cursor: 0)
         await settleManualRequest()
         #expect(vm.safeCurrentScene?.primaryAssetId == "asset-1")
+        #expect(!vm.isAutoPlay)
+        #expect(vm.sceneRenderSnapshot.phase == .paused)
         try expectHistory(vm, assetIds: ["asset-0", "asset-1"], cursor: 1)
         #expect(displayedSceneLines.count == 1)
         vm.incomingBecameVisible(vm.scenePresentationLayerIdentity(for: hiddenLayer))
@@ -227,6 +230,8 @@ extension SlideShowViewModelNavigationSemanticsTests {
         vm.requestNextScene()
         await settleManualRequest()
         #expect(vm.safeCurrentScene?.primaryAssetId == "asset-2")
+        #expect(!vm.isAutoPlay)
+        #expect(vm.sceneRenderSnapshot.phase == .paused)
         try expectHistory(vm, assetIds: ["asset-0", "asset-1", "asset-2"], cursor: 2)
 
         vm.requestPreviousScene()

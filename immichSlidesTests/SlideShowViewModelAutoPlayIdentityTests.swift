@@ -87,27 +87,94 @@ struct SlideShowViewModelAutoPlayIdentityTests {
         #expect(deliveryTimes == [42.5])
     }
 
-    @Test
-    func `autoplay switches the current identity to the next scene once the deadline passes`() {
+    @Test(arguments: [5.0, 8.0])
+    func `autoplay switches the current identity to the next scene once the deadline passes`(
+        interval: TimeInterval
+    ) throws {
         let clock = VirtualClock()
-        let (viewModel, store) = makeIsolatedAutoPlayViewModel(clock: clock)
+        let (viewModel, store) = makeIsolatedAutoPlayViewModel(clock: clock, interval: interval)
         defer { store.clear() }
         completeCurrentScenePresentation(viewModel, clock: clock)
-        let firstIdentity = currentPresentationIdentity(viewModel)
+        let firstIdentity = try #require(currentPresentationIdentity(viewModel))
+        #expect(viewModel.safeCurrentScene?.primaryAssetId == "autoplay-0")
+        let firstDeadline = try #require(viewModel.scenePresentationWakeUpScheduler.scheduledDeadlineForTesting)
+        #expect(abs(firstDeadline - clock.now - interval) < 0.0001)
+
+        clock.now = firstDeadline - 0.001
+        #expect(viewModel.sceneRenderSnapshot.phase == .stablePhoto)
+        #expect(viewModel.scenePresentationWakeUpScheduler.scheduledDeadlineForTesting == firstDeadline)
+        #expect(currentPresentationIdentity(viewModel) == firstIdentity)
         #expect(viewModel.safeCurrentScene?.primaryAssetId == "autoplay-0")
 
-        // The stable deadline is already set to now + interval; advance the clock, then fire, so the next scene enters
-        // grace at the deadline.
-        clock.now += 5
+        clock.now = firstDeadline
         let deadline = viewModel.fireScheduledScenePresentationWakeUpForTesting()
-        #expect(deadline != nil)
-        clock.now = deadline ?? clock.now
+        #expect(deadline == firstDeadline)
         // At the deadline the next scene is committed and enters grace; the visible identity changes only once the next
         // scene is Ready.
         completeCurrentScenePresentation(viewModel, clock: clock)
 
         #expect(viewModel.safeCurrentScene?.primaryAssetId == "autoplay-1")
         #expect(currentPresentationIdentity(viewModel) != firstIdentity)
+        let secondDeadline = try #require(viewModel.scenePresentationWakeUpScheduler.scheduledDeadlineForTesting)
+        #expect(abs(secondDeadline - clock.now - interval) < 0.0001)
+    }
+
+    @Test(arguments: [5.0, 8.0], [false, true])
+    func `overlapping user and background pauses resume only after both reasons clear with the remaining interval`(
+        interval: TimeInterval,
+        shouldReturnToForegroundFirst: Bool
+    ) throws {
+        let clock = VirtualClock()
+        let (viewModel, store) = makeIsolatedAutoPlayViewModel(clock: clock, interval: interval)
+        defer { store.clear() }
+        completeCurrentScenePresentation(viewModel, clock: clock)
+        let initialIdentity = try #require(currentPresentationIdentity(viewModel))
+        let initialDeadline = try #require(viewModel.scenePresentationWakeUpScheduler.scheduledDeadlineForTesting)
+        clock.now += 1.25
+        let remainingInterval = initialDeadline - clock.now
+        viewModel.toggleAutoPlayFromUserInteraction()
+        let pausedLayer = try #require(viewModel.sceneRenderSnapshot.layers.first)
+        clock.now += 0.5
+        viewModel.suspendScenePresentationForBackground()
+
+        clock.now += interval * 10
+        if shouldReturnToForegroundFirst {
+            viewModel.resumeScenePresentationFromBackground()
+            #expect(!viewModel.isAutoPlay)
+        } else {
+            viewModel.toggleAutoPlayFromUserInteraction()
+            #expect(viewModel.isAutoPlay)
+        }
+        #expect(viewModel.sceneRenderSnapshot.phase == .paused)
+        #expect(viewModel.fireScheduledScenePresentationWakeUpForTesting() == nil)
+        let stillPausedLayer = try #require(viewModel.sceneRenderSnapshot.layers.first)
+        #expect(stillPausedLayer.identity == pausedLayer.identity)
+        #expect(stillPausedLayer.opacity == pausedLayer.opacity)
+        #expect(stillPausedLayer.motionActiveTime == pausedLayer.motionActiveTime)
+
+        clock.now += interval * 10
+        if shouldReturnToForegroundFirst {
+            viewModel.toggleAutoPlayFromUserInteraction()
+        } else {
+            viewModel.resumeScenePresentationFromBackground()
+        }
+        #expect(viewModel.isAutoPlay)
+        #expect(viewModel.sceneRenderSnapshot.phase == .stablePhoto)
+        #expect(currentPresentationIdentity(viewModel) == initialIdentity)
+        let resumedLayer = try #require(viewModel.sceneRenderSnapshot.layers.first)
+        #expect(abs(resumedLayer.motionActiveTime - pausedLayer.motionActiveTime) < 0.0001)
+        let resumedDeadline = try #require(viewModel.scenePresentationWakeUpScheduler.scheduledDeadlineForTesting)
+        #expect(abs(resumedDeadline - clock.now - remainingInterval) < 0.0001)
+
+        // A duplicate foreground notification must not reset the restored interval.
+        clock.now += 0.25
+        viewModel.resumeScenePresentationFromBackground()
+        #expect(viewModel.scenePresentationWakeUpScheduler.scheduledDeadlineForTesting == resumedDeadline)
+        #expect(currentPresentationIdentity(viewModel) == initialIdentity)
+        clock.now = resumedDeadline
+        #expect(viewModel.fireScheduledScenePresentationWakeUpForTesting() == resumedDeadline)
+        completeCurrentScenePresentation(viewModel, clock: clock)
+        #expect(viewModel.safeCurrentScene?.primaryAssetId == "autoplay-1")
     }
 
     @Test
@@ -134,7 +201,8 @@ struct SlideShowViewModelAutoPlayIdentityTests {
     }
 
     private func makeIsolatedAutoPlayViewModel(
-        clock: VirtualClock
+        clock: VirtualClock,
+        interval: TimeInterval = 5
     ) -> (SlideShowViewModel, PlaybackSettingsStore) {
         let suiteName = "SlideShowViewModelAutoPlayIdentity.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
@@ -146,7 +214,7 @@ struct SlideShowViewModelAutoPlayIdentityTests {
         store.save(
             PlaybackSettings(
                 autoPlayEnabled: true,
-                intervalSeconds: 5,
+                intervalSeconds: interval,
                 displayMode: .singlePhoto
             )
         )
