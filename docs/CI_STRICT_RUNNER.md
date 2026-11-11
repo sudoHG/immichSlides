@@ -2087,10 +2087,10 @@ outside that optional budget, so they neither consume a later attempt's image
 allowance nor disappear when the first-failure budget is spent. Mandatory bounded
 publication validation and bookkeeping remain separate, as do synchronous XCTest
 capture and export budgets.
-The current matrix has 19 strict and 18 UI jobs. Its 92 strict cases expand to
-96 session methods (two filter-person cases each invoke three methods); the UI
-plans have 306 device executions. Thus at most 402 methods could fail once:
-402 MiB of new PNGs plus 3.14 MiB of
+The current matrix has 19 strict and 18 UI jobs. Its 94 strict cases expand to
+98 session methods (two filter-person cases each invoke three methods); the UI
+plans have 306 device executions. Thus at most 404 methods could fail once:
+404 MiB of new PNGs plus 3.16 MiB of
 logical receipts, or twice those amounts if every method used both allowed
 attempts (a conservative bound under the existing retry-admission limits).
 Passing methods produce none of those bytes. A local optimized bookkeeping

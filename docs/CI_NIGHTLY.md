@@ -18,7 +18,7 @@ release authority. Separate [live unit jobs](CI_LIVE_TESTS.md) use the main-only
 gh workflow run ci-nightly.yml --ref <branch> -f strict_only=true
 gh workflow run ci-nightly.yml --ref <branch> -f ui_only=true
 gh run list --workflow ci-nightly.yml --branch <branch>
-gh workflow run ci-nightly.yml --ref <branch> -f shard=ipad-immichSlides-iOS-debug-3
+gh workflow run ci-nightly.yml --ref <branch> -f shard=ipad-immichSlides-iOS-debug-2
 python3 -B scripts/ci_nightly.py plan --output-dir '<fresh-outside-repo>/plan'
 python3 -B scripts/run_strict_ci_tracer.py --manifest scripts/nightly-matrix.json \
     --shard iphone-immichSlides-iOS-debug-0 --platform ios \
@@ -220,14 +220,18 @@ against current selector/scenario/fixture/scheme contracts; duplicates and missi
 cases fail. Runtime discovery cannot silently change the scheduled list. Inapplicable
 platforms/scenarios and P2 devices are outside the supported population.
 
-The version 2 matrix has 92 cases: 47 iPhone, 16 iPad and 29 Apple TV combinations,
-covering 61 distinct device/suite/scenario identities. It removes 43 duplicate
+The version 2 matrix has 94 cases: 47 iPhone, 18 iPad and 29 Apple TV combinations,
+covering 63 distinct device/suite/scenario identities. It removes 41 duplicate
 executions from the version 1 population of 135 (54 iPhone, 50 iPad, 31 Apple TV).
 `ci_nightly.contract_population` names the exact iPad/fixture duplicates and
 requires a retained equivalent. Same-fixture iPhone executions retain the shared
 XCTest assertions; fixture B is retained where its larger pools or photo glyphs
 still supply distinct data. All approved smoke anchors remain, including iPad
 first boot/background return and Apple TV pause/server switch with fixture A.
+iPad server-switch and Debug pause-timeline rows also remain: server switching has
+iPad-specific failure history (#487) and a newly suspected playback issue (#725),
+while the pause-timeline row reproduces open #666 and its Pause → Next → Continue
+unit replacement is still being added in #723.
 Version 1 keeps its original complete-population validation for retained nights;
 version 2 has its own exact population. Neither accepts missing or duplicate rows.
 Reports use the tested night's matrix and preserve its original outcomes.

@@ -653,13 +653,13 @@ its separately bounded host reads and the additional native allowance above.
 Native extraction adds at most twenty seconds per strict job; actual elapsed
 cost is not published separately. The approved preparation/anomaly ceilings apply
 across repeated preparations and Xcode invocations.
-Both the 25 strict jobs and 18 fixture UI jobs use the shared producers: at most
-43 × 5 s = 3.59 machine minutes/night for preparation. Xcode diagnostics add at
+Both the 19 strict jobs and 18 fixture UI jobs use the shared producers: at most
+37 × 5 s = 3.08 machine minutes/night for preparation. Xcode diagnostics add at
 most 10 s (0.167 machine minutes) per failed strict job. With one such failed
-job, the combined ceiling is 3.75 machine minutes/night. Strict and UI can overlap
+job, the combined ceiling is 3.25 machine minutes/night. Strict and UI can overlap
 after archive selection, each at two jobs per matrix. Preparation and Xcode
-diagnostics add at most 75 s along the strict tier (13 waves plus one failure)
-and 45 s along UI (nine waves); summing them gives a conservative 2.00-minute
+diagnostics add at most 60 s along the strict tier (10 waves plus one failure)
+and 45 s along UI (nine waves); summing them gives a conservative 1.75-minute
 wall-time allowance. The final aggregate waits for both tiers. These are ceilings
 and ideal parallel
 estimates, not hosted measurements or billing. Existing readiness, Xcode and
