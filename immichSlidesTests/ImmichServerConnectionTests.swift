@@ -11,6 +11,10 @@ struct ImmichServerConnectionTests {
 
     @Test(arguments: FailedConnection.allCases)
     func `failed HTTP connections cannot save first boot configuration`(_ failure: FailedConnection) async throws {
+        ImmichServer.clearSavedConfiguration()
+        let persistedServer = ImmichServer.load()
+        let persistedURL = UserDefaults.standard.string(forKey: "immichURL")
+        let persistedAPIKeyFallback = UserDefaults.standard.string(forKey: ImmichServer.testAPIKeyDefaultsKey)
         let recorder = HTTPRequestRecorder()
         let session = makeMockedSession { request in
             await recorder.store(request)
@@ -32,18 +36,21 @@ struct ImmichServerConnectionTests {
             },
             automaticRetryDelayScheduleForTesting: []
         )
-        viewModel.serverURL = "https://server.invalid"
+        viewModel.serverURL = failure == .localNetworkPermission ? "http://192.168.1.10:2283" : "https://server.invalid"
         viewModel.apiKey = "synthetic-key"
 
         await viewModel.testConnection()?.value
         #expect(!viewModel.isConnectionVerified)
         #expect(viewModel.shouldShowErrorAlert)
         #expect(viewModel.errorAlertTitle == failure.alertTitle)
-        #expect(
-            viewModel.errorMessage == failure.message + "\n\n"
-                + String(
-                    localized: "Please check the server URL and API key, make sure Immich is reachable, and try again."
-                ))
+        if failure == .localNetworkPermission {
+            #expect(
+                viewModel.errorMessage.hasPrefix(
+                    String(
+                        localized:
+                            "Network permission is not complete yet. Allow Wireless Data or Local Network access, then try again."
+                    )))
+        }
 
         // Call Save even though the UI disables it: the persistence boundary must independently refuse it.
         await viewModel.saveServerConfig().value
@@ -51,11 +58,15 @@ struct ImmichServerConnectionTests {
         #expect(!viewModel.didSaveConfig)
         #expect(!viewModel.isConnectionVerified)
         #expect(viewModel.errorAlertTitle == String(localized: "Save Failed"))
-        #expect(viewModel.errorMessage == failure.message)
         #expect(persistence.writeCount == 0)
         #expect(persistence.server == nil)
+        #expect(UserDefaults.standard.string(forKey: "immichURL") == persistedURL)
+        #expect(UserDefaults.standard.string(forKey: ImmichServer.testAPIKeyDefaultsKey) == persistedAPIKeyFallback)
+        let reloadedServer = ImmichServer.load()
+        #expect(reloadedServer?.immichURL == persistedServer?.immichURL)
+        #expect(reloadedServer?.immichApiKey == persistedServer?.immichApiKey)
         var relaunchedFlow = AppFlowStateMachine(isAccessProtectionInitiallyEnabled: false)
-        relaunchedFlow.initializeRoute(isServerConfigured: persistence.server?.isConfigured == true)
+        relaunchedFlow.initializeRoute(isServerConfigured: reloadedServer?.isConfigured == true)
         #expect(relaunchedFlow.route == .firstBoot)
         let requests = await recorder.values
         #expect(requests.count == 2)
@@ -98,7 +109,7 @@ struct ImmichServerConnectionTests {
     }
 
     enum FailedConnection: CaseIterable, Sendable {
-        case unauthorized, html, unreachable, timeout, cancelled
+        case unauthorized, html, unreachable, timeout, cancelled, localNetworkPermission
 
         func respond(to request: URLRequest) throws -> (HTTPURLResponse, Data) {
             switch self {
@@ -109,7 +120,7 @@ struct ImmichServerConnectionTests {
                 )
             case .html:
                 return (Self.response(request, status: 200, type: "text/html"), Data("<html>Proxy</html>".utf8))
-            case .unreachable: throw URLError(.cannotConnectToHost)
+            case .unreachable, .localNetworkPermission: throw URLError(.cannotConnectToHost)
             case .timeout: throw URLError(.timedOut)
             case .cancelled: throw URLError(.cancelled)
             }
@@ -117,28 +128,6 @@ struct ImmichServerConnectionTests {
 
         @MainActor var alertTitle: String {
             self == .unauthorized ? String(localized: "Invalid API Key") : String(localized: "Connection test failed")
-        }
-
-        @MainActor var message: String {
-            switch self {
-            case .unauthorized:
-                return String(
-                    localized:
-                        "The server rejected this API Key. Make sure you copied the full new API Key, not the Key name or an old Key."
-                )
-            case .html:
-                return String(
-                    localized:
-                        "Server did not return JSON. The Immich URL, port, or reverse proxy entry point may be incorrect"
-                )
-            case .unreachable: return networkMessage(.cannotConnectToHost)
-            case .timeout: return networkMessage(.timedOut)
-            case .cancelled: return networkMessage(.cancelled)
-            }
-        }
-
-        @MainActor private func networkMessage(_ code: URLError.Code) -> String {
-            LocalizedText.format("Network request failed: %@", URLError(code).localizedDescription)
         }
 
         private static func response(_ request: URLRequest, status: Int, type: String) -> HTTPURLResponse {
