@@ -986,6 +986,13 @@ class RepositoryTests(unittest.TestCase):
             (root / conv.TEST_TIER_PLAN_PATH).write_text('{"schema_version":')
             self.assertEqual(["tier-plan-input"], rules(conv.check_test_tier_plan(root)))
             self.assertEqual(1, conv.main(["--root", directory]))
+            (root / conv.TEST_TIER_PLAN_PATH).write_text(json.dumps(plan))
+            (root / "immichSlidesUITests").mkdir()
+            (root / "immichSlidesUITests/Flow.swift").write_text('func testUnowned() {}')
+            violations = conv.check_test_tier_plan(root)
+            self.assertEqual(["tier-plan-input"], rules(violations))
+            self.assertEqual("Flow.swift: testUnowned() is not a member of a direct XCTestCase subclass",
+                             violations[0].detail)
 
     def test_every_direct_ui_case_forwards_the_first_failure_before_xctest(self):
         import tempfile
