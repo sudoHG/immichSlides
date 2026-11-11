@@ -4,7 +4,7 @@ import Testing
 
 @MainActor
 struct PlaybackControlsStateTests {
-    private let autoHideDelay: Duration = .seconds(12)
+    private let autoHideDelay: Duration = .seconds(TestWait.seconds(.product(12)))
 
     @Test
     func `dismissing the entry hint hides the control bar only for the down action`() {
