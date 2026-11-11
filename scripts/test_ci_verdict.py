@@ -21,8 +21,9 @@ class NightlyVerdictTests(unittest.TestCase):
         import os
         import tempfile
         import time
+        from ci_failure_diagnostics import environment_limit_evidence
         from ci_nightly import main
-        from test_ci_summary import nightly_retry_summary
+        from test_ci_summary import hosted_v5_summary, nightly_retry_summary
         summary = nightly_retry_summary()
         case = summary["population"]["declared"][0]
         method = "StrictE2ESmokeUITests/testIOSStrictE2EConnectionSmoke"
@@ -45,11 +46,28 @@ class NightlyVerdictTests(unittest.TestCase):
             plan = {"identity": summary["identity"], "run": {"id": "10", "attempt": 1}, "hashes": hashes,
                     "shards": planned, "started_epoch": time.time() - 20, "max_parallel": 2}
             (root / "plan.json").write_text(json.dumps(plan))
-            for exit_code in (0, 65):
-                first["retry"]["exit_code"] = exit_code
+            for exit_code, keep_original in ((0, False), (65, False), (65, True)):
+                attempt_trace = copy.deepcopy(first)
+                attempt_trace["retry"]["exit_code"] = exit_code
+                if keep_original:
+                    backup_summary, resource = hosted_v5_summary()
+                    original = backup_summary["population"]["observed"][0]
+                    proof = environment_limit_evidence(backup_summary, original, [resource], runner_hosted=True, policy_version=5)
+                    original["environment_limit"] = original["attempts"][0]["environment_limit"] = proof
+                    backed = copy.deepcopy(summary)
+                    backed["strict_case_evidence"] = backup_summary["strict_case_evidence"]
+                    row = backed["population"]["observed"][0]
+                    row["attempts"][0]["duration_seconds"] = original["duration_seconds"]
+                    row["duration_seconds"] = sum(attempt["duration_seconds"] for attempt in row["attempts"])
+                    row["nightly_retry_first"] = original
+                    attempt_trace["official_method_durations"][method] = original["duration_seconds"]
+                    attempt_trace["bounded_diagnostics"] = {"case_resources": [resource]}
+                    attempt_trace["official_methods"][0].update({key: original[key] for key in
+                        ("failure_phase", "failure_class", "failure_messages", "first_failure")})
+                    (records / "summary.json").write_text(json.dumps(backed))
                 (records / "trace.json").write_text(json.dumps({"started_epoch": time.time() - 10,
-                    "finished_epoch": time.time(), "warm": [first]}))
-                output = root / f"output-{exit_code}"
+                    "finished_epoch": time.time(), "warm": [attempt_trace]}))
+                output = root / f"output-{exit_code}-{keep_original}"
                 with patch("ci_nightly.workspace_preflight"), patch("ci_nightly.run_identity", return_value=summary["identity"]), patch(
                         "ci_nightly.source_metadata", return_value=(summary["source"]["workflow_path"], False)), patch(
                         "ci_nightly.file_hash", return_value="a" * 64), patch("ci_nightly.shards", return_value=planned), patch(
@@ -58,9 +76,13 @@ class NightlyVerdictTests(unittest.TestCase):
                     code = main(["aggregate", "--output-dir", str(output), "--plan", str(root / "plan.json"),
                                  "--records-dir", str(root / "records"), "--matrix-job-result", "success"])
                 result = json.loads((output / "nightly.json").read_text())
-                with self.subTest(exit_code=exit_code):
+                with self.subTest(exit_code=exit_code, keep_original=keep_original):
                     if exit_code == 0:
                         self.assertEqual((0, "environment-limited", [case]), (code, result["status"], result["flaky"]))
+                    elif keep_original:
+                        self.assertEqual((0, "environment-limited", [case]), (code, result["status"], result["environment_limited"]))
+                        self.assertEqual(original, result["observed"][0])
+                        self.assertNotIn("flaky", result)
                     else:
                         self.assertEqual((1, "failed", []), (code, result["status"], result.get("flaky", [])))
                         self.assertIn("a: nightly retry: passing claim differs from retry evidence", result["errors"])

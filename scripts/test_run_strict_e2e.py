@@ -3859,6 +3859,38 @@ class FailureDiagnosticsTests(unittest.TestCase):
 
 
 class StrictCITracerTests(unittest.TestCase):
+    def test_nightly_retry_phase_problems_preserve_the_first_strict_shard_verdict(self):
+        from test_ci_summary import hosted_v5_summary
+
+        case = {"platform": "ios", "device": "iphone", "configuration": "Debug", "suite": "smoke",
+                "scenario": "normal", "fixture": "a"}
+        for starved in (True, False):
+            for fault, expected in (("timeout", "timed-out"), ("infrastructure", "not-run"),
+                                    ("nonzero-pass", "crashed"), ("group-cleanup", "not-run")):
+                with self.subTest(starved=starved, fault=fault), tempfile.TemporaryDirectory() as directory:
+                    fixture, _ = hosted_v5_summary()
+                    initial = fixture["population"]["observed"][0]
+                    ledger = fixture["strict_case_evidence"][0]["bounded_diagnostics"]
+                    if not starved:
+                        ledger["case_resources"][0]["failure_samples"][0]["idle_percent"] = 50
+                    code, records, trace, summary = self._produce_validator_records(Path(directory), None,
+                        receipt_suite=None, nightly=True, case=case, nightly_flake=True,
+                        timing_failure=(initial, ledger), policy_version=5, retry_fault=fault)
+                    self.assertEqual(code, 0 if starved else 1)
+                    self.assertEqual(summary["infrastructure"], [])
+                    actual = summary["population"]["observed"][0]
+                    self.assertEqual(actual["duration_seconds"], trace["warm"][0]["duration_seconds"])
+                    self.assertEqual((actual["outcome"], len(actual["attempts"])), ("failed", 1))
+                    self.assertEqual("environment_limit" in actual, starved)
+                    self.assertEqual(actual["retry_failure"]["outcome"], expected)
+                    self.assertNotIn("nightly_retry", actual)
+                    marker = records.parent / "runner-group-cleanup-failed"
+                    if fault == "group-cleanup":
+                        self.assertEqual(marker.read_text().strip(), "retry")
+                        self.assertTrue((records.parent / "derived").is_dir())
+                    else:
+                        self.assertFalse(marker.exists())
+
     def test_nightly_tracer_replays_a_recorded_failed_method_and_keeps_the_first_phase(self):
         from ci_nightly import aggregate_nightly
         case = {"platform": "ios", "device": "iphone", "configuration": "Debug", "suite": "smoke",
@@ -3976,8 +4008,15 @@ class StrictCITracerTests(unittest.TestCase):
             with self.subTest(change=change):
                 observed, _ = evaluate_tracer([identity], [first | {"retry": second}])
                 self.assertEqual(observed[0]["outcome"], expected)
-                self.assertEqual([attempt["exit_code"] for attempt in observed[0]["attempts"]], [65, second["exit_code"]])
-                self.assertEqual(observed[0]["duration_seconds"], 22)
+                problem = "not-run" if change.get("products_unchanged") is False else "crashed" if change.get("exit_code") == 2 else None
+                if problem:
+                    self.assertEqual([attempt["exit_code"] for attempt in observed[0]["attempts"]], [65])
+                    self.assertEqual(observed[0]["duration_seconds"], 10)
+                    self.assertEqual((observed[0]["retry_failure"]["outcome"], observed[0]["retry_failure"]["exit_code"]),
+                                     (problem, second["exit_code"]))
+                else:
+                    self.assertEqual([attempt["exit_code"] for attempt in observed[0]["attempts"]], [65, second["exit_code"]])
+                    self.assertEqual(observed[0]["duration_seconds"], 22)
                 self.assertEqual(observed[0]["attempts"][0]["failure_messages"], first["official_methods"][0]["failure_messages"])
                 method_row = strict_method_retry(first, second, method)
                 self.assertEqual(method_row["outcome"], expected)
@@ -4434,6 +4473,7 @@ class StrictCITracerTests(unittest.TestCase):
                     self.assertEqual(actual["outcome"], "flaky-passed")
                     self.assertIn("nightly_retry", actual)
                     self.assertNotIn("environment_limit", actual)
+                    self.assertEqual(actual["nightly_retry_first"], baseline["population"]["observed"][0])
                 elif starved:
                     initial = baseline["population"]["observed"][0]
                     self.assertEqual(actual["environment_limit"], initial["environment_limit"])
@@ -4966,7 +5006,7 @@ class StrictCITracerTests(unittest.TestCase):
     def _produce_validator_records(self, directory, error, *, verdict="FAIL", runner_exit=2,
                                    receipt_suite="tvos-switch", nightly=False, child_load_timeout=False, case=None,
                                    timing_failure=None, invocation_fault=None, bounded_diagnostics=None, policy_version=4,
-                                   nightly_flake=False):
+                                   nightly_flake=False, retry_fault=None):
         import run_strict_ci_tracer as tracer
         case = case or {"platform": "tvos", "device": "tv", "configuration": "Release",
                 "suite": "tvos-switch", "scenario": "normal", "fixture": "a"}
@@ -5018,6 +5058,11 @@ raise SystemExit(65)
             replay_failed = nightly_flake and "--nightly-retry-method" not in command
             if nightly_flake and not replay_failed:
                 self.assertEqual(command[command.index("--nightly-retry-method") + 1], tracer.resolve_suite_selector(case["platform"], case["suite"]).split("/", 1)[1])
+                if retry_fault == "timeout":
+                    raise subprocess.TimeoutExpired(["strict test runner"], _kwargs["timeout_seconds"])
+                if retry_fault == "group-cleanup":
+                    raise tracer.RunnerGroupCleanupError("Synthetic retry descendants did not exit")
+            timing_failure_on_call = timing_failure and (not nightly_flake or replay_failed)
             details = {"infrastructure": [],
                 "source_sha": identity["commit_sha"], "platform": case["platform"], "suite": case["suite"],
                 "scenario": case["scenario"], "fixture_set": case["fixture"],
@@ -5026,7 +5071,7 @@ raise SystemExit(65)
                 details["bounded_diagnostics"] = timing_failure[1]
             elif bounded_diagnostics is not None:
                 details["bounded_diagnostics"] = bounded_diagnostics
-            if invocation_fault == "case infrastructure":
+            if invocation_fault == "case infrastructure" or (retry_fault == "infrastructure" and not replay_failed):
                 details["infrastructure"] = [{"code": "cleanup-failed", "message": "Synthetic cleanup failure"}]
             (evidence / "case-manifest.json").write_text(json.dumps(details))
             if receipt_suite is not None:
@@ -5039,20 +5084,21 @@ raise SystemExit(65)
             sessions = [("-" + entry["name"], entry["selector"]) for entry in FILTER_PERSON_SESSIONS] if case["suite"] == "filter-person" else [
                 ("", tracer.resolve_suite_selector(case["platform"], case["suite"]))]
             (evidence / "official-summary.json").write_text(json.dumps({"totalTestCount": len(sessions),
-                "passedTests": 0 if timing_failure or replay_failed else len(sessions), "failedTests": len(sessions) if timing_failure or replay_failed else 0,
-                "skippedTests": 0, "result": "Failed" if timing_failure or replay_failed else "Passed"}))
+                "passedTests": 0 if timing_failure_on_call or replay_failed else len(sessions),
+                "failedTests": len(sessions) if timing_failure_on_call or replay_failed else 0,
+                "skippedTests": 0, "result": "Failed" if timing_failure_on_call or replay_failed else "Passed"}))
             for suffix, selector in sessions:
                 (evidence / ("xcodebuild" + suffix + "-reuse.json")).write_text(json.dumps({"products_unchanged": invocation_fault != "changed products"}))
                 if nightly_flake:
                     (evidence / ("xcodebuild" + suffix + "-reuse.json")).write_text(json.dumps({
                         "products_unchanged": True, "exit_code": 65 if replay_failed else 0}))
                 bundle, method = selector.split("/", 1)
-                failure = ({key: timing_failure[0][key] for key in ("failure_phase", "failure_class", "first_failure")}
-                           if timing_failure else {})
+                failure = ({key: timing_failure[0][key] for key in ("failure_phase", "failure_class", "first_failure", "failure_messages")
+                            if key in timing_failure[0]} if timing_failure_on_call else {})
                 (evidence / ("official-tests" + suffix + ".json")).write_text(json.dumps({"testNodes": [{
                     "nodeType": "Unit test bundle", "name": bundle, "children": [{
                         "nodeType": "Test Case", "nodeIdentifier": method + "()",
-                        "result": "Failed" if timing_failure or replay_failed else "Passed", **failure,
+                        "result": "Failed" if timing_failure_on_call or replay_failed else "Passed", **failure,
                         **({"retry_assertion": True, "durationInSeconds": 4} if replay_failed else
                            {"durationInSeconds": 5} if nightly_flake else {})}]}]}))
             if timing_failure and "validator_failure_message" in timing_failure[0]:
@@ -5062,7 +5108,7 @@ raise SystemExit(65)
                 (evidence / "official-summary.json").write_text("{}")
             if invocation_fault == "missing method":
                 (evidence / "official-tests.json").unlink()
-            return (65 if replay_failed else 0) if nightly_flake else runner_exit
+            return (65 if replay_failed else 2 if retry_fault == "nonzero-pass" else 0) if nightly_flake else runner_exit
 
         produce_limits = tracer.produce_environment_limits
         with mock.patch.object(tracer, "produce_environment_limits", side_effect=lambda *args, **kwargs:

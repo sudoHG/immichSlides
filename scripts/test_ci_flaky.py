@@ -121,8 +121,9 @@ class RegistryTests(unittest.TestCase):
             reset=lambda: None, execute=lambda call: (calls.append(call) or (65, 1)), read=read,
             allocate_bundle=lambda: Path(f"attempt-{len(calls)}") / "result.xcresult", nightly_retry=True)
         self.assertEqual(len(calls), 2)
-        self.assertEqual([len(item["attempts"]) for item in result["observed"]], [2, 1])
-        self.assertEqual(result["infrastructure"][0]["code"], "official-result-read-failed")
+        self.assertEqual([len(item["attempts"]) for item in result["observed"]], [1, 1])
+        self.assertEqual(result["observed"][0]["retry_failure"]["outcome"], "not-run")
+        self.assertEqual(result["infrastructure"], [])
 
     def test_branch_registry_is_available_only_to_bound_nightly_fixture_ui_dispatch(self):
         environment = {"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_SHA": "a" * 40,

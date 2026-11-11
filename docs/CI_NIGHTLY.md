@@ -523,11 +523,14 @@ official methods per shard qualify; more than three starts no retry. Only
 official assertion failures with known durations and complete selected-method
 evidence qualify, regardless of the known-flaky registry. Preparation, build,
 infrastructure, cancellation, crashes, incomplete/missing exports, unclassified
-failures and failed evidence/contract checks grant no retry. After a nonpassing
-retry, the original invocation supplies the verdict. A first failure that
-qualifies under v5 keeps its yellow proof and duration, with the second failure
-retained separately. Other first failures stay red with both attempts. Retry
-evidence never supplies a v5 proof. Each case can be retried at most once.
+failures and failed evidence/contract checks in the first invocation grant no
+retry. A clean retry pass with both official results bound is flaky yellow.
+Otherwise the first invocation supplies the verdict. A first failure that
+qualifies under v5 keeps its yellow proof and duration. A red first failure
+stays red. Reset, execution and result-collection problems during retry are
+supplementary evidence and do not affect the shard verdict or exit status.
+The aggregate discards supplementary evidence it cannot bind. Each case can
+be retried at most once.
 
 Retries reuse the same dedicated simulator and immutable Products after the
 existing tier's app, keychain and privacy reset. Each Xcode invocation selects
@@ -562,18 +565,19 @@ final exports (including failure attachments), plus 720 seconds reserved for eac
 exports. Its Xcode call is clamped to the remaining original deadline after
 reserving those reads and exports. The 110-minute job still accounts
 for `85 + 2 + 10 + 13` minutes. Exports outside the existing total deadline
-continue to spend its surrounding-step margin; as before, that margin is not
-a proof that every possible export/cleanup delay fits. Exhaustion remains red.
+continue to spend its surrounding-step margin. Exhausting the retry budget
+keeps the first verdict. The surrounding job cap still applies to the entire
+job, including publication and cleanup.
 
 The reporter tracks first failures and passing retries as yellow events. They
 never count as explicit passing recovery nights, and yellow alone does not
-reopen a closed issue. The same complete identity (including UI device) being
-yellow on two adjacent UTC dates
-becomes red, combining flaky, starvation and native-tool yellows. A globally red
-night does not clear a yellow identity; multiple runs on a UTC date count once,
-and any yellow observation on that date retains that date's yellow evidence.
-A date with only red, only pass, no execution or missing evidence cannot supply
-a yellow date; a missing date breaks adjacency. A red observation stays red.
+reopen a closed issue. The reporter uses the existing issue identity, which
+groups UI observations by method and platform across devices. A UTC date
+counts as yellow only when every observed row for that identity is flaky,
+starvation yellow or native-tool yellow. The second adjacent yellow date turns
+red. A same-day pass or red row prevents that date from counting. Missing
+shards contribute no rows. A date with no observations for the identity breaks
+adjacency. Failures for other identities have no effect on the streak.
 The completion target is three nights without red, while every yellow remains
 visible; this does not change issue closure's explicit-pass requirement.
 Release eligibility remains disabled for the nightly skeleton, including yellow.

@@ -198,6 +198,26 @@ def split_failed_nightly_retry(entry):
     return first, public_retry_failure(retry)
 
 
+def first_nightly_attempt(entry):
+    entry = copy.deepcopy(entry)
+    entry.pop("nightly_retry", None)
+    entry.pop("nightly_retry_first", None)
+    entry.pop("retry_failure", None)
+    entry["attempts"] = entry["attempts"][:1]
+    entry["duration_seconds"] = entry["attempts"][0]["duration_seconds"]
+    entry["outcome"] = "failed"
+    return entry
+
+
+def record_nightly_retry_failure(first, *, outcome, duration_seconds, exit_code):
+    from ci_summary import public_retry_failure
+    entry = first_nightly_attempt(first)
+    entry["retry_failure"] = public_retry_failure({
+        "outcome": outcome, "duration_seconds": duration_seconds, "exit_code": exit_code,
+    })
+    return entry
+
+
 def retry_observations(first, registry, *, tier, environment, today, reset, execute, infrastructure=None,
                        nightly_retry=False, retry_allowed=None):
     from strict_e2e_runner_support import CommandError
@@ -218,16 +238,31 @@ def retry_observations(first, registry, *, tier, environment, today, reset, exec
                 and record["attempts"][0]["reason"] == ASSERTION_FAILURE
                 and (nightly_retry or eligible_entry(registry, record["identity"], tier=tier, environment=environment, today=today))
                 and (retry_allowed is None or retry_allowed(record))):
+            started = time.monotonic()
             try:
                 reset()
-            except (CommandError, OSError, subprocess.SubprocessError):
+            except (CommandError, OSError, subprocess.SubprocessError) as error:
+                if nightly_retry:
+                    outcome = "timed-out" if isinstance(error, subprocess.TimeoutExpired) else "not-run"
+                    problem = record_nightly_retry_failure(record, outcome=outcome,
+                        duration_seconds=time.monotonic() - started, exit_code=124 if outcome == "timed-out" else None)
+                    return merged + [problem] + first[index + 1:]
                 if infrastructure is None:
                     raise
                 infrastructure.append({"code": "retry-reset-failed", "message": "App reset failed before listed retry"})
                 return merged + first[index:]
             proof = {"schema_version": 1, "policy_version": 1, "runner_hosted": True,
                      "failed_case_count": failures} if nightly_retry else None
-            record = merge_retry(record, execute(record["identity"]), nightly_proof=proof)
+            second = execute(record["identity"])
+            if nightly_retry and (second is None or second["outcome"] in {"timed-out", "not-run", "crashed"}):
+                from ci_summary import public_retry_failure
+                attempt = second["attempts"][0] if second is not None else {
+                    "outcome": "not-run", "duration_seconds": 0, "exit_code": None}
+                record = dict(record, retry_failure=public_retry_failure(attempt))
+                if attempt["outcome"] != "crashed":
+                    return merged + [record] + first[index + 1:]
+            else:
+                record = merge_retry(record, second, nightly_proof=proof)
         merged.append(record)
     return merged
 
@@ -493,7 +528,7 @@ def run_xcode_attempts(command, registry, *, tier, environment, today, identity_
     bundle = Path(command[command.index("-resultBundlePath") + 1])
     invocations = []
     infrastructure = []
-    def invoke(call, path, retry_identity=None):
+    def invoke(call, path, retry_identity=None, *, problems):
         from strict_e2e_runner_support import CommandError
         started = time.monotonic()
         invocation = {"command": call, "result_bundle": str(path)}
@@ -508,36 +543,50 @@ def run_xcode_attempts(command, registry, *, tier, environment, today, identity_
             outcome = "timed-out" if timed_out else "not-run"
             invocation.update(exit_code=code, duration_seconds=elapsed, outcome=outcome)
             if timed_out:
-                infrastructure.append({"code": "xcodebuild-timeout", "message": "Xcode invocation exceeded its execution budget"})
+                problems.append({"code": "xcodebuild-timeout", "message": "Xcode invocation exceeded its execution budget"})
             rows = ([observation(retry_identity, outcome, elapsed, reason="Xcode execution did not complete", exit_code=code)]
                     if retry_identity is not None else [])
             return rows, code
         invocation.update(exit_code=code, duration_seconds=elapsed)
         if code == 124:
             invocation["outcome"] = "timed-out"
-            infrastructure.append({"code": "xcodebuild-timeout", "message": "Xcode invocation exceeded its execution budget"})
+            problems.append({"code": "xcodebuild-timeout", "message": "Xcode invocation exceeded its execution budget"})
+            if nightly_retry and retry_identity is not None:
+                return [], code
         try:
             return read(path, identity_for_key, elapsed, code), code
         except (ContractError, OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as error:
             cause = error.error if isinstance(error, OfficialResultReadError) else error
             detail = getattr(cause, "entry", {}).get("message", str(cause))
-            infrastructure.append({"code": "official-result-read-failed", "message": (type(cause).__name__ + ": " + detail)[:200]})
+            problems.append({"code": "official-result-read-failed", "message": (type(cause).__name__ + ": " + detail)[:200]})
             if isinstance(cause, subprocess.TimeoutExpired):
-                infrastructure.append(getattr(cause, "entry", {"code": "xcresult-export-timeout", "message": "Official result export exceeded its budget"}))
+                problems.append(getattr(cause, "entry", {"code": "xcresult-export-timeout", "message": "Official result export exceeded its budget"}))
             return error.observed if isinstance(error, OfficialResultReadError) else [], code or 1
-    first, first_exit = invoke(command, bundle)
+    first, first_exit = invoke(command, bundle, problems=infrastructure)
     effective_bundle = bundle
     def retry(identity):
         nonlocal effective_bundle
-        retry_bundle = Path(allocate_bundle())
+        started = time.monotonic()
+        try:
+            retry_bundle = Path(allocate_bundle())
+        except (OSError, ContractError):
+            if not nightly_retry:
+                raise
+            return observation(identity, "not-run", time.monotonic() - started, exit_code=None)
         require(retry_bundle.parent not in {Path(call["result_bundle"]).parent for call in invocations},
                 "Every retry bundle requires an independent private directory")
-        records, code = invoke(retry_command(command, identity["key"], retry_bundle), retry_bundle, identity)
+        problems = [] if nightly_retry else infrastructure
+        records, code = invoke(retry_command(command, identity["key"], retry_bundle), retry_bundle, identity, problems=problems)
+        call = invocations[-1]
+        if nightly_retry and problems:
+            outcome = "timed-out" if code == 124 else "not-run"
+            call["outcome"] = outcome
+            return observation(identity, outcome, call["duration_seconds"], exit_code=call["exit_code"])
         if len(records) != 1 or records[0]["identity"] != identity:
             return None
         effective_bundle = retry_bundle
         if code and records[0]["outcome"] == "passed":
-            return observation(identity, "crashed", invocations[-1]["duration_seconds"],
+            return observation(identity, "crashed", call["duration_seconds"],
                                reason="Retry invocation failed despite passing test row", exit_code=code)
         return records[0]
     # Exit 65 with official assertion failures is retryable. Infrastructure exits

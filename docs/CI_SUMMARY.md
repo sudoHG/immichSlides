@@ -1008,8 +1008,11 @@ failure diagnostics, public messages and `first_failure` stay on the first
 attempt and observation. A failed retry leaves the first verdict in effect. For
 a v5 yellow first failure, the one-attempt proof and duration remain intact.
 The optional observation-only `retry_failure` retains attempt 2, including its
-nonpassing outcome, exit code, duration and validated diagnostics. Free-form
-attempt text is excluded. Other failed retries retain the two-attempt red result.
+nonpassing outcome, exit code, duration and validated diagnostics. Retry-phase
+reset, execution and evidence problems use this field alongside the original
+failed attempt. A clean failed retry can retain the two-attempt red result.
+Free-form attempt text is excluded. A passing retry can carry
+`nightly_retry_first` with the independently verifiable v5 first observation.
 For P2 and unsigned pause evidence, a successful automated retry retains
 `needs-human-review` with failed-then-H attempts and the same tracking receipt;
 it never becomes a signed visual pass or an explicit recovery pass.
@@ -1043,7 +1046,8 @@ and `official_method_exit_codes` maps bind filtered execution; successful person
 siblings can reuse their unchanged first evidence. Fixture UI retains
 `official-tests.json` and `official-tests-attempt-N.json` for independent reader
 validation. Both the aggregate and the reporter bind a flaky claim to the
-original and retry evidence.
+original and retry evidence. They use the first verdict if the retry claim
+cannot be bound, and discard any unbound supplementary failure evidence.
 
 ### Reader-first evolution
 

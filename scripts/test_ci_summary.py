@@ -297,8 +297,49 @@ class SummaryContractTests(unittest.TestCase):
                     ci_summary.parse_summary(changed)
             projected = ci_summary.observation(row["identity"], "failed", 1, exit_code=65)
             projected["retry_failure"] = retry
-            with self.assertRaisesRegex(ci_summary.ContractError, "^retry failure: requires a v5"):
+            for outcome, code in (("timed-out", 124), ("not-run", None), ("crashed", 65)):
+                projected["retry_failure"] = {**retry, "outcome": outcome, "exit_code": code}
+                projected["retry_failure"].pop("failure_messages")
                 ci_summary.validate_observation(projected)
+                ordinary = copy.deepcopy(summary)
+                ordinary["population"]["observed"] = [projected]
+                self.assertEqual(ordinary, ci_summary.parse_summary(ordinary))
+                with self.assertRaisesRegex(ci_summary.ContractError, "^nightly retry: requires a main nightly shard$"):
+                    ci_summary.parse_summary({**ordinary, "source": {**ordinary["source"], "workflow_path": ".github/workflows/ci-ui.yml"}})
+            with self.assertRaisesRegex(ci_summary.ContractError, "^retry failure: requires one failed"):
+                ci_summary.validate_observation({**projected, "attempts": [*projected["attempts"], retry]})
+
+    def test_passing_retry_can_retain_an_independently_bound_v5_first_observation(self):
+        from ci_failure_diagnostics import environment_limit_evidence
+        from ci_flaky import ASSERTION_FAILURE, merge_retry
+        summary, resource = hosted_v5_summary()
+        original = summary["population"]["observed"][0]
+        proof = environment_limit_evidence(summary, original, [resource], runner_hosted=True, policy_version=5)
+        ordinary = copy.deepcopy(original)
+        ordinary["attempts"][0]["reason"] = ASSERTION_FAILURE
+        claim = {"schema_version": 1, "policy_version": 1, "runner_hosted": True, "failed_case_count": 1}
+        retried = merge_retry(ordinary, ci_summary.observation(original["identity"], "passed", 3), nightly_proof=claim)
+        original["environment_limit"] = original["attempts"][0]["environment_limit"] = proof
+        retried["nightly_retry_first"] = original
+        summary["population"]["observed"] = [retried]
+        self.assertEqual(summary, ci_summary.parse_summary(summary))
+        for key in ("identity", "duration", "ledger", "without-proof", "recursive"):
+            changed = copy.deepcopy(summary)
+            row = changed["population"]["observed"][0]
+            first = row["nightly_retry_first"]
+            if key == "identity":
+                first["identity"]["key"] = "unrelated"
+            elif key == "duration":
+                first["duration_seconds"] = first["attempts"][0]["duration_seconds"] = 9
+            elif key == "ledger":
+                changed.pop("strict_case_evidence")
+            elif key == "without-proof":
+                row.pop("nightly_retry")
+            else:
+                first["nightly_retry_first"] = {}
+            with self.subTest(key=key), self.assertRaisesRegex(ci_summary.ContractError,
+                    "nightly retry first:|environment limit differs from summary case evidence"):
+                ci_summary.parse_summary(changed)
 
     def test_nightly_retry_retained_reader_needs_no_image_or_runner_dependencies(self):
         from ci_flaky import P2_REVIEW_SUITES, IOS_PENDING_REVIEW_SUITE

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import math
 import re
@@ -12,6 +13,7 @@ from pathlib import Path
 SCHEMA_VERSION = 1
 NIGHTLY_RETRY_READER_VERSION = 1
 NIGHTLY_RETRY_FIELD = "nightly_retry"
+NIGHTLY_RETRY_FIRST_FIELD = "nightly_retry_first"
 RETRY_FAILURE_FIELD = "retry_failure"
 BOUNDED_DIAGNOSTICS_FIELD = "bounded_diagnostics"
 OUTCOMES = {"passed", "failed", "skipped", "flaky-passed", "crashed", "timed-out", "not-run", "needs-human-review"}
@@ -207,8 +209,9 @@ def public_retry_failure(attempt):
 
 
 def validate_retry_failure(entry):
-    require(entry.get("outcome") == "failed" and entry.get("environment_limit", {}).get("policy_version") == 5,
-            "retry failure: requires a v5 failed observation")
+    require(entry.get("outcome") == "failed" and entry["identity"]["kind"] in {"strict", "ui"}
+            and ("attempts" not in entry or len(entry["attempts"]) == 1 and entry["attempts"][0]["outcome"] == "failed"),
+            "retry failure: requires one failed strict or UI attempt")
     retry = entry[RETRY_FAILURE_FIELD]
     try:
         require(isinstance(retry, dict) and type(retry.get("number")) is int and retry["number"] == 2
@@ -223,6 +226,19 @@ def validate_retry_failure(entry):
     except (ContractError, KeyError, TypeError) as error:
         message = str(error) if isinstance(error, ContractError) else "invalid second attempt"
         raise ContractError("retry failure: " + message) from error
+
+
+def validate_nightly_retry_first(entry):
+    first = entry[NIGHTLY_RETRY_FIRST_FIELD]
+    require(NIGHTLY_RETRY_FIELD in entry and isinstance(first, dict)
+            and not {NIGHTLY_RETRY_FIELD, NIGHTLY_RETRY_FIRST_FIELD, RETRY_FAILURE_FIELD} & first.keys(),
+            "nightly retry first: requires a passing retry and a standalone first observation")
+    validate_observation(first)
+    primary = entry["attempts"][0]
+    require(first["identity"] == entry["identity"] and first["outcome"] == "failed"
+            and first.get("environment_limit", {}).get("policy_version") == 5
+            and all(first["attempts"][0][field] == primary[field] for field in ("duration_seconds", "exit_code")),
+            "nightly retry first: v5 observation differs from the original attempt")
 
 
 def render_retry_failure(attempt):
@@ -246,11 +262,13 @@ def validate_observation(entry):
     optional = DIAGNOSTIC_FIELDS | {VALIDATOR_FAILURE_FIELD, FIRST_FAILURE_FIELD, ENVIRONMENT_LIMIT_FIELD, FAILURE_MESSAGES_FIELD,
                                     NIGHTLY_RETRY_FIELD}
     fields(entry, {"identity", "outcome", "duration_seconds", "attempts"}
-           | ((optional | {RETRY_FAILURE_FIELD}) & entry.keys()), "observation")
+           | ((optional | {RETRY_FAILURE_FIELD, NIGHTLY_RETRY_FIRST_FIELD}) & entry.keys()), "observation")
     validate_test_identity(entry["identity"])
     require(entry["outcome"] in OUTCOMES, "invalid outcome")
     if NIGHTLY_RETRY_FIELD in entry:
         validate_nightly_retry(entry)
+    if NIGHTLY_RETRY_FIRST_FIELD in entry:
+        validate_nightly_retry_first(entry)
     if RETRY_FAILURE_FIELD in entry:
         validate_retry_failure(entry)
     if ENVIRONMENT_LIMIT_FIELD in entry:
@@ -477,6 +495,8 @@ def validate_summary_v1(payload):
                          (run["tier"] == "ui" and run["job"] in {"ui-iphone", "ui-ipad", "ui-appletv"}))
                     and bool(run["shard"]),
                     "nightly retry: requires a main nightly shard")
+    for row in population["observed"]:
+        entry = row.get(NIGHTLY_RETRY_FIRST_FIELD, row)
         if ENVIRONMENT_LIMIT_FIELD in entry:
             proof = entry[ENVIRONMENT_LIMIT_FIELD]
             require(environment_limit_evidence(payload, entry, [] if proof["resources"] is None else [proof["resources"]], runner_hosted=proof["runner_hosted"],
@@ -533,6 +553,28 @@ def parse_identity(raw):
 
 def parse_summary(raw):
     return parse_record(raw, SUMMARY_READERS)
+
+
+def parse_nightly_summary(raw):
+    """Validate the producer record independently of optional retry evidence."""
+    payload = copy.deepcopy(decode(raw))
+    backups = []
+    for entry in payload["population"]["observed"]:
+        if RETRY_FAILURE_FIELD in entry:
+            try:
+                validate_retry_failure(entry)
+            except (ValueError, KeyError, TypeError, AttributeError):
+                entry.pop(RETRY_FAILURE_FIELD)
+        if NIGHTLY_RETRY_FIRST_FIELD in entry:
+            backups.append((entry, entry.pop(NIGHTLY_RETRY_FIRST_FIELD)))
+    parse_summary(payload)
+    for entry, backup in backups:
+        entry[NIGHTLY_RETRY_FIRST_FIELD] = backup
+        try:
+            parse_summary(payload)
+        except (ValueError, KeyError, TypeError, AttributeError):
+            entry.pop(NIGHTLY_RETRY_FIRST_FIELD)
+    return payload
 
 
 def markdown_text(value):

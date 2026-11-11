@@ -19,7 +19,8 @@ from pathlib import Path
 from ci_summary import (ARCHIVE_DOWNLOAD_FAILURES, ContractError, decode, identity_key, markdown_text, parse_identity,
                         parse_summary, require, validate_observation, validate_test_identity,
                         NON_INFRASTRUCTURE_DIAGNOSTICS, observation, test_identity, validate_nightly_retry, render_nightly_retry,
-                        nightly_retry_outcome, public_retry_failure, render_retry_failure, validate_retry_failure)
+                        nightly_retry_outcome, public_retry_failure, render_retry_failure, validate_retry_failure,
+                        parse_nightly_summary)
 from ci_publish import GitHub
 
 REPORT_PATH = ".github/workflows/ci-report.yml"
@@ -132,7 +133,41 @@ def historical_strict_population(summary):
     return {identity_key(case) for case in decode(matrix.decode("utf-8"))["cases"]}
 
 
-def method_observations(raw, trace, *, runner_hosted=False):
+def method_observations(raw, trace, *, runner_hosted=False, verified_cases=None):
+    summary = parse_nightly_summary(raw)
+    population = summary["population"]
+    phases = trace["warm"]
+    discarded = set()
+    for index, row in enumerate(population["observed"]):
+        backup = row.get("nightly_retry_first")
+        supplemental = row.get("retry_failure")
+        key = identity_key(row["identity"])
+        if backup is None and supplemental is None:
+            if len(row["attempts"]) == 1:
+                discarded.add(key)
+            continue
+        scoped = {**summary, "population": {**population,
+            "declared": [item for item in population["declared"] if identity_key(item) == key], "observed": [row]}}
+        try:
+            methods, missing = _method_observations(scoped, trace, runner_hosted=runner_hosted)
+            field = "nightly_retry" if backup is not None else "retry_failure"
+            require(not missing and any(field in method for method in methods), "retry evidence is incomplete")
+        except (ValueError, TypeError, KeyError, AttributeError, IndexError):
+            discarded.add(key)
+            if backup is not None:
+                population["observed"][index] = backup
+            else:
+                row.pop("retry_failure")
+    if discarded:
+        phases = [{key: value for key, value in phase.items() if key != "retry"}
+                  if identity_key(phase["identity"]) in discarded else phase for phase in phases]
+    result = _method_observations(summary, {**trace, "warm": phases}, runner_hosted=runner_hosted)
+    if verified_cases is not None:
+        verified_cases.update({identity_key(row["identity"]): row for row in population["observed"]})
+    return result
+
+
+def _method_observations(raw, trace, *, runner_hosted=False):
     """A suite result never substitutes for an officially exported method result."""
     from run_strict_e2e import CommandError, FILTER_PERSON_SESSIONS, resolve_suite_selector
     from strict_e2e_p2_contract import P2_CASES
@@ -239,7 +274,7 @@ def method_observations(raw, trace, *, runner_hosted=False):
                 result["environment_limit"] = result["attempts"][0]["environment_limit"] = copy.deepcopy(proof)
             if "retry" in phase and method["identifier"] in selected_retries:
                 method_claim = retry_records.get(method["identifier"])
-                if "environment_limit" in result:
+                if "retry_failure" in case_record:
                     result["retry_failure"] = bind_strict_retry_failure(result, phase, case_record, failed_count, method_claim)
                 else:
                     result = strict_retry_observation(result, phase, case_record,
@@ -290,6 +325,7 @@ def bind_strict_retry_failure(first, phase, case, failed_count, method_claim):
             "retry failure: strict case evidence differs")
     methods = retry.get("official_methods", [])
     require(retry.get("exit_code") != 0 or retry.get("automated_contract_failed") or not retry.get("log_present")
+            or retry.get("retry_collection_failed") is True
             or retry.get("build_operations") != 0 or retry.get("products_unchanged") is not True
             or any(method.get("result") != "Passed" for method in methods),
             "retry failure: strict retry completed successfully")
@@ -636,6 +672,7 @@ def scrub_attempt_text(attempt, *, keep_assertion=False):
 def scrub_report_attempts(record, *, retry_only=False):
     rows = [*record.get("observed", []), *record.get("diagnostics", {}).get("failures", [])]
     for row in rows:
+        row.pop("nightly_retry_first", None)
         has_retry = "nightly_retry" in row
         if not retry_only or has_retry or "retry_failure" in row:
             attempts = row.get("attempts")
@@ -811,7 +848,7 @@ def nightly_ref_allowed(api, run, identity):
 def nightly_ui_attempt(api, run, attempt, artifacts, raw):
     import subprocess
     from ci_population import ui_identities
-    from ci_nightly_ui import parse_ui_plan, validate_ui_record
+    from ci_nightly_ui import parse_ui_plan, read_ui_retry_tests, validate_ui_record
     from ci_publish import json_member
     from ci_ui_shards import DEVICES, MANIFEST_PATH, shard_populations
     from ci_verdict import identity_label
@@ -871,7 +908,7 @@ def nightly_ui_attempt(api, run, attempt, artifacts, raw):
             continue
         if matches[0]["expired"]:
             raise EvidenceExpired("nightly UI shard expired")
-        summary = parse_summary(json_member(api, matches[0], "summary.json"))
+        summary = parse_nightly_summary(json_member(api, matches[0], "summary.json"))
         require(summary["identity"] == plan["identity"] and summary["source"] == plan["source"]
                 and summary["run"] == {**plan["run"], "tier": "ui", "job": "ui-" + shard["device"], "shard": shard["shard"]}
                 and summary["hashes"] == plan["hashes"][shard["device"]], "nightly UI shard source binding differs")
@@ -890,12 +927,13 @@ def nightly_ui_attempt(api, run, attempt, artifacts, raw):
                     "nightly retry: requires a verified GitHub-hosted UI job")
             official_tests[(shard["device"], shard["shard"])] = json_member(api, matches[0], "official-tests.json")
         if flaky or failed_retry:
-            calls = json_member(api, matches[0], "retry-invocations.json")["invocations"]
-            require(2 <= len(calls) <= 4 and calls[0].get("exit_code") == 65,
-                    "nightly retry: invalid UI invocation count or initial exit")
-            retry_tests[(shard["device"], shard["shard"])] = [
-                {"official_tests": json_member(api, matches[0], f"official-tests-attempt-{number}.json"), "invocation": call}
-                for number, call in enumerate(calls[1:], 2)]
+            artifact = matches[0]
+            retry_tests[(shard["device"], shard["shard"])] = read_ui_retry_tests(lambda name: json_member(api, artifact, name))
+            if not (environment or flaky):
+                try:
+                    official_tests[(shard["device"], shard["shard"])] = json_member(api, artifact, "official-tests.json")
+                except (ValueError, KeyError, TypeError, OSError):
+                    pass  # An ordinary failed result does not depend on its optional retry receipt.
     values = {}
     for name, path in (("policy", "scripts/ci-test-policy.json"), ("registry", "scripts/ci-known-flaky.json")):
         content = blob(path)
@@ -903,11 +941,11 @@ def nightly_ui_attempt(api, run, attempt, artifacts, raw):
         require(all(hashes["policies"][label] == hashlib.sha256(content).hexdigest() for hashes in plan["hashes"].values()),
                 "nightly UI policy differs from tested source")
         values[name] = decode(content.decode())
-    validate_ui_record(ui, summaries, **values, evaluated_on=date.fromisoformat(run["created_at"][:10]),
-                       official_tests=official_tests, retry_tests=retry_tests)
+    verified = validate_ui_record(ui, summaries, **values, evaluated_on=date.fromisoformat(run["created_at"][:10]),
+                                  official_tests=official_tests, retry_tests=retry_tests)
     require(raw["tiers"]["ui"] == ui["verdict"]["status"]
             and (ui["verdict"]["status"] != "failed" or raw["status"] == "failed"), "nightly UI status differs")
-    verdict = copy.deepcopy(ui["verdict"])
+    verdict = copy.deepcopy(verified["verdict"])
     verdict["infrastructure"] = []
     # Only validated closed-set receipt reasons cross the public reporting boundary.
     verdict["infrastructure"].extend(sorted({summary["archive_download"]["failure_reason"] for summary in summaries
@@ -1036,7 +1074,7 @@ def nightly_attempt(api, run, attempt, artifacts):
             and raw["source"]["event"] == run["event"] and raw["source"]["fork_originated"] is False
             and raw["status"] in {"passed", "failed", "environment-limited"}, "invalid nightly source or status")
     for item in raw["observed"]:
-        validate_observation(item)
+        validate_observation({key: value for key, value in item.items() if key not in {"retry_failure", "nightly_retry_first"}})
     entry.update(identity=identity, hashes=raw["hashes"], status=raw["status"], tiers=raw["tiers"],
                  release_ineligible_reasons=raw["release_ineligible_reasons"], diagnostic_shard=raw.get("diagnostic_shard"))
     require(entry["diagnostic_shard"] is None or run["event"] == "workflow_dispatch"
@@ -1048,7 +1086,7 @@ def nightly_attempt(api, run, attempt, artifacts):
     case_keys = {identity_key(item["identity"]) for item in raw["observed"]}
     informational = {identity_key(item["identity"]) for item in raw["informational"]}
     shards = {item["shard"] for item in raw["capacity"]["shard_intervals"]}
-    summary_cases, yellow_cases, flaky_cases, failed_retries = set(), {}, {}, {}
+    summary_cases, yellow_cases, flaky_cases, restored = set(), {}, {}, {}
     jobs = None
     for shard in sorted(shards):
         name = f"nightly-strict-{shard}-{run['id']}-{attempt}"
@@ -1056,7 +1094,7 @@ def nightly_attempt(api, run, attempt, artifacts):
         require(len(matches) == 1, "missing or duplicate nightly shard")
         if matches[0]["expired"]:
             raise EvidenceExpired("nightly shard expired")
-        summary = parse_summary(json_member(api, matches[0], "summary.json"))
+        summary = parse_nightly_summary(json_member(api, matches[0], "summary.json"))
         require(summary["identity"] == identity and summary["hashes"] == raw["hashes"]
                 and summary["source"]["workflow_path"] == NIGHTLY_PATH and not summary["source"]["fork_originated"]
                 and summary["run"] == {"id": str(run["id"]), "attempt": attempt, "tier": "strict", "job": "nightly-strict", "shard": shard},
@@ -1078,10 +1116,14 @@ def nightly_attempt(api, run, attempt, artifacts):
                       and "self-hosted" not in matching[0].get("labels", []))
             require(hosted, "environment limit requires a verified GitHub-hosted strict job" if yellow else
                     "nightly retry: requires a verified GitHub-hosted strict job")
-            yellow_cases.update({identity_key(item["identity"]): item["environment_limit"] for item in yellow})
-            flaky_cases.update({identity_key(item["identity"]): item["nightly_retry"] for item in flaky})
-            failed_retries.update({identity_key(item["identity"]): item["retry_failure"] for item in yellow if "retry_failure" in item})
-        methods, absent = method_observations(summary, trace, runner_hosted=hosted)
+        verified = {}
+        methods, absent = method_observations(summary, trace, runner_hosted=hosted, verified_cases=verified)
+        yellow_cases.update({key: item["environment_limit"] for key, item in verified.items() if "environment_limit" in item})
+        flaky_cases.update({key: item["nightly_retry"] for key, item in verified.items() if "nightly_retry" in item})
+        for claim in flaky:
+            key = identity_key(claim["identity"])
+            if key in verified and "environment_limit" in verified[key]:
+                restored[key] = claim["nightly_retry"]
         observed.extend(methods)
         missing.extend(absent)
     ui = nightly_ui_attempt(api, run, attempt, artifacts, raw) if raw["schema_version"] == 2 else None
@@ -1119,20 +1161,30 @@ def nightly_attempt(api, run, attempt, artifacts):
     strict_yellow = bool(yellow_cases)
     strict_flaky = bool(flaky_cases)
     raw_flaky = {identity_key(item["identity"]): item["nightly_retry"] for item in raw["observed"] if "nightly_retry" in item}
-    require(failed_retries == {identity_key(item["identity"]): item["retry_failure"] for item in raw["observed"]
-                              if "retry_failure" in item}, "retry failure: strict aggregate bindings differ")
     if ui is not None:
         ui_yellow = {identity_key(item["identity"]): item["environment_limit"] for item in ui["observed"]
                      if "environment_limit" in item}
         yellow_cases.update(ui_yellow)
-        raw_yellow.update(ui_yellow)
         ui_flaky = {identity_key(item["identity"]): item["nightly_retry"] for item in ui["observed"] if "nightly_retry" in item}
         flaky_cases.update(ui_flaky)
-        raw_flaky.update(ui_flaky)
-    require(raw_yellow == yellow_cases and len(raw.get("environment_limited", [])) == len(raw_yellow) and set(raw_yellow) == {
+        for item in raw["ui"]["verdict"]["observed"]:
+            key = identity_key(item["identity"])
+            if "environment_limit" in item:
+                raw_yellow[key] = item["environment_limit"]
+            if "nightly_retry" in item:
+                raw_flaky[key] = item["nightly_retry"]
+                if key in ui_yellow:
+                    restored[key] = item["nightly_retry"]
+    require(len(raw.get("environment_limited", [])) == len(raw_yellow) and set(raw_yellow) == {
         identity_key(item) for item in raw.get("environment_limited", [])}, "nightly environment limit bindings differ")
-    require(raw_flaky == flaky_cases and len(raw.get("flaky", [])) == len(raw_flaky) and set(raw_flaky) == {
+    require(len(raw.get("flaky", [])) == len(raw_flaky) and set(raw_flaky) == {
         identity_key(item) for item in raw.get("flaky", [])}, "nightly retry: aggregate bindings differ")
+    for key, claim in restored.items():
+        if raw_flaky.get(key) == claim:
+            raw_flaky.pop(key)
+            raw_yellow[key] = yellow_cases[key]
+    require(raw_yellow == yellow_cases, "nightly environment limit bindings differ")
+    require(raw_flaky == flaky_cases, "nightly retry: aggregate bindings differ")
     if raw["status"] == "environment-limited":
         require(bool(yellow_cases or flaky_cases) and not raw["errors"] and not infrastructure and not missing
                 and not any(item["outcome"] in FAILURES and "environment_limit" not in item for item in observed)
@@ -1599,13 +1651,13 @@ def environment_history(entries):
                                         for key in ("failure_phase", "failure_class", "failure_messages")),
                                 "environment limit: retained attempt differs")
             except (ValueError, TypeError, KeyError, AttributeError):
-                rejected.add(identity_key(item["identity"]))
+                rejected.add(identity_token(item["identity"]))
         for item in items:
             if identity_key(item["identity"]) in rejected_retries:
                 item.pop("nightly_retry", None)
                 item["outcome"] = "failed"
                 item["nightly_retry_rejection"] = "RED: invalid or obsolete nightly-retry proof under the current policy"
-            if identity_key(item["identity"]) in rejected:
+            if identity_token(item["identity"]) in rejected:
                 item.pop("environment_limit", None)
                 item.pop("retry_failure", None)
                 item["environment_limit_rejection"] = "RED: invalid or obsolete environment-limit proof under the current policy"
@@ -1621,28 +1673,29 @@ def environment_history(entries):
         if rejected or rejected_retries:
             report["status"] = "failed"
             for item in items:
-                if identity_key(item["identity"]) in rejected | rejected_retries and item["identity"]["kind"] in report.get("tiers", {}):
+                if (identity_token(item["identity"]) in rejected or identity_key(item["identity"]) in rejected_retries
+                        ) and item["identity"]["kind"] in report.get("tiers", {}):
                     report["tiers"][item["identity"]["kind"]] = "failed"
         if not issue_eligible(report) or report["source"]["workflow_path"] != NIGHTLY_PATH:
             continue
         for item in report["observed"]:
-            token = identity_key(item["identity"])
+            token = identity_token(item["identity"])
             by_case.setdefault(token, {}).setdefault(report["day"], []).append(item)
     for nights in by_case.values():
         streak, previous_day = 0, None
         for day, items in sorted(nights.items()):
             current = date.fromisoformat(day)
-            yellow = any("environment_limit" in item or "nightly_retry" in item for item in items)
+            yellow = all("environment_limit" in item or "nightly_retry" in item for item in items)
             streak = (streak + 1 if previous_day == current - timedelta(days=1) else 1) if yellow else 0
             previous_day = current
             if streak >= ENVIRONMENT_YELLOW_NIGHTS_BEFORE_RED:
                 for item in items:
                     item["environment_limit_escalation"] = True
     for report in reports:
-        escalated = {identity_key(item["identity"]) for item in report.get("observed", [])
+        escalated = {identity_token(item["identity"]) for item in report.get("observed", [])
                      if item.get("environment_limit_escalation")}
         for item in report.get("diagnostics", {}).get("failures", []):
-            if identity_key(item["identity"]) in escalated:
+            if identity_token(item["identity"]) in escalated:
                 item["environment_limit_escalation"] = True
         if escalated:
             report["status"] = "failed"

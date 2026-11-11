@@ -79,8 +79,19 @@ class ReporterTests(unittest.TestCase):
         for field, value in (("exit_code", 2), ("duration_seconds", 7)):
             bad = copy.deepcopy(phase)
             bad["retry"][field] = value
-            with self.subTest(field=field), self.assertRaisesRegex(ContractError, "^retry failure: strict case evidence differs"):
-                ci_report.method_observations(summary, {"warm": [bad]}, runner_hosted=True)
+            with self.subTest(field=field):
+                self.assertEqual((original, []), ci_report.method_observations(summary, {"warm": [bad]}, runner_hosted=True))
+        unfinished = {**phase, "retry_methods": [], "retry": {"identity": case, "exit_code": 124, "duration_seconds": 3}}
+        row["retry_failure"].update(outcome="timed-out", exit_code=124)
+        timed_out, missing = ci_report.method_observations(summary, {"warm": [unfinished]}, runner_hosted=True)
+        self.assertEqual([], missing)
+        self.assertEqual(row["retry_failure"], timed_out[0]["retry_failure"])
+        self.assertEqual(original[0], {key: value for key, value in timed_out[0].items() if key != "retry_failure"})
+        collection_failed = {**unfinished, "retry": {**unfinished["retry"], "exit_code": 0, "log_present": True,
+                             "build_operations": 0, "products_unchanged": True, "retry_collection_failed": True}}
+        row["retry_failure"].update(outcome="not-run", exit_code=0)
+        self.assertEqual(([{**original[0], "retry_failure": row["retry_failure"]}], []),
+                         ci_report.method_observations(summary, {"warm": [collection_failed]}, runner_hosted=True))
 
     def test_strict_retry_reader_recomputes_both_official_attempts_and_rejects_missing_proof(self):
         from test_ci_summary import nightly_retry_summary
@@ -246,8 +257,8 @@ class ReporterTests(unittest.TestCase):
         following.update(day="2026-10-04", run={"id": 12, "attempt": 1})
         self.assertEqual("reopen", issue_decision(closed, IDENTITY, [later, following], registry_referenced=False)["action"])
 
-    def test_flaky_and_starvation_yellows_share_one_streak_without_red_erasing_it(self):
-        from test_ci_summary import nightly_retry_summary, hosted_timeout_summary
+    def test_flaky_and_starvation_yellows_use_main_identity_and_all_observations(self):
+        from test_ci_summary import nightly_retry_summary, hosted_timeout_summary, hosted_v5_summary
         from ci_failure_diagnostics import environment_limit_evidence
         summary = nightly_retry_summary()
         row = summary["population"]["observed"][0]
@@ -263,10 +274,11 @@ class ReporterTests(unittest.TestCase):
         starvation = entry("2026-10-02", run=11)
         starvation.update(status="environment-limited", observed=[yellow])
         starvation["diagnostics"]["failures"] = [ci_report.failure_details(yellow)]
-        red = entry(run=12)
-        history = ci_report.environment_history([flaky, red, starvation])
-        self.assertEqual(["environment-limited", "failed", "failed"], [item["status"] for item in history])
+        history = ci_report.environment_history([flaky, starvation])
+        self.assertEqual(["environment-limited", "failed"], [item["status"] for item in history])
         self.assertTrue(history[-1]["observed"][0]["environment_limit_escalation"])
+        red = entry(run=12)
+        self.assertEqual("environment-limited", ci_report.environment_history([flaky, red, starvation])[-1]["status"])
         for intervening in ("passed", "not-run"):
             changed = copy.deepcopy(starvation)
             changed["day"] = "2026-10-03"
@@ -274,7 +286,7 @@ class ReporterTests(unittest.TestCase):
             self.assertEqual("environment-limited", history[-1]["status"])
         same_day_pass = entry(outcome="passed", run=13)
         history = ci_report.environment_history([flaky, same_day_pass, starvation])
-        self.assertEqual("failed", history[-1]["status"])
+        self.assertEqual("environment-limited", history[-1]["status"])
         phone = copy.deepcopy(flaky)
         phone["observed"][0]["identity"] = test_identity("ui", "ExampleUITests/testOpen", platform="ios", device="iphone")
         phone["diagnostics"]["failures"] = [ci_report.failure_details(phone["observed"][0])]
@@ -282,13 +294,30 @@ class ReporterTests(unittest.TestCase):
         pad.update(day="2026-10-02", run={"id": 14, "attempt": 1})
         pad["observed"][0]["identity"]["dimensions"]["device"] = "ipad"
         pad["diagnostics"]["failures"] = [ci_report.failure_details(pad["observed"][0])]
-        self.assertEqual("environment-limited", ci_report.environment_history([phone, pad])[-1]["status"])
+        self.assertEqual("failed", ci_report.environment_history([phone, pad])[-1]["status"])
         next_phone = copy.deepcopy(phone)
         next_phone.update(day="2026-10-02", run={"id": 15, "attempt": 1})
         pad_pass = copy.deepcopy(pad)
         pad_pass["observed"] = [observation(pad["observed"][0]["identity"], "passed", 1)]
         history = ci_report.environment_history([phone, next_phone, pad_pass])
-        self.assertEqual(("failed", "environment-limited"), (history[1]["status"], history[2]["status"]))
+        self.assertEqual(("environment-limited", "environment-limited"), (history[1]["status"], history[2]["status"]))
+        fixture, _ = hosted_v5_summary(ui=True, tool=True)
+        first_v5 = fixture["population"]["observed"][0]
+        proof = environment_limit_evidence(fixture, first_v5, [], runner_hosted=True, policy_version=5)
+        first_v5["environment_limit"] = first_v5["attempts"][0]["environment_limit"] = proof
+        for report, device in ((phone, "iphone"), (pad, "ipad")):
+            v5 = copy.deepcopy(first_v5)
+            v5["identity"]["dimensions"]["device"] = device
+            report["observed"] = [v5]
+            report["diagnostics"]["failures"] = [ci_report.failure_details(v5)]
+            report["status"] = "failed"
+        self.assertTrue(ci_report.environment_history([phone, pad])[1]["observed"][0]["environment_limit_escalation"])
+        self.assertEqual("open", issue_decision(None, first_v5["identity"], [phone, pad], registry_referenced=False)["action"])
+        broken_v5 = copy.deepcopy(phone)
+        broken_v5["observed"][0]["environment_limit"]["policy_version"] = 99
+        broken_v5["observed"].append(pad["observed"][0])
+        rejected_v5 = ci_report.environment_history([broken_v5])[0]
+        self.assertTrue(all("environment_limit_rejection" in item for item in rejected_v5["observed"]))
         for defect in (2, False):
             changed = copy.deepcopy(flaky)
             changed["observed"][0]["nightly_retry"]["policy_version"] = defect
@@ -296,7 +325,7 @@ class ReporterTests(unittest.TestCase):
             self.assertEqual("failed", rejected["status"])
             self.assertIn("invalid or obsolete nightly-retry proof", render_entry(rejected))
         # Rejection uses the device-specific evidence identity rather than the shared issue identity.
-        broken = copy.deepcopy(phone)
+        broken = copy.deepcopy(next_phone)
         broken["observed"][0]["nightly_retry"]["policy_version"] = 2
         passing_pad = pad_pass["observed"][0]
         broken["observed"].append(passing_pad)
@@ -1744,9 +1773,51 @@ class ReporterTests(unittest.TestCase):
                 self.assertEqual([65, 65], report["diagnostics"]["failures"][0]["exit_codes"])
                 self.assertIn("Retry outcome failed, exit 65, duration 3.000s.", render_entry(report))
                 last["result"] = "Passed"
-                with self.assertRaisesRegex(ContractError, "^nightly UI aggregate differs from bound shard evidence$"):
-                    ci_report.nightly_attempt(api, run, 1, artifacts)
+                discarded = ci_report.nightly_attempt(api, run, 1, artifacts)
+                self.assertEqual("environment-limited", discarded["status"])
+                self.assertEqual([65], discarded["diagnostics"]["failures"][0]["exit_codes"])
+                for outcome, code in (("crashed", 65), ("timed-out", 124), ("not-run", 2)):
+                    with self.subTest(retry_outcome=outcome):
+                        row["retry_failure"].update(outcome=outcome, exit_code=code, duration_seconds=4)
+                        retry_call.update(exit_code=code, duration_seconds=4, outcome=outcome)
+                        export = second_export if outcome == "crashed" else None
+                        path = ("ui-appletv-visual-10-1", "official-tests-attempt-2.json")
+                        if export is None:
+                            members.pop(path, None)
+                        else:
+                            members[path] = export
+                        retry_tests[("appletv", "visual")][0]["official_tests"] = export
+                        ui["verdict"] = judge_ui(plan, summaries, policy=policy, registry=registry, evaluated_on=date(2026, 10, 1),
+                            matrix_job_result="success", official_tests=official_tests, retry_tests=retry_tests)
+                        retained = ci_report.nightly_attempt(api, run, 1, artifacts)
+                        self.assertEqual(("environment-limited", [65, code]),
+                            (retained["status"], retained["diagnostics"]["failures"][0]["exit_codes"]))
             row.pop("retry_failure")
+            from ci_flaky import ASSERTION_FAILURE, merge_retry
+            ordinary = copy.deepcopy(row)
+            ordinary.pop("environment_limit")
+            ordinary["attempts"][0].pop("environment_limit")
+            ordinary["attempts"][0]["reason"] = ASSERTION_FAILURE
+            claim = {"schema_version": 1, "policy_version": 1, "runner_hosted": True, "failed_case_count": 1}
+            retried = merge_retry(ordinary, observation(row["identity"], "passed", 3), nightly_proof=claim)
+            retried["nightly_retry_first"] = row
+            summaries[-1]["population"]["observed"] = [retried]
+            retry_call.update(exit_code=0, outcome="passed")
+            members[("ui-appletv-visual-10-1", "official-tests-attempt-2.json")] = second_export
+            retry_tests[("appletv", "visual")][0]["official_tests"] = second_export
+            ui["verdict"] = judge_ui(plan, summaries, policy=policy, registry=registry, evaluated_on=date(2026, 10, 1),
+                matrix_job_result="success", official_tests=official_tests, retry_tests=retry_tests)
+            self.assertEqual([row["identity"]], ui["verdict"]["flaky"])
+            original_yellow = raw.pop("environment_limited")
+            bind_ui_aggregate(raw, ui)
+            with patch("ci_publish.complete_attempt_jobs", return_value=jobs):
+                members.pop(("ui-appletv-visual-10-1", "official-tests-attempt-2.json"))
+                restored = ci_report.nightly_attempt(api, run, 1, artifacts)
+            self.assertEqual("environment-limited", restored["status"])
+            self.assertEqual(proof, restored["observed"][-1]["environment_limit"])
+            self.assertNotIn("nightly_retry", restored["observed"][-1])
+            raw.pop("flaky")
+            raw["environment_limited"] = original_yellow
             summaries[-1]["population"]["observed"] = [original_row]
             summaries[-1]["status"] = "passed"
             raw.update(status=original_status, tiers=original_tiers)
@@ -2703,7 +2774,7 @@ class ReporterTests(unittest.TestCase):
             [compact, same_night], registry_referenced=False)["action"])
         same_day_pass = copy.deepcopy(passed)
         same_day_pass["run"]["id"] = 12
-        self.assertEqual("open", issue_decision(None, report["observed"][0]["identity"],
+        self.assertEqual("none", issue_decision(None, report["observed"][0]["identity"],
             [compact, following, same_day_pass], registry_referenced=False)["action"])
         consecutive = ci_report.merge_snapshot(None, [compact, following], date(2026, 10, 2))
         escalated = consecutive["days"]["2026-10-02"]["entries"][0]

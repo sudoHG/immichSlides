@@ -13,9 +13,10 @@ reader accepts the version-1 `nightly_retry` extension alongside unchanged old
 summaries. Its producer is enabled only by the exact hosted-main trusted-reader
 gate documented there; branch dispatches emit no new claims, and the first
 qualifying main nightly after merge enables it automatically. The reader checks
-both official attempts and preserves the original failure plus the retry outcome.
-For a v5 yellow followed by a failed retry, the first proof and duration remain
-authoritative. The second attempt is separate evidence. Compact history and issue
+both official attempts before accepting a flaky yellow. An unbound retry
+falls back to the first verdict. For a v5 yellow followed by a failed retry,
+the first proof and duration remain authoritative. The second attempt is
+supplementary evidence. Compact history and issue
 details retain structured outcomes, exit codes, durations and allowlisted failure
 messages. The issue's state stores the retry details once.
 `flaky` is a yellow tracked event: it can open/update its tracking issue, supplies

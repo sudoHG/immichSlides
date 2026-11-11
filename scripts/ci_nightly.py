@@ -16,7 +16,7 @@ from pathlib import Path
 from ci_build_archive import file_hash, workspace_preflight
 from ci_summary import (ContractError, decode, fields, identity_key, integer, observation,
                         parse_identity, parse_summary, require, string, test_identity, nightly_retry_outcome,
-                        markdown_text, render_nightly_retry, render_retry_failure)
+                        markdown_text, render_nightly_retry, render_retry_failure, parse_nightly_summary)
 from ci_verdict import tokens
 from run_host_checks import run_identity, source_metadata
 
@@ -235,7 +235,7 @@ def aggregate_nightly(scheduled, summaries, *, live_in_scope, informational=(), 
 
 
 def validate_shard(raw, identity, run, hashes, expected):
-    summary = parse_summary(raw)
+    summary = parse_nightly_summary(raw)
     require(summary["identity"] == identity, "shard tested a different tree/commit/event")
     require(summary["run"] == run, "wrong shard, run or attempt")
     require(summary["hashes"] == hashes, "shard manifest/policy mismatch")
@@ -383,9 +383,12 @@ def main(argv=None):
             if needs_retry_trace:
                 from ci_report import method_observations
                 require(not plan.get("diagnostic_shard"), "nightly retry: requires a full nightly run")
+                verified = {}
                 _, missing = method_observations(summary, trace,
-                    runner_hosted=os.environ.get("RUNNER_ENVIRONMENT") == "github-hosted")
+                    runner_hosted=os.environ.get("RUNNER_ENVIRONMENT") == "github-hosted", verified_cases=verified)
                 require(not missing, "nightly retry: strict official method evidence is incomplete")
+                summary["population"]["observed"] = [verified[identity_key(item["identity"])]
+                                                       for item in summary["population"]["observed"]]
                 summaries.append(summary)
             review_packages.extend(bindings)
             traces.append({"shard": shard["id"], "started_epoch": trace["started_epoch"], "finished_epoch": trace["finished_epoch"]})
