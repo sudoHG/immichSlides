@@ -587,6 +587,50 @@ struct PlaybackPoolResolverTests {
         #expect(Set(actualIDs) == expectedIDs)
     }
 
+    @Test(arguments: ["a", "b"])
+    func `fixture album and person rules union without leaking a conflicting normal mode`(fixtureName: String)
+        async throws
+    {
+        let fixture = FilterRuleFixture(name: fixtureName)
+        let resolver = PlaybackPoolResolver()
+        resolver.albumsProviderForTesting = { fixture.albums }
+        resolver.personAssetsCountProviderForTesting = { personID in
+            fixture.assets.filter { $0.people?.contains(where: { $0.id == personID }) == true }.count
+        }
+        resolver.soloApprovalProviderForTesting = { candidates, acceptedLimit in
+            SoloVisionBatchResult(
+                approvedAssets: Array(candidates.prefix(acceptedLimit)),
+                finishedCount: candidates.count,
+                failedCount: 0,
+                incompleteCount: 0
+            )
+        }
+        resolver.randomAssetProviderForTesting = { _, albumIds, personIds in
+            if albumIds == [fixture.targetAlbumID] { return fixture.targetAlbumAssets }
+            if let personID = personIds?.first {
+                return fixture.assets.filter { $0.people?.contains(where: { $0.id == personID }) == true }
+            }
+            return []
+        }
+
+        let selection = FilterSelection(
+            albumIds: [fixture.targetAlbumID],
+            personFilters: [
+                PersonFilter(personId: fixture.noFacesPersonID, matchMode: .normal),
+                PersonFilter(personId: fixture.soloPersonID, matchMode: .normal),
+                PersonFilter(personId: fixture.soloPersonID, matchMode: .soloOnly)
+            ]
+        )
+        let result = try await resolver.resolve(selection: selection, targetCount: 20)
+        // Album membership keeps the group photo; solo rejects the unassigned face outside that album.
+        let expectedNumbers = fixtureName == "a" ? [1, 2, 3, 4] : [1, 2, 3, 4, 6, 7, 8]
+        let expectedIDs = Set(expectedNumbers.map { "asset-\(fixtureName)-\($0)" })
+        let actualIDs = result.map(\.id)
+
+        #expect(actualIDs.count == Set(actualIDs).count)
+        #expect(Set(actualIDs) == expectedIDs)
+    }
+
     @Test
     func `empty selection reports no active rules as the empty reason`() async throws {
         let resolver = PlaybackPoolResolver()
@@ -825,6 +869,45 @@ struct AppFlowStateMachineTests {
 @MainActor
 @Suite(.sharedRuntimeIsolation)
 struct SlideShowViewModelSelectionRefreshTests {
+
+    @Test(arguments: ["a", "b"])
+    func `editing a running album selection replaces the pool and an empty album clears it`(fixtureName: String) async {
+        let first = FilterRuleFixture(name: fixtureName)
+        let second = FilterRuleFixture(name: fixtureName == "a" ? "b" : "a")
+        let viewModel = SlideShowViewModel(source: .filtered(FilterSelection(albumIds: [first.targetAlbumID])))
+        viewModel.isAutoPlay = false
+        viewModel.initialPhotoLoadHookForTesting = { _ in }
+        viewModel.backgroundPreloadHookForTesting = { _, _, _ in }
+        viewModel.loadAssetsHookForTesting = { source in
+            guard case .filtered(let selection) = source else {
+                Issue.record("Editing a selection must keep the filtered source")
+                return []
+            }
+            switch selection.albumIds {
+            case [first.targetAlbumID]: return first.targetAlbumAssets
+            case [second.targetAlbumID]: return second.targetAlbumAssets
+            default: return []
+            }
+        }
+        await viewModel.loadAssets()
+        #expect(viewModel.assets.map(\.id) == first.targetAlbumAssets.map(\.id))
+
+        let updated = FilterSelection(albumIds: [second.targetAlbumID])
+        #expect(viewModel.shouldReloadFilteredSource(for: updated))
+        await viewModel.switchPlaybackSource(to: .filtered(updated))
+        #expect(viewModel.assets.map(\.id) == second.targetAlbumAssets.map(\.id))
+        #expect(!viewModel.shouldReloadFilteredSource(for: updated))
+
+        await viewModel.switchPlaybackSource(to: .filtered(FilterSelection(albumIds: ["album-\(fixtureName)-empty"])))
+        #expect(viewModel.currentPlaybackMode == .filtered)
+        #expect(viewModel.assets.isEmpty)
+        #expect(viewModel.safeCurrentScene == nil)
+        #expect(!viewModel.isLoading)
+        #expect(
+            viewModel.emptyPlaybackMessage
+                == String(
+                    localized: "No playable photos match the current filters. Try another album or person."))
+    }
 
     @Test
     func `random source never triggers a filtered reload`() {

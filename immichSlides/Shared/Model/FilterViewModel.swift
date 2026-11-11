@@ -10,6 +10,16 @@ import Combine
 import SDWebImage
 import OSLog
 
+protocol FilterAPIService {
+    func getAllAlbums(size: Int?) async throws -> [Album]
+    func getAllPeople(size: Int?) async throws -> [People]
+    func getThumbnailURL(id: String, size: ThumbnailSize) async throws -> URL
+    func getPeopleThumbnailURL(id: String) async throws -> URL
+    func getPersonAssetsCount(id: String) async throws -> Int
+}
+
+extension ImmichAPIService: FilterAPIService {}
+
 class FilterViewModel: ObservableObject {
     private nonisolated static let logger = Logger(subsystem: "immichSlides", category: "FilterViewModel")
     @Published var albums: [Album] = []
@@ -32,10 +42,16 @@ class FilterViewModel: ObservableObject {
         }
     }
 
-    private let store: FilterSelectionStore = FilterSelectionStore()
+    private let store: any FilterSelectionStoring
+    private let injectedAPIService: (any FilterAPIService)?
+    private var apiService: any FilterAPIService { injectedAPIService ?? ImmichAPIService.shared }
     private var selectedAlbumIDs: Set<String> = []
-    init() {
-
+    init(
+        store: any FilterSelectionStoring = FilterSelectionStore(),
+        apiService: (any FilterAPIService)? = nil
+    ) {
+        self.store = store
+        self.injectedAPIService = apiService
         selection = store.load() ?? FilterSelection()
         selectedAlbumIDs = Set(selection.albumIds)
     }
@@ -252,7 +268,7 @@ class FilterViewModel: ObservableObject {
         loadingPersonStatsIDs.insert(id)
         do {
             defer { loadingPersonStatsIDs.remove(id) }
-            let count = try await ImmichAPIService.shared.getPersonAssetsCount(id: id)
+            let count = try await apiService.getPersonAssetsCount(id: id)
             personAssetsCountByID[id] = count
         } catch {
             if error is CancellationError { return }
@@ -379,7 +395,7 @@ extension FilterViewModel {
 
         let fetchedAlbums: [Album]
         do {
-            fetchedAlbums = try await ImmichAPIService.shared.getAllAlbums(size: coverLimit)
+            fetchedAlbums = try await apiService.getAllAlbums(size: coverLimit)
         } catch {
             await MainActor.run {
                 self.albumLoadErrorMessage = String(
@@ -417,7 +433,7 @@ extension FilterViewModel {
                     group.addTask {
                         do {
 
-                            let url = try await ImmichAPIService.shared.getThumbnailURL(
+                            let url = try await self.apiService.getThumbnailURL(
                                 id: thumbID, size: .thumbnail)
                             return (albumID, url)
                         } catch {
@@ -473,7 +489,7 @@ extension FilterViewModel {
 
         let fetchedPeople: [People]
         do {
-            fetchedPeople = try await ImmichAPIService.shared.getAllPeople(size: coverLimit)
+            fetchedPeople = try await apiService.getAllPeople(size: coverLimit)
         } catch {
             await MainActor.run {
                 self.peopleLoadErrorMessage = String(
@@ -508,7 +524,7 @@ extension FilterViewModel {
                     if existingPeopleIDs.contains(peopleID) { continue }
                     group.addTask {
                         do {
-                            let url = try await ImmichAPIService.shared.getPeopleThumbnailURL(id: peopleID)
+                            let url = try await self.apiService.getPeopleThumbnailURL(id: peopleID)
                             return (peopleID, url)
                         } catch {
                             Self.logger.error(

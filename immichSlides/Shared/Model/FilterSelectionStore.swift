@@ -7,7 +7,14 @@
 
 import Foundation
 
-final class FilterSelectionStore {
+protocol FilterSelectionStoring {
+    func save(_ selection: FilterSelection)
+    func load() -> FilterSelection?
+    func clear()
+    func seedUITestSelectionIfRequestedForTesting() -> FilterSelection?
+}
+
+final class FilterSelectionStore: FilterSelectionStoring {
     private let key = "filterSelection"
     private let defaults = UserDefaults.standard
 
