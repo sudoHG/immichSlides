@@ -64,12 +64,24 @@ struct SlideShowViewTV: View {
 
     @State private var controlBarFocusRequestToken: Int = 0
 
-    @State private var isPlaybackEntryHintVisible: Bool = false
+    @StateObject private var controlsState = PlaybackControlsState()
+    private var isPlaybackEntryHintVisible: Bool {
+        get { controlsState.isPlaybackEntryHintVisible }
+        nonmutating set {
+            guard controlsState.isPlaybackEntryHintVisible != newValue else { return }
+            controlsState.isPlaybackEntryHintVisible = newValue
+        }
+    }
     private let playbackEntryHintStore = PlaybackEntryHintStore()
 
-    @State var isControlBarVisible: Bool = true
+    var isControlBarVisible: Bool {
+        get { controlsState.isControlBarVisible }
+        nonmutating set {
+            guard controlsState.isControlBarVisible != newValue else { return }
+            controlsState.isControlBarVisible = newValue
+        }
+    }
 
-    @State private var autoHideBarTask: Task<Void, Never>? = nil
     // When the control bar is hidden, a hidden focus receiver handles arrow keys and Play/Pause.
 
     @FocusState private var hiddenWakeReceiverFocused: Bool
@@ -555,8 +567,7 @@ struct SlideShowViewTV: View {
         }
         .onDisappear {
             PlatformCompat.setIdleTimerDisabled(false)
-            autoHideBarTask?.cancel()
-            autoHideBarTask = nil
+            controlsState.cancelAutoHideTimer()
             isPlaybackEntryHintVisible = false
             #if DEBUG
             viewModel.clearVisionFaceAuditState()
@@ -721,21 +732,7 @@ struct SlideShowViewTV: View {
     }
 
     private func resetAutoHideTimer() {
-        autoHideBarTask?.cancel()  // Don't auto-hide the bar after 8 seconds while the tutorial bubble is shown.
-
-        guard !isPlaybackEntryHintVisible else {
-            autoHideBarTask = nil
-            return
-        }
-        autoHideBarTask = Task {
-
-            try? await Task.sleep(for: .seconds(PlaybackViewMetrics.controlBarAutoHideDelaySeconds))
-
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                isControlBarVisible = false
-            }
-        }
+        controlsState.resetAutoHideTimer(after: .seconds(PlaybackViewMetrics.controlBarAutoHideDelaySeconds))
     }
 
     private var playbackEntryHintContent: TVSlideshowEntryHintContent {
@@ -750,37 +747,37 @@ struct SlideShowViewTV: View {
     }
 
     private func maybePresentPlaybackEntryHintIfNeeded() {
-        guard shouldShowOnboardingPlaybackHint else { return }
-        guard !isPlaybackEntryHintDisabledForUITests else { return }
-        guard !isPlaybackEntryHintVisible else { return }
-        guard !playbackEntryHintStore.hasShownPlaybackEntryHint else { return }
-        guard !viewModel.isLoading else { return }
-        guard !viewModel.assets.isEmpty else { return }
-        guard viewModel.emptyPlaybackMessage == nil else { return }
-        guard viewModel.autoPlayRecoveryMessage == nil else { return }
+        guard
+            controlsState.canPresentEntryHint(
+                isOnboarding: shouldShowOnboardingPlaybackHint,
+                isDisabled: isPlaybackEntryHintDisabledForUITests,
+                hasShown: playbackEntryHintStore.hasShownPlaybackEntryHint,
+                isLoading: viewModel.isLoading,
+                hasAssets: !viewModel.assets.isEmpty,
+                hasEmptyMessage: viewModel.emptyPlaybackMessage != nil,
+                hasRecoveryMessage: viewModel.autoPlayRecoveryMessage != nil
+            )
+        else { return }
 
         playbackEntryHintStore.markPlaybackEntryHintShown()
         withAnimation(.easeInOut(duration: 0.24)) {
             isPlaybackEntryHintVisible = true
             isControlBarVisible = true
         }
-        autoHideBarTask?.cancel()
-        autoHideBarTask = nil
+        controlsState.cancelAutoHideTimer()
     }
 
     private func dismissPlaybackEntryHint() {
         guard isPlaybackEntryHintVisible else { return }
         withAnimation(.easeInOut(duration: 0.2)) {
-            isPlaybackEntryHintVisible = false
+            controlsState.dismissEntryHint()
         }
     }
 
     private func dismissPlaybackEntryHintAndHideControlBar() {
-        autoHideBarTask?.cancel()
-        autoHideBarTask = nil
+        controlsState.cancelAutoHideTimer()
         withAnimation(.easeInOut(duration: 0.22)) {
-            isPlaybackEntryHintVisible = false
-            isControlBarVisible = false
+            controlsState.dismissEntryHint(hidesControlBar: true)
         }
     }
 

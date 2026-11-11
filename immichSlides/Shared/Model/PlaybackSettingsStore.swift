@@ -54,7 +54,11 @@ final class PlaybackSettingsStore {
 // UI tests can reset it on its own.
 final class PlaybackEntryHintStore {
     private let hasShownPlaybackEntryHintKey = "playbackEntryHint.hasShown"
-    private let defaults = UserDefaults.standard
+    private let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
 
     var hasShownPlaybackEntryHint: Bool {
         defaults.bool(forKey: hasShownPlaybackEntryHintKey)
