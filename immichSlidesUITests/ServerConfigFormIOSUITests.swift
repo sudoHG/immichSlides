@@ -34,25 +34,6 @@ final class ServerConfigFormIOSUITests: XCTestCase {
     }
 
     @MainActor
-    func testIOSSettingsServerURLKeyboardAppearsPromptly() throws {
-        let app = try launchConfiguredAppAtModeSelection(
-            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment)
-        openServerSettingsFromModeSelection(app: app)
-
-        let serverField = app.textFields["firstboot.serverURL.field"]
-        XCTAssertTrue(
-            serverField.waitForPublicElement(
-                "firstboot.serverURL.field", timeout: WaitTiming.controlAppearanceTimeoutSeconds),
-            "Server settings page should show the URL field")
-        tapFieldAndAssertKeyboardAppears(
-            serverField,
-            app: app,
-            timeout: WaitTiming.keyboardTransitionTimeoutSeconds,
-            message: "After tapping the URL field, the keyboard should appear quickly"
-        )
-    }
-
-    @MainActor
     func testIOSSettingsServerAPIKeyKeyboardAppearsAfterSavedConfig() throws {
         let app = try launchConfiguredAppAtModeSelection(
             extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment)

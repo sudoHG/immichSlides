@@ -651,7 +651,7 @@ class ReporterTests(unittest.TestCase):
                                 {ci_report.identity_key(item["identity"]): item["outcome"] for item in observed})
 
     def test_retained_nightly_suites_require_the_tested_matrix_and_preserve_results(self):
-        from ci_nightly import aggregate_nightly, case_identity, shards
+        from ci_nightly import aggregate_nightly, case_identity, contract_population, shards
         from run_strict_e2e import CommandError, FILTER_PERSON_SESSIONS, resolve_suite_selector
         from strict_e2e_p2_contract import P2_CASES
         current = json.loads(Path(__file__).with_name("nightly-matrix.json").read_bytes())
@@ -671,7 +671,8 @@ class ReporterTests(unittest.TestCase):
         message = "Still multi-photo after the change; cannot pass as single-photo; context unresolved"
         for old_shape in (False, True):
             matrix = copy.deepcopy(current)
-            matrix["cases"].extend(retired if old_shape else [])
+            if old_shape:
+                matrix.update(schema_version=1, cases=contract_population(schema_version=1)[0] + retired)
             summaries, members, expected, intervals = [], {}, {}, []
             for shard in shards(matrix):
                 declared = [case_identity(case) for case in shard["cases"]]
@@ -778,7 +779,8 @@ class ReporterTests(unittest.TestCase):
         matrix = matrix_path.read_bytes()
         matrix_population = json.loads(matrix)
         planned = shards(matrix_population)
-        target = next(item for item in planned if item["id"] == "iphone-immichSlides-iOS-debug-1")
+        target = next(item for item in planned if item["device"] == "iphone"
+                      and all(case["suite"] != "filter-vision" for case in item["cases"]))
         cases = [case_identity(case) for case in target["cases"]]
         # Derive the exact population independently of the reporter's execution count.
         other_shard_case_count = len(matrix_population["cases"]) - len(cases)

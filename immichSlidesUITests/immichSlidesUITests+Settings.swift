@@ -166,35 +166,6 @@ extension immichSlidesUITests {
     }
 
     @MainActor
-    func testCacheManagementClearDiskCacheEntryWorks() throws {
-        let app = try launchConfiguredAppAtModeSelection(
-            shouldResetState: true,
-            extraLaunchEnvironment: SlideshowControlBarNavigationTestConfiguration.extendedAutoHideLaunchEnvironment
-        )
-        startRandomPlaybackFromModeSelection(app: app)
-
-        openSettingsFromSlideshow(app: app)
-        openSettingsSection(app: app, sectionID: "settings.item.cache")
-
-        let clearDiskButton = app.buttons["settings.cache.clearDisk.button"]
-        XCTAssertTrue(
-            clearDiskButton.waitForPublicElement(
-                "settings.cache.clearDisk.button", timeout: TestWait.seconds(.infrastructure(6))))
-        clearDiskButton.tapForFailureEvidence()
-
-        // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
-        let confirmAlertTitle = findFirstExistingStaticText(
-            in: app,
-            labels: ["确认清理磁盘缓存", "Confirm Disk Cache Clear"],
-            timeout: TestWait.seconds(.infrastructure(5))
-        )
-        XCTAssertNotNil(confirmAlertTitle)
-        attachScreenshot(app: app, name: "ios-settings-cache-confirm-alert")
-        // ui-label-lookup: SwiftUI alert content does not expose accessibility identifiers
-        tapFirstExistingButton(in: app, labels: ["取消", "Cancel"])
-    }
-
-    @MainActor
     func testResetStateEnvironmentForcesFirstBootAfterConfigured() throws {
         let app = try launchConfiguredAppAtModeSelection(shouldResetState: true)
         startRandomPlaybackFromModeSelection(app: app)

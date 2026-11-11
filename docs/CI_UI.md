@@ -395,18 +395,23 @@ assignments use the reader shipped in [PR #232](https://github.com/sudoHG/immich
 
 | Shard | Assignment | iPhone / iPad methods | Apple TV methods |
 | --- | --- | --- | --- |
-| `navigation` | `immichSlidesUITests`, `ServerConfigFormTVOSUITests` | 21 | 6 |
-| `visual-a` | Exact methods in the two filter-summary visual classes | 15 | 22 |
-| `visual-b` | Exact methods in the two filter-summary visual classes | 16 | 21 |
-| `visual-c` | Exact methods in the two filter-summary visual classes | 15 | 22 |
-| `visual-d` | Exact methods in the two filter-summary visual classes | 15 | 21 |
-| `default` | Every unassigned class/method, including new methods outside class assignments | 21 | 20 |
+| `navigation` | `immichSlidesUITests`, `ServerConfigFormTVOSUITests` | 20 | 6 |
+| `visual-a` | Exact methods in the two filter-summary visual classes | 15 | 21 |
+| `visual-b` | Exact methods in the two filter-summary visual classes | 16 | 20 |
+| `visual-c` | Exact methods in the two filter-summary visual classes | 15 | 21 |
+| `visual-d` | Exact methods in the two filter-summary visual classes | 15 | 18 |
+| `default` | Every unassigned class/method, including new methods outside class assignments | 19 | 20 |
 
 The named revision describes the assignment. The exact Git revision and
 SHA-256 of the manifest bytes identify a reproduction. Every default-plan
 identity has exactly one shard. iPhone and iPad share the iOS assignments;
 all six shard names remain nonempty on Apple TV. Their complete populations are
-103, 103 and 112 identities, respectively.
+100, 100 and 106 identities, respectively. Nine duplicate source methods were
+removed with their exact assignments and obsolete duration/area references.
+The retained first-boot, second-card selection, filter-editor, cache-confirmation,
+default-focus and strict history flows still check the corresponding assertions.
+Historical summaries retain their bound populations; removed source methods are
+not discarded or reinterpreted in old report records.
 
 The trusted reader supports the historical class-only schema version 1 and
 schema version 2 with the same fields. Each v2 shard array may assign exact classes or exact `Class/testMethod`

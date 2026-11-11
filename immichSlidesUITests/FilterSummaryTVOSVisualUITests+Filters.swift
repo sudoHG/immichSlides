@@ -385,38 +385,6 @@ extension FilterSummaryTVOSVisualUITests {
     }
 
     @MainActor
-    func testTVOSAlbumFilterFocusCanMoveToSecondCard() throws {
-        let app = try launchIntoFilterSummary()
-        openAlbumFilter(from: app)
-        waitForAlbumFilterReady(app: app)
-
-        let firstCard = try albumCardInServerOrder(at: 0, in: app)
-        let secondCard = try albumCardInServerOrder(at: 1, in: app)
-
-        XCTAssertTrue(
-            firstCard.waitForFailureEvidence(
-                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
-            "Album filter page should render at least the first album card")
-        XCTAssertTrue(
-            secondCard.waitForFailureEvidence(
-                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
-            "Album filter page should render at least a second album card to verify horizontal focus movement")
-
-        waitForElementToGainFocus(
-            firstCard,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
-            failureMessage: "When the album filter page opens, default focus should land on the first album card"
-        )
-
-        FirstFailureRemote.press(.right)
-        waitForElementToGainFocus(
-            secondCard,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
-            failureMessage: "Moving right from the first album card, focus should reach the second album card"
-        )
-    }
-
-    @MainActor
     func testTVOSAlbumFilterSelectCanToggleSelectionForSecondCard() throws {
         let app = try launchIntoFilterSummary()
         openAlbumFilter(from: app)
@@ -643,42 +611,6 @@ extension FilterSummaryTVOSVisualUITests {
         )
         waitForFocusVisualSettle()
         attachScreenshot(app: app, name: "tvos-person-filter-playpause-solo-enabled-english")
-    }
-
-    @MainActor
-    func testTVOSPersonFilterFocusCanMoveToSecondCard() throws {
-        let app = try launchIntoFilterSummary()
-        openPersonFilter(from: app)
-        waitForPersonFilterReady(app: app)
-
-        let personCards = personPrimaryCardButtons(in: app)
-        let firstCard = personCards.element(boundBy: 0)
-        let secondCard = personCards.element(boundBy: 1)
-
-        XCTAssertTrue(
-            firstCard.waitForFailureEvidence(
-                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
-            "Person filter page should render at least the first primary person card")
-        XCTAssertTrue(
-            secondCard.waitForFailureEvidence(
-                timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceTimeoutSeconds),
-            "Person filter page should render at least a second primary person card to verify horizontal focus movement"
-        )
-
-        waitForElementToGainFocus(
-            firstCard,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
-            failureMessage:
-                "When the person filter page opens, default focus should land on the first primary person card"
-        )
-
-        FirstFailureRemote.press(.right)
-        waitForElementToGainFocus(
-            secondCard,
-            timeout: FilterSummaryTVOSVisualUITestsWaitTiming.controlAppearanceDeadlineSeconds,
-            failureMessage:
-                "Moving right from the first person card, focus should reach the second, not stay stuck in the first"
-        )
     }
 
     @MainActor

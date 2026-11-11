@@ -31,6 +31,34 @@ UNBUILT_TIERS = ("ui", "offline-performance", "live", "live-performance")
 SMOKE_DEVICE_REASON = ("StrictE2ESmokeUITests.testIOSStrictE2EConnectionSmoke guards "
                        "userInterfaceIdiom == .phone and skips iPad.")
 
+# Version 2 retains the same XCTest on iPhone with the same fixture and scenario.
+REDUNDANT_IPAD_FIXTURES = {
+    "album-empty": {"a", "b"},
+    "filter-edit-switch": {"a", "b"},
+    "filter-empty": {"a", "b"},
+    "filter-person-return": {"b"},
+    "filter-person-solo-persist": {"a", "b"},
+    "filter-person": {"a", "b"},
+    "filter-switch": {"a"},
+    "filter-vision": {"a", "b"},
+    "firstboot-failure": {"a", "b"},
+    "image-failure-recovery": {"a"},
+    "ios-lifecycle-first-wake": {"a"},
+    "ios-lifecycle-pause-timeline": {"a"},
+    "ios-lifecycle-pause": {"a"},
+    "ios-lifecycle-settings": {"a"},
+    "journey-a": {"b"},
+    "late-image": {"a", "b"},
+    "p2-exif": {"b"},
+    "p2-rotation": {"b"},
+    "pause-window": {"a", "b"},
+}
+# These paths inspect empty selection, navigation, settings or errors before photos.
+REDUNDANT_FIXTURE_B_SUITES = {
+    "filter-empty", "filter-person-return", "filter-person-solo-persist",
+    "firstboot-failure", "tvos-directional-wake", "tvos-firstboot-failure",
+}
+
 
 def require_smoke_phone_guard(source):
     from ci_population import conditional_code
@@ -46,7 +74,7 @@ def require_smoke_phone_guard(source):
             "smoke phone-only skip guard changed; review device population")
 
 
-def contract_population():
+def contract_population(*, schema_version=2):
     """Enumerate only combinations supported by the current runner contracts."""
     from run_strict_e2e import CommandError, resolve_suite_selector
     from strict_e2e_build import build_settings
@@ -82,6 +110,20 @@ def contract_population():
                         exclusions.append({"case": case, "reason": str(error)})
                         continue
                     cases.append(case)
+    if schema_version == 2:
+        retained, covered = [], []
+        for case in cases:
+            covering = dict(case)
+            if case["device"] == "ipad" and case["fixture"] in REDUNDANT_IPAD_FIXTURES.get(case["suite"], set()):
+                covering["device"] = "iphone"
+            if case["fixture"] == "b" and case["suite"] in REDUNDANT_FIXTURE_B_SUITES:
+                covering["fixture"] = "a"
+            if covering == case:
+                retained.append(case)
+            else:
+                covered.append(covering)
+        require(all(case in retained for case in covered), "redundant case has no retained equivalent")
+        cases = retained
     return cases, exclusions
 
 
@@ -92,7 +134,7 @@ def case_identity(case):
 def parse_manifest(raw):
     manifest = decode(raw)
     fields(manifest, {"schema_version", "cases", "exclusions", "runner_exclusions", "informational", "shard_size"}, "nightly matrix")
-    require(type(manifest["schema_version"]) is int and manifest["schema_version"] == 1, "unsupported matrix version")
+    require(type(manifest["schema_version"]) is int and manifest["schema_version"] in {1, 2}, "unsupported matrix version")
     integer(manifest["shard_size"], 1, "shard size")
     require(manifest["shard_size"] <= 6, "shards exceed the bounded job budget")
     for name in ("cases", "exclusions", "runner_exclusions", "informational"):
@@ -105,7 +147,7 @@ def parse_manifest(raw):
         fields(entry, {"case", "reason"}, "matrix exclusion")
         fields(entry["case"], CASE_FIELDS, "excluded case")
         string(entry["reason"], "exclusion reason")
-    expected, exclusions = contract_population()
+    expected, exclusions = contract_population(schema_version=manifest["schema_version"])
     require(Counter(identity_key(case) for case in manifest["cases"]) == Counter(identity_key(case) for case in expected),
             "matrix does not equal current runner population (missing, duplicate or unsupported case)")
     require(Counter(identity_key(entry) for entry in manifest["exclusions"]) == Counter(identity_key(entry) for entry in exclusions),

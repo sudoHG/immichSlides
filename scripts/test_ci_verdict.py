@@ -539,17 +539,19 @@ class NightlyVerdictTests(unittest.TestCase):
                 self.assertEqual(summary, original)
 
     def test_manifest_rejects_unknown_missing_and_duplicate_cases(self):
-        from ci_nightly import parse_manifest
+        from ci_nightly import contract_population, parse_manifest
         raw = json.loads((Path(__file__).parent / "nightly-matrix.json").read_text())
-        parse_manifest(raw)
-        for mutation in (lambda x: x["cases"].pop(), lambda x: x["cases"].append(x["cases"][0]),
-                         lambda x: x["cases"][0].update(suite="unknown"),
-                         lambda x: x.update(schema_version=99)):
-            with self.subTest(mutation=mutation):
-                changed = copy.deepcopy(raw)
-                mutation(changed)
-                with self.assertRaises(ci_summary.ContractError):
-                    parse_manifest(changed)
+        historical = {**raw, "schema_version": 1, "cases": contract_population(schema_version=1)[0]}
+        for manifest in (raw, historical):
+            parse_manifest(manifest)
+            for mutation in (lambda x: x["cases"].pop(), lambda x: x["cases"].append(x["cases"][0]),
+                             lambda x: x["cases"][0].update(suite="unknown"),
+                             lambda x: x.update(schema_version=99)):
+                with self.subTest(version=manifest["schema_version"], mutation=mutation):
+                    changed = copy.deepcopy(manifest)
+                    mutation(changed)
+                    with self.assertRaises(ci_summary.ContractError):
+                        parse_manifest(changed)
 
     def test_nightly_early_boot_records_failures_without_waiting_for_readiness(self):
         import contextlib

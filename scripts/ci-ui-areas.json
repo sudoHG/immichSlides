@@ -45,8 +45,7 @@
         "StrictE2ELateImageTVOSUITests",
         "StrictE2ESmokeUITests",
         "VisualAuditMatrixUITests",
-        "immichSlidesUITests/testLaunchPerformance",
-        "immichSlidesUITestsLaunchTests"
+        "immichSlidesUITests/testLaunchPerformance"
       ]
     },
     "settings": {
@@ -126,7 +125,6 @@
         "FilterSummaryTVOSVisualUITests/testTVOSSettingsCacheClearShowsConfirmationImmediately",
         "FilterSummaryTVOSVisualUITests/testTVOSSettingsCachePageScreenshotLight",
         "FilterSummaryTVOSVisualUITests/testTVOSSettingsCachePageShowsAllCacheMetrics",
-        "FilterSummaryTVOSVisualUITests/testTVOSSettingsFilterConfigButtonCanOpenEditor",
         "FilterSummaryTVOSVisualUITests/testTVOSSettingsOpenSourceLicensesPageScreenshotDark",
         "FilterSummaryTVOSVisualUITests/testTVOSSettingsPlaybackDefaultFocusedScreenshot",
         "FilterSummaryTVOSVisualUITests/testTVOSSettingsPlaybackIntervalUsesDedicatedSubpage",
@@ -136,7 +134,6 @@
         "FilterSummaryTVOSVisualUITests/testTVOSSettingsServerPageScreenshotLight",
         "FilterSummaryTVOSVisualUITests/testTVOSSettingsServerPageShowsFormAndStatusBanner",
         "FilterSummaryTVOSVisualUITests/testTVOSSettingsSidebarAccessProtectionScreenshotLight",
-        "FilterSummaryTVOSVisualUITests/testTVOSSettingsSidebarDefaultsToPlaybackAndCanMoveToAccessProtection",
         "FilterSummaryTVOSVisualUITests/testTVOSSettingsSidebarDirectionalRoutingMatchesPressedDirection",
         "FilterSummaryTVOSVisualUITests/testTVOSSlideShowControlBarButtonsCanActivateOnSelect",
         "FilterSummaryTVOSVisualUITests/testTVOSSlideShowPlaybackEntryHintShowsOnlyOncePerOnboardingFlow",
@@ -146,7 +143,6 @@
         "ScenePresentationContractUITests/testIPhoneSmartFillSharedScenePresentationContract",
         "ServerConfigFormIOSUITests",
         "immichSlidesUITests/testCacheClearShowsSuccessMessageAfterConfirm",
-        "immichSlidesUITests/testCacheManagementClearDiskCacheEntryWorks",
         "immichSlidesUITests/testIPhonePortraitAndLandscapeSettingsSectionsNavigation",
         "immichSlidesUITests/testIPhonePortraitAndLandscapeSlideshowControls",
         "immichSlidesUITests/testPinAndServerConfigPersistAfterRelaunch",
@@ -206,17 +202,14 @@
         "FilterSummaryIOSVisualUITests/testIOSSlideShowVisualScreenshotLight",
         "FilterSummaryTVOSVisualUITests/testTVOSEnglishAcceptanceSettingsPagesScreenshots",
         "FilterSummaryTVOSVisualUITests/testTVOSExifAlbumDiagnosticScreenshots",
-        "FilterSummaryTVOSVisualUITests/testTVOSPreviousNextRetainedHistoryFromSlideshowControls",
         "FilterSummaryTVOSVisualUITests/testTVOSSettingsPlaybackDefaultFocusedScreenshot",
         "FilterSummaryTVOSVisualUITests/testTVOSSettingsPlaybackIntervalUsesDedicatedSubpage",
-        "FilterSummaryTVOSVisualUITests/testTVOSSettingsSidebarDefaultsToPlaybackAndCanMoveToAccessProtection",
         "FilterSummaryTVOSVisualUITests/testTVOSSlideShowControlBarButtonsCanActivateOnSelect",
         "FilterSummaryTVOSVisualUITests/testTVOSSlideShowControlBarCanWakeByAnyDirectionalPress",
         "FilterSummaryTVOSVisualUITests/testTVOSSlideShowControlBarFocusStatesScreenshot",
         "FilterSummaryTVOSVisualUITests/testTVOSSlideShowControlBarLightModeContrastScreenshot",
         "FilterSummaryTVOSVisualUITests/testTVOSSlideShowControlBarStaysWhileFocusKeepsMoving",
         "FilterSummaryTVOSVisualUITests/testTVOSSlideShowHasNoBackButtonScreenshot",
-        "FilterSummaryTVOSVisualUITests/testTVOSSlideShowInitialDefaultFocusIsPlayPause",
         "FilterSummaryTVOSVisualUITests/testTVOSSlideShowPlayPauseCanToggleAndWakeControlBar",
         "FilterSummaryTVOSVisualUITests/testTVOSSlideShowPlaybackEntryHintDismissesHintAndControlBarWithDown",
         "FilterSummaryTVOSVisualUITests/testTVOSSlideShowPlaybackEntryHintEnglishScreenshot",
@@ -300,7 +293,6 @@
         "FilterSummaryTVOSVisualUITests/testTVOSAlbumFilterAccessibilityTextScreenshot",
         "FilterSummaryTVOSVisualUITests/testTVOSAlbumFilterAccessibilityTextScreenshotEnglish",
         "FilterSummaryTVOSVisualUITests/testTVOSAlbumFilterBottomAreaScreenshot",
-        "FilterSummaryTVOSVisualUITests/testTVOSAlbumFilterFocusCanMoveToSecondCard",
         "FilterSummaryTVOSVisualUITests/testTVOSAlbumFilterLightModeScreenshot",
         "FilterSummaryTVOSVisualUITests/testTVOSAlbumFilterScreenshot",
         "FilterSummaryTVOSVisualUITests/testTVOSAlbumFilterScreenshotEnglish",
@@ -326,7 +318,6 @@
         "FilterSummaryTVOSVisualUITests/testTVOSModeSelectionContinueToggleKeepsFilteredCardStableScreenshot",
         "FilterSummaryTVOSVisualUITests/testTVOSPersonFilterAccessibilityTextScreenshot",
         "FilterSummaryTVOSVisualUITests/testTVOSPersonFilterAccessibilityTextScreenshotEnglish",
-        "FilterSummaryTVOSVisualUITests/testTVOSPersonFilterFocusCanMoveToSecondCard",
         "FilterSummaryTVOSVisualUITests/testTVOSPersonFilterLightModeScreenshot",
         "FilterSummaryTVOSVisualUITests/testTVOSPersonFilterLongNamesScreenshot",
         "FilterSummaryTVOSVisualUITests/testTVOSPersonFilterPlayPauseShortcutCanEnableSoloModeForFocusedCard",
@@ -336,7 +327,6 @@
         "FilterSummaryTVOSVisualUITests/testTVOSPersonFilterScreenshotEnglishLight",
         "FilterSummaryTVOSVisualUITests/testTVOSPersonFilterSelectCanToggleSelectionForSecondCard",
         "FilterSummaryTVOSVisualUITests/testTVOSPersonFilterTopBarFocusedScreenshot",
-        "FilterSummaryTVOSVisualUITests/testTVOSSettingsFilterConfigButtonCanOpenEditor",
         "PlaybackSettingsTVOSUITests",
         "PlaybackSmartFillTVOSVisualUITests",
         "PlaybackSmartFillVisualUITests",
@@ -382,7 +372,6 @@
         "FilterSummaryTVOSVisualUITests/testTVOSSettingsAccessProtectionAccessibilityTextScreenshot",
         "FilterSummaryTVOSVisualUITests/testTVOSSettingsAccessProtectionScreenshotDark",
         "FilterSummaryTVOSVisualUITests/testTVOSSettingsSidebarAccessProtectionScreenshotLight",
-        "FilterSummaryTVOSVisualUITests/testTVOSSettingsSidebarDefaultsToPlaybackAndCanMoveToAccessProtection",
         "FilterSummaryTVOSVisualUITests/testTVOSSettingsSidebarDirectionalRoutingMatchesPressedDirection",
         "immichSlidesUITests/testPinAndServerConfigPersistAfterRelaunch",
         "immichSlidesUITests/testPinProtectionBlocksBackAndRequiresPINForSettings"
@@ -490,8 +479,7 @@
         "immichSlidesUITests/testIPhonePortraitAndLandscapeFirstBootElements",
         "immichSlidesUITests/testIPhonePortraitAndLandscapeModeSelectionFlow",
         "immichSlidesUITests/testResetStateEnvironmentForcesFirstBootAfterConfigured",
-        "immichSlidesUITests/testVisualAuditPack_FirstBootMatrixSnapshots",
-        "immichSlidesUITestsLaunchTests"
+        "immichSlidesUITests/testVisualAuditPack_FirstBootMatrixSnapshots"
       ]
     },
     "server-connection": {
@@ -560,8 +548,7 @@
         "FilterSummaryTVOSVisualUITests/testTVOSSettingsCacheClearShowsConfirmationImmediately",
         "FilterSummaryTVOSVisualUITests/testTVOSSettingsCachePageScreenshotLight",
         "FilterSummaryTVOSVisualUITests/testTVOSSettingsCachePageShowsAllCacheMetrics",
-        "immichSlidesUITests/testCacheClearShowsSuccessMessageAfterConfirm",
-        "immichSlidesUITests/testCacheManagementClearDiskCacheEntryWorks"
+        "immichSlidesUITests/testCacheClearShowsSuccessMessageAfterConfirm"
       ]
     },
     "localization": {
