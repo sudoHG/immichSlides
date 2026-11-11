@@ -119,12 +119,45 @@ struct SlideShowViewModelAutoPlayIdentityTests {
         #expect(abs(secondDeadline - clock.now - interval) < 0.0001)
     }
 
-    @Test(arguments: [5.0, 8.0], [false, true])
+    @Test
+    func `continuing after a paused next schedules a full interval without catching up`() throws {
+        let clock = VirtualClock()
+        let interval = PlaybackSettings().intervalSeconds
+        let (viewModel, store) = makeIsolatedAutoPlayViewModel(clock: clock, interval: interval)
+        defer { store.clear() }
+        completeCurrentScenePresentation(viewModel, clock: clock)
+        viewModel.toggleAutoPlayFromUserInteraction()
+        viewModel.requestNextScene()
+        completeCurrentScenePresentation(viewModel, clock: clock)
+
+        #expect(viewModel.safeCurrentScene?.primaryAssetId == "autoplay-1")
+        #expect(!viewModel.isAutoPlay)
+        #expect(viewModel.sceneRenderSnapshot.phase == .paused)
+        #expect(viewModel.scenePresentationWakeUpScheduler.scheduledDeadlineForTesting == nil)
+        let pausedIdentity = try #require(currentPresentationIdentity(viewModel))
+
+        clock.now += interval * 10
+        viewModel.toggleAutoPlayFromUserInteraction()
+
+        #expect(viewModel.isAutoPlay)
+        #expect(viewModel.sceneRenderSnapshot.phase == .stablePhoto)
+        #expect(currentPresentationIdentity(viewModel) == pausedIdentity)
+        #expect(viewModel.safeCurrentScene?.primaryAssetId == "autoplay-1")
+        let resumedDeadline = try #require(viewModel.scenePresentationWakeUpScheduler.scheduledDeadlineForTesting)
+        #expect(abs(resumedDeadline - clock.now - interval) < 0.0001)
+
+        clock.now = resumedDeadline
+        #expect(viewModel.fireScheduledScenePresentationWakeUpForTesting() == resumedDeadline)
+        completeCurrentScenePresentation(viewModel, clock: clock)
+        #expect(viewModel.safeCurrentScene?.primaryAssetId == "autoplay-2")
+    }
+
+    @Test(arguments: [false, true])
     func `overlapping user and background pauses resume only after both reasons clear with the remaining interval`(
-        interval: TimeInterval,
         shouldReturnToForegroundFirst: Bool
     ) throws {
         let clock = VirtualClock()
+        let interval = PlaybackSettings().intervalSeconds
         let (viewModel, store) = makeIsolatedAutoPlayViewModel(clock: clock, interval: interval)
         defer { store.clear() }
         completeCurrentScenePresentation(viewModel, clock: clock)
