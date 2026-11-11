@@ -445,6 +445,19 @@ class BuildArchiveTests(unittest.TestCase):
         sources = {path.relative_to(root).as_posix(): path.read_text()
                    for path in (root / 'immichSlidesUITests').rglob('*.swift')}
         populations = {'ui-' + platform: ui_identities(sources, platform) for platform in ('ios', 'tvos')}
+        base_sources = dict(sources, **{'immichSlidesUITests/DeletedUITests.swift':
+            'import XCTest\nclass DeletedUITests: XCTestCase { func testObsolete() {} }'})
+        base_populations = {'ui-' + platform: ui_identities(base_sources, platform) for platform in ('ios', 'tvos')}
+        head_map = (root / 'scripts/ci-ui-areas.json').read_text()
+        base_map = json.loads(head_map)
+        base_map['areas']['settings']['tests'].append('DeletedUITests/testObsolete')
+        def blob(revision, path):
+            if revision == self.identity['base_sha']:
+                if path == 'scripts/ci-ui-areas.json':
+                    return json.dumps(base_map).encode()
+                if path in base_sources:
+                    return base_sources[path].encode()
+            return (root / path).read_bytes()
         modules = {name: (root / 'scripts' / name).read_text() for name in BASE_MODULES + OPTIONAL_BASE_MODULES}
         paths = ['scripts/ci-ui-shards.json', 'immichSlides-iOS.xctestplan', 'immichSlides-tvOS.xctestplan']
         listing = [{'path': path, 'type': 'blob', 'mode': '100644'} for path in paths]
@@ -455,20 +468,21 @@ class BuildArchiveTests(unittest.TestCase):
         for changed in cases:
             with self.subTest(path=changed):
                 inputs = {'paths': [changed], 'event': 'pull_request', 'build_target_paths': members,
-                          'area_map': (root / 'scripts/ci-ui-areas.json').read_text(),
+                          'area_map': json.dumps(base_map), 'head_area_map': head_map,
                           'classification_policy': json.loads((root / 'scripts/ci-classification.json').read_text()),
                           'map_revision': self.identity['base_sha'], 'map_sha256': 'd' * 64,
                           'project': (root / 'immichSlides.xcodeproj/project.pbxproj').read_text(),
                           'expected_skips': json.loads((root / 'scripts/ci-test-policy.json').read_text())['expected_skips'],
                           'durations': (root / 'scripts/ci-ui-durations.json').read_text()}
                 with patch.object(ui, 'ROOT', root), \
-                        patch.object(ui, 'git_blob', side_effect=lambda revision, path: (root / path).read_bytes()), \
+                        patch.object(ui, 'git_blob', side_effect=blob), \
                         patch.object(ui.subprocess, 'check_output', side_effect=lambda command, **kwargs:
-                                     changed + '\n' if command[1] == 'diff' else '\n'.join(members)), \
+                                     changed + '\n' if command[1] == 'diff' else
+                                     '\n'.join(base_sources if command[-1] == 'immichSlidesUITests' else members)), \
                         patch('ci_publish_git.read_blob', side_effect=lambda revision, path: (root / path).read_text()):
                     produced = ui.planned_ui_selection(self.identity, pack_scoped_ui=True, scoped_ui_v2=True)
                     admitted = ui_inputs(self.identity['base_sha'], listing, populations=populations,
-                        base_populations=populations, workflow=workflow,
+                        base_populations=base_populations, workflow=workflow,
                         run={'path': ui.WORKFLOW, 'event': 'pull_request', 'id': 100, 'run_attempt': 1},
                         modules=modules, selection_inputs=inputs)
                 self.assertEqual(produced['packing'], admitted['selection']['packing'])

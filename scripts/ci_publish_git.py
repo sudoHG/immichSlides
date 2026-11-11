@@ -83,12 +83,16 @@ elif p['operation']=='ui':
             from ci_summary import identity_key
             selection_inputs=p['selection_inputs']
             selection_options={}
+            import inspect
+            if 'head_area_map' in inspect.signature(select_ui_population).parameters:
+                selection_options.update(base_populations=p['base_populations'],
+                    head_area_map=selection_inputs.get('head_area_map'))
             if p.get('pack_scoped_ui'):
                 from ci_ui_selection import platform_sources_from_project
                 from ci_ui_packing import pack_scoped_selection
-                selection_options={'platform_scoped':True,'functional_only':True,
-                    'platform_sources':platform_sources_from_project(selection_inputs['project']),
-                    'expected_skips':selection_inputs.get('expected_skips',[])}
+                selection_options.update(platform_scoped=True,functional_only=True,
+                    platform_sources=platform_sources_from_project(selection_inputs['project']),
+                    expected_skips=selection_inputs.get('expected_skips',[]))
             selection=select_ui_population(selection_inputs['paths'],selection_inputs['classification_policy'],
                 build_target_paths=selection_inputs['build_target_paths'],area_map=selection_inputs['area_map'],
                 populations=p['populations'],plans={platform:entry['plan'] for platform,entry in p['plans'].items()},
@@ -233,6 +237,8 @@ def derive_record(identity, run, *, before=None):
                             "build_target_paths": payload["build_target_paths"], "event": identity["event"],
                             "area_map": raw_map, "map_revision": base,
                             "map_sha256": hashlib.sha256(raw_map.encode()).hexdigest()}
+        if identity["event"] == "pull_request":
+            selection_inputs["head_area_map"] = read_blob(identity["head_sha"], "scripts/ci-ui-areas.json")
         if "ci_ui_packing.py" in modules:
             from ci_ui_packing import DURATIONS_PATH
             base_paths = {entry["path"] for entry in base_listing if entry["type"] == "blob"

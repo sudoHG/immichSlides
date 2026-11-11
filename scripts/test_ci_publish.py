@@ -1577,6 +1577,102 @@ class PublisherTests(unittest.TestCase):
         conservative = select_ui_population(["immichSlides/iOS/Settings.swift"], **dict(arguments, platform_sources={}))
         self.assertEqual({entry["key"] for entry in conservative["populations"]["appletv"]}, set(keys[:2]))
 
+    def test_pr_area_selection_tolerates_only_declared_deletions_of_base_tests(self):
+        from ci_ui_selection import select_ui_population, validate_area_coverage
+        keys = ("SmokeUITests/testLaunch", "SettingsUITests/testEdit", "CoreUITests/testPlay")
+        deleted = "DeletedUITests/testObsolete"
+        populations = {"ui-" + platform: [test_identity("ui", key, platform=platform) for key in keys]
+                       for platform in ("ios", "tvos")}
+        base_populations = {name: entries + [test_identity("ui", deleted, platform=name[3:])]
+                            for name, entries in populations.items()}
+        for location in ("area-method", "area-class", "smoke", "functional_smoke"):
+            selector = "DeletedUITests" if location == "area-class" else deleted
+            area_map = {"schema_version": 1, "revision": "removal-v1", "smoke": [keys[0]],
+                        "functional_smoke": [keys[0]], "areas": {
+                            "core": {"sources": ["immichSlides/Engine.swift"], "tests": ["CoreUITests", "SmokeUITests"]},
+                            "settings": {"sources": ["immichSlides/Settings.swift"], "tests": ["SettingsUITests"]}}}
+            if location.startswith("area-"):
+                area_map["areas"]["settings"]["tests"].append(selector)
+            else:
+                area_map[location].append(selector)
+            head_map = {"schema_version": 1, "revision": "head-v1", "smoke": [keys[2]],
+                        "functional_smoke": [keys[2]], "areas": {
+                            "core": {"sources": ["immichSlides/Engine.swift"], "tests": ["CoreUITests", "SmokeUITests"]},
+                            "settings": {"sources": ["immichSlides/Redirect.swift"],
+                                         "tests": ["CoreUITests", "InjectedUITests/testExtra"]}}}
+            arguments = dict(classification_policy={"schema_version": 1, "app_unaffected": ["docs/**"], "ci_trusted": []},
+                             build_target_paths=[], area_map=area_map, head_area_map=head_map,
+                             populations=populations, base_populations=base_populations,
+                             plans={platform: UI_PLAN for platform in ("ios", "tvos")},
+                             event="pull_request", functional_only=True)
+            for functional_only in (False, True):
+                with self.subTest(location=location, functional_only=functional_only, case="declared-removal"):
+                    selected = select_ui_population(["immichSlides/Settings.swift"], **dict(arguments, functional_only=functional_only))
+                    self.assertEqual(selected["mode"], "scoped")
+                    for entries in selected["populations"].values():
+                        self.assertEqual({entry["key"] for entry in entries}, set(keys[:2]))
+            retained = copy.deepcopy(head_map)
+            retained["areas"]["core"]["tests"].append(selector)
+            for case, changes in (("absent-at-base", {"base_populations": populations}),
+                                  ("retained-in-head", {"head_area_map": retained}),
+                                  ("missing-base-proof", {"base_populations": None}),
+                                  ("missing-head-map", {"head_area_map": None})):
+                with self.subTest(location=location, case=case), self.assertRaisesRegex(
+                        ContractError, "^UI area selector matches no test: " + selector + "$"):
+                    select_ui_population(["immichSlides/Settings.swift"], **dict(arguments, **changes))
+            if "/" in selector:
+                for field in ("smoke", "functional_smoke"):
+                    retained = copy.deepcopy(head_map)
+                    retained[field].append(selector)
+                    with self.subTest(location=location, retained=field), self.assertRaisesRegex(
+                            ContractError, "^UI area selector matches no test: " + selector + "$"):
+                        select_ui_population(["immichSlides/Settings.swift"], **dict(arguments, head_area_map=retained))
+            with self.subTest(location=location, case="unmapped-source"), self.assertRaisesRegex(
+                    ContractError, "^unmapped app source: immichSlides/New.swift$"):
+                validate_area_coverage(area_map, ["immichSlides/New.swift"], populations,
+                                       base_populations=base_populations, head_area_map=head_map)
+            unmapped = copy.deepcopy(populations)
+            unmapped["ui-ios"].append(test_identity("ui", "InjectedUITests/testExtra", platform="ios"))
+            with self.subTest(location=location, case="head-cannot-map-new-test"), self.assertRaisesRegex(
+                    ContractError, "^unmapped UI test: InjectedUITests/testExtra$"):
+                select_ui_population(["immichSlides/Settings.swift"], **dict(arguments, populations=unmapped))
+            for event in ("push", "schedule", "workflow_dispatch"):
+                with self.subTest(location=location, event=event):
+                    selected = select_ui_population(["immichSlides/Settings.swift"], **dict(arguments, event=event))
+                    self.assertEqual(selected["mode"], "full")
+                    for entries in selected["populations"].values():
+                        self.assertEqual({entry["key"] for entry in entries}, set(keys))
+
+    def test_pr_declared_removal_cannot_remove_a_devices_last_default_plan_smoke(self):
+        from ci_ui_selection import select_ui_population
+        deleted = "DeletedUITests/testLaunch"
+        for smoke_field in ("smoke", "functional_smoke"):
+            for platform, device in (("ios", "iphone"), ("tvos", "appletv")):
+                area_map = {"schema_version": 1, "revision": "smoke-v1", "smoke": ["SettingsUITests/testEdit"],
+                            "functional_smoke": ["SettingsUITests/testEdit"], "areas": {
+                                "core": {"sources": ["immichSlides/Engine.swift"],
+                                         "tests": ["SettingsUITests", "SmokeUITests", deleted]},
+                                "settings": {"sources": ["immichSlides/Settings.swift"], "tests": ["SettingsUITests"]}}}
+                area_map[smoke_field] = [deleted, "SmokeUITests/testLaunch"]
+                populations = {"ui-" + candidate: [test_identity("ui", "SettingsUITests/testEdit", platform=candidate)]
+                               + ([] if candidate == platform else [test_identity("ui", "SmokeUITests/testLaunch", platform=candidate)])
+                               for candidate in ("ios", "tvos")}
+                base_populations = copy.deepcopy(populations)
+                base_populations["ui-" + platform].append(test_identity("ui", deleted, platform=platform))
+                head_map = copy.deepcopy(area_map)
+                head_map["areas"]["core"]["tests"].remove(deleted)
+                head_map[smoke_field].remove(deleted)
+                arguments = dict(classification_policy={"schema_version": 1, "app_unaffected": ["docs/**"], "ci_trusted": []},
+                                 build_target_paths=[], area_map=area_map, head_area_map=head_map,
+                                 populations=base_populations, base_populations=base_populations,
+                                 plans={candidate: UI_PLAN for candidate in ("ios", "tvos")},
+                                 event="pull_request", functional_only=True)
+                with self.subTest(smoke=smoke_field, platform=platform):
+                    self.assertEqual(select_ui_population(["immichSlides/Settings.swift"], **arguments)["mode"], "scoped")
+                    label = "UI smoke set" if smoke_field == "smoke" else "functional smoke"
+                    with self.assertRaisesRegex(ContractError, "^" + label + " is absent from default plan on " + device + "$"):
+                        select_ui_population(["immichSlides/Settings.swift"], **dict(arguments, populations=populations))
+
     def test_ui_kinds_classify_method_names_once_and_pr_core_unknown_and_ci_changes_are_functional_only(self):
         from ci_ui_test_kinds import classify_ui_methods
         from ci_ui_selection import select_ui_population
@@ -2383,10 +2479,12 @@ class OtherUITests: XCTestCase { func testPlay() {} }
 """, "TestSupport/Helpers.swift": "import XCTest\nclass SupportUITests: XCTestCase { func testSupport() {} }"}
         read_maps = []
         read_durations = []
+        head_map = '{"untrusted":"candidate map"}'
+        reader_suffix = ""
         def blob(revision, path):
             if path == AREA_MAP_PATH:
                 read_maps.append(revision)
-                return files[path] if revision == BASE else '{"untrusted":"candidate map"}'
+                return files[path] if revision == BASE else head_map if revision == HEAD else '{"untrusted":"merge map"}'
             if path == DURATIONS_PATH:
                 read_durations.append(revision)
                 return files[path] if revision == BASE else '{"untrusted":"candidate durations"}'
@@ -2395,7 +2493,7 @@ class OtherUITests: XCTestCase { func testPlay() {} }
             name = path.removeprefix("scripts/")
             if name in BASE_MODULES + OPTIONAL_BASE_MODULES:
                 self.assertEqual(revision, BASE)
-                return (Path(__file__).parent / name).read_text()
+                return (Path(__file__).parent / name).read_text() + (reader_suffix if name == 'ci_ui_selection.py' else '')
             if name == "ci_build_archive.py":
                 return 'def run_build():\n step = test_identity("host", "secret-free build archive", configuration="Debug")\n'
             if name == "ci-test-policy.json":
@@ -2405,7 +2503,7 @@ class OtherUITests: XCTestCase { func testPlay() {} }
                 patch("ci_publish_git.git", side_effect=lambda *args, **kwargs: "immichSlides/Settings.swift" if args[0] == "diff" else args[-1]), \
                 patch("ci_publish_git.tree_inputs", return_value=(listing, sources)):
             record = derive_record(identity, RUN)
-        self.assertEqual(read_maps, [BASE])
+        self.assertEqual(read_maps, [BASE, HEAD])
         for platform in ("ios", "tvos"):
             self.assertNotIn("SupportUITests/testSupport", {entry["key"] for entry in record["populations"]["ui-" + platform]})
         for side in ("base", "candidate"):
@@ -2419,6 +2517,19 @@ class OtherUITests: XCTestCase { func testPlay() {} }
             names, _, _ = workflow_contract(record["workflows"][".github/workflows/ci-ui.yml"][side], RUN, details=True)
             self.assertEqual(sorted(names), sorted(["ui-archive"] + [f"ui-{device}-{shard}" for device in
                                                                      ("iphone", "ipad", "appletv") for shard in ("default", "visual")]))
+        reader_suffix = '''
+_current_selection = select_ui_population
+def select_ui_population(paths, classification_policy, *, build_target_paths, area_map, populations, plans, event):
+    return _current_selection(paths, classification_policy, build_target_paths=build_target_paths,
+        area_map=area_map, populations=populations, plans=plans, event=event)
+'''
+        with patch('ci_publish_git.read_blob', side_effect=blob), \
+                patch('ci_publish_git.git', side_effect=lambda *args, **kwargs:
+                      'immichSlides/Settings.swift' if args[0] == 'diff' else args[-1]), \
+                patch('ci_publish_git.tree_inputs', return_value=(listing, sources)):
+            historical = derive_record(identity, RUN)
+        self.assertEqual(historical['ui_inputs']['base']['selection'], record['ui_inputs']['base']['selection'])
+        reader_suffix = ""
         # Successor selection still uses base-only weights, including approved candidate metadata.
         durations = {"schema_version": 1, "revision": "trusted-v1", "default_seconds": 120,
                      "seconds": {device: {} for device in ("iphone", "ipad", "appletv")}}
@@ -2435,6 +2546,32 @@ class OtherUITests: XCTestCase { func testPlay() {} }
             selected = packed['ui_inputs'][side]['selection']
             self.assertEqual(selected['coverage'], 'functional')
             self.assertEqual(selected['packing']['durations_sha256'], canonical_hash(durations))
+        head_map = files[AREA_MAP_PATH]
+        area_map['areas']['settings']['tests'].append('DeletedUITests/testObsolete')
+        files[AREA_MAP_PATH] = json.dumps(area_map)
+        base_sources = dict(sources, **{'immichSlidesUITests/Deleted.swift':
+            'import XCTest\nclass DeletedUITests: XCTestCase { func testObsolete() {} }'})
+        with patch('ci_publish_git.read_blob', side_effect=blob), \
+                patch('ci_publish_git.git', side_effect=lambda *args, **kwargs:
+                      'immichSlides/Settings.swift' if args[0] == 'diff' else args[-1]), \
+                patch('ci_publish_git.tree_inputs', side_effect=lambda revision:
+                      (listing, base_sources if revision == BASE else sources)):
+            removed = derive_record(identity, RUN)
+        for side in ('base', 'candidate'):
+            self.assertEqual(removed['ui_inputs'][side]['selection']['packing'], packed['ui_inputs'][side]['selection']['packing'])
+        for case in ('absent-at-base', 'retained-in-head'):
+            with self.subTest(case=case), patch('ci_publish_git.read_blob', side_effect=blob), \
+                    patch('ci_publish_git.git', side_effect=lambda *args, **kwargs:
+                          'immichSlides/Settings.swift' if args[0] == 'diff' else args[-1]), \
+                    patch('ci_publish_git.tree_inputs', side_effect=lambda revision:
+                          (listing, base_sources if case != 'absent-at-base' and revision == BASE else sources)):
+                if case == 'retained-in-head':
+                    head_map = files[AREA_MAP_PATH]
+                refused = derive_record(identity, RUN)
+                self.assertEqual(refused['ui_inputs']['base']['error'],
+                    'functional UI selection refused: UI area selector matches no test: DeletedUITests/testObsolete')
+        area_map['areas']['settings']['tests'].remove('DeletedUITests/testObsolete')
+        files[AREA_MAP_PATH] = head_map = json.dumps(area_map)
         # A grouped packed producer must refuse only UI, preserving the independent gate record.
         durations['seconds']['iphone']['VisualUITests/testFlow'] = 1000
         files[DURATIONS_PATH] = json.dumps(durations)
