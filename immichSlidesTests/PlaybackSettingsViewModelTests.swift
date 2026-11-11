@@ -5,6 +5,36 @@ import Testing
 @MainActor
 @Suite(.sharedPlaybackRuntimeIsolation)
 struct PlaybackSettingsViewModelTests {
+    @Test(arguments: DefaultModeSelectionCase.allCases)
+    func `settings mode selection persists valid choices and prompts before accepting an empty filter`(
+        _ selection: DefaultModeSelectionCase
+    ) {
+        let suiteName = "PlaybackSettingsViewModelTests.modeSelection.\(selection)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        let store = PlaybackSettingsStore(key: suiteName, defaults: defaults)
+        store.clear()
+        defer { store.clear() }
+        let viewModel = PlaybackSettingsViewModel(store: store)
+        let prompts = SettingsPromptStore()
+
+        prompts.selectDefaultPlaybackMode(
+            selection.mode, isFilterSelectionEmpty: selection.isEmpty, playbackViewModel: viewModel
+        )
+
+        let isBlocked = selection == .emptyFiltered
+        let expectedMode: DefaultPlaybackMode = isBlocked ? .random : selection.mode
+        #expect(viewModel.settings.defaultPlaybackMode == expectedMode)
+        #expect(PlaybackSettingsViewModel(store: store).settings.defaultPlaybackMode == expectedMode)
+        #expect(prompts.shouldShowFilterModeBlockedAlert == isBlocked)
+        #expect(prompts.shouldSwitchToFilteredAfterConfig == isBlocked)
+    }
+
+    enum DefaultModeSelectionCase: CaseIterable {
+        case emptyFiltered, populatedFiltered, emptyRandom
+        var mode: DefaultPlaybackMode { self == .emptyRandom ? .random : .filtered }
+        var isEmpty: Bool { self != .populatedFiltered }
+    }
+
     @Test
     func `external saves apply settings synchronously in notification order`() {
         let defaults = UserDefaults(suiteName: "PlaybackSettingsViewModelTests.synchronousExternalSaves")!

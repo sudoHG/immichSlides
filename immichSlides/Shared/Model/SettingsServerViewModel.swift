@@ -192,7 +192,8 @@ final class SettingsServerViewModel: ObservableObject {
         )
     }
 
-    func testConnection() {
+    @discardableResult
+    func testConnection() -> Task<Void, Never>? {
         let validateURLResult = ImmichServer.validateURL(serverURL)
         guard validateURLResult.isURLValid else {
             isConnectionVerified = false
@@ -200,7 +201,7 @@ final class SettingsServerViewModel: ObservableObject {
                 context: .connectionTest,
                 message: validateURLResult.errorMessage ?? String(localized: "Invalid server URL format")
             )
-            return
+            return nil
         }
 
         let validateAPIKeyResult = ImmichServer.validateAPIKey(apiKey)
@@ -210,7 +211,7 @@ final class SettingsServerViewModel: ObservableObject {
                 context: .connectionTest,
                 message: validateAPIKeyResult.errorMessage ?? String(localized: "Invalid API Key")
             )
-            return
+            return nil
         }
 
         cancelPendingConnectionTestFlow()
@@ -219,7 +220,7 @@ final class SettingsServerViewModel: ObservableObject {
         testingStatusMessage = String(localized: "Testing connection...")
         isTestingConnection = true
 
-        runConnectionTestAttempt(
+        return runConnectionTestAttempt(
             serverURL: serverURL,
             apiKey: apiKey,
             remainingAutomaticRetries: automaticRetryDelayScheduleForTesting.count
@@ -275,12 +276,13 @@ final class SettingsServerViewModel: ObservableObject {
         }
     }
 
+    @discardableResult
     private func runConnectionTestAttempt(
         serverURL: String,
         apiKey: String,
         remainingAutomaticRetries: Int,
         shouldResetProgressMessage: Bool = true
-    ) {
+    ) -> Task<Void, Never> {
         connectionTestTask?.cancel()
 
         if shouldResetProgressMessage {
@@ -290,7 +292,7 @@ final class SettingsServerViewModel: ObservableObject {
         isTestingConnection = true
         let connectionTestActionForTesting = self.connectionTestActionForTesting
 
-        connectionTestTask = Task { [weak self] in
+        let task = Task { [weak self] in
             guard let self else { return }
 
             let result = await connectionTestActionForTesting(serverURL, apiKey) { [weak self] event in
@@ -307,6 +309,8 @@ final class SettingsServerViewModel: ObservableObject {
                 remainingAutomaticRetries: remainingAutomaticRetries
             )
         }
+        connectionTestTask = task
+        return task
     }
 
     private func handleConnectionTestProgressEvent(_ event: ImmichServer.ConnectionTestEvent) {

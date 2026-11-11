@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import SDWebImage
 import Testing
 @testable import immichSlides
 
@@ -14,6 +15,51 @@ import Testing
 @MainActor
 @Suite(.serialized, .sharedPlaybackRuntimeIsolation)
 struct SlideShowViewModelCacheReloadTests {
+
+    @Test
+    func `clearing disk cache reloads the current photo through HTTP after memory eviction`() async throws {
+        let http = LateLoadLocalHTTPFixture()
+        try await http.start()
+        defer { http.stop() }
+        #expect(http.isListeningOnLoopbackOnly)
+        let didInstall = LateLoadRealPathTestSupport.installIsolatedFixtureServer(
+            port: http.port, credential: LateLoadRealPathFixture.fixtureCredential
+        )
+        #expect(didInstall)
+        let fixture = makeCurrentSceneFixture()
+        defer { resetSharedDownloadManager(fixture.vm.downloadManager) }
+        let manager = fixture.vm.downloadManager
+        await manager.clearDiskCacheForSettings()
+        await fixture.vm.forceReloadCurrentAssetAfterCacheClear()
+        #expect(manager.isReady(assetId: fixture.currentId, size: .fullsize))
+        #expect(manager.isReady(assetId: fixture.currentId, size: .preview))
+        #expect(http.completedCount(assetId: fixture.currentId) == 2)
+        let fullsizeURL = try #require(manager.findURL(assetId: fixture.currentId, size: .fullsize))
+        let previewURL = try #require(manager.findURL(assetId: fixture.currentId, size: .preview))
+        #expect(SDImageCache.shared.diskImageDataExists(withKey: fullsizeURL.absoluteString))
+        #expect(SDImageCache.shared.diskImageDataExists(withKey: previewURL.absoluteString))
+
+        await manager.clearDiskCacheForSettings()
+        #expect(!SDImageCache.shared.diskImageDataExists(withKey: fullsizeURL.absoluteString))
+        #expect(!SDImageCache.shared.diskImageDataExists(withKey: previewURL.absoluteString))
+        #expect(!manager.isReady(assetId: fixture.currentId, size: .fullsize))
+        #expect(!manager.isReady(assetId: fixture.currentId, size: .preview))
+        #expect(manager.findURL(assetId: fixture.currentId, size: .fullsize) == nil)
+        #expect(manager.findURL(assetId: fixture.currentId, size: .preview) == nil)
+        // Evict memory separately: the Settings command only promises to clear disk and tracked state.
+        SDImageCache.shared.clearMemory()
+        await fixture.vm.forceReloadCurrentAssetAfterCacheClear()
+
+        #expect(manager.isReady(assetId: fixture.currentId, size: .fullsize))
+        #expect(manager.isReady(assetId: fixture.currentId, size: .preview))
+        #expect(http.completedCount(assetId: fixture.currentId) == 4)
+        #expect(http.enteredCount(assetId: fixture.neighborId) == 0)
+        #expect(fixture.vm.safeCurrentScene?.primaryAssetId == fixture.currentId)
+        let requests = http.completedRequests()
+        #expect(requests.filter { $0.path.hasSuffix("size=fullsize") }.count == 2)
+        #expect(requests.filter { $0.path.hasSuffix("size=preview") }.count == 2)
+        #expect(requests.allSatisfy { $0.apiKey == LateLoadRealPathFixture.fixtureCredential })
+    }
 
     @Test
     func

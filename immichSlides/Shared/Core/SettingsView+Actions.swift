@@ -32,13 +32,9 @@ extension SettingsView {
     }
 
     func selectDefaultPlaybackMode(_ mode: DefaultPlaybackMode) {
-        if mode == .filtered && filterVM.selection.isEmpty {
-            promptState.shouldSwitchToFilteredAfterConfig = true
-            promptState.shouldShowFilterModeBlockedAlert = true
-            return
-        }
-
-        playbackVM.settings.defaultPlaybackMode = mode
+        promptState.selectDefaultPlaybackMode(
+            mode, isFilterSelectionEmpty: filterVM.selection.isEmpty, playbackViewModel: playbackVM
+        )
     }
 
     func selectPlaybackDisplayMode(_ mode: PlaybackDisplayMode) {

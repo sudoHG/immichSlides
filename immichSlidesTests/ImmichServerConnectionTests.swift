@@ -9,8 +9,137 @@ import Testing
 @Suite(.serialized, .sharedRuntimeIsolation)
 struct ImmichServerConnectionTests {
 
+    @Test(arguments: FailedConnection.allCases)
+    func `failed HTTP connections cannot save first boot configuration`(_ failure: FailedConnection) async throws {
+        ImmichServer.clearSavedConfiguration()
+        let persistedServer = ImmichServer.load()
+        let persistedURL = UserDefaults.standard.string(forKey: "immichURL")
+        let persistedAPIKeyFallback = UserDefaults.standard.string(forKey: ImmichServer.testAPIKeyDefaultsKey)
+        let recorder = HTTPRequestRecorder()
+        let session = makeMockedSession { request in
+            await recorder.store(request)
+            return try failure.respond(to: request)
+        }
+        defer { session.invalidateAndCancel() }
+        let persistence = ServerSaveRecorder()
+        let viewModel = SettingsServerViewModel(
+            connectionTestActionForTesting: { url, key, progress in
+                await ImmichServer.testConnection(
+                    serverURL: url, apiKey: key, sessionForTesting: session, progressHandler: progress
+                )
+            },
+            saveServerConfigActionForTesting: { url, key in
+                await ImmichServer.tryToSaveServerConfig(
+                    serverURL: url, apiKey: key, sessionForTesting: session,
+                    saveServerForTesting: { server in await persistence.save(server) }
+                )
+            },
+            automaticRetryDelayScheduleForTesting: []
+        )
+        viewModel.serverURL = failure == .localNetworkPermission ? "http://192.168.1.10:2283" : "https://server.invalid"
+        viewModel.apiKey = "synthetic-key"
+
+        await viewModel.testConnection()?.value
+        #expect(!viewModel.isConnectionVerified)
+        #expect(viewModel.shouldShowErrorAlert)
+        #expect(viewModel.errorAlertTitle == failure.alertTitle)
+        if failure == .localNetworkPermission {
+            #expect(
+                viewModel.errorMessage.hasPrefix(
+                    String(
+                        localized:
+                            "Network permission is not complete yet. Allow Wireless Data or Local Network access, then try again."
+                    )))
+        }
+
+        // Call Save even though the UI disables it: the persistence boundary must independently refuse it.
+        await viewModel.saveServerConfig().value
+
+        #expect(!viewModel.didSaveConfig)
+        #expect(!viewModel.isConnectionVerified)
+        #expect(viewModel.errorAlertTitle == String(localized: "Save Failed"))
+        #expect(persistence.writeCount == 0)
+        #expect(persistence.server == nil)
+        #expect(UserDefaults.standard.string(forKey: "immichURL") == persistedURL)
+        #expect(UserDefaults.standard.string(forKey: ImmichServer.testAPIKeyDefaultsKey) == persistedAPIKeyFallback)
+        let reloadedServer = ImmichServer.load()
+        #expect(reloadedServer?.immichURL == persistedServer?.immichURL)
+        #expect(reloadedServer?.immichApiKey == persistedServer?.immichApiKey)
+        var relaunchedFlow = AppFlowStateMachine(isAccessProtectionInitiallyEnabled: false)
+        relaunchedFlow.initializeRoute(isServerConfigured: reloadedServer?.isConfigured == true)
+        #expect(relaunchedFlow.route == .firstBoot)
+        let requests = await recorder.values
+        #expect(requests.count == 2)
+        #expect(requests.allSatisfy { $0.url?.path == "/api/search/random" && $0.httpMethod == "POST" })
+    }
+
     @Test
-    func `connection test verifies access to a random photo, its preview and its full image`() async throws {
+    func `editing credentials cancels an in flight HTTP test without verifying or saving its late result`() async {
+        let gate = ConnectionResponseGate()
+        let session = makeMockedSession { request in
+            await gate.wait()
+            return (
+                Self.response(for: request.url!, statusCode: 401, contentType: "application/json"),
+                Data(#"{"message":"Unauthorized"}"#.utf8)
+            )
+        }
+        defer { session.invalidateAndCancel() }
+        let viewModel = SettingsServerViewModel(
+            connectionTestActionForTesting: { url, key, progress in
+                await ImmichServer.testConnection(
+                    serverURL: url, apiKey: key, sessionForTesting: session, progressHandler: progress
+                )
+            }
+        )
+        viewModel.serverURL = "https://server.invalid"
+        viewModel.apiKey = "synthetic-key"
+        let connectionTask = viewModel.testConnection()
+        let didStart = await waitUntil { gate.hasStarted }
+        #expect(didStart)
+
+        viewModel.apiKey = "edited-key"
+        gate.release()
+        await connectionTask?.value
+
+        #expect(!viewModel.isTestingConnection)
+        #expect(!viewModel.isConnectionVerified)
+        #expect(!viewModel.didSaveConfig)
+        #expect(!viewModel.shouldShowErrorAlert)
+        #expect(viewModel.statusMessage.isEmpty)
+    }
+
+    enum FailedConnection: CaseIterable, Sendable {
+        case unauthorized, html, unreachable, timeout, cancelled, localNetworkPermission
+
+        func respond(to request: URLRequest) throws -> (HTTPURLResponse, Data) {
+            switch self {
+            case .unauthorized:
+                return (
+                    Self.response(request, status: 401, type: "application/json"),
+                    Data(#"{"message":"Unauthorized"}"#.utf8)
+                )
+            case .html:
+                return (Self.response(request, status: 200, type: "text/html"), Data("<html>Proxy</html>".utf8))
+            case .unreachable, .localNetworkPermission: throw URLError(.cannotConnectToHost)
+            case .timeout: throw URLError(.timedOut)
+            case .cancelled: throw URLError(.cancelled)
+            }
+        }
+
+        @MainActor var alertTitle: String {
+            self == .unauthorized ? String(localized: "Invalid API Key") : String(localized: "Connection test failed")
+        }
+
+        private static func response(_ request: URLRequest, status: Int, type: String) -> HTTPURLResponse {
+            HTTPURLResponse(
+                url: request.url!, statusCode: status, httpVersion: nil,
+                headerFields: ["Content-Type": type])!
+        }
+    }
+
+    @Test
+    func `successful HTTP probes save first boot configuration only after checking playback permissions`() async throws
+    {
         let recorder = HTTPRequestRecorder()
         let session = makeMockedSession { request in
             await recorder.store(request)
@@ -45,13 +174,23 @@ struct ImmichServerConnectionTests {
             return (response, data)
         }
 
-        let result = await ImmichServer.testConnection(
+        defer { session.invalidateAndCancel() }
+        let persistence = ServerSaveRecorder()
+        let result = await ImmichServer.tryToSaveServerConfig(
             serverURL: "https://demo.example.com",
             apiKey: "fake-key",
-            sessionForTesting: session
+            sessionForTesting: session,
+            saveServerForTesting: { server in
+                let requestCount = await recorder.values.count
+                return await persistence.save(server, afterProbeCount: requestCount)
+            }
         )
 
         #expect(result.isSuccess)
+        #expect(persistence.writeCount == 1)
+        #expect(persistence.probeCountAtSave == 6)
+        #expect(persistence.server?.immichURL == "https://demo.example.com/api")
+        #expect(persistence.server?.immichApiKey == "fake-key")
 
         let requests = await recorder.values
         #expect(
@@ -515,6 +654,36 @@ struct ImmichServerConnectionTests {
             httpVersion: nil,
             headerFields: ["Content-Type": contentType]
         )!
+    }
+}
+
+@MainActor
+private final class ServerSaveRecorder {
+    private(set) var writeCount = 0
+    private(set) var server: ImmichServer?
+    private(set) var probeCountAtSave: Int?
+
+    func save(_ server: ImmichServer, afterProbeCount: Int? = nil) -> Bool {
+        writeCount += 1
+        self.server = server
+        probeCountAtSave = afterProbeCount
+        return true
+    }
+}
+
+@MainActor
+private final class ConnectionResponseGate {
+    private(set) var hasStarted = false
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func wait() async {
+        hasStarted = true
+        await withCheckedContinuation { continuation = $0 }
+    }
+
+    func release() {
+        continuation?.resume()
+        continuation = nil
     }
 }
 

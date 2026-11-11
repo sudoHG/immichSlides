@@ -40,11 +40,7 @@ struct SlideShowViewIOS: View {
     @State var retainedExifOverlayAsset: Asset? = nil
     @State var isRenderedExifOverlayVisible: Bool = false
 
-    @State private var isPinEntrySheetPresented: Bool = false
-
-    @State private var pinEntryErrorMessage: String = ""
-
-    @State private var isAccessProtectionRecoveryAlertPresented: Bool = false
+    @StateObject private var settingsAccess = SettingsAccessCoordinator()
 
     @StateObject private var controlsState = PlaybackControlsState()
     private var isPlaybackEntryHintVisible: Bool {
@@ -650,27 +646,20 @@ struct SlideShowViewIOS: View {
             // Resync playback settings once after returning from Settings.
             refreshPlaybackRelatedSettings()
         }
-        .sheet(isPresented: $isPinEntrySheetPresented) {
+        .sheet(isPresented: $settingsAccess.isPinEntrySheetPresented) {
             PinEntrySheetView(
                 title: String(localized: "Enter PIN"),
                 message: String(localized: "Enter the 6-digit PIN before opening Settings."),
-                errorMessage: pinEntryErrorMessage.isEmpty ? nil : pinEntryErrorMessage,
-                onCancel: {
-                    pinEntryErrorMessage = ""
-                    isPinEntrySheetPresented = false
-                },
+                errorMessage: settingsAccess.pinEntryErrorMessage.isEmpty ? nil : settingsAccess.pinEntryErrorMessage,
+                onCancel: settingsAccess.cancelPIN,
                 onSubmit: { pin in
-                    if AccessProtectionStore.shared.verifyPIN(pin) {
-                        pinEntryErrorMessage = ""
-                        isPinEntrySheetPresented = false
+                    settingsAccess.submitPIN(pin) {
                         onOpenSettings?()
-                    } else {
-                        pinEntryErrorMessage = String(localized: "PIN is incorrect. Please try again.")
                     }
                 }
             )
         }
-        .alert("Access Protection Error", isPresented: $isAccessProtectionRecoveryAlertPresented) {
+        .alert("Access Protection Error", isPresented: $settingsAccess.isAccessProtectionRecoveryAlertPresented) {
             Button("Reset Access Protection", role: .destructive) {
                 AccessProtectionStore.shared.resetProtection()
                 onOpenSettings?()
@@ -701,15 +690,7 @@ struct SlideShowViewIOS: View {
         #if DEBUG
         PlatformCompat.consumeInitialSettingsControlHoldForTesting()
         #endif
-        if AccessProtectionStore.shared.isEnabled {
-            if AccessProtectionStore.shared.isRecoveryNeeded {
-                isAccessProtectionRecoveryAlertPresented = true
-                resetAutoHideTimer()
-                return
-            }
-            pinEntryErrorMessage = ""
-            isPinEntrySheetPresented = true
-        } else {
+        settingsAccess.requestSettings {
             onOpenSettings?()
         }
         resetAutoHideTimer()
