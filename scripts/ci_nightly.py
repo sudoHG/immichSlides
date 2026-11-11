@@ -375,6 +375,7 @@ def main(argv=None):
             binding_record = decode(binding_path.read_text())
             fields(binding_record, {"schema_version", "review_packages"}, "shard package bindings")
             require(type(binding_record["schema_version"]) is int and binding_record["schema_version"] == 1, "unknown binding schema")
+            bindings = binding_record["review_packages"]
             trace = decode((paths[0].parent / "trace.json").read_text())
             require(all(type(trace[key]) in (int, float) and math.isfinite(trace[key]) for key in ("started_epoch", "finished_epoch")),
                     "invalid shard clock")
@@ -385,14 +386,17 @@ def main(argv=None):
                 verified = {}
                 _, missing = method_observations(summary, trace,
                     runner_hosted=os.environ.get("RUNNER_ENVIRONMENT") == "github-hosted", verified_cases=verified,
-                    review_bindings=binding_record["review_packages"])
+                    review_bindings=bindings)
                 require(not missing, "nightly retry: strict official method evidence is incomplete")
+                discarded_reviews = {identity_key(item["identity"]) for item in summary["population"]["observed"]
+                    if "nightly_retry" in item and verified[identity_key(item["identity"])]["outcome"] != "needs-human-review"}
+                bindings = [item for item in bindings if identity_key(item["identity"]) not in discarded_reviews]
                 summary["population"]["observed"] = [verified[identity_key(item["identity"])]
                                                        for item in summary["population"]["observed"]]
                 if summary["status"] == "unverified" and not any(item["outcome"] == "needs-human-review"
                         for item in summary["population"]["observed"]):
                     summary["status"] = "failed"
-            bindings = validate_bindings(binding_record["review_packages"], summary)
+            bindings = validate_bindings(bindings, summary)
             if needs_retry_trace:
                 summaries.append(summary)
             review_packages.extend(bindings)

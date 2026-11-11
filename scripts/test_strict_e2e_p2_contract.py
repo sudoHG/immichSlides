@@ -134,13 +134,13 @@ class ReviewPackageTests(unittest.TestCase):
         from ci_nightly import aggregate_nightly
         from ci_report import method_observations
         from ci_review_packages import export_shard, validate_bindings
-        from ci_summary import parse_summary
+        from ci_summary import observation, parse_summary
         from run_strict_ci_tracer import evaluate_tracer, produce_environment_limits
         from run_strict_e2e import resolve_suite_selector
         from test_ci_summary import hosted_v5_summary
 
         for starved in (True, False):
-            for failure in (ValueError, OSError, P2ContractError):
+            for failure in (ValueError, OSError, P2ContractError, KeyError, TypeError, AttributeError, RuntimeError, Exception):
                 with self.subTest(starved=starved, failure=failure.__name__), tempfile.TemporaryDirectory() as directory:
                     summary, _ = hosted_v5_summary()
                     initial = summary["population"]["observed"][0]
@@ -175,6 +175,10 @@ class ReviewPackageTests(unittest.TestCase):
                     source, published = Path(directory, "shard"), Path(directory, "published")
                     (source / "records").mkdir(parents=True)
                     _write_json(source / "records/summary.json", summary)
+                    cold = "Cold build durations: immichSlides-iOS-Debug: 24.3s"
+                    disk = "Peak sampled disk growth: 1.23 GiB; minimum free: 99.45 GiB."
+                    (source / "records/summary.md").write_text(
+                        "# needs-human-review\n\n" + cold + "\n\n" + disk + "\n")
                     with mock.patch("ci_review_packages.build_package", side_effect=failure("Synthetic retry package refusal")):
                         self.assertEqual(export_shard(source, published), 0)
                     retained = parse_summary(_read_json(source / "records/summary.json"))
@@ -183,7 +187,10 @@ class ReviewPackageTests(unittest.TestCase):
                     self.assertEqual("environment_limit" in actual, starved)
                     self.assertEqual(actual["retry_failure"]["outcome"], "not-run")
                     self.assertNotIn("nightly_retry", actual)
-                    self.assertNotIn("needs-human-review", (source / "records/summary.md").read_text())
+                    rendered = (source / "records/summary.md").read_text()
+                    self.assertNotIn("needs-human-review", rendered)
+                    self.assertEqual([line for line in rendered.splitlines() if line.startswith((
+                        "Cold build durations:", "Peak sampled disk growth:"))], [cold, disk])
                     bindings = _read_json(source / "records/p2-review-bindings.json")["review_packages"]
                     self.assertEqual(validate_bindings(bindings, retained), [])
                     verdict = aggregate_nightly([identity], [retained], live_in_scope=False, review_packages=bindings)
@@ -191,6 +198,17 @@ class ReviewPackageTests(unittest.TestCase):
                     observed, missing = method_observations(retained, {"warm": [phase]}, runner_hosted=True)
                     self.assertEqual(missing, [])
                     self.assertEqual("environment_limit" in observed[0], starved)
+                    ordinary = copy.deepcopy(summary)
+                    ordinary["population"]["observed"] = [observation(identity, "needs-human-review", 9,
+                        reason="P2 contract requires signed human review", exit_code=0)]
+                    ordinary["status"] = "unverified"
+                    _write_json(source / "records/summary.json", ordinary)
+                    with mock.patch("ci_review_packages.build_package", side_effect=failure("Synthetic original package refusal")):
+                        if failure in (ValueError, OSError, P2ContractError):
+                            self.assertEqual(export_shard(source, Path(directory, "original-published")), 1)
+                        else:
+                            with self.assertRaises(failure):
+                                export_shard(source, Path(directory, "original-published"))
 
     def test_nightly_retry_with_pending_human_review_exports_the_successful_retry_package(self):
         from ci_flaky import merge_retry

@@ -498,13 +498,12 @@ def export_shard(input_dir, output_dir):
             missing.append({"case": case, "reason": "automated contract did not pass"})
             continue
         relative = Path(context["source_sha"]) / suite / dimensions["device"] / dimensions["fixture"]
+        evidence = input_dir / ("retries" if "nightly_retry" in entry else "cases") / f"{index:03d}-{suite}"
         try:
-            evidence = input_dir / ("retries" if "nightly_retry" in entry else "cases") / f"{index:03d}-{suite}"
             manifest = build_package(evidence, output_dir / relative, context, case)
-            bindings.append({"identity": item, "context": context, "case_sha256": manifest["case_sha256"],
-                             "package_sha256": manifest["package_sha256"]})
-            packages.append(relative.as_posix())
-        except (ValueError, OSError, P2ContractError):
+        except Exception as error:
+            if "nightly_retry" not in entry and not isinstance(error, (ValueError, OSError, P2ContractError)):
+                raise
             reason = "package validation or sensitive scan refused publication"
             if "nightly_retry" in entry:
                 from ci_summary import fallback_nightly_retry, public_retry_failure
@@ -518,8 +517,23 @@ def export_shard(input_dir, output_dir):
                 restored_first = True
                 reason = "retry package unavailable; first attempt retained"
             missing.append({"case": case, "reason": reason})
+        else:
+            bindings.append({"identity": item, "context": context, "case_sha256": manifest["case_sha256"],
+                             "package_sha256": manifest["package_sha256"]})
+            packages.append(relative.as_posix())
     if restored_first:
+        markdown = input_dir / "records/summary.md"
+        retained_lines = []
+        try:
+            if markdown.is_file() and not markdown.is_symlink():
+                retained_lines = [line for line in markdown.read_text().splitlines()
+                                  if line.startswith(("Cold build durations:", "Peak sampled disk growth:"))]
+        except (OSError, UnicodeError):
+            pass
         write_summary(summary, input_dir / "records")
+        if retained_lines:
+            with markdown.open("a") as report:
+                report.write("\n" + "\n\n".join(retained_lines) + "\n")
     write_json(output_dir / "index.json", {"schema_version": 1, "packages": packages, "unavailable": missing})
     write_json(input_dir / "records/p2-review-bindings.json", {"schema_version": 1, "review_packages": bindings})
     scan(output_dir)

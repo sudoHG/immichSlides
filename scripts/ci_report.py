@@ -144,12 +144,13 @@ def method_observations(raw, trace, *, runner_hosted=False, verified_cases=None,
         backup = row.get("nightly_retry_first")
         supplemental = row.get("retry_failure")
         key = identity_key(row["identity"])
-        if (bound_reviews is not None and key not in bound_reviews and "nightly_retry" in row
-                and row["outcome"] == "needs-human-review" and row["identity"]["dimensions"]["suite"] in P2_CASES):
+        pending_retry = ("nightly_retry" in row and row["outcome"] == "needs-human-review"
+                         and row["identity"]["dimensions"]["suite"] in P2_CASES)
+        if bound_reviews is not None and key not in bound_reviews and pending_retry:
             population["observed"][index] = fallback_nightly_retry(row)
             discarded.add(key)
             continue
-        if backup is None and supplemental is None:
+        if backup is None and supplemental is None and not pending_retry:
             if len(row["attempts"]) == 1:
                 discarded.add(key)
             continue
@@ -157,12 +158,12 @@ def method_observations(raw, trace, *, runner_hosted=False, verified_cases=None,
             "declared": [item for item in population["declared"] if identity_key(item) == key], "observed": [row]}}
         try:
             methods, missing = _method_observations(scoped, trace, runner_hosted=runner_hosted)
-            field = "nightly_retry" if backup is not None else "retry_failure"
+            field = "nightly_retry" if "nightly_retry" in row else "retry_failure"
             require(not missing and any(field in method for method in methods), "retry evidence is incomplete")
         except (ValueError, TypeError, KeyError, AttributeError, IndexError):
             discarded.add(key)
-            if backup is not None:
-                population["observed"][index] = backup
+            if "nightly_retry" in row:
+                population["observed"][index] = fallback_nightly_retry(row)
             else:
                 row.pop("retry_failure")
     if discarded:

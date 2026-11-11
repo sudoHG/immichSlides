@@ -25,11 +25,14 @@ class NightlyVerdictTests(unittest.TestCase):
         from ci_failure_diagnostics import environment_limit_evidence
         from ci_flaky import ASSERTION_FAILURE, merge_retry
         from ci_nightly import main
+        from ci_review_packages import digest, shard_context
         from run_strict_e2e import resolve_suite_selector
         from strict_e2e_p2_contract import RAW_VERDICT
         from test_ci_summary import hosted_v5_summary
-        for retained_v5, retry in ((True, True), (False, True), (False, False)):
-            with self.subTest(retained_v5=retained_v5, retry=retry), tempfile.TemporaryDirectory() as directory:
+        for retained_v5, retry, binding in ((True, True, "missing"), (False, True, "missing"), (False, False, "missing"),
+                                           (True, True, "duration"), (False, True, "duration"),
+                                           (True, True, "foreign"), (False, False, "present")):
+            with self.subTest(retained_v5=retained_v5, retry=retry, binding=binding), tempfile.TemporaryDirectory() as directory:
                 summary, resource = hosted_v5_summary(tool=True)
                 summary["run"]["shard"] = "a"
                 first = summary["population"]["observed"][0]
@@ -58,15 +61,27 @@ class NightlyVerdictTests(unittest.TestCase):
                 phase["retry"] = {**phase, "exit_code": 0, "p2_verdict": RAW_VERDICT,
                     "official_method_durations": {method: 9}, "official_methods": [{"identifier": method, "result": "Passed"}],
                     "official_summary": {"totalTestCount": 1, "passedTests": 1, "failedTests": 0, "skippedTests": 0}}
+                if binding in {"duration", "foreign"}:
+                    phase["retry"].pop("official_method_durations")
+                if not retry and binding == "present":
+                    phase = phase["retry"]
                 trace = {"started_epoch": time.time() - 10, "finished_epoch": time.time(), "warm": [phase]}
                 planned = [{"id": "a", "cases": [{"platform": "ios", **case["dimensions"]}]}]
                 summary["hashes"] = {"manifests": {"nightly-matrix": "a" * 64}, "policies": {"nightly": "a" * 64}}
+                bindings = []
+                if binding != "missing":
+                    bindings.append({"identity": case, "context": shard_context(summary),
+                        "case_sha256": digest({"platform": "ios", **case["dimensions"]}), "package_sha256": "e" * 64})
+                if binding == "foreign":
+                    foreign = ci_summary.test_identity("strict", "p2-exif", **{**case["dimensions"], "suite": "p2-exif"})
+                    bindings.append({"identity": foreign, "context": shard_context(summary),
+                        "case_sha256": digest({"platform": "ios", **foreign["dimensions"]}), "package_sha256": "f" * 64})
                 root = Path(directory)
                 records = root / "records/nightly-strict-a-10-1"
                 records.mkdir(parents=True)
                 (records / "summary.json").write_text(json.dumps(summary))
                 (records / "trace.json").write_text(json.dumps(trace))
-                (records / "p2-review-bindings.json").write_text(json.dumps({"schema_version": 1, "review_packages": []}))
+                (records / "p2-review-bindings.json").write_text(json.dumps({"schema_version": 1, "review_packages": bindings}))
                 (root / "plan.json").write_text(json.dumps({"identity": summary["identity"], "hashes": summary["hashes"],
                     "run": {"id": "10", "attempt": 1}, "shards": planned, "started_epoch": time.time() - 20, "max_parallel": 2}))
                 output = root / "output"
@@ -78,14 +93,20 @@ class NightlyVerdictTests(unittest.TestCase):
                     code = main(["aggregate", "--output-dir", str(output), "--plan", str(root / "plan.json"),
                                  "--records-dir", str(root / "records"), "--matrix-job-result", "success"])
                 result = json.loads((output / "nightly.json").read_text())
-                if not retry:
+                if binding == "foreign" or not retry and binding == "missing":
                     self.assertEqual((1, "failed"), (code, result["status"]))
                     self.assertIn("a: completed P2 package bindings are missing or unexpected", result["errors"])
+                    continue
+                if not retry:
+                    self.assertEqual((0, "passed", [case], bindings),
+                        (code, result["status"], result["needs_human_review"], result["review_packages"]))
+                    self.assertEqual(retried, result["observed"][0])
                     continue
                 self.assertEqual((0 if retained_v5 else 1, "environment-limited" if retained_v5 else "failed"), (code, result["status"]))
                 self.assertTrue(result["matrix"]["equal"])
                 self.assertEqual(first, result["observed"][0])
                 self.assertFalse(result["needs_human_review"])
+                self.assertEqual([], result["review_packages"])
                 api = type("API", (), {"repository": "sudoHG/immichSlides"})()
                 run = {"id": 10, "workflow_id": 123, "run_attempt": 1, "created_at": "2026-10-01T10:00:00Z",
                     "head_sha": "a" * 40, "path": ci_report.NIGHTLY_PATH, "event": "schedule", "head_branch": "main",

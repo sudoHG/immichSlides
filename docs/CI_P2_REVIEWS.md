@@ -130,7 +130,9 @@ Package validation failure makes the export step fail and prevents its upload.
 For a hosted nightly's passing retry, a refused retry package restores the first
 attempt in the compact summary. Its independent v5 proof retains yellow, while
 an ordinary first failure remains red. The shard index records that retry package
-publication was unavailable. Other shard packages remain independent.
+publication was unavailable. Any exception from retry package construction uses
+this fallback. Re-rendering the compact summary preserves the tracer's cold-build
+duration and sampled-disk measurements. Other shard packages remain independent.
 Before compact records upload, the exporter writes case identity, context, case hash
 and package hash into `records/p2-review-bindings.json`. The aggregate validates each
 binding against its completed P2 observation and retains them in `review_packages`
@@ -138,6 +140,9 @@ and its rollup entry. Missing or mismatched bindings fail aggregation for origin
 P2 automated successes. A missing binding for a P2 passing-retry claim restores
 the first attempt before binding validation. A v5 fallback is independently
 bound to the original official result and resource evidence.
+If official-method re-validation restores a passing retry to its first failure,
+the aggregate removes that retry's package binding before validating the remaining
+bindings. The rollup and reporter use that filtered binding list.
 The bounded `ci-p2-review` PR probe collects a real fixture-A cache package on iPhone
 to verify packaging and upload. The nightly retains its full device matrix.
 The probe does not claim full P2 coverage or human acceptance.

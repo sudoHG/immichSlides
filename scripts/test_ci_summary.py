@@ -420,8 +420,17 @@ print('parsed 3 nightly retry records without image or runner dependencies')
         methods, missing = ci_report.method_observations(summary, {"warm": [phase]}, runner_hosted=True)
         self.assertEqual(("needs-human-review", []), (methods[0]["outcome"], missing))
         phase["retry"].pop("p2_verdict")
-        with self.assertRaisesRegex(ci_summary.ContractError, "^nightly retry: P2 automated contract evidence is missing or invalid$"):
-            ci_report.method_observations(summary, {"warm": [phase]}, runner_hosted=True)
+        methods, missing = ci_report.method_observations(summary, {"warm": [phase]}, runner_hosted=True)
+        self.assertEqual([], missing)
+        original = copy.deepcopy(summary)
+        original["population"]["observed"] = [ci_summary.fallback_nightly_retry(row)]
+        original["status"] = "failed"
+        first_phase = {key: value for key, value in phase.items() if key != "retry"}
+        first_methods, first_missing = ci_report.method_observations(original, {"warm": [first_phase]}, runner_hosted=True)
+        self.assertEqual([], first_missing)
+        self.assertEqual(first_methods, methods)
+        self.assertEqual(("failed", 1), (methods[0]["outcome"], len(methods[0]["attempts"])))
+        self.assertNotIn("nightly_retry", methods[0])
         for mutation in ("ui", "ordinary-strict", "missing-proof", "p2-auto-pass"):
             changed = copy.deepcopy(summary)
             target = changed["population"]["observed"][0]
