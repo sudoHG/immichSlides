@@ -1,5 +1,8 @@
 import sys
 import unittest
+import copy
+import json
+import tempfile
 from pathlib import Path
 
 
@@ -939,6 +942,51 @@ class TimeoutLiteralTests(unittest.TestCase):
 
 
 class RepositoryTests(unittest.TestCase):
+    def test_target_tier_plan_rejects_population_drift_and_unproved_coverage(self):
+        plan = json.loads((REPO_ROOT / conv.TEST_TIER_PLAN_PATH).read_text())
+        context = conv.test_tier_context(REPO_ROOT)
+        self.assertEqual([], conv.validate_test_tier_plan(plan, *context))
+        mutations = (
+            ('unsupported version', lambda p: p.update(schema_version=2), 'tier-plan-version'),
+            ('accidental activation', lambda p: p.update(mode='active'), 'tier-plan-mode'),
+            ('changed retry policy', lambda p: p['migration'].update(yellow_and_retry='expanded'), 'tier-plan-migration'),
+            ('missing smoke', lambda p: p['smoke_flows'].pop(), 'tier-plan-smoke-population'),
+            ('duplicate smoke', lambda p: p['smoke_flows'].__setitem__(0, p['smoke_flows'][1]), 'tier-plan-smoke-population'),
+            ('missing UI method', lambda p: p['inventory'].pop(), 'tier-plan-inventory'),
+            ('duplicate strict row', lambda p: p['inventory'].append(p['inventory'][0]), 'tier-plan-inventory'),
+            ('unknown home', lambda p: p['inventory'][0].update(target_home='ignore'), 'tier-plan-home'),
+            ('unproved coverage', lambda p: p['inventory'][0].update(status='covered'), 'tier-plan-coverage'),
+            ('unknown status', lambda p: p['inventory'][0].update(status='done'), 'tier-plan-coverage'),
+            ('nonexistent replacement', lambda p: p['inventory'][0].update(replacement_tests=['MissingTests/never runs']), 'tier-plan-replacement'),
+            ('unknown smoke reference', lambda p: p['inventory'][0].update(smoke_flows=['missing']), 'tier-plan-replacement'),
+            ('missing smoke mapping', lambda p: next(r for r in p['inventory'] if r['smoke_flows']).update(smoke_flows=[]), 'tier-plan-replacement'),
+            ('wrong source configuration', lambda p: p['smoke_flows'][0].update(configuration='Release'), 'tier-plan-smoke-source'),
+            ('wrong selector', lambda p: p['smoke_flows'][0]['source'].update(selector='MissingUITests/testNoSuchMethod'), 'tier-plan-smoke-source'),
+            ('wrong fixture', lambda p: p['smoke_flows'][0].update(fixture='b'), 'tier-plan-smoke-contract'),
+            ('lost assertion boundary', lambda p: p['smoke_flows'][0].update(must_not_assert=[]), 'tier-plan-smoke-contract'),
+            ('empty user path', lambda p: p['smoke_flows'][0].update(user_path=''), 'tier-plan-smoke-contract'),
+            ('missing weekly group', lambda p: p['weekly_human_review']['groups'].pop(), 'tier-plan-human-review'),
+            ('missing review recording', lambda p: p['weekly_human_review']['groups'][0].update(recordings=[]), 'tier-plan-human-review'),
+            ('unknown review reference', lambda p: p['inventory'][0].update(human_review_groups=['missing']), 'tier-plan-replacement'),
+            ('missing release device', lambda p: p['release_full_set'].pop(), 'tier-plan-release'),
+            ('missing release smoke', lambda p: p['release_full_set'][0]['smoke_flows'].pop(), 'tier-plan-release'),
+            ('missing release visuals', lambda p: p['release_full_set'][0].update(human_review_groups=[]), 'tier-plan-release'),
+            ('missing Release build', lambda p: p['release_full_set'][0].update(configurations=['Debug']), 'tier-plan-release'),
+            ('malformed inventory', lambda p: p.update(inventory=None), 'tier-plan-shape'),
+        )
+        for label, mutate, expected in mutations:
+            with self.subTest(mutation=label):
+                changed = copy.deepcopy(plan)
+                mutate(changed)
+                self.assertIn(expected, conv.validate_test_tier_plan(changed, *context))
+        self.assertEqual([], conv.check_test_tier_plan(REPO_ROOT))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "scripts").mkdir()
+            (root / conv.TEST_TIER_PLAN_PATH).write_text('{"schema_version":')
+            self.assertEqual(["tier-plan-input"], rules(conv.check_test_tier_plan(root)))
+            self.assertEqual(1, conv.main(["--root", directory]))
+
     def test_every_direct_ui_case_forwards_the_first_failure_before_xctest(self):
         import tempfile
         hook = "override func record(_ issue: XCTIssue) { FirstFailureEvidence.record(self, issue: issue); super.record(issue) }"

@@ -1,5 +1,11 @@
 # Strict runner warm-build tracer
 
+The approved [target tier plan](TESTING.md#approved-target-tiers-planning-only)
+records future rule, smoke and human-review responsibilities. It supplies no
+runner inputs. All strict suites, assertions, matrix rows and verdict contracts
+in this guide remain active during wave one; none retire before mutation-proven
+replacement coverage and the separately reviewed execution switch.
+
 The informational `ci-strict-tracer` workflow runs on the [pinned hosted toolchain](CI_TOOLCHAIN.md)
 only for pull requests touching its workflow, strict runner modules/tests or tracer
 manifest, and through `workflow_dispatch`. Other PRs and main pushes do not trigger it.

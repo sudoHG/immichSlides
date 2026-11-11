@@ -22,6 +22,7 @@ from pathlib import Path
 TARGET_GLOBS = ("immichSlidesTests/*.swift", "immichSlidesUITests/*.swift", "TestSupport/*.swift")
 ALLOWLIST_PATH = "scripts/test_conventions_allowlist.json"
 TIMEOUT_ALLOWLIST_PATH = "scripts/test_timeout_allowlist.json"
+TEST_TIER_PLAN_PATH = "scripts/ci-test-tiers.json"
 
 # Swift Testing functions that intentionally keep a plain (non-raw-identifier) name. Selected by the
 # scripts that migrated the rest of the suite to sentence-style raw identifiers; see docs/TESTING.md #2.
@@ -1094,6 +1095,113 @@ def partition_against_allowlist(violations: list[Violation], allowlist: list[dic
     return unallowed, stale
 
 
+def test_tier_context(root: Path):
+    """Read only public source inventories; this plan never supplies execution selectors."""
+    from ci_population import swift_identities
+    from run_strict_e2e import resolve_suite_selector
+    from ui_test_inventory import parse_ui_tests
+
+    _, methods, errors, _ = parse_ui_tests({p.name: p.read_text(encoding="utf-8")
+                                          for p in (root / "immichSlidesUITests").glob("*.swift")})
+    if errors:
+        raise ValueError("; ".join(errors))
+    ui = {f"{suite}/{method}": platforms for suite, entries in methods.items()
+          for method, platforms in entries.items()}
+    cases = json.loads((root / "scripts/nightly-matrix.json").read_text(encoding="utf-8"))["cases"]
+    strict = {}
+    for case in cases:
+        key = "|".join(case[field] for field in ("suite", "scenario", "device", "configuration", "fixture"))
+        strict[key] = dict(case, selector=resolve_suite_selector(case["platform"], case["suite"]).split("/", 1)[1])
+    sources = {p.name: p.read_text(encoding="utf-8") for p in (root / "immichSlidesTests").glob("*.swift")}
+    units = {entry["key"] for platform in ("ios", "tvos") for entry in swift_identities(sources, platform)}
+    return ui, strict, units
+
+
+def validate_test_tier_plan(plan, ui, strict, units) -> list[str]:
+    """Reject incomplete migration accounting without changing any running population."""
+    errors = []
+
+    def check(condition, rule):
+        if not condition and rule not in errors:
+            errors.append(rule)
+
+    try:
+        check(type(plan["schema_version"]) is int and plan["schema_version"] == 1, "tier-plan-version")
+        check(plan["mode"] == "planning-only", "tier-plan-mode")
+        migration = plan["migration"]
+        check(migration["wave_one_removes_ui_tests"] is False and migration["app_behavior"] == "unchanged"
+              and migration["yellow_and_retry"] == "frozen-no-new-exceptions"
+              and migration["shadow_runs"] == {"minimum": 5, "maximum": 7}
+              and migration["executed_nights_after_switch"] == 10
+              and migration["unexplained_red_allowed"] == 0 and migration["history_readable_days"] == 90
+              and bool(migration["replacement_gate"]), "tier-plan-migration")
+        flows = plan["smoke_flows"]
+        flow_ids = [flow["id"] for flow in flows]
+        additions = {"tv-pause-resume", "tv-server-switch", "ipad-first-boot", "ipad-background-return"}
+        check(len(flow_ids) == len(set(flow_ids)) == 23
+              and Counter(flow["device"] for flow in flows) == {"iphone": 8, "ipad": 5, "tv": 10}
+              and Counter(flow["selection_basis"] for flow in flows) == {"shared-core": 19, "maintainer-addition": 4}
+              and {flow["id"] for flow in flows if flow["selection_basis"] == "maintainer-addition"} == additions,
+              "tier-plan-smoke-population")
+        for flow in flows:
+            source = flow["source"]
+            platform = "tvos" if flow["device"] == "tv" else "ios"
+            valid = source["selector"] in ui and platform in ui[source["selector"]]
+            if source["kind"] == "strict":
+                case = strict.get(source["identifier"], {})
+                valid = valid and all(case.get(key) == flow[key] for key in ("device", "configuration", "fixture"))
+                valid = valid and case.get("selector") == source["selector"]
+            else:
+                valid = valid and source["kind"] == "ui" and source["identifier"] == source["selector"]
+            check(valid, "tier-plan-smoke-source")
+            check(flow["fixture"] == "a" and flow["configuration"] in {"Debug", "Release"}
+                  and bool(flow["user_path"].strip()) and set(flow["must_not_assert"]) == {
+                      "mid-animation-pixels", "second-level-windows", "glyph-identity"}, "tier-plan-smoke-contract")
+        groups = plan["weekly_human_review"]["groups"]
+        group_ids = {group["id"] for group in groups}
+        check(len(groups) == len(group_ids) == 6 and all(
+            group["screenshots"] and group["recordings"] and group["look_for"] and group["devices"]
+            for group in groups), "tier-plan-human-review")
+        rows = plan["inventory"]
+        keys = [(row["kind"], row["identifier"]) for row in rows]
+        expected = {("ui", key) for key in ui} | {("strict", key) for key in strict}
+        check(len(keys) == len(set(keys)) and set(keys) == expected, "tier-plan-inventory")
+        for row in rows:
+            check(row["target_home"] in {"unit", "smoke", "human-review", "delete"}, "tier-plan-home")
+            # Wave one records candidates; no App mutation receipts have been established yet.
+            check(row["status"] == "pending", "tier-plan-coverage")
+            expected_flows = {flow["id"] for flow in flows if
+                              (flow["source"]["kind"], flow["source"]["identifier"]) == (row["kind"], row["identifier"])
+                              or row["kind"] == "ui" and flow["source"]["selector"] == row["identifier"]}
+            check(set(row["replacement_tests"]) <= units and set(row["smoke_flows"]) == expected_flows
+                  and bool(expected_flows) == (row["target_home"] == "smoke")
+                  and bool(row["human_review_groups"]) and set(row["human_review_groups"]) <= group_ids,
+                  "tier-plan-replacement")
+        releases = plan["release_full_set"]
+        check(len(releases) == 3 and {entry["device"] for entry in releases} == {"iphone", "ipad", "tv"},
+              "tier-plan-release")
+        for entry in releases:
+            device = entry["device"]
+            check(set(entry["smoke_flows"]) == {flow["id"] for flow in flows if flow["device"] == device}
+                  and set(entry["human_review_groups"]) == {group["id"] for group in groups if device in group["devices"]}
+                  and set(entry["configurations"]) == {"Debug", "Release"}
+                  and entry["unit_platform"] == ("tvos" if device == "tv" else "ios")
+                  and bool(entry["unit_and_interface_scope"]) and bool(entry["visual_variants"])
+                  and bool(entry["additional_review"]), "tier-plan-release")
+    except (KeyError, TypeError, AttributeError):
+        errors.append("tier-plan-shape")
+    return errors
+
+
+def check_test_tier_plan(root: Path) -> list[Violation]:
+    try:
+        plan = json.loads((root / TEST_TIER_PLAN_PATH).read_text(encoding="utf-8"))
+        errors = validate_test_tier_plan(plan, *test_tier_context(root))
+    except (OSError, ValueError) as error:
+        return [Violation(TEST_TIER_PLAN_PATH, 1, "tier-plan-input", "target tiers", str(error))]
+    return [Violation(TEST_TIER_PLAN_PATH, 1, rule, "target tiers", rule) for rule in errors]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--root", default=".", help="repository root")
@@ -1118,6 +1226,7 @@ def main(argv: list[str] | None = None) -> int:
     ordinary = [v for v in violations if v.rule != "product-wait-factor"]
     unallowed, stale = partition_against_allowlist(ordinary, allowlist)
     unallowed.extend(v for v in violations if v.rule == "product-wait-factor")
+    unallowed.extend(check_test_tier_plan(root))
 
     timeout_path = root / TIMEOUT_ALLOWLIST_PATH
     timeout_allowed = json.loads(timeout_path.read_text(encoding="utf-8")) if timeout_path.is_file() else []

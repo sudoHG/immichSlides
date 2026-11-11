@@ -1,5 +1,13 @@
 # UI tier: iPhone, iPad and Apple TV
 
+The approved [target tiers](TESTING.md#approved-target-tiers-planning-only) move
+rules to deterministic App tests and visual material to human review, with 23
+short nightly smoke flows. The versioned
+[`ci-test-tiers.json`](../scripts/ci-test-tiers.json) is planning data only; it
+does not select or deselect UI tests. The populations and producer/reader protocol
+below continue unchanged until a separately reviewed switch after replacement
+coverage and shadow execution. No new yellow or retry exception is part of migration.
+
 `ci-ui` runs on pull requests and pushes to `main`, independently of `ci-gate`.
 It is informational: only the [trusted publisher](CI_PUBLISHER.md) writes its
 commit status. No required check or repository setting changes here. All three

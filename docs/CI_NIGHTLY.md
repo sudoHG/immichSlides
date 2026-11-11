@@ -1,5 +1,13 @@
 # Nightly strict and fixture UI tiers
 
+The approved [target tier model](TESTING.md#approved-target-tiers-planning-only)
+and [`ci-test-tiers.json`](../scripts/ci-test-tiers.json) plan 23 short nightly
+smoke flows and weekly human visual review. They are planning-only: this guide
+describes the current complete strict and fixture UI execution. Wave one removes
+no coverage or execution, and freezes yellow/retry exceptions. Switching requires
+mutation-proven rule coverage, 5–7 shadow runs and the separately reviewed activation;
+completion then needs 10 actually executed nights without unexplained red.
+
 `ci-nightly` schedules a primary run at 14:07 UTC (22:07 Beijing) and a backup at
 19:07 UTC (03:07 Beijing the next day) on the default branch, avoiding the busy
 top of the hour, and supports
@@ -352,7 +360,8 @@ New default-plan tests join this population automatically. Evidence plans, stric
 tests, offline performance and the uncapped benchmark are outside this UI tier.
 It also runs the
 [nightly-default locale screenshots](CI_UI.md#nightly-default-locale-screenshots),
-which pull requests omit unless they change a string catalog or a captured screen.
+which current packed pull requests omit by screenshot method name, including when
+a string catalog or captured screen changes.
 
 The existing credential-free `live-build` jobs produce one iOS and one tvOS archive
 for the same event, source, run and attempt. iPhone/iPad share the iOS archive and
