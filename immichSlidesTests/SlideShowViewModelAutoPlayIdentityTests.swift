@@ -119,10 +119,11 @@ struct SlideShowViewModelAutoPlayIdentityTests {
         #expect(abs(secondDeadline - clock.now - interval) < 0.0001)
     }
 
-    @Test
-    func `continuing after a paused next schedules a full interval without catching up`() throws {
+    @Test(arguments: [8.0])
+    func `continuing after a paused next schedules a full interval without catching up`(
+        interval: TimeInterval
+    ) throws {
         let clock = VirtualClock()
-        let interval = PlaybackSettings().intervalSeconds
         let (viewModel, store) = makeIsolatedAutoPlayViewModel(clock: clock, interval: interval)
         defer { store.clear() }
         completeCurrentScenePresentation(viewModel, clock: clock)
