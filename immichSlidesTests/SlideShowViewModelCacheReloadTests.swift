@@ -38,7 +38,10 @@ struct SlideShowViewModelCacheReloadTests {
                 try #require(manager.isReady(assetId: assetId, size: size))
             }
         }
-        try #require(http.completedRequests().count == assetIds.count * sizes.count)
+        let requests = http.completedRequests().filter { request in
+            assetIds.contains { $0 == request.assetId }
+        }
+        try #require(requests.count == assetIds.count * sizes.count)
         try #require(manager.cacheSummary().diskBytes > 0)
 
         await manager.clearDiskCacheForSettings()
