@@ -957,11 +957,14 @@ class RepositoryTests(unittest.TestCase):
             ('missing UI method', lambda p: p['inventory'].pop(), 'tier-plan-inventory'),
             ('duplicate strict row', lambda p: p['inventory'].append(p['inventory'][0]), 'tier-plan-inventory'),
             ('unknown home', lambda p: p['inventory'][0].update(target_home='ignore'), 'tier-plan-home'),
-            ('unproved coverage', lambda p: p['inventory'][0].update(status='covered'), 'tier-plan-coverage'),
+            ('unproved coverage', lambda p: (p['inventory'][0].update(status='covered'),
+                                            p['inventory'][0].pop('mutation_proof', None)), 'tier-plan-coverage'),
             ('unknown status', lambda p: p['inventory'][0].update(status='done'), 'tier-plan-coverage'),
             ('nonexistent replacement', lambda p: p['inventory'][0].update(replacement_tests=['MissingTests/never runs']), 'tier-plan-replacement'),
             ('unknown smoke reference', lambda p: p['inventory'][0].update(smoke_flows=['missing']), 'tier-plan-replacement'),
-            ('missing smoke mapping', lambda p: next(r for r in p['inventory'] if r['smoke_flows']).update(smoke_flows=[]), 'tier-plan-replacement'),
+            ('missing smoke mapping', lambda p: next(r for r in p['inventory']
+                                                    if r['identifier'] == p['smoke_flows'][0]['source']['identifier']
+                                                    ).update(smoke_flows=[]), 'tier-plan-replacement'),
             ('wrong source configuration', lambda p: p['smoke_flows'][0].update(configuration='Release'), 'tier-plan-smoke-source'),
             ('wrong selector', lambda p: p['smoke_flows'][0]['source'].update(selector='MissingUITests/testNoSuchMethod'), 'tier-plan-smoke-source'),
             ('wrong fixture', lambda p: p['smoke_flows'][0].update(fixture='b'), 'tier-plan-smoke-contract'),
