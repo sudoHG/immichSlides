@@ -35,11 +35,12 @@ PROBE_ATTEMPTS = 2
 class SnapshotCleanupError(RuntimeError):
     """Live or unverifiable child processes require retaining their source tree."""
 
-    def __init__(self, message, *, phase="child-processes", cause=None, retained_path=None):
+    def __init__(self, message, *, phase="child-processes", cause=None, retained_path=None, entry_point_exit_code=None):
         super().__init__(message)
         self.phase = phase
         self.error_type = type(cause).__name__ if cause is not None else type(self).__name__
         self.retained_path = retained_path
+        self.entry_point_exit_code = entry_point_exit_code
 
     def details(self):
         return {"phase": self.phase, "error_type": self.error_type, "retained_path": self.retained_path}
@@ -348,8 +349,12 @@ def run_child(command, root, environment):
             if probe_gap:
                 with ignored_cancellation_signals():
                     sweep_tagged_groups(token)
-        except (OSError, ValueError, subprocess.SubprocessError) as error:
-            raise SnapshotCleanupError("child cleanup could not be verified") from error
+        except (OSError, ValueError, subprocess.SubprocessError, SnapshotCleanupError) as error:
+            if isinstance(error, SnapshotCleanupError):
+                error.entry_point_exit_code = code
+                raise
+            raise SnapshotCleanupError("child cleanup could not be verified", cause=error,
+                                       entry_point_exit_code=code) from error
         return code
 
 
@@ -414,7 +419,7 @@ def launch(script, arguments):
         print("Local mode: " + receipt["mode"] + "; tested tree: " + (receipt["tree_sha"] or "unrecorded (original checkout)"), flush=True)
         code = run_child(command, checkout, environment)
         if receipt["mode"] != "private" and (checkout.parent / "cleanup-failed").exists():
-            raise SnapshotCleanupError("entry-point cleanup failed")
+            raise SnapshotCleanupError("entry-point cleanup failed", phase="entry-point-cleanup", entry_point_exit_code=code)
         return code
 
     def record_exit(receipt, code):
@@ -442,8 +447,9 @@ def launch(script, arguments):
         if receipt is not None:
             if isinstance(error, SnapshotCleanupError):
                 receipt["cleanup_failure"] = error.details()
-                if code is not None:
-                    receipt["entry_point_exit_code"] = code
+                observed_exit = code if code is not None else error.entry_point_exit_code
+                if observed_exit is not None:
+                    receipt["entry_point_exit_code"] = observed_exit
                 if (script.name == "run_strict_e2e.py" and option_value(remaining, {"--suite"}) == "smoke-flow"
                         and output is not None and (output / "smoke-flow-results.json").is_file()):
                     from strict_e2e_smoke import record_cleanup_failure

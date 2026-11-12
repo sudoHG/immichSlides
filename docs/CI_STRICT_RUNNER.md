@@ -110,8 +110,10 @@ success. Aggregation errors use `official-result`; final write errors use
 
 Local snapshot cleanup keeps its existing single 30-second occupancy probe and
 120-second Git removal deadline. A timeout or unverifiable occupancy retains the
-snapshot and exits 2. `local-snapshot.json` records `entry_point_exit_code` separately
-from the final exit, plus `cleanup_failure` with its phase, error type and retained
+snapshot and exits 2. When the launcher observed the child's exit before cleanup
+failed, `local-snapshot.json` records `entry_point_exit_code` separately from the
+final exit; an unavailable child exit is omitted. This includes post-exit child-group
+cleanup and the entry-point cleanup marker. It also records `cleanup_failure` with its phase, error type and retained
 path. Smoke roots become FAILED with a separate `cleanup` group gate before any
 per-flow rewrites; existing native failures and official per-flow summaries remain
 intact. The public gate records the phase, type and retention Boolean, without the

@@ -10,13 +10,59 @@ import sys
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
+from contextlib import contextmanager
 
 import ci_local
 from ci_local import SnapshotCleanupError, clean_environment, local_main, select_mode, snapshot
 
 
 class LocalModeTests(unittest.TestCase):
+    def test_child_cleanup_failure_keeps_the_observed_child_exit(self):
+        for failed_probe in (True, False):
+            with self.subTest(failed_probe=failed_probe):
+                process = Mock(pid=12345)
+                process.wait.return_value = 65
+                with patch("ci_local.subprocess.Popen", return_value=process), \
+                        patch("ci_local.remember_groups"), patch("ci_local.signal_groups"), \
+                        patch("ci_local.wait_for_groups", side_effect=subprocess.TimeoutExpired("ps", 30)
+                              if failed_probe else lambda *args: False), \
+                        self.assertRaises(SnapshotCleanupError) as caught:
+                    ci_local.run_child(["synthetic-child"], Path("."), {})
+                self.assertEqual(65, caught.exception.entry_point_exit_code)
+
+    def test_launch_cleanup_receipt_keeps_available_child_exits_and_omits_unknown_exits(self):
+        for failure in ("child-cleanup", "entry-point-marker", "unknown-exit"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory, "source").resolve()
+                entry = root / "scripts/run_strict_e2e.py"
+                entry.parent.mkdir(parents=True)
+                entry.write_text("pass\n")
+                evidence = Path(directory, "evidence")
+                receipt = {"mode": "snapshot", "tree_sha": "a" * 40}
+                @contextmanager
+                def isolated(*args, **kwargs):
+                    yield root, receipt
+                def child(*args, **kwargs):
+                    if failure == "entry-point-marker":
+                        (root.parent / "cleanup-failed").touch()
+                        return 65
+                    error = SnapshotCleanupError("synthetic child cleanup failed")
+                    if failure == "child-cleanup":
+                        error.entry_point_exit_code = 65
+                    raise error
+                with patch("ci_local.snapshot", isolated), patch("ci_local.run_child", side_effect=child):
+                    with self.assertRaises(SnapshotCleanupError):
+                        ci_local.launch(entry, ["--suite", "smoke-flow", "--evidence-dir", str(evidence)])
+                saved = json.loads((evidence / "local-snapshot.json").read_text())
+                self.assertEqual(2, saved["exit_code"])
+                if failure == "unknown-exit":
+                    self.assertNotIn("entry_point_exit_code", saved)
+                else:
+                    self.assertEqual(65, saved["entry_point_exit_code"])
+                self.assertEqual("entry-point-cleanup" if failure == "entry-point-marker" else "child-processes",
+                                 saved["cleanup_failure"]["phase"])
+
     def test_snapshot_cleanup_failure_records_phase_retention_and_preserves_native_failure(self):
         import strict_e2e_smoke as smoke
         for failure in ("occupancy-timeout", "occupancy-busy", "removal-timeout", "directory-failure", "evidence-error"):
