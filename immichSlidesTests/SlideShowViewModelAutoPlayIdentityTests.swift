@@ -153,6 +153,95 @@ struct SlideShowViewModelAutoPlayIdentityTests {
         #expect(viewModel.safeCurrentScene?.primaryAssetId == "autoplay-2")
     }
 
+    @Test(arguments: [4.0])
+    func
+        `the automatic transition after continuing a paused next reaches a ready stable photo within four seconds`(
+            maximumTransitionSeconds: TimeInterval
+        )
+        throws
+    {
+        let clock = VirtualClock()
+        let (viewModel, store) = makeIsolatedAutoPlayViewModel(clock: clock, interval: 8)
+        defer { store.clear() }
+        completeCurrentScenePresentation(viewModel, clock: clock)
+        viewModel.toggleAutoPlayFromUserInteraction()
+        viewModel.requestNextScene()
+        completeCurrentScenePresentation(viewModel, clock: clock)
+        viewModel.toggleAutoPlayFromUserInteraction()
+        let onset = try #require(viewModel.scenePresentationWakeUpScheduler.scheduledDeadlineForTesting)
+        clock.now = onset
+        #expect(viewModel.fireScheduledScenePresentationWakeUpForTesting() == onset)
+        let incoming = try #require(viewModel.sceneRenderSnapshot.layers.last { $0.role == .incoming })
+        let scene = try #require(viewModel.scene(for: incoming))
+        for slot in scene.photoSlots {
+            viewModel.rendererDecoded(
+                SceneRendererIdentity(
+                    generation: incoming.identity.generation,
+                    attemptID: viewModel.scenePresentationRendererAttemptID(for: incoming),
+                    sceneID: incoming.identity.sceneID,
+                    slotID: slot.id,
+                    assetID: slot.asset.id
+                ))
+        }
+        let completion = try #require(viewModel.scenePresentationWakeUpScheduler.scheduledDeadlineForTesting)
+        // The lifecycle contract requires the new photo stable by onset + 4, independently of pacing constants.
+        #expect(completion > onset)
+        #expect(completion <= onset + maximumTransitionSeconds)
+        clock.now = completion
+        #expect(viewModel.fireScheduledScenePresentationWakeUpForTesting() == completion)
+        let stable = viewModel.sceneRenderSnapshot
+        #expect(stable.phase == .stablePhoto)
+        #expect(stable.layers.count == 1)
+        #expect(stable.layers.first?.identity == incoming.identity)
+        #expect(stable.layers.first?.opacity == 1)
+        #expect(stable.layers.first?.isPresentationReady == true)
+        #expect(viewModel.safeCurrentScene?.primaryAssetId == "autoplay-2")
+    }
+
+    @Test(arguments: [8.0])
+    func `a settings refresh applies autoplay changes to a non observing player without replacing its scene`(
+        interval: TimeInterval
+    ) throws {
+        let sharedStore = PlaybackSettingsStore()
+        let savedSharedSettings = sharedStore.load()
+        sharedStore.save(PlaybackSettings(defaultPlaybackMode: .random))
+        defer {
+            if let savedSharedSettings { sharedStore.save(savedSharedSettings) } else { sharedStore.clear() }
+        }
+        let clock = VirtualClock()
+        let (viewModel, store) = makeIsolatedAutoPlayViewModel(clock: clock, interval: interval)
+        defer { store.clear() }
+        completeCurrentScenePresentation(viewModel, clock: clock)
+        let scene = try #require(viewModel.safeCurrentScene)
+        var settings = try #require(store.load())
+        settings.autoPlayEnabled = false
+        store.save(settings)
+        #expect(viewModel.isAutoPlay)
+
+        viewModel.refreshPlaybackRelatedSettings(
+            applyExifVisibility: { _ in }, applyDebugOverlayVisibility: { _ in })
+        #expect(!viewModel.isAutoPlay)
+        #expect(viewModel.sceneRenderSnapshot.phase == .paused)
+        #expect(viewModel.safeCurrentScene?.id == scene.id)
+        #expect(viewModel.scenePresentationWakeUpScheduler.scheduledDeadlineForTesting == nil)
+        let pausedLayer = try #require(viewModel.sceneRenderSnapshot.layers.first)
+
+        clock.now += interval * 10
+        settings.autoPlayEnabled = true
+        store.save(settings)
+        #expect(!viewModel.isAutoPlay)
+        viewModel.refreshPlaybackRelatedSettings(
+            applyExifVisibility: { _ in }, applyDebugOverlayVisibility: { _ in })
+        #expect(viewModel.isAutoPlay)
+        #expect(viewModel.sceneRenderSnapshot.phase == .stablePhoto)
+        #expect(viewModel.safeCurrentScene?.id == scene.id)
+        let resumedLayer = try #require(viewModel.sceneRenderSnapshot.layers.first)
+        #expect(resumedLayer.motionActiveTime == pausedLayer.motionActiveTime)
+        #expect(resumedLayer.opacity == pausedLayer.opacity)
+        let deadline = try #require(viewModel.scenePresentationWakeUpScheduler.scheduledDeadlineForTesting)
+        #expect(abs(deadline - clock.now - interval) < 0.0001)
+    }
+
     @Test(arguments: [false, true])
     func `overlapping user and background pauses resume only after both reasons clear with the remaining interval`(
         shouldReturnToForegroundFirst: Bool

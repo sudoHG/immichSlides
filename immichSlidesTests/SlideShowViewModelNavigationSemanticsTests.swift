@@ -161,6 +161,170 @@ struct SlideShowViewModelNavigationSemanticsTests {
         #expect(vm.currentIndex == secondTargetIndex)
     }
 
+    @Test(arguments: [8.0])
+    func
+        `a failed initial renderer is skipped without entering history and navigation resumes from the recovered scene`(
+            interval: TimeInterval
+        )
+        async throws
+    {
+        let store = PlaybackSettingsStore()
+        store.save(PlaybackSettings(autoPlayEnabled: true, intervalSeconds: interval, displayMode: .singlePhoto))
+        defer { store.clear() }
+        let vm = SlideShowViewModel(settingsStore: store, observeSettingsChanges: false)
+        resetDownloadManagerState(vm.downloadManager)
+        vm.scenePresentationTimestampProviderForTesting = { 0 }
+        vm.initialPhotoLoadHookForTesting = { _ in }
+        vm.backgroundPreloadHookForTesting = { _, _, _ in }
+        vm.indexChangePhotoLoadHookForTesting = { assetID, size in
+            markReady(assetId: assetID, size: size, in: vm.downloadManager)
+        }
+        let assets = (0..<5).map { makeAsset(id: "recovery-\($0)", width: 6000, height: 4000) }
+        markReady(assets, in: vm.downloadManager)
+        vm.loadAssetsHookForTesting = { _ in assets }
+        await vm.firstPreload()
+        let failedLayer = try #require(vm.sceneRenderSnapshot.layers.last { $0.role == .incoming })
+        #expect(vm.safeCurrentScene?.primaryAssetId == "recovery-0")
+        failSceneRendererThroughRetryBudget(layer: failedLayer, viewModel: vm)
+        try #require(await waitUntilForTesting { vm.safeCurrentScene?.primaryAssetId == "recovery-1" })
+        completeCurrentScenePresentation(vm)
+        #expect(!vm.isLoading)
+        #expect(vm.sceneRenderSnapshot.phase == .stablePhoto)
+        #expect(vm.sceneRenderSnapshot.layers.count == 1)
+        #expect(vm.sceneRenderSnapshot.layers.first?.isPresentationReady == true)
+        #expect(vm.sceneRenderSnapshot.layers.first?.opacity == 1)
+        #expect(vm.visibleOverlayScene?.primaryAssetId == "recovery-1")
+        #expect(vm.canRequestPreviousScene == false)
+        try expectHistory(vm, assetIds: ["recovery-1"], cursor: 0)
+
+        vm.toggleAutoPlayFromUserInteraction()
+        for (isNext, expectedAsset, cursor) in [
+            (true, "recovery-2", 1), (false, "recovery-1", 0), (true, "recovery-2", 1)
+        ] {
+            if isNext { vm.requestNextScene() } else { vm.requestPreviousScene() }
+            completeCurrentScenePresentation(vm)
+            #expect(!vm.isAutoPlay)
+            #expect(vm.visibleOverlayScene?.primaryAssetId == expectedAsset)
+            try expectHistory(vm, assetIds: ["recovery-1", "recovery-2"], cursor: cursor)
+        }
+        vm.toggleAutoPlayFromUserInteraction()
+        let deadline = try #require(vm.scenePresentationWakeUpScheduler.scheduledDeadlineForTesting)
+        #expect(vm.visibleOverlayScene?.primaryAssetId == "recovery-2")
+        vm.scenePresentationTimestampProviderForTesting = { deadline }
+        #expect(vm.fireScheduledScenePresentationWakeUpForTesting() == deadline)
+        completeCurrentScenePresentation(vm)
+        #expect(vm.visibleOverlayScene?.primaryAssetId == "recovery-3")
+        try expectHistory(vm, assetIds: ["recovery-1", "recovery-2", "recovery-3"], cursor: 2)
+    }
+
+    @Test(arguments: [false, true])
+    func `a late download and renderer callback cannot replace the paused layers overlay or history`(
+        isInitialLoad: Bool
+    ) async throws {
+        let store = PlaybackSettingsStore()
+        defer { store.clear() }
+        let vm: SlideShowViewModel
+        if isInitialLoad {
+            store.save(PlaybackSettings(autoPlayEnabled: false))
+            vm = SlideShowViewModel(settingsStore: store, observeSettingsChanges: false)
+            resetDownloadManagerState(vm.downloadManager)
+            vm.scenePresentationTimestampProviderForTesting = { 0 }
+            vm.updateSmartFillSurfaceForTesting(
+                PlaybackSmartFillSurface(
+                    pixelSize: iPadLandscapePlanningPixelSize, profile: .iPad, orientation: .landscape))
+            let assets = (0..<6).map { makeAsset(id: "asset-\($0)", width: 6000, height: 4000) }
+            markReady(Array(assets.dropFirst()), in: vm.downloadManager)
+            vm.loadAssetsHookForTesting = { _ in assets }
+            vm.backgroundPreloadHookForTesting = { _, _, _ in }
+            vm.transitionWindowPreloadHookForTesting = { _, _, _ in }
+        } else {
+            vm = makeSmartFillViewModel()
+            vm.toggleAutoPlayFromUserInteraction()
+        }
+        var finishOldLoad: CheckedContinuation<Void, Never>?
+        var didStartOldLoad = false
+        var didFinishOldLoad = false
+        var didReleaseOldLoad = false
+        let oldAssetID = isInitialLoad ? "asset-0" : "asset-1"
+        let loadPhoto: @MainActor (String, ThumbnailSize) async -> Void = { assetID, size in
+            if assetID == oldAssetID, size == .fullsize, !didStartOldLoad, !didReleaseOldLoad {
+                didStartOldLoad = true
+                await withCheckedContinuation { finishOldLoad = $0 }
+                didFinishOldLoad = true
+            }
+            markReady(assetId: assetID, size: size, in: vm.downloadManager)
+        }
+        vm.indexChangePhotoLoadHookForTesting = loadPhoto
+        var firstPreloadTask: Task<Void, Never>?
+        defer {
+            didReleaseOldLoad = true
+            finishOldLoad?.resume()
+            firstPreloadTask?.cancel()
+        }
+
+        if isInitialLoad {
+            vm.initialPhotoLoadHookForTesting = { await loadPhoto($0, .fullsize) }
+            firstPreloadTask = Task { await vm.firstPreload() }
+        } else {
+            vm.requestNextScene()
+        }
+        try #require(await waitUntilForTesting { finishOldLoad != nil })
+        let oldLayer = try #require(vm.sceneRenderSnapshot.layers.last { $0.role == .incoming })
+        let oldDownload = try #require(vm.currentSceneDownloadCompletion)
+        #expect(oldDownload.identity == oldLayer.identity)
+        let oldScene = try #require(vm.scene(for: oldLayer))
+        let oldSlot = try #require(oldScene.photoSlots.first)
+        let oldRenderer = SceneRendererIdentity(
+            generation: oldLayer.identity.generation,
+            attemptID: vm.scenePresentationRendererAttemptID(for: oldLayer),
+            sceneID: oldLayer.identity.sceneID,
+            slotID: oldSlot.id,
+            assetID: oldSlot.asset.id
+        )
+        if isInitialLoad {
+            vm.requestNextScene()
+            completeCurrentScenePresentation(vm)
+        }
+        let initialScene = try #require(vm.visibleOverlayScene)
+        let seenAssetIDs = [isInitialLoad ? "asset-1" : "asset-0"]
+        #expect(initialScene.primaryAssetId == seenAssetIDs[0])
+        vm.requestNextScene()
+        let pending = vm.sceneRenderSnapshot
+        let newLayer = try #require(pending.layers.last { $0.role == .incoming })
+        #expect(vm.safeCurrentScene?.primaryAssetId == "asset-2")
+        #expect(!newLayer.isPresentationReady)
+        #expect(pending.phase == .paused)
+        try expectHistory(vm, assetIds: seenAssetIDs, cursor: 0)
+
+        vm.rendererDecoded(oldRenderer)
+        #expect(vm.sceneRenderSnapshot == pending)
+        #expect(vm.visibleOverlayScene?.id == initialScene.id)
+        try expectHistory(vm, assetIds: seenAssetIDs, cursor: 0)
+        didReleaseOldLoad = true
+        let continuation = finishOldLoad
+        finishOldLoad = nil
+        continuation?.resume()
+        try #require(await waitUntilForTesting { didFinishOldLoad })
+        await oldDownload.waitForDownloads()
+        await firstPreloadTask?.value
+        #expect(vm.sceneRenderSnapshot == pending)
+        #expect(vm.visibleOverlayScene?.id == initialScene.id)
+
+        completeCurrentScenePresentation(vm)
+        let settled = vm.sceneRenderSnapshot
+        let currentScene = try #require(vm.visibleOverlayScene)
+        #expect(settled.phase == .paused)
+        #expect(settled.layers.map(\.identity) == [newLayer.identity])
+        #expect(currentScene.primaryAssetId == "asset-2")
+        try expectHistory(vm, assetIds: seenAssetIDs + ["asset-2"], cursor: 1)
+        vm.scenePresentationTimestampProviderForTesting = { 3_600 }
+        vm.rendererDecoded(oldRenderer)
+        #expect(vm.sceneRenderSnapshot == settled)
+        #expect(vm.visibleOverlayScene?.id == currentScene.id)
+        #expect(vm.safeCurrentScene?.id == currentScene.id)
+        try expectHistory(vm, assetIds: seenAssetIDs + ["asset-2"], cursor: 1)
+    }
+
     @Test
     func
         `EXIF overlay owner during a transition animation stays on the committed current scene and is not hidden by the transition state`()
