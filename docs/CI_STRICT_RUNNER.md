@@ -1,5 +1,89 @@
 # Strict runner warm-build tracer
 
+## Short smoke-flow suite
+
+`--suite smoke-flow` is an independent, first-result-only runner for the 23 approved
+device flows in the CI-trusted [`smoke-flows.json`](../scripts/smoke-flows.json).
+Changing that manifest requires exact-head CI approval. The host conventions checker
+compares every ID, device, platform, configuration and fixture list with the approved
+tier plan, rejects missing/duplicate flows, and resolves every selector against its
+compiled platform. The tier plan remains planning data; it does not select execution.
+
+```bash
+python3 -B scripts/run_strict_e2e.py --suite smoke-flow --platform ios \
+  --smoke-device iphone --configuration Debug \
+  --destination 'platform=iOS Simulator,id=<UDID>' \
+  --warm-up-only --derived-data-path '<task-derived>/iphone-debug' \
+  --evidence-dir '<fresh-outside-repo>/warm-iphone-debug'
+python3 -B scripts/run_strict_e2e.py --suite smoke-flow --platform ios \
+  --smoke-device iphone --configuration Debug \
+  --destination 'platform=iOS Simulator,id=<UDID>' \
+  --test-without-building --derived-data-path '<task-derived>/iphone-debug' \
+  --evidence-dir '<fresh-outside-repo>/iphone-debug'
+```
+
+Use `ipad` with `ios`, or `tv` with `tvos`, and the matching pinned simulator.
+Configuration is explicit. A selection runs every matching flow in manifest order;
+an empty selection fails. Without explicit warm-up/reuse the runner builds once in
+disposable DerivedData. Reuse retains the strict signed Products/source identity checks.
+Smoke uses the existing UI-only `settings-resume` scheme with the explicitly requested
+Debug or Release configuration. This avoids building `@testable` unit targets against
+the non-testable Release App; App compiler settings and legacy suite routing stay unchanged.
+For local debugging, `--smoke-flow <manifest-id>` selects exactly that member of the
+device/configuration group. It rejects unknown IDs or members of another group and
+records `selection: single-flow`; a complete group records `selection: group`.
+Single-flow evidence cannot count as complete shadow execution. The warm build can
+be reused for either selection while source, device and configuration stay identical.
+Each flow gets a fresh uninstall, keychain/privacy reset and public loopback fixture A;
+TV server switching also starts B. No test or flow is retried, and smoke-flow grants
+no yellow outcome. Legacy suites, plans, matrix rows and assertions remain unchanged.
+
+One default unscaled **60-second** guard covers each iOS user path. The runner separately
+caps each native XCTest invocation at 180 seconds and enables XCTest's execution
+timeout at the same value. A stuck action records a failed flow and a nonzero suite
+exit; simulator reset, fixture preparation and official export retain their separate
+infrastructure bounds. `elapsed_seconds` measures native XCTest invocation time;
+`total_elapsed_seconds` also includes preparation/export/cleanup.
+
+`smoke-flow-results.json` and the root `case-manifest.json` contain ordered flow IDs,
+selectors, PASS/FAIL, elapsed seconds, exit codes and the first public failure message
+(null when unavailable). Each flow directory retains the standard `official-tests.json`,
+`official-summary.json`, fixture/reset records and private-result disposal/quarantine
+receipt. The root official summary sums only exported official outcomes; missing
+official evidence remains a failure. Public messages use the existing redacted failure
+projection. Original result bundles remain private and follow the strict disposal path.
+Screenshots, recordings, pixels, glyphs and second-level product windows are not smoke
+judges. The Debug iOS controls flow reads the existing scene AX probe; Release flows
+use real controls and persistence without DEBUG hooks. Synthetic PIN smoke uses the
+existing Debug UserDefaults path and does not prove production Keychain behavior.
+
+The per-flow record additionally carries `source_sha`, `failure_kind`,
+`official_execution_complete`, `official_summary`, `official_tests_sha256` and
+`request_logs`. `failure_kind` is `none`, `test`, `hang-guard`, `infrastructure`,
+`official-result` or `cleanup`; `test` means an officially failed selected method,
+not an established App cause. Official completeness requires exactly the selected
+method once, one passed or failed official execution, no skips and consistent summary
+counts. A failed method can be complete; passing still requires all official facts
+and exit zero. `source_sha` is the tested checkout commit in both root files and each
+flow; the warm identity separately binds source content. Local snapshots also retain
+`local-snapshot.json` with the caller commit, tested snapshot commit and tree SHA.
+
+Every flow retains the complete fixture request logs, including on failure, under
+`<flow-id>/private/service-a.log` and (when selected) `service-b.log`. These files are
+private evidence, not public records; the server's existing redaction stays intact.
+The public `request_logs` map contains only fixture key, availability state, byte count,
+SHA-256 and completed request count. It never contains request lines, URLs or headers.
+Consumers publish only the public records and approved official exports; they must
+not recursively publish the private evidence directory.
+
+Smoke classes are excluded from default fixture plans, hence PR area selection and
+complete nightly fixture shards. Core-area entries account for the source inventory
+without selecting excluded methods. Strict matrix selectors never name these classes.
+Each new UI method has its own `target_home: smoke` inventory row linking its device
+flows and review group; no existing inventory destination changes. Smoke is selected
+only through its manifest, outside legacy execution. Retirement and the nightly switch
+still require the approved shadow and executed-night gates.
+
 The approved [target tier plan](TESTING.md#approved-target-tiers-planning-only)
 records future rule, smoke and human-review responsibilities. It supplies no
 runner inputs. The unit-coverage PRs retire no strict assertions; duplicate-removal

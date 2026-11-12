@@ -942,6 +942,41 @@ class TimeoutLiteralTests(unittest.TestCase):
         self.assertEqual([], conv.check_product_wait_factor("immichSlides/A.swift", "// TestWait is test-only"))
 
 
+class SmokeManifestTests(unittest.TestCase):
+    def test_manifest_rejects_execution_and_compiled_selector_drift(self):
+        from strict_e2e_smoke import validate_manifest, unique_object
+        planned = [{"id": "iphone-first-boot", "device": "iphone", "configuration": "Debug", "fixture": "a"}]
+        manifest = {"schema_version": 1, "flows": [{"id": "iphone-first-boot", "device": "iphone",
+            "platform": "ios", "configuration": "Debug", "fixtures": ["a"], "selector": "BootUITests/testSave"}]}
+        methods = {"BootUITests/testSave": {"ios"}}
+        self.assertEqual(manifest["flows"], validate_manifest(manifest, planned, methods))
+        mutations = [
+            (lambda p: p.update(schema_version=True), "smoke-manifest-shape"),
+            (lambda p: p.update(flows=None), "smoke-manifest-shape"),
+            (lambda p: p.update(extra=True), "smoke-manifest-shape"),
+            (lambda p: p["flows"][0].update(extra=True), "smoke-manifest-shape"),
+            (lambda p: p["flows"].append(copy.deepcopy(p["flows"][0])), "smoke-manifest-population: duplicate iphone-first-boot"),
+            (lambda p: p["flows"].clear(), "smoke-manifest-population: missing iphone-first-boot"),
+            (lambda p: p["flows"][0].update(id="unknown"), "smoke-manifest-population: unknown unknown"),
+            (lambda p: p["flows"][0].update(device="ipad"), "smoke-manifest-mapping: iphone-first-boot device"),
+            (lambda p: p["flows"][0].update(platform="tvos"), "smoke-manifest-mapping: iphone-first-boot platform"),
+            (lambda p: p["flows"][0].update(configuration="Release"), "smoke-manifest-mapping: iphone-first-boot configuration"),
+            (lambda p: p["flows"][0].update(fixtures=["a", "b"]), "smoke-manifest-mapping: iphone-first-boot fixtures"),
+            (lambda p: p["flows"][0].update(selector="BootUITests/testMissing"), "smoke-manifest-selector: iphone-first-boot"),
+            (lambda p: p["flows"][0].update(selector=[]), "smoke-manifest-selector: iphone-first-boot"),
+        ]
+        for mutate, message in mutations:
+            with self.subTest(message=message):
+                changed = copy.deepcopy(manifest)
+                mutate(changed)
+                with self.assertRaisesRegex(ValueError, message):
+                    validate_manifest(changed, planned, methods)
+        with self.assertRaisesRegex(ValueError, "smoke-manifest-selector: iphone-first-boot"):
+            validate_manifest(manifest, planned, {"BootUITests/testSave": {"tvos"}})
+        with self.assertRaisesRegex(ValueError, "smoke-manifest-shape: duplicate JSON key schema_version"):
+            json.loads('{"schema_version":1,"schema_version":1,"flows":[]}', object_pairs_hook=unique_object)
+
+
 class RepositoryTests(unittest.TestCase):
     def test_target_tier_plan_rejects_population_drift_and_unproved_coverage(self):
         plan = json.loads((REPO_ROOT / conv.TEST_TIER_PLAN_PATH).read_text())

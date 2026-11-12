@@ -8104,5 +8104,52 @@ finally:
                 self.assertIn("CommandError: fixture failure", stderr.getvalue())
 
 
+class SmokeFlowResultTests(unittest.TestCase):
+    def test_smoke_selects_the_whole_ordered_group_or_one_explicit_member(self):
+        from strict_e2e_smoke import select_flows
+        flows = [{"id": "a", "device": "iphone", "configuration": "Debug"},
+                 {"id": "b", "device": "ipad", "configuration": "Debug"},
+                 {"id": "c", "device": "iphone", "configuration": "Release"},
+                 {"id": "d", "device": "iphone", "configuration": "Debug"}]
+        self.assertEqual([flows[0], flows[3]], select_flows(flows, "iphone", "Debug"))
+        self.assertEqual([flows[3]], select_flows(flows, "iphone", "Debug", "d"))
+        for key in ("missing", "b", "c"):
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, "smoke-flow selection is empty or the requested flow"):
+                select_flows(flows, "iphone", "Debug", key)
+
+    def test_smoke_requires_the_selected_official_method_and_no_skip_or_extra_execution(self):
+        from strict_e2e_smoke import official_flow_passed, official_flow_complete
+        summary = {"totalTestCount": 1, "passedTests": 1, "failedTests": 0, "skippedTests": 0, "result": "Passed"}
+        tests = {"testNodes": [{"children": [{"nodeType": "Test Case", "nodeIdentifier": "BootUITests/testSave()",
+                                             "result": "Passed"}]}]}
+        self.assertTrue(official_flow_passed("BootUITests/testSave", summary, tests))
+        self.assertTrue(official_flow_complete("BootUITests/testSave", summary, tests))
+        failed_tests = copy.deepcopy(tests)
+        failed_tests["testNodes"][0]["children"][0]["result"] = "Failed"
+        failed_summary = dict(summary, passedTests=0, failedTests=1, result="Failed")
+        self.assertTrue(official_flow_complete("BootUITests/testSave", failed_summary, failed_tests))
+        self.assertFalse(official_flow_passed("BootUITests/testSave", failed_summary, failed_tests))
+        for field, value in (("totalTestCount", 0), ("passedTests", 0), ("failedTests", 1), ("skippedTests", 1),
+                             ("result", "Failed")):
+            with self.subTest(field=field):
+                self.assertFalse(official_flow_passed("BootUITests/testSave", dict(summary, **{field: value}), tests))
+                self.assertFalse(official_flow_complete("BootUITests/testSave", dict(summary, **{field: value}), tests))
+        self.assertFalse(official_flow_complete("BootUITests/testSave", dict(summary, totalTestCount=True), tests))
+        for mutation in ("wrong-method", "failed", "skipped", "missing", "duplicate"):
+            with self.subTest(mutation=mutation):
+                changed = copy.deepcopy(tests)
+                nodes = changed["testNodes"][0]["children"]
+                if mutation == "wrong-method":
+                    nodes[0]["nodeIdentifier"] = "BootUITests/testOther()"
+                elif mutation in ("failed", "skipped"):
+                    nodes[0]["result"] = mutation.title()
+                elif mutation == "missing":
+                    nodes.clear()
+                else:
+                    nodes.append(copy.deepcopy(nodes[0]))
+                self.assertFalse(official_flow_passed("BootUITests/testSave", summary, changed))
+                self.assertFalse(official_flow_complete("BootUITests/testSave", summary, changed))
+
+
 if __name__ == "__main__":
     unittest.main()

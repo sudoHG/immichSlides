@@ -52,6 +52,7 @@
     "immichSlides-tvOS.xctestplan",
     "scripts/ci-classification.json",
     "scripts/strict-tracer.json",
+    "scripts/smoke-flows.json",
     "scripts/nightly-*.json",
     "scripts/test_conventions_allowlist.json",
     "scripts/test_timeout_allowlist.json",

@@ -67,6 +67,7 @@
         "ReduceMotionUITests",
         "RotationUITests",
         "ScenePresentationContractUITests/testIOSImageFailureRecovery()",
+        "SmokeFlowIOSUITests",
         "StrictE2EFilterIOSUITests",
         "StrictE2EFirstBatchIOSUITests",
         "StrictE2ELateImageIOSUITests",
