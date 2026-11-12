@@ -1330,6 +1330,7 @@ def public_validator_failure_message(value):
 # Source locations and enum meanings: docs/CI_STRICT_RUNNER.md#reviewed-prefix-table.
 # No activity marker exists in these flows. Suffixes (including values) are discarded.
 PREFIX_RULES = (
+    ("Smoke flow: ", "control_action", "control_state"),
     ("System Reduce Motion command: ", "settings_navigation", "control_state"),
     ("App Reduce Motion: ", "settings_navigation", "control_state"),
     ("The app did not return to the foreground after changing system Reduce Motion.", "settings_navigation", "control_state"),

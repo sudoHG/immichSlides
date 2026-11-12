@@ -1,0 +1,236 @@
+{
+  "schema_version": 1,
+  "flows": [
+    {
+      "id": "iphone-album-selection",
+      "platform": "ios",
+      "device": "iphone",
+      "configuration": "Debug",
+      "fixtures": [
+        "a"
+      ],
+      "selector": "SmokeFlowIOSUITests/testAlbumSelection"
+    },
+    {
+      "id": "iphone-background-return",
+      "platform": "ios",
+      "device": "iphone",
+      "configuration": "Release",
+      "fixtures": [
+        "a"
+      ],
+      "selector": "SmokeFlowIOSUITests/testBackgroundReturn"
+    },
+    {
+      "id": "iphone-connection-error",
+      "platform": "ios",
+      "device": "iphone",
+      "configuration": "Debug",
+      "fixtures": [
+        "a"
+      ],
+      "selector": "SmokeFlowIOSUITests/testConnectionError"
+    },
+    {
+      "id": "iphone-first-boot",
+      "platform": "ios",
+      "device": "iphone",
+      "configuration": "Debug",
+      "fixtures": [
+        "a"
+      ],
+      "selector": "SmokeFlowIOSUITests/testFirstBoot"
+    },
+    {
+      "id": "iphone-person-return",
+      "platform": "ios",
+      "device": "iphone",
+      "configuration": "Debug",
+      "fixtures": [
+        "a"
+      ],
+      "selector": "SmokeFlowIOSUITests/testPersonReturn"
+    },
+    {
+      "id": "iphone-pin-gate",
+      "platform": "ios",
+      "device": "iphone",
+      "configuration": "Debug",
+      "fixtures": [
+        "a"
+      ],
+      "selector": "SmokeFlowIOSUITests/testPinGate"
+    },
+    {
+      "id": "iphone-playback-controls",
+      "platform": "ios",
+      "device": "iphone",
+      "configuration": "Debug",
+      "fixtures": [
+        "a"
+      ],
+      "selector": "SmokeFlowIOSUITests/testPlaybackControls"
+    },
+    {
+      "id": "iphone-settings-relaunch",
+      "platform": "ios",
+      "device": "iphone",
+      "configuration": "Release",
+      "fixtures": [
+        "a"
+      ],
+      "selector": "SmokeFlowIOSUITests/testSettingsRelaunch"
+    },
+    {
+      "id": "ipad-background-return",
+      "platform": "ios",
+      "device": "ipad",
+      "configuration": "Release",
+      "fixtures": [
+        "a"
+      ],
+      "selector": "SmokeFlowIOSUITests/testBackgroundReturn"
+    },
+    {
+      "id": "ipad-first-boot",
+      "platform": "ios",
+      "device": "ipad",
+      "configuration": "Debug",
+      "fixtures": [
+        "a"
+      ],
+      "selector": "SmokeFlowIOSUITests/testFirstBoot"
+    },
+    {
+      "id": "ipad-playback-controls",
+      "platform": "ios",
+      "device": "ipad",
+      "configuration": "Debug",
+      "fixtures": [
+        "a"
+      ],
+      "selector": "SmokeFlowIOSUITests/testPlaybackControls"
+    },
+    {
+      "id": "ipad-rotation",
+      "platform": "ios",
+      "device": "ipad",
+      "configuration": "Debug",
+      "fixtures": [
+        "a"
+      ],
+      "selector": "SmokeFlowIOSUITests/testRotation"
+    },
+    {
+      "id": "ipad-settings-sidebar",
+      "platform": "ios",
+      "device": "ipad",
+      "configuration": "Debug",
+      "fixtures": [
+        "a"
+      ],
+      "selector": "SmokeFlowIOSUITests/testSettingsSidebar"
+    },
+    {
+      "id": "tv-album-selection",
+      "platform": "tvos",
+      "device": "tv",
+      "configuration": "Debug",
+      "fixtures": [
+        "a"
+      ],
+      "selector": "SmokeFlowTVOSUITests/testAlbumSelection"
+    },
+    {
+      "id": "tv-background-return",
+      "platform": "tvos",
+      "device": "tv",
+      "configuration": "Release",
+      "fixtures": [
+        "a"
+      ],
+      "selector": "SmokeFlowTVOSUITests/testBackgroundReturn"
+    },
+    {
+      "id": "tv-directional-wake",
+      "platform": "tvos",
+      "device": "tv",
+      "configuration": "Debug",
+      "fixtures": [
+        "a"
+      ],
+      "selector": "SmokeFlowTVOSUITests/testDirectionalWake"
+    },
+    {
+      "id": "tv-first-boot",
+      "platform": "tvos",
+      "device": "tv",
+      "configuration": "Debug",
+      "fixtures": [
+        "a"
+      ],
+      "selector": "SmokeFlowTVOSUITests/testFirstBoot"
+    },
+    {
+      "id": "tv-pause-resume",
+      "platform": "tvos",
+      "device": "tv",
+      "configuration": "Release",
+      "fixtures": [
+        "a"
+      ],
+      "selector": "SmokeFlowTVOSUITests/testPauseResume"
+    },
+    {
+      "id": "tv-person-selection",
+      "platform": "tvos",
+      "device": "tv",
+      "configuration": "Debug",
+      "fixtures": [
+        "a"
+      ],
+      "selector": "SmokeFlowTVOSUITests/testPersonSelection"
+    },
+    {
+      "id": "tv-pin-gate",
+      "platform": "tvos",
+      "device": "tv",
+      "configuration": "Debug",
+      "fixtures": [
+        "a"
+      ],
+      "selector": "SmokeFlowTVOSUITests/testPinGate"
+    },
+    {
+      "id": "tv-playback-controls",
+      "platform": "tvos",
+      "device": "tv",
+      "configuration": "Debug",
+      "fixtures": [
+        "a"
+      ],
+      "selector": "SmokeFlowTVOSUITests/testPlaybackControls"
+    },
+    {
+      "id": "tv-server-switch",
+      "platform": "tvos",
+      "device": "tv",
+      "configuration": "Release",
+      "fixtures": [
+        "a",
+        "b"
+      ],
+      "selector": "SmokeFlowTVOSUITests/testServerSwitch"
+    },
+    {
+      "id": "tv-settings-relaunch",
+      "platform": "tvos",
+      "device": "tv",
+      "configuration": "Release",
+      "fixtures": [
+        "a"
+      ],
+      "selector": "SmokeFlowTVOSUITests/testSettingsRelaunch"
+    }
+  ]
+}

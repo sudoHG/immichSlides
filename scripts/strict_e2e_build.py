@@ -18,7 +18,10 @@ RECEIPT = "strict-warm-build.json"
 
 def build_settings(platform, suite, configuration=None):
     scheme, plan, _ = PLATFORM_SETTINGS[platform]
-    if suite in SETTINGS_RESUME_SUITES:
+    if suite == "smoke-flow":
+        # The UI-only scheme avoids compiling @testable unit targets against a Release app.
+        scheme += "-settings-resume"
+    elif suite in SETTINGS_RESUME_SUITES:
         scheme += "-settings-resume"
         if configuration not in (None, "Release"):
             raise CommandError("Settings-resume suites require Release.")

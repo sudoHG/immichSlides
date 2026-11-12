@@ -806,7 +806,9 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
                         help="Reuse a dedicated device's submitted boot; still require bootstatus, readiness and resets")
     parser.add_argument("--fixture-set", choices=("a", "b"), default="a")
     parser.add_argument("--scenario", choices=RUNNER_SCENARIOS, default="normal")
-    parser.add_argument("--suite", choices=RUNNER_SUITES, default="smoke")
+    parser.add_argument("--suite", choices=(*RUNNER_SUITES, "smoke-flow"), default="smoke")
+    parser.add_argument("--smoke-device", choices=("iphone", "ipad", "tv"))
+    parser.add_argument("--smoke-flow", help="Debug one manifest flow; never a complete smoke group")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--warm-up-only", action="store_true", help="build this shard once without starting a test or recording")
     mode.add_argument("--test-without-building", action="store_true", help="require and reuse an explicit shard warm-up")
@@ -828,6 +830,16 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         help=f"minimum free GiB required before xcodebuild (default: {MIN_DATA_GIB})",
     )
     arguments = parser.parse_args(argv)
+    if arguments.suite == "smoke-flow":
+        from strict_e2e_smoke import run
+        arguments.cold_timeout_seconds = arguments.cold_timeout_seconds or XCODEBUILD_TIMEOUT_SECONDS
+        try:
+            return run(arguments, REPO_ROOT, sys.modules[__name__], stdout, stderr)
+        except (CommandError, ValueError, OSError, subprocess.SubprocessError) as error:
+            print(f"CommandError: {error}", file=stderr)
+            return getattr(error, "code", 2)
+    if arguments.smoke_device or arguments.smoke_flow:
+        parser.error("--smoke-device/--smoke-flow require --suite smoke-flow")
     from ci_flaky import nightly_retry_enabled
     nightly_retry = nightly_retry_enabled(REPO_ROOT, os.environ)
     if arguments.nightly_retry_method:

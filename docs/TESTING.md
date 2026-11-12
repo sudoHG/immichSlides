@@ -35,8 +35,8 @@ become CI-trusted before any reader uses it to select execution.
 The unit-coverage PRs and this tier plan change no App behavior and retire no E2E
 assertions. The duplicate-removal batch (#721) is separate: it removes only reviewed
 duplicates whose assertions still run in retained tests, before the future tier switch.
-The current inventory is 377 UI source methods and 94 strict matrix rows, separately
-identified; it is not 471 nightly executions. The current complete nightly schedules
+UI source methods and strict matrix rows are separately identified in the inventory;
+their sum is not a count of nightly executions. The current complete nightly schedules
 306 fixture UI device identities plus 94 strict rows, or 400 scheduling identities.
 A strict row may invoke more than one XCTest method.
 
@@ -131,6 +131,24 @@ nights. Keep first failures, retries, yellow, infrastructure errors, human findi
 elapsed time separate; do not relabel old failures. The 60–120 minute nightly budget and
 estimated 0.2–0.6 red events per run are planning estimates, `NOT_VERIFIED` until measured
 on comparable runs; fewer scheduled identities do not prove better App correctness.
+
+### Shadow smoke execution
+
+The separate [`smoke-flow` suite](CI_STRICT_RUNNER.md#short-smoke-flow-suite) executes
+the approved short paths from the CI-trusted `scripts/smoke-flows.json`, selected by
+device and configuration. The host checker rejects disagreement with the planning
+file and missing, duplicated or platform-incompatible selectors. This does not activate
+the future nightly switch or retire any existing assertion.
+
+`SmokeFlowIOSUITests` and `SmokeFlowTVOSUITests` belong only to that runner. Default
+fixture plans exclude their compiled classes, so neither PR UI area selection nor
+nightly fixture shards execute them. They are absent from the strict matrix and
+Evidence selections. New methods receive separate smoke inventory rows; existing
+rows retain their destinations. Core-area source accounting does not override a
+default-plan exclusion. Each selected flow starts with clean App state, uses public
+fixtures, records the first result without retries/yellow, and has a shared 180-second
+native invocation cap, with the existing 60-second navigation guard. See the runner
+guide for commands, evidence fields and Release/PIN limits.
 
 ## 0. When to write a test
 
