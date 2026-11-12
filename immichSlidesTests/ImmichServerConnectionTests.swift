@@ -9,6 +9,65 @@ import Testing
 @Suite(.serialized, .sharedRuntimeIsolation)
 struct ImmichServerConnectionTests {
 
+    @Test(arguments: [FailedConnection.unreachable, .timeout, .html])
+    func `failed HTTP probes retain their cause and recovery guidance in the connection form`(
+        _ failure: FailedConnection
+    )
+        async
+    {
+        let session = makeMockedSession { request in try failure.respond(to: request) }
+        defer { session.invalidateAndCancel() }
+        let viewModel = SettingsServerViewModel(
+            connectionTestActionForTesting: { url, key, progress in
+                await ImmichServer.testConnection(
+                    serverURL: url, apiKey: key, sessionForTesting: session, progressHandler: progress
+                )
+            },
+            automaticRetryDelayScheduleForTesting: []
+        )
+        viewModel.serverURL = "https://server.invalid"
+        viewModel.apiKey = "synthetic-key"
+
+        await viewModel.testConnection()?.value
+
+        let cause = URLError(failure == .timeout ? .timedOut : .cannotConnectToHost)
+        let expectedCause =
+            failure == .html
+            ? String(
+                localized:
+                    "Server did not return JSON. The Immich URL, port, or reverse proxy entry point may be incorrect"
+            )
+            : LocalizedText.format("Network request failed: %@", cause.localizedDescription)
+        #expect(!viewModel.isConnectionVerified)
+        #expect(!viewModel.isTestingConnection)
+        #expect(viewModel.shouldShowErrorAlert)
+        #expect(viewModel.errorAlertTitle == String(localized: "Connection test failed"))
+        #expect(
+            viewModel.errorMessage
+                == expectedCause + "\n\n"
+                + String(
+                    localized:
+                        "Please check the server URL and API key, make sure Immich is reachable, and try again."
+                )
+        )
+    }
+
+    @Test
+    func `loopback timeouts remain network failures rather than permission waits`() async {
+        let session = makeMockedSession { _ in throw URLError(.timedOut) }
+        defer { session.invalidateAndCancel() }
+
+        let result = await ImmichServer.testConnection(
+            serverURL: "http://127.0.0.1:2283", apiKey: "synthetic-key", sessionForTesting: session
+        )
+
+        #expect(result.kind == .failure)
+        #expect(
+            result.errorMessage
+                == LocalizedText.format("Network request failed: %@", URLError(.timedOut).localizedDescription)
+        )
+    }
+
     @Test(arguments: FailedConnection.allCases)
     func `failed HTTP connections cannot save first boot configuration`(_ failure: FailedConnection) async throws {
         ImmichServer.clearSavedConfiguration()

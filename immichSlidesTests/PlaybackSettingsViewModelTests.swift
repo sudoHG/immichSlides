@@ -5,6 +5,45 @@ import Testing
 @MainActor
 @Suite(.sharedPlaybackRuntimeIsolation)
 struct PlaybackSettingsViewModelTests {
+    @Test
+    func `returning from settings rereads EXIF visibility synchronously`() throws {
+        let store = PlaybackSettingsStore()
+        let settingsViewModel = PlaybackSettingsViewModel(store: store)
+        settingsViewModel.settings.autoPlayEnabled = false
+        settingsViewModel.settings.defaultPlaybackMode = .random
+        settingsViewModel.settings.displayMode = .singlePhoto
+        let player = SlideShowViewModel(settingsStore: store, observeSettingsChanges: false)
+        player.initialPhotoLoadHookForTesting = { _ in }
+        player.backgroundPreloadHookForTesting = { _, _, _ in }
+        player.indexChangePhotoLoadHookForTesting = { _, _ in }
+        player.transitionWindowPreloadHookForTesting = { _, _, _ in }
+        player.scenePresentationTimestampProviderForTesting = { 0 }
+        player.replacePlaybackAssetsForTesting([
+            Asset(
+                id: "exif-settings-photo", type: "IMAGE", isFavorite: false, isTrashed: false,
+                isArchived: false, exifInfo: ExifInfo(model: "Synthetic Camera"), people: nil, tags: nil,
+                livePhotoVideoID: nil, width: 1800, height: 1200
+            )
+        ])
+        let originalScene = try #require(player.safeCurrentScene)
+        let originalIndex = player.currentIndex
+
+        for isExifEnabled in [true, false, true] {
+            settingsViewModel.settings.showExif = isExifEnabled
+            var appliedVisibility: [Bool] = []
+            player.refreshPlaybackRelatedSettings(
+                applyExifVisibility: { appliedVisibility.append($0) },
+                applyDebugOverlayVisibility: { _ in }
+            )
+
+            #expect(appliedVisibility == [isExifEnabled])
+            #expect(!player.isAutoPlay)
+            #expect(player.currentIndex == originalIndex)
+            #expect(player.safeCurrentScene?.id == originalScene.id)
+            #expect(player.safeCurrentScene?.primaryAsset?.exifInfo?.model == "Synthetic Camera")
+        }
+    }
+
     @Test(arguments: DefaultModeSelectionCase.allCases)
     func `settings mode selection persists valid choices and prompts before accepting an empty filter`(
         _ selection: DefaultModeSelectionCase
