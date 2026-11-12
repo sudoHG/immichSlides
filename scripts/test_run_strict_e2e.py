@@ -8181,9 +8181,9 @@ class SmokeFlowResultTests(unittest.TestCase):
             command = runner.run_command.call_args.args[0]
             self.assertEqual("YES", command[command.index("-test-timeouts-enabled") + 1])
             for flag in ("-default-test-execution-time-allowance", "-maximum-test-execution-time-allowance"):
-                self.assertEqual("100", command[command.index(flag) + 1])
+                self.assertEqual("60", command[command.index(flag) + 1])
             self.assertEqual(180, runner.run_command.call_args.kwargs["timeout_seconds"])
-            self.assertEqual(80, smoke.STARTUP_OVERHEAD_SECONDS)
+            self.assertEqual(120, smoke.STARTUP_OVERHEAD_SECONDS)
 
     def run_group(self, root, *, single=False, failed=False, dirty=False, late=None, overrides=None):
         from types import SimpleNamespace
