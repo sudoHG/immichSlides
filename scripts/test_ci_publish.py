@@ -1732,9 +1732,10 @@ class PublisherTests(unittest.TestCase):
         area_map = {"schema_version": 1, "revision": "dedicated-v1", "smoke": ["SmokeUITests/testLaunch"],
                     "areas": {"core": {"sources": ["immichSlides/Engine.swift"], "tests": ["SmokeUITests"]},
                               "settings": {"sources": ["immichSlides/Settings.swift"], "tests": ["SettingsUITests"]}}}
-        for class_name in ("UnmappedUITests", "SmokeFlowOtherUITests", "SmokeFlowIOSUITestsExtra",
-                           "SmokeFlowTVOSUITestsExtra"):
-            key = class_name + "/testOtherFlow"
+        for key in ("UnmappedUITests/testOtherFlow", "SmokeFlowOtherUITests/testOtherFlow",
+                    "SmokeFlowIOSUITestsExtra/testOtherFlow", "SmokeFlowTVOSUITestsExtra/testOtherFlow",
+                    "UnmappedUITests/testOtherScreenshot", "smokeflowiosuitests/testAlbumSelection",
+                    "SMOKEFLOWTVOSUITESTS/testAlbumSelection", "XSmokeFlowIOSUITests/testAlbumSelection"):
             for platform in ("ios", "tvos"):
                 with self.subTest(key=key, platform=platform), self.assertRaisesRegex(
                         ContractError, "^unmapped UI test: " + key + "$"):

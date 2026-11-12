@@ -151,7 +151,7 @@ def validate_area_coverage(raw, source_paths, populations, *, plans=None, expect
     for selector in all_selectors:
         require(selector not in missing, f"UI area selector matches no test: {selector}")
     for key in sorted(keys):
-        require(method_kind(key) == "dedicated-smoke" or matches_test(key, selectors), f"unmapped UI test: {key}")
+        require(matches_test(key, selectors) or method_kind(key) == "dedicated-smoke", f"unmapped UI test: {key}")
     for path in sorted(source_paths):
         require(affected_areas(path, area_map), f"unmapped app source: {path}")
     if plans is not None:
