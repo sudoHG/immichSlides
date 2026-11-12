@@ -158,6 +158,38 @@ failed flow's first failure kind and exit code; both roots also retain `group_fa
 See the runner
 guide for commands, evidence fields and Release/PIN limits.
 
+The Apple TV class has ten short remote flows, with navigation in its `+Support`
+extension. Each method shares one default `TestWait.hangGuard()` across launch,
+navigation and its eventual outcome.
+
+| Flow | Method | Configuration | Remote boundary |
+|---|---|---|---|
+| `tv-album-selection` | `testAlbumSelection` | Debug | Move between album cards, Select, Back and start playback |
+| `tv-background-return` | `testBackgroundReturn` | Release | Home, foreground return and operable Play/Pause |
+| `tv-directional-wake` | `testDirectionalWake` | Debug | Each direction wakes hidden controls with operable Play/Pause focus |
+| `tv-first-boot` | `testFirstBoot` | Debug | System keyboard, connection/save, cold launch and default playback focus |
+| `tv-pause-resume` | `testPauseResume` | Release | Select pauses, Next advances while paused, physical Play/Pause resumes |
+| `tv-person-selection` | `testPersonSelection` | Debug | Person grid, Select, physical Play/Pause solo shortcut and Back |
+| `tv-pin-gate` | `testPinGate` | Debug | Synthetic PIN sheet rejects a wrong PIN and unlocks Settings with the correct PIN |
+| `tv-playback-controls` | `testPlaybackControls` | Debug | One eventual automatic advance, remote Next and Previous |
+| `tv-server-switch` | `testServerSwitch` | Release | Save B during random A playback, require B playback, then inspect B filter lists |
+| `tv-settings-relaunch` | `testSettingsRelaunch` | Release | Change autoplay, cold relaunch, verify persistence and Back to playback |
+
+Release flows configure the public loopback server through the real form and set
+no Debug launch hooks. The synthetic PIN path does not verify production Keychain
+behavior. The playback-controls flow uses existing read-only Debug scene references
+and phase probes to observe its eventual automatic advance and navigate after the
+scene settles; it asserts no timing window. The server-switch flow changes only display mode to
+single photo before switching, so public EXIF can identify a photo without pixels.
+It must observe A playback, then a B-exclusive EXIF label (currently Fixture 7)
+before changing any filter or playback source; entering Filtered first could hide the stale-pool defect
+tracked in [#725](https://github.com/sudoHG/immichSlides/issues/725). Only after that
+proof does it open the real empty-filter alert and inspect unselected B album/person
+lists. The B manifest supplies the maximum Next count and the EXIF labels absent
+from A; observing any such label during that bounded traversal satisfies identity.
+It does not wait for automatic playback to happen upon B's exclusive photo. Its two
+phases share the same guard and report their elapsed time and Next count.
+
 ## 0. When to write a test
 
 Every test must guard a failure that can realistically happen again. If you cannot name that failure in one sentence, do not write the test.

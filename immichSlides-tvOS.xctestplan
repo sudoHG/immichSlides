@@ -63,6 +63,7 @@
         "ServerConfigFormTVOSUITests/testTVOSFirstBootAccessibilityTextSnapshot()",
         "ServerConfigFormTVOSUITests/testTVOSFirstBootDarkModeSnapshot()",
         "ServerConfigFormTVOSUITests/testTVOSFirstBootLightModeSnapshot()",
+        "SmokeFlowTVOSUITests",
         "StrictE2EFilterTVOSUITests",
         "StrictE2ELateImageTVOSUITests",
         "StrictE2ESmokeUITests",
