@@ -263,6 +263,7 @@ def xctest_tool_class(message):
     if not isinstance(message, str) or len(message) > 512:
         return None
     lifecycle = (
+        r"Failed to terminate com\.331works\.immichSlides:[0-9]{1,10}",
         r"Failed to terminate com\.331works\.immichSlides:[0-9]{1,10}: Failed to terminate com\.331works\.immichSlides:[0-9]{1,10}",
         r"Application 'com\.331works\.immichSlides' does not have a process ID",
         r"Failed to launch (?:com\.331works\.immichSlides|Application 'com\.331works\.immichSlides'): Timed out while launching application via Xcode",

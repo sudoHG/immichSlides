@@ -626,6 +626,32 @@ The fixture UI and outer aggregates accept `environment-limited` while retaining
 raw failures; incomplete official lists, matrix jobs or evidence stay red.
 Clean fixture shards with only bound native tool failures exit zero but retain
 raw `summary.status: failed`. Cleanup errors and mixed failures stay nonzero.
+
+The shared v5 producer and reader also recognise the complete native message
+`Failed to terminate com.331works.immichSlides:<pid>` (one to ten decimal PID
+digits), alongside the existing full snapshot-query timeout and nested termination
+messages. They follow the existing `xctest-tool` exception and separate yellow
+listing: raw failures remain recorded, and the unchanged consecutive-night rule
+still applies. Matching is exact and occurs before assertion-wrapper stripping.
+This follows the maintainer's 2026-10-30 rule that App launch or terminate stalls
+count as Apple tool failures. Bare `Failed to get matching snapshot` and unreviewed
+suffixes of that prefix remain `unknown/snapshot_query` and red: they can indicate an
+App main-thread hang, and the capture is intended to distinguish that cause.
+Night 1112 (run 43121052166) therefore stays red under this change; its published
+prefix does not establish the raw message, whose form remains `NOT_VERIFIED`.
+Suffixed terminate messages and oversized PIDs retain their prior
+`unknown/process_lifetime` public projection; other-bundle near-misses remain
+`unknown/unknown`. None qualify for the exception.
+Trailing text, another bundle, an assertion mentioning snapshot or termination,
+and App crash messages do not qualify. Complete official failure lists, bound
+counts/identities, known durations, hosted nightly scope and every existing
+validator/infrastructure exclusion remain required. This adds no assertion retry
+and no PR-time exception. Fixture UI's optional live capture is documented in
+[the UI protocol](CI_UI.md#fixture-execution-retry-and-public-output). Strict
+execution does not share that capture helper. The shared classifier change does
+reach `nightly-strict`: the exact bare terminate message becomes yellow-eligible
+under the existing gates and receives the `application-process` failure label.
+
 The [v5 class/step taxonomy](CI_SUMMARY.md#policy-v5-reader-preparation) is
 authoritative for new output. The following table documents retained v1–v4
 boundaries for the 90-day history window:

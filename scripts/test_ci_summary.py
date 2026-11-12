@@ -840,6 +840,93 @@ print('parsed 3 nightly retry records without image or runner dependencies')
         with self.assertRaisesRegex(ValueError, "^failure messages: unreviewed public message$"):
             scan_diagnostic_json(json.dumps({"failure_messages": [pid_message.replace("1234567890", "12345678901")]}).encode())
 
+    def test_v5_short_native_termination_keeps_exact_tool_boundaries(self):
+        from ci_failure_diagnostics import (environment_limit_evidence, failure_messages_diagnostics,
+            public_failure_messages, scan_diagnostic_json, xctest_tool_class)
+        import ci_report
+        patterns = (("Failed to terminate com.331works.immichSlides:123", "process_lifetime"),)
+        for message, failure_class in patterns:
+            self.assertEqual(xctest_tool_class(message), failure_class)
+            self.assertEqual(public_failure_messages([message]), [message])
+            near_misses = [message + " unrelated", message + "\n", "XCTAssertTrue failed - " + message,
+                "App assertion: snapshot must match " + message,
+                "Test crashed with App frame: " + message]
+            if failure_class == "process_lifetime":
+                near_misses.extend((message.replace("immichSlides", "other"), message.replace("123", "12345678901"),
+                                    message.replace("123", "-1"), message.replace("123", "pid")))
+            for near_miss in near_misses:
+                with self.subTest(near_miss=near_miss):
+                    self.assertIsNone(xctest_tool_class(near_miss))
+                    projected = public_failure_messages([near_miss])
+                    self.assertTrue(all(xctest_tool_class(item) is None for item in projected))
+            for ui in (False, True):
+                with self.subTest(message=message, ui=ui):
+                    summary, _ = hosted_v5_summary(ui=ui, tool=True)
+                    row = summary["population"]["observed"][0]
+                    for target in (row, row["attempts"][0]):
+                        target.update(failure_messages=[message], **failure_messages_diagnostics([message]))
+                    proof = environment_limit_evidence(summary, row, [], runner_hosted=True, policy_version=5)
+                    self.assertIsNotNone(proof)
+                    self.assertEqual((proof["kind"], proof["failure_class"]), ("xctest-tool", failure_class))
+                    row["environment_limit"] = row["attempts"][0]["environment_limit"] = proof
+                    ci_summary.parse_summary(summary)
+                    scan_diagnostic_json(json.dumps(summary).encode())
+                    verdict = ci_verdict.evaluate_population(summary, summary["population"]["declared"],
+                        {"schema_version": 1, "approval_records": [], "expected_skips": [], "deselections": []},
+                        environment="fixture" if ui else "hermetic")
+                    self.assertEqual(verdict["status"], "environment-limited")
+                    self.assertIn(message, ci_summary.render_markdown(summary))
+                    self.assertIsNone(environment_limit_evidence(summary, row, [], runner_hosted=False, policy_version=5))
+                    changed = copy.deepcopy(summary)
+                    changed["source"].update(workflow_path=".github/workflows/ci-ui.yml", event="pull_request")
+                    self.assertIsNone(environment_limit_evidence(changed, row, [], runner_hosted=True, policy_version=5))
+                    missing = copy.deepcopy(summary)
+                    missing["population"]["observed"][0]["attempts"][0].pop("failure_messages")
+                    with self.assertRaises(ValueError):
+                        ci_summary.parse_summary(missing)
+                    if not ui:
+                        method = {"identifier": "StrictE2ESmokeUITests/testIOSStrictE2EConnectionSmoke", "result": "Failed",
+                            **{key: row[key] for key in ("failure_phase", "failure_class", "failure_messages")}}
+                        phase = {"identity": row["identity"], "exit_code": 65, "build_operations": 0, "products_unchanged": True,
+                            "log_present": True, "official_methods": [method],
+                            "official_summary": {"totalTestCount": 1, "passedTests": 0, "failedTests": 1, "skippedTests": 0}}
+                        observed, absent = ci_report.method_observations(summary, {"warm": [phase]}, runner_hosted=True)
+                        self.assertEqual(absent, [])
+                        self.assertEqual(observed[0]["environment_limit"], proof)
+                        phase["official_methods"][0]["failure_messages"] = [message, "App timeline:"]
+                        with self.assertRaises(ValueError):
+                            ci_report.method_observations(summary, {"warm": [phase]}, runner_hosted=True)
+
+    def test_snapshot_and_nonexact_termination_keep_their_public_diagnostics_and_red_verdict(self):
+        from ci_failure_diagnostics import (attach_native_tap_failure, environment_limit_evidence,
+            failure_messages_diagnostics, public_failure_messages, validate_failure_messages, xctest_tool_class)
+        for raw, public, kind in (
+                ("Failed to get matching snapshot", "Failed to get matching snapshot", "snapshot_query"),
+                ("Failed to get matching snapshot: Lost connection to the application (pid 123).",
+                 "Failed to get matching snapshot", "snapshot_query"),
+                ("Failed to terminate com.331works.immichSlides:123: unexpected detail",
+                 "Failed to terminate com.331works.immichSlides:", "process_lifetime"),
+                ("Failed to terminate com.331works.immichSlides:12345678901",
+                 "Failed to terminate com.331works.immichSlides:", "process_lifetime"),
+                ("Failed to terminate com.331works.other:123", "[unrecognized XCTest failure]", "unknown")):
+            with self.subTest(raw=raw):
+                self.assertIsNone(xctest_tool_class(raw))
+                messages = public_failure_messages([raw])
+                self.assertEqual(messages, [public])
+                validate_failure_messages(messages)
+                self.assertEqual(failure_messages_diagnostics(messages),
+                                 {"failure_phase": "unknown", "failure_class": kind})
+                summary, _ = hosted_v5_summary(tool=True)
+                row = summary["population"]["observed"][0]
+                for target in (row, row["attempts"][0]):
+                    target.update(failure_messages=messages, **failure_messages_diagnostics(messages))
+                self.assertIsNone(environment_limit_evidence(summary, row, [], runner_hosted=True, policy_version=5))
+        key = "StrictE2EFilterIOSUITests/testFilterAlbumTargetMembers"
+        node = {"nodeIdentifier": key, "first_failure": {"source": "xctest", "step": "select",
+                "element": "slideshow.control.next.button", "action": "tap"}}
+        attach_native_tap_failure([node], {key: ["Failed to get matching snapshot"]})
+        self.assertNotIn("native_tap_failure", node["first_failure"])
+
     def test_v5_readers_bind_complete_messages_and_keep_functional_or_missing_evidence_red(self):
         from ci_failure_diagnostics import environment_limit_evidence, scan_diagnostic_json
         for ui, tool in ((False, False), (False, True), (True, True)):

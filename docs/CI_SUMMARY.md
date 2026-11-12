@@ -1737,6 +1737,7 @@ unrecognized or different-family failure keeps the method red:
 
 | Exact message grammar | Diagnostic pair |
 | --- | --- |
+| `Failed to terminate com.331works.immichSlides:<1-10 digits>` | `unknown/process_lifetime` |
 | `Failed to terminate com.331works.immichSlides:<1-10 digits>: Failed to terminate com.331works.immichSlides:<1-10 digits>` | `unknown/process_lifetime` |
 | `Application 'com.331works.immichSlides' does not have a process ID` | `unknown/process_lifetime` |
 | `Failed to launch com.331works.immichSlides: Timed out while launching application via Xcode` (also the reviewed `Application 'com.331works.immichSlides'` target spelling) | `unknown/process_lifetime` |
