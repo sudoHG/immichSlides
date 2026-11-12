@@ -115,20 +115,20 @@ final class SmokeFlowIOSUITests: XCTestCase {
 
     @MainActor
     func testPlaybackControls() throws {
-        try flow(exposeAssetProbe: true) { app, guardWait, input in
+        try flow(observePlaybackLedger: true) { app, guardWait, input in
             try configure(app, guardWait, input: input)
             try chooseMode(app, guardWait, filtered: false)
             try playback(app, guardWait)
             try pause(app, guardWait)
-            let before = try asset(app, guardWait)
+            let before = try historyCursor(app, guardWait)
             try control(app, guardWait, "next")
             try require(guardWait, "Next must publish another scene while paused") {
-                let value = app.evidenceSnapshotsByIdentifier()["slideshow.currentAssetId.flag"]?.label ?? ""
-                return !value.isEmpty && value != before
+                guard let value = self.observedHistoryCursor(app) else { return false }
+                return value > before
             }
             try control(app, guardWait, "previous")
             try require(guardWait, "Previous must return to the prior scene") {
-                app.evidenceSnapshotsByIdentifier()["slideshow.currentAssetId.flag"]?.label == before
+                self.observedHistoryCursor(app) == before
             }
             try control(app, guardWait, "playPause")
             try state(app, guardWait, "pause")
@@ -246,13 +246,13 @@ final class SmokeFlowIOSUITests: XCTestCase {
 
     @MainActor
     private func flow(
-        exposeAssetProbe: Bool = false, syntheticPIN: Bool = false,
+        observePlaybackLedger: Bool = false, syntheticPIN: Bool = false,
         _ body: (XCUIApplication, TestWait.HangGuard, StrictE2EInput) throws -> Void
     ) throws {
         let guardWait = TestWait.hangGuard()
         let input = try requireStrictE2EInput()
         let app = XCUIApplication()
-        if exposeAssetProbe { app.launchEnvironment["UI_TEST_SCENE_PRESENTATION_CONTRACT_PROBE"] = "1" }
+        if observePlaybackLedger { app.launchEnvironment["IMMICHSLIDES_PLAYBACK_CPU_DIAGNOSTICS"] = "1" }
         if syntheticPIN { app.launchEnvironment["UI_TEST_RESET_STATE"] = "1" }
         try action(guardWait) { app.launchForFailureEvidence() }
         // The reset hook is needed only for the initial launch and never for a cold relaunch.
@@ -301,12 +301,29 @@ final class SmokeFlowIOSUITests: XCTestCase {
 
     @MainActor
     private func tap(_ app: XCUIApplication, _ guardWait: TestWait.HangGuard, _ identifier: String) throws {
+        if identifier.hasPrefix("slideshow.control.") {
+            var captured: SlideshowControlBarButtonObservation?
+            try require(guardWait, "required playback control must be ready") {
+                captured = try? app.slideshowControlBarButtonObservation(identifier: identifier)
+                return captured?.isReady == true
+            }
+            let target = try XCTUnwrap(captured, "Smoke flow: playback control observation is missing.")
+            let button = try XCTUnwrap(target.button, "Smoke flow: playback control snapshot is missing.")
+            try action(guardWait) {
+                target.windowElement.coordinate(withNormalizedOffset: .zero).withOffset(
+                    CGVector(
+                        dx: button.frame.midX - target.windowFrame.minX,
+                        dy: button.frame.midY - target.windowFrame.minY)
+                ).tapForFailureEvidence()
+            }
+            return
+        }
         let observed = try snapshot(app, guardWait, identifier, enabled: true)
         XCTAssertTrue(observed.isEnabled, "Smoke flow: target must be enabled before its single tap.")
         try action(guardWait) {
-            app.coordinate(withNormalizedOffset: .zero).withOffset(
-                CGVector(dx: observed.frame.midX, dy: observed.frame.midY)
-            ).tapForFailureEvidence()
+            // Native resolution follows keyboard/sidebar layout changes before the sole tap.
+            app.descendants(matching: observed.elementType).matching(identifier: identifier)
+                .firstMatch.tapForFailureEvidence()
         }
     }
 
@@ -326,6 +343,11 @@ final class SmokeFlowIOSUITests: XCTestCase {
                 field.typeKey("a", modifierFlags: .command)
                 field.typeKey(XCUIKeyboardKey.delete.rawValue, modifierFlags: [])
                 field.typeForFailureEvidence(value)
+            }
+            if identifier == "firstboot.serverURL.field" {
+                try require(guardWait, "the public URL must reach the real text field") {
+                    (try? field.snapshot().value as? String) == input.serverURL
+                }
             }
         }
         let keyboard = guardWait.transaction()
@@ -405,14 +427,22 @@ final class SmokeFlowIOSUITests: XCTestCase {
     }
 
     @MainActor
-    private func asset(_ app: XCUIApplication, _ guardWait: TestWait.HangGuard) throws -> String {
+    private func historyCursor(_ app: XCUIApplication, _ guardWait: TestWait.HangGuard) throws -> Int {
+        var cursor: Int?
         try require(guardWait, "playback must publish a scene before navigation") {
-            let label = app.evidenceSnapshotsByIdentifier()["slideshow.currentAssetId.flag"]?.label ?? ""
-            return !label.isEmpty && label != "no-asset"
+            cursor = self.observedHistoryCursor(app)
+            return cursor != nil
         }
-        let label = try snapshot(app, guardWait, "slideshow.currentAssetId.flag").label
-        XCTAssertFalse(label.isEmpty, "Smoke flow: playback must expose an eventual scene identity.")
-        return label
+        return try XCTUnwrap(cursor, "Smoke flow: playback must expose its published history position.")
+    }
+
+    @MainActor
+    private func observedHistoryCursor(_ app: XCUIApplication) -> Int? {
+        guard let label = app.evidenceSnapshotsByIdentifier()["slideshow.historyLedger.summary.flag"]?.label,
+            let bytes = label.data(using: .utf8),
+            let summary = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any]
+        else { return nil }
+        return summary["cursor"] as? Int
     }
 
     @MainActor
