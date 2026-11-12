@@ -151,7 +151,7 @@ def validate_area_coverage(raw, source_paths, populations, *, plans=None, expect
     for selector in all_selectors:
         require(selector not in missing, f"UI area selector matches no test: {selector}")
     for key in sorted(keys):
-        require(matches_test(key, selectors), f"unmapped UI test: {key}")
+        require(matches_test(key, selectors) or method_kind(key) == "dedicated-smoke", f"unmapped UI test: {key}")
     for path in sorted(source_paths):
         require(affected_areas(path, area_map), f"unmapped app source: {path}")
     if plans is not None:
@@ -239,7 +239,8 @@ def select_ui_population(paths, classification_policy, *, build_target_paths, ar
                     f"functional smoke is absent from default plan on {device}")
         chosen = []
         for entry in entries:
-            if functional_pr and kinds[entry["key"]] != "functional":
+            kind = kinds[entry["key"]] if functional_pr else method_kind(entry["key"])
+            if kind == "dedicated-smoke" or functional_pr and kind != "functional":
                 continue
             if not (mode == "full" or mode == "scoped" and matches_test(entry["key"], device_selectors)):
                 continue
