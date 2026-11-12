@@ -13,6 +13,18 @@ selection and explicit `pr-smoke` target tier, separate from the 23 nightly flow
 The planning file remains untrusted and must become CI-trusted before it selects tests.
 Review ownership is defined in [Testing conventions](TESTING.md#approved-target-tiers-planning-only).
 
+Dedicated smoke classes are recognized by the base-owned exact class set in
+[`ci_ui_test_kinds.py`](../scripts/ci_ui_test_kinds.py): `SmokeFlowIOSUITests` and
+`SmokeFlowTVOSUITests`. Their methods have kind `dedicated-smoke`, never functional,
+and PR UI selection excludes them even when the base default plans do not yet skip
+them. The area coverage audit does not require these runner-owned classes to be
+mapped; every other class or method still needs its existing area assignment.
+This is an exact class rule, with no prefix, wildcard or method-name exemption.
+These classes run only through `run_strict_e2e.py --suite smoke-flow`; their runner
+and default-plan exclusions land separately. Merge this trusted reader bootstrap
+first, then rebase the smoke implementation: candidate selection code or maps
+cannot change the base-owned selection protocol for their own PR.
+
 `ci-ui` runs on pull requests and pushes to `main`, independently of `ci-gate`.
 It is informational: only the [trusted publisher](CI_PUBLISHER.md) writes its
 commit status. No required check or repository setting changes here. All three

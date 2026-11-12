@@ -1697,6 +1697,66 @@ class PublisherTests(unittest.TestCase):
             select_ui_population(['immichSlides/Engine.swift'], event='pull_request', **dict(
                 arguments, area_map=dict(area_map, functional_smoke=[keys[2]])))
 
+    def test_dedicated_smoke_classes_are_not_functional_selected_or_unmapped(self):
+        from ci_ui_selection import select_ui_population, validate_area_coverage
+        from ci_ui_test_kinds import classify_ui_methods
+        keys = ("SmokeUITests/testLaunch", "SettingsUITests/testEdit")
+        area_map = {"schema_version": 1, "revision": "dedicated-v1", "smoke": [keys[0]],
+                    "functional_smoke": [keys[0]], "areas": {
+                        "core": {"sources": ["immichSlides/Engine.swift"], "tests": [keys[0]]},
+                        "settings": {"sources": ["immichSlides/Settings.swift"], "tests": [keys[1]]}}}
+        populations = {"ui-" + platform: [test_identity("ui", key, platform=platform) for key in keys]
+                       for platform in ("ios", "tvos")}
+        dedicated = {"ios": "SmokeFlowIOSUITests/testAlbumSelection",
+                     "tvos": "SmokeFlowTVOSUITests/testPlaybackControls"}
+        for platform, key in dedicated.items():
+            populations["ui-" + platform].append(test_identity("ui", key, platform=platform))
+        plans = {platform: UI_PLAN for platform in ("ios", "tvos")}
+        validate_area_coverage(area_map, [], populations, plans=plans)
+        kinds = classify_ui_methods(populations)
+        for key in dedicated.values():
+            self.assertEqual(kinds[key], "dedicated-smoke")
+        for functional_only in (False, True):
+            for path in ("immichSlides/Settings.swift", "immichSlides/Engine.swift", "unknown/path"):
+                with self.subTest(functional_only=functional_only, path=path):
+                    selected = select_ui_population([path],
+                        {"schema_version": 1, "app_unaffected": [], "ci_trusted": []},
+                        build_target_paths=[], area_map=area_map, populations=populations,
+                        plans=plans, event="pull_request", functional_only=functional_only,
+                        platform_scoped=True)
+                    for entries in selected["populations"].values():
+                        self.assertEqual({entry["key"] for entry in entries}, set(keys))
+
+    def test_dedicated_smoke_exemption_rejects_other_unmapped_classes(self):
+        from ci_ui_selection import validate_area_coverage
+        area_map = {"schema_version": 1, "revision": "dedicated-v1", "smoke": ["SmokeUITests/testLaunch"],
+                    "areas": {"core": {"sources": ["immichSlides/Engine.swift"], "tests": ["SmokeUITests"]},
+                              "settings": {"sources": ["immichSlides/Settings.swift"], "tests": ["SettingsUITests"]}}}
+        for class_name in ("UnmappedUITests", "SmokeFlowOtherUITests", "SmokeFlowIOSUITestsExtra",
+                           "SmokeFlowTVOSUITestsExtra"):
+            key = class_name + "/testOtherFlow"
+            for platform in ("ios", "tvos"):
+                with self.subTest(key=key, platform=platform), self.assertRaisesRegex(
+                        ContractError, "^unmapped UI test: " + key + "$"):
+                    validate_area_coverage(area_map, [], {"ui-" + platform: [
+                        test_identity("ui", name, platform=platform) for name in
+                        ("SmokeUITests/testLaunch", "SettingsUITests/testEdit", key)]})
+
+    def test_dedicated_smoke_method_names_do_not_exempt_another_class(self):
+        from ci_ui_selection import validate_area_coverage
+        area_map = {"schema_version": 1, "revision": "dedicated-v1", "smoke": ["SmokeUITests/testLaunch"],
+                    "areas": {"core": {"sources": ["immichSlides/Engine.swift"], "tests": ["SmokeUITests"]},
+                              "settings": {"sources": ["immichSlides/Settings.swift"],
+                                           "tests": ["SettingsUITests/testEdit"]}}}
+        for method in ("testAlbumSelection", "testPlaybackControls"):
+            key = "SettingsUITests/" + method
+            for platform in ("ios", "tvos"):
+                with self.subTest(key=key, platform=platform), self.assertRaisesRegex(
+                        ContractError, "^unmapped UI test: " + key + "$"):
+                    validate_area_coverage(area_map, [], {"ui-" + platform: [
+                        test_identity("ui", name, platform=platform) for name in
+                        ("SmokeUITests/testLaunch", "SettingsUITests/testEdit", key)]})
+
     def test_platform_narrowing_requires_the_synchronized_app_target_filter(self):
         from ci_ui_selection import platform_sources_from_project
         project = '''
