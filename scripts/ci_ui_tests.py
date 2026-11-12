@@ -1123,10 +1123,12 @@ def main(argv=None):
                 diagnostic = {key: value for key, value in summary.items() if key != "compiled_evidence"}
                 diagnostic["schema_version"] = 1
                 parse_summary(diagnostic)
+            from ci_xctest_lifecycle import prepare_publication
+            has_lifecycle = prepare_publication(args.output_dir / "failure-screenshots/lifecycle")
             write_sensitive_scan(args.output_dir, [PUBLIC_API_KEY])
             from ci_failure_diagnostics import validate_ui_first_failure_images
             validate_ui_first_failure_images(args.output_dir / "failure-screenshots", summary)
-            output("has_screenshots", str(any(path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".ips", ".crash"}
+            output("has_screenshots", str(has_lifecycle or any(path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".ips", ".crash"}
                     for path in (args.output_dir / "failure-screenshots").rglob("*"))).lower())
             return 0
         if args.command == "reproduce":

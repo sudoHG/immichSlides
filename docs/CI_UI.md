@@ -587,6 +587,41 @@ main records 7 days. Raw result bundles, Xcode logs and runtime launch inputs
 stay on the private result path and are never uploaded. Successful bundles are
 disposed; failed bundles remain quarantined until reviewed and deleted locally.
 
+Fixture invocations with failure attachments enabled watch live XCTest output for
+`Failed to terminate`, `Failed to get matching snapshot`,
+`Timed out while evaluating UI query`, or `crashed`. A `Launch` or `Terminate`
+activity for the App that has not returned to its parent activity within 15 seconds
+triggers the same optional capture. It captures once per XCTest method, at most
+three times per Xcode invocation. Enumeration and builds do not enable it.
+The monitor starts before Xcode and joins before another runner invocation,
+retry reset, or simulator cleanup. XCTest continues running during capture; an
+immediately following method inside the same invocation can race the capture.
+The process snapshot is collected first, before official-result export.
+
+Each capture has a 20-second subprocess watchdog, including kill/reap reserve.
+Only the selected simulator's `launchctl managerpid` subtree is projected: App,
+SpringBoard, launchd_sim, ReportCrash and testmanagerd PID, PPID, state, CPU and
+elapsed time, without argv. If exactly one App process exists, it receives a
+one-second `sample`. That UDID's `log show --last 3m` is filtered to the App,
+SpringBoard, launchd, RunningBoard and XCTest. New `.ips`/`.crash` reports are
+searched in simulator data `Library/Logs/CrashReporter` and `DiagnosticReports`,
+as well as host DiagnosticReports (including Retired). The invocation start time
+excludes old reports; host reports must contain the selected UDID. Only the named
+processes' reports are considered, at most five.
+
+Raw command output stays in a private temporary directory. Diagnostic files are
+capped at 256 KiB each and 1 MiB combined per invocation, across all captures;
+raw subprocess writes are also capped. Home paths and crash-device identifiers
+use the existing crash normalisation, followed by the existing sensitive-value,
+diagnostic JSON and high-confidence secret scans. A refused file is dropped and
+marked `withheld`; capture errors cannot change the XCTest exit, retry eligibility
+or verdict. Upload rechecks these optional files before the ordinary whole-artifact
+sensitive scan. A closed `failure-screenshots/lifecycle/<invocation>/summary.json`
+records each trigger (`native-failure` or `activity-timeout`) and content status
+(`captured`, `unavailable`, `timeout`, `withheld`), even without an image. These
+files use the existing `ui-failures-*` artifact and seven-day retention in PR and
+nightly UI. The verdict summary schema and separate strict runner are unchanged.
+
 Failed method nodes and UI observations also include the fixed `failure_phase`
 and `failure_class` enums described in
 [public failure diagnostics](CI_STRICT_RUNNER.md#public-failure-diagnostics).

@@ -595,6 +595,22 @@ The fixture UI and outer aggregates accept `environment-limited` while retaining
 raw failures; incomplete official lists, matrix jobs or evidence stay red.
 Clean fixture shards with only bound native tool failures exit zero but retain
 raw `summary.status: failed`. Cleanup errors and mixed failures stay nonzero.
+
+The shared v5 producer and reader also recognise the complete native message
+`Failed to get matching snapshot` and
+`Failed to terminate com.331works.immichSlides:<pid>` (one to ten decimal PID
+digits), alongside the existing full snapshot-query timeout and nested termination
+messages. They follow the existing `xctest-tool` exception and separate yellow
+listing: raw failures remain recorded, and the unchanged consecutive-night rule
+still applies. Matching is exact and occurs before assertion-wrapper stripping.
+Trailing text, another bundle, an assertion mentioning snapshot or termination,
+and App crash messages do not qualify. Complete official failure lists, bound
+counts/identities, known durations, hosted nightly scope and every existing
+validator/infrastructure exclusion remain required. This adds no assertion retry
+and no PR-time exception. Fixture UI's optional live capture is documented in
+[the UI protocol](CI_UI.md#fixture-execution-retry-and-public-output); strict
+execution does not share that runner helper and is unchanged.
+
 The [v5 class/step taxonomy](CI_SUMMARY.md#policy-v5-reader-preparation) is
 authoritative for new output. The following table documents retained v1–v4
 boundaries for the 90-day history window:

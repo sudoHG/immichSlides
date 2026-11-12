@@ -18,6 +18,316 @@ from ci_summary import ContractError
 from run_fixture_ui_tests import clean_environment, compiled_tests, coverage_rows, declared_tests, problem_reason
 
 
+class LifecycleCaptureTests(unittest.TestCase):
+    def test_live_trigger_deduplicates_methods_and_bounds_invocations(self):
+        from ci_xctest_lifecycle import Trigger
+        trigger = Trigger()
+        failures = ("Failed to terminate app", "Failed to get matching snapshots", "Timed out while evaluating UI query", "Test crashed")
+        self.assertIsNone(trigger.observe("ordinary assertion failed", 0))
+        self.assertIsNone(trigger.observe("crashedly", 0))
+        for failure in failures:
+            self.assertEqual(Trigger().observe(failure, 0), "native-failure")
+        for index, failure in enumerate(failures):
+            trigger.observe(f"Test Case '-[Flow test{index}]' started.", index)
+            self.assertEqual(trigger.observe(failure, index), "native-failure" if index < 3 else None)
+            self.assertIsNone(trigger.observe(failure, index))
+
+    def test_launch_watch_expires_only_while_the_activity_is_pending(self):
+        from ci_xctest_lifecycle import Trigger, ACTIVITY_TIMEOUT_SECONDS
+        for action in ("Launch", "Terminate"):
+            for completion in (None, "t = 1.0s     Find the Application", "Test Case '-[Flow testA]' passed."):
+                with self.subTest(action=action, completion=completion):
+                    trigger = Trigger()
+                    trigger.observe("Test Case '-[Flow testA]' started.", 0)
+                    trigger.observe(f"t = 0.0s     {action} com.331works.immichSlides", 0)
+                    trigger.observe("t = 0.1s         Waiting for accessibility", 0.1)
+                    self.assertIsNone(trigger.observe("", ACTIVITY_TIMEOUT_SECONDS - 0.01))
+                    if completion:
+                        trigger.observe(completion, 1)
+                    self.assertEqual(trigger.observe("", ACTIVITY_TIMEOUT_SECONDS), "activity-timeout" if completion is None else None)
+
+    def test_process_projection_excludes_other_simulators_and_argv(self):
+        from ci_xctest_lifecycle import process_state
+        raw = ("10 1 S 0.0 00:10 /runtime/launchd_sim\n11 10 R 99.0 00:09 /app/immichSlides\n"
+               "12 10 S 0.0 00:09 /runtime/SpringBoard\n13 10 S 0.0 00:09 /runtime/ReportCrash\n"
+               "14 10 S 0.0 00:09 /runtime/testmanagerd\n15 10 S 0.0 00:09 /runtime/unrelated\n"
+               "21 20 R 90.0 00:09 /other/immichSlides\n")
+        text, pid = process_state(raw, 10)
+        self.assertEqual(pid, 11)
+        self.assertEqual(len(text.splitlines()), 6)
+        self.assertNotIn("21", text)
+        self.assertNotIn("/runtime/", text)
+        self.assertNotIn("unrelated", text)
+        for invalid in ("broken", raw.replace("99.0", "nan"), raw.replace("10 1 S", "20 1 S")):
+            with self.assertRaises(ValueError):
+                process_state(invalid, 10)
+        self.assertIsNone(process_state(raw.replace("/app/immichSlides", "/app/other"), 10)[1])
+
+    def test_files_are_normalized_scanned_and_bounded_before_publication(self):
+        import ci_xctest_lifecycle as capture
+        from strict_e2e_server import PUBLIC_API_KEY
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            record = capture.empty_capture("native-failure")
+            total = 0
+            for number, (data, expected) in enumerate(((b"/" + b"Users/synthetic/file\n", "captured"),
+                    (PUBLIC_API_KEY.encode(), "withheld"), (b"x" * (capture.MAX_FILE_BYTES + 1), "withheld"))):
+                total = capture.publish_file(root, record, "simulator_log", f"log-{number}.txt", data, total)
+                self.assertEqual(record["status"]["simulator_log"], expected)
+            self.assertNotIn(b"/Users/", (root / "log-0.txt").read_bytes())
+            self.assertFalse((root / "log-1.txt").exists())
+            self.assertEqual((root / "log-2.txt").stat().st_size, capture.MAX_FILE_BYTES)
+            self.assertLessEqual((root / "log-2.txt").stat().st_size, 256 * 1024)
+            before = total
+            self.assertEqual(capture.publish_file(root, record, "app_sample", "full.txt", b"extra", capture.MAX_TOTAL_BYTES), capture.MAX_TOTAL_BYTES)
+            self.assertFalse((root / "full.txt").exists())
+            self.assertEqual(record["status"]["app_sample"], "unavailable")
+            self.assertEqual(total, before)
+            with patch.object(capture, "scan_bytes", side_effect=OSError("scan failed")):
+                capture.publish_file(root, record, "processes", "scan.txt", b"safe", total)
+            self.assertEqual(record["status"]["processes"], "withheld")
+            self.assertFalse((root / "scan.txt").exists())
+            capture.publish_file(root, record, "processes", "empty.txt", b"", total)
+            self.assertEqual(record["status"]["processes"], "withheld")
+            self.assertFalse((root / "empty.txt").exists())
+            record = capture.empty_capture("native-failure")
+            total = 0
+            for index in range(5):
+                total = capture.publish_file(root, record, "crash_reports", f"crash-{index}.ips", b"x" * (256 * 1024), total)
+            self.assertEqual(total, 1024 * 1024)
+            self.assertEqual(len(record["files"]), 4)
+            self.assertEqual(record["status"]["crash_reports"], "captured")
+            self.assertFalse((root / "crash-4.ips").exists())
+
+    def test_simulator_crash_folders_use_the_invocation_baseline_and_device_scope(self):
+        import ci_xctest_lifecycle as capture
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            device = "AAAAAAAA-0000-0000-0000-000000000001"
+            own = home / "Library/Developer/CoreSimulator/Devices" / device / "data/Library/Logs/CrashReporter"
+            host = home / "Library/Logs/DiagnosticReports"
+            other = own.parents[4] / "other/data/Library/Logs/CrashReporter"
+            for folder in (own, host, other):
+                folder.mkdir(parents=True)
+            for folder, name, content, stamp in ((own, "SpringBoard-new.ips", "synthetic crash", 11),
+                    (own, "immichSlides-old.ips", "old crash", 9), (host, "immichSlides-new.ips", device, 11),
+                    (host, "immichSlides-other.ips", "other-device", 11), (other, "immichSlides-other.ips", device, 11),
+                    (own, "unrelated.ips", "irrelevant", 11)):
+                path = folder / name
+                path.write_text(content)
+                os.utime(path, (stamp, stamp))
+            own.joinpath("ReportCrash-link.ips").symlink_to(host / "immichSlides-new.ips")
+            reports = list(capture.crash_reports(home, device, 10))
+            self.assertEqual({path.name for path in reports}, {"SpringBoard-new.ips", "immichSlides-new.ips"})
+            for index in range(7):
+                path = own / f"immichSlides-burst-{index}.ips"
+                path.write_text("synthetic")
+                os.utime(path, (11, 11))
+            self.assertEqual(len(list(capture.crash_reports(home, device, 10))), 5)
+
+    def test_capture_commands_share_one_deadline_and_fail_without_changing_verdicts(self):
+        import ci_xctest_lifecycle as capture
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            def command(argv, **kwargs):
+                self.assertLessEqual(kwargs["timeout"], 5)
+                kwargs["stdout"].write(b"synthetic output")
+                return subprocess.CompletedProcess(argv, 0)
+            with patch.object(capture.subprocess, "run", side_effect=command), patch.object(capture.time, "monotonic", return_value=5):
+                self.assertEqual(capture.command_output(["synthetic"], root / "raw", 10), ("captured", b"synthetic output"))
+                self.assertEqual(capture.command_output(["synthetic"], root / "raw", 5), ("timeout", b""))
+            for failure, status in ((subprocess.TimeoutExpired("synthetic", 1), "timeout"), (OSError(), "unavailable")):
+                with patch.object(capture.subprocess, "run", side_effect=failure):
+                    self.assertEqual(capture.command_output(["synthetic"], root / "raw", float("inf")), (status, b""))
+            import signal
+            for code, expected in ((2, ("unavailable", b"")), (-signal.SIGXFSZ, ("captured", b"synthetic output"))):
+                with patch.object(capture.subprocess, "run", side_effect=lambda argv, **kwargs: (
+                        kwargs["stdout"].write(b"synthetic output"), subprocess.CompletedProcess(argv, code))[1]):
+                    self.assertEqual(capture.command_output(["synthetic"], root / "raw", float("inf")), expected)
+            with patch.object(capture.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)):
+                self.assertEqual(capture.command_output(["synthetic"], root / "raw", float("inf")), ("unavailable", b""))
+
+    def test_summary_has_only_closed_statuses_and_publishes_without_a_screenshot(self):
+        import ci_xctest_lifecycle as capture
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.assertFalse(capture.prepare_publication(root))
+            record = capture.empty_capture("native-failure")
+            capture.publish_file(root, record, "processes", "processes.txt", b"pid ppid state cpu elapsed name\n", 0)
+            payload = {"schema_version": 1, "captures": [record]}
+            capture.write_summary(root, payload)
+            self.assertTrue(capture.prepare_publication(root))
+            for field in capture.KINDS:
+                self.assertIn(record["status"][field], capture.STATUSES)
+            for change in ({"extra": "private"}, {"status": {"processes": "arbitrary"}}, {"trigger": "private text"}):
+                invalid = copy.deepcopy(payload)
+                invalid["captures"][0].update(change)
+                with self.assertRaises(ValueError):
+                    capture.validate_summary(invalid)
+            for change in ({"schema_version": 2}, {"schema_version": True}, {"captures": [record] * 4}, {"extra": "private"}):
+                with self.assertRaises(ValueError):
+                    capture.validate_summary({**payload, **change})
+            for item in ({"kind": "unknown", "name": "processes.txt"}, {"kind": "processes", "name": "../escape.txt"},
+                         {"kind": "processes", "name": "private.json"}, {"kind": "processes", "name": "safe.txt", "extra": 1}):
+                invalid = copy.deepcopy(payload)
+                invalid["captures"][0]["files"] = [item]
+                with self.assertRaises(ValueError):
+                    capture.validate_summary(invalid)
+            invalid = copy.deepcopy(payload)
+            invalid["captures"][0]["files"] *= 2
+            with self.assertRaises(ValueError):
+                capture.validate_summary(invalid)
+            (root / "processes.txt").write_bytes(__import__("strict_e2e_server").PUBLIC_API_KEY.encode())
+            self.assertTrue(capture.prepare_publication(root))
+            self.assertEqual(json.loads((root / "summary.json").read_text())["captures"][0]["status"]["processes"], "withheld")
+            self.assertFalse((root / "processes.txt").exists())
+
+    def test_capture_projects_each_source_and_preserves_unavailable_or_timeout_status(self):
+        import ci_xctest_lifecycle as capture
+        raw = b"10 1 S 0 00:10 launchd_sim\n11 10 R 99 00:01 immichSlides\n"
+        for failure in (None, "manager", "ps", "missing-app", "bad-ps", "log", "crash-deadline", "crash-io"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                crash = root / "new.ips"
+                crash.write_text("synthetic crash")
+                calls = []
+                clock = [0]
+                def command(argv, _path, _deadline):
+                    calls.append(argv)
+                    if "managerpid" in argv:
+                        return ("timeout", b"") if failure == "manager" else ("captured", b"10\n")
+                    if argv[0] == "/bin/ps":
+                        return (("unavailable", b"") if failure == "ps" else
+                                ("captured", b"bad") if failure == "bad-ps" else
+                                ("captured", raw.replace(b"immichSlides", b"other") if failure == "missing-app" else raw))
+                    if "show" in argv:
+                        if failure == "crash-deadline":
+                            clock[0] = 100
+                        return ("timeout", b"") if failure == "log" else ("captured", b"synthetic log")
+                    return "captured", b"synthetic main-thread stack"
+                with patch.object(capture, "command_output", side_effect=command), \
+                        patch.object(capture, "crash_reports", side_effect=OSError() if failure == "crash-io" else None,
+                                     return_value=iter([crash])), \
+                        patch.object(capture.time, "monotonic", side_effect=lambda: clock[0]):
+                    capture.collect("target", 0, root, "native-failure")
+                record = json.loads((root / "summary.json").read_text())["captures"][0]
+                expected_process = "timeout" if failure == "manager" else "unavailable" if failure in {"ps", "bad-ps"} else "captured"
+                self.assertEqual(record["status"]["processes"], expected_process)
+                self.assertEqual(record["status"]["app_sample"], "unavailable" if failure in {"manager", "ps", "bad-ps", "missing-app"} else "captured")
+                self.assertEqual(record["status"]["simulator_log"], "timeout" if failure == "log" else "captured")
+                self.assertEqual((root / "simulator.log").exists(), failure != "log")
+                self.assertEqual(record["status"]["crash_reports"], "timeout" if failure == "crash-deadline" else "unavailable" if failure == "crash-io" else "captured")
+                log = next(call for call in calls if "show" in call)
+                self.assertEqual(log[:8], ["xcrun", "simctl", "spawn", "target", "log", "show", "--last", "3m"])
+                self.assertIn("XCTest", log[-1])
+                self.assertIn("RunningBoard", log[-1])
+                self.assertEqual(log[-1].count("CONTAINS[c]"), 3)
+                if failure not in {"manager", "ps", "bad-ps", "missing-app"}:
+                    self.assertIn(["/usr/bin/sample", "11", "1", "10"], calls)
+
+    def test_capture_watchdog_reaps_the_group_and_bounds_total_published_bytes(self):
+        import ci_xctest_lifecycle as capture
+        from types import SimpleNamespace
+        for outcome in ("captured", "timeout", "nonzero", "copy-timeout", "full"):
+            with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as directory:
+                clock = [0]
+                def launch(argv, **kwargs):
+                    self.assertTrue(kwargs["start_new_session"])
+                    private = Path(argv[-2])
+                    record = capture.empty_capture("native-failure")
+                    capture.publish_file(private, record, "processes", "processes.txt", b"synthetic", 0)
+                    capture.write_summary(private, {"schema_version": 1, "captures": [record]})
+                    def wait(timeout):
+                        self.assertLessEqual(timeout, 20)
+                        if outcome == "timeout" and not killed:
+                            raise subprocess.TimeoutExpired(argv, timeout)
+                        if outcome == "copy-timeout":
+                            clock[0] = 21
+                        return 1 if outcome == "nonzero" else 0
+                    return SimpleNamespace(pid=123, wait=wait)
+                killed = []
+                before = capture.MAX_TOTAL_BYTES if outcome == "full" else 0
+                with patch.object(capture.subprocess, "Popen", side_effect=launch), \
+                        patch.object(capture.os, "killpg", side_effect=lambda *args: killed.append(args)), \
+                        patch.object(capture.time, "monotonic", side_effect=lambda: clock[0]):
+                    record, total = capture.capture("target", 10, Path(directory), "native-failure", 2, before)
+                expected = {"captured": "captured", "timeout": "timeout", "nonzero": "unavailable", "copy-timeout": "timeout", "full": "unavailable"}[outcome]
+                self.assertEqual(record["status"]["processes"], expected)
+                self.assertEqual(total, len(b"synthetic") if outcome == "captured" else before)
+                self.assertEqual(bool(killed), outcome == "timeout")
+                if outcome == "captured":
+                    self.assertEqual((Path(directory) / "capture-2-processes.txt").read_bytes(), b"synthetic")
+
+    def test_live_monitor_captures_before_returning_and_never_changes_the_test_exit(self):
+        import ci_xctest_lifecycle as capture
+        for command in (["xcodebuild", "build-for-testing"], ["xcodebuild", "test-without-building", "-enumerate-tests"],
+                        ["xcodebuild", "test-without-building"]):
+            for broken in (False, True):
+                with self.subTest(command=command, broken=broken), tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    log, destination = root / "xcode.log", root / "public"
+                    log.write_text("Test Case '-[Flow testA]' started.\nFailed to get matching snapshot\n")
+                    record = capture.empty_capture("native-failure")
+                    with patch.object(capture, "capture", side_effect=OSError() if broken else None, return_value=(record, 0)) as operation:
+                        with self.assertRaisesRegex(RuntimeError, "original test exit"), \
+                                capture.monitor_invocation(command, log, "target", destination):
+                            raise RuntimeError("original test exit")
+                        active = "test-without-building" in command and "-enumerate-tests" not in command
+                        self.assertEqual(operation.call_count, int(active))
+                    self.assertEqual((destination / "summary.json").exists(), active)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            monitor = capture.Monitor(root / "missing.log", "target", root)
+            monitor.watch()
+            self.assertEqual(monitor.payload["captures"], [])
+            with patch.object(capture, "Monitor", side_effect=OSError()):
+                with capture.monitor_invocation(["test-without-building"], root / "log", "target", root):
+                    pass
+
+    def test_upload_recheck_drops_invalid_optional_evidence_and_unlisted_files(self):
+        import ci_xctest_lifecycle as capture
+        for refused in ("oversize", "symlink", "total", "invalid-summary", "extra"):
+            with self.subTest(refused=refused), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory) / "public"
+                record = capture.empty_capture("native-failure")
+                capture.publish_file(root, record, "processes", "processes.txt", b"safe", 0)
+                capture.write_summary(root, {"schema_version": 1, "captures": [record]})
+                path = root / "processes.txt"
+                if refused == "oversize":
+                    path.write_bytes(b"x" * (capture.MAX_FILE_BYTES + 1))
+                elif refused == "symlink":
+                    path.unlink()
+                    path.symlink_to(Path(directory) / "absent")
+                elif refused == "invalid-summary":
+                    (root / "summary.json").write_text("invalid")
+                elif refused == "extra":
+                    (root / "unlisted.txt").write_text("private")
+                with patch.object(capture, "MAX_TOTAL_BYTES", 1 if refused == "total" else capture.MAX_TOTAL_BYTES):
+                    self.assertEqual(capture.prepare_publication(root), refused != "invalid-summary")
+                if refused in {"oversize", "symlink", "total"}:
+                    self.assertFalse(path.exists())
+                    self.assertEqual(json.loads((root / "summary.json").read_text())["captures"][0]["status"]["processes"], "withheld")
+                if refused == "extra":
+                    self.assertFalse((root / "unlisted.txt").exists())
+
+    def test_upload_includes_a_closed_lifecycle_receipt_without_any_image(self):
+        import ci_ui_tests
+        import ci_xctest_lifecycle as capture
+        from test_ci_summary import hosted_v5_summary
+        for present in (False, True):
+            with self.subTest(present=present), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                summary, _ = hosted_v5_summary(ui=True, tool=True)
+                (root / "summary.json").write_text(json.dumps(summary))
+                if present:
+                    record = capture.empty_capture("native-failure")
+                    record["status"] = dict.fromkeys(capture.KINDS, "timeout")
+                    capture.write_summary(root / "failure-screenshots/lifecycle/test", {"schema_version": 1, "captures": [record]})
+                with patch.object(ci_ui_tests, "output") as outputs:
+                    self.assertEqual(ci_ui_tests.main(["check-upload", "--output-dir", str(root)]), 0)
+                outputs.assert_any_call("has_screenshots", str(present).lower())
+
+
 class FixtureCoverageTests(unittest.TestCase):
     def test_nightly_retry_artifact_failures_use_the_original_tool_verdict(self):
         for phase, outcome, tool in (("failed-retry", "failed", True), ("export", "timed-out", True),
@@ -109,10 +419,13 @@ class FixtureCoverageTests(unittest.TestCase):
             stack.enter_context(patch.object(runner, "read_xcode_observations", side_effect=[[first], [second]]))
             stack.enter_context(patch.object(runner, "export_private_result_bundle", side_effect=export))
             stack.enter_context(patch.object(runner.subprocess, "Popen", side_effect=process))
+            lifecycle = stack.enter_context(patch.object(runner, "monitor_invocation", wraps=runner.monitor_invocation))
             stdout = stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
             code = runner.main(["--device", "iphone", "--destination", "platform=iOS Simulator,id=target",
                 "--output-dir", str(output), "--xctestrun", str(source), "--shard", "navigation", "--mode", "measure",
                 "--shard-manifest", str(root / "manifest.json"), "--total-timeout-minutes", "85"])
+            self.assertTrue(lifecycle.called)
+            self.assertTrue(all(call.args[0] == [] for call in lifecycle.call_args_list))
             actual = parse_summary((output / "summary.json").read_text())
             self.assertEqual((code, actual["infrastructure"]), (0 if tool else 65, []))
             observed = actual["population"]["observed"][0]
@@ -402,6 +715,7 @@ class FixtureCoverageTests(unittest.TestCase):
                         ("stop_exact_process", None), ("finalize_fixture_run", [])):
                         stack.enter_context(patch.object(runner, name, value if name == "ROOT" else unittest.mock.Mock(return_value=value)))
                     stack.enter_context(patch.object(runner.subprocess, "Popen", side_effect=process))
+                    lifecycle = stack.enter_context(patch.object(runner, "monitor_invocation", wraps=runner.monitor_invocation))
                     stack.enter_context(patch.object(runner.subprocess, "run", side_effect=read))
                     stack.enter_context(patch.object(runner.time, "monotonic", side_effect=lambda: clock[0]))
                     stdout = stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
@@ -422,6 +736,8 @@ class FixtureCoverageTests(unittest.TestCase):
                         "--output-dir", str(output), "--xctestrun", str(source), "--shard", "navigation",
                         "--shard-manifest", str(root / "manifest.json"), "--listed-only-retry",
                         "--result-export-timeout-seconds", "180", "--failure-screenshots"])
+                    self.assertTrue(any("test-without-building" in call.args[0] and "-enumerate-tests" not in call.args[0]
+                                        for call in lifecycle.call_args_list))
                     retained = runner.finalize_fixture_run.call_args
                 if tool_yellow:
                     yellow = phase == "tool-yellow"

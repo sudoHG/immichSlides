@@ -263,13 +263,15 @@ def xctest_tool_class(message):
     if not isinstance(message, str) or len(message) > 512:
         return None
     lifecycle = (
+        r"Failed to terminate com\.331works\.immichSlides:[0-9]{1,10}",
         r"Failed to terminate com\.331works\.immichSlides:[0-9]{1,10}: Failed to terminate com\.331works\.immichSlides:[0-9]{1,10}",
         r"Application 'com\.331works\.immichSlides' does not have a process ID",
         r"Failed to launch (?:com\.331works\.immichSlides|Application 'com\.331works\.immichSlides'): Timed out while launching application via Xcode",
     )
     if any(re.fullmatch(pattern, message) for pattern in lifecycle):
         return "process_lifetime"
-    if message == "Failed to get matching snapshots: Timed out while evaluating UI query":
+    if message in {"Failed to get matching snapshot",
+                   "Failed to get matching snapshots: Timed out while evaluating UI query"}:
         return "snapshot_query"
     return None
 

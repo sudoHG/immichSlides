@@ -36,6 +36,7 @@ from strict_e2e_runner_support import CommandError, destination_udid, prepare_si
 from strict_e2e_server import PUBLIC_API_KEY, fixture_manifest
 from access_lifecycle_contract import logical_bytes_contain
 from ci_wait_policy import FACTOR_ENVIRONMENT_KEY, wait_configuration
+from ci_xctest_lifecycle import monitor_invocation
 
 ROOT = Path(__file__).resolve().parent.parent
 # Hosted UI contention spends the existing shard total, outside strict/tracer budgets.
@@ -656,7 +657,10 @@ def main(argv=None, *, simulator_prepared=False):
             disk_check(args.min_free_gib)
             require(not os.path.lexists(ROOT / "Config/env.xcconfig"), "private configuration reappeared")
             print("Running " + name, flush=True)
-            with (work / (name + ".log")).open("w") as log:
+            log_path = work / (name + ".log")
+            capture_command = command if args.failure_screenshots else []
+            with log_path.open("w") as log, monitor_invocation(capture_command, log_path, udid,
+                    output / "failure-screenshots/lifecycle" / name):
                 process = subprocess.Popen(command, cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT,
                                            start_new_session=True)
                 deadline = min(time.monotonic() + timeout, invocation_deadline)
