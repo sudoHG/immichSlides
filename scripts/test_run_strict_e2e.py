@@ -8255,8 +8255,16 @@ class SmokeFlowResultTests(unittest.TestCase):
                       failure(root / "immichSlidesUITests/Invalid.md", 9),
                       first, failure(root / "TestSupport/Wait.swift", 4), copy.deepcopy(first),
                       failure(root / "TestSupport/Third.swift", 5), failure(root / "TestSupport/Fourth.swift", 6)]
-            record, _, _ = self.execute_record(root, code=65, official_failed=True, failure_nodes=nodes,
-                                                build_source_root=compiled)
+            foreign_resolutions = []
+            original_resolve = Path.resolve
+            def resolve(path, *args, **kwargs):
+                if "private-input-sentinel" in str(path):
+                    foreign_resolutions.append(str(path))
+                return original_resolve(path, *args, **kwargs)
+            with mock.patch.object(Path, "resolve", resolve):
+                record, _, _ = self.execute_record(root, code=65, official_failed=True, failure_nodes=nodes,
+                                                    build_source_root=compiled)
+            self.assertEqual([], foreign_resolutions)
             self.assertEqual("FAIL", record["outcome"])
             self.assertEqual("a" * 40, record["source_sha"])
             self.assertEqual([{"path": "immichSlidesUITests/SmokeFlowIOSUITests.swift", "line": 25},
@@ -8348,6 +8356,11 @@ class SmokeFlowResultTests(unittest.TestCase):
             read_source_dirty_paths=lambda path: [" M changed.swift"] if dirty else [],
             write_case_manifest=lambda path, payload: smoke.write_json(path / "case-manifest.json", payload),
             write_sensitive_scan=mock.Mock(side_effect=lambda *args: assert_running("privacy")))
+        original_write_json = smoke.write_json
+        def write_json(path, payload):
+            if late == "evidence-finalization" and path.resolve() == (evidence / "official-summary.json").resolve():
+                raise OSError("final summary write failed")
+            return original_write_json(path, payload)
         def execute(flow, *args, **kwargs):
             self.assertEqual("/retired/compilation-root", kwargs["build_source_root"])
             directory = evidence / flow["id"]
@@ -8357,6 +8370,8 @@ class SmokeFlowResultTests(unittest.TestCase):
                 summary.update(passedTests=0, failedTests=1, result="Failed")
                 tests["testNodes"][0]["result"] = "Failed"
             smoke.write_json(directory / "official-summary.json", summary)
+            if late == "official-result" and flow == flows[0]:
+                (directory / "official-summary.json").write_text("{invalid")
             smoke.write_json(directory / "official-tests.json", tests)
             record = dict(id=flow["id"], selector=flow["selector"], source_sha="a" * 40, source_dirty_paths=[],
                 outcome="FAIL" if summary["failedTests"] else "PASS", exit_code=65 if summary["failedTests"] else 0,
@@ -8374,10 +8389,11 @@ class SmokeFlowResultTests(unittest.TestCase):
                 mock.patch("strict_e2e_build.validate_warm_products", side_effect=lambda *args: assert_running("products")), \
                 mock.patch.object(smoke.tempfile, "mkdtemp", return_value=str(root / "owned")), \
                 mock.patch.object(smoke.shutil, "rmtree", side_effect=OSError("cleanup failed") if late == "owned-cleanup" else None), \
+                mock.patch.object(smoke, "write_json", side_effect=write_json), \
                 mock.patch.object(smoke, "execute_flow", side_effect=execute) as execution:
             try:
                 code = smoke.run(arguments, root, runner, io.StringIO(), io.StringIO())
-            except (CommandError, OSError):
+            except (CommandError, OSError, ValueError):
                 code = 2
             return code, flows, evidence, execution.call_count
 
@@ -8397,7 +8413,8 @@ class SmokeFlowResultTests(unittest.TestCase):
 
     def test_smoke_late_gates_and_dirty_checkout_cannot_leave_a_passing_root(self):
         for late, dirty in (("privacy", False), ("privacy-one", False), ("privacy-root", False),
-                            ("products", False), ("owned-cleanup", False), (None, True)):
+                            ("products", False), ("owned-cleanup", False), ("official-result", False),
+                            ("evidence-finalization", False), (None, True)):
             with self.subTest(late=late, dirty=dirty), tempfile.TemporaryDirectory() as temporary:
                 code, _, evidence, calls = self.run_group(Path(temporary), late=late, dirty=dirty)
                 self.assertEqual(2, code)
@@ -8417,8 +8434,39 @@ class SmokeFlowResultTests(unittest.TestCase):
                     self.assertEqual(("FAILED", 2) if affected else ("Passed", 0), (saved["result"], saved["exit_code"]))
                     self.assertEqual("Passed", saved["official_summary"]["result"])
                     if affected:
-                        self.assertEqual({"products": "warm-products", "owned-cleanup": "build-cleanup"}.get(late, "sensitive-scan"),
+                        self.assertEqual({"products": "warm-products", "owned-cleanup": "build-cleanup",
+                                          "official-result": "official-result", "evidence-finalization": "evidence-finalization"}.get(late, "sensitive-scan"),
                                          record["failure_kind"])
+
+    def test_late_gate_keeps_the_first_test_failure_and_records_the_group_gate(self):
+        for late in ("products", "privacy-one"):
+            with self.subTest(late=late), tempfile.TemporaryDirectory() as temporary:
+                code, _, evidence, _ = self.run_group(Path(temporary), failed=True, late=late)
+                self.assertEqual(2, code)
+                root = json.loads((evidence / "smoke-flow-results.json").read_text())
+                first, second = root["flows"]
+                self.assertEqual(("FAIL", 65, "test"), (first["outcome"], first["exit_code"], first["failure_kind"]))
+                self.assertEqual("Failed", first["official_summary"]["result"])
+                saved = json.loads((evidence / first["id"] / "case-manifest.json").read_text())
+                self.assertEqual(("FAILED", 65, first), (saved["result"], saved["exit_code"], saved["flow"]))
+                self.assertEqual("warm-products" if late == "products" else "sensitive-scan", root["group_failures"][0]["failure_kind"])
+                self.assertEqual(("FAIL", 2) if late == "products" else ("PASS", 0), (second["outcome"], second["exit_code"]))
+
+    def test_late_gate_preserves_the_first_hang_guard_failure(self):
+        import strict_e2e_smoke as smoke
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary)
+            record = {"id": "iphone-first-boot", "outcome": "FAIL", "exit_code": 124,
+                      "failure_kind": "hang-guard", "official_execution_complete": False}
+            directory = evidence / record["id"]
+            directory.mkdir()
+            smoke.write_json(directory / "case-manifest.json", {"flow": record, "result": "FAILED", "exit_code": 124})
+            gate = smoke.fail_gate_flows(evidence, [record], "evidence-finalization")
+            self.assertEqual(("FAIL", 124, "hang-guard"), (record["outcome"], record["exit_code"], record["failure_kind"]))
+            self.assertEqual({"failure_kind": "evidence-finalization", "exit_code": 2,
+                              "flow_ids": [record["id"]]}, gate)
+            self.assertEqual({"flow": record, "result": "FAILED", "exit_code": 124},
+                             json.loads((directory / "case-manifest.json").read_text()))
 
     def test_smoke_rejects_retry_fixture_scenario_and_mismatched_arguments_before_execution(self):
         for overrides in ({"smoke_device": None}, {"configuration": None}, {"platform": "tvos"},
@@ -8442,6 +8490,7 @@ class SmokeFlowResultTests(unittest.TestCase):
             ("case-manifest.json", lambda p: p.update(exit_code=65)),
             ("smoke-flow-results.json", lambda p: p.update(exit_code=False)),
             ("case-manifest.json", lambda p: p.update(result="FAILED")),
+            ("case-manifest.json", lambda p: p.update(group_failures=[{"failure_kind": "warm-products"}])),
             ("case-manifest.json", lambda p: p.update(device="ipad")),
             ("smoke-flow-results.json", lambda p: p.update(configuration="Release")),
             ("case-manifest.json", lambda p: p.update(source_sha="invalid")),

@@ -115,7 +115,7 @@ def validate_group_evidence(evidence, flows, device, configuration, *, expected_
         if (payload.get("selection") != "group" or payload.get("result") != "Passed"
                 or type(payload.get("exit_code")) is not int or payload["exit_code"] != 0
                 or payload.get("source_dirty_paths") != [] or payload.get("device") != device
-                or payload.get("configuration") != configuration):
+                or payload.get("configuration") != configuration or payload.get("group_failures", []) != []):
             raise ValueError("smoke-group-evidence: group verdict, selection, source state or device differs")
     sha = case.get("source_sha")
     if not isinstance(sha, str) or len(sha) != 40 or any(c not in "0123456789abcdef" for c in sha):
@@ -201,14 +201,16 @@ def fail_gate_flows(evidence, records, gate):
         except (OSError, ValueError, KeyError, TypeError, IndexError):
             pass  # An unlocalised privacy failure invalidates the whole group.
     for record in records:
-        if record["id"] in affected:
+        if record["id"] in affected and record["outcome"] == "PASS":
             record.update(outcome="FAIL", exit_code=2, failure_kind=gate)
     for record in records:
         if record["id"] in affected:
             path = evidence / record["id"] / "case-manifest.json"
             case = json.loads(path.read_text())
-            case.update(flow=record, result="FAILED", exit_code=2)
+            case.update(flow=record, result="FAILED", exit_code=record["exit_code"])
             write_json(path, case)
+    return {"failure_kind": gate, "exit_code": 2,
+            "flow_ids": [record["id"] for record in records if record["id"] in affected]}
 
 
 def flow_failure_locations(tests, selector, source_roots):
@@ -228,6 +230,10 @@ def flow_failure_locations(tests, selector, source_roots):
             path = source.get("filePath")
             if isinstance(path, str) and Path(path).is_absolute():
                 for root in roots:
+                    prefix = root.as_posix().rstrip("/") + "/"
+                    prefixes = {prefix, prefix.removeprefix("/private") if prefix.startswith("/private/") else prefix}
+                    if not any(path.startswith(value) for value in prefixes):
+                        continue
                     try:
                         relative = Path(path).resolve().relative_to(root).as_posix()
                     except (OSError, ValueError, RuntimeError):
@@ -294,13 +300,15 @@ def run(arguments, root, runner, stdout, stderr):
                 "device": arguments.smoke_device, "configuration": arguments.configuration,
                 "selection": "single-flow" if arguments.smoke_flow else "group",
                 "destination": arguments.destination, "warm_build_identity": receipt["identity"],
-                "human_review": "NOT_RUN", "result": "RUNNING", "exit_code": None, "flows": records}
+                "human_review": "NOT_RUN", "result": "RUNNING", "exit_code": None, "flows": records,
+                "group_failures": []}
         def write_state():
             runner.write_case_manifest(evidence, case)
             write_json(evidence / "smoke-flow-results.json", {"schema_version": 1, "source_sha": case["source_sha"],
                 "source_dirty_paths": case["source_dirty_paths"], "device": case["device"],
                 "configuration": case["configuration"], "selection": case["selection"],
-                "result": case["result"], "exit_code": case["exit_code"], "flows": records})
+                "result": case["result"], "exit_code": case["exit_code"], "flows": records,
+                "group_failures": case["group_failures"]})
         write_state()
         gate = None
         try:
@@ -344,7 +352,7 @@ def run(arguments, root, runner, stdout, stderr):
             case.update(result="FAILED", exit_code=getattr(error, "code", 2) or 2)
             try:
                 if gate is not None:
-                    fail_gate_flows(evidence, records, gate)
+                    case["group_failures"].append(fail_gate_flows(evidence, records, gate))
                 summary_path = evidence / "official-summary.json"
                 if summary_path.is_file():
                     summary = json.loads(summary_path.read_text())
