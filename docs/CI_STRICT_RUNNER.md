@@ -2216,8 +2216,9 @@ The reviewed XCTest messages `Failed to terminate com.331works.immichSlides:`
 and `Application 'com.331works.immichSlides' does not have a process ID` identify
 `unknown/process_lifetime`. The phase stays unknown because termination can be
 explicit or part of `XCUIApplication.launch()`, including a launch in a different
-test. PID values and remaining text are discarded from these diagnostic labels.
-The active v5 proof retains complete reviewed tool messages; termination
+test. Nonexact messages retain these short diagnostic labels, discarding PID
+values and remaining text. Exact reviewed messages retain the complete public
+message and active v5 proof; termination
 PIDs are limited to 1–10 digits each, as an explicit exception preserving exact
 message binding. These labels do not prove
 an XCTest/simulator defect or rule out an App crash or stalled launch.

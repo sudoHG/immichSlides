@@ -591,46 +591,65 @@ Fixture invocations with failure attachments enabled watch live XCTest output fo
 `Failed to terminate`, `Failed to get matching snapshot`,
 `Timed out while evaluating UI query`, or `crashed`. A `Launch` or `Terminate`
 activity for the App that has not returned to its parent activity within 15 seconds
-triggers the same optional capture. It captures once per XCTest method, at most
+triggers an optional process snapshot. Expensive tools wait for a native failure
+in that method or Xcode exit, within the same capture budget; otherwise their
+statuses are `skipped`. It captures once per XCTest method, at most
 three times per Xcode invocation. Enumeration and builds do not enable it.
 The monitor starts before Xcode and joins before another runner invocation,
 retry reset, or simulator cleanup. XCTest continues running during capture; an
 immediately following method inside the same invocation can race the capture.
 The process snapshot is collected first, before official-result export.
 
-Each capture has a 20-second subprocess watchdog, including kill/reap reserve.
+Each capture has a 20-second subprocess watchdog, including interpreter startup,
+deferred collection and kill/reap reserve. The collector inherits the parent's
+absolute deadline, writes its summary incrementally, and checks that deadline
+during crash traversal. A capture with less than 20 seconds of the invocation's
+remaining budget is `skipped`. All capture tools run under `nice -n 10`.
 Only the selected simulator's `launchctl managerpid` subtree is projected: App,
 SpringBoard, launchd_sim, ReportCrash and testmanagerd PID, PPID, state, CPU and
 elapsed time, without argv. If exactly one App process exists, it receives a
-one-second `sample`. That UDID's `log show --last 3m` is filtered to the App,
+one-second `sample`. That UDID's `log show --last 60s` is filtered to the App,
 SpringBoard, launchd, RunningBoard and XCTest. New `.ips`/`.crash` reports are
 searched in simulator data `Library/Logs/CrashReporter` and `DiagnosticReports`,
 as well as host DiagnosticReports (including Retired). The invocation start time
 excludes old reports; host reports must contain the selected UDID. Only the named
-processes' reports are considered, at most five.
+processes' reports are considered, at most five per capture. Oversized crash
+reports are omitted; report contents are de-duplicated across the invocation.
 
-Raw command output stays in a private temporary directory. Diagnostic files are
+Raw command output stays private to the collector subprocess. Diagnostic files are
 capped at 256 KiB each and 1 MiB combined per invocation, across all captures;
-raw subprocess writes are also capped. `sample -file /dev/stdout` directs the report into
-the capped private output file instead of creating sample's default raw `/tmp`
-report. Home paths and crash-device identifiers
+command output is streamed into bounded memory. Logs and samples retain their
+tail at a line boundary with an explicit truncation marker. Process output uses
+`ps -c` and is projected to the relevant subtree before capping, so unrelated
+processes cannot hide a live App. `sample -file /dev/stdout` directs the report
+into that stream instead of creating sample's default raw `/tmp` report.
+Home paths and crash-device identifiers
 use the existing crash normalisation, followed by the existing sensitive-value,
 diagnostic JSON and high-confidence secret scans. A refused file is dropped and
-marked `withheld`; capture errors cannot change the XCTest exit, retry eligibility
-or verdict. Upload rechecks these optional files before the ordinary whole-artifact
+marked `withheld`; capture errors cannot replace the XCTest exit or verdict.
+Capture time consumes the existing invocation budget and can reduce remaining
+retry eligibility; it adds no retry or deadline extension. Upload rechecks these optional files before the ordinary whole-artifact
 sensitive scan. A closed `failure-screenshots/lifecycle/<invocation>/summary.json`
 records each trigger (`native-failure` or `activity-timeout`) and content status
-(`captured`, `unavailable`, `timeout`, `withheld`), even without an image. These
+(`captured`, `unavailable`, `timeout`, `withheld`, `skipped`, `oversized`,
+`duplicate`, `budget-exhausted`), even without an image. A status describes the
+latest source result; the file list identifies all retained files, including a
+successful file after an earlier refusal. `budget-exhausted` distinguishes the
+size limit from an absent source. These
 files use the existing `ui-failures-*` artifact and seven-day retention in PR and
 nightly UI. The verdict summary schema and separate strict runner are unchanged.
 
-The live reader remains active while a separate, serial worker collects evidence.
+The live reader buffers until a newline and processes the remainder at stop,
+while a separate, serial worker collects evidence.
 The summary's `trigger_to_capture_start_seconds` and `trigger_to_capture_end_seconds`
 measure monotonic lag from the reader's observation of each trigger, including time
 queued behind an earlier capture. Missing measurements are `null`; measured values
 must be finite, nonnegative and ordered. These values expose delayed capture, without
 claiming to measure Xcode's own stdout buffering delay. Both threads join before
-the runner returns to reset, the next invocation or cleanup.
+the runner returns to reset, the next invocation or cleanup, with a 65-second
+join bound (three capture budgets plus margin). A join timeout is recorded as
+`monitor_status: timeout`; a continually appended Xcode log cannot extend the
+reader's stop boundary.
 
 Failed method nodes and UI observations also include the fixed `failure_phase`
 and `failure_class` enums described in

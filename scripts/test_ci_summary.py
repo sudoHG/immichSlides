@@ -840,12 +840,11 @@ print('parsed 3 nightly retry records without image or runner dependencies')
         with self.assertRaisesRegex(ValueError, "^failure messages: unreviewed public message$"):
             scan_diagnostic_json(json.dumps({"failure_messages": [pid_message.replace("1234567890", "12345678901")]}).encode())
 
-    def test_v5_short_native_snapshot_and_termination_messages_keep_exact_tool_boundaries(self):
+    def test_v5_short_native_termination_keeps_exact_tool_boundaries(self):
         from ci_failure_diagnostics import (environment_limit_evidence, failure_messages_diagnostics,
             public_failure_messages, scan_diagnostic_json, xctest_tool_class)
         import ci_report
-        patterns = (("Failed to get matching snapshot", "snapshot_query"),
-                    ("Failed to terminate com.331works.immichSlides:123", "process_lifetime"))
+        patterns = (("Failed to terminate com.331works.immichSlides:123", "process_lifetime"),)
         for message, failure_class in patterns:
             self.assertEqual(xctest_tool_class(message), failure_class)
             self.assertEqual(public_failure_messages([message]), [message])
@@ -897,6 +896,36 @@ print('parsed 3 nightly retry records without image or runner dependencies')
                         phase["official_methods"][0]["failure_messages"] = [message, "App timeline:"]
                         with self.assertRaises(ValueError):
                             ci_report.method_observations(summary, {"warm": [phase]}, runner_hosted=True)
+
+    def test_snapshot_and_nonexact_termination_keep_their_public_diagnostics_and_red_verdict(self):
+        from ci_failure_diagnostics import (attach_native_tap_failure, environment_limit_evidence,
+            failure_messages_diagnostics, public_failure_messages, validate_failure_messages, xctest_tool_class)
+        for raw, public, kind in (
+                ("Failed to get matching snapshot", "Failed to get matching snapshot", "snapshot_query"),
+                ("Failed to get matching snapshot: Lost connection to the application (pid 123).",
+                 "Failed to get matching snapshot", "snapshot_query"),
+                ("Failed to terminate com.331works.immichSlides:123: unexpected detail",
+                 "Failed to terminate com.331works.immichSlides:", "process_lifetime"),
+                ("Failed to terminate com.331works.immichSlides:12345678901",
+                 "Failed to terminate com.331works.immichSlides:", "process_lifetime"),
+                ("Failed to terminate com.331works.other:123", "[unrecognized XCTest failure]", "unknown")):
+            with self.subTest(raw=raw):
+                self.assertIsNone(xctest_tool_class(raw))
+                messages = public_failure_messages([raw])
+                self.assertEqual(messages, [public])
+                validate_failure_messages(messages)
+                self.assertEqual(failure_messages_diagnostics(messages),
+                                 {"failure_phase": "unknown", "failure_class": kind})
+                summary, _ = hosted_v5_summary(tool=True)
+                row = summary["population"]["observed"][0]
+                for target in (row, row["attempts"][0]):
+                    target.update(failure_messages=messages, **failure_messages_diagnostics(messages))
+                self.assertIsNone(environment_limit_evidence(summary, row, [], runner_hosted=True, policy_version=5))
+        key = "StrictE2EFilterIOSUITests/testFilterAlbumTargetMembers"
+        node = {"nodeIdentifier": key, "first_failure": {"source": "xctest", "step": "select",
+                "element": "slideshow.control.next.button", "action": "tap"}}
+        attach_native_tap_failure([node], {key: ["Failed to get matching snapshot"]})
+        self.assertNotIn("native_tap_failure", node["first_failure"])
 
     def test_v5_readers_bind_complete_messages_and_keep_functional_or_missing_evidence_red(self):
         from ci_failure_diagnostics import environment_limit_evidence, scan_diagnostic_json

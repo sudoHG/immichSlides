@@ -270,8 +270,7 @@ def xctest_tool_class(message):
     )
     if any(re.fullmatch(pattern, message) for pattern in lifecycle):
         return "process_lifetime"
-    if message in {"Failed to get matching snapshot",
-                   "Failed to get matching snapshots: Timed out while evaluating UI query"}:
+    if message == "Failed to get matching snapshots: Timed out while evaluating UI query":
         return "snapshot_query"
     return None
 

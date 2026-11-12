@@ -597,12 +597,19 @@ Clean fixture shards with only bound native tool failures exit zero but retain
 raw `summary.status: failed`. Cleanup errors and mixed failures stay nonzero.
 
 The shared v5 producer and reader also recognise the complete native message
-`Failed to get matching snapshot` and
 `Failed to terminate com.331works.immichSlides:<pid>` (one to ten decimal PID
 digits), alongside the existing full snapshot-query timeout and nested termination
 messages. They follow the existing `xctest-tool` exception and separate yellow
 listing: raw failures remain recorded, and the unchanged consecutive-night rule
 still applies. Matching is exact and occurs before assertion-wrapper stripping.
+This follows the maintainer's 2026-10-30 rule that App launch or terminate stalls
+count as Apple tool failures. Bare `Failed to get matching snapshot` and unreviewed
+suffixes of that prefix remain `unknown/snapshot_query` and red: they can indicate an
+App main-thread hang, and the capture is intended to distinguish that cause.
+Night 1112 (run 43121052166) therefore stays red under this change; its published
+prefix does not establish the raw message, whose form remains `NOT_VERIFIED`.
+Suffixed or near-miss terminate messages retain their prior
+`unknown/process_lifetime` public projection without qualifying for the exception.
 Trailing text, another bundle, an assertion mentioning snapshot or termination,
 and App crash messages do not qualify. Complete official failure lists, bound
 counts/identities, known durations, hosted nightly scope and every existing

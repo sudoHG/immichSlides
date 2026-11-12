@@ -659,11 +659,11 @@ def main(argv=None, *, simulator_prepared=False):
             print("Running " + name, flush=True)
             log_path = work / (name + ".log")
             capture_command = command if args.failure_screenshots else []
+            deadline = min(time.monotonic() + timeout, invocation_deadline)
             with log_path.open("w") as log, monitor_invocation(capture_command, log_path, udid,
-                    output / "failure-screenshots/lifecycle" / name):
+                    output / "failure-screenshots/lifecycle" / name, deadline=deadline):
                 process = subprocess.Popen(command, cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT,
                                            start_new_session=True)
-                deadline = min(time.monotonic() + timeout, invocation_deadline)
                 try:
                     while time.monotonic() < deadline:
                         try:

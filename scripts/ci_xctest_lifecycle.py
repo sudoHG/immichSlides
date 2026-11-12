@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
 import queue
 import re
+import selectors
 import signal
 import shutil
 import subprocess
@@ -22,8 +24,10 @@ CAPTURE_TIMEOUT_SECONDS = 20
 MAX_CAPTURES = 3
 MAX_FILE_BYTES = 256 * 1024
 MAX_TOTAL_BYTES = 1024 * 1024
+JOIN_TIMEOUT_SECONDS = MAX_CAPTURES * CAPTURE_TIMEOUT_SECONDS + 5
+TRUNCATED = b"[truncated: earlier output omitted]\n"
 KINDS = {"processes", "app_sample", "simulator_log", "crash_reports"}
-STATUSES = {"captured", "unavailable", "timeout", "withheld"}
+STATUSES = {"captured", "unavailable", "timeout", "withheld", "skipped", "budget-exhausted", "oversized", "duplicate"}
 PROCESS_NAMES = {"immichSlides", "SpringBoard", "launchd_sim", "ReportCrash", "testmanagerd"}
 LOG_PREDICATE = ('process == "immichSlides" OR process == "SpringBoard" OR process == "launchd_sim" '
                  'OR subsystem CONTAINS[c] "RunningBoard" OR subsystem CONTAINS[c] "launchd" OR subsystem CONTAINS[c] "XCTest"')
@@ -81,29 +85,45 @@ def scan_bytes(data):
     scan_diagnostic_json(data)
 
 
-def publish_file(root, record, kind, name, raw, total):
+def publish_file(root, record, kind, name, raw, total, seen_crashes=None):
+    if kind == "crash_reports" and len(raw) > MAX_FILE_BYTES:
+        record["status"][kind] = "oversized"
+        return total
     try:
         data = normalize(raw)
         scan_bytes(data)
     except Exception:
         record["status"][kind] = "withheld"
         return total
-    data = data[:MAX_FILE_BYTES]
-    if not data or total + len(data) > MAX_TOTAL_BYTES:
-        if not any(item["kind"] == kind for item in record["files"]) and record["status"][kind] != "withheld":
-            record["status"][kind] = "unavailable"
+    if kind == "crash_reports" and len(data) > MAX_FILE_BYTES:
+        record["status"][kind] = "oversized"
+        return total
+    data = bounded_tail(data)
+    fingerprint = hashlib.sha256(data).hexdigest()
+    if kind == "crash_reports" and seen_crashes is not None and fingerprint in seen_crashes:
+        record["status"][kind] = "duplicate"
+        return total
+    if total + len(data) > MAX_TOTAL_BYTES:
+        record["status"][kind] = "budget-exhausted"
+        return total
+    if not data:
         return total
     root.mkdir(parents=True, exist_ok=True)
     path = root / name
     path.write_bytes(data)
     path.chmod(0o600)
     record["files"].append({"kind": kind, "name": name})
-    record["status"][kind] = "withheld" if record["status"][kind] == "withheld" else "captured"
+    # Status describes the latest source result; the file list identifies every retained file.
+    record["status"][kind] = "captured"
+    if kind == "crash_reports" and seen_crashes is not None:
+        seen_crashes.add(fingerprint)
     return total + len(data)
 
 
 def validate_summary(payload):
-    if (set(payload) != {"schema_version", "captures"} or type(payload["schema_version"]) is not int or payload["schema_version"] != 1
+    if (set(payload) - {"monitor_status"} != {"schema_version", "captures"}
+            or payload.get("monitor_status", "complete") not in {"complete", "timeout"}
+            or type(payload["schema_version"]) is not int or payload["schema_version"] != 1
             or not isinstance(payload["captures"], list) or len(payload["captures"]) > MAX_CAPTURES):
         raise ValueError("invalid lifecycle summary")
     names = set()
@@ -127,7 +147,14 @@ def validate_summary(payload):
 def write_summary(root, payload):
     validate_summary(payload)
     root.mkdir(parents=True, exist_ok=True)
-    (root / "summary.json").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    with tempfile.NamedTemporaryFile(mode="w", dir=root, delete=False) as receipt:
+        temporary = Path(receipt.name)
+        try:
+            receipt.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+            receipt.close()
+            temporary.replace(root / "summary.json")
+        finally:
+            temporary.unlink(missing_ok=True)
 
 
 def prepare_publication(root):
@@ -155,9 +182,11 @@ def _prepare_publication(root):
                         raise ValueError("withheld")
                     data = path.read_bytes()
                     scan_bytes(data)
+                    if total + len(data) > MAX_TOTAL_BYTES:
+                        path.unlink()
+                        record["status"][item["kind"]] = "budget-exhausted"
+                        continue
                     total += len(data)
-                    if total > MAX_TOTAL_BYTES:
-                        raise ValueError("withheld")
                     retained.append(item)
                 except Exception:
                     path.unlink(missing_ok=True)
@@ -175,6 +204,8 @@ def _prepare_publication(root):
 def process_state(raw, root):
     rows = {}
     for line in raw.splitlines():
+        if not line.strip():
+            continue
         pid, parent, state, cpu, elapsed, name = line.split(None, 5)
         pid, parent, cpu = int(pid), int(parent), float(cpu)
         if pid <= 0 or parent < 0 or not math.isfinite(cpu) or cpu < 0:
@@ -193,13 +224,15 @@ def process_state(raw, root):
     return text, apps[0] if len(apps) == 1 else None
 
 
-def crash_reports(home, udid, baseline):
+def crash_reports(home, udid, baseline, deadline=float("inf")):
     device = home / "Library/Developer/CoreSimulator/Devices" / udid / "data/Library/Logs"
     directories = [(home / "Library/Logs/DiagnosticReports", False), (device / "CrashReporter", True),
                    (device / "DiagnosticReports", True)]
     count = 0
     for directory, scoped in directories:
         for path in directory.rglob("*"):
+            if time.monotonic() >= deadline:
+                raise TimeoutError("crash traversal deadline")
             if (path.is_symlink() or not path.is_file() or path.suffix.lower() not in {".ips", ".crash"}
                     or not any(path.name.startswith(name) for name in PROCESS_NAMES) or path.stat().st_mtime < baseline):
                 continue
@@ -213,122 +246,239 @@ def crash_reports(home, udid, baseline):
                 return
 
 
-def command_output(command, path, deadline):
+def bounded_tail(raw, truncated=False):
+    if len(raw) <= MAX_FILE_BYTES and not truncated:
+        return raw
+    tail = raw[-(MAX_FILE_BYTES - len(TRUNCATED)):]
+    # Drop the partial oldest line; the newest complete lines contain the trigger window.
+    return TRUNCATED + tail.partition(b"\n")[2]
+
+
+def command_output(command, path, deadline, *, process_root=None):
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         return "timeout", b""
+    process = None
     try:
-        with path.open("wb") as output:
-            completed = subprocess.run(command, stdout=output, stderr=subprocess.DEVNULL, timeout=min(5, remaining), check=False)
-        with path.open("rb") as source:
-            raw = source.read(MAX_FILE_BYTES)
-        if not raw or completed.returncode and completed.returncode != -signal.SIGXFSZ:
+        command_deadline = min(deadline, time.monotonic() + 5)
+        raw, partial, rows, truncated = b"", b"", [], False
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        with selectors.DefaultSelector() as selector:
+            selector.register(process.stdout, selectors.EVENT_READ)
+            while selector.get_map():
+                remaining = command_deadline - time.monotonic()
+                if remaining <= 0:
+                    process.kill()
+                    process.wait()
+                    return "timeout", b""
+                for key, _ in selector.select(remaining):
+                    chunk = os.read(key.fd, 8192)
+                    if not chunk:
+                        selector.unregister(key.fileobj)
+                        continue
+                    if process_root is not None:
+                        partial += chunk
+                        lines = partial.split(b"\n")
+                        rows.extend(lines[:-1])
+                        partial = lines[-1]
+                        if len(rows) > 100000 or len(partial) > MAX_FILE_BYTES:
+                            raise ValueError("invalid process population")
+                    else:
+                        raw += chunk
+                        if len(raw) > MAX_FILE_BYTES:
+                            raw, truncated = raw[-MAX_FILE_BYTES:], True
+            code = process.wait(timeout=max(0, command_deadline - time.monotonic()))
+        if code:
             return "unavailable", b""
-        return "captured", raw
+        if process_root is not None:
+            text, _ = process_state(b"\n".join(rows + [partial]).decode("utf-8", errors="replace"), process_root)
+            raw = text.encode()
+            if len(raw) > MAX_FILE_BYTES:
+                return "unavailable", b""
+        else:
+            raw = bounded_tail(raw, truncated)
+        return ("captured", raw) if raw else ("unavailable", b"")
     except subprocess.TimeoutExpired:
+        if process is not None:
+            process.kill()
+            process.wait()
         return "timeout", b""
-    except OSError:
+    except (OSError, ValueError):
+        if process is not None and process.poll() is None:
+            process.kill()
+            process.wait()
         return "unavailable", b""
+    finally:
+        if process is not None and process.stdout is not None:
+            process.stdout.close()
 
 
-def collect(udid, baseline, root, trigger):
+def collect(udid, baseline, root, trigger, deadline, release_path=None):
     """Runs only in a killable private subprocess; no raw command output enters the public tree."""
     record, total = empty_capture(trigger), 0
-    deadline = time.monotonic() + CAPTURE_TIMEOUT_SECONDS - 2
+    def save():
+        write_summary(root, {"schema_version": 1, "captures": [record]})
+    save()
     def output(kind, name, command):
         nonlocal total
-        status, raw = command_output(command, root / "raw", deadline)
+        status, raw = command_output(["/usr/bin/nice", "-n", "10", *command], root / "raw", deadline)
         record["status"][kind] = status
         if raw:
             total = publish_file(root, record, kind, name, raw, total)
+        save()
         return status, raw
+    pid = None
     try:
-        state, manager = command_output(["xcrun", "simctl", "spawn", udid, "launchctl", "managerpid"], root / "raw", deadline)
+        state, manager = command_output(["/usr/bin/nice", "-n", "10", "xcrun", "simctl", "spawn", udid, "launchctl", "managerpid"], root / "raw", deadline)
         if state != "captured":
             record["status"]["processes"] = state
         else:
-            state, raw = command_output(["/bin/ps", "-A", "-o", "pid=,ppid=,state=,%cpu=,etime=,comm="], root / "raw", deadline)
+            state, raw = command_output(["/usr/bin/nice", "-n", "10", "/bin/ps", "-A", "-c", "-o", "pid=,ppid=,state=,%cpu=,etime=,comm="],
+                                        root / "raw", deadline, process_root=int(manager.strip()))
             record["status"]["processes"] = state
             if state == "captured":
-                text, pid = process_state(raw.decode("utf-8", errors="replace"), int(manager.strip()))
+                text, pid = process_state(raw.decode("utf-8", errors="replace").partition("\n")[2], int(manager.strip()))
                 total = publish_file(root, record, "processes", "processes.txt", text.encode(), total)
-                if pid is not None:
-                    output("app_sample", "app-sample.txt", ["/usr/bin/sample", str(pid), "1", "10", "-file", "/dev/stdout"])
     except (OSError, ValueError):
         record["status"]["processes"] = "unavailable"
-    output("simulator_log", "simulator.log", ["xcrun", "simctl", "spawn", udid, "log", "show", "--last", "3m",
+    save()
+    if release_path is not None:
+        while not release_path.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        if not release_path.exists():
+            for kind in KINDS - {"processes"}:
+                record["status"][kind] = "skipped"
+            save()
+            return
+    if pid is not None:
+        output("app_sample", "app-sample.txt", ["/usr/bin/sample", str(pid), "1", "10", "-file", "/dev/stdout"])
+    output("simulator_log", "simulator.log", ["xcrun", "simctl", "spawn", udid, "log", "show", "--last", "60s",
            "--style", "compact", "--predicate", LOG_PREDICATE])
     try:
-        for number, path in enumerate(crash_reports(Path.home(), udid, baseline), 1):
+        for number, path in enumerate(crash_reports(Path.home(), udid, baseline, deadline), 1):
             if time.monotonic() >= deadline:
                 record["status"]["crash_reports"] = "timeout"
                 break
             with path.open("rb") as source:
                 raw = source.read(MAX_FILE_BYTES + 1)
             total = publish_file(root, record, "crash_reports", "crash-" + str(number) + path.suffix.lower(), raw, total)
+            save()
+    except TimeoutError:
+        record["status"]["crash_reports"] = "timeout"
     except OSError:
         record["status"]["crash_reports"] = "unavailable"
     (root / "raw").unlink(missing_ok=True)
     write_summary(root, {"schema_version": 1, "captures": [record]})
 
 
-def capture(udid, baseline, destination, trigger, number, total):
+def capture(udid, baseline, destination, trigger, number, total, *, deadline=None, release=None, seen_crashes=None):
     record = empty_capture(trigger)
-    deadline = time.monotonic() + CAPTURE_TIMEOUT_SECONDS
+    deadline = min(deadline if deadline is not None else float("inf"), time.monotonic() + CAPTURE_TIMEOUT_SECONDS)
     with tempfile.TemporaryDirectory(prefix="immichSlides-lifecycle-") as directory:
         private = Path(directory)
-        process = subprocess.Popen([sys.executable, "-B", str(Path(__file__).resolve()), udid, str(baseline), directory, trigger],
+        release_path = private / "release" if release is not None else None
+        process = subprocess.Popen(["/usr/bin/nice", "-n", "10", sys.executable, "-B", str(Path(__file__).resolve()), udid,
+                                    str(baseline), directory, trigger, str(deadline - 1), str(release_path) if release_path else ""],
                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
         try:
-            code = process.wait(timeout=max(0, deadline - time.monotonic() - 1))
+            while True:
+                if release_path is not None and release.is_set():
+                    release_path.touch()
+                remaining = max(0, deadline - time.monotonic() - 1)
+                try:
+                    code = process.wait(timeout=min(0.1, remaining) if release_path is not None else remaining)
+                    break
+                except subprocess.TimeoutExpired:
+                    if release_path is None or time.monotonic() >= deadline - 1:
+                        raise
         except subprocess.TimeoutExpired:
             os.killpg(process.pid, signal.SIGKILL)
             process.wait(timeout=max(0, deadline - time.monotonic()))
+            code = -signal.SIGKILL
             record["status"] = dict.fromkeys(sorted(KINDS), "timeout")
-            return record, total
-        if code:
+        if not (private / "summary.json").is_file():
             return record, total
         payload = json.loads((private / "summary.json").read_text())
         validate_summary(payload)
         record = payload["captures"][0]
+        if code:
+            for kind in KINDS:
+                if record["status"][kind] == "unavailable":
+                    record["status"][kind] = "timeout" if code == -signal.SIGKILL else "unavailable"
         items, record["files"] = record["files"], []
         for item in items:
             if time.monotonic() >= deadline:
                 record["status"][item["kind"]] = "timeout"
                 continue
             total = publish_file(destination, record, item["kind"], f"capture-{number}-" + item["name"],
-                                 (private / item["name"]).read_bytes(), total)
+                                 (private / item["name"]).read_bytes(), total, seen_crashes)
     return record, total
 
 
 class Monitor:
-    def __init__(self, log, udid, destination):
+    def __init__(self, log, udid, destination, deadline=float("inf")):
         self.log, self.udid, self.destination = log, udid, destination
+        self.deadline = deadline
         self.baseline = time.time()
         self.trigger = Trigger()
         self.stopped = threading.Event()
-        self.thread = threading.Thread(target=self.watch, name="fixture-lifecycle")
-        self.worker = threading.Thread(target=self.collect_requests, name="fixture-lifecycle-capture")
+        self.thread = threading.Thread(target=self.watch, name="fixture-lifecycle", daemon=True)
+        self.worker = threading.Thread(target=self.collect_requests, name="fixture-lifecycle-capture", daemon=True)
         self.requests = queue.Queue(maxsize=MAX_CAPTURES + 1)
         self.payload = {"schema_version": 1, "captures": []}
         self.total = 0
+        self.releases = {}
+        self.seen_crashes = set()
+
+    def observe(self, line):
+        now = time.monotonic()
+        reason = self.trigger.observe(line, now)
+        release = self.releases.get(self.trigger.case)
+        if release is not None and FAILURE.search(line):
+            release.set()
+        if reason:
+            release = threading.Event() if reason == "activity-timeout" else None
+            if release is not None:
+                self.releases[self.trigger.case] = release
+            self.requests.put_nowait((reason, now, release))
+
+    def mark_join_timeout(self):
+        self.payload["monitor_status"] = "timeout"
+        try:
+            write_summary(self.destination, self.payload)
+        except Exception:
+            pass
 
     def watch(self):
         try:
-            with self.log.open(encoding="utf-8", errors="replace") as log:
+            with self.log.open("rb") as log:
                 self.worker.start()
                 try:
+                    buffer, stop_position = b"", None
                     while True:
-                        line = log.readline(8192)
-                        observed_at = time.monotonic()
-                        reason = self.trigger.observe(line, observed_at)
-                        if reason:
-                            self.requests.put_nowait((reason, observed_at))
-                        if not line and self.stopped.wait(0.1):
+                        if self.stopped.is_set() and stop_position is None:
+                            stop_position = os.fstat(log.fileno()).st_size
+                        remaining = 8192 if stop_position is None else max(0, stop_position - log.tell())
+                        chunk = log.read(min(8192, remaining))
+                        buffer += chunk
+                        lines = buffer.split(b"\n")
+                        buffer = lines[-1]
+                        for line in lines[:-1]:
+                            self.observe(line.decode("utf-8", errors="replace"))
+                        if stop_position is not None and log.tell() >= stop_position:
+                            if buffer:
+                                self.observe(buffer.decode("utf-8", errors="replace"))
                             return
+                        if not chunk:
+                            self.observe("")
+                            self.stopped.wait(0.1)
                 finally:
+                    for release in self.releases.values():
+                        release.set()
                     self.requests.put_nowait(None)
-                    self.worker.join()
+                    self.worker.join(timeout=JOIN_TIMEOUT_SECONDS)
+                    if self.worker.is_alive():
+                        self.mark_join_timeout()
         except Exception:
             # Optional evidence cannot replace the XCTest exit or prevent bundle finalization.
             return
@@ -338,11 +488,16 @@ class Monitor:
             request = self.requests.get()
             if request is None:
                 return
-            reason, observed_at = request
+            reason, observed_at, release = request
             started_at = time.monotonic()
             try:
-                record, self.total = capture(self.udid, self.baseline, self.destination, reason,
-                                            len(self.payload["captures"]) + 1, self.total)
+                if self.deadline - started_at < CAPTURE_TIMEOUT_SECONDS:
+                    record = empty_capture(reason)
+                    record["status"] = dict.fromkeys(sorted(KINDS), "skipped")
+                else:
+                    record, self.total = capture(self.udid, self.baseline, self.destination, reason,
+                        len(self.payload["captures"]) + 1, self.total, deadline=self.deadline,
+                        release=release, seen_crashes=self.seen_crashes)
             except Exception:
                 record = empty_capture(reason)
             record["trigger_to_capture_start_seconds"] = started_at - observed_at
@@ -356,11 +511,11 @@ class Monitor:
 
 
 @contextmanager
-def monitor_invocation(command, log, udid, destination):
+def monitor_invocation(command, log, udid, destination, deadline=float("inf")):
     monitor = None
     try:
         if "test-without-building" in command and "-enumerate-tests" not in command:
-            monitor = Monitor(log, udid, destination)
+            monitor = Monitor(log, udid, destination, deadline)
             monitor.thread.start()
     except Exception:
         monitor = None
@@ -369,10 +524,15 @@ def monitor_invocation(command, log, udid, destination):
     finally:
         if monitor is not None:
             monitor.stopped.set()
-            monitor.thread.join()
+            monitor.thread.join(timeout=JOIN_TIMEOUT_SECONDS)
+            if monitor.thread.is_alive():
+                monitor.mark_join_timeout()
+
+
+def main(arguments):
+    collect(arguments[0], float(arguments[1]), Path(arguments[2]), arguments[3], float(arguments[4]),
+            Path(arguments[5]) if arguments[5] else None)
 
 
 if __name__ == "__main__":
-    import resource
-    resource.setrlimit(resource.RLIMIT_FSIZE, (MAX_FILE_BYTES, MAX_FILE_BYTES))
-    collect(sys.argv[1], float(sys.argv[2]), Path(sys.argv[3]), sys.argv[4])
+    main(sys.argv[1:])
