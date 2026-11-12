@@ -35,9 +35,9 @@ become CI-trusted before any reader uses it to select execution.
 The unit-coverage PRs and this tier plan change no App behavior and retire no E2E
 assertions. The duplicate-removal batch (#721) is separate: it removes only reviewed
 duplicates whose assertions still run in retained tests, before the future tier switch.
-The current inventory is 386 UI source methods and 135 strict matrix rows, separately
-identified; it is not 521 nightly executions. The current complete nightly schedules
-318 fixture UI device identities plus 135 strict rows, or 453 scheduling identities.
+The current inventory is 377 UI source methods and 94 strict matrix rows, separately
+identified; it is not 471 nightly executions. The current complete nightly schedules
+306 fixture UI device identities plus 94 strict rows, or 400 scheduling identities.
 A strict row may invoke more than one XCTest method.
 
 | Target tier | Responsibility | Frequency |
@@ -85,7 +85,9 @@ Even `delete` is a conditional destination, never
 an instruction to delete now. A source method can anchor several device flows without
 creating additional smoke executions. Rows may link additional valid smoke flows
 that absorb their interactions; every linked flow must run on one of the row's devices,
-and anchors must retain their links. Human-review groups
+and anchors must retain their links. For a UI method, the row's devices are those of
+its compiled platforms (iOS: iPhone and iPad; tvOS: Apple TV); runtime device skips
+are not modelled. Human-review groups
 are optional for `unit`, `delete` and `pr-smoke` rows, and each linked group must apply
 to the strict row's device or the UI method's compiled platform. TV focus routing
 belongs to `tv-focus`; iPhone rotation belongs to playback review, while iPad rotation
