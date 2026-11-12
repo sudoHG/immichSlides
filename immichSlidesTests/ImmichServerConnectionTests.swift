@@ -9,6 +9,40 @@ import Testing
 @Suite(.serialized, .sharedRuntimeIsolation)
 struct ImmichServerConnectionTests {
 
+    @Test(arguments: [FailedConnection.unreachable, .timeout])
+    func `network failures retain their cause and recovery guidance in the connection form`(_ failure: FailedConnection)
+        async
+    {
+        let session = makeMockedSession { request in try failure.respond(to: request) }
+        defer { session.invalidateAndCancel() }
+        let viewModel = SettingsServerViewModel(
+            connectionTestActionForTesting: { url, key, progress in
+                await ImmichServer.testConnection(
+                    serverURL: url, apiKey: key, sessionForTesting: session, progressHandler: progress
+                )
+            },
+            automaticRetryDelayScheduleForTesting: []
+        )
+        viewModel.serverURL = "https://server.invalid"
+        viewModel.apiKey = "synthetic-key"
+
+        await viewModel.testConnection()?.value
+
+        let cause = URLError(failure == .timeout ? .timedOut : .cannotConnectToHost)
+        #expect(!viewModel.isConnectionVerified)
+        #expect(!viewModel.isTestingConnection)
+        #expect(viewModel.shouldShowErrorAlert)
+        #expect(viewModel.errorAlertTitle == String(localized: "Connection test failed"))
+        #expect(
+            viewModel.errorMessage
+                == LocalizedText.format("Network request failed: %@", cause.localizedDescription) + "\n\n"
+                + String(
+                    localized:
+                        "Please check the server URL and API key, make sure Immich is reachable, and try again."
+                )
+        )
+    }
+
     @Test(arguments: FailedConnection.allCases)
     func `failed HTTP connections cannot save first boot configuration`(_ failure: FailedConnection) async throws {
         ImmichServer.clearSavedConfiguration()

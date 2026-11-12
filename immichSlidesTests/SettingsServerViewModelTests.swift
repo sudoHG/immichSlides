@@ -7,6 +7,28 @@ struct SettingsServerViewModelTests {
     private let retryDelayNanoseconds: UInt64 = 1_000_000_000
     private let settlingYieldCount: Int = 6
 
+    @Test(arguments: [true, false])
+    @MainActor
+    func `invalid credentials cannot start an HTTP test or enable saving`(_ hasInvalidURL: Bool) async {
+        let attempts = ConnectionAttemptCounter()
+        let viewModel = SettingsServerViewModel(
+            connectionTestActionForTesting: { _, _, _ in
+                _ = await attempts.nextValue()
+                return .init(kind: .success, message: nil)
+            }
+        )
+        #expect(!viewModel.isConnectionVerified)
+        viewModel.serverURL = hasInvalidURL ? "foo://invalid-host" : "https://server.invalid"
+        viewModel.apiKey = hasInvalidURL ? "synthetic-key" : ""
+        await viewModel.testConnection()?.value
+
+        #expect(!viewModel.isConnectionVerified)
+        #expect(!viewModel.isTestingConnection)
+        #expect(viewModel.shouldShowErrorAlert)
+        #expect(viewModel.errorAlertTitle == String(localized: "Connection test failed"))
+        #expect(await attempts.currentValue() == 0)
+    }
+
     @Test
     @MainActor
     func `invalid input uses the connection test failed alert title`() {

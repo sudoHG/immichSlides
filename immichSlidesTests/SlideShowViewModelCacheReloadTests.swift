@@ -17,6 +17,46 @@ import Testing
 struct SlideShowViewModelCacheReloadTests {
 
     @Test
+    func `clearing disk cache reports zero usage for all cached photos and sizes`() async throws {
+        let http = LateLoadLocalHTTPFixture()
+        try await http.start()
+        defer { http.stop() }
+        try #require(
+            LateLoadRealPathTestSupport.installIsolatedFixtureServer(
+                port: http.port, credential: LateLoadRealPathFixture.fixtureCredential
+            ))
+        let fixture = makeCurrentSceneFixture()
+        let manager = fixture.vm.downloadManager
+        defer { resetSharedDownloadManager(manager) }
+        await manager.clearDiskCacheForSettings()
+        let cacheRunId = UUID().uuidString
+        let assetIds = ["cache-summary-a-\(cacheRunId)", "cache-summary-b-\(cacheRunId)"]
+        let sizes: [ThumbnailSize] = [.fullsize, .preview, .thumbnail]
+        for assetId in assetIds {
+            for size in sizes {
+                await manager.loadPhoto(assetId: assetId, size: size, priority: .high)
+                try #require(manager.isReady(assetId: assetId, size: size))
+            }
+        }
+        try #require(http.completedRequests().count == assetIds.count * sizes.count)
+        try #require(manager.cacheSummary().diskBytes > 0)
+
+        await manager.clearDiskCacheForSettings()
+
+        let cleared = manager.cacheSummary()
+        #expect(cleared.diskBytes == 0)
+        #expect(cleared.trackedAssetURLCount == 0)
+        #expect(cleared.trackedStateCount == 0)
+        #expect(cleared.runningTaskCount == 0)
+        for assetId in assetIds {
+            for size in sizes {
+                #expect(!manager.isReady(assetId: assetId, size: size))
+                #expect(manager.findURL(assetId: assetId, size: size) == nil)
+            }
+        }
+    }
+
+    @Test
     func `clearing disk cache reloads the current photo through HTTP after memory eviction`() async throws {
         let http = LateLoadLocalHTTPFixture()
         try await http.start()
