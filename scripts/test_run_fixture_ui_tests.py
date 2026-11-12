@@ -223,7 +223,7 @@ class LifecycleCaptureTests(unittest.TestCase):
                 self.assertIn("RunningBoard", log[-1])
                 self.assertEqual(log[-1].count("CONTAINS[c]"), 3)
                 if failure not in {"manager", "ps", "bad-ps", "missing-app"}:
-                    self.assertIn(["/usr/bin/sample", "11", "1", "10"], calls)
+                    self.assertIn(["/usr/bin/sample", "11", "1", "10", "-file", "/dev/stdout"], calls)
 
     def test_capture_watchdog_reaps_the_group_and_bounds_total_published_bytes(self):
         import ci_xctest_lifecycle as capture

@@ -253,7 +253,7 @@ def collect(udid, baseline, root, trigger):
                 text, pid = process_state(raw.decode("utf-8", errors="replace"), int(manager.strip()))
                 total = publish_file(root, record, "processes", "processes.txt", text.encode(), total)
                 if pid is not None:
-                    output("app_sample", "app-sample.txt", ["/usr/bin/sample", str(pid), "1", "10"])
+                    output("app_sample", "app-sample.txt", ["/usr/bin/sample", str(pid), "1", "10", "-file", "/dev/stdout"])
     except (OSError, ValueError):
         record["status"]["processes"] = "unavailable"
     output("simulator_log", "simulator.log", ["xcrun", "simctl", "spawn", udid, "log", "show", "--last", "3m",

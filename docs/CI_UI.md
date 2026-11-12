@@ -611,7 +611,9 @@ processes' reports are considered, at most five.
 
 Raw command output stays in a private temporary directory. Diagnostic files are
 capped at 256 KiB each and 1 MiB combined per invocation, across all captures;
-raw subprocess writes are also capped. Home paths and crash-device identifiers
+raw subprocess writes are also capped. `sample -file /dev/stdout` directs the report into
+the capped private output file instead of creating sample's default raw `/tmp`
+report. Home paths and crash-device identifiers
 use the existing crash normalisation, followed by the existing sensitive-value,
 diagnostic JSON and high-confidence secret scans. A refused file is dropped and
 marked `withheld`; capture errors cannot change the XCTest exit, retry eligibility
