@@ -22,6 +22,33 @@ from pathlib import Path
 TARGET_GLOBS = ("immichSlidesTests/*.swift", "immichSlidesUITests/*.swift", "TestSupport/*.swift")
 ALLOWLIST_PATH = "scripts/test_conventions_allowlist.json"
 TIMEOUT_ALLOWLIST_PATH = "scripts/test_timeout_allowlist.json"
+TEST_TIER_PLAN_PATH = "scripts/ci-test-tiers.json"
+# Approved source identities are independent of the editable plan's links.
+APPROVED_TIER_SMOKE = {
+    "iphone-album-selection": ("iphone", "Debug", "strict", "filter-album|normal|iphone|Debug|a"),
+    "iphone-background-return": ("iphone", "Release", "strict", "ios-lifecycle-background|normal|iphone|Release|a"),
+    "iphone-connection-error": ("iphone", "Debug", "strict", "firstboot-failure|auth-401|iphone|Debug|a"),
+    "iphone-first-boot": ("iphone", "Debug", "strict", "journey-a|normal|iphone|Debug|a"),
+    "iphone-person-return": ("iphone", "Debug", "strict", "filter-person-return|normal|iphone|Debug|a"),
+    "iphone-pin-gate": ("iphone", "Debug", "ui", "immichSlidesUITests/testPinProtectionBlocksBackAndRequiresPINForSettings"),
+    "iphone-playback-controls": ("iphone", "Debug", "strict", "journey-b|normal|iphone|Debug|a"),
+    "iphone-settings-relaunch": ("iphone", "Release", "strict", "ios-lifecycle-settings|normal|iphone|Release|a"),
+    "ipad-background-return": ("ipad", "Release", "strict", "ios-lifecycle-background|normal|ipad|Release|a"),
+    "ipad-first-boot": ("ipad", "Debug", "strict", "journey-a|normal|ipad|Debug|a"),
+    "ipad-playback-controls": ("ipad", "Debug", "strict", "journey-b|normal|ipad|Debug|a"),
+    "ipad-rotation": ("ipad", "Debug", "strict", "p2-rotation|normal|ipad|Debug|a"),
+    "ipad-settings-sidebar": ("ipad", "Debug", "ui", "FilterSummaryIOSVisualUITests/testIOSSettingsOpenSourceLicensesKeepsPadSidebarResponsive"),
+    "tv-album-selection": ("tv", "Debug", "strict", "tvos-album|normal|tv|Debug|a"),
+    "tv-background-return": ("tv", "Release", "strict", "tvos-lifecycle-background|normal|tv|Release|a"),
+    "tv-directional-wake": ("tv", "Debug", "strict", "tvos-directional-wake|normal|tv|Debug|a"),
+    "tv-first-boot": ("tv", "Debug", "strict", "tvos-n1-cold|normal|tv|Debug|a"),
+    "tv-pause-resume": ("tv", "Release", "strict", "tvos-lifecycle-pause|normal|tv|Release|a"),
+    "tv-person-selection": ("tv", "Debug", "strict", "tvos-person|normal|tv|Debug|a"),
+    "tv-pin-gate": ("tv", "Debug", "ui", "FilterSummaryTVOSVisualUITests/testTVOSFullFlowPinGateBlocksSettingsUntilPinValidated"),
+    "tv-playback-controls": ("tv", "Debug", "strict", "tvos-flow|normal|tv|Debug|a"),
+    "tv-server-switch": ("tv", "Release", "strict", "tvos-switch|normal|tv|Release|a"),
+    "tv-settings-relaunch": ("tv", "Release", "strict", "tvos-lifecycle-settings|normal|tv|Release|a"),
+}
 
 # Swift Testing functions that intentionally keep a plain (non-raw-identifier) name. Selected by the
 # scripts that migrated the rest of the suite to sentence-style raw identifiers; see docs/TESTING.md #2.
@@ -1094,6 +1121,268 @@ def partition_against_allowlist(violations: list[Violation], allowlist: list[dic
     return unallowed, stale
 
 
+def test_tier_context(root: Path):
+    """Read only public source inventories; this plan never supplies execution selectors."""
+    from ci_population import swift_identities
+    from ci_ui_selection import method_kind, parse_area_map
+    from run_strict_e2e import CommandError, resolve_suite_selector
+    from ui_test_inventory import parse_ui_tests
+
+    _, methods, errors, _ = parse_ui_tests({p.relative_to(root).as_posix(): p.read_text(encoding="utf-8")
+                                          for p in (root / "immichSlidesUITests").rglob("*.swift")})
+    if errors:
+        raise ValueError("; ".join(errors))
+    ui = {f"{suite}/{method}": platforms for suite, entries in methods.items()
+          for method, platforms in entries.items()}
+    cases = json.loads((root / "scripts/nightly-matrix.json").read_text(encoding="utf-8"))["cases"]
+    strict = {}
+    for case in cases:
+        key = "|".join(case[field] for field in ("suite", "scenario", "device", "configuration", "fixture"))
+        try:
+            selector = resolve_suite_selector(case["platform"], case["suite"])
+        except CommandError as error:
+            raise ValueError(f"strict {key}: {error}") from error
+        if len(selector.split("/")) != 3 or not all(selector.split("/")):
+            raise ValueError(f"strict {key}: malformed selector {selector!r}")
+        strict[key] = dict(case, selector=selector.split("/", 1)[1])
+    sources = {p.relative_to(root).as_posix(): p.read_text(encoding="utf-8")
+               for p in (root / "immichSlidesTests").rglob("*.swift")}
+    units = {platform: {entry["key"] for entry in swift_identities(sources, platform)} for platform in ("ios", "tvos")}
+    areas = parse_area_map((root / "scripts/ci-ui-areas.json").read_text(encoding="utf-8"))
+    return ui, strict, units, set(areas.get("functional_smoke", [key for key in areas["smoke"] if method_kind(key) == "functional"]))
+
+
+def validate_test_tier_plan(plan, ui, strict, units, pr_smoke) -> list[str]:
+    """Reject incomplete migration accounting without changing any running population."""
+    errors = []
+
+    def check(condition, rule, where, detail):
+        if not condition:
+            errors.append(f"{rule}: {where}: {detail}")
+
+    def obj(value, where, required, optional=()):
+        if not isinstance(value, dict):
+            check(False, "tier-plan-shape", where, "expected object")
+            return {}
+        missing, extra = set(required) - value.keys(), value.keys() - set(required) - set(optional)
+        check(not missing and not extra, "tier-plan-shape", where,
+              f"missing keys {sorted(missing)}; extra keys {sorted(extra)}")
+        return value
+
+    def text_field(value):
+        return isinstance(value, str) and bool(value.strip())
+
+    def objects(value, where):
+        if not isinstance(value, list):
+            check(False, "tier-plan-shape", where, "expected list of objects")
+            return []
+        return value
+
+    def strings(value, where):
+        if not isinstance(value, list) or not all(text_field(v) for v in value):
+            check(False, "tier-plan-shape", where, "expected list of nonempty strings")
+            return set()
+        return set(value)
+
+    def text_keys(value, where, keys):
+        for key in keys:
+            check(text_field(value.get(key)), "tier-plan-shape", where, f"{key} must be a nonempty string")
+
+    plan = obj(plan, "plan", ("schema_version", "revision", "mode", "baseline_sha", "migration", "smoke_flows",
+                              "inventory", "weekly_human_review", "release_full_set"))
+    check(type(plan.get("schema_version")) is int and plan.get("schema_version") == 1,
+          "tier-plan-version", "plan", f"schema_version={plan.get('schema_version')!r}; expected 1")
+    check(plan.get("mode") == "planning-only", "tier-plan-mode", "plan", "mode must remain planning-only")
+    migration = obj(plan.get("migration"), "migration", (
+        "unit_coverage_prs_remove_ui_tests", "app_behavior", "replacement_gate", "yellow_and_retry", "history_readable_days",
+        "shadow_runs", "executed_nights_after_switch", "unexplained_red_allowed", "nightly_budget_minutes", "reference_meaning"))
+    for key, expected in {"unit_coverage_prs_remove_ui_tests": False, "app_behavior": "unchanged",
+                          "yellow_and_retry": "frozen-no-new-exceptions", "shadow_runs": {"minimum": 5, "maximum": 7},
+                          "executed_nights_after_switch": 10, "unexplained_red_allowed": 0, "history_readable_days": 90}.items():
+        check(type(migration.get(key)) is type(expected) and migration.get(key) == expected,
+              "tier-plan-migration", "migration", f"{key} must be {expected!r} ({type(expected).__name__})")
+    check(text_field(migration.get("replacement_gate")), "tier-plan-migration", "migration", "missing replacement_gate")
+    check(isinstance(migration.get("nightly_budget_minutes"), list)
+          and all(type(v) is int for v in migration.get("nightly_budget_minutes", [])),
+          "tier-plan-shape", "migration", "nightly_budget_minutes must be a list of integers")
+    flows = {}
+    additions = {"tv-pause-resume", "tv-server-switch", "ipad-first-boot", "ipad-background-return"}
+    for index, value in enumerate(objects(plan.get("smoke_flows"), "smoke_flows")):
+        where = f"smoke_flows[{index}] {value.get('id')!r}" if isinstance(value, dict) else f"smoke_flows[{index}]"
+        flow = obj(value, where, ("id", "device", "configuration", "fixture", "source", "selection_basis", "user_path", "must_not_assert"),
+                   ("peer_fixture",))
+        text_keys(flow, where, ("id", "device", "configuration", "fixture", "selection_basis", "user_path"))
+        source = obj(flow.get("source"), where + ".source", ("kind", "identifier", "selector"))
+        flow["source"] = source
+        text_keys(source, where + ".source", ("kind", "identifier", "selector"))
+        fid = flow.get("id")
+        if not text_field(fid):
+            continue
+        check(fid not in flows, "tier-plan-smoke-population", where, f"duplicate id {fid}")
+        flows[fid] = flow
+        approved = APPROVED_TIER_SMOKE.get(fid)
+        actual = (flow.get("device"), flow.get("configuration"), source.get("kind"), source.get("identifier"))
+        check(approved == actual, "tier-plan-smoke-source", where, f"source {actual!r}; approved {approved!r}")
+        platform = "tvos" if flow.get("device") == "tv" else "ios"
+        selector = source.get("selector")
+        valid = text_field(selector) and selector in ui and platform in ui[selector]
+        if source.get("kind") == "strict":
+            case = strict.get(source["identifier"], {}) if text_field(source.get("identifier")) else {}
+            valid = valid and all(case.get(key) == flow.get(key) for key in ("device", "configuration", "fixture"))
+            valid = valid and case.get("selector") == selector
+        else:
+            valid = valid and source.get("kind") == "ui" and source.get("identifier") == selector
+        check(valid, "tier-plan-smoke-source", where, f"unknown or mismatched source {source!r}")
+        forbidden = strings(flow.get("must_not_assert"), where + ".must_not_assert")
+        check(flow.get("fixture") == "a" and flow.get("configuration") in ("Debug", "Release")
+              and text_field(flow.get("user_path")) and {"mid-animation-pixels", "second-level-windows", "glyph-identity"} <= forbidden,
+              "tier-plan-smoke-contract", where, "fixture/configuration/user_path/must_not_assert violates smoke boundary")
+        check(flow.get("peer_fixture") == ("b" if fid == "tv-server-switch" else None),
+              "tier-plan-smoke-contract", where, "peer_fixture must be b only for tv-server-switch")
+        check(flow.get("selection_basis") == ("maintainer-addition" if fid in additions else "shared-core"),
+              "tier-plan-smoke-population", where, "incorrect selection_basis")
+    check(set(flows) == set(APPROVED_TIER_SMOKE), "tier-plan-smoke-population", "smoke_flows",
+          f"missing ids {sorted(set(APPROVED_TIER_SMOKE) - flows.keys())}; unknown ids {sorted(flows.keys() - APPROVED_TIER_SMOKE.keys())}")
+    weekly = obj(plan.get("weekly_human_review"), "weekly_human_review",
+                 ("owner", "escalate_to", "cadence", "unreviewed_status", "fixture_policy", "groups"))
+    for key, expected in (("owner", "Claude (coordinator)"), ("escalate_to", "Hogan")):
+        check(weekly.get(key) == expected, "tier-plan-human-review", "weekly_human_review", f"{key} must be {expected}")
+    groups = {}
+    for index, value in enumerate(objects(weekly.get("groups"), "weekly_human_review.groups")):
+        where = f"review group[{index}] {value.get('id')!r}" if isinstance(value, dict) else f"review group[{index}]"
+        group = obj(value, where, ("id", "title", "devices", "screenshots", "recordings", "look_for"))
+        text_keys(group, where, ("id", "title"))
+        devices = strings(group.get("devices"), where + ".devices")
+        check(bool(devices) and devices <= {"iphone", "ipad", "tv"}, "tier-plan-human-review", where, f"unknown/empty devices {sorted(devices)}")
+        for key in ("screenshots", "recordings", "look_for"):
+            check(bool(strings(group.get(key), where + "." + key)), "tier-plan-human-review", where, f"missing {key}")
+        if text_field(group.get("id")):
+            check(group["id"] not in groups, "tier-plan-human-review", where, "duplicate id")
+            groups[group["id"]] = devices
+    check(len(groups) == 6, "tier-plan-human-review", "weekly_human_review", f"expected 6 groups; found {sorted(groups)}")
+    known_units = set().union(*units.values())
+    keys = []
+    for index, value in enumerate(objects(plan.get("inventory"), "inventory")):
+        where = f"inventory[{index}] {value.get('identifier')!r}" if isinstance(value, dict) else f"inventory[{index}]"
+        row = obj(value, where, ("kind", "identifier", "target_home", "replacement_tests", "smoke_flows", "status"),
+                  ("human_review_groups", "mutation_proof"))
+        text_keys(row, where, ("kind", "identifier", "target_home", "status"))
+        kind, identifier, home = row.get("kind"), row.get("identifier"), row.get("target_home")
+        parts = identifier.split("/" if kind == "ui" else "|") if text_field(identifier) else []
+        valid_id = all(parts) and (kind == "ui" and len(parts) == 2 or kind == "strict" and len(parts) == 5)
+        check(valid_id, "tier-plan-identifier", where, f"malformed kind/identifier {kind!r}/{identifier!r}")
+        if not valid_id:
+            continue
+        keys.append((kind, identifier))
+        check(home in ("unit", "smoke", "pr-smoke", "human-review", "delete"), "tier-plan-home", where, f"unknown target_home {home!r}")
+        replacements = strings(row.get("replacement_tests"), where + ".replacement_tests")
+        linked_flows = strings(row.get("smoke_flows"), where + ".smoke_flows")
+        reviews = strings(row.get("human_review_groups", []), where + ".human_review_groups")
+        expected_flows = {fid for fid, flow in flows.items() if
+                          (flow.get("source", {}).get("kind"), flow.get("source", {}).get("identifier")) == (kind, identifier)
+                          or kind == "ui" and flow.get("source", {}).get("selector") == identifier}
+        for field, unknown in (("replacement_tests", replacements - known_units), ("smoke_flows", linked_flows - flows.keys()),
+                               ("human_review_groups", reviews - groups.keys())):
+            check(not unknown, "tier-plan-replacement", where, f"unknown {field} references {sorted(unknown)}")
+        direct_anchor = any((flow.get("source", {}).get("kind"), flow.get("source", {}).get("identifier"))
+                            == (kind, identifier) for flow in flows.values())
+        check(expected_flows <= linked_flows and (not direct_anchor or home == "smoke")
+              and (home != "smoke" or bool(linked_flows)), "tier-plan-replacement", where,
+              f"missing smoke_flows {sorted(expected_flows - linked_flows)} or incorrect target_home {home!r}; anchors {sorted(expected_flows)}")
+        check(home not in ("smoke", "human-review") or bool(reviews), "tier-plan-replacement", where, "missing human_review_groups")
+        devices = ({strict[identifier]["device"]} if kind == "strict" and identifier in strict else
+                   {device for device, platform in (("iphone", "ios"), ("ipad", "ios"), ("tv", "tvos"))
+                    if platform in ui.get(identifier, set())})
+        row_platforms = ({strict[identifier]["platform"]} if kind == "strict" and identifier in strict else
+                         set(ui.get(identifier, set())))
+        for fid in linked_flows & APPROVED_TIER_SMOKE.keys():
+            check(APPROVED_TIER_SMOKE[fid][0] in devices, "tier-plan-smoke-device", where,
+                  f"smoke_flows {fid!r} device {APPROVED_TIER_SMOKE[fid][0]!r} does not apply to row devices {sorted(devices)}")
+        for platform in sorted(row_platforms):
+            missing = replacements - units.get(platform, set())
+            check(not missing, "tier-plan-replacement", where,
+                  f"replacement_tests unavailable on row platform {platform}: {sorted(missing)}")
+        available_replacements = all(replacements <= units.get(platform, set()) for platform in row_platforms)
+        for group in reviews & groups.keys():
+            check(bool(devices & groups[group]), "tier-plan-review-device", where,
+                  f"human_review_groups {group!r} devices {sorted(groups[group])} do not apply to row devices {sorted(devices)}")
+        check((kind == "ui" and identifier in pr_smoke) == (home == "pr-smoke"),
+              "tier-plan-pr-smoke", where, f"target_home must {'be' if identifier in pr_smoke else 'not be'} pr-smoke for functional_smoke {identifier}")
+        proof_tests = set()
+        for proof_index, value in enumerate(objects(row.get("mutation_proof", []), where + ".mutation_proof")):
+            proof_where = f"{where}.mutation_proof[{proof_index}]"
+            proof = obj(value, proof_where, ("pr", "test", "mutation", "failed_then_passed_on"))
+            text_keys(proof, proof_where, ("pr", "test", "mutation"))
+            platforms = strings(proof.get("failed_then_passed_on"), proof_where + ".failed_then_passed_on")
+            valid = (text_field(proof.get("pr")) and re.fullmatch(r"https://github\.com/sudoHG/immichSlides/pull/[1-9][0-9]*", proof["pr"])
+                     and text_field(proof.get("test")) and proof["test"] in replacements
+                     and text_field(proof.get("mutation")) and bool(platforms)
+                     and platforms == {platform for platform, identities in units.items() if proof["test"] in identities})
+            check(bool(valid), "tier-plan-coverage", proof_where, f"invalid mutation_proof reference/evidence {proof!r}")
+            if valid:
+                proof_tests.add(proof["test"])
+        check(row.get("status") == "pending" or row.get("status") == "covered" and bool(replacements)
+              and available_replacements and replacements <= known_units and replacements == proof_tests, "tier-plan-coverage", where,
+              f"status {row.get('status')!r} requires existing replacement_tests and mutation_proof for every test; missing {sorted(replacements - proof_tests)}")
+    expected = {("ui", key) for key in ui} | {("strict", key) for key in strict}
+    for key, count in Counter(keys).items():
+        check(count == 1, "tier-plan-inventory", str(key), f"duplicate inventory identity ({count} rows)")
+    for key in sorted(expected - set(keys)):
+        check(False, "tier-plan-inventory", str(key), "missing inventory identity")
+    for key in sorted(set(keys) - expected):
+        check(False, "tier-plan-inventory", str(key), "unknown inventory identity")
+    for identifier in sorted(pr_smoke):
+        check(("ui", identifier) in keys, "tier-plan-pr-smoke", identifier,
+              "missing functional_smoke inventory row with target_home pr-smoke")
+    release_devices = []
+    for index, value in enumerate(objects(plan.get("release_full_set"), "release_full_set")):
+        where = f"release_full_set[{index}] {value.get('device')!r}" if isinstance(value, dict) else f"release_full_set[{index}]"
+        entry = obj(value, where, ("device", "owner", "smoke_flows", "configurations", "unit_platform", "unit_and_interface_scope",
+                                   "human_review_groups", "visual_variants", "additional_review"))
+        device = entry.get("device")
+        if text_field(device):
+            release_devices.append(device)
+        else:
+            check(False, "tier-plan-shape", where, "device must be a nonempty string")
+            device = None
+        for field, expected in (("smoke_flows", {fid for fid, flow in flows.items() if flow.get("device") == device}),
+                                ("human_review_groups", {gid for gid, devices in groups.items() if device in devices}),
+                                ("configurations", {"Debug", "Release"})):
+            actual = strings(entry.get(field), where + "." + field)
+            check(actual == expected, "tier-plan-release", where,
+                  f"{field}: missing {sorted(expected - actual)}; extra/unknown {sorted(actual - expected)}")
+        for field in ("visual_variants", "additional_review"):
+            check(bool(strings(entry.get(field), where + "." + field)), "tier-plan-release", where, f"missing {field}")
+        check(entry.get("owner") == "Hogan", "tier-plan-release", where, "owner must be Hogan")
+        check(entry.get("unit_platform") == ("tvos" if device == "tv" else "ios")
+              and text_field(entry.get("unit_and_interface_scope")), "tier-plan-release", where, "invalid unit_platform/unit_and_interface_scope")
+    check(Counter(release_devices) == {"iphone": 1, "ipad": 1, "tv": 1}, "tier-plan-release", "release_full_set",
+          f"device population {release_devices!r}; expected iphone, ipad, tv once each")
+    return errors
+
+
+def unique_tier_json_object(pairs):
+    """Reject duplicate keys before JSON's last-value-wins decoding can hide evidence."""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            identity = next((v for k, v in pairs if k in ("identifier", "id", "device")), "plan")
+            raise ValueError(f"{identity}: duplicate JSON key {key!r}")
+        result[key] = value
+    return result
+
+
+def check_test_tier_plan(root: Path) -> list[Violation]:
+    from strict_e2e_runner_support import CommandError
+
+    try:
+        plan = json.loads((root / TEST_TIER_PLAN_PATH).read_text(encoding="utf-8"), object_pairs_hook=unique_tier_json_object)
+        errors = validate_test_tier_plan(plan, *test_tier_context(root))
+    except (OSError, ValueError, CommandError, KeyError, TypeError, IndexError) as error:
+        return [Violation(TEST_TIER_PLAN_PATH, 1, "tier-plan-input", "target tiers", str(error))]
+    return [Violation(TEST_TIER_PLAN_PATH, 1, error.split(":", 1)[0], "target tiers", error) for error in errors]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--root", default=".", help="repository root")
@@ -1118,6 +1407,7 @@ def main(argv: list[str] | None = None) -> int:
     ordinary = [v for v in violations if v.rule != "product-wait-factor"]
     unallowed, stale = partition_against_allowlist(ordinary, allowlist)
     unallowed.extend(v for v in violations if v.rule == "product-wait-factor")
+    unallowed.extend(check_test_tier_plan(root))
 
     timeout_path = root / TIMEOUT_ALLOWLIST_PATH
     timeout_allowed = json.loads(timeout_path.read_text(encoding="utf-8")) if timeout_path.is_file() else []

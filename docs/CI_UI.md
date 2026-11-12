@@ -1,5 +1,18 @@
 # UI tier: iPhone, iPad and Apple TV
 
+The approved [target tiers](TESTING.md#approved-target-tiers-planning-only) move
+rules to deterministic App tests and visual material to human review, with 23
+short nightly smoke flows. The versioned
+[`ci-test-tiers.json`](../scripts/ci-test-tiers.json) is planning data only; it
+does not select or deselect UI tests. The populations and producer/reader protocol
+below are unaffected by the unit-coverage PRs. Duplicate-removal batch #721 is
+separate and retains its assertions in other tests; the future tier switch requires
+replacement coverage and shadow execution. No new yellow or retry exception is part of migration.
+The existing `functional_smoke` methods in `ci-ui-areas.json` retain their per-PR
+selection and explicit `pr-smoke` target tier, separate from the 23 nightly flows.
+The planning file remains untrusted and must become CI-trusted before it selects tests.
+Review ownership is defined in [Testing conventions](TESTING.md#approved-target-tiers-planning-only).
+
 `ci-ui` runs on pull requests and pushes to `main`, independently of `ci-gate`.
 It is informational: only the [trusted publisher](CI_PUBLISHER.md) writes its
 commit status. No required check or repository setting changes here. All three

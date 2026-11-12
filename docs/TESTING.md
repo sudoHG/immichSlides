@@ -24,6 +24,114 @@ DerivedData remains in the original checkout or an explicit stable path, outside
 the disposable snapshot. Local nightly plan, tracer and aggregate identities must
 match; see [the nightly guide](CI_NIGHTLY.md).
 
+## Approved target tiers (planning only)
+
+[`scripts/ci-test-tiers.json`](../scripts/ci-test-tiers.json), revision
+`target-tiers-v1`, records the approved migration target. It is data for review and
+host validation, **not an execution manifest**. Existing test plans, strict matrix,
+workflows, selectors, runners and verdicts remain authoritative for what runs today.
+The plan is intentionally not CI-trusted while it only records targets. It must
+become CI-trusted before any reader uses it to select execution.
+The unit-coverage PRs and this tier plan change no App behavior and retire no E2E
+assertions. The duplicate-removal batch (#721) is separate: it removes only reviewed
+duplicates whose assertions still run in retained tests, before the future tier switch.
+The current inventory is 377 UI source methods and 94 strict matrix rows, separately
+identified; it is not 471 nightly executions. The current complete nightly schedules
+306 fixture UI device identities plus 94 strict rows, or 400 scheduling identities.
+A strict row may invoke more than one XCTest method.
+
+| Target tier | Responsibility | Frequency |
+|---|---|---|
+| Deterministic App unit and no-UI interface tests | Playback, pause/resume, history, late callbacks, filters, settings, server errors, cache and PIN rules through production code; fake clocks, in-memory stores, controlled continuations, loopback HTTP or URLProtocol | Every PR, on iOS and tvOS |
+| Existing per-PR functional UI smoke (`pr-smoke`) | Keep the `functional_smoke` methods in `ci-ui-areas.json`, including the iOS keyboard and tvOS first-boot form checks; the iOS method runs on iPhone and iPad | Every applicable PR on each selected device, under the unchanged UI selection policy |
+| Short real-App smoke | Keyboard, remote/focus, native controls, navigation, relaunch and background wiring; one user purpose per bounded flow | Nightly: exactly 23 device flows |
+| Human visual review | Screenshots and short recordings, including actual paused and transitional output, crops, text and focus appearance | Weekly, affected visual PRs and before release |
+| Existing safety and build gates | Privacy, release isolation, localization, official-result completeness, source identity and exact-head approval | Keep the existing gates |
+
+The 23 flows are the 19 shared audit choices plus Apple TV pause/resume, Apple TV
+server switch, iPad first boot and iPad background return: **8 iPhone, 5 iPad and
+10 Apple TV**, with 16 Debug and 7 Release flows. The plan lists each exact source
+method or matrix identity, configuration, public fixture and user path. Device keys
+`iphone`, `ipad` and `tv` mean the `iphone`, `ipad` and `appletv` device types in
+[`ci-pins.json`](../scripts/ci-pins.json): iPhone 17e, iPad Air 11-inch (M4) and
+Apple TV 4K (3rd generation), using its 4K simulator type. Smoke uses public fixture A;
+the TV switch also uses a second loopback server with B. A/B rule differences remain
+parameterized unit/interface inputs and representative human-review material.
+
+These are targets for shortened flows, not permission to run the existing long
+selectors as the new smoke. Smoke must not assert mid-animation pixels, second-level
+timing windows or glyph identity. It checks an eventual observable outcome within a
+shared hang guard. Exact intervals, paused time and event ordering belong to fake-clock
+tests; actual rendering still needs human review. TV automatic playback retains one
+eventual automatic advance; pause/resume has its own short flow. Synthetic PIN checks
+do not prove production Keychain behavior, and injected face counts do not prove real
+Vision integration ([#80](https://github.com/sudoHG/immichSlides/issues/80)).
+
+The plan's `inventory` accounts for every current UI method and strict matrix row.
+`target_home` is `unit`, `smoke`, `pr-smoke`, `human-review` or `delete`; `replacement_tests`
+contains exact existing unit identities when known, while `smoke_flows` and
+`human_review_groups` link the remaining responsibilities. Existing unit references
+are candidates, not evidence that every assertion in the old flow is covered.
+An empty replacement list means the exact replacement is unknown. All entries are
+`pending` in this planning revision. A later `covered` row requires every replacement
+test to exist and a `mutation_proof` entry for each test: `pr` (the implementation PR URL),
+`test` (the exact replacement identity), `mutation` (the concrete defect), and
+`failed_then_passed_on` (exactly the platforms on which that test compiles: `ios`,
+`tvos` or both). Each replacement must exist on every platform of the inventory row;
+a strict row uses its matrix platform and a UI method uses its compiled platforms.
+The checker validates the receipt
+structure and references; reviewers still verify the actual failure/pass evidence.
+Even `delete` is a conditional destination, never
+an instruction to delete now. A source method can anchor several device flows without
+creating additional smoke executions. Rows may link additional valid smoke flows
+that absorb their interactions; every linked flow must run on one of the row's devices,
+and anchors must retain their links. For a UI method, the row's devices are those of
+its compiled platforms (iOS: iPhone and iPad; tvOS: Apple TV); runtime device skips
+are not modelled. Human-review groups
+are optional for `unit`, `delete` and `pr-smoke` rows, and each linked group must apply
+to the strict row's device or the UI method's compiled platform. TV focus routing
+belongs to `tv-focus`; iPhone rotation belongs to playback review, while iPad rotation
+and split view retain their separate group. A flow may forbid more than the three
+mandatory assertion exclusions. The checker reports row identities, malformed fields,
+missing/extra keys and unknown references independently, and rejects duplicate JSON keys.
+
+Before retiring an E2E rule assertion, map that assertion to a production App unit or
+no-UI interface test, name a concrete App mutation, show that test failing under the
+mutation and passing after restoration, and run the replacement on every platform
+where it compiles (both platforms for shared tests).
+Reuse existing suites. Add only missing behavior coverage; pure visual work does not
+need artificial unit tests. Behavior-neutral injection seams must default to the
+current implementation. Controlled HTTP scenarios include 401, HTML 200, unreachable,
+timeout, cancellation, late response, server switch, empty album, disk-cache clear,
+reload after clear, decode failure recovery and PIN storage failure. Privacy scanners,
+missing-result failures, source binding and readable 90-day history survive migration.
+Yellow and retry rules are frozen: add no new exceptions.
+
+The plan defines six weekly human-review groups: first boot/Settings; filters;
+playback/pause/transitions; theme/long locale/large text; iPad rotation/split view;
+and TV focus. Each group lists representative screenshots, short recordings and
+visible failure checks. Claude, the coordinator, reviews the weekly material and
+escalates suspicious items to Hogan, recording the source SHA, device/settings, result
+and unresolved defects. Hogan personally reviews the full three-device release set.
+Until that happens the result is `NEEDS_HUMAN_REVIEW`; generating media is not sign-off.
+Rotate locales weekly and cover all shipped locales before release. Visual changes
+also retain the same-device before/after requirement.
+
+`release_full_set` requires all applicable smoke flows and all applicable visual groups
+on each of the three pinned devices, both build configurations, complete offline unit
+and interface coverage on both platforms, light/dark, large text and all shipped locales.
+Affected real-device system integration remains explicit; synthetic tests cannot supply
+it. Existing release eligibility and human approval contracts remain in force until a
+separately reviewed replacement is activated.
+
+Migration is done only after **5–7 shadow runs**, preserving old gate results, followed
+by **10 consecutive actually executed nights after the switch with no unexplained red**.
+Unchanged-night skips, cancellation, missing shards and NOT_RUN do not count as executed
+nights. Keep first failures, retries, yellow, infrastructure errors, human findings and
+elapsed time separate; do not relabel old failures. The 60–120 minute nightly budget and
+estimated 0.2–0.6 red events per run are planning estimates, `NOT_VERIFIED` until measured
+on comparable runs; fewer scheduled identities do not prove better App correctness.
+
 ## 0. When to write a test
 
 Every test must guard a failure that can realistically happen again. If you cannot name that failure in one sentence, do not write the test.
@@ -725,6 +833,13 @@ These are exactly the problems tests exist to catch.
 - [ ] New comments are in English
 
 ## 7. Automated check
+
+The same conventions entry point validates the planning-only target tier file
+against the complete static UI inventory, current strict matrix and existing unit
+identities. Missing/duplicate rows, invalid source or replacement references,
+unproved `covered` claims, incomplete visual/release sets and accidental activation
+fail the host check. This validates migration accounting, not App coverage or
+permission to change the running population.
 
 Classify new waits with the [central test wait API](TEST_WAITS.md). Infrastructure
 budgets can scale by the runner's recorded factor; product deadlines and
