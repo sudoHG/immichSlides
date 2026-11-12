@@ -24,6 +24,7 @@ CAPTURE_TIMEOUT_SECONDS = 20
 MAX_CAPTURES = 3
 MAX_FILE_BYTES = 256 * 1024
 MAX_TOTAL_BYTES = 1024 * 1024
+MAX_READER_BYTES = 64 * 1024
 JOIN_TIMEOUT_SECONDS = MAX_CAPTURES * CAPTURE_TIMEOUT_SECONDS + 5
 TRUNCATED = b"[truncated: earlier output omitted]\n"
 KINDS = {"processes", "app_sample", "simulator_log", "crash_reports"}
@@ -39,6 +40,8 @@ class Trigger:
     def __init__(self):
         self.case = 0
         self.seen = set()
+        self.activity_seen = set()
+        self.capture_count = 0
         self.pending = None
 
     def observe(self, line, now):
@@ -57,9 +60,17 @@ class Trigger:
                 self.pending = None
         reason = "native-failure" if FAILURE.search(line) else (
             "activity-timeout" if self.pending is not None and now - self.pending[0] >= ACTIVITY_TIMEOUT_SECONDS else None)
-        if reason is None or self.case in self.seen or len(self.seen) >= MAX_CAPTURES:
+        if reason == "activity-timeout" and self.case in self.activity_seen:
             return None
-        self.seen.add(self.case)
+        return self.reserve(self.case, reason)
+
+    def reserve(self, case, reason):
+        if reason is None or case in self.seen or self.capture_count >= MAX_CAPTURES:
+            return None
+        self.seen.add(case)
+        self.capture_count += 1
+        if reason == "activity-timeout":
+            self.activity_seen.add(case)
         return reason
 
 
@@ -224,7 +235,7 @@ def process_state(raw, root):
     return text, apps[0] if len(apps) == 1 else None
 
 
-def crash_reports(home, udid, baseline, deadline=float("inf")):
+def crash_reports(home, udid, baseline, deadline=float("inf"), seen_paths=()):
     device = home / "Library/Developer/CoreSimulator/Devices" / udid / "data/Library/Logs"
     directories = [(home / "Library/Logs/DiagnosticReports", False), (device / "CrashReporter", True),
                    (device / "DiagnosticReports", True)]
@@ -233,7 +244,7 @@ def crash_reports(home, udid, baseline, deadline=float("inf")):
         for path in directory.rglob("*"):
             if time.monotonic() >= deadline:
                 raise TimeoutError("crash traversal deadline")
-            if (path.is_symlink() or not path.is_file() or path.suffix.lower() not in {".ips", ".crash"}
+            if (str(path) in seen_paths or path.is_symlink() or not path.is_file() or path.suffix.lower() not in {".ips", ".crash"}
                     or not any(path.name.startswith(name) for name in PROCESS_NAMES) or path.stat().st_mtime < baseline):
                 continue
             with path.open("rb") as source:
@@ -313,15 +324,16 @@ def command_output(command, path, deadline, *, process_root=None):
             process.stdout.close()
 
 
-def collect(udid, baseline, root, trigger, deadline, release_path=None):
+def collect(udid, baseline, root, trigger, deadline, release_path=None, seen_crash_paths=()):
     """Runs only in a killable private subprocess; no raw command output enters the public tree."""
     record, total = empty_capture(trigger), 0
+    seen_crash_paths = set(seen_crash_paths)
     def save():
         write_summary(root, {"schema_version": 1, "captures": [record]})
     save()
     def output(kind, name, command):
         nonlocal total
-        status, raw = command_output(["/usr/bin/nice", "-n", "10", *command], root / "raw", deadline)
+        status, raw = command_output(command, root / "raw", deadline)
         record["status"][kind] = status
         if raw:
             total = publish_file(root, record, kind, name, raw, total)
@@ -329,11 +341,11 @@ def collect(udid, baseline, root, trigger, deadline, release_path=None):
         return status, raw
     pid = None
     try:
-        state, manager = command_output(["/usr/bin/nice", "-n", "10", "xcrun", "simctl", "spawn", udid, "launchctl", "managerpid"], root / "raw", deadline)
+        state, manager = command_output(["xcrun", "simctl", "spawn", udid, "launchctl", "managerpid"], root / "raw", deadline)
         if state != "captured":
             record["status"]["processes"] = state
         else:
-            state, raw = command_output(["/usr/bin/nice", "-n", "10", "/bin/ps", "-A", "-c", "-o", "pid=,ppid=,state=,%cpu=,etime=,comm="],
+            state, raw = command_output(["/bin/ps", "-A", "-c", "-o", "pid=,ppid=,state=,%cpu=,etime=,comm="],
                                         root / "raw", deadline, process_root=int(manager.strip()))
             record["status"]["processes"] = state
             if state == "captured":
@@ -355,12 +367,16 @@ def collect(udid, baseline, root, trigger, deadline, release_path=None):
     output("simulator_log", "simulator.log", ["xcrun", "simctl", "spawn", udid, "log", "show", "--last", "60s",
            "--style", "compact", "--predicate", LOG_PREDICATE])
     try:
-        for number, path in enumerate(crash_reports(Path.home(), udid, baseline, deadline), 1):
+        for number, path in enumerate(crash_reports(Path.home(), udid, baseline, deadline, seen_crash_paths), 1):
             if time.monotonic() >= deadline:
                 record["status"]["crash_reports"] = "timeout"
                 break
             with path.open("rb") as source:
                 raw = source.read(MAX_FILE_BYTES + 1)
+            seen_crash_paths.add(str(path))
+            paths_receipt = root / "crash-paths.json.tmp"
+            paths_receipt.write_text(json.dumps(sorted(seen_crash_paths)))
+            paths_receipt.replace(root / "crash-paths.json")
             total = publish_file(root, record, "crash_reports", "crash-" + str(number) + path.suffix.lower(), raw, total)
             save()
     except TimeoutError:
@@ -371,14 +387,16 @@ def collect(udid, baseline, root, trigger, deadline, release_path=None):
     write_summary(root, {"schema_version": 1, "captures": [record]})
 
 
-def capture(udid, baseline, destination, trigger, number, total, *, deadline=None, release=None, seen_crashes=None):
+def capture(udid, baseline, destination, trigger, number, total, *, deadline=None, release=None, seen_crashes=None,
+            seen_crash_paths=None):
     record = empty_capture(trigger)
     deadline = min(deadline if deadline is not None else float("inf"), time.monotonic() + CAPTURE_TIMEOUT_SECONDS)
     with tempfile.TemporaryDirectory(prefix="immichSlides-lifecycle-") as directory:
         private = Path(directory)
         release_path = private / "release" if release is not None else None
         process = subprocess.Popen(["/usr/bin/nice", "-n", "10", sys.executable, "-B", str(Path(__file__).resolve()), udid,
-                                    str(baseline), directory, trigger, str(deadline - 1), str(release_path) if release_path else ""],
+                                    str(baseline), directory, trigger, str(deadline - 2), str(release_path) if release_path else "",
+                                    json.dumps(sorted(seen_crash_paths or ()))],
                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
         try:
             while True:
@@ -396,6 +414,8 @@ def capture(udid, baseline, destination, trigger, number, total, *, deadline=Non
             process.wait(timeout=max(0, deadline - time.monotonic()))
             code = -signal.SIGKILL
             record["status"] = dict.fromkeys(sorted(KINDS), "timeout")
+        if seen_crash_paths is not None and (private / "crash-paths.json").is_file():
+            seen_crash_paths.update(json.loads((private / "crash-paths.json").read_text()))
         if not (private / "summary.json").is_file():
             return record, total
         payload = json.loads((private / "summary.json").read_text())
@@ -419,6 +439,7 @@ class Monitor:
     def __init__(self, log, udid, destination, deadline=float("inf")):
         self.log, self.udid, self.destination = log, udid, destination
         self.deadline = deadline
+        self.shutdown_deadline = float("inf")
         self.baseline = time.time()
         self.trigger = Trigger()
         self.stopped = threading.Event()
@@ -428,19 +449,29 @@ class Monitor:
         self.payload = {"schema_version": 1, "captures": []}
         self.total = 0
         self.releases = {}
+        self.native_failures = {}
+        self.lock = threading.Lock()
         self.seen_crashes = set()
+        self.seen_crash_paths = set()
 
     def observe(self, line):
         now = time.monotonic()
-        reason = self.trigger.observe(line, now)
-        release = self.releases.get(self.trigger.case)
-        if release is not None and FAILURE.search(line):
-            release.set()
-        if reason:
-            release = threading.Event() if reason == "activity-timeout" else None
-            if release is not None:
-                self.releases[self.trigger.case] = release
-            self.requests.put_nowait((reason, now, release))
+        with self.lock:
+            reason = self.trigger.observe(line, now)
+            case = self.trigger.case
+            release = self.releases.get(case)
+            if release is not None and FAILURE.search(line):
+                self.native_failures.setdefault(case, now)
+                release.set()
+            if reason:
+                release = threading.Event() if reason == "activity-timeout" else None
+                if release is not None:
+                    self.releases[case] = release
+                self.requests.put_nowait((reason, now, release, case))
+
+    def stop(self):
+        self.shutdown_deadline = time.monotonic() + JOIN_TIMEOUT_SECONDS
+        self.stopped.set()
 
     def mark_join_timeout(self):
         self.payload["monitor_status"] = "timeout"
@@ -460,7 +491,7 @@ class Monitor:
                             stop_position = os.fstat(log.fileno()).st_size
                         remaining = 8192 if stop_position is None else max(0, stop_position - log.tell())
                         chunk = log.read(min(8192, remaining))
-                        buffer += chunk
+                        buffer = (buffer + chunk)[-MAX_READER_BYTES:]
                         lines = buffer.split(b"\n")
                         buffer = lines[-1]
                         for line in lines[:-1]:
@@ -473,9 +504,10 @@ class Monitor:
                             self.observe("")
                             self.stopped.wait(0.1)
                 finally:
-                    for release in self.releases.values():
-                        release.set()
-                    self.requests.put_nowait(None)
+                    with self.lock:
+                        for release in self.releases.values():
+                            release.set()
+                        self.requests.put_nowait(None)
                     self.worker.join(timeout=JOIN_TIMEOUT_SECONDS)
                     if self.worker.is_alive():
                         self.mark_join_timeout()
@@ -484,25 +516,36 @@ class Monitor:
             return
 
     def collect_requests(self):
+        followup = None
         while True:
-            request = self.requests.get()
+            request = followup if followup is not None else self.requests.get()
+            followup = None
             if request is None:
                 return
-            reason, observed_at, release = request
+            reason, observed_at, release, case = request
             started_at = time.monotonic()
+            deadline = min(self.deadline, self.shutdown_deadline)
             try:
-                if self.deadline - started_at < CAPTURE_TIMEOUT_SECONDS:
+                if deadline - started_at < CAPTURE_TIMEOUT_SECONDS:
                     record = empty_capture(reason)
                     record["status"] = dict.fromkeys(sorted(KINDS), "skipped")
                 else:
                     record, self.total = capture(self.udid, self.baseline, self.destination, reason,
-                        len(self.payload["captures"]) + 1, self.total, deadline=self.deadline,
-                        release=release, seen_crashes=self.seen_crashes)
+                        len(self.payload["captures"]) + 1, self.total, deadline=deadline,
+                        release=release, seen_crashes=self.seen_crashes, seen_crash_paths=self.seen_crash_paths)
             except Exception:
                 record = empty_capture(reason)
             record["trigger_to_capture_start_seconds"] = started_at - observed_at
             record["trigger_to_capture_end_seconds"] = time.monotonic() - observed_at
             self.payload["captures"].append(record)
+            if release is not None:
+                with self.lock:
+                    self.releases.pop(case, None)
+                    failure_at = self.native_failures.pop(case, None)
+                    if not release.is_set() or all(record["status"][kind] == "skipped" for kind in KINDS - {"processes"}):
+                        self.trigger.seen.discard(case)
+                        if failure_at is not None and self.trigger.reserve(case, "native-failure"):
+                            followup = ("native-failure", failure_at, None, case)
             try:
                 write_summary(self.destination, self.payload)
             except Exception:
@@ -523,7 +566,7 @@ def monitor_invocation(command, log, udid, destination, deadline=float("inf")):
         yield
     finally:
         if monitor is not None:
-            monitor.stopped.set()
+            monitor.stop()
             monitor.thread.join(timeout=JOIN_TIMEOUT_SECONDS)
             if monitor.thread.is_alive():
                 monitor.mark_join_timeout()
@@ -531,7 +574,7 @@ def monitor_invocation(command, log, udid, destination, deadline=float("inf")):
 
 def main(arguments):
     collect(arguments[0], float(arguments[1]), Path(arguments[2]), arguments[3], float(arguments[4]),
-            Path(arguments[5]) if arguments[5] else None)
+            Path(arguments[5]) if arguments[5] else None, set(json.loads(arguments[6])))
 
 
 if __name__ == "__main__":

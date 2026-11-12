@@ -19,6 +19,143 @@ from run_fixture_ui_tests import clean_environment, compiled_tests, coverage_row
 
 
 class LifecycleCaptureTests(unittest.TestCase):
+    def test_expired_deferred_capture_allows_a_late_native_failure_within_the_invocation_cap(self):
+        import ci_xctest_lifecycle as capture
+        for during_completion in (False, True):
+            with self.subTest(during_completion=during_completion), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                monitor = capture.Monitor(root / "log", "target", root / "public")
+                clock = [0]
+                def collect(*args, **kwargs):
+                    record = capture.empty_capture(args[3])
+                    if args[3] == "activity-timeout":
+                        def expire(_seconds):
+                            clock[0] = 33
+                        with patch.object(capture, "command_output", return_value=("unavailable", b"")), \
+                                patch.object(capture.time, "sleep", side_effect=expire):
+                            capture.collect("target", 0, root / "private", args[3], 33, root / "release")
+                        record = json.loads((root / "private/summary.json").read_text())["captures"][0]
+                        self.assertEqual(record["status"]["simulator_log"], "skipped")
+                        clock[0] = 60
+                        if during_completion:
+                            monitor.observe("Failed to terminate com.331works.immichSlides:123")
+                    return record, args[5]
+                with patch.object(capture.time, "monotonic", side_effect=lambda: clock[0]), \
+                        patch.object(capture, "capture", side_effect=collect) as operation:
+                    monitor.observe("Test Case '-[Flow testA]' started.")
+                    monitor.observe("t = 0.0s     Launch com.331works.immichSlides")
+                    clock[0] = 15
+                    monitor.observe("")
+                    self.assertFalse(monitor.requests.empty(), "the activity timeout must enqueue its bounded capture")
+                    monitor.requests.put_nowait(None)
+                    monitor.collect_requests()
+                    if not during_completion:
+                        monitor.observe("")
+                        self.assertTrue(monitor.requests.empty(), "an expired activity must not trigger another activity capture")
+                        monitor.observe("Failed to terminate com.331works.immichSlides:123")
+                        self.assertFalse(monitor.requests.empty(), "the late failure must enqueue a fresh capture")
+                        monitor.requests.put_nowait(None)
+                        monitor.collect_requests()
+                    self.assertEqual([call.args[3] for call in operation.call_args_list], ["activity-timeout", "native-failure"])
+                    self.assertIsNone(operation.call_args.kwargs["release"], "a late native failure needs a full capture")
+                    monitor.observe("Failed to get matching snapshot")
+                    monitor.observe("Test Case '-[Flow testB]' started.")
+                    monitor.observe("Failed to get matching snapshot")
+                    self.assertFalse(monitor.requests.empty(), "one invocation slot must remain")
+                    monitor.requests.put_nowait(None)
+                    monitor.collect_requests()
+                    monitor.observe("Test Case '-[Flow testC]' started.")
+                    monitor.observe("Failed to get matching snapshot")
+                self.assertEqual(operation.call_count, capture.MAX_CAPTURES)
+                self.assertTrue(monitor.requests.empty())
+
+    def test_failure_in_another_method_does_not_release_a_deferred_capture(self):
+        import ci_xctest_lifecycle as capture
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            monitor = capture.Monitor(root / "log", "target", root / "public")
+            with patch.object(capture.time, "monotonic", side_effect=[0, 0, 15, 16, 17]):
+                monitor.observe("Test Case '-[Flow testA]' started.")
+                monitor.observe("t = 0.0s     Launch com.331works.immichSlides")
+                monitor.observe("")
+                deferred = monitor.requests.get_nowait()
+                monitor.observe("Test Case '-[Flow testB]' started.")
+                monitor.observe("Failed to get matching snapshot")
+            self.assertFalse(deferred[2].is_set())
+            self.assertEqual(monitor.requests.get_nowait()[0], "native-failure")
+
+    def test_shutdown_deadline_skips_queued_captures_that_cannot_finish_before_join(self):
+        import ci_xctest_lifecycle as capture
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            monitor = capture.Monitor(root / "log", "target", root / "public", deadline=200)
+            with patch.object(capture.time, "monotonic", return_value=0):
+                monitor.stop()
+            monitor.requests.put_nowait(("native-failure", 0, None, 1))
+            monitor.requests.put_nowait(("native-failure", 0, None, 2))
+            monitor.requests.put_nowait(None)
+            clock = [capture.JOIN_TIMEOUT_SECONDS - capture.CAPTURE_TIMEOUT_SECONDS]
+            def collected(*args, **kwargs):
+                self.assertEqual(kwargs["deadline"], capture.JOIN_TIMEOUT_SECONDS)
+                clock[0] += 1
+                return capture.empty_capture(args[3]), args[5]
+            with patch.object(capture.time, "monotonic", side_effect=lambda: clock[0]), \
+                    patch.object(capture, "capture", side_effect=collected) as operation:
+                monitor.collect_requests()
+            self.assertEqual(operation.call_count, 1)
+            self.assertEqual(set(monitor.payload["captures"][1]["status"].values()), {"skipped"})
+
+    def test_reader_bounds_a_line_without_newlines_and_keeps_later_failures(self):
+        import ci_xctest_lifecycle as capture
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            log = root / "log"
+            log.write_bytes(b"x" * (128 * 1024) + b"\nFailed to get matching snapshot")
+            monitor = capture.Monitor(log, "target", root / "public")
+            monitor.stopped.set()
+            with patch.object(monitor, "observe") as observe:
+                monitor.watch()
+            self.assertLessEqual(max(len(call.args[0]) for call in observe.call_args_list), 64 * 1024)
+            self.assertEqual(observe.call_args.args[0], "Failed to get matching snapshot")
+
+    def test_seen_crash_reports_carry_across_captures(self):
+        import ci_xctest_lifecycle as capture
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            monitor = capture.Monitor(root / "log", "target", root / "public")
+            for case in (1, 2):
+                monitor.requests.put_nowait(("native-failure", 0, None, case))
+            monitor.requests.put_nowait(None)
+            def collected(*args, **kwargs):
+                record = capture.empty_capture(args[3])
+                total = capture.publish_file(root / "public", record, "crash_reports", f"crash-{args[4]}.ips",
+                                             b"synthetic repeated crash", args[5], kwargs["seen_crashes"])
+                if args[4] == 1:
+                    kwargs["seen_crash_paths"].add("/synthetic/immichSlides.ips")
+                else:
+                    self.assertEqual(kwargs["seen_crash_paths"], {"/synthetic/immichSlides.ips"})
+                return record, total
+            with patch.object(capture, "capture", side_effect=collected):
+                monitor.collect_requests()
+            self.assertEqual([record["status"]["crash_reports"] for record in monitor.payload["captures"]], ["captured", "duplicate"])
+            self.assertFalse((root / "public/crash-2.ips").exists())
+            home = root / "home"
+            reports = home / "Library/Developer/CoreSimulator/Devices/target/data/Library/Logs/CrashReporter"
+            reports.mkdir(parents=True)
+            for index in range(7):
+                (reports / f"immichSlides-{index}.ips").write_text(f"synthetic crash {index}")
+            seen_paths = set()
+            def command(argv, *_args, **_kwargs):
+                return ("unavailable", b"") if "managerpid" in argv else ("captured", b"synthetic log")
+            with patch.object(capture.Path, "home", return_value=home), \
+                    patch.object(capture, "command_output", side_effect=command):
+                for index, count in ((1, 5), (2, 7)):
+                    private = root / f"private-{index}"
+                    capture.collect("target", 0, private, "native-failure", float("inf"), seen_crash_paths=seen_paths)
+                    seen_paths.update(json.loads((private / "crash-paths.json").read_text()))
+                    self.assertEqual(len(seen_paths), count)
+            self.assertEqual(len(list((root / "private-2").glob("*.ips"))), 2)
+
     def test_stream_keeps_the_recent_log_tail_and_projects_processes_before_capping(self):
         import ci_xctest_lifecycle as capture
         import sys
@@ -73,14 +210,14 @@ class LifecycleCaptureTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             monitor = capture.Monitor(root / "log", "target", root / "public", deadline=19)
-            monitor.requests.put_nowait(("native-failure", 0, None))
+            monitor.requests.put_nowait(("native-failure", 0, None, 1))
             monitor.requests.put_nowait(None)
             with patch.object(capture.time, "monotonic", return_value=0), patch.object(capture, "capture") as operation:
                 monitor.collect_requests()
             operation.assert_not_called()
             self.assertEqual(set(monitor.payload["captures"][0]["status"].values()), {"skipped"})
             admitted = capture.Monitor(root / "log", "target", root / "admitted", deadline=20)
-            admitted.requests.put_nowait(("native-failure", 0, None))
+            admitted.requests.put_nowait(("native-failure", 0, None, 1))
             admitted.requests.put_nowait(None)
             with patch.object(capture.time, "monotonic", return_value=0), \
                     patch.object(capture, "capture", return_value=(capture.empty_capture("native-failure"), 0)) as operation:
@@ -88,9 +225,11 @@ class LifecycleCaptureTests(unittest.TestCase):
             self.assertEqual(operation.call_args.kwargs["deadline"], 20)
             with patch.object(capture, "Monitor", return_value=monitor), \
                     patch.object(monitor.thread, "start"), patch.object(monitor.thread, "join") as join, \
-                    patch.object(monitor.thread, "is_alive", return_value=True):
+                    patch.object(monitor.thread, "is_alive", return_value=True), \
+                    patch.object(capture.time, "monotonic", return_value=100):
                 with capture.monitor_invocation(["test-without-building"], root / "log", "target", root / "public"):
                     pass
+            self.assertEqual(monitor.shutdown_deadline, 100 + capture.JOIN_TIMEOUT_SECONDS)
             join.assert_called_once_with(timeout=capture.JOIN_TIMEOUT_SECONDS)
             self.assertLessEqual(capture.JOIN_TIMEOUT_SECONDS, 70)
             self.assertEqual(json.loads((root / "public/summary.json").read_text())["monitor_status"], "timeout")
@@ -190,7 +329,7 @@ class LifecycleCaptureTests(unittest.TestCase):
                 self.assertEqual(record["status"]["processes"], "captured")
                 self.assertEqual(record["status"]["simulator_log"], "captured" if released else "skipped")
                 self.assertEqual(any("/usr/bin/sample" in call for call in calls), bool(released))
-                self.assertTrue(all(call[:3] == ["/usr/bin/nice", "-n", "10"] for call in calls))
+                self.assertTrue(all("/usr/bin/nice" not in call for call in calls), "tools inherit the collector's nice 10")
                 if released:
                     self.assertIn("60s", next(call for call in calls if "show" in call))
 
@@ -325,6 +464,10 @@ class LifecycleCaptureTests(unittest.TestCase):
                 path.write_text("synthetic")
                 os.utime(path, (11, 11))
             self.assertEqual(len(list(capture.crash_reports(home, device, 10))), 5)
+            ordered = sorted(own.glob("immichSlides-burst-*.ips"))
+            with patch.object(Path, "rglob", side_effect=[iter([]), iter(ordered), iter([])]):
+                self.assertEqual(list(capture.crash_reports(home, device, 10, seen_paths=set(map(str, ordered[:5])))),
+                                 ordered[5:])
 
     def test_capture_commands_share_one_deadline_and_fail_without_changing_verdicts(self):
         import ci_xctest_lifecycle as capture
@@ -363,7 +506,7 @@ class LifecycleCaptureTests(unittest.TestCase):
                          "[print(f'{p} 10 S 0 00:01 immichSlides') for p in range(11, 30)]", "unavailable", 10)):
                     with self.subTest(expected=expected, process_root=process_root), patch.object(capture, "MAX_FILE_BYTES", 256):
                         status, _ = capture.command_output([sys.executable, "-c", script], root / "raw",
-                            capture.time.monotonic() + 0.2, process_root=process_root)
+                            capture.time.monotonic() + (0.2 if expected == "timeout" else 5), process_root=process_root)
                         self.assertEqual(status, expected)
                         self.assertIsNotNone(children[-1].poll(), "every command must be reaped")
                         self.assertTrue(children[-1].stdout.closed, "repeated captures must not leak pipes")
@@ -447,25 +590,29 @@ class LifecycleCaptureTests(unittest.TestCase):
                 self.assertEqual((root / "simulator.log").exists(), failure != "log")
                 self.assertEqual(record["status"]["crash_reports"], "timeout" if failure in {"crash-deadline", "crash-traversal"} else "unavailable" if failure == "crash-io" else "captured")
                 log = next(call for call in calls if "show" in call)
-                self.assertEqual(log[:11], ["/usr/bin/nice", "-n", "10", "xcrun", "simctl", "spawn", "target", "log", "show", "--last", "60s"])
+                self.assertEqual(log[:8], ["xcrun", "simctl", "spawn", "target", "log", "show", "--last", "60s"])
                 self.assertIn("XCTest", log[-1])
                 self.assertIn("RunningBoard", log[-1])
                 self.assertEqual(log[-1].count("CONTAINS[c]"), 3)
                 if failure not in {"manager", "ps", "bad-ps", "missing-app"}:
-                    self.assertIn(["/usr/bin/nice", "-n", "10", "/usr/bin/sample", "11", "1", "10", "-file", "/dev/stdout"], calls)
+                    self.assertIn(["/usr/bin/sample", "11", "1", "10", "-file", "/dev/stdout"], calls)
 
     def test_capture_watchdog_reaps_the_group_and_bounds_total_published_bytes(self):
         import ci_xctest_lifecycle as capture
         from types import SimpleNamespace
         import threading
-        for outcome in ("captured", "timeout", "nonzero", "copy-timeout", "full", "missing-summary", "parent-deadline", "activity", "activity-later"):
+        for outcome in ("captured", "timeout", "nonzero", "copy-timeout", "full", "missing-summary", "parent-deadline", "activity", "activity-later", "no-paths", "missing-paths"):
             with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as directory:
                 clock = [0]
                 def launch(argv, **kwargs):
                     self.assertTrue(kwargs["start_new_session"])
-                    private = Path(argv[-4])
-                    self.assertEqual(float(argv[-2]), 9 if outcome == "parent-deadline" else 19)
-                    self.assertEqual(argv[-1], str(private / "release") if outcome.startswith("activity") else "")
+                    self.assertEqual(argv[:3], ["/usr/bin/nice", "-n", "10"])
+                    private = Path(argv[-5])
+                    self.assertEqual(float(argv[-3]), 8 if outcome == "parent-deadline" else 18)
+                    self.assertEqual(argv[-2], str(private / "release") if outcome.startswith("activity") else "")
+                    self.assertEqual(json.loads(argv[-1]), [] if outcome == "no-paths" else ["/synthetic/old.ips"])
+                    if outcome != "missing-paths":
+                        (private / "crash-paths.json").write_text('["/synthetic/new.ips"]')
                     record = capture.empty_capture("native-failure")
                     record["status"]["app_sample"] = "withheld"
                     capture.publish_file(private, record, "processes", "processes.txt", b"synthetic", 0)
@@ -479,7 +626,7 @@ class LifecycleCaptureTests(unittest.TestCase):
                             release.set()
                             raise subprocess.TimeoutExpired(argv, timeout)
                         if outcome.startswith("activity"):
-                            self.assertTrue(Path(argv[-1]).exists(), "native failure must release the deferred collector")
+                            self.assertTrue(Path(argv[-2]).exists(), "native failure must release the deferred collector")
                         if outcome == "timeout" and not killed:
                             raise subprocess.TimeoutExpired(argv, timeout)
                         if outcome == "copy-timeout":
@@ -494,13 +641,17 @@ class LifecycleCaptureTests(unittest.TestCase):
                     release = threading.Event() if outcome.startswith("activity") else None
                     if outcome == "activity":
                         release.set()
+                    seen_paths = {"/synthetic/old.ips"}
                     record, total = capture.capture("target", 10, Path(directory), "native-failure", 2, before,
-                        deadline=10 if outcome == "parent-deadline" else None, release=release)
+                        deadline=10 if outcome == "parent-deadline" else None, release=release,
+                        seen_crash_paths=None if outcome == "no-paths" else seen_paths)
+                self.assertEqual(seen_paths, {"/synthetic/old.ips"} if outcome in {"no-paths", "missing-paths"} else
+                                 {"/synthetic/old.ips", "/synthetic/new.ips"})
                 expected = {"captured": "captured", "timeout": "captured", "nonzero": "captured", "copy-timeout": "timeout",
                             "full": "budget-exhausted", "missing-summary": "unavailable", "parent-deadline": "captured",
-                            "activity": "captured", "activity-later": "captured"}[outcome]
+                            "activity": "captured", "activity-later": "captured", "no-paths": "captured", "missing-paths": "captured"}[outcome]
                 self.assertEqual(record["status"]["processes"], expected)
-                self.assertEqual(total, len(b"synthetic") if outcome in {"captured", "timeout", "nonzero", "parent-deadline", "activity", "activity-later"} else before)
+                self.assertEqual(total, len(b"synthetic") if outcome in {"captured", "timeout", "nonzero", "parent-deadline", "activity", "activity-later", "no-paths", "missing-paths"} else before)
                 if outcome != "missing-summary":
                     self.assertEqual(record["status"]["app_sample"], "withheld")
                     self.assertEqual(record["status"]["crash_reports"], "timeout" if outcome == "timeout" else "unavailable")
@@ -512,9 +663,9 @@ class LifecycleCaptureTests(unittest.TestCase):
         import ci_xctest_lifecycle as capture
         for release in ("", "/synthetic/release"):
             with patch.object(capture, "collect") as collect:
-                capture.main(["target", "1", "/synthetic/capture", "activity-timeout", "20", release])
+                capture.main(["target", "1", "/synthetic/capture", "activity-timeout", "20", release, '["/synthetic/old.ips"]'])
             collect.assert_called_once_with("target", 1, Path("/synthetic/capture"), "activity-timeout", 20,
-                                            Path(release) if release else None)
+                                            Path(release) if release else None, {"/synthetic/old.ips"})
 
     def test_live_monitor_captures_before_returning_and_never_changes_the_test_exit(self):
         import ci_xctest_lifecycle as capture
@@ -576,7 +727,7 @@ class LifecycleCaptureTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             monitor = capture.Monitor(root / "log", "target", root / "public")
-            for request in (("native-failure", 10, None), ("activity-timeout", 11, None), None):
+            for request in (("native-failure", 10, None, 1), ("activity-timeout", 11, None, 2), None):
                 monitor.requests.put_nowait(request)
             with patch.object(capture.time, "monotonic", side_effect=[12, 15, 20, 25]), \
                     patch.object(capture, "capture", side_effect=[(capture.empty_capture("native-failure"), 0),
@@ -591,7 +742,7 @@ class LifecycleCaptureTests(unittest.TestCase):
                 with self.subTest(start=start, end=end), self.assertRaises(ValueError):
                     capture.validate_summary(invalid)
             failed_write = capture.Monitor(root / "log", "target", root / "unavailable")
-            failed_write.requests.put_nowait(("native-failure", 10, None))
+            failed_write.requests.put_nowait(("native-failure", 10, None, 1))
             failed_write.requests.put_nowait(None)
             with patch.object(capture.time, "monotonic", side_effect=[12, 15]), \
                     patch.object(capture, "capture", return_value=(capture.empty_capture("native-failure"), 0)), \

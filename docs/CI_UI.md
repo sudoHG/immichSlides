@@ -593,8 +593,10 @@ Fixture invocations with failure attachments enabled watch live XCTest output fo
 activity for the App that has not returned to its parent activity within 15 seconds
 triggers an optional process snapshot. Expensive tools wait for a native failure
 in that method or Xcode exit, within the same capture budget; otherwise their
-statuses are `skipped`. It captures once per XCTest method, at most
-three times per Xcode invocation. Enumeration and builds do not enable it.
+statuses are `skipped`. A deferred capture that expires without collecting those
+sources leaves that method eligible for one full capture on a later native
+failure. Both attempts count toward the three-capture limit per Xcode invocation;
+otherwise captures are de-duplicated by method. Enumeration and builds do not enable it.
 The monitor starts before Xcode and joins before another runner invocation,
 retry reset, or simulator cleanup. XCTest continues running during capture; an
 immediately following method inside the same invocation can race the capture.
@@ -602,9 +604,11 @@ The process snapshot is collected first, before official-result export.
 
 Each capture has a 20-second subprocess watchdog, including interpreter startup,
 deferred collection and kill/reap reserve. The collector inherits the parent's
-absolute deadline, writes its summary incrementally, and checks that deadline
-during crash traversal. A capture with less than 20 seconds of the invocation's
-remaining budget is `skipped`. All capture tools run under `nice -n 10`.
+absolute deadline minus two seconds, leaving one second to save statuses before
+the parent's kill and another for reaping/publication. It writes its summary
+incrementally and checks its cutoff during crash traversal. A capture with less
+than 20 seconds of the invocation or shutdown budget remaining is `skipped`.
+The collector runs under `nice -n 10`; its tools inherit that priority.
 Only the selected simulator's `launchctl managerpid` subtree is projected: App,
 SpringBoard, launchd_sim, ReportCrash and testmanagerd PID, PPID, state, CPU and
 elapsed time, without argv. If exactly one App process exists, it receives a
@@ -613,8 +617,9 @@ SpringBoard, launchd, RunningBoard and XCTest. New `.ips`/`.crash` reports are
 searched in simulator data `Library/Logs/CrashReporter` and `DiagnosticReports`,
 as well as host DiagnosticReports (including Retired). The invocation start time
 excludes old reports; host reports must contain the selected UDID. Only the named
-processes' reports are considered, at most five per capture. Oversized crash
-reports are omitted; report contents are de-duplicated across the invocation.
+processes' reports are considered, at most five previously unseen paths per capture.
+Known paths are skipped before that cap. Oversized crash reports are omitted;
+report contents are also de-duplicated across the invocation.
 
 Raw command output stays private to the collector subprocess. Diagnostic files are
 capped at 256 KiB each and 1 MiB combined per invocation, across all captures;
@@ -639,7 +644,8 @@ size limit from an absent source. These
 files use the existing `ui-failures-*` artifact and seven-day retention in PR and
 nightly UI. The verdict summary schema and separate strict runner are unchanged.
 
-The live reader buffers until a newline and processes the remainder at stop,
+The live reader buffers at most 64 KiB until a newline, retaining the tail of an
+oversized line, and processes the remainder at stop,
 while a separate, serial worker collects evidence.
 The summary's `trigger_to_capture_start_seconds` and `trigger_to_capture_end_seconds`
 measure monotonic lag from the reader's observation of each trigger, including time
@@ -649,7 +655,9 @@ claiming to measure Xcode's own stdout buffering delay. Both threads join before
 the runner returns to reset, the next invocation or cleanup, with a 65-second
 join bound (three capture budgets plus margin). A join timeout is recorded as
 `monitor_status: timeout`; a continually appended Xcode log cannot extend the
-reader's stop boundary.
+reader's stop boundary. Stopping the monitor sets an absolute shutdown deadline;
+queued captures that cannot finish before it are skipped, so no new collector
+can start after the join expires.
 
 Failed method nodes and UI observations also include the fixed `failure_phase`
 and `failure_class` enums described in

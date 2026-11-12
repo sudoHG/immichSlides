@@ -608,15 +608,18 @@ suffixes of that prefix remain `unknown/snapshot_query` and red: they can indica
 App main-thread hang, and the capture is intended to distinguish that cause.
 Night 1112 (run 43121052166) therefore stays red under this change; its published
 prefix does not establish the raw message, whose form remains `NOT_VERIFIED`.
-Suffixed or near-miss terminate messages retain their prior
-`unknown/process_lifetime` public projection without qualifying for the exception.
+Suffixed terminate messages and oversized PIDs retain their prior
+`unknown/process_lifetime` public projection; other-bundle near-misses remain
+`unknown/unknown`. None qualify for the exception.
 Trailing text, another bundle, an assertion mentioning snapshot or termination,
 and App crash messages do not qualify. Complete official failure lists, bound
 counts/identities, known durations, hosted nightly scope and every existing
 validator/infrastructure exclusion remain required. This adds no assertion retry
 and no PR-time exception. Fixture UI's optional live capture is documented in
-[the UI protocol](CI_UI.md#fixture-execution-retry-and-public-output); strict
-execution does not share that runner helper and is unchanged.
+[the UI protocol](CI_UI.md#fixture-execution-retry-and-public-output). Strict
+execution does not share that capture helper. The shared classifier change does
+reach `nightly-strict`: the exact bare terminate message becomes yellow-eligible
+under the existing gates and receives the `application-process` failure label.
 
 The [v5 class/step taxonomy](CI_SUMMARY.md#policy-v5-reader-preparation) is
 authoritative for new output. The following table documents retained v1–v4
