@@ -204,6 +204,22 @@ def git_blob(revision, path):
     return subprocess.check_output(["git", "show", revision + ":" + path], cwd=ROOT, timeout=60)
 
 
+def ui_populations_at_revision(revision):
+    from ci_population import ui_identities
+    paths = subprocess.check_output(["git", "ls-tree", "-rz", "--name-only", revision, "--", "immichSlidesUITests"],
+                                    cwd=ROOT, text=True, timeout=60).split("\0")
+    sources = {path: git_blob(revision, path).decode() for path in paths if path.endswith(".swift")}
+    return {"ui-" + platform: ui_identities(sources, platform) for platform in ("ios", "tvos")}
+
+
+def tested_area_map():
+    from ci_ui_selection import AREA_MAP_PATH
+    try:
+        return git_blob("HEAD", AREA_MAP_PATH).decode()
+    except (subprocess.CalledProcessError, UnicodeDecodeError):
+        return None  # Unavailable tested-tree data grants no removal exception.
+
+
 def context(*, on_identity_failure=None):
     ci = os.environ.get("GITHUB_ACTIONS") == "true"
     try:
@@ -277,7 +293,9 @@ def shard_selection(identity):
         selection = select_ui_population(paths or ["__unknown_empty_diff__"],
                                          decode(git_blob(base, "scripts/ci-classification.json").decode()),
                                          build_target_paths=sorted(members), area_map=area_map,
-                                         populations=populations, plans=plans, event="pull_request")
+                                         populations=populations, plans=plans, event="pull_request",
+                                         base_populations=ui_populations_at_revision(base),
+                                         head_area_map=tested_area_map())
     except (ContractError, ValueError, KeyError, subprocess.SubprocessError):
         return full  # a selection error keeps the complete population, as admission does
     if selection["mode"] == "full":
@@ -323,7 +341,9 @@ def planned_ui_selection(identity, *, pack_scoped_ui=False, scoped_ui_v2=False):
         decode(git_blob(base, "scripts/ci-classification.json").decode()), build_target_paths=sorted(members),
         area_map=git_blob(base, AREA_MAP_PATH).decode(), populations=populations, plans=plans, event="pull_request",
         platform_scoped=True, platform_sources=platform_sources_from_project(project), functional_only=True,
-        expected_skips=decode(git_blob(base, "scripts/ci-test-policy.json").decode())["expected_skips"])
+        expected_skips=decode(git_blob(base, "scripts/ci-test-policy.json").decode())["expected_skips"],
+        base_populations=ui_populations_at_revision(base),
+        head_area_map=tested_area_map())
     packing = (pack_scoped_selection(selection["populations"], git_blob(base, DURATIONS_PATH).decode(),
                                     **({"algorithm": "capacity-v2"} if scoped_ui_v2 else {}))
                if selection["mode"] == "scoped" else None)

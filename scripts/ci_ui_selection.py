@@ -131,13 +131,25 @@ def affected_areas(path, area_map):
                   if any(matches_source(path, pattern) for pattern in area["sources"]))
 
 
-def validate_area_coverage(raw, source_paths, populations, *, plans=None, expected_skips=()):
+def validate_area_coverage(raw, source_paths, populations, *, plans=None, expected_skips=(),
+                           base_populations=None, head_area_map=None):
     """Check both unfiltered platforms, including Evidence and strict identities."""
     area_map = parse_area_map(raw)
     keys = {entry["key"] for platform in ("ios", "tvos") for entry in populations.get("ui-" + platform, [])}
     selectors = [selector for area in area_map["areas"].values() for selector in area["tests"]]
-    for selector in selectors + area_map["smoke"] + area_map.get("functional_smoke", []):
-        require(any(matches_test(key, [selector]) for key in keys), f"UI area selector matches no test: {selector}")
+    all_selectors = selectors + area_map["smoke"] + area_map.get("functional_smoke", [])
+    missing = {selector for selector in all_selectors if not any(matches_test(key, [selector]) for key in keys)}
+    if missing and base_populations is not None and head_area_map is not None:
+        head_map = parse_area_map(head_area_map)
+        head_selectors = {selector for area in head_map["areas"].values() for selector in area["tests"]}
+        head_selectors.update(head_map["smoke"] + head_map.get("functional_smoke", []))
+        base_keys = {entry["key"] for platform in ("ios", "tvos")
+                     for entry in base_populations.get("ui-" + platform, [])}
+        # HEAD may acknowledge deleted tests, but cannot choose or redirect coverage.
+        missing -= {selector for selector in missing if selector not in head_selectors
+                    and any(matches_test(key, [selector]) for key in base_keys)}
+    for selector in all_selectors:
+        require(selector not in missing, f"UI area selector matches no test: {selector}")
     for key in sorted(keys):
         require(matches_test(key, selectors), f"unmapped UI test: {key}")
     for path in sorted(source_paths):
@@ -174,7 +186,8 @@ def check_area_map(root):
 
 
 def select_ui_population(paths, classification_policy, *, build_target_paths, area_map, populations, plans, event,
-                         platform_scoped=False, platform_sources=None, functional_only=False, expected_skips=()):
+                         platform_scoped=False, platform_sources=None, functional_only=False, expected_skips=(),
+                         base_populations=None, head_area_map=None):
     """Use base data and rules over the trusted diff and tested-tree identities."""
     require(event in {"pull_request", "push", "schedule", "workflow_dispatch"}, "unsupported UI selection event")
     require(type(platform_scoped) is bool and all(platform in DEVICES.values()
@@ -240,7 +253,9 @@ def select_ui_population(paths, classification_policy, *, build_target_paths, ar
     elif mode == "full" and omitted:
         mode = "scoped"  # full minus nightly-default tests is an exact trusted selection
     if mode == "scoped":
-        validate_area_coverage(area_map, [], populations, plans=plans, expected_skips=expected_skips)
+        validate_area_coverage(area_map, [], populations, plans=plans, expected_skips=expected_skips,
+                               base_populations=base_populations if event == "pull_request" else None,
+                               head_area_map=head_area_map if event == "pull_request" else None)
     result = {"mode": mode, "areas": sorted(areas), "unknown_paths": sorted(unknown), "populations": selected}
     if functional_pr:
         result["coverage"] = "functional"

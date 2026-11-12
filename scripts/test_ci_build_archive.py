@@ -433,6 +433,81 @@ class BuildArchiveTests(unittest.TestCase):
             ui.reproduce(args)
         build.assert_not_called()
 
+    def test_producer_removal_proof_uses_the_tested_tree_and_unavailable_maps_grant_nothing(self):
+        from ci_ui_selection import AREA_MAP_PATH
+        repo = self.root / 'selection-repo'
+        area_map = {'schema_version': 1, 'revision': 'removal-v1', 'smoke': ['SmokeUITests/testLaunch'],
+                    'areas': {'core': {'sources': ['immichSlides/Engine.swift'], 'tests': ['SmokeUITests']},
+                              'settings': {'sources': ['immichSlides/Settings.swift'],
+                                           'tests': ['SettingsUITests', 'DeletedUITests/testObsolete']}}}
+        plan = {'testTargets': [{'target': {'name': 'immichSlidesUITests'}}]}
+        deleted_source = 'import XCTest\nclass DeletedUITests: XCTestCase { func testObsolete() {} }'
+        deleted_path = 'immichSlidesUITests/\u5df2\u5220\u9664.swift'
+        files = {AREA_MAP_PATH: json.dumps(area_map),
+                 'scripts/ci-ui-shards.json': json.dumps({'schema_version': 1, 'revision': 'all-v1',
+                     'default_shard': 'default', 'shards': {'default': []}}),
+                 'scripts/ci-ui-durations.json': json.dumps({'schema_version': 1, 'revision': 'test-v1',
+                     'default_seconds': 120, 'seconds': {device: {} for device in ui.DEVICES}}),
+                 'scripts/ci-classification.json': json.dumps({'schema_version': 1,
+                     'app_unaffected': ['docs/**', AREA_MAP_PATH], 'ci_trusted': []}),
+                 'scripts/ci-test-policy.json': json.dumps({'expected_skips': []}),
+                 'immichSlides.xcodeproj/project.pbxproj': '',
+                 **{'immichSlides-' + suffix + '.xctestplan': json.dumps(plan) for suffix in ('iOS', 'tvOS')},
+                 'immichSlides/Settings.swift': '// base\n', deleted_path: deleted_source,
+                 'immichSlidesUITests/Flows.swift': 'import XCTest\n'
+                     'class SmokeUITests: XCTestCase { func testLaunch() {} }\n'
+                     'class SettingsUITests: XCTestCase { func testEdit() {} }\n'}
+        for path, text in files.items():
+            (repo / path).parent.mkdir(parents=True, exist_ok=True)
+            (repo / path).write_text(text, encoding='utf-8')
+        def git(*arguments):
+            return subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', *arguments],
+                                  cwd=repo, check=True, capture_output=True, text=True, timeout=60).stdout.strip()
+        git('init', '-q')
+        git('add', '-A')
+        git('commit', '-q', '-m', 'base')
+        base = git('rev-parse', 'HEAD')
+        head_map = copy.deepcopy(area_map)
+        head_map['areas']['settings']['tests'].remove('DeletedUITests/testObsolete')
+        (repo / AREA_MAP_PATH).write_text(json.dumps(head_map))
+        (repo / 'immichSlides/Settings.swift').write_text('// head\n')
+        git('add', '-A')
+        git('commit', '-q', '-m', 'head')
+        head = git('rev-parse', 'HEAD')
+        identity = {'event': 'pull_request', 'base_sha': base, 'head_sha': head}
+        for removed in (False, True):
+            for case, raw in (('declared-removal', json.dumps(head_map).encode()),
+                              ('retained-in-tested-tree', json.dumps(area_map).encode()),
+                              ('missing-map', None), ('invalid-utf8-map', b'\xff')):
+                git('checkout', '-q', head)
+                if removed:
+                    (repo / deleted_path).unlink()
+                if raw is None:
+                    (repo / AREA_MAP_PATH).unlink()
+                else:
+                    (repo / AREA_MAP_PATH).write_bytes(raw)
+                git('add', '-A')
+                git('commit', '-q', '--allow-empty', '-m', 'tested tree')
+                for packed in (False, True):
+                    with self.subTest(removed=removed, case=case, packed=packed), patch.object(ui, 'ROOT', repo):
+                        if removed and case != 'declared-removal':
+                            if packed:
+                                with self.assertRaisesRegex(ContractError,
+                                        '^UI area selector matches no test: DeletedUITests/testObsolete$'):
+                                    ui.planned_ui_selection(identity, pack_scoped_ui=True)
+                            else:
+                                selected = ui.planned_ui_selection(identity)
+                                self.assertEqual(selected['mode'], 'full')
+                                self.assertEqual(selected['keys'], {'ios': None, 'tvos': None})
+                        else:
+                            selected = ui.planned_ui_selection(identity, pack_scoped_ui=packed)
+                            self.assertEqual(selected['mode'], 'scoped')
+                            expected = {'SmokeUITests/testLaunch', 'SettingsUITests/testEdit'}
+                            if not removed:
+                                expected.add('DeletedUITests/testObsolete')
+                            for keys in selected['keys'].values():
+                                self.assertEqual(set(keys), expected)
+
     def test_functional_producer_plan_and_serialized_fixture_population_equal_the_base_reader(self):
         share_ui_source_fixture(self)
         from types import SimpleNamespace
@@ -445,6 +520,19 @@ class BuildArchiveTests(unittest.TestCase):
         sources = {path.relative_to(root).as_posix(): path.read_text()
                    for path in (root / 'immichSlidesUITests').rglob('*.swift')}
         populations = {'ui-' + platform: ui_identities(sources, platform) for platform in ('ios', 'tvos')}
+        base_sources = dict(sources, **{'immichSlidesUITests/DeletedUITests.swift':
+            'import XCTest\nclass DeletedUITests: XCTestCase { func testObsolete() {} }'})
+        base_populations = {'ui-' + platform: ui_identities(base_sources, platform) for platform in ('ios', 'tvos')}
+        head_map = (root / 'scripts/ci-ui-areas.json').read_text()
+        base_map = json.loads(head_map)
+        base_map['areas']['settings']['tests'].append('DeletedUITests/testObsolete')
+        def blob(revision, path):
+            if revision == self.identity['base_sha']:
+                if path == 'scripts/ci-ui-areas.json':
+                    return json.dumps(base_map).encode()
+                if path in base_sources:
+                    return base_sources[path].encode()
+            return (root / path).read_bytes()
         modules = {name: (root / 'scripts' / name).read_text() for name in BASE_MODULES + OPTIONAL_BASE_MODULES}
         paths = ['scripts/ci-ui-shards.json', 'immichSlides-iOS.xctestplan', 'immichSlides-tvOS.xctestplan']
         listing = [{'path': path, 'type': 'blob', 'mode': '100644'} for path in paths]
@@ -455,20 +543,21 @@ class BuildArchiveTests(unittest.TestCase):
         for changed in cases:
             with self.subTest(path=changed):
                 inputs = {'paths': [changed], 'event': 'pull_request', 'build_target_paths': members,
-                          'area_map': (root / 'scripts/ci-ui-areas.json').read_text(),
+                          'area_map': json.dumps(base_map), 'head_area_map': head_map,
                           'classification_policy': json.loads((root / 'scripts/ci-classification.json').read_text()),
                           'map_revision': self.identity['base_sha'], 'map_sha256': 'd' * 64,
                           'project': (root / 'immichSlides.xcodeproj/project.pbxproj').read_text(),
                           'expected_skips': json.loads((root / 'scripts/ci-test-policy.json').read_text())['expected_skips'],
                           'durations': (root / 'scripts/ci-ui-durations.json').read_text()}
                 with patch.object(ui, 'ROOT', root), \
-                        patch.object(ui, 'git_blob', side_effect=lambda revision, path: (root / path).read_bytes()), \
+                        patch.object(ui, 'git_blob', side_effect=blob), \
                         patch.object(ui.subprocess, 'check_output', side_effect=lambda command, **kwargs:
-                                     changed + '\n' if command[1] == 'diff' else '\n'.join(members)), \
+                                     changed + '\n' if command[1] == 'diff' else
+                                     '\0'.join(base_sources) if command[-1] == 'immichSlidesUITests' else '\n'.join(members)), \
                         patch('ci_publish_git.read_blob', side_effect=lambda revision, path: (root / path).read_text()):
                     produced = ui.planned_ui_selection(self.identity, pack_scoped_ui=True, scoped_ui_v2=True)
                     admitted = ui_inputs(self.identity['base_sha'], listing, populations=populations,
-                        base_populations=populations, workflow=workflow,
+                        base_populations=base_populations, workflow=workflow,
                         run={'path': ui.WORKFLOW, 'event': 'pull_request', 'id': 100, 'run_attempt': 1},
                         modules=modules, selection_inputs=inputs)
                 self.assertEqual(produced['packing'], admitted['selection']['packing'])

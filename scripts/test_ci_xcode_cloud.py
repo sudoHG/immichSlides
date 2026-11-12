@@ -1257,6 +1257,7 @@ class GroupProducerTests(unittest.TestCase):
         files[scheme] = '<Scheme><TestAction><TestPlans><TestPlanReference reference="container:Cloud-iOS.xctestplan"/></TestPlans></TestAction></Scheme>'
         members = [path.relative_to(root).as_posix() for path in (root / "immichSlides").rglob("*.swift")]
         listing = [{"path": path, "type": "blob", "mode": "100644"} for path in set(files) | set(members)]
+        ui_sources = [path for path in files if path.startswith('immichSlidesUITests/') and path.endswith('.swift')]
         workflow = files[producer.WORKFLOW]
         for accelerated in (False, True):
             files[producer.WORKFLOW] = workflow if accelerated else workflow.replace("--scoped-ui-v2", "")
@@ -1268,7 +1269,8 @@ class GroupProducerTests(unittest.TestCase):
                             if path == producer.WORKFLOW and revision != self.identity["base_sha"] else files[path],
                         changed_paths=[changed], head_tree=self.identity["tree_sha"])
                     with patch.object(producer, "git_blob", side_effect=lambda revision, path: files[path].encode()), \
-                            patch.object(producer.subprocess, "check_output", side_effect=[changed + "\n", "\n".join(members), "\n".join(members)]):
+                            patch.object(producer.subprocess, "check_output", side_effect=[changed + "\n", "\n".join(members),
+                                                                                       "\n".join(members), "\0".join(ui_sources)]):
                         planned = producer.planned_ui_selection(self.identity, pack_scoped_ui=True, scoped_ui_v2=accelerated)
                     self.assertEqual(record["ui_inputs"]["base"]["selection"]["packing"], planned["packing"])
 
