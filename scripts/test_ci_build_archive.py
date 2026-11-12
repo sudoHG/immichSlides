@@ -43,6 +43,124 @@ def share_ui_source_fixture(test):
 
 
 class BuildArchiveTests(unittest.TestCase):
+    def test_verified_redownload_is_bounded_and_bound_to_the_original_artifact(self):
+        from ci_summary import parse_summary
+        from test_ci_summary import archive_download_summary
+        failure_handler = ui.failed_shard
+        pins = json.loads((ui.ROOT / "scripts/ci-pins.json").read_text())
+        for event, platform_name in ((event, name) for event in ("schedule", "pull_request") for name in ("ios", "tvos")):
+            for defect in ("success", "missing", "truncated", "twice-missing", "twice-truncated", "second-manifest-hash", "changed-id", "changed-selection-id",
+                           "missing-receipt", "private-receipt", "invalid-timing", "budget-exhausted", "action-failure"):
+                with self.subTest(event=event, platform=platform_name, defect=defect), tempfile.TemporaryDirectory() as temporary:
+                    root = Path(temporary)
+                    identity = (archive_download_summary()["identity"] if event == "schedule" else self.identity)
+                    ctx = {"identity": identity, "source": {"repository": identity["repository"], "event": event,
+                           "workflow_path": ui.NIGHTLY_WORKFLOW if event == "schedule" else ui.WORKFLOW,
+                           "fork_originated": False, "ci_changing": None},
+                           "run": {"id": "123", "attempt": 1, "tier": "ui-infrastructure", "job": "ui-archive", "shard": None}}
+                    # PR UI and gate archives are separate runs; nightly archives belong to this run.
+                    producer = "123" if event == "schedule" else "789"
+                    good = root / "good"
+                    good.mkdir()
+                    archive.pack_products(self.products, good / "build.tar.gz")
+                    manifest = archive.make_manifest(self.products, identity=identity, run_id=producer, attempt=1,
+                        platform=platform_name, architecture=[platform.machine()], xcode_build=pins["xcode"]["build"],
+                        source_path=self.root / "source", archive_sha=archive.file_hash(good / "build.tar.gz"),
+                        pins_sha=archive.file_hash(ui.ROOT / "scripts/ci-pins.json"), signing_mode="adhoc")
+                    ui.write_json(good / "manifest.json", manifest)
+                    ui.write_json(root / "selection.json", {"identity": identity, "platform": platform_name,
+                        "producer_run_id": producer, "producer_attempt": 1, "artifact_id": 456,
+                        "build_manifest_sha256": archive.file_hash(good / "manifest.json")})
+                    receipt = root / "receipt.json"
+                    summary = root / "step-summary.md"
+                    with patch.object(ui, "context", return_value=ctx), \
+                            patch.dict(os.environ, {"RUNNER_TEMP": temporary, "GITHUB_STEP_SUMMARY": str(summary)}), \
+                            patch.object(ui, "output") as exported, patch.object(ui, "failed_shard") as failed, \
+                            redirect_stderr(io.StringIO()), redirect_stdout(io.StringIO()) as logs:
+                        self.assertEqual(ui.main(["stage-download"]), 0)
+                        outputs = dict(call.args for call in exported.call_args_list)
+                        staging = Path(outputs["staging_path"])
+                        shutil.copytree(good, staging, dirs_exist_ok=True)
+                        if defect not in {"success", "action-failure"}:
+                            if defect == "truncated":
+                                packed = staging / "build.tar.gz"
+                                packed.write_bytes(packed.read_bytes()[:-8])
+                            else:
+                                (staging / "manifest.json").unlink()
+                        def gate(path, artifact_id="456", *extra):
+                            return ui.main(["gate-archive", "--device", "ipad" if platform_name == "ios" else "appletv", "--shard", "navigation",
+                                "--staging-dir", str(path), "--archive-dir", str(root / "published"),
+                                "--selection-path", str(root / "selection.json"), "--artifact-id", artifact_id,
+                                "--action-outcome", "failure" if defect == "action-failure" and path == staging else "success",
+                                "--transfer-started", outputs["transfer_started"],
+                                "--download-receipt-path", str(receipt), "--output-dir", str(root / "records"), *extra])
+                        exported.reset_mock()
+                        self.assertEqual(gate(staging, "456", "--prepare-redownload"), 0)
+                        outputs.update(dict(call.args for call in exported.call_args_list))
+                        self.assertEqual(outputs["retry_required"], "false" if defect == "success" else "true")
+                        if defect != "success":
+                            self.assertFalse(staging.exists(), "rejected staging must be deleted before re-download")
+                            retry_staging = Path(outputs["staging_path"])
+                            self.assertNotEqual(retry_staging, staging)
+                            self.assertEqual(list(retry_staging.iterdir()), [])
+                            self.assertFalse((root / "published").exists())
+                            failed.assert_not_called()
+                            shutil.copytree(good, retry_staging, dirs_exist_ok=True)
+                            if defect == "twice-missing":
+                                (retry_staging / "manifest.json").unlink()
+                            if defect == "twice-truncated":
+                                packed = retry_staging / "build.tar.gz"
+                                packed.write_bytes(packed.read_bytes()[:-8])
+                            if defect == "second-manifest-hash":
+                                manifest_path = retry_staging / "manifest.json"
+                                manifest_path.write_text(manifest_path.read_text() + " ")
+                            if defect == "missing-receipt":
+                                receipt.unlink()
+                            if defect == "changed-selection-id":
+                                selection = json.loads((root / "selection.json").read_text())
+                                selection["artifact_id"] = 457
+                                ui.write_json(root / "selection.json", selection)
+                            if defect in {"private-receipt", "invalid-timing", "budget-exhausted"}:
+                                previous = json.loads(receipt.read_text())
+                                if defect == "private-receipt":
+                                    previous["failure_reason"] = "private-diagnostic"
+                                else:
+                                    previous["gate_seconds"] = "private-diagnostic" if defect == "invalid-timing" else ui.ARCHIVE_GATE_SECONDS
+                                ui.write_json(receipt, previous)
+                            code = gate(retry_staging, "457" if defect in {"changed-id", "changed-selection-id"} else "456",
+                                        "--previous-receipt-path", str(receipt))
+                            reason = {"twice-missing": "archive-member-missing", "changed-id": "archive-identity-mismatch",
+                                      "twice-truncated": "archive-download-incomplete", "second-manifest-hash": "archive-hash-mismatch",
+                                      "changed-selection-id": "archive-identity-mismatch", "missing-receipt": "archive-identity-mismatch",
+                                      "private-receipt": "archive-identity-mismatch", "invalid-timing": "archive-identity-mismatch",
+                                      "budget-exhausted": "archive-gate-timeout"}.get(defect)
+                            self.assertEqual(code, int(reason is not None))
+                            self.assertEqual(json.loads(receipt.read_text())["failure_reason"], reason)
+                            self.assertEqual((root / "published").exists(), reason is None)
+                            if reason:
+                                self.assertEqual(str(failed.call_args.args[1]), reason)
+                                inputs = archive_download_summary()
+                                inputs["population"].update(compiled=[], observed=[])
+                                inputs["hashes"]["manifests"]["ui-shards"] = "c" * 64
+                                with patch("run_fixture_ui_tests.fixture_inputs", return_value=inputs):
+                                    failure_handler(*failed.call_args.args)
+                                recorded = parse_summary((root / "records/summary.json").read_text())
+                                self.assertEqual(recorded["status"], "failed")
+                                self.assertEqual(recorded["infrastructure"], [{"code": reason, "message": reason}])
+                                self.assertEqual(recorded["population"]["compiled"], [])
+                                self.assertEqual(recorded["population"]["observed"], [])
+                                self.assertEqual("archive_download" in recorded, event == "schedule")
+                        final = json.loads(receipt.read_text())
+                        self.assertEqual(set(final), set(archive_download_summary()["archive_download"]),
+                                         "the trusted base reader must accept the unchanged receipt schema")
+                        attempts = 1 if defect == "success" else 2
+                        first = "none" if defect == "success" else ("archive-download-incomplete" if defect in {"truncated", "action-failure"}
+                                                                 else "archive-member-missing")
+                        if defect not in {"missing-receipt", "private-receipt"}:
+                            for content in (logs.getvalue(), summary.read_text()):
+                                self.assertIn(f"attempts={attempts}; first rejection={first}", content)
+                        self.assertNotIn("private-diagnostic", logs.getvalue() + summary.read_text())
+
     def test_ui_archive_download_must_be_complete_before_simulator_preparation(self):
         from ci_summary import parse_summary, test_identity
         from ci_ui_packing import pack_scoped_selection
