@@ -8287,19 +8287,29 @@ class SmokeFlowResultTests(unittest.TestCase):
             ("case-manifest.json", lambda p: p.update(selection="single-flow")),
             ("smoke-flow-results.json", lambda p: p.update(selection="single-flow")),
             ("smoke-flow-results.json", lambda p: p.update(result="RUNNING")),
-            ("case-manifest.json", lambda p: p.update(exit_code=True)),
+            ("case-manifest.json", lambda p: p.update(exit_code=False)),
+            ("case-manifest.json", lambda p: p.update(exit_code=65)),
+            ("smoke-flow-results.json", lambda p: p.update(exit_code=False)),
+            ("case-manifest.json", lambda p: p.update(result="FAILED")),
+            ("case-manifest.json", lambda p: p.update(device="ipad")),
+            ("smoke-flow-results.json", lambda p: p.update(configuration="Release")),
+            ("case-manifest.json", lambda p: p.update(source_sha="invalid")),
             ("case-manifest.json", lambda p: p.update(source_dirty_paths=[" M file"])),
             ("smoke-flow-results.json", lambda p: p.update(source_sha="b" * 40)),
             ("smoke-flow-results.json", lambda p: p["flows"].reverse()),
             ("smoke-flow-results.json", lambda p: p["flows"].pop()),
+            ("smoke-flow-results.json", lambda p: p["flows"][0].update(id="unknown")),
+            ("case-manifest.json", lambda p: p["flows"].reverse()),
             ("smoke-flow-results.json", lambda p: p["flows"][0].update(official_execution_complete=False)),
             ("smoke-flow-results.json", lambda p: p["flows"][0].update(outcome="FAIL")),
             ("smoke-flow-results.json", lambda p: p["flows"][0].update(exit_code=65)),
+            ("smoke-flow-results.json", lambda p: p["flows"][0].update(exit_code=False)),
             ("smoke-flow-results.json", lambda p: p["flows"][0].update(source_sha="b" * 40)),
             ("smoke-flow-results.json", lambda p: p["flows"][0].update(source_dirty_paths=[" M file"])),
             ("smoke-flow-results.json", lambda p: p["flows"][0].update(selector="Other/testWrong")),
             ("smoke-flow-results.json", lambda p: p["flows"][0].update(failure_kind="cleanup")),
             ("smoke-flow-results.json", lambda p: p["flows"][0].update(official_tests_sha256="b" * 64)),
+            ("smoke-flow-results.json", lambda p: p["flows"][0].update(official_summary={})),
             ("iphone-first-boot/official-tests.json", lambda p: p["testNodes"][0].update(nodeIdentifier="Other/testWrong()")),
             ("iphone-first-boot/official-summary.json", lambda p: p.update(skippedTests=1)),
         )
@@ -8317,6 +8327,11 @@ class SmokeFlowResultTests(unittest.TestCase):
                 case = json.loads((evidence / "case-manifest.json").read_text())
                 result = json.loads((evidence / "smoke-flow-results.json").read_text())
                 if filename == "smoke-flow-results.json":
+                    case["flows"] = copy.deepcopy(result["flows"])
+                elif filename == "case-manifest.json" and case["source_sha"] == "invalid":
+                    result["source_sha"] = "invalid"
+                    for record in result["flows"]:
+                        record["source_sha"] = "invalid"
                     case["flows"] = copy.deepcopy(result["flows"])
                 elif filename.endswith("/official-tests.json"):
                     result["flows"][0]["official_tests_sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
