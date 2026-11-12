@@ -8468,6 +8468,24 @@ class SmokeFlowResultTests(unittest.TestCase):
             self.assertEqual({"flow": record, "result": "FAILED", "exit_code": 124},
                              json.loads((directory / "case-manifest.json").read_text()))
 
+    def test_cleanup_invalidates_passing_roots_before_a_per_flow_evidence_write_fails(self):
+        import strict_e2e_smoke as smoke
+        with tempfile.TemporaryDirectory() as temporary:
+            code, _, evidence, _ = self.run_group(Path(temporary))
+            self.assertEqual(0, code)
+            original = smoke.write_json
+            def write_json(path, payload):
+                if path == evidence / "iphone-first-boot/case-manifest.json":
+                    raise OSError("per-flow write failed")
+                original(path, payload)
+            with mock.patch.object(smoke, "write_json", side_effect=write_json), self.assertRaises(OSError):
+                smoke.record_cleanup_failure(evidence, {"phase": "snapshot-occupancy", "error_type": "TimeoutExpired",
+                                                        "retained_path": "/private/tmp/synthetic-source"})
+            for name in ("case-manifest.json", "smoke-flow-results.json"):
+                payload = json.loads((evidence / name).read_text())
+                self.assertEqual(("FAILED", 2), (payload["result"], payload["exit_code"]))
+                self.assertEqual("cleanup", payload["group_failures"][0]["failure_kind"])
+
     def test_smoke_rejects_retry_fixture_scenario_and_mismatched_arguments_before_execution(self):
         for overrides in ({"smoke_device": None}, {"configuration": None}, {"platform": "tvos"},
                 {"listed_retry_device": "iphone"}, {"nightly_retry_method": "testFirstBoot"},

@@ -213,6 +213,34 @@ def fail_gate_flows(evidence, records, gate):
             "flow_ids": [record["id"] for record in records if record["id"] in affected]}
 
 
+def record_cleanup_failure(evidence, details):
+    """Record a local launcher's late cleanup failure without replacing first native failures."""
+    evidence = Path(evidence)
+    case = json.loads((evidence / "case-manifest.json").read_text())
+    result = json.loads((evidence / "smoke-flow-results.json").read_text())
+    if case.get("suite") != "smoke-flow":
+        raise ValueError("cleanup evidence is not a smoke-flow group")
+    records = result["flows"]
+    gate = {"failure_kind": "cleanup", "exit_code": 2, "flow_ids": [record["id"] for record in records],
+            "phase": details["phase"], "error_type": details["error_type"],
+            "retained_snapshot": details["retained_path"] is not None}
+    for payload, name in ((case, "case-manifest.json"), (result, "smoke-flow-results.json")):
+        payload.update(result="FAILED", exit_code=2, flows=records)
+        payload.setdefault("group_failures", []).append(gate)
+        if isinstance(payload.get("official_summary"), dict):
+            payload["official_summary"]["result"] = "Failed"
+        write_json(evidence / name, payload)
+    # Invalidate roots before per-flow writes that could themselves fail.
+    fail_gate_flows(evidence, records, "cleanup")
+    write_json(evidence / "case-manifest.json", case)
+    write_json(evidence / "smoke-flow-results.json", result)
+    summary_path = evidence / "official-summary.json"
+    if summary_path.is_file():
+        summary = json.loads(summary_path.read_text())
+        summary["result"] = "Failed"
+        write_json(summary_path, summary)
+
+
 def flow_failure_locations(tests, selector, source_roots):
     """Project only reviewed relative source coordinates from the selected official failure."""
     from ci_bounded_diagnostics import MAX_FAILURE_LOCATIONS, public_failure_locations

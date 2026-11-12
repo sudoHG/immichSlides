@@ -35,6 +35,15 @@ PROBE_ATTEMPTS = 2
 class SnapshotCleanupError(RuntimeError):
     """Live or unverifiable child processes require retaining their source tree."""
 
+    def __init__(self, message, *, phase="child-processes", cause=None, retained_path=None):
+        super().__init__(message)
+        self.phase = phase
+        self.error_type = type(cause).__name__ if cause is not None else type(self).__name__
+        self.retained_path = retained_path
+
+    def details(self):
+        return {"phase": self.phase, "error_type": self.error_type, "retained_path": self.retained_path}
+
 
 class Interrupted(KeyboardInterrupt):
     def __init__(self, signum):
@@ -142,26 +151,37 @@ def snapshot(root, *, strict=False):
             yield checkout, {"schema_version": 1, "mode": "strict" if strict else "snapshot",
                              "source_commit_sha": head, "source_dirty": dirty,
                              "commit_sha": commit, "tree_sha": tree, "private_configuration": False}
-        except SnapshotCleanupError:
+        except SnapshotCleanupError as error:
             retained = True
+            error.retained_path = str(checkout)
             raise
         finally:
             if not retained:
                 try:
                     # A crashing launcher can orphan a new session between process probes.
+                    phase = "snapshot-occupancy"
                     usage = subprocess.run(["lsof", "-t", "+D", str(checkout)], capture_output=True,
                                            text=True, timeout=30)
                     if usage.returncode != 1 or usage.stdout or usage.stderr:
                         raise SnapshotCleanupError("snapshot process/file occupancy could not be cleared")
+                    phase = "snapshot-removal"
                     git(root, "worktree", "remove", "--force", str(checkout), environment=environment)
-                except BaseException:
+                except BaseException as error:
                     retained = True
+                    if isinstance(error, (OSError, ValueError, subprocess.SubprocessError, SnapshotCleanupError)):
+                        raise SnapshotCleanupError("snapshot cleanup failed: " + phase + "; " + type(error).__name__,
+                            phase=phase, cause=error, retained_path=str(checkout)) from error
                     raise
     finally:
         if retained:
             print("Cleanup unverified; snapshot retained: " + str(checkout), file=sys.stderr, flush=True)
         else:
-            shutil.rmtree(directory)
+            try:
+                shutil.rmtree(directory)
+            except OSError as error:
+                print("Cleanup unverified; snapshot directory retained: " + str(directory), file=sys.stderr, flush=True)
+                raise SnapshotCleanupError("snapshot cleanup failed: snapshot-directory; " + type(error).__name__,
+                    phase="snapshot-directory", cause=error, retained_path=str(directory)) from error
 
 
 def absolute_paths(arguments, cwd):
@@ -404,7 +424,7 @@ def launch(script, arguments):
             record_path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
         return code
 
-    receipt = None
+    receipt, code = None, None
     try:
         if mode == "private":
             receipt = {"schema_version": 1, "mode": "private", "source_commit_sha": git(root, "rev-parse", "HEAD"),
@@ -418,8 +438,19 @@ def launch(script, arguments):
         if receipt is not None:
             record_exit(receipt, 128 + getattr(error, "signum", signal.SIGINT))
         raise
-    except (OSError, ValueError, subprocess.SubprocessError, SnapshotCleanupError):
+    except (OSError, ValueError, subprocess.SubprocessError, SnapshotCleanupError) as error:
         if receipt is not None:
+            if isinstance(error, SnapshotCleanupError):
+                receipt["cleanup_failure"] = error.details()
+                if code is not None:
+                    receipt["entry_point_exit_code"] = code
+                if (script.name == "run_strict_e2e.py" and option_value(remaining, {"--suite"}) == "smoke-flow"
+                        and output is not None and (output / "smoke-flow-results.json").is_file()):
+                    from strict_e2e_smoke import record_cleanup_failure
+                    try:
+                        record_cleanup_failure(output, error.details())
+                    except (OSError, ValueError, KeyError, TypeError) as evidence_error:
+                        receipt["cleanup_evidence_error"] = type(evidence_error).__name__
             record_exit(receipt, 2)
         raise
     return record_exit(receipt, code)

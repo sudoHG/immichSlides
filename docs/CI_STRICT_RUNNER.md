@@ -108,6 +108,15 @@ gate to `group_failures` with its kind, exit code and affected flow IDs. The gro
 success. Aggregation errors use `official-result`; final write errors use
 `evidence-finalization`.
 
+Local snapshot cleanup keeps its existing single 30-second occupancy probe and
+120-second Git removal deadline. A timeout or unverifiable occupancy retains the
+snapshot and exits 2. `local-snapshot.json` records `entry_point_exit_code` separately
+from the final exit, plus `cleanup_failure` with its phase, error type and retained
+path. Smoke roots become FAILED with a separate `cleanup` group gate before any
+per-flow rewrites; existing native failures and official per-flow summaries remain
+intact. The public gate records the phase, type and retention Boolean, without the
+absolute path. A secondary evidence-write error is recorded in the local receipt.
+
 Helpers forward `file`/`line` to the flow's own assertion call site. `failure_locations`
 is null when unavailable, otherwise the existing reviewed projection of at most three
 project-relative Swift paths and positive line numbers, bound to the record's source SHA.
