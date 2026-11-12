@@ -2079,7 +2079,7 @@ plus 8 KiB receipt for a failing method: 19 failures would add at most 19 MiB pl
 before existing artifact compression and receipt copies in
 the current shard artifacts. Optional host image projection uses the existing
 #471 shared accounting, stopping when its Xcode collection charge reaches five
-seconds per job (43 jobs: at most 215 seconds/night). Earlier #471 collection
+seconds per job (37 jobs: at most 185 seconds/night). Earlier #471 collection
 consumes that same allowance. A spent allowance or invalid image leaves the core
 receipt intact with unavailable media. Image workers only return bytes; timed-out
 workers cannot publish late files. Existing UI failure attachments are normalized
@@ -2087,11 +2087,12 @@ outside that optional budget, so they neither consume a later attempt's image
 allowance nor disappear when the first-failure budget is spent. Mandatory bounded
 publication validation and bookkeeping remain separate, as do synchronous XCTest
 capture and export budgets.
-The current matrix has 25 strict and 18 UI jobs. Its 132 strict cases include
-12 additional filter-person session methods; the UI plans have 318 methods.
-Thus at most 462 methods could fail once: 462 MiB of new PNGs plus 3.61 MiB of
+The current matrix has 19 strict and 18 UI jobs. Its 94 strict cases expand to
+98 session methods (two filter-person cases each invoke three methods); the UI
+plans have 306 device executions. Thus at most 404 methods could fail once:
+404 MiB of new PNGs plus 3.16 MiB of
 logical receipts, or twice those amounts if every method used both allowed
-attempts (a conservative bound, since only listed methods may retry).
+attempts (a conservative bound under the existing retry-admission limits).
 Passing methods produce none of those bytes. A local optimized bookkeeping
 probe measured about 0.28 microseconds added per action/wait pair; this is a
 local helper cost, not a hosted wall-clock or full-nightly measurement.

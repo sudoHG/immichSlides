@@ -477,17 +477,6 @@
     },
     {
       "kind": "ui",
-      "key_pattern": "immichSlidesUITests/testCacheManagementClearDiskCacheEntryWorks",
-      "dimensions": {
-        "device": "ipad",
-        "platform": "ios"
-      },
-      "tier": "ui",
-      "environment": "fixture",
-      "reason": "Test skipped - Not on an iPhone (detected: iPad); skipping iPhone-only UI tests."
-    },
-    {
-      "kind": "ui",
       "key_pattern": "immichSlidesUITests/testEmptyAlbumAndPersonFilterPagesCanReturn",
       "dimensions": {
         "device": "ipad",

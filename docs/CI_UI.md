@@ -270,13 +270,14 @@ Predictions do **not** establish a 30-minute pass.
 Gate queue time, real test duration and runner overhead still require hosted
 measurement. Full/nightly runs retain every existing duration-balanced v2 shard.
 
-With the updated frozen weights, iOS settings selects 29/29/0 methods in 2/2/0
+In the pre-removal packing calibration, iOS settings selected 29/29/0 methods in 2/2/0
 jobs, with a 25:17 push-to-status estimate and 67.5 UI runner-minutes. Apple TV
 filter selects 0/0/26 in 0/0/1: 23:33 and 17.5 UI runner-minutes. Shared settings
 selects 29/29/34 in 2/1/2: 30:24 and 94.3 UI runner-minutes, so its plan explicitly
 misses the target. These include modeled build readiness, this PR's gate unit
 occupancy and publication, and assume no external queue. They are estimates,
-not hosted acceptance. Core still selects all 51/51/60 functional methods.
+not hosted acceptance or a new measurement after duplicate removal. Core now
+selects all 48/48/54 functional methods.
 
 [`scripts/ci-ui-durations.json`](../scripts/ci-ui-durations.json) supplies frozen,
 per-device method seconds. The initial weights are the maximum observed duration
@@ -395,18 +396,23 @@ assignments use the reader shipped in [PR #232](https://github.com/sudoHG/immich
 
 | Shard | Assignment | iPhone / iPad methods | Apple TV methods |
 | --- | --- | --- | --- |
-| `navigation` | `immichSlidesUITests`, `ServerConfigFormTVOSUITests` | 21 | 6 |
-| `visual-a` | Exact methods in the two filter-summary visual classes | 15 | 22 |
-| `visual-b` | Exact methods in the two filter-summary visual classes | 16 | 21 |
-| `visual-c` | Exact methods in the two filter-summary visual classes | 15 | 22 |
-| `visual-d` | Exact methods in the two filter-summary visual classes | 15 | 21 |
-| `default` | Every unassigned class/method, including new methods outside class assignments | 21 | 20 |
+| `navigation` | `immichSlidesUITests`, `ServerConfigFormTVOSUITests` | 20 | 6 |
+| `visual-a` | Exact methods in the two filter-summary visual classes | 15 | 21 |
+| `visual-b` | Exact methods in the two filter-summary visual classes | 16 | 20 |
+| `visual-c` | Exact methods in the two filter-summary visual classes | 15 | 21 |
+| `visual-d` | Exact methods in the two filter-summary visual classes | 15 | 18 |
+| `default` | Every unassigned class/method, including new methods outside class assignments | 19 | 20 |
 
 The named revision describes the assignment. The exact Git revision and
 SHA-256 of the manifest bytes identify a reproduction. Every default-plan
 identity has exactly one shard. iPhone and iPad share the iOS assignments;
 all six shard names remain nonempty on Apple TV. Their complete populations are
-103, 103 and 112 identities, respectively.
+100, 100 and 106 identities, respectively. Nine duplicate source methods were
+removed with their exact assignments and obsolete duration/area references.
+The retained first-boot, second-card selection, filter-editor, cache-confirmation,
+default-focus and strict history flows still check the corresponding assertions.
+Historical summaries retain their bound populations; removed source methods are
+not discarded or reinterpreted in old report records.
 
 The trusted reader supports the historical class-only schema version 1 and
 schema version 2 with the same fields. Each v2 shard array may assign exact classes or exact `Class/testMethod`

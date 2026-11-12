@@ -18,7 +18,7 @@ release authority. Separate [live unit jobs](CI_LIVE_TESTS.md) use the main-only
 gh workflow run ci-nightly.yml --ref <branch> -f strict_only=true
 gh workflow run ci-nightly.yml --ref <branch> -f ui_only=true
 gh run list --workflow ci-nightly.yml --branch <branch>
-gh workflow run ci-nightly.yml --ref <branch> -f shard=ipad-immichSlides-iOS-debug-3
+gh workflow run ci-nightly.yml --ref <branch> -f shard=ipad-immichSlides-iOS-debug-2
 python3 -B scripts/ci_nightly.py plan --output-dir '<fresh-outside-repo>/plan'
 python3 -B scripts/run_strict_ci_tracer.py --manifest scripts/nightly-matrix.json \
     --shard iphone-immichSlides-iOS-debug-0 --platform ios \
@@ -220,13 +220,30 @@ against current selector/scenario/fixture/scheme contracts; duplicates and missi
 cases fail. Runtime discovery cannot silently change the scheduled list. Inapplicable
 platforms/scenarios and P2 devices are outside the supported population.
 
-The 132 cases comprise 53 iPhone, 49 iPad and 30 Apple TV combinations,
-covering 74 distinct device/suite/scenario identities. Following issue #424,
+The version 2 matrix has 94 cases: 47 iPhone, 18 iPad and 29 Apple TV combinations,
+covering 63 distinct device/suite/scenario identities. It removes 41 duplicate
+executions from the version 1 population of 135 (54 iPhone, 50 iPad, 31 Apple TV).
+`ci_nightly.contract_population` names the exact iPad/fixture duplicates and
+requires a retained equivalent. Same-fixture iPhone executions retain the shared
+XCTest assertions; fixture B is retained where its larger pools or photo glyphs
+still supply distinct data. All approved smoke anchors remain, including iPad
+first boot/background return and Apple TV pause/server switch with fixture A.
+iPad server-switch and Debug pause-timeline rows also remain: server switching has
+iPad-specific failure history (#487) and playback coverage tracked in #725.
+The pause-timeline row remains the device reproduction source for #666;
+the deterministic Pause → Next → Continue coverage added in #723 does not
+replace that device reproduction.
+Version 1 keeps its original complete-population validation for retained nights;
+version 2 has its own exact population. Neither accepts missing or duplicate rows.
+Reports use the tested night's matrix and preserve its original outcomes.
+Following issue #424,
 the three standalone server-switch-display identities were removed after their
 guarantees moved into filter-switch and tvos-switch.
-Repeat attempts are not new identities. New identities are iPhone/iPad image-failure-recovery.
-Both frozen fixtures run wherever permitted. The 22 explicit exclusions comprise two
-device exclusions and 20 fixture exclusions. iPad smoke is unsupported: the selected
+Repeat attempts are not new identities. Image-failure recovery remains on iPhone.
+Both frozen fixtures remain available to the runners. The 25 explicit unsupported
+exclusions comprise two device exclusions and 23 fixture exclusions; the version 2
+duplicates are population changes, not new skip or yellow exceptions.
+iPad smoke is unsupported: the selected
 `StrictE2ESmokeUITests.testIOSStrictE2EConnectionSmoke` guards
 `userInterfaceIdiom == .phone` and skips iPad. The validator checks that guard against
 Swift code with comments/strings removed and fails when it changes, requiring a device
@@ -245,7 +262,7 @@ Shards group by device/platform/scheme/configuration, then split into chunks of 
 six, retaining ordinary Debug and settings-resume Release. The [warm tracer](CI_STRICT_RUNNER.md)
 builds once per shard, resets app/keychain/privacy and uses `test-without-building`
 with immutable Products checks. Case directories are unique across repeated suites.
-The 25 shards use `max-parallel: 2`: at least 13 waves, with no reserved macOS slots.
+The 19 shards use `max-parallel: 2`: at least 10 waves, with no reserved macOS slots.
 Cold warm-up has 1,200 seconds; each warm invocation has 600. Each case adds a 240-second
 reset/export/cleanup allowance plus 300 seconds of readiness per warm invocation;
 filter-person receives three invocation budgets.
@@ -277,11 +294,12 @@ execution budgets are unchanged outside Reduce Motion's control channel; the out
 retains these entries even when official exports are unavailable, so application/test execution and infrastructure hangs remain
 distinguishable. An xcodebuild test-execution timeout remains a failure of that case,
 without an infrastructure entry.
-The person shard contains both fixtures: two three-session cases and four single-session
-cases require ten invocations. Cold/warm/reset/export allowances total 148 minutes
-(24 cold plus 124 warm), with up to 50 more minutes if every invocation consumes
-its readiness budget: 198 minutes for those allowances. The job cap is 215
-minutes. The nominal difference of 17 minutes also pays for checkout, Python
+The two iPhone person shards each contain one three-session case and five
+single-session cases, requiring eight invocations apiece. Cold/warm/reset/export
+allowances total 128 minutes (24 cold plus 104 warm), with up to 40 more minutes
+if every invocation consumes its readiness budget: 168 minutes for those
+allowances. The job cap stays 215 minutes. The nominal difference of 47 minutes
+also pays for checkout, Python
 environment and toolchain setup, simulator creation and early boot submission,
 the post-build gate, review-package export, uploads and final cleanup. It is
 an upper bound on time available to publish records. Readiness can exceed its
@@ -294,8 +312,8 @@ These derive from the shared 60-second simulator-command constant; see the
 [complete derivation](CI_STRICT_RUNNER.md#reduce-motion-command-handshake).
 An ordinary six-case shard previously bounds at `24 + 6 × 19 = 138 minutes`
 (including cold-build overhead and every readiness allowance). The TV shard has
-two Reduce Motion fixtures, so its bound becomes `138 + 2 × 30 = 198 minutes`;
-each affected iPhone shard has one and bounds at 168 minutes. These are case and
+two Reduce Motion fixtures, as does the current affected iPhone shard, so each
+bound becomes `138 + 2 × 30 = 198 minutes`. These are case and
 build allowances within the 215-minute job cap, with the same surrounding steps.
 If simulator creation or the separate preparation gate fails before the tracer starts,
 the workflow invokes the tracer's `--preparation-failed` accounting mode before upload.
@@ -323,10 +341,13 @@ leaving about 15 GiB per shard.
 Scheduled runs and ordinary dispatches plan all three devices' complete default-plan
 UI populations at the checked-out main head. Branch dispatches provide diagnostic
 evidence for a candidate commit. The [existing UI class manifest](CI_UI.md#manifest-and-union)
-partitions each device into shards. The current v1 manifest has default, navigation
-and visual: nine shards total. Names, counts and the matrix come from that manifest
-through the shared helpers; the separate v2 exact-method reader can support additional
-visual partitions without a nightly protocol change.
+partitions each device into six shards: default, navigation and visual-a through
+visual-d, for 18 jobs total. Names, counts and the matrix come from that version 2
+manifest through the shared helpers. The default-plan populations are 100 iPhone,
+100 iPad and 106 Apple TV executions (306 total), down from 103/103/112 (318).
+Nine redundant source methods were removed; iOS methods run on both iPhone and
+iPad, so the reduction is 12 declared device executions. This is a population
+change, not measured runtime savings or completion of the smoke migration.
 New default-plan tests join this population automatically. Evidence plans, strict-only
 tests, offline performance and the uncapped benchmark are outside this UI tier.
 It also runs the
