@@ -181,10 +181,10 @@ struct ContentView: View {
             viewModel: onboardingFilterVM,
             onBackToModeSelection: onboardingBackHandler,
             isOnboardingOnly: flow.isOnboardingSession,
-            onStartPlaybackRequested: { selection in
+            onStartPlaybackRequested: { _ in
                 // Do not await pool building on the summary screen; switch the playback source, then open playback.
 
-                slideShowVM.preparePlaybackSourceForPresentation(to: .filtered(selection))
+                slideShowVM.preparePlaybackSourceForPresentation(to: onboardingFilterVM.playbackSource)
                 flow.handleFilteredPlaybackStarted()
             }
         )
@@ -210,8 +210,8 @@ struct ContentView: View {
             // iOS step 3 must pass isOnboardingOnly down so the filter summary can show the wizard header.
 
             isOnboardingOnly: flow.isOnboardingSession,
-            onStartPlaybackRequested: { selection in
-                slideShowVM.preparePlaybackSourceForPresentation(to: .filtered(selection))
+            onStartPlaybackRequested: { _ in
+                slideShowVM.preparePlaybackSourceForPresentation(to: onboardingFilterVM.playbackSource)
                 flow.handleFilteredPlaybackStarted()
             }
         )

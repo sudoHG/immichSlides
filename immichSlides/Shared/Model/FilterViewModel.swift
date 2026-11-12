@@ -64,6 +64,10 @@ class FilterViewModel: ObservableObject {
         selection.isEmpty == false
     }
 
+    var playbackSource: PlaybackSource {
+        .filtered(selection)
+    }
+
     var selectedAlbumAssetsCount: Int {
 
         let selectedSet = selectedAlbumIDs

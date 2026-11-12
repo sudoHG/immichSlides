@@ -40,6 +40,10 @@ private final class FilterSearchURLProtocol: URLProtocol, @unchecked Sendable {
         lock.withLock { recordedSearchRequests }
     }
 
+    static func setSearchResponse(_ payload: Data) {
+        lock.withLock { responses["/api/search/random"] = payload }
+    }
+
     override class func canInit(with request: URLRequest) -> Bool {
         request.url?.host == "127.0.0.1" && request.url?.port == Int(port)
     }
@@ -159,6 +163,63 @@ struct PlaybackPoolResolverTests {
             let unrequestedKey = isPersonSelection ? "albumIds" : "personIds"
             #expect(body[selectedKey] as? [String] == [selectedID])
             #expect(body[unrequestedKey] == nil)
+        }
+    }
+
+    @Test(.sharedPlaybackRuntimeIsolation, arguments: [false, true])
+    func `filtered playback initial load and refill retain the selected rules in every HTTP request`(
+        isPersonSelection: Bool
+    ) async throws {
+        let fixture = FilterRuleFixture(name: "a")
+        let selectedID = isPersonSelection ? fixture.normalPersonID : fixture.targetAlbumID
+        let initialAsset = makeSoloAsset(id: "initial-filtered", personId: fixture.normalPersonID)
+        let refillAsset = makeSoloAsset(id: "refill-filtered", personId: fixture.normalPersonID)
+        try #require(
+            FilterSearchURLProtocol.begin(responses: [
+                "/api/albums": try JSONEncoder().encode(fixture.albums),
+                "/api/people/\(fixture.normalPersonID)/statistics": Data(#"{"assets":2}"#.utf8),
+                "/api/search/random": try JSONEncoder().encode([initialAsset])
+            ]))
+        defer { FilterSearchURLProtocol.end() }
+        try #require(
+            LateLoadRealPathTestSupport.installIsolatedFixtureServer(
+                port: FilterSearchURLProtocol.port, credential: "filter-playback-fixture"))
+        var settings = PlaybackSettings()
+        settings.autoPlayEnabled = false
+        settings.displayMode = .singlePhoto
+        PlaybackSettingsStore().save(settings)
+        let selection =
+            isPersonSelection
+            ? FilterSelection(personFilters: [PersonFilter(personId: selectedID, matchMode: .normal)])
+            : FilterSelection(albumIds: [selectedID])
+        let viewModel = SlideShowViewModel(source: .filtered(selection))
+        // Stub image work only; pool acquisition must use the real loader, resolver and API client.
+        viewModel.initialPhotoLoadHookForTesting = { _ in }
+        viewModel.backgroundPreloadHookForTesting = { _, _, _ in }
+        viewModel.indexChangePhotoLoadHookForTesting = { _, _ in }
+        viewModel.transitionWindowPreloadHookForTesting = { _, _, _ in }
+
+        #expect(await viewModel.loadAssets())
+        #expect(viewModel.assets.map(\.id) == [initialAsset.id])
+        let initialRequests = FilterSearchURLProtocol.searchRequests()
+        try #require(!initialRequests.isEmpty)
+        for request in initialRequests {
+            #expect(request.httpMethod == "POST")
+            let body = try #require(try JSONSerialization.jsonObject(with: request.body) as? [String: Any])
+            #expect(body[isPersonSelection ? "personIds" : "albumIds"] as? [String] == [selectedID])
+            #expect(body[isPersonSelection ? "albumIds" : "personIds"] == nil)
+        }
+
+        FilterSearchURLProtocol.setSearchResponse(try JSONEncoder().encode([refillAsset]))
+        await viewModel.loadMoreAssets()
+        #expect(Set(viewModel.assets.map(\.id)) == [initialAsset.id, refillAsset.id])
+        let refillRequests = Array(FilterSearchURLProtocol.searchRequests().dropFirst(initialRequests.count))
+        try #require(!refillRequests.isEmpty)
+        for request in refillRequests {
+            #expect(request.httpMethod == "POST")
+            let body = try #require(try JSONSerialization.jsonObject(with: request.body) as? [String: Any])
+            #expect(body[isPersonSelection ? "personIds" : "albumIds"] as? [String] == [selectedID])
+            #expect(body[isPersonSelection ? "albumIds" : "personIds"] == nil)
         }
     }
 

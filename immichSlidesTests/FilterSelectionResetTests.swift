@@ -10,6 +10,22 @@ import Testing
 struct FilterSelectionResetTests {
 
     @Test(arguments: [false, true])
+    func `start playback source preserves the current album or person selection`(isPersonSelection: Bool) throws {
+        let viewModel = FilterViewModel(store: InMemoryFilterSelectionStore())
+        if isPersonSelection {
+            viewModel.setPersonMatchMode(id: "selected-person", mode: .normal)
+        } else {
+            viewModel.toggleAlbum(id: "selected-album")
+        }
+        let expectedSelection = viewModel.selection
+        guard case .filtered(let selection) = viewModel.playbackSource else {
+            Issue.record("Start must use the selected filtered playback source")
+            return
+        }
+        #expect(selection == expectedSelection)
+    }
+
+    @Test(arguments: [false, true])
     func `filtered playback is available only while an album or person remains selected`(isPersonSelection: Bool) {
         let store = InMemoryFilterSelectionStore()
         let viewModel = FilterViewModel(store: store)
