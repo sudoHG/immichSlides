@@ -229,9 +229,10 @@ XCTest assertions; fixture B is retained where its larger pools or photo glyphs
 still supply distinct data. All approved smoke anchors remain, including iPad
 first boot/background return and Apple TV pause/server switch with fixture A.
 iPad server-switch and Debug pause-timeline rows also remain: server switching has
-iPad-specific failure history (#487) and a newly suspected playback issue (#725),
-while the pause-timeline row reproduces open #666 and its Pause → Next → Continue
-unit replacement is still being added in #723.
+iPad-specific failure history (#487) and playback coverage tracked in #725.
+The pause-timeline row remains the device reproduction source for #666;
+the deterministic Pause → Next → Continue coverage added in #723 does not
+replace that device reproduction.
 Version 1 keeps its original complete-population validation for retained nights;
 version 2 has its own exact population. Neither accepts missing or duplicate rows.
 Reports use the tested night's matrix and preserve its original outcomes.

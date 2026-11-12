@@ -684,7 +684,7 @@ timed out. Direct helper calls in the iOS/tvOS access-lifecycle runners and
 strict session they share its existing ceiling. An explicitly wrapped independent
 invocation would add at most 0.25 machine minutes and 15 s wall time. These
 direct callers publish no bounded receipt themselves. They have no scheduled
-nightly frequency and are outside the 43-job nightly estimate above; add their
+nightly frequency and are outside the 37-job nightly estimate above; add their
 per-invocation costs for any manual or additional workflow runs.
 
 ### Prepared strict identity failure receipt
