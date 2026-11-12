@@ -43,8 +43,9 @@ no yellow outcome. Legacy suites, plans, matrix rows and assertions remain uncha
 
 Each iOS flow starts a default unscaled **60-second** navigation guard and passes it
 to its own steps. Existing first-boot helpers retain their own bounded navigation
-and keyboard-focus guards. XCTest's method allowance is **100 seconds**, with an
-explicit **80-second** launch/runner overhead budget: the native invocation cap is
+and keyboard-focus guards. XCTest rounds method allowances up to whole minutes;
+the method allowance is **60 seconds**, with an explicit **120-second** launch/runner
+overhead budget: the native invocation cap is
 **180 seconds**. A stuck action records a failed flow and a nonzero suite
 exit; simulator reset, fixture preparation and official export retain their separate
 infrastructure bounds. `elapsed_seconds` measures native XCTest invocation time;

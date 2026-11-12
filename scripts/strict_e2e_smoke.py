@@ -13,8 +13,9 @@ import tempfile
 import time
 
 MANIFEST = "scripts/smoke-flows.json"
-METHOD_TIMEOUT_SECONDS = 100
-STARTUP_OVERHEAD_SECONDS = 80
+# XCTest rounds method allowances up to whole minutes.
+METHOD_TIMEOUT_SECONDS = 60
+STARTUP_OVERHEAD_SECONDS = 120
 FLOW_TIMEOUT_SECONDS = METHOD_TIMEOUT_SECONDS + STARTUP_OVERHEAD_SECONDS
 FLOW_METHODS = {
     "album-selection": "testAlbumSelection", "background-return": "testBackgroundReturn",
