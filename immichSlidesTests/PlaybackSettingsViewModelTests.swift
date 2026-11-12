@@ -6,7 +6,7 @@ import Testing
 @Suite(.sharedPlaybackRuntimeIsolation)
 struct PlaybackSettingsViewModelTests {
     @Test
-    func `returning from settings rereads EXIF visibility without replacing the paused photo`() throws {
+    func `returning from settings rereads EXIF visibility synchronously`() throws {
         let store = PlaybackSettingsStore()
         let settingsViewModel = PlaybackSettingsViewModel(store: store)
         settingsViewModel.settings.autoPlayEnabled = false
