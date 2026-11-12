@@ -20,7 +20,7 @@ final class SmokeFlowIOSUITests: XCTestCase {
 
     @MainActor
     func testFirstBoot() throws {
-        try flow { app, guardWait, input in
+        try iosSmokeFlow { app, guardWait, input in
             try iosSmokeConfigure(app, guardWait, input: input)
             try iosSmokeChooseMode(app, guardWait, filtered: false)
             try iosSmokePlayback(app, guardWait)
@@ -32,7 +32,7 @@ final class SmokeFlowIOSUITests: XCTestCase {
 
     @MainActor
     func testConnectionError() throws {
-        try flow { app, guardWait, input in
+        try iosSmokeFlow { app, guardWait, input in
             try iosSmokeFillForm(
                 app, guardWait,
                 input: StrictE2EInput(
@@ -66,7 +66,7 @@ final class SmokeFlowIOSUITests: XCTestCase {
 
     @MainActor
     func testAlbumSelection() throws {
-        try flow { app, guardWait, input in
+        try iosSmokeFlow { app, guardWait, input in
             try iosSmokeConfigure(app, guardWait, input: input)
             try iosSmokeChooseMode(app, guardWait, filtered: true)
             try iosSmokeTap(app, guardWait, "filterSummary.album.button")
@@ -89,7 +89,7 @@ final class SmokeFlowIOSUITests: XCTestCase {
 
     @MainActor
     func testPersonReturn() throws {
-        try flow { app, guardWait, input in
+        try iosSmokeFlow { app, guardWait, input in
             try iosSmokeConfigure(app, guardWait, input: input)
             try iosSmokeChooseMode(app, guardWait, filtered: true)
             try iosSmokeTap(app, guardWait, "filterSummary.person.button")
@@ -141,7 +141,7 @@ final class SmokeFlowIOSUITests: XCTestCase {
 
     @MainActor
     func testBackgroundReturn() throws {
-        try flow { app, guardWait, input in
+        try iosSmokeFlow { app, guardWait, input in
             try iosSmokeConfigure(app, guardWait, input: input)
             try iosSmokeChooseMode(app, guardWait, filtered: false)
             try iosSmokePlayback(app, guardWait)
@@ -161,7 +161,7 @@ final class SmokeFlowIOSUITests: XCTestCase {
 
     @MainActor
     func testSettingsRelaunch() throws {
-        try flow { app, guardWait, input in
+        try iosSmokeFlow { app, guardWait, input in
             try iosSmokeConfigure(app, guardWait, input: input)
             try iosSmokeChooseMode(app, guardWait, filtered: false)
             try iosSmokePlayback(app, guardWait)
@@ -188,7 +188,7 @@ final class SmokeFlowIOSUITests: XCTestCase {
 
     @MainActor
     func testRotation() throws {
-        try flow { app, guardWait, input in
+        try iosSmokeFlow { app, guardWait, input in
             defer { FirstFailureOrientation.set(.portrait) }
             try iosSmokeConfigure(app, guardWait, input: input)
             try iosSmokeChooseMode(app, guardWait, filtered: false)
@@ -205,7 +205,7 @@ final class SmokeFlowIOSUITests: XCTestCase {
 
     @MainActor
     func testSettingsSidebar() throws {
-        try flow { app, guardWait, input in
+        try iosSmokeFlow { app, guardWait, input in
             try iosSmokeConfigure(app, guardWait, input: input)
             try iosSmokeChooseMode(app, guardWait, filtered: false)
             try iosSmokePlayback(app, guardWait)
