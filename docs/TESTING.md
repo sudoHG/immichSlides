@@ -147,7 +147,11 @@ Evidence selections. New methods receive separate smoke inventory rows; existing
 rows retain their destinations. Core-area source accounting does not override a
 default-plan exclusion. Each selected flow starts with clean App state, uses public
 fixtures, records the first result without retries/yellow, and has a shared 180-second
-native invocation cap, with the existing 60-second navigation guard. See the runner
+native invocation cap (100-second XCTest method allowance plus 80 seconds for startup),
+with the flow's 60-second navigation guard and existing bounded first-boot helper guards.
+The checker enforces contracted selector/inventory links and exclusion from default,
+Evidence and Xcode Cloud populations. Shadow evidence must pass `validate_group_evidence`,
+including the final verdict, complete ordered group, clean source and official exports. See the runner
 guide for commands, evidence fields and Release/PIN limits.
 
 ## 0. When to write a test

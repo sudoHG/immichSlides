@@ -13,7 +13,18 @@ import tempfile
 import time
 
 MANIFEST = "scripts/smoke-flows.json"
-FLOW_TIMEOUT_SECONDS = 180
+METHOD_TIMEOUT_SECONDS = 100
+STARTUP_OVERHEAD_SECONDS = 80
+FLOW_TIMEOUT_SECONDS = METHOD_TIMEOUT_SECONDS + STARTUP_OVERHEAD_SECONDS
+FLOW_METHODS = {
+    "album-selection": "testAlbumSelection", "background-return": "testBackgroundReturn",
+    "connection-error": "testConnectionError", "first-boot": "testFirstBoot",
+    "person-return": "testPersonReturn", "pin-gate": "testPinGate",
+    "playback-controls": "testPlaybackControls", "settings-relaunch": "testSettingsRelaunch",
+    "rotation": "testRotation", "settings-sidebar": "testSettingsSidebar",
+    "directional-wake": "testDirectionalWake", "pause-resume": "testPauseResume",
+    "person-selection": "testPersonSelection", "server-switch": "testServerSwitch",
+}
 
 
 def unique_object(pairs):
@@ -25,7 +36,7 @@ def unique_object(pairs):
     return value
 
 
-def validate_manifest(manifest, planned, methods=None):
+def validate_manifest(manifest, planned, methods=None, inventory=None):
     """Fail closed on population, execution metadata and compiled-selector drift."""
     if (not isinstance(manifest, dict) or set(manifest) != {"schema_version", "flows"}
             or type(manifest["schema_version"]) is not int or manifest["schema_version"] != 1
@@ -54,14 +65,80 @@ def validate_manifest(manifest, planned, methods=None):
             if flow[field] != value:
                 errors.append(f"smoke-manifest-mapping: {key} {field} must be {value!r}")
         selector = flow["selector"]
+        expected_selector = ("SmokeFlowTVOSUITests" if platform == "tvos" else "SmokeFlowIOSUITests")
+        expected_selector += "/" + FLOW_METHODS.get(key.partition("-")[2], "<unknown>")
+        if selector != expected_selector:
+            errors.append(f"smoke-manifest-binding: {key} must select {expected_selector}")
         if (not isinstance(selector, str) or len(selector.split("/")) != 2
                 or methods is not None and platform not in methods.get(selector, set())):
             errors.append(f"smoke-manifest-selector: {key} {selector!r} is not compiled for {platform}")
+        if inventory is not None:
+            rows = [row for row in inventory if row.get("kind") == "ui" and row.get("identifier") == selector]
+            if len(rows) != 1 or rows[0].get("target_home") != "smoke" or key not in rows[0].get("smoke_flows", []):
+                errors.append(f"smoke-manifest-inventory: {key} requires one matching smoke UI row")
+    if inventory is not None:
+        for row in inventory:
+            selector = row.get("identifier", "")
+            if selector.partition("/")[0] not in {"SmokeFlowIOSUITests", "SmokeFlowTVOSUITests"}:
+                continue
+            mapped = [flow["id"] for flow in manifest["flows"] if flow.get("selector") == selector]
+            if (not mapped or row.get("kind") != "ui" or row.get("target_home") != "smoke"
+                    or sorted(row.get("smoke_flows", [])) != sorted(mapped)):
+                errors.append(f"smoke-manifest-inventory: {selector} reverse mapping differs")
     for key in sorted(expected.keys() - seen):
         errors.append(f"smoke-manifest-population: missing {key}")
     if errors:
         raise ValueError("\n".join(errors))
     return manifest["flows"]
+
+
+def validate_exclusions(flows, methods, plans):
+    """Evaluate actual plan populations, including class and method selections."""
+    from ci_ui_shards import default_plan_population
+    for platform in ("ios", "tvos"):
+        population = [{"key": selector} for selector, platforms in methods.items() if platform in platforms]
+        smoke = {flow["selector"] for flow in flows if flow["platform"] == platform}
+        for name, plan in plans[platform].items():
+            leaked = smoke & {entry["key"] for entry in default_plan_population(population, plan)}
+            if leaked:
+                raise ValueError(f"smoke-manifest-exclusion: {name} includes {sorted(leaked)!r}")
+
+
+def validate_group_evidence(evidence, flows, device, configuration, *, expected_source_sha=None):
+    """Return complete ordered first-result records, or fail closed for shadow consumers."""
+    evidence = Path(evidence)
+    case = json.loads((evidence / "case-manifest.json").read_text())
+    result = json.loads((evidence / "smoke-flow-results.json").read_text())
+    selected = select_flows(flows, device, configuration)
+    for payload in (case, result):
+        if (payload.get("selection") != "group" or payload.get("result") != "Passed"
+                or type(payload.get("exit_code")) is not int or payload["exit_code"] != 0
+                or payload.get("source_dirty_paths") != [] or payload.get("device") != device
+                or payload.get("configuration") != configuration):
+            raise ValueError("smoke-group-evidence: group verdict, selection, source state or device differs")
+    sha = case.get("source_sha")
+    if not isinstance(sha, str) or len(sha) != 40 or any(c not in "0123456789abcdef" for c in sha):
+        raise ValueError("smoke-group-evidence: invalid source SHA")
+    if result.get("source_sha") != sha or expected_source_sha is not None and sha != expected_source_sha:
+        raise ValueError("smoke-group-evidence: source SHA differs")
+    records = result.get("flows", [])
+    if ([record.get("id") for record in records] != [flow["id"] for flow in selected]
+            or case.get("flows") != records):
+        raise ValueError("smoke-group-evidence: ordered flow population differs")
+    for flow, record in zip(selected, records):
+        directory = evidence / flow["id"]
+        summary = json.loads((directory / "official-summary.json").read_text())
+        tests_path = directory / "official-tests.json"
+        tests = json.loads(tests_path.read_text())
+        if (record.get("selector") != flow["selector"] or record.get("source_sha") != sha
+                or record.get("source_dirty_paths") != [] or record.get("outcome") != "PASS"
+                or type(record.get("exit_code")) is not int or record["exit_code"] != 0
+                or record.get("official_execution_complete") is not True
+                or record.get("failure_kind") != "none" or record.get("official_summary") != summary
+                or record.get("official_tests_sha256") != hashlib.sha256(tests_path.read_bytes()).hexdigest()
+                or not official_flow_passed(flow["selector"], summary, tests)):
+            raise ValueError(f"smoke-group-evidence: incomplete or failed {flow['id']}")
+    return records
 
 
 def load_manifest(root):
@@ -154,39 +231,59 @@ def run(arguments, root, runner, stdout, stderr):
         receipt, source_run = load_warm_build(root, arguments.platform, "smoke-flow", arguments.configuration,
                                               arguments.destination, derived)
         records = []
-        case = {"source_sha": runner.read_source_sha(root), "platform": arguments.platform,
+        case = {"source_sha": runner.read_source_sha(root), "source_dirty_paths": runner.read_source_dirty_paths(root),
+                "platform": arguments.platform,
                 "suite": "smoke-flow", "scenario": "normal", "fixture_set": "a",
                 "os": "iOS Simulator" if arguments.platform == "ios" else "tvOS Simulator", "e2e_ids": [],
                 "device": arguments.smoke_device, "configuration": arguments.configuration,
                 "selection": "single-flow" if arguments.smoke_flow else "group",
                 "destination": arguments.destination, "warm_build_identity": receipt["identity"],
-                "human_review": "NOT_RUN", "result": "RUNNING", "flows": records}
-        runner.write_case_manifest(evidence, case)
-        code = 0
-        for flow in selected:
-            record = execute_flow(flow, root, arguments, source_run, runner, evidence)
-            records.append(record)
-            code = code or record["exit_code"]
+                "human_review": "NOT_RUN", "result": "RUNNING", "exit_code": None, "flows": records}
+        def write_state():
             runner.write_case_manifest(evidence, case)
             write_json(evidence / "smoke-flow-results.json", {"schema_version": 1, "source_sha": case["source_sha"],
-                "selection": case["selection"], "flows": records})
-            print(f"{flow['id']}: {record['outcome']} ({record['elapsed_seconds']:.3f}s)", file=stdout, flush=True)
-        validate_warm_products(derived, receipt)
-        summaries = [json.loads((evidence / flow["id"] / "official-summary.json").read_text())
-                     for flow in selected if (evidence / flow["id"] / "official-summary.json").is_file()]
-        summary = {field: sum(item[field] for item in summaries)
-                   for field in ("totalTestCount", "passedTests", "failedTests", "skippedTests")}
-        summary["result"] = "Passed" if code == 0 and len(summaries) == len(selected) else "Failed"
-        write_json(evidence / "official-summary.json", summary)
-        tests = {"testNodes": [node for flow in selected
-                 if (evidence / flow["id"] / "official-tests.json").is_file()
-                 for node in json.loads((evidence / flow["id"] / "official-tests.json").read_text()).get("testNodes", [])]}
-        write_json(evidence / "official-tests.json", tests)
-        case["official_tests_sha256"] = hashlib.sha256((evidence / "official-tests.json").read_bytes()).hexdigest()
-        case.update(result="Passed" if code == 0 else "FAILED", exit_code=code, official_summary=summary)
-        runner.write_case_manifest(evidence, case)
-        runner.write_sensitive_scan(evidence, [PUBLIC_API_KEY, runner.WRONG_PUBLIC_API_KEY])
-        return code
+                "source_dirty_paths": case["source_dirty_paths"], "device": case["device"],
+                "configuration": case["configuration"], "selection": case["selection"],
+                "result": case["result"], "exit_code": case["exit_code"], "flows": records})
+        write_state()
+        try:
+            if case["source_dirty_paths"] != []:
+                raise runner.CommandError("smoke-flow requires a clean tested checkout")
+            code = 0
+            for flow in selected:
+                record = execute_flow(flow, root, arguments, source_run, runner, evidence)
+                records.append(record)
+                code = code or record["exit_code"]
+                write_state()
+                print(f"{flow['id']}: {record['outcome']} ({record['elapsed_seconds']:.3f}s)", file=stdout, flush=True)
+            validate_warm_products(derived, receipt)
+            summaries = [json.loads((evidence / flow["id"] / "official-summary.json").read_text())
+                         for flow in selected if (evidence / flow["id"] / "official-summary.json").is_file()]
+            if len(summaries) != len(selected):
+                code = code or 2
+            summary = {field: sum(item[field] for item in summaries)
+                       for field in ("totalTestCount", "passedTests", "failedTests", "skippedTests")}
+            summary["result"] = "Passed" if code == 0 else "Failed"
+            tests = {"testNodes": [node for flow in selected
+                     if (evidence / flow["id"] / "official-tests.json").is_file()
+                     for node in json.loads((evidence / flow["id"] / "official-tests.json").read_text()).get("testNodes", [])]}
+            write_json(evidence / "official-tests.json", tests)
+            case["official_tests_sha256"] = hashlib.sha256((evidence / "official-tests.json").read_bytes()).hexdigest()
+            runner.write_sensitive_scan(evidence, [PUBLIC_API_KEY, runner.WRONG_PUBLIC_API_KEY])
+            write_json(evidence / "official-summary.json", summary)
+            case.update(result="Passed" if code == 0 else "FAILED", exit_code=code, official_summary=summary)
+            write_state()
+            return code
+        except BaseException as error:
+            case.update(result="FAILED", exit_code=getattr(error, "code", 2) or 2)
+            summary_path = evidence / "official-summary.json"
+            if summary_path.is_file():
+                summary = json.loads(summary_path.read_text())
+                summary["result"] = "Failed"
+                write_json(summary_path, summary)
+                case["official_summary"] = summary
+            write_state()
+            raise
     finally:
         if owned_derived is not None:
             shutil.rmtree(owned_derived)
@@ -199,11 +296,12 @@ def execute_flow(flow, root, arguments, source_run, runner, evidence):
     directory.mkdir()
     started = time.monotonic()
     record = {"id": flow["id"], "selector": flow["selector"], "outcome": "FAIL",
-              "source_sha": runner.read_source_sha(root), "failure_kind": "infrastructure",
+              "source_sha": runner.read_source_sha(root), "source_dirty_paths": runner.read_source_dirty_paths(root),
+              "failure_kind": "infrastructure",
               "official_execution_complete": False, "official_summary": None, "official_tests_sha256": None,
               "elapsed_seconds": 0, "first_public_failure_message": None, "exit_code": 2}
-    private_evidence = directory / "private"
-    private_evidence.mkdir(mode=0o700)
+    private_evidence = evidence.parent / "private" / evidence.name / flow["id"]
+    private_evidence.mkdir(mode=0o700, parents=True)
     processes, private_run, bundle, digest = [], None, None, None
     exported, summary, fixture_payload = False, None, None
     stage = "infrastructure"
@@ -234,8 +332,8 @@ def execute_flow(flow, root, arguments, source_run, runner, evidence):
         private_run = prepare_test_run(source_run, bundle.parent / "run", environment)
         command = warm_test_command(private_run, arguments.destination, bundle,
                                     "immichSlidesUITests/" + flow["selector"])
-        command += ["-test-timeouts-enabled", "YES", "-default-test-execution-time-allowance", str(FLOW_TIMEOUT_SECONDS),
-                    "-maximum-test-execution-time-allowance", str(FLOW_TIMEOUT_SECONDS)]
+        command += ["-test-timeouts-enabled", "YES", "-default-test-execution-time-allowance", str(METHOD_TIMEOUT_SECONDS),
+                    "-maximum-test-execution-time-allowance", str(METHOD_TIMEOUT_SECONDS)]
         execution_started = time.monotonic()
         try:
             code = runner.run_command(command, cwd=root, environment=environment, log_path=directory / "xcodebuild.log",
@@ -301,6 +399,7 @@ def execute_flow(flow, root, arguments, source_run, runner, evidence):
                     "sha256": None, "request_count": None}
         record["total_elapsed_seconds"] = round(time.monotonic() - started, 3)
         write_json(directory / "case-manifest.json", {"source_sha": runner.read_source_sha(root),
+            "source_dirty_paths": record["source_dirty_paths"],
             "platform": arguments.platform, "suite": "smoke-flow", "flow": record,
             "destination": arguments.destination, "scenario": "normal", "fixture_set": "a",
             "configuration": arguments.configuration, "human_review": "NOT_RUN",

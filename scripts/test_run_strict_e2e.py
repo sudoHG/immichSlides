@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import copy
+import hashlib
 from contextlib import ExitStack
 from pathlib import Path
 
@@ -8105,6 +8106,224 @@ finally:
 
 
 class SmokeFlowResultTests(unittest.TestCase):
+    def test_smoke_shared_failure_prefix_redacts_values_without_claiming_a_playback_phase(self):
+        from ci_failure_diagnostics import classify_messages, public_failure_messages
+        messages = ["XCTAssertTrue failed - Smoke flow: first boot synthetic-private-value."]
+        self.assertEqual(["Smoke flow: "], public_failure_messages(messages))
+        self.assertEqual({"failure_phase": "unknown", "failure_class": "control_state"}, classify_messages(messages))
+
+    @staticmethod
+    def passed_official(selector):
+        return ({"totalTestCount": 1, "passedTests": 1, "failedTests": 0, "skippedTests": 0, "result": "Passed"},
+                {"testNodes": [{"nodeType": "Test Case", "nodeIdentifier": selector + "()", "result": "Passed"}]})
+
+    def execute_record(self, root, *, code=0, cleanup=False, invalid_official=False):
+        import plistlib
+        from types import SimpleNamespace
+        import strict_e2e_smoke as smoke
+        evidence = root / "evidence"
+        evidence.mkdir()
+        source = root / "source.xctestrun"
+        source.write_bytes(plistlib.dumps({"TestConfigurations": [{"TestTargets": [{"BlueprintName": "immichSlidesUITests"}]}]}))
+        flow = {"id": "iphone-first-boot", "selector": "SmokeFlowIOSUITests/testFirstBoot", "fixtures": ["a"]}
+        summary, tests = self.passed_official(flow["selector"])
+        if invalid_official:
+            summary["totalTestCount"] = 0
+        def export(bundle, directory, *args, **kwargs):
+            smoke.write_json(directory / "official-summary.json", summary)
+            smoke.write_json(directory / "official-tests.json", tests)
+            return hashlib.sha256((directory / "official-tests.json").read_bytes()).hexdigest()
+        def start(command, **kwargs):
+            Path(command[command.index("--log-file") + 1]).write_bytes(b"request GET synthetic-secret-url\nprivate-header\n")
+            return mock.Mock()
+        runner = SimpleNamespace(CommandError=CommandError, WRONG_PUBLIC_API_KEY=WRONG_PUBLIC_API_KEY,
+            read_source_sha=mock.Mock(return_value="a" * 40), read_source_dirty_paths=mock.Mock(return_value=[]),
+            destination_udid=mock.Mock(return_value="device"), reset_simulator_app=mock.Mock(return_value="reset"),
+            wait_for_service=mock.Mock(return_value=("127.0.0.1", 1234)),
+            write_fixture_artifacts=mock.Mock(return_value={"fixture_sha256": "b" * 64}),
+            make_test_environment=mock.Mock(return_value={}),
+            prepare_private_result_bundle_path=mock.Mock(return_value=root / "holding/result.xcresult"),
+            run_command=mock.Mock(return_value=code), OfficialExportBudget=mock.Mock(),
+            export_private_result_bundle=mock.Mock(side_effect=export), stop_exact_process=mock.Mock(),
+            finalize_private_result_bundle=mock.Mock(return_value=["failed"] if cleanup else []))
+        arguments = SimpleNamespace(destination="platform=iOS Simulator,id=device", platform="ios",
+                                    configuration="Debug", simulator_boot_submitted=False)
+        with mock.patch("strict_e2e_smoke.subprocess.Popen", side_effect=start):
+            record = smoke.execute_flow(flow, root, arguments, source, runner, evidence)
+        return record, runner, evidence
+
+    def test_smoke_exit_and_cleanup_failures_override_a_passing_official_method(self):
+        for code, cleanup, invalid, expected in ((0, False, False, ("PASS", 0, "none")),
+                (65, False, False, ("FAIL", 65, "infrastructure")),
+                (0, True, False, ("FAIL", 2, "cleanup")), (0, False, True, ("FAIL", 2, "official-result"))):
+            with self.subTest(code=code, cleanup=cleanup, invalid=invalid), tempfile.TemporaryDirectory() as temporary:
+                record, runner, _ = self.execute_record(Path(temporary), code=code, cleanup=cleanup, invalid_official=invalid)
+                self.assertEqual(expected, (record["outcome"], record["exit_code"], record["failure_kind"]))
+                self.assertEqual(1, runner.run_command.call_count)
+
+    def test_smoke_request_logs_are_private_and_only_fixed_metadata_is_public(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            record, _, evidence = self.execute_record(root)
+            private = root / "private/evidence/iphone-first-boot/service-a.log"
+            self.assertTrue(private.is_file())
+            self.assertFalse(any(path.name == "private" for path in evidence.rglob("*")))
+            self.assertEqual(0o600, private.stat().st_mode & 0o777)
+            self.assertEqual({"a": {"state": "present", "bytes": private.stat().st_size,
+                "sha256": hashlib.sha256(private.read_bytes()).hexdigest(), "request_count": 1}}, record["request_logs"])
+            self.assertNotIn("synthetic-secret-url", json.dumps(record))
+            self.assertEqual([], record["source_dirty_paths"])
+
+    def test_smoke_xctest_timeout_precedes_the_outer_startup_budget(self):
+        import strict_e2e_smoke as smoke
+        with tempfile.TemporaryDirectory() as temporary:
+            _, runner, _ = self.execute_record(Path(temporary))
+            command = runner.run_command.call_args.args[0]
+            self.assertEqual("YES", command[command.index("-test-timeouts-enabled") + 1])
+            for flag in ("-default-test-execution-time-allowance", "-maximum-test-execution-time-allowance"):
+                self.assertEqual("100", command[command.index(flag) + 1])
+            self.assertEqual(180, runner.run_command.call_args.kwargs["timeout_seconds"])
+            self.assertEqual(80, smoke.STARTUP_OVERHEAD_SECONDS)
+
+    def run_group(self, root, *, single=False, failed=False, dirty=False, late=None, overrides=None):
+        from types import SimpleNamespace
+        import strict_e2e_smoke as smoke
+        evidence = root / "evidence"
+        flows = [{"id": "iphone-first-boot", "platform": "ios", "device": "iphone", "configuration": "Debug",
+                  "fixtures": ["a"], "selector": "SmokeFlowIOSUITests/testFirstBoot"},
+                 {"id": "iphone-connection-error", "platform": "ios", "device": "iphone", "configuration": "Debug",
+                  "fixtures": ["a"], "selector": "SmokeFlowIOSUITests/testConnectionError"}]
+        planned = [{k: flow[k] for k in ("id", "device", "configuration")} | {"fixture": "a"} for flow in flows]
+        arguments = SimpleNamespace(smoke_device="iphone", configuration="Debug", platform="ios", listed_retry_device=None,
+            nightly_retry_method=None, nightly_retry_source=None, scenario="normal", fixture_set="a",
+            smoke_flow=flows[0]["id"] if single else None, min_free_gib=80,
+            destination="platform=iOS Simulator,id=device", evidence_dir=evidence, derived_data_path=root / "derived",
+            cloned_source_packages_path=root / "packages", test_without_building=True, warm_up_only=False)
+        for key, value in (overrides or {}).items():
+            setattr(arguments, key, value)
+        def assert_running(gate):
+            for name in ("case-manifest.json", "smoke-flow-results.json"):
+                payload = json.loads((evidence / name).read_text())
+                self.assertEqual(("RUNNING", None), (payload["result"], payload["exit_code"]))
+            self.assertFalse((evidence / "official-summary.json").exists())
+            if late == gate:
+                raise CommandError(gate + " failed")
+        runner = SimpleNamespace(CommandError=CommandError, WRONG_PUBLIC_API_KEY=WRONG_PUBLIC_API_KEY,
+            ensure_disk_for_xcodebuild=mock.Mock(), data_available_gib=mock.Mock(), destination_udid=mock.Mock(return_value="device"),
+            prepare_evidence_directory=lambda path: path.mkdir(), read_source_sha=lambda path: "a" * 40,
+            read_source_dirty_paths=lambda path: [" M changed.swift"] if dirty else [],
+            write_case_manifest=lambda path, payload: smoke.write_json(path / "case-manifest.json", payload),
+            write_sensitive_scan=mock.Mock(side_effect=lambda *args: assert_running("privacy")))
+        def execute(flow, *args):
+            directory = evidence / flow["id"]
+            directory.mkdir()
+            summary, tests = self.passed_official(flow["selector"])
+            if failed and flow == flows[0]:
+                summary.update(passedTests=0, failedTests=1, result="Failed")
+                tests["testNodes"][0]["result"] = "Failed"
+            smoke.write_json(directory / "official-summary.json", summary)
+            smoke.write_json(directory / "official-tests.json", tests)
+            return dict(id=flow["id"], selector=flow["selector"], source_sha="a" * 40, source_dirty_paths=[],
+                outcome="FAIL" if summary["failedTests"] else "PASS", exit_code=65 if summary["failedTests"] else 0,
+                failure_kind="test" if summary["failedTests"] else "none", official_execution_complete=True,
+                official_summary=summary, official_tests_sha256=hashlib.sha256((directory / "official-tests.json").read_bytes()).hexdigest(),
+                elapsed_seconds=2)
+        with mock.patch.object(smoke, "load_manifest", return_value=({"schema_version": 1, "flows": flows}, planned,
+                {flow["selector"]: {"ios"} for flow in flows})), mock.patch("ci_flaky.simulator_device_class"), \
+                mock.patch("strict_e2e_build.validate_paths"), \
+                mock.patch("strict_e2e_build.load_warm_build", return_value=({"identity": "warm"}, root / "run")), \
+                mock.patch("strict_e2e_build.validate_warm_products", side_effect=lambda *args: assert_running("products")), \
+                mock.patch.object(smoke, "execute_flow", side_effect=execute) as execution:
+            try:
+                code = smoke.run(arguments, root, runner, io.StringIO(), io.StringIO())
+            except CommandError:
+                code = 2
+            return code, flows, evidence, execution.call_count
+
+    def test_smoke_group_aggregates_first_results_and_labels_single_flow(self):
+        for single, failed in ((False, False), (True, False), (False, True)):
+            with self.subTest(single=single, failed=failed), tempfile.TemporaryDirectory() as temporary:
+                code, flows, evidence, calls = self.run_group(Path(temporary), single=single, failed=failed)
+                result = json.loads((evidence / "smoke-flow-results.json").read_text())
+                self.assertEqual(65 if failed else 0, code)
+                self.assertEqual(1 if single else 2, calls)
+                self.assertEqual([flow["id"] for flow in (flows[:1] if single else flows)], [r["id"] for r in result["flows"]])
+                self.assertEqual("single-flow" if single else "group", result["selection"])
+                self.assertEqual(("FAILED", 65) if failed else ("Passed", 0), (result["result"], result["exit_code"]))
+                summary = json.loads((evidence / "official-summary.json").read_text())
+                self.assertEqual((calls, calls - int(failed), int(failed), 0),
+                                 tuple(summary[k] for k in ("totalTestCount", "passedTests", "failedTests", "skippedTests")))
+
+    def test_smoke_late_gates_and_dirty_checkout_cannot_leave_a_passing_root(self):
+        for late, dirty in (("privacy", False), ("products", False), (None, True)):
+            with self.subTest(late=late, dirty=dirty), tempfile.TemporaryDirectory() as temporary:
+                code, _, evidence, calls = self.run_group(Path(temporary), late=late, dirty=dirty)
+                self.assertEqual(2, code)
+                self.assertEqual(0 if dirty else 2, calls)
+                for name in ("case-manifest.json", "smoke-flow-results.json"):
+                    payload = json.loads((evidence / name).read_text())
+                    self.assertEqual(("FAILED", 2), (payload["result"], payload["exit_code"]))
+                if (evidence / "official-summary.json").exists():
+                    self.assertEqual("Failed", json.loads((evidence / "official-summary.json").read_text())["result"])
+
+    def test_smoke_rejects_retry_fixture_scenario_and_mismatched_arguments_before_execution(self):
+        for overrides in ({"smoke_device": None}, {"configuration": None}, {"platform": "tvos"},
+                {"listed_retry_device": "iphone"}, {"nightly_retry_method": "testFirstBoot"},
+                {"nightly_retry_source": "a"}, {"scenario": "error"}, {"fixture_set": "b"}):
+            with self.subTest(overrides=overrides), tempfile.TemporaryDirectory() as temporary:
+                code, _, evidence, calls = self.run_group(Path(temporary), overrides=overrides)
+                self.assertEqual(2, code)
+                self.assertEqual(0, calls)
+                self.assertFalse(evidence.exists())
+
+    def test_smoke_group_validator_rejects_partial_dirty_wrong_or_changed_official_evidence(self):
+        import strict_e2e_smoke as smoke
+        mutations = (
+            ("case-manifest.json", lambda p: p.update(selection="single-flow")),
+            ("smoke-flow-results.json", lambda p: p.update(selection="single-flow")),
+            ("smoke-flow-results.json", lambda p: p.update(result="RUNNING")),
+            ("case-manifest.json", lambda p: p.update(exit_code=True)),
+            ("case-manifest.json", lambda p: p.update(source_dirty_paths=[" M file"])),
+            ("smoke-flow-results.json", lambda p: p.update(source_sha="b" * 40)),
+            ("smoke-flow-results.json", lambda p: p["flows"].reverse()),
+            ("smoke-flow-results.json", lambda p: p["flows"].pop()),
+            ("smoke-flow-results.json", lambda p: p["flows"][0].update(official_execution_complete=False)),
+            ("smoke-flow-results.json", lambda p: p["flows"][0].update(outcome="FAIL")),
+            ("smoke-flow-results.json", lambda p: p["flows"][0].update(exit_code=65)),
+            ("smoke-flow-results.json", lambda p: p["flows"][0].update(source_sha="b" * 40)),
+            ("smoke-flow-results.json", lambda p: p["flows"][0].update(source_dirty_paths=[" M file"])),
+            ("smoke-flow-results.json", lambda p: p["flows"][0].update(selector="Other/testWrong")),
+            ("smoke-flow-results.json", lambda p: p["flows"][0].update(failure_kind="cleanup")),
+            ("smoke-flow-results.json", lambda p: p["flows"][0].update(official_tests_sha256="b" * 64)),
+            ("iphone-first-boot/official-tests.json", lambda p: p["testNodes"][0].update(nodeIdentifier="Other/testWrong()")),
+            ("iphone-first-boot/official-summary.json", lambda p: p.update(skippedTests=1)),
+        )
+        for filename, mutate in mutations:
+            with self.subTest(filename=filename, mutate=mutate), tempfile.TemporaryDirectory() as temporary:
+                code, flows, evidence, _ = self.run_group(Path(temporary))
+                self.assertEqual(0, code)
+                self.assertEqual(2, len(smoke.validate_group_evidence(evidence, flows, "iphone", "Debug", expected_source_sha="a" * 40)))
+                with self.assertRaisesRegex(ValueError, "smoke-group-evidence"):
+                    smoke.validate_group_evidence(evidence, flows, "iphone", "Debug", expected_source_sha="b" * 40)
+                path = evidence / filename
+                payload = json.loads(path.read_text())
+                mutate(payload)
+                smoke.write_json(path, payload)
+                case = json.loads((evidence / "case-manifest.json").read_text())
+                result = json.loads((evidence / "smoke-flow-results.json").read_text())
+                if filename == "smoke-flow-results.json":
+                    case["flows"] = copy.deepcopy(result["flows"])
+                elif filename.endswith("/official-tests.json"):
+                    result["flows"][0]["official_tests_sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+                    case["flows"] = copy.deepcopy(result["flows"])
+                elif filename.endswith("/official-summary.json"):
+                    result["flows"][0]["official_summary"] = payload
+                    case["flows"] = copy.deepcopy(result["flows"])
+                smoke.write_json(evidence / "case-manifest.json", case)
+                smoke.write_json(evidence / "smoke-flow-results.json", result)
+                with self.assertRaisesRegex(ValueError, "smoke-group-evidence"):
+                    smoke.validate_group_evidence(evidence, flows, "iphone", "Debug")
+
     def test_stuck_smoke_records_the_first_failure_without_retrying_or_claiming_execution(self):
         import plistlib
         from types import SimpleNamespace
@@ -8115,7 +8334,8 @@ class SmokeFlowResultTests(unittest.TestCase):
             source.write_bytes(plistlib.dumps({"TestConfigurations": [{"TestTargets": [
                 {"BlueprintName": "immichSlidesUITests"}]}]}))
             runner = SimpleNamespace(CommandError=CommandError, WRONG_PUBLIC_API_KEY=WRONG_PUBLIC_API_KEY,
-                read_source_sha=mock.Mock(return_value="a" * 40), destination_udid=mock.Mock(return_value="device"),
+                read_source_sha=mock.Mock(return_value="a" * 40), read_source_dirty_paths=mock.Mock(return_value=[]),
+                destination_udid=mock.Mock(return_value="device"),
                 reset_simulator_app=mock.Mock(return_value="reset"), wait_for_service=mock.Mock(return_value=("127.0.0.1", 1234)),
                 write_fixture_artifacts=mock.Mock(return_value={"fixture_sha256": "b" * 64}),
                 make_test_environment=mock.Mock(return_value={}),
@@ -8126,15 +8346,19 @@ class SmokeFlowResultTests(unittest.TestCase):
             arguments = SimpleNamespace(destination="platform=iOS Simulator,id=device", platform="ios",
                                         configuration="Debug", simulator_boot_submitted=False)
             flow = {"id": "iphone-first-boot", "selector": "SmokeFlowIOSUITests/testFirstBoot", "fixtures": ["a"]}
+            evidence = root / "evidence"
+            evidence.mkdir()
             with mock.patch("strict_e2e_smoke.subprocess.Popen"), mock.patch("strict_e2e_smoke.sys.stderr", io.StringIO()):
-                result = execute_flow(flow, root, arguments, source, runner, root)
+                result = execute_flow(flow, root, arguments, source, runner, evidence)
             self.assertEqual(("FAIL", 124, "hang-guard", False),
                              (result["outcome"], result["exit_code"], result["failure_kind"], result["official_execution_complete"]))
             self.assertEqual("Smoke flow execution exceeded its hang guard.", result["first_public_failure_message"])
             self.assertEqual(1, runner.run_command.call_count)
             runner.export_private_result_bundle.assert_not_called()
             self.assertEqual(1, runner.stop_exact_process.call_count)
-            saved = json.loads((root / flow["id"] / "case-manifest.json").read_text())
+            self.assertEqual({"a": {"state": "unavailable", "bytes": None, "sha256": None, "request_count": None}},
+                             result["request_logs"])
+            saved = json.loads((evidence / flow["id"] / "case-manifest.json").read_text())
             self.assertEqual(result, saved["flow"])
 
     def test_smoke_selects_the_whole_ordered_group_or_one_explicit_member(self):

@@ -947,8 +947,8 @@ class SmokeManifestTests(unittest.TestCase):
         from strict_e2e_smoke import validate_manifest, unique_object
         planned = [{"id": "iphone-first-boot", "device": "iphone", "configuration": "Debug", "fixture": "a"}]
         manifest = {"schema_version": 1, "flows": [{"id": "iphone-first-boot", "device": "iphone",
-            "platform": "ios", "configuration": "Debug", "fixtures": ["a"], "selector": "BootUITests/testSave"}]}
-        methods = {"BootUITests/testSave": {"ios"}}
+            "platform": "ios", "configuration": "Debug", "fixtures": ["a"], "selector": "SmokeFlowIOSUITests/testFirstBoot"}]}
+        methods = {"SmokeFlowIOSUITests/testFirstBoot": {"ios"}}
         self.assertEqual(manifest["flows"], validate_manifest(manifest, planned, methods))
         mutations = [
             (lambda p: p.update(schema_version=True), "smoke-manifest-shape"),
@@ -972,9 +972,68 @@ class SmokeManifestTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, message):
                     validate_manifest(changed, planned, methods)
         with self.assertRaisesRegex(ValueError, "smoke-manifest-selector: iphone-first-boot"):
-            validate_manifest(manifest, planned, {"BootUITests/testSave": {"tvos"}})
+            validate_manifest(manifest, planned, {"SmokeFlowIOSUITests/testFirstBoot": {"tvos"}})
         with self.assertRaisesRegex(ValueError, "smoke-manifest-shape: duplicate JSON key schema_version"):
             json.loads('{"schema_version":1,"schema_version":1,"flows":[]}', object_pairs_hook=unique_object)
+
+    def test_smoke_binding_requires_the_contracted_method_and_bidirectional_inventory(self):
+        from strict_e2e_smoke import validate_manifest
+        planned = [{"id": "iphone-first-boot", "device": "iphone", "configuration": "Debug", "fixture": "a"}]
+        selector = "SmokeFlowIOSUITests/testFirstBoot"
+        manifest = {"schema_version": 1, "flows": [dict(planned[0], platform="ios", fixtures=["a"], selector=selector)]}
+        del manifest["flows"][0]["fixture"]
+        inventory = [{"kind": "ui", "identifier": selector, "target_home": "smoke", "smoke_flows": ["iphone-first-boot"]}]
+        methods = {selector: {"ios"}, "SmokeFlowIOSUITests/testSettingsRelaunch": {"ios"},
+                   "LegacyUITests/testFirstBoot": {"ios"}}
+        self.assertEqual(manifest["flows"], validate_manifest(manifest, planned, methods, inventory))
+        for changed_selector in ("SmokeFlowIOSUITests/testSettingsRelaunch", "LegacyUITests/testFirstBoot"):
+            with self.subTest(selector=changed_selector), self.assertRaisesRegex(ValueError, "smoke-manifest-binding"):
+                changed = copy.deepcopy(manifest)
+                changed["flows"][0]["selector"] = changed_selector
+                validate_manifest(changed, planned, methods, inventory)
+        for change in (lambda rows: rows.clear(), lambda rows: rows.append(copy.deepcopy(rows[0])),
+                       lambda rows: rows[0].update(kind="strict"), lambda rows: rows[0].update(target_home="unit"),
+                       lambda rows: rows[0].update(smoke_flows=[]),
+                       lambda rows: rows[0].update(smoke_flows=["iphone-first-boot", "unknown"]),
+                       lambda rows: rows.append(dict(rows[0], identifier="SmokeFlowIOSUITests/testUnused"))):
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, "smoke-manifest-inventory"):
+                changed = copy.deepcopy(inventory)
+                change(changed)
+                validate_manifest(manifest, planned, methods, changed)
+
+    def test_smoke_is_excluded_from_every_existing_plan_population(self):
+        from strict_e2e_smoke import validate_exclusions
+        methods = {"SmokeFlowIOSUITests/testFirstBoot": {"ios"}, "SmokeFlowTVOSUITests/testFirstBoot": {"tvos"}}
+        flows = [{"platform": platform, "selector": selector} for selector, platforms in methods.items() for platform in platforms]
+        plans = {platform: {name: {"testTargets": [{"target": {"name": "immichSlidesUITests"}, **fields}]}
+                            for name, fields in (("default", {"skippedTests": ["SmokeFlowIOSUITests", "SmokeFlowTVOSUITests"]}),
+                                                 ("Evidence", {"selectedTests": ["LegacyUITests"]}),
+                                                 ("XcodeCloud", {"selectedTests": ["LegacyUITests"]}))}
+                 for platform in ("ios", "tvos")}
+        validate_exclusions(flows, methods, plans)
+        for platform in plans:
+            for name in plans[platform]:
+                for use_class in (True, False):
+                    with self.subTest(platform=platform, plan=name, use_class=use_class):
+                        changed = copy.deepcopy(plans)
+                        target = changed[platform][name]["testTargets"][0]
+                        if name == "default":
+                            target["skippedTests"] = []
+                        else:
+                            selector = next(flow["selector"] for flow in flows if flow["platform"] == platform)
+                            target["selectedTests"] = [selector.split("/")[0] if use_class else selector + "()"]
+                        with self.assertRaisesRegex(ValueError, "smoke-manifest-exclusion"):
+                            validate_exclusions(flows, methods, changed)
+
+    def test_main_rejects_a_bad_smoke_manifest_in_a_temporary_repository(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "scripts").mkdir()
+            (root / "scripts/smoke-flows.json").write_text('{"schema_version":2,"flows":[]}')
+            (root / "scripts/ci-test-tiers.json").write_text('{"smoke_flows":[],"inventory":[]}')
+            with patch.object(conv, "check_repository", return_value=[]), patch.object(conv, "check_test_tier_plan", return_value=[]), \
+                    patch.object(conv, "repository_timeout_inventory", return_value=[]):
+                self.assertEqual(1, conv.main(["--root", temporary]))
 
 
 class RepositoryTests(unittest.TestCase):
