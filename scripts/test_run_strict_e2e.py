@@ -8201,6 +8201,9 @@ class SmokeFlowResultTests(unittest.TestCase):
             cloned_source_packages_path=root / "packages", test_without_building=True, warm_up_only=False)
         for key, value in (overrides or {}).items():
             setattr(arguments, key, value)
+        if late == "owned-cleanup":
+            arguments.derived_data_path = None
+            (root / "owned").mkdir()
         def assert_running(gate):
             for name in ("case-manifest.json", "smoke-flow-results.json"):
                 payload = json.loads((evidence / name).read_text())
@@ -8233,10 +8236,12 @@ class SmokeFlowResultTests(unittest.TestCase):
                 mock.patch("strict_e2e_build.validate_paths"), \
                 mock.patch("strict_e2e_build.load_warm_build", return_value=({"identity": "warm"}, root / "run")), \
                 mock.patch("strict_e2e_build.validate_warm_products", side_effect=lambda *args: assert_running("products")), \
+                mock.patch.object(smoke.tempfile, "mkdtemp", return_value=str(root / "owned")), \
+                mock.patch.object(smoke.shutil, "rmtree", side_effect=OSError("cleanup failed") if late == "owned-cleanup" else None), \
                 mock.patch.object(smoke, "execute_flow", side_effect=execute) as execution:
             try:
                 code = smoke.run(arguments, root, runner, io.StringIO(), io.StringIO())
-            except CommandError:
+            except (CommandError, OSError):
                 code = 2
             return code, flows, evidence, execution.call_count
 
@@ -8255,7 +8260,7 @@ class SmokeFlowResultTests(unittest.TestCase):
                                  tuple(summary[k] for k in ("totalTestCount", "passedTests", "failedTests", "skippedTests")))
 
     def test_smoke_late_gates_and_dirty_checkout_cannot_leave_a_passing_root(self):
-        for late, dirty in (("privacy", False), ("products", False), (None, True)):
+        for late, dirty in (("privacy", False), ("products", False), ("owned-cleanup", False), (None, True)):
             with self.subTest(late=late, dirty=dirty), tempfile.TemporaryDirectory() as temporary:
                 code, _, evidence, calls = self.run_group(Path(temporary), late=late, dirty=dirty)
                 self.assertEqual(2, code)

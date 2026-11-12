@@ -269,6 +269,9 @@ def run(arguments, root, runner, stdout, stderr):
                      for node in json.loads((evidence / flow["id"] / "official-tests.json").read_text()).get("testNodes", [])]}
             write_json(evidence / "official-tests.json", tests)
             case["official_tests_sha256"] = hashlib.sha256((evidence / "official-tests.json").read_bytes()).hexdigest()
+            if owned_derived is not None:
+                cleanup_path, owned_derived = owned_derived, None
+                shutil.rmtree(cleanup_path)
             runner.write_sensitive_scan(evidence, [PUBLIC_API_KEY, runner.WRONG_PUBLIC_API_KEY])
             write_json(evidence / "official-summary.json", summary)
             case.update(result="Passed" if code == 0 else "FAILED", exit_code=code, official_summary=summary)
