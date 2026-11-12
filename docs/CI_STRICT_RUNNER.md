@@ -53,7 +53,8 @@ receipt. The root official summary sums only exported official outcomes; missing
 official evidence remains a failure. Public messages use the existing redacted failure
 projection. Original result bundles remain private and follow the strict disposal path.
 Screenshots, recordings, pixels, glyphs and second-level product windows are not smoke
-judges. The Debug iOS controls flow reads the existing scene AX probe; Release flows
+judges. The Debug iOS controls flow reads the existing published history AX probe,
+so repeated photos in different scenes cannot masquerade as a lost Next action; Release flows
 use real controls and persistence without DEBUG hooks. Synthetic PIN smoke uses the
 existing Debug UserDefaults path and does not prove production Keychain behavior.
 
