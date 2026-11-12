@@ -138,6 +138,8 @@ The loader owns the ordered pool, while `SlideShowViewModel.assets`, `isLoading`
 
 ### Settings and platform integration
 
+`FilterViewModel.canStartPlayback` owns the nonempty-selection decision used by both filter summary views. It reads the same selection as the former view-local expression; the views retain their existing button, focus and action bindings.
+
 `SettingsPromptStore.selectDefaultPlaybackMode` applies the Settings action and rejects filtered mode when the selection is empty. `AccessProtectionViewModel` accepts the same store interface as `SettingsAccessCoordinator`; tests can supply atomic in-memory storage without exercising the production Keychain. Keychain writes remain a separate device check. `ImmichServer.tryToSaveServerConfig` accepts an optional connection session and save action for hermetic interface tests; its defaults still probe HTTP before saving through the existing Keychain and UserDefaults path. `SettingsServerViewModel.testConnection` returns its existing task so callers can await completion without polling.
 
 The iOS and tvOS slideshow views keep their property wrappers in the primary declarations and place diagnostics, rendering and EXIF methods in platform-filtered extensions. tvOS settings server/cache, About/licenses and bundled privacy pages have separate extension files; their focus state remains owned by `SettingsViewTV`.

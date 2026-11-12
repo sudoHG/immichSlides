@@ -31,6 +31,26 @@ struct PlaybackPoolResolverTests {
         #expect(result.isEmpty)
     }
 
+    @Test(arguments: ["a", "b"])
+    func `an empty selected album reports no matching assets rather than no active rules`(fixtureName: String)
+        async throws
+    {
+        let fixture = FilterRuleFixture(name: fixtureName)
+        let albumID = "album-\(fixtureName)-empty"
+        let resolver = PlaybackPoolResolver()
+        resolver.albumsProviderForTesting = { fixture.albums }
+        resolver.randomAssetProviderForTesting = { _, albumIDs, personIDs in
+            #expect(albumIDs == [albumID])
+            #expect(personIDs == nil)
+            return []
+        }
+
+        let result = try await resolver.resolveDetailed(selection: FilterSelection(albumIds: [albumID]), targetCount: 8)
+
+        #expect(result.assets.isEmpty)
+        #expect(result.emptyReason == .noMatchingAssets)
+    }
+
     @Test
     func `request budget scales down for a small target instead of inflating to a fixed value`() {
         // soloOnly+Vision must not reuse an oversized fixed budget.
