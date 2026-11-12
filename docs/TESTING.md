@@ -189,6 +189,12 @@ lists. The B manifest supplies the maximum Next count and the EXIF labels absent
 from A; observing any such label during that bounded traversal satisfies identity.
 It does not wait for automatic playback to happen upon B's exclusive photo. Its two
 phases share the same guard and report their elapsed time and Next count.
+`smoke-tv-server-switch-timing.json` retains the Next-loop entry time, Next count,
+direct-switch completion and total completion against that same guard, even if
+an assertion stops the method before its final print. In random mode A starts
+without selected filters, so the list phase does not establish clearing a nonempty
+old selection. That guarantee comes from
+`FilterSelectionResetTests/reset removes old album and person ids so a new store instance cannot read them`.
 
 ## 0. When to write a test
 

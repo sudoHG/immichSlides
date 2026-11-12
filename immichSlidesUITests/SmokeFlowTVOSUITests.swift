@@ -227,7 +227,7 @@ final class SmokeFlowTVOSUITests: XCTestCase {
                 $0.nodes["settings.server.feedback.save.success"] != nil
             }
             peerExifLabels = fixtures.uniqueExifLabels
-            try tvSmokeReturnToPlayback(app, guardWait: guardWait)
+            try tvSmokeNextPath(app, guardWait: guardWait, since: startedAt)
             // A healthy single-photo pool exposes every B candidate within one bounded traversal.
             for _ in 0..<fixtures.photoCount {
                 if didObservePeerPhoto { break }
@@ -237,8 +237,9 @@ final class SmokeFlowTVOSUITests: XCTestCase {
                 nextPresses += 1
                 try tvSmokeExpect(app, guardWait: guardWait, step: "server B playback advances") {
                     lastPublicExif = Self.tvSmokePublicExifIndices($0)
+                    if didObservePeerPhoto { return true }
                     guard let current = Self.tvSmokeIndex($0.nodes[indexID]) else { return false }
-                    return didObservePeerPhoto || current != before
+                    return current != before
                 }
             }
             if !didObservePeerPhoto {
@@ -249,7 +250,7 @@ final class SmokeFlowTVOSUITests: XCTestCase {
                 "Smoke TV server switch phase=direct-switch elapsed_seconds=\(ProcessInfo.processInfo.systemUptime - startedAt)"
             )
             phase = "filter-lists"
-            phaseStartedAt = ProcessInfo.processInfo.systemUptime
+            phaseStartedAt = try tvSmokeSwitchPhase("filter-lists", guardWait: guardWait)
             // Changing mode before the B-photo proof could hide the stale source reported in the switch defect.
             try tvSmokeOpenSettings(app, guardWait: guardWait)
             try tvSmokeSelect("settings.item.playback", app: app, guardWait: guardWait)
@@ -267,6 +268,7 @@ final class SmokeFlowTVOSUITests: XCTestCase {
             try tvSmokeExpect(app, guardWait: guardWait, step: "B lists return to filter editor") {
                 $0.nodes["filter.editor.done.button"] != nil
             }
+            _ = try tvSmokeSwitchPhase("complete", guardWait: guardWait)
         }
     }
 

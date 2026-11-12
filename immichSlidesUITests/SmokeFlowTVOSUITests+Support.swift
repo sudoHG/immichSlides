@@ -108,9 +108,15 @@ extension SmokeFlowTVOSUITests {
             $0.nodes[identifier]?.isEnabled == true
         }
         for _ in 0..<16 {
-            guard let current = guardWait.transaction().query({ tvSmokeObservation(app) }), let current,
-                let target = current.nodes[identifier]
-            else { try tvSmokeFail("focus observation", file: file, line: line) }
+            var observation: Observation?
+            try tvSmokeExpect(app, guardWait: guardWait, file: file, line: line, step: "focus observation") {
+                guard $0.nodes[identifier] != nil, $0.allNodes.contains(where: { $0.hasFocus }) else { return false }
+                observation = $0
+                return true
+            }
+            guard let current = observation, let target = current.nodes[identifier] else {
+                try tvSmokeFail("focus observation", file: file, line: line)
+            }
             if target.hasFocus { return }
             guard let focused = current.allNodes.first(where: { $0.hasFocus }) else {
                 try tvSmokeExpect(app, guardWait: guardWait, file: file, line: line, step: "initial remote focus") {
@@ -146,6 +152,9 @@ extension SmokeFlowTVOSUITests {
         try tvSmokeFocus(identifier, app: app, guardWait: guardWait, file: file, line: line)
         FirstFailureContext.mark("select", element: identifier)
         try tvSmokePress(.select, guardWait: guardWait, file: file, line: line)
+        if identifier == "slideshow.control.next.button", !peerExifLabels.isEmpty {
+            _ = try tvSmokeSwitchPhase("next-loop", guardWait: guardWait, didPressNext: true)
+        }
     }
 
     @MainActor
@@ -208,11 +217,20 @@ extension SmokeFlowTVOSUITests {
         XCTAssertTrue(
             try submit.snapshot().hasFocus, "Smoke flow: system keyboard submit has focus.", file: file, line: line)
         try tvSmokePress(.select, guardWait: guardWait, file: file, line: line)
-        if tvSmokeObservation(app)?.allNodes.contains(where: { $0.elementType == .keyboard }) == true {
+        var shouldCloseKeyboard = false
+        try tvSmokeExpect(app, guardWait: guardWait, file: file, line: line, step: "keyboard submission settles") {
+            let keyboards = $0.allNodes.filter { $0.elementType == .keyboard }
+            if keyboards.isEmpty { return $0.nodes[identifier]?.hasFocus == true }
+            // Require active keyboard focus before treating an attached keyboard as needing Menu.
+            guard keyboards.contains(where: Self.tvSmokeHasFocusedDescendant) else { return false }
+            shouldCloseKeyboard = true
+            return true
+        }
+        if shouldCloseKeyboard {
             try tvSmokePress(.menu, guardWait: guardWait, file: file, line: line)
         }
         try tvSmokeExpect(app, guardWait: guardWait, file: file, line: line, step: "keyboard returns focus to field") {
-            $0.nodes[identifier]?.hasFocus == true
+            $0.nodes[identifier]?.hasFocus == true && !$0.allNodes.contains { $0.elementType == .keyboard }
         }
     }
 
@@ -380,7 +398,15 @@ extension SmokeFlowTVOSUITests {
             $0.allNodes.contains { $0.elementType == .alert && alertTitles.contains($0.label) }
         }
         for _ in 0..<4 {
-            guard let current = tvSmokeObservation(app),
+            var observation: Observation?
+            try tvSmokeExpect(app, guardWait: guardWait, file: file, line: line, step: "empty-filter alert focus") {
+                guard $0.allNodes.contains(where: { $0.elementType == .button && actionLabels.contains($0.label) }),
+                    $0.allNodes.contains(where: { $0.hasFocus })
+                else { return false }
+                observation = $0
+                return true
+            }
+            guard let current = observation,
                 let target = current.allNodes.first(where: {
                     $0.elementType == .button && actionLabels.contains($0.label)
                 }),
@@ -419,6 +445,56 @@ extension SmokeFlowTVOSUITests {
             return cards[prefix + target + ".button"] != nil
                 && !cards.contains { $0.key.contains("-a-") || Self.tvSmokeIsSelected($0.value) }
         }
+    }
+
+    static func tvSmokeHasFocusedDescendant(_ node: XCUIElementSnapshot) -> Bool {
+        node.hasFocus || node.children.contains(where: tvSmokeHasFocusedDescendant)
+    }
+
+    @MainActor
+    func tvSmokeNextPath(
+        _ app: XCUIApplication, guardWait: TestWait.HangGuard, since startedAt: TimeInterval,
+        file: StaticString = #filePath, line: UInt = #line
+    ) throws {
+        try tvSmokeReturnToPlayback(app, guardWait: guardWait, file: file, line: line)
+        _ = try tvSmokeSwitchPhase("next-loop", guardWait: guardWait, startedAt: startedAt)
+    }
+
+    @MainActor
+    func tvSmokeSwitchPhase(
+        _ phase: String, guardWait: TestWait.HangGuard, startedAt: TimeInterval? = nil,
+        didPressNext: Bool = false
+    ) throws -> TimeInterval {
+        let now = ProcessInfo.processInfo.systemUptime
+        let write: Result<Void, Error>? = guardWait.transaction().query {
+            Result {
+                guard let directory = StrictE2EVisualEvidence.directory() else {
+                    throw FlowError.failedStep("switch timing directory")
+                }
+                let path = directory.appendingPathComponent("smoke-tv-server-switch-timing.json")
+                var fields =
+                    startedAt == nil
+                    ? (try JSONSerialization.jsonObject(with: Data(contentsOf: path)) as? [String: Any] ?? [:]) : [:]
+                let start = startedAt ?? fields["started_uptime_seconds"] as? TimeInterval ?? now
+                let elapsed = now - start
+                if startedAt != nil {
+                    fields = [
+                        "schema_version": 1, "started_uptime_seconds": start,
+                        "next_loop_entered_seconds": elapsed, "next_presses": 0
+                    ]
+                }
+                if didPressNext { fields["next_presses"] = (fields["next_presses"] as? Int ?? 0) + 1 }
+                if phase == "filter-lists" { fields["direct_switch_seconds"] = elapsed }
+                fields["phase"] = phase
+                fields["elapsed_seconds"] = elapsed
+                fields["remaining_guard_seconds"] = guardWait.remainingSeconds
+                try JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]).write(
+                    to: path, options: .atomic)
+            }
+        }
+        guard let write else { throw FlowError.failedStep("switch timing guard") }
+        try write.get()
+        return now
     }
 
     @MainActor
