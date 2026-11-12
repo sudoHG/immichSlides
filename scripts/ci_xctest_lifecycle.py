@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import queue
 import re
 import signal
 import shutil
@@ -59,7 +60,8 @@ class Trigger:
 
 
 def empty_capture(trigger):
-    return {"trigger": trigger, "status": dict.fromkeys(sorted(KINDS), "unavailable"), "files": []}
+    return {"trigger": trigger, "status": dict.fromkeys(sorted(KINDS), "unavailable"), "files": [],
+            "trigger_to_capture_start_seconds": None, "trigger_to_capture_end_seconds": None}
 
 
 def normalize(data):
@@ -106,10 +108,15 @@ def validate_summary(payload):
         raise ValueError("invalid lifecycle summary")
     names = set()
     for record in payload["captures"]:
-        if (set(record) != {"trigger", "status", "files"} or record["trigger"] not in {"native-failure", "activity-timeout"}
+        if (set(record) != {"trigger", "status", "files", "trigger_to_capture_start_seconds", "trigger_to_capture_end_seconds"}
+                or record["trigger"] not in {"native-failure", "activity-timeout"}
                 or set(record["status"]) != KINDS or any(value not in STATUSES for value in record["status"].values())
                 or not isinstance(record["files"], list) or len(record["files"]) > 8):
             raise ValueError("invalid lifecycle capture")
+        start, end = record["trigger_to_capture_start_seconds"], record["trigger_to_capture_end_seconds"]
+        if not (start is None and end is None or all(type(value) in {int, float} and math.isfinite(value) and value >= 0
+                for value in (start, end)) and end >= start):
+            raise ValueError("invalid lifecycle capture lag")
         for item in record["files"]:
             if (set(item) != {"kind", "name"} or item["kind"] not in KINDS
                     or not re.fullmatch(r"[A-Za-z0-9_-]+\.(?:txt|log|ips|crash)", item["name"]) or item["name"] in names):
@@ -301,28 +308,51 @@ class Monitor:
         self.trigger = Trigger()
         self.stopped = threading.Event()
         self.thread = threading.Thread(target=self.watch, name="fixture-lifecycle")
+        self.worker = threading.Thread(target=self.collect_requests, name="fixture-lifecycle-capture")
+        self.requests = queue.Queue(maxsize=MAX_CAPTURES + 1)
         self.payload = {"schema_version": 1, "captures": []}
         self.total = 0
 
     def watch(self):
         try:
             with self.log.open(encoding="utf-8", errors="replace") as log:
-                while True:
-                    line = log.readline(8192)
-                    reason = self.trigger.observe(line, time.monotonic())
-                    if reason:
-                        try:
-                            record, self.total = capture(self.udid, self.baseline, self.destination, reason,
-                                                        len(self.payload["captures"]) + 1, self.total)
-                        except Exception:
-                            record = empty_capture(reason)
-                        self.payload["captures"].append(record)
-                        write_summary(self.destination, self.payload)
-                    if not line and self.stopped.wait(0.1):
-                        return
+                self.worker.start()
+                try:
+                    while True:
+                        line = log.readline(8192)
+                        observed_at = time.monotonic()
+                        reason = self.trigger.observe(line, observed_at)
+                        if reason:
+                            self.requests.put_nowait((reason, observed_at))
+                        if not line and self.stopped.wait(0.1):
+                            return
+                finally:
+                    self.requests.put_nowait(None)
+                    self.worker.join()
         except Exception:
             # Optional evidence cannot replace the XCTest exit or prevent bundle finalization.
             return
+
+    def collect_requests(self):
+        while True:
+            request = self.requests.get()
+            if request is None:
+                return
+            reason, observed_at = request
+            started_at = time.monotonic()
+            try:
+                record, self.total = capture(self.udid, self.baseline, self.destination, reason,
+                                            len(self.payload["captures"]) + 1, self.total)
+            except Exception:
+                record = empty_capture(reason)
+            record["trigger_to_capture_start_seconds"] = started_at - observed_at
+            record["trigger_to_capture_end_seconds"] = time.monotonic() - observed_at
+            self.payload["captures"].append(record)
+            try:
+                write_summary(self.destination, self.payload)
+            except Exception:
+                # A failed optional receipt write cannot escape into the runner's verdict.
+                pass
 
 
 @contextmanager

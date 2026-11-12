@@ -622,6 +622,14 @@ records each trigger (`native-failure` or `activity-timeout`) and content status
 files use the existing `ui-failures-*` artifact and seven-day retention in PR and
 nightly UI. The verdict summary schema and separate strict runner are unchanged.
 
+The live reader remains active while a separate, serial worker collects evidence.
+The summary's `trigger_to_capture_start_seconds` and `trigger_to_capture_end_seconds`
+measure monotonic lag from the reader's observation of each trigger, including time
+queued behind an earlier capture. Missing measurements are `null`; measured values
+must be finite, nonnegative and ordered. These values expose delayed capture, without
+claiming to measure Xcode's own stdout buffering delay. Both threads join before
+the runner returns to reset, the next invocation or cleanup.
+
 Failed method nodes and UI observations also include the fixed `failure_phase`
 and `failure_class` enums described in
 [public failure diagnostics](CI_STRICT_RUNNER.md#public-failure-diagnostics).

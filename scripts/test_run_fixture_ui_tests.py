@@ -310,6 +310,68 @@ class LifecycleCaptureTests(unittest.TestCase):
                 if refused == "extra":
                     self.assertFalse((root / "unlisted.txt").exists())
 
+    def test_queued_capture_lags_are_closed_and_include_time_waiting_for_the_prior_capture(self):
+        import ci_xctest_lifecycle as capture
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            monitor = capture.Monitor(root / "log", "target", root / "public")
+            for request in (("native-failure", 10), ("activity-timeout", 11), None):
+                monitor.requests.put_nowait(request)
+            with patch.object(capture.time, "monotonic", side_effect=[12, 15, 20, 25]), \
+                    patch.object(capture, "capture", side_effect=[(capture.empty_capture("native-failure"), 0),
+                                                                (capture.empty_capture("activity-timeout"), 0)]):
+                monitor.collect_requests()
+            records = json.loads((root / "public/summary.json").read_text())["captures"]
+            self.assertEqual([(record["trigger_to_capture_start_seconds"], record["trigger_to_capture_end_seconds"])
+                              for record in records], [(2, 5), (9, 14)])
+            for start, end in ((-1, 1), (1, -1), (2, 1), (None, 1), (1, None), (True, 1), (float("nan"), 1), (1, float("inf"))):
+                invalid = copy.deepcopy(monitor.payload)
+                invalid["captures"][0].update(trigger_to_capture_start_seconds=start, trigger_to_capture_end_seconds=end)
+                with self.subTest(start=start, end=end), self.assertRaises(ValueError):
+                    capture.validate_summary(invalid)
+            failed_write = capture.Monitor(root / "log", "target", root / "unavailable")
+            failed_write.requests.put_nowait(("native-failure", 10))
+            failed_write.requests.put_nowait(None)
+            with patch.object(capture.time, "monotonic", side_effect=[12, 15]), \
+                    patch.object(capture, "capture", return_value=(capture.empty_capture("native-failure"), 0)), \
+                    patch.object(capture, "write_summary", side_effect=OSError("receipt unavailable")):
+                failed_write.collect_requests()
+            self.assertEqual(failed_write.payload["captures"][0]["trigger_to_capture_end_seconds"], 5)
+
+    def test_live_output_keeps_observing_triggers_while_an_earlier_capture_is_running(self):
+        import ci_xctest_lifecycle as capture
+        import threading
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            log = root / "xcode.log"
+            log.write_text("Test Case '-[Flow testA]' started.\nFailed to get matching snapshot\n")
+            started, second_seen, release, second_finished = (threading.Event() for _ in range(4))
+            observe = capture.Trigger.observe
+            def observed(trigger, line, now):
+                reason = observe(trigger, line, now)
+                if reason and trigger.case == 2:
+                    second_seen.set()
+                return reason
+            def collect(_udid, _baseline, _destination, reason, number, total):
+                if number == 1:
+                    started.set()
+                    self.assertTrue(release.wait(2), "the reader must keep observing while capture is blocked")
+                else:
+                    second_finished.set()
+                return capture.empty_capture(reason), total
+            try:
+                with patch.object(capture.Trigger, "observe", observed), patch.object(capture, "capture", side_effect=collect) as operation:
+                    with capture.monitor_invocation(["xcodebuild", "test-without-building"], log, "target", root / "public"):
+                        self.assertTrue(started.wait(1), "capture must start before invocation end")
+                        with log.open("a") as output:
+                            output.write("Test Case '-[Flow testB]' started.\nFailed to terminate app\n")
+                        self.assertTrue(second_seen.wait(1), "live observation must not wait for a previous capture")
+                        release.set()
+                    self.assertTrue(second_finished.is_set(), "all queued captures must finish before runner return")
+                    self.assertEqual(operation.call_count, 2)
+            finally:
+                release.set()
+
     def test_upload_includes_a_closed_lifecycle_receipt_without_any_image(self):
         import ci_ui_tests
         import ci_xctest_lifecycle as capture
