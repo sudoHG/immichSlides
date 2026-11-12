@@ -32,7 +32,9 @@ host validation, **not an execution manifest**. Existing test plans, strict matr
 workflows, selectors, runners and verdicts remain authoritative for what runs today.
 The plan is intentionally not CI-trusted while it only records targets. It must
 become CI-trusted before any reader uses it to select execution.
-Wave one removes no UI methods, strict rows or assertions and changes no App behavior.
+The unit-coverage PRs and this tier plan change no App behavior and retire no E2E
+assertions. The duplicate-removal batch (#721) is separate: it removes only reviewed
+duplicates whose assertions still run in retained tests, before the future tier switch.
 The current inventory is 386 UI source methods and 135 strict matrix rows, separately
 identified; it is not 521 nightly executions. The current complete nightly schedules
 318 fixture UI device identities plus 135 strict rows, or 453 scheduling identities.
@@ -74,12 +76,16 @@ An empty replacement list means the exact replacement is unknown. All entries ar
 `pending` in this planning revision. A later `covered` row requires every replacement
 test to exist and a `mutation_proof` entry for each test: `pr` (the implementation PR URL),
 `test` (the exact replacement identity), `mutation` (the concrete defect), and
-`failed_then_passed_on` (both `ios` and `tvos`). The checker validates the receipt
+`failed_then_passed_on` (exactly the platforms on which that test compiles: `ios`,
+`tvos` or both). Each replacement must exist on every platform of the inventory row;
+a strict row uses its matrix platform and a UI method uses its compiled platforms.
+The checker validates the receipt
 structure and references; reviewers still verify the actual failure/pass evidence.
 Even `delete` is a conditional destination, never
 an instruction to delete now. A source method can anchor several device flows without
 creating additional smoke executions. Rows may link additional valid smoke flows
-that absorb their interactions; anchors must retain their links. Human-review groups
+that absorb their interactions; every linked flow must run on one of the row's devices,
+and anchors must retain their links. Human-review groups
 are optional for `unit`, `delete` and `pr-smoke` rows, and each linked group must apply
 to the strict row's device or the UI method's compiled platform. TV focus routing
 belongs to `tv-focus`; iPhone rotation belongs to playback review, while iPad rotation
@@ -89,7 +95,8 @@ missing/extra keys and unknown references independently, and rejects duplicate J
 
 Before retiring an E2E rule assertion, map that assertion to a production App unit or
 no-UI interface test, name a concrete App mutation, show that test failing under the
-mutation and passing after restoration, and run the replacement on both platforms.
+mutation and passing after restoration, and run the replacement on every platform
+where it compiles (both platforms for shared tests).
 Reuse existing suites. Add only missing behavior coverage; pure visual work does not
 need artificial unit tests. Behavior-neutral injection seams must default to the
 current implementation. Controlled HTTP scenarios include 401, HTML 200, unreachable,

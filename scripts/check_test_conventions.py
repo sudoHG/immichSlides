@@ -1124,6 +1124,7 @@ def partition_against_allowlist(violations: list[Violation], allowlist: list[dic
 def test_tier_context(root: Path):
     """Read only public source inventories; this plan never supplies execution selectors."""
     from ci_population import swift_identities
+    from ci_ui_selection import method_kind, parse_area_map
     from run_strict_e2e import CommandError, resolve_suite_selector
     from ui_test_inventory import parse_ui_tests
 
@@ -1146,9 +1147,9 @@ def test_tier_context(root: Path):
         strict[key] = dict(case, selector=selector.split("/", 1)[1])
     sources = {p.relative_to(root).as_posix(): p.read_text(encoding="utf-8")
                for p in (root / "immichSlidesTests").rglob("*.swift")}
-    units = {entry["key"] for platform in ("ios", "tvos") for entry in swift_identities(sources, platform)}
-    areas = json.loads((root / "scripts/ci-ui-areas.json").read_text(encoding="utf-8"))
-    return ui, strict, units, set(areas["functional_smoke"])
+    units = {platform: {entry["key"] for entry in swift_identities(sources, platform)} for platform in ("ios", "tvos")}
+    areas = parse_area_map((root / "scripts/ci-ui-areas.json").read_text(encoding="utf-8"))
+    return ui, strict, units, set(areas.get("functional_smoke", [key for key in areas["smoke"] if method_kind(key) == "functional"]))
 
 
 def validate_test_tier_plan(plan, ui, strict, units, pr_smoke) -> list[str]:
@@ -1193,9 +1194,9 @@ def validate_test_tier_plan(plan, ui, strict, units, pr_smoke) -> list[str]:
           "tier-plan-version", "plan", f"schema_version={plan.get('schema_version')!r}; expected 1")
     check(plan.get("mode") == "planning-only", "tier-plan-mode", "plan", "mode must remain planning-only")
     migration = obj(plan.get("migration"), "migration", (
-        "wave_one_removes_ui_tests", "app_behavior", "replacement_gate", "yellow_and_retry", "history_readable_days",
+        "unit_coverage_prs_remove_ui_tests", "app_behavior", "replacement_gate", "yellow_and_retry", "history_readable_days",
         "shadow_runs", "executed_nights_after_switch", "unexplained_red_allowed", "nightly_budget_minutes", "reference_meaning"))
-    for key, expected in {"wave_one_removes_ui_tests": False, "app_behavior": "unchanged",
+    for key, expected in {"unit_coverage_prs_remove_ui_tests": False, "app_behavior": "unchanged",
                           "yellow_and_retry": "frozen-no-new-exceptions", "shadow_runs": {"minimum": 5, "maximum": 7},
                           "executed_nights_after_switch": 10, "unexplained_red_allowed": 0, "history_readable_days": 90}.items():
         check(type(migration.get(key)) is type(expected) and migration.get(key) == expected,
@@ -1259,6 +1260,7 @@ def validate_test_tier_plan(plan, ui, strict, units, pr_smoke) -> list[str]:
             check(group["id"] not in groups, "tier-plan-human-review", where, "duplicate id")
             groups[group["id"]] = devices
     check(len(groups) == 6, "tier-plan-human-review", "weekly_human_review", f"expected 6 groups; found {sorted(groups)}")
+    known_units = set().union(*units.values())
     keys = []
     for index, value in enumerate(objects(plan.get("inventory"), "inventory")):
         where = f"inventory[{index}] {value.get('identifier')!r}" if isinstance(value, dict) else f"inventory[{index}]"
@@ -1279,7 +1281,7 @@ def validate_test_tier_plan(plan, ui, strict, units, pr_smoke) -> list[str]:
         expected_flows = {fid for fid, flow in flows.items() if
                           (flow.get("source", {}).get("kind"), flow.get("source", {}).get("identifier")) == (kind, identifier)
                           or kind == "ui" and flow.get("source", {}).get("selector") == identifier}
-        for field, unknown in (("replacement_tests", replacements - units), ("smoke_flows", linked_flows - flows.keys()),
+        for field, unknown in (("replacement_tests", replacements - known_units), ("smoke_flows", linked_flows - flows.keys()),
                                ("human_review_groups", reviews - groups.keys())):
             check(not unknown, "tier-plan-replacement", where, f"unknown {field} references {sorted(unknown)}")
         direct_anchor = any((flow.get("source", {}).get("kind"), flow.get("source", {}).get("identifier"))
@@ -1291,6 +1293,16 @@ def validate_test_tier_plan(plan, ui, strict, units, pr_smoke) -> list[str]:
         devices = ({strict[identifier]["device"]} if kind == "strict" and identifier in strict else
                    {device for device, platform in (("iphone", "ios"), ("ipad", "ios"), ("tv", "tvos"))
                     if platform in ui.get(identifier, set())})
+        row_platforms = ({strict[identifier]["platform"]} if kind == "strict" and identifier in strict else
+                         set(ui.get(identifier, set())))
+        for fid in linked_flows & APPROVED_TIER_SMOKE.keys():
+            check(APPROVED_TIER_SMOKE[fid][0] in devices, "tier-plan-smoke-device", where,
+                  f"smoke_flows {fid!r} device {APPROVED_TIER_SMOKE[fid][0]!r} does not apply to row devices {sorted(devices)}")
+        for platform in sorted(row_platforms):
+            missing = replacements - units.get(platform, set())
+            check(not missing, "tier-plan-replacement", where,
+                  f"replacement_tests unavailable on row platform {platform}: {sorted(missing)}")
+        available_replacements = all(replacements <= units.get(platform, set()) for platform in row_platforms)
         for group in reviews & groups.keys():
             check(bool(devices & groups[group]), "tier-plan-review-device", where,
                   f"human_review_groups {group!r} devices {sorted(groups[group])} do not apply to row devices {sorted(devices)}")
@@ -1304,12 +1316,13 @@ def validate_test_tier_plan(plan, ui, strict, units, pr_smoke) -> list[str]:
             platforms = strings(proof.get("failed_then_passed_on"), proof_where + ".failed_then_passed_on")
             valid = (text_field(proof.get("pr")) and re.fullmatch(r"https://github\.com/sudoHG/immichSlides/pull/[1-9][0-9]*", proof["pr"])
                      and text_field(proof.get("test")) and proof["test"] in replacements
-                     and text_field(proof.get("mutation")) and platforms == {"ios", "tvos"})
+                     and text_field(proof.get("mutation")) and bool(platforms)
+                     and platforms == {platform for platform, identities in units.items() if proof["test"] in identities})
             check(bool(valid), "tier-plan-coverage", proof_where, f"invalid mutation_proof reference/evidence {proof!r}")
             if valid:
                 proof_tests.add(proof["test"])
         check(row.get("status") == "pending" or row.get("status") == "covered" and bool(replacements)
-              and replacements <= units and replacements == proof_tests, "tier-plan-coverage", where,
+              and available_replacements and replacements <= known_units and replacements == proof_tests, "tier-plan-coverage", where,
               f"status {row.get('status')!r} requires existing replacement_tests and mutation_proof for every test; missing {sorted(replacements - proof_tests)}")
     expected = {("ui", key) for key in ui} | {("strict", key) for key in strict}
     for key, count in Counter(keys).items():

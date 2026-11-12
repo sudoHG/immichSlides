@@ -951,7 +951,7 @@ class RepositoryTests(unittest.TestCase):
             ('unsupported version', lambda p: p.update(schema_version=2), 'tier-plan-version'),
             ('accidental activation', lambda p: p.update(mode='active'), 'tier-plan-mode'),
             ('changed retry policy', lambda p: p['migration'].update(yellow_and_retry='expanded'), 'tier-plan-migration'),
-            ('nonboolean removal flag', lambda p: p['migration'].update(wave_one_removes_ui_tests=0), 'tier-plan-migration'),
+            ('nonboolean removal flag', lambda p: p['migration'].update(unit_coverage_prs_remove_ui_tests=0), 'tier-plan-migration'),
             ('missing smoke', lambda p: p['smoke_flows'].pop(), 'tier-plan-smoke-population'),
             ('duplicate smoke', lambda p: p['smoke_flows'].__setitem__(0, p['smoke_flows'][1]), 'tier-plan-smoke-population'),
             ('missing UI method', lambda p: p['inventory'].pop(), 'tier-plan-inventory'),
@@ -1016,6 +1016,16 @@ class RepositoryTests(unittest.TestCase):
                'tier-plan-replacement', row_id, 'MissingTests/unknown')
         reject(lambda p: p['inventory'][0].update(human_review_groups=['tv-focus']),
                'tier-plan-review-device', row_id, 'tv-focus')
+        ipad_id = 'p2-cache-smoke|normal|ipad|Debug|a'
+        reject(lambda p: next(r for r in p['inventory'] if r['identifier'] == ipad_id).update(
+            smoke_flows=['iphone-first-boot']), 'tier-plan-smoke-device', ipad_id, 'iphone-first-boot', 'ipad')
+        tv_id = 'FilterSummaryTVOSVisualUITests/testTVOSAlbumFilterUpFromThirdCardCanReachTopBar'
+        reject(lambda p: next(r for r in p['inventory'] if r['identifier'] == tv_id).update(
+            human_review_groups=['ipad-rotation-split']), 'tier-plan-review-device', tv_id, 'ipad-rotation-split')
+        reject(lambda p: next(r for r in p['inventory'] if r['identifier'] == tv_id).update(
+            smoke_flows=['iphone-album-selection']), 'tier-plan-smoke-device', tv_id, 'iphone-album-selection', 'tv')
+        reject(lambda p: next(r for r in p['inventory'] if r['identifier'] == tv_id).update(target_home='pr-smoke'),
+               'tier-plan-pr-smoke', tv_id, 'not be')
         reject(lambda p: p['inventory'][0].update(identifier='malformed'),
                'tier-plan-identifier', 'malformed')
         reject(lambda p: p['inventory'][0].update(identifier='a||iphone|Debug|a'),
@@ -1067,10 +1077,11 @@ class RepositoryTests(unittest.TestCase):
                             for e in errors), errors)
 
         changed = copy.deepcopy(plan)
-        row = changed['inventory'][0]
+        row_index = next(i for i, r in enumerate(changed['inventory']) if r['identifier'] == ipad_id)
+        row = changed['inventory'][row_index]
         row['target_home'] = 'unit'
         row['human_review_groups'] = []
-        row['smoke_flows'] = ['iphone-first-boot']
+        row['smoke_flows'] = ['ipad-first-boot']
         changed['smoke_flows'][0]['must_not_assert'].append('extra-exclusion')
         self.assertEqual([], conv.validate_test_tier_plan(changed, *context))
         del row['human_review_groups']
@@ -1082,21 +1093,56 @@ class RepositoryTests(unittest.TestCase):
         self.assertEqual([], conv.validate_test_tier_plan(changed, *context))
         for field in ('pr', 'test', 'mutation', 'failed_then_passed_on'):
             bad = copy.deepcopy(changed)
-            bad['inventory'][0]['mutation_proof'][0].pop(field)
+            bad['inventory'][row_index]['mutation_proof'][0].pop(field)
             self.assertTrue(any('mutation_proof' in e and field in e
                                 for e in conv.validate_test_tier_plan(bad, *context)))
         for field, value in (('pr', 'unreviewed'), ('test', 'MissingTests/unknown'),
                              ('mutation', ''), ('failed_then_passed_on', ['ios'])):
             bad = copy.deepcopy(changed)
-            bad['inventory'][0]['mutation_proof'][0][field] = value
+            bad['inventory'][row_index]['mutation_proof'][0][field] = value
             self.assertTrue(any(e.startswith('tier-plan-coverage:') and 'mutation_proof' in e
                                 for e in conv.validate_test_tier_plan(bad, *context)))
         for replacements, proofs in ((row['replacement_tests'], []), ([], row['mutation_proof']),
                                      (['MissingTests/unknown'], row['mutation_proof'])):
             bad = copy.deepcopy(changed)
-            bad['inventory'][0].update(replacement_tests=replacements, mutation_proof=proofs)
+            bad['inventory'][row_index].update(replacement_tests=replacements, mutation_proof=proofs)
             self.assertTrue(any(e.startswith('tier-plan-coverage:') for e in
                                 conv.validate_test_tier_plan(bad, *context)))
+
+    def test_target_tier_replacements_and_mutation_receipts_match_compiled_platforms(self):
+        plan = json.loads((REPO_ROOT / conv.TEST_TIER_PLAN_PATH).read_text())
+        context = conv.test_tier_context(REPO_ROOT)
+        tv_test = 'ServerConfigFormTVOSTests/plain text field commits final value to binding on end editing'
+        ios_test = 'FilterSummaryNavigationIdentityIOSTests/album and people entries use distinct stable identifiers'
+        shared_test = 'AppFlowStateMachineTests/app initial route goes straight to playback when configured, else to first boot'
+        tv_id = 'tvos-n1-cold|normal|tv|Debug|a'
+        shared_id = next(key for key, platforms in context[0].items() if set(platforms) == {'ios', 'tvos'})
+        for identifier, replacement, receipt_platforms, expected_rule, detail in (
+                (tv_id, tv_test, ['tvos'], None, None),
+                (plan['inventory'][0]['identifier'], tv_test, ['tvos'], 'tier-plan-replacement', 'ios'),
+                (shared_id, tv_test, ['tvos'], 'tier-plan-replacement', 'ios'),
+                (tv_id, ios_test, ['ios'], 'tier-plan-replacement', 'tvos'),
+                (tv_id, tv_test, ['ios', 'tvos'], 'tier-plan-coverage', 'failed_then_passed_on'),
+                (tv_id, shared_test, ['tvos'], 'tier-plan-coverage', 'failed_then_passed_on'),
+                (tv_id, shared_test, ['ios', 'tvos'], None, None)):
+            with self.subTest(identifier=identifier, replacement=replacement, platforms=receipt_platforms):
+                changed = copy.deepcopy(plan)
+                row = next(r for r in changed['inventory'] if r['identifier'] == identifier)
+                row.update(status='covered', replacement_tests=[replacement], mutation_proof=[dict(
+                    pr='https://github.com/sudoHG/immichSlides/pull/718', test=replacement,
+                    mutation='Ignore the input rule', failed_then_passed_on=receipt_platforms)])
+                errors = conv.validate_test_tier_plan(changed, *context)
+                if expected_rule is None:
+                    self.assertEqual([], errors)
+                else:
+                    self.assertTrue(any(e.startswith(expected_rule + ':') and identifier in e
+                                        and replacement in e and detail in e for e in errors), errors)
+                    if expected_rule == 'tier-plan-replacement':
+                        self.assertTrue(any(e.startswith('tier-plan-coverage:') and identifier in e for e in errors), errors)
+                        row['status'] = 'pending'
+                        self.assertTrue(any(e.startswith('tier-plan-replacement:') and identifier in e
+                                            and replacement in e and detail in e for e in
+                                            conv.validate_test_tier_plan(changed, *context)))
 
     def test_target_tier_context_reads_nested_sources_and_reports_invalid_inputs(self):
         from strict_e2e_runner_support import CommandError
@@ -1105,14 +1151,30 @@ class RepositoryTests(unittest.TestCase):
             for folder in ('scripts', 'immichSlidesUITests/Nested', 'immichSlidesTests/Nested'):
                 (root / folder).mkdir(parents=True)
             (root / 'scripts/nightly-matrix.json').write_text('{"cases": []}')
-            (root / 'scripts/ci-ui-areas.json').write_text('{"functional_smoke": []}')
+            areas = dict(schema_version=1, revision='test-areas', smoke=['RootUITests/testRoot',
+                         'NestedUITests/testNestedScreenshot'], functional_smoke=['NestedUITests/testNested'], areas={
+                             'core': dict(sources=['immichSlides/Shared/**'], tests=['RootUITests']),
+                             'feature': dict(sources=['immichSlides/iOS/**'], tests=['NestedUITests'])})
+            (root / 'scripts/ci-ui-areas.json').write_text(json.dumps(areas))
             (root / 'immichSlidesUITests/Flow.swift').write_text('class RootUITests: XCTestCase { func testRoot() {} }')
             (root / 'immichSlidesUITests/Nested/Flow.swift').write_text('class NestedUITests: XCTestCase { func testNested() {} }')
             (root / 'immichSlidesTests/Rule.swift').write_text('struct RootTests { @Test func `root rule`() {} }')
-            (root / 'immichSlidesTests/Nested/Rule.swift').write_text('struct NestedTests { @Test func `nested rule`() {} }')
-            ui, _, units, _ = conv.test_tier_context(root)
+            (root / 'immichSlidesTests/Nested/Rule.swift').write_text(
+                '#if os(tvOS)\nstruct NestedTests { @Test func `nested rule`() {} }\n#endif')
+            ui, _, units, pr_smoke = conv.test_tier_context(root)
             self.assertEqual({'RootUITests/testRoot', 'NestedUITests/testNested'}, set(ui))
-            self.assertEqual({'RootTests/root rule', 'NestedTests/nested rule'}, units)
+            self.assertEqual({'ios': {'RootTests/root rule'},
+                              'tvos': {'RootTests/root rule', 'NestedTests/nested rule'}}, units)
+            self.assertEqual({'NestedUITests/testNested'}, pr_smoke)
+            del areas['functional_smoke']
+            (root / 'scripts/ci-ui-areas.json').write_text(json.dumps(areas))
+            self.assertEqual({'RootUITests/testRoot'}, conv.test_tier_context(root)[3])
+            areas['smoke'].append(areas['smoke'][0])
+            (root / 'scripts/ci-ui-areas.json').write_text(json.dumps(areas))
+            with self.assertRaisesRegex(ValueError, 'duplicate UI area selector'):
+                conv.test_tier_context(root)
+            areas['smoke'].pop()
+            (root / 'scripts/ci-ui-areas.json').write_text(json.dumps(areas))
             plan = json.loads((REPO_ROOT / conv.TEST_TIER_PLAN_PATH).read_text())
             (root / conv.TEST_TIER_PLAN_PATH).write_text(json.dumps(plan))
             with patch('run_strict_e2e.resolve_suite_selector', side_effect=CommandError('unknown suite')):

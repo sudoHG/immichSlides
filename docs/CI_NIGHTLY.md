@@ -3,8 +3,9 @@
 The approved [target tier model](TESTING.md#approved-target-tiers-planning-only)
 and [`ci-test-tiers.json`](../scripts/ci-test-tiers.json) plan 23 short nightly
 smoke flows and weekly human visual review. They are planning-only: this guide
-describes the current complete strict and fixture UI execution. Wave one removes
-no coverage or execution, and freezes yellow/retry exceptions. Switching requires
+describes the current complete strict and fixture UI execution. The unit-coverage
+PRs retire no E2E assertions; duplicate-removal batch #721 is separate and retains
+those assertions in other tests. Yellow/retry exceptions stay frozen. Switching requires
 mutation-proven rule coverage, 5–7 shadow runs and the separately reviewed activation;
 completion then needs 10 actually executed nights without unexplained red.
 
