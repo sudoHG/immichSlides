@@ -2,12 +2,94 @@
 //  PlaybackPoolResolverTests.swift
 //  immichSlidesTests
 //
-//  Local unit tests with no network access.
+//  Local unit tests with intercepted HTTP and no external network access.
 //
 
 import Foundation
 import Testing
 @testable import immichSlides
+
+private final class FilterSearchURLProtocol: URLProtocol, @unchecked Sendable {
+    struct SearchRequest {
+        let httpMethod: String?
+        let body: Data
+    }
+
+    static let port: UInt16 = 49263
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var responses: [String: Data] = [:]
+    nonisolated(unsafe) private static var recordedSearchRequests: [SearchRequest] = []
+
+    static func begin(responses: [String: Data]) -> Bool {
+        lock.withLock {
+            Self.responses = responses
+            recordedSearchRequests = []
+        }
+        return URLProtocol.registerClass(Self.self)
+    }
+
+    static func end() {
+        URLProtocol.unregisterClass(Self.self)
+        lock.withLock {
+            responses = [:]
+            recordedSearchRequests = []
+        }
+    }
+
+    static func searchRequests() -> [SearchRequest] {
+        lock.withLock { recordedSearchRequests }
+    }
+
+    static func setSearchResponse(_ payload: Data) {
+        lock.withLock { responses["/api/search/random"] = payload }
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.host == "127.0.0.1" && request.url?.port == Int(port)
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        do {
+            let path = request.url?.path ?? ""
+            let body = try requestBody()
+            let payload = Self.lock.withLock {
+                if path == "/api/search/random" {
+                    Self.recordedSearchRequests.append(SearchRequest(httpMethod: request.httpMethod, body: body))
+                }
+                return Self.responses[path]
+            }
+            guard let payload, let url = request.url,
+                let response = HTTPURLResponse(
+                    url: url, statusCode: 200, httpVersion: nil,
+                    headerFields: ["Content-Type": "application/json"])
+            else { throw URLError(.badServerResponse) }
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: payload)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
+    override func stopLoading() {}
+
+    private func requestBody() throws -> Data {
+        if let body = request.httpBody { return body }
+        guard let stream = request.httpBodyStream else { return Data() }
+        stream.open()
+        defer { stream.close() }
+        var body = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while true {
+            let count = stream.read(&buffer, maxLength: buffer.count)
+            guard count >= 0 else { throw stream.streamError ?? URLError(.cannotDecodeRawData) }
+            if count == 0 { return body }
+            body.append(contentsOf: buffer.prefix(count))
+        }
+    }
+}
 
 @MainActor
 @Suite(.sharedRuntimeIsolation)
@@ -29,6 +111,116 @@ struct PlaybackPoolResolverTests {
         let selection = FilterSelection()
         let result = try await resolver.resolve(selection: selection, targetCount: 100)
         #expect(result.isEmpty)
+    }
+
+    @Test(arguments: ["a", "b"])
+    func `an empty selected album reports no matching assets rather than no active rules`(fixtureName: String)
+        async throws
+    {
+        let fixture = FilterRuleFixture(name: fixtureName)
+        let albumID = "album-\(fixtureName)-empty"
+        let resolver = PlaybackPoolResolver()
+        resolver.albumsProviderForTesting = { fixture.albums }
+        resolver.randomAssetProviderForTesting = { _, _, _ in [] }
+
+        let result = try await resolver.resolveDetailed(selection: FilterSelection(albumIds: [albumID]), targetCount: 8)
+
+        #expect(result.emptyReason == .noMatchingAssets)
+    }
+
+    @Test(arguments: [false, true])
+    func `selected album and person rules reach the random search HTTP body without unrequested ids`(
+        isPersonSelection: Bool
+    ) async throws {
+        let fixture = FilterRuleFixture(name: "a")
+        let selectedID = isPersonSelection ? fixture.normalPersonID : fixture.targetAlbumID
+        let responseAssets = [fixture.assets[0]]
+        let responses = [
+            "/api/albums": try JSONEncoder().encode(fixture.albums),
+            "/api/people/\(fixture.normalPersonID)/statistics": Data(#"{"assets":1}"#.utf8),
+            "/api/search/random": try JSONEncoder().encode(responseAssets)
+        ]
+        try #require(FilterSearchURLProtocol.begin(responses: responses))
+        defer { FilterSearchURLProtocol.end() }
+        try #require(
+            LateLoadRealPathTestSupport.installIsolatedFixtureServer(
+                port: FilterSearchURLProtocol.port, credential: "filter-search-fixture"))
+
+        let selection =
+            isPersonSelection
+            ? FilterSelection(personFilters: [PersonFilter(personId: selectedID, matchMode: .normal)])
+            : FilterSelection(albumIds: [selectedID])
+        // Leave every resolver provider unset so the real API client builds and encodes the request.
+        let resolved = try await PlaybackPoolResolver().resolve(selection: selection, targetCount: 1)
+        #expect(resolved.map(\.id) == responseAssets.map(\.id))
+
+        let requests = FilterSearchURLProtocol.searchRequests()
+        try #require(!requests.isEmpty)
+        for request in requests {
+            #expect(request.httpMethod == "POST")
+            let body = try #require(try JSONSerialization.jsonObject(with: request.body) as? [String: Any])
+            let selectedKey = isPersonSelection ? "personIds" : "albumIds"
+            let unrequestedKey = isPersonSelection ? "albumIds" : "personIds"
+            #expect(body[selectedKey] as? [String] == [selectedID])
+            #expect(body[unrequestedKey] == nil)
+        }
+    }
+
+    @Test(.sharedPlaybackRuntimeIsolation, arguments: [false, true])
+    func `filtered playback initial load and refill retain the selected rules in every HTTP request`(
+        isPersonSelection: Bool
+    ) async throws {
+        let fixture = FilterRuleFixture(name: "a")
+        let selectedID = isPersonSelection ? fixture.normalPersonID : fixture.targetAlbumID
+        let initialAsset = makeSoloAsset(id: "initial-filtered", personId: fixture.normalPersonID)
+        let refillAsset = makeSoloAsset(id: "refill-filtered", personId: fixture.normalPersonID)
+        try #require(
+            FilterSearchURLProtocol.begin(responses: [
+                "/api/albums": try JSONEncoder().encode(fixture.albums),
+                "/api/people/\(fixture.normalPersonID)/statistics": Data(#"{"assets":2}"#.utf8),
+                "/api/search/random": try JSONEncoder().encode([initialAsset])
+            ]))
+        defer { FilterSearchURLProtocol.end() }
+        try #require(
+            LateLoadRealPathTestSupport.installIsolatedFixtureServer(
+                port: FilterSearchURLProtocol.port, credential: "filter-playback-fixture"))
+        var settings = PlaybackSettings()
+        settings.autoPlayEnabled = false
+        settings.displayMode = .singlePhoto
+        PlaybackSettingsStore().save(settings)
+        let selection =
+            isPersonSelection
+            ? FilterSelection(personFilters: [PersonFilter(personId: selectedID, matchMode: .normal)])
+            : FilterSelection(albumIds: [selectedID])
+        let viewModel = SlideShowViewModel(source: .filtered(selection))
+        // Stub image work only; pool acquisition must use the real loader, resolver and API client.
+        viewModel.initialPhotoLoadHookForTesting = { _ in }
+        viewModel.backgroundPreloadHookForTesting = { _, _, _ in }
+        viewModel.indexChangePhotoLoadHookForTesting = { _, _ in }
+        viewModel.transitionWindowPreloadHookForTesting = { _, _, _ in }
+
+        #expect(await viewModel.loadAssets())
+        #expect(viewModel.assets.map(\.id) == [initialAsset.id])
+        let initialRequests = FilterSearchURLProtocol.searchRequests()
+        try #require(!initialRequests.isEmpty)
+        for request in initialRequests {
+            #expect(request.httpMethod == "POST")
+            let body = try #require(try JSONSerialization.jsonObject(with: request.body) as? [String: Any])
+            #expect(body[isPersonSelection ? "personIds" : "albumIds"] as? [String] == [selectedID])
+            #expect(body[isPersonSelection ? "albumIds" : "personIds"] == nil)
+        }
+
+        FilterSearchURLProtocol.setSearchResponse(try JSONEncoder().encode([refillAsset]))
+        await viewModel.loadMoreAssets()
+        #expect(Set(viewModel.assets.map(\.id)) == [initialAsset.id, refillAsset.id])
+        let refillRequests = Array(FilterSearchURLProtocol.searchRequests().dropFirst(initialRequests.count))
+        try #require(!refillRequests.isEmpty)
+        for request in refillRequests {
+            #expect(request.httpMethod == "POST")
+            let body = try #require(try JSONSerialization.jsonObject(with: request.body) as? [String: Any])
+            #expect(body[isPersonSelection ? "personIds" : "albumIds"] as? [String] == [selectedID])
+            #expect(body[isPersonSelection ? "albumIds" : "personIds"] == nil)
+        }
     }
 
     @Test

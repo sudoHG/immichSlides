@@ -47,7 +47,7 @@ struct FilterSummaryViewIOS: View {
     }
 
     private var canStartPlayback: Bool {
-        viewModel.selection.isEmpty == false
+        viewModel.canStartPlayback
     }
 
     #if DEBUG

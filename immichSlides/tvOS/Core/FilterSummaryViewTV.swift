@@ -97,7 +97,7 @@ struct FilterSummaryViewTV: View {
     }
 
     private var canStartPlayback: Bool {
-        viewModel.selection.isEmpty == false
+        viewModel.canStartPlayback
     }
 
     private var preferredActionFocusTarget: FocusTarget? {

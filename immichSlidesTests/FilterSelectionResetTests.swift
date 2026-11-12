@@ -9,6 +9,82 @@ import Testing
 @Suite(.serialized, .sharedRuntimeIsolation)
 struct FilterSelectionResetTests {
 
+    @Test(arguments: [false, true])
+    func `start playback source preserves the current album or person selection`(isPersonSelection: Bool) throws {
+        let viewModel = FilterViewModel(store: InMemoryFilterSelectionStore())
+        if isPersonSelection {
+            viewModel.setPersonMatchMode(id: "selected-person", mode: .normal)
+        } else {
+            viewModel.toggleAlbum(id: "selected-album")
+        }
+        let expectedSelection = viewModel.selection
+        guard case .filtered(let selection) = viewModel.playbackSource else {
+            Issue.record("Start must use the selected filtered playback source")
+            return
+        }
+        #expect(selection == expectedSelection)
+    }
+
+    @Test(arguments: [false, true])
+    func `filtered playback is available only while an album or person remains selected`(isPersonSelection: Bool) {
+        let store = InMemoryFilterSelectionStore()
+        let viewModel = FilterViewModel(store: store)
+        #expect(!viewModel.canStartPlayback)
+
+        if isPersonSelection {
+            viewModel.setPersonMatchMode(id: "selected-person", mode: .soloOnly)
+        } else {
+            viewModel.toggleAlbum(id: "selected-album")
+        }
+        #expect(viewModel.canStartPlayback)
+        #expect(FilterViewModel(store: store).canStartPlayback)
+
+        if isPersonSelection {
+            viewModel.removeAllPersonSelection()
+        } else {
+            viewModel.removeAllAlbumSelection()
+        }
+        #expect(!viewModel.canStartPlayback)
+        #expect(!FilterViewModel(store: store).canStartPlayback)
+    }
+
+    @Test(.sharedPlaybackRuntimeIsolation, arguments: ["a", "b"])
+    func `playback entry reloads a stored changed album selection`(fixtureName: String)
+        async throws
+    {
+        let fixture = FilterRuleFixture(name: fixtureName)
+        var settings = PlaybackSettings()
+        settings.defaultPlaybackMode = .filtered
+        settings.autoPlayEnabled = false
+        PlaybackSettingsStore().save(settings)
+        let original = FilterSelection(albumIds: [fixture.targetAlbumID])
+        FilterSelectionStore().save(original)
+        let viewModel = SlideShowViewModel(source: .filtered(original))
+        viewModel.initialPhotoLoadHookForTesting = { _ in }
+        viewModel.backgroundPreloadHookForTesting = { _, _, _ in }
+        viewModel.loadAssetsHookForTesting = { source in
+            guard case .filtered(let selection) = source else {
+                Issue.record("Returning from a nonempty filter edit must keep filtered playback")
+                return []
+            }
+            switch selection.albumIds {
+            case [fixture.targetAlbumID]: return fixture.targetAlbumAssets
+            case ["album-\(fixtureName)-non-target"]: return Array(fixture.assets[3...4])
+            default: return []
+            }
+        }
+        await viewModel.loadAssets()
+        try #require(viewModel.assets.map(\.id) == fixture.targetAlbumAssets.map(\.id))
+
+        let replacement = FilterSelection(albumIds: ["album-\(fixtureName)-non-target"])
+        FilterSelectionStore().save(replacement)
+        viewModel.refreshPlaybackRelatedSettings(applyExifVisibility: { _ in }, applyDebugOverlayVisibility: { _ in })
+        try #require(
+            await waitUntil { !viewModel.isLoading && viewModel.assets.map(\.id) == fixture.assets[3...4].map(\.id) })
+        #expect(!viewModel.shouldReloadFilteredSource(for: replacement))
+        #expect(viewModel.currentPlaybackMode == .filtered)
+    }
+
     @Test(arguments: ["a", "b"])
     func `album picker toggles and bulk selection persist exact counts across returning`(fixtureName: String) async {
         let fixture = FilterRuleFixture(name: fixtureName)
