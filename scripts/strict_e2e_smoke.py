@@ -224,6 +224,9 @@ def execute_flow(flow, root, arguments, source_run, runner, evidence):
             host, port = runner.wait_for_service(ready, process, startup_log=startup)
             urls.append(f"http://{host}:{port}/api")
         fixture_payload = runner.write_fixture_artifacts(directory, "a")
+        if "b" in flow["fixtures"]:
+            write_json(directory / "fixture-manifest-b.json", runner.fixture_manifest("b"))
+            runner.write_member_manifest(directory / "member-manifest-b.json", "b")
         environment = runner.make_test_environment(os.environ, server_url=urls[0], public_key=PUBLIC_API_KEY,
                                                    server_url_b=urls[1] if len(urls) == 2 else None)
         environment["STRICT_E2E_EVIDENCE_DIR"] = str(directory)

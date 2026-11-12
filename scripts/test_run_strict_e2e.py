@@ -8105,6 +8105,38 @@ finally:
 
 
 class SmokeFlowResultTests(unittest.TestCase):
+    def test_stuck_smoke_records_the_first_failure_without_retrying_or_claiming_execution(self):
+        import plistlib
+        from types import SimpleNamespace
+        from strict_e2e_smoke import execute_flow
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source.xctestrun"
+            source.write_bytes(plistlib.dumps({"TestConfigurations": [{"TestTargets": [
+                {"BlueprintName": "immichSlidesUITests"}]}]}))
+            runner = SimpleNamespace(CommandError=CommandError, WRONG_PUBLIC_API_KEY=WRONG_PUBLIC_API_KEY,
+                read_source_sha=mock.Mock(return_value="a" * 40), destination_udid=mock.Mock(return_value="device"),
+                reset_simulator_app=mock.Mock(return_value="reset"), wait_for_service=mock.Mock(return_value=("127.0.0.1", 1234)),
+                write_fixture_artifacts=mock.Mock(return_value={"fixture_sha256": "b" * 64}),
+                make_test_environment=mock.Mock(return_value={}),
+                prepare_private_result_bundle_path=mock.Mock(return_value=root / "holding/result.xcresult"),
+                run_command=mock.Mock(side_effect=CommandError("xcodebuild timed out")),
+                export_private_result_bundle=mock.Mock(), stop_exact_process=mock.Mock(),
+                finalize_private_result_bundle=mock.Mock(return_value=[]))
+            arguments = SimpleNamespace(destination="platform=iOS Simulator,id=device", platform="ios",
+                                        configuration="Debug", simulator_boot_submitted=False)
+            flow = {"id": "iphone-first-boot", "selector": "SmokeFlowIOSUITests/testFirstBoot", "fixtures": ["a"]}
+            with mock.patch("strict_e2e_smoke.subprocess.Popen"), mock.patch("strict_e2e_smoke.sys.stderr", io.StringIO()):
+                result = execute_flow(flow, root, arguments, source, runner, root)
+            self.assertEqual(("FAIL", 124, "hang-guard", False),
+                             (result["outcome"], result["exit_code"], result["failure_kind"], result["official_execution_complete"]))
+            self.assertEqual("Smoke flow execution exceeded its hang guard.", result["first_public_failure_message"])
+            self.assertEqual(1, runner.run_command.call_count)
+            runner.export_private_result_bundle.assert_not_called()
+            self.assertEqual(1, runner.stop_exact_process.call_count)
+            saved = json.loads((root / flow["id"] / "case-manifest.json").read_text())
+            self.assertEqual(result, saved["flow"])
+
     def test_smoke_selects_the_whole_ordered_group_or_one_explicit_member(self):
         from strict_e2e_smoke import select_flows
         flows = [{"id": "a", "device": "iphone", "configuration": "Debug"},
