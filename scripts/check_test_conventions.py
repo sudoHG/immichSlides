@@ -1384,10 +1384,18 @@ def check_test_tier_plan(root: Path) -> list[Violation]:
 
 
 def check_smoke_manifest(root: Path) -> list[Violation]:
-    from strict_e2e_smoke import MANIFEST, load_manifest, validate_manifest
+    from strict_e2e_smoke import MANIFEST, load_manifest, validate_manifest, validate_exclusions
     try:
-        validate_manifest(*load_manifest(root))
-    except (ValueError, KeyError, OSError) as error:
+        manifest, planned, methods = load_manifest(root)
+        inventory = json.loads((root / TEST_TIER_PLAN_PATH).read_text())["inventory"]
+        flows = validate_manifest(manifest, planned, methods, inventory)
+        plans = {platform: {name: json.loads((root / name).read_text()) for name in (
+            f"immichSlides-{'iOS' if platform == 'ios' else 'tvOS'}.xctestplan",
+            f"immichSlides-Evidence-{'iOS' if platform == 'ios' else 'tvOS'}.xctestplan",
+            f"XcodeCloud-UI-{'iOS' if platform == 'ios' else 'tvOS'}.xctestplan")}
+            for platform in ("ios", "tvos")}
+        validate_exclusions(flows, methods, plans)
+    except (ValueError, KeyError, OSError, TypeError) as error:
         return [Violation(MANIFEST, 1, "smoke-manifest", "smoke flows", str(error))]
     return []
 

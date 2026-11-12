@@ -27,9 +27,9 @@ final class SmokeFlowIOSUITests: XCTestCase {
             try action(guardWait) { app.terminateForFailureEvidence() }
             try action(guardWait) { app.launchForFailureEvidence() }
             try playback(app, guardWait)
-            XCTAssertNil(
-                app.evidenceSnapshotsByIdentifier()["firstboot.serverURL.field"],
-                "Smoke flow: saved first boot must survive cold relaunch.")
+            try require(guardWait, "saved first boot must survive cold relaunch") {
+                app.evidenceSnapshotsByIdentifier()["firstboot.serverURL.field"] == nil
+            }
         }
     }
 
@@ -107,9 +107,9 @@ final class SmokeFlowIOSUITests: XCTestCase {
             }
             try tap(app, guardWait, "personFilter.back.button")
             try ready(app, guardWait, "filterSummary.startPlayback.button", enabled: true)
-            XCTAssertNil(
-                app.evidenceSnapshotsByIdentifier()["personFilter.back.button"],
-                "Smoke flow: Back must return from the person picker to the selected summary.")
+            try require(guardWait, "Back must return from the person picker to the selected summary") {
+                app.evidenceSnapshotsByIdentifier()["personFilter.back.button"] == nil
+            }
         }
     }
 
@@ -238,9 +238,9 @@ final class SmokeFlowIOSUITests: XCTestCase {
             try ready(app, guardWait, "pinEntry.close.button")
             try digits(app, guardWait, "123456")
             try ready(app, guardWait, "settings.item.playback")
-            XCTAssertNil(
-                app.evidenceSnapshotsByIdentifier()["pinEntry.close.button"],
-                "Smoke flow: the correct synthetic PIN must unlock Settings.")
+            try require(guardWait, "the correct synthetic PIN must unlock Settings") {
+                app.evidenceSnapshotsByIdentifier()["pinEntry.close.button"] == nil
+            }
         }
     }
 
@@ -319,7 +319,6 @@ final class SmokeFlowIOSUITests: XCTestCase {
             return
         }
         let observed = try snapshot(app, guardWait, identifier, enabled: true)
-        XCTAssertTrue(observed.isEnabled, "Smoke flow: target must be enabled before its single tap.")
         try action(guardWait) {
             // Native resolution follows keyboard/sidebar layout changes before the sole tap.
             app.descendants(matching: observed.elementType).matching(identifier: identifier)
@@ -333,7 +332,9 @@ final class SmokeFlowIOSUITests: XCTestCase {
             ("firstboot.serverURL.field", input.serverURL), ("firstboot.apiKey.field", input.publicKey)
         ] {
             try ready(app, guardWait, identifier)
-            let field = app.descendants(matching: .any).matching(identifier: identifier).firstMatch
+            let field =
+                identifier == "firstboot.serverURL.field"
+                ? app.textFields[identifier] : app.secureTextFields[identifier]
             var focused: XCUIElementSnapshot?
             try action(guardWait) {
                 focused = IOSFirstBootNavigation(app: app).focusTextField(field, identifier: identifier)

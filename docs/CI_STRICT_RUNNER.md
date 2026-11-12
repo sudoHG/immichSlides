@@ -8,6 +8,9 @@ Changing that manifest requires exact-head CI approval. The host conventions che
 compares every ID, device, platform, configuration and fixture list with the approved
 tier plan, rejects missing/duplicate flows, and resolves every selector against its
 compiled platform. The tier plan remains planning data; it does not select execution.
+The checker also binds each ID to its contracted smoke method, requires bidirectional
+smoke inventory links, and rejects smoke selectors in default, Evidence or Xcode Cloud
+plan populations. Legacy rows that will retire into smoke remain separate rows.
 
 ```bash
 python3 -B scripts/run_strict_e2e.py --suite smoke-flow --platform ios \
@@ -38,9 +41,11 @@ Each flow gets a fresh uninstall, keychain/privacy reset and public loopback fix
 TV server switching also starts B. No test or flow is retried, and smoke-flow grants
 no yellow outcome. Legacy suites, plans, matrix rows and assertions remain unchanged.
 
-One default unscaled **60-second** guard covers each iOS user path. The runner separately
-caps each native XCTest invocation at 180 seconds and enables XCTest's execution
-timeout at the same value. A stuck action records a failed flow and a nonzero suite
+Each iOS flow starts a default unscaled **60-second** navigation guard and passes it
+to its own steps. Existing first-boot helpers retain their own bounded navigation
+and keyboard-focus guards. XCTest's method allowance is **100 seconds**, with an
+explicit **80-second** launch/runner overhead budget: the native invocation cap is
+**180 seconds**. A stuck action records a failed flow and a nonzero suite
 exit; simulator reset, fixture preparation and official export retain their separate
 infrastructure bounds. `elapsed_seconds` measures native XCTest invocation time;
 `total_elapsed_seconds` also includes preparation/export/cleanup.
@@ -66,16 +71,23 @@ not an established App cause. Official completeness requires exactly the selecte
 method once, one passed or failed official execution, no skips and consistent summary
 counts. A failed method can be complete; passing still requires all official facts
 and exit zero. `source_sha` is the tested checkout commit in both root files and each
-flow; the warm identity separately binds source content. Local snapshots also retain
+flow; `source_dirty_paths` must be `[]` in the tested checkout. The warm identity separately binds source content. Local snapshots also retain
 `local-snapshot.json` with the caller commit, tested snapshot commit and tree SHA.
 
 Every flow retains the complete fixture request logs, including on failure, under
-`<flow-id>/private/service-a.log` and (when selected) `service-b.log`. These files are
+`<evidence-parent>/private/<evidence-name>/<flow-id>/service-a.log` and (when selected)
+`service-b.log`, outside the public evidence directory. These files are
 private evidence, not public records; the server's existing redaction stays intact.
 The public `request_logs` map contains only fixture key, availability state, byte count,
 SHA-256 and completed request count. It never contains request lines, URLs or headers.
-Consumers publish only the public records and approved official exports; they must
-not recursively publish the private evidence directory.
+Both root records start with `result: RUNNING, exit_code: null`. Their final verdict
+is written after warm-product validation and the sensitive scan; a late exception
+rewrites both to `FAILED`. The root official summary is written after those gates.
+Shadow consumers call `strict_e2e_smoke.validate_group_evidence(evidence_path,
+manifest["flows"], device, configuration, expected_source_sha=sha)` rather than counting
+PASS strings. It requires a complete ordered group, clean source binding and matching
+passing official exports; single-flow, missing, skipped, altered or failed evidence
+raises `ValueError` (unreadable files raise `OSError`). The function returns the records.
 
 Smoke classes are excluded from default fixture plans, hence PR area selection and
 complete nightly fixture shards. Core-area entries account for the source inventory
@@ -2550,6 +2562,7 @@ New enum meanings and why the previous vocabulary cannot express them:
 
 | Fixed source prefix | Phase | Class | Public source |
 |---|---|---|---|
+| `Smoke flow: ` | `unknown` | `control_state` | [SmokeFlowIOSUITests.swift](../immichSlidesUITests/SmokeFlowIOSUITests.swift); suffixes are discarded because steps span first boot, PIN, filters, playback and settings |
 | `System Reduce Motion command: ` | `settings_navigation` | `control_state` | [HostReduceMotionSetting in ReduceMotionUITests.swift](../immichSlidesUITests/ReduceMotionUITests.swift) |
 | `App Reduce Motion: ` | `settings_navigation` | `control_state` | [HostReduceMotionSetting.confirm in ReduceMotionUITests.swift](../immichSlidesUITests/ReduceMotionUITests.swift) |
 | `The app did not return to the foreground after changing system Reduce Motion.` | `settings_navigation` | `control_state` | [bringToForeground in ReduceMotionUITests.swift](../immichSlidesUITests/ReduceMotionUITests.swift) |
