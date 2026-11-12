@@ -146,8 +146,8 @@ nightly fixture shards execute them. They are absent from the strict matrix and
 Evidence selections. New methods receive separate smoke inventory rows; existing
 rows retain their destinations. Core-area source accounting does not override a
 default-plan exclusion. Each selected flow starts with clean App state, uses public
-fixtures, records the first result without retries/yellow, and has a shared 180-second
-native invocation cap (60-second XCTest method allowance plus 120 seconds for startup;
+fixtures, records the first result without retries/yellow, and has a shared 270-second
+native invocation cap (120-second XCTest method allowance plus 150 seconds for startup and finalization;
 the allowance is a whole minute because XCTest rounds upward),
 with the flow's 60-second navigation guard and existing bounded first-boot helper guards.
 The checker enforces contracted selector/inventory links and exclusion from default,

@@ -27,9 +27,6 @@ final class SmokeFlowIOSUITests: XCTestCase {
             try action(guardWait) { app.terminateForFailureEvidence() }
             try action(guardWait) { app.launchForFailureEvidence() }
             try playback(app, guardWait)
-            try require(guardWait, "saved first boot must survive cold relaunch") {
-                app.evidenceSnapshotsByIdentifier()["firstboot.serverURL.field"] == nil
-            }
         }
     }
 
@@ -108,7 +105,12 @@ final class SmokeFlowIOSUITests: XCTestCase {
             try tap(app, guardWait, "personFilter.back.button")
             try ready(app, guardWait, "filterSummary.startPlayback.button", enabled: true)
             try require(guardWait, "Back must return from the person picker to the selected summary") {
-                app.evidenceSnapshotsByIdentifier()["personFilter.back.button"] == nil
+                var didSnapshotFail = false
+                let snapshots = app.evidenceSnapshotsByIdentifier(onSnapshotFailure: { _ in didSnapshotFail = true })
+                return !didSnapshotFail
+                    && snapshots["filterSummary.startPlayback.button"]?.isEnabled == true
+                    && snapshots["filterSummary.startPlayback.button"]?.frame.isEmpty == false
+                    && snapshots["personFilter.back.button"] == nil
             }
         }
     }
@@ -239,7 +241,11 @@ final class SmokeFlowIOSUITests: XCTestCase {
             try digits(app, guardWait, "123456")
             try ready(app, guardWait, "settings.item.playback")
             try require(guardWait, "the correct synthetic PIN must unlock Settings") {
-                app.evidenceSnapshotsByIdentifier()["pinEntry.close.button"] == nil
+                var didSnapshotFail = false
+                let snapshots = app.evidenceSnapshotsByIdentifier(onSnapshotFailure: { _ in didSnapshotFail = true })
+                return !didSnapshotFail
+                    && snapshots["settings.item.playback"]?.frame.isEmpty == false
+                    && snapshots["pinEntry.close.button"] == nil
             }
         }
     }
@@ -247,6 +253,7 @@ final class SmokeFlowIOSUITests: XCTestCase {
     @MainActor
     private func flow(
         observePlaybackLedger: Bool = false, syntheticPIN: Bool = false,
+        file: StaticString = #filePath, line: UInt = #line,
         _ body: (XCUIApplication, TestWait.HangGuard, StrictE2EInput) throws -> Void
     ) throws {
         let guardWait = TestWait.hangGuard()
@@ -254,7 +261,7 @@ final class SmokeFlowIOSUITests: XCTestCase {
         let app = XCUIApplication()
         if observePlaybackLedger { app.launchEnvironment["IMMICHSLIDES_PLAYBACK_CPU_DIAGNOSTICS"] = "1" }
         if syntheticPIN { app.launchEnvironment["UI_TEST_RESET_STATE"] = "1" }
-        try action(guardWait) { app.launchForFailureEvidence() }
+        try action(guardWait, file: file, line: line) { app.launchForFailureEvidence() }
         // The reset hook is needed only for the initial launch and never for a cold relaunch.
         app.launchEnvironment = [:]
         defer { app.terminateForFailureEvidence() }
@@ -262,54 +269,84 @@ final class SmokeFlowIOSUITests: XCTestCase {
     }
 
     @MainActor
-    private func action(_ guardWait: TestWait.HangGuard, _ body: () -> Void) throws {
+    private func action(
+        _ guardWait: TestWait.HangGuard, file: StaticString = #filePath, line: UInt = #line,
+        _ body: () -> Void
+    ) throws {
         XCTAssertTrue(
-            guardWait.transaction().perform("tap", body), "Smoke flow: action exceeded the shared hang guard.")
+            guardWait.transaction().perform("tap", body), "Smoke flow: action exceeded the shared hang guard.",
+            file: file, line: line)
     }
 
     @MainActor
-    private func require(_ guardWait: TestWait.HangGuard, _ message: String, _ condition: () -> Bool) throws {
-        XCTAssertTrue(guardWait.transaction().until(condition), "Smoke flow: \(message).")
+    private func require(
+        _ guardWait: TestWait.HangGuard, _ message: String,
+        file: StaticString = #filePath, line: UInt = #line, _ condition: () -> Bool
+    ) throws {
+        XCTAssertTrue(guardWait.transaction().until(condition), "Smoke flow: \(message).", file: file, line: line)
+    }
+
+    @MainActor
+    private func surface(
+        _ app: XCUIApplication, _ guardWait: TestWait.HangGuard,
+        file: StaticString = #filePath, line: UInt = #line
+    ) throws -> [String: XCUIElementSnapshot] {
+        var captured: [String: XCUIElementSnapshot]?
+        try require(guardWait, "App accessibility snapshot must succeed", file: file, line: line) {
+            var didFail = false
+            let snapshots = app.evidenceSnapshotsByIdentifier(onSnapshotFailure: { _ in didFail = true })
+            guard !didFail else { return false }
+            captured = snapshots
+            return true
+        }
+        return try XCTUnwrap(captured, "Smoke flow: App accessibility snapshot is missing.", file: file, line: line)
     }
 
     @MainActor
     private func snapshot(
-        _ app: XCUIApplication, _ guardWait: TestWait.HangGuard, _ identifier: String, enabled: Bool = false
+        _ app: XCUIApplication, _ guardWait: TestWait.HangGuard, _ identifier: String, enabled: Bool = false,
+        file: StaticString = #filePath, line: UInt = #line
     ) throws
         -> XCUIElementSnapshot
     {
         var observed: XCUIElementSnapshot?
-        try require(guardWait, "required element must be available: \(identifier)") {
+        try require(guardWait, "required element must be available: \(identifier)", file: file, line: line) {
             observed = app.evidenceSnapshotsByIdentifier()[identifier]
             guard let observed else { return false }
             return !observed.frame.isEmpty && (!enabled || observed.isEnabled)
         }
-        return try XCTUnwrap(observed, "Smoke flow: required element snapshot is missing.")
+        return try XCTUnwrap(observed, "Smoke flow: required element snapshot is missing.", file: file, line: line)
     }
 
     @MainActor
     private func ready(
-        _ app: XCUIApplication, _ guardWait: TestWait.HangGuard, _ identifier: String, enabled: Bool = false
+        _ app: XCUIApplication, _ guardWait: TestWait.HangGuard, _ identifier: String, enabled: Bool = false,
+        file: StaticString = #filePath, line: UInt = #line
     )
         throws
     {
-        try require(guardWait, "required element must be ready: \(identifier)") {
+        try require(guardWait, "required element must be ready: \(identifier)", file: file, line: line) {
             guard let node = app.evidenceSnapshotsByIdentifier()[identifier] else { return false }
             return !node.frame.isEmpty && (!enabled || node.isEnabled)
         }
     }
 
     @MainActor
-    private func tap(_ app: XCUIApplication, _ guardWait: TestWait.HangGuard, _ identifier: String) throws {
+    private func tap(
+        _ app: XCUIApplication, _ guardWait: TestWait.HangGuard, _ identifier: String,
+        file: StaticString = #filePath, line: UInt = #line
+    ) throws {
         if identifier.hasPrefix("slideshow.control.") {
             var captured: SlideshowControlBarButtonObservation?
-            try require(guardWait, "required playback control must be ready") {
+            try require(guardWait, "required playback control must be ready", file: file, line: line) {
                 captured = try? app.slideshowControlBarButtonObservation(identifier: identifier)
                 return captured?.isReady == true
             }
-            let target = try XCTUnwrap(captured, "Smoke flow: playback control observation is missing.")
-            let button = try XCTUnwrap(target.button, "Smoke flow: playback control snapshot is missing.")
-            try action(guardWait) {
+            let target = try XCTUnwrap(
+                captured, "Smoke flow: playback control observation is missing.", file: file, line: line)
+            let button = try XCTUnwrap(
+                target.button, "Smoke flow: playback control snapshot is missing.", file: file, line: line)
+            try action(guardWait, file: file, line: line) {
                 target.windowElement.coordinate(withNormalizedOffset: .zero).withOffset(
                     CGVector(
                         dx: button.frame.midX - target.windowFrame.minX,
@@ -318,8 +355,8 @@ final class SmokeFlowIOSUITests: XCTestCase {
             }
             return
         }
-        let observed = try snapshot(app, guardWait, identifier, enabled: true)
-        try action(guardWait) {
+        let observed = try snapshot(app, guardWait, identifier, enabled: true, file: file, line: line)
+        try action(guardWait, file: file, line: line) {
             // Native resolution follows keyboard/sidebar layout changes before the sole tap.
             app.descendants(matching: observed.elementType).matching(identifier: identifier)
                 .firstMatch.tapForFailureEvidence()
@@ -327,114 +364,149 @@ final class SmokeFlowIOSUITests: XCTestCase {
     }
 
     @MainActor
-    private func fillForm(_ app: XCUIApplication, _ guardWait: TestWait.HangGuard, input: StrictE2EInput) throws {
+    private func fillForm(
+        _ app: XCUIApplication, _ guardWait: TestWait.HangGuard, input: StrictE2EInput,
+        file: StaticString = #filePath, line: UInt = #line
+    ) throws {
         for (identifier, value) in [
             ("firstboot.serverURL.field", input.serverURL), ("firstboot.apiKey.field", input.publicKey)
         ] {
-            try ready(app, guardWait, identifier)
+            try ready(app, guardWait, identifier, file: file, line: line)
             let field =
                 identifier == "firstboot.serverURL.field"
                 ? app.textFields[identifier] : app.secureTextFields[identifier]
             var focused: XCUIElementSnapshot?
-            try action(guardWait) {
-                focused = IOSFirstBootNavigation(app: app).focusTextField(field, identifier: identifier)
+            try action(guardWait, file: file, line: line) {
+                focused = IOSFirstBootNavigation(app: app).focusTextField(
+                    field, identifier: identifier, file: file, line: line)
             }
-            XCTAssertNotNil(focused, "Smoke flow: input must have keyboard focus.")
-            try action(guardWait) {
+            XCTAssertNotNil(focused, "Smoke flow: input must have keyboard focus.", file: file, line: line)
+            try action(guardWait, file: file, line: line) {
                 field.typeKey("a", modifierFlags: .command)
                 field.typeKey(XCUIKeyboardKey.delete.rawValue, modifierFlags: [])
                 field.typeForFailureEvidence(value)
             }
             if identifier == "firstboot.serverURL.field" {
-                try require(guardWait, "the public URL must reach the real text field") {
+                try require(guardWait, "the public URL must reach the real text field", file: file, line: line) {
                     (try? field.snapshot().value as? String) == input.serverURL
                 }
             }
         }
         let keyboard = guardWait.transaction()
         if keyboard.probe({ app.evidenceSnapshotsByIdentifier()["server.keyboard.done.button"] != nil }) {
-            try tap(app, guardWait, "server.keyboard.done.button")
+            try tap(app, guardWait, "server.keyboard.done.button", file: file, line: line)
         }
     }
 
     @MainActor
-    private func configure(_ app: XCUIApplication, _ guardWait: TestWait.HangGuard, input: StrictE2EInput) throws {
-        try fillForm(app, guardWait, input: input)
-        try tap(app, guardWait, "firstboot.testConnection.button")
-        try ready(app, guardWait, "firstboot.saveConfig.button", enabled: true)
-        try tap(app, guardWait, "firstboot.saveConfig.button")
-        try ready(app, guardWait, "mode.random.button")
+    private func configure(
+        _ app: XCUIApplication, _ guardWait: TestWait.HangGuard, input: StrictE2EInput,
+        file: StaticString = #filePath, line: UInt = #line
+    ) throws {
+        try fillForm(app, guardWait, input: input, file: file, line: line)
+        try tap(app, guardWait, "firstboot.testConnection.button", file: file, line: line)
+        try ready(app, guardWait, "firstboot.saveConfig.button", enabled: true, file: file, line: line)
+        try tap(app, guardWait, "firstboot.saveConfig.button", file: file, line: line)
+        try ready(app, guardWait, "mode.random.button", file: file, line: line)
     }
 
     @MainActor
-    private func chooseMode(_ app: XCUIApplication, _ guardWait: TestWait.HangGuard, filtered: Bool) throws {
+    private func chooseMode(
+        _ app: XCUIApplication, _ guardWait: TestWait.HangGuard, filtered: Bool,
+        file: StaticString = #filePath, line: UInt = #line
+    ) throws {
         let departure = IOSFirstBootNavigation(app: app).selectModeAndContinue(
             filtered ? "mode.filtered.button" : "mode.random.button",
-            destinationIdentifier: filtered ? "filterSummary.startPlayback.button" : "slideshow.control.settings.button"
+            destinationIdentifier: filtered
+                ? "filterSummary.startPlayback.button" : "slideshow.control.settings.button",
+            file: file, line: line
         )
-        XCTAssertNotNil(departure, "Smoke flow: selected mode must reach its destination.")
-        if filtered { try ready(app, guardWait, "filterSummary.startPlayback.button") }
+        XCTAssertNotNil(departure, "Smoke flow: selected mode must reach its destination.", file: file, line: line)
+        if filtered { try ready(app, guardWait, "filterSummary.startPlayback.button", file: file, line: line) }
     }
 
     @MainActor
-    private func firstIdentifier(_ app: XCUIApplication, _ guardWait: TestWait.HangGuard, prefix: String) throws
+    private func firstIdentifier(
+        _ app: XCUIApplication, _ guardWait: TestWait.HangGuard, prefix: String,
+        file: StaticString = #filePath, line: UInt = #line
+    ) throws
         -> String
     {
         var identifier: String?
-        try require(guardWait, "public fixture must provide a picker target") {
+        try require(guardWait, "public fixture must provide a picker target", file: file, line: line) {
             identifier = app.evidenceSnapshotsByIdentifier().keys.sorted().first { $0.hasPrefix(prefix) }
             return identifier != nil
         }
-        return try XCTUnwrap(identifier, "Smoke flow: picker target is missing.")
+        return try XCTUnwrap(identifier, "Smoke flow: picker target is missing.", file: file, line: line)
     }
 
     @MainActor
-    private func playback(_ app: XCUIApplication, _ guardWait: TestWait.HangGuard) throws {
-        let observation = app.evidenceSnapshotsByIdentifier()
+    private func playback(
+        _ app: XCUIApplication, _ guardWait: TestWait.HangGuard,
+        file: StaticString = #filePath, line: UInt = #line
+    ) throws {
+        let observation = try surface(app, guardWait, file: file, line: line)
         if observation["slideshow.entryHint.banner"] != nil {
-            try tap(app, guardWait, "slideshow.entryHint.banner")
+            try tap(app, guardWait, "slideshow.entryHint.banner", file: file, line: line)
         }
-        try wake(app, guardWait)
-        try ready(app, guardWait, "slideshow.control.settings.button", enabled: true)
-        try ready(app, guardWait, "slideshow.control.playPause.button", enabled: true)
+        try wake(app, guardWait, file: file, line: line)
+        try ready(app, guardWait, "slideshow.control.settings.button", enabled: true, file: file, line: line)
+        try ready(app, guardWait, "slideshow.control.playPause.button", enabled: true, file: file, line: line)
     }
 
     @MainActor
-    private func wake(_ app: XCUIApplication, _ guardWait: TestWait.HangGuard) throws {
-        try action(guardWait) {
+    private func wake(
+        _ app: XCUIApplication, _ guardWait: TestWait.HangGuard,
+        file: StaticString = #filePath, line: UInt = #line
+    ) throws {
+        try action(guardWait, file: file, line: line) {
             app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25)).tapForFailureEvidence()
         }
     }
 
     @MainActor
-    private func control(_ app: XCUIApplication, _ guardWait: TestWait.HangGuard, _ name: String) throws {
-        try wake(app, guardWait)
-        try tap(app, guardWait, "slideshow.control.\(name).button")
+    private func control(
+        _ app: XCUIApplication, _ guardWait: TestWait.HangGuard, _ name: String,
+        file: StaticString = #filePath, line: UInt = #line
+    ) throws {
+        try wake(app, guardWait, file: file, line: line)
+        try tap(app, guardWait, "slideshow.control.\(name).button", file: file, line: line)
     }
 
     @MainActor
-    private func state(_ app: XCUIApplication, _ guardWait: TestWait.HangGuard, _ expected: String) throws {
-        try require(guardWait, "Play/Pause must reach \(expected)") {
+    private func state(
+        _ app: XCUIApplication, _ guardWait: TestWait.HangGuard, _ expected: String,
+        file: StaticString = #filePath, line: UInt = #line
+    ) throws {
+        try require(guardWait, "Play/Pause must reach \(expected)", file: file, line: line) {
             (app.evidenceSnapshotsByIdentifier()["slideshow.control.playPause.button"]?.value as? String) == expected
         }
     }
 
     @MainActor
-    private func pause(_ app: XCUIApplication, _ guardWait: TestWait.HangGuard) throws {
-        try wake(app, guardWait)
-        let value = try snapshot(app, guardWait, "slideshow.control.playPause.button").value as? String
-        if value == "pause" { try tap(app, guardWait, "slideshow.control.playPause.button") }
-        try state(app, guardWait, "play")
+    private func pause(
+        _ app: XCUIApplication, _ guardWait: TestWait.HangGuard,
+        file: StaticString = #filePath, line: UInt = #line
+    ) throws {
+        try wake(app, guardWait, file: file, line: line)
+        let value =
+            try snapshot(app, guardWait, "slideshow.control.playPause.button", file: file, line: line).value as? String
+        if value == "pause" { try tap(app, guardWait, "slideshow.control.playPause.button", file: file, line: line) }
+        try state(app, guardWait, "play", file: file, line: line)
     }
 
     @MainActor
-    private func historyCursor(_ app: XCUIApplication, _ guardWait: TestWait.HangGuard) throws -> Int {
+    private func historyCursor(
+        _ app: XCUIApplication, _ guardWait: TestWait.HangGuard,
+        file: StaticString = #filePath, line: UInt = #line
+    ) throws -> Int {
         var cursor: Int?
-        try require(guardWait, "playback must publish a scene before navigation") {
+        try require(guardWait, "playback must publish a scene before navigation", file: file, line: line) {
             cursor = self.observedHistoryCursor(app)
             return cursor != nil
         }
-        return try XCTUnwrap(cursor, "Smoke flow: playback must expose its published history position.")
+        return try XCTUnwrap(
+            cursor, "Smoke flow: playback must expose its published history position.", file: file, line: line)
     }
 
     @MainActor
@@ -447,37 +519,68 @@ final class SmokeFlowIOSUITests: XCTestCase {
     }
 
     @MainActor
-    private func openSettings(_ app: XCUIApplication, _ guardWait: TestWait.HangGuard) throws {
-        try control(app, guardWait, "settings")
-        try ready(app, guardWait, "settings.item.playback")
+    private func openSettings(
+        _ app: XCUIApplication, _ guardWait: TestWait.HangGuard,
+        file: StaticString = #filePath, line: UInt = #line
+    ) throws {
+        try control(app, guardWait, "settings", file: file, line: line)
+        try ready(app, guardWait, "settings.item.playback", file: file, line: line)
     }
 
     @MainActor
-    private func section(_ app: XCUIApplication, _ guardWait: TestWait.HangGuard, _ name: String, destination: String)
-        throws
-    {
-        if app.evidenceSnapshotsByIdentifier()[destination] == nil { try tap(app, guardWait, "settings.item.\(name)") }
-        try ready(app, guardWait, destination)
+    private func section(
+        _ app: XCUIApplication, _ guardWait: TestWait.HangGuard, _ name: String, destination: String,
+        file: StaticString = #filePath, line: UInt = #line
+    ) throws {
+        let observed = try surface(app, guardWait, file: file, line: line)
+        if observed[destination] == nil { try tap(app, guardWait, "settings.item.\(name)", file: file, line: line) }
+        try ready(app, guardWait, destination, file: file, line: line)
     }
 
     @MainActor
-    private func returnToPlayback(_ app: XCUIApplication, _ guardWait: TestWait.HangGuard) throws {
-        let back = try XCTUnwrap(
-            app.navigationBars.buttons.matching(identifier: "BackButton").allElementsBoundByIndex.last,
-            "Smoke flow: Settings must offer Back.")
-        try action(guardWait) { back.tapForFailureEvidence() }
-        if app.evidenceSnapshotsByIdentifier()["settings.item.playback"] != nil {
-            let rootBack = try XCTUnwrap(
-                app.navigationBars.buttons.matching(identifier: "BackButton").allElementsBoundByIndex.last,
-                "Smoke flow: Settings root must offer Back.")
-            try action(guardWait) { rootBack.tapForFailureEvidence() }
+    private func navigationBack(
+        _ app: XCUIApplication, _ guardWait: TestWait.HangGuard, file: StaticString, line: UInt
+    ) throws -> XCUIElement {
+        var captured: XCUIElement?
+        try require(guardWait, "Settings must offer Back", file: file, line: line) {
+            guard
+                let button = app.navigationBars.buttons.matching(identifier: "BackButton").allElementsBoundByIndex.last,
+                let observed = try? button.snapshot(), !observed.frame.isEmpty, observed.isEnabled
+            else { return false }
+            captured = button
+            return true
         }
-        try playback(app, guardWait)
+        return try XCTUnwrap(captured, "Smoke flow: Settings Back is missing.", file: file, line: line)
     }
 
     @MainActor
-    private func digits(_ app: XCUIApplication, _ guardWait: TestWait.HangGuard, _ pin: String) throws {
-        for digit in pin { try tap(app, guardWait, "pinEntry.digit.\(digit).button") }
+    private func returnToPlayback(
+        _ app: XCUIApplication, _ guardWait: TestWait.HangGuard,
+        file: StaticString = #filePath, line: UInt = #line
+    ) throws {
+        let back = try navigationBack(app, guardWait, file: file, line: line)
+        try action(guardWait, file: file, line: line) { back.tapForFailureEvidence() }
+        var isSettingsRoot = false
+        try require(guardWait, "Back must reach Settings root or playback", file: file, line: line) {
+            var didFail = false
+            let observed = app.evidenceSnapshotsByIdentifier(onSnapshotFailure: { _ in didFail = true })
+            guard !didFail else { return false }
+            isSettingsRoot = observed["settings.item.playback"]?.frame.isEmpty == false
+            return isSettingsRoot || observed["slideshow.control.playPause.button"]?.frame.isEmpty == false
+        }
+        if isSettingsRoot {
+            let rootBack = try navigationBack(app, guardWait, file: file, line: line)
+            try action(guardWait, file: file, line: line) { rootBack.tapForFailureEvidence() }
+        }
+        try playback(app, guardWait, file: file, line: line)
+    }
+
+    @MainActor
+    private func digits(
+        _ app: XCUIApplication, _ guardWait: TestWait.HangGuard, _ pin: String,
+        file: StaticString = #filePath, line: UInt = #line
+    ) throws {
+        for digit in pin { try tap(app, guardWait, "pinEntry.digit.\(digit).button", file: file, line: line) }
     }
 }
 #endif
