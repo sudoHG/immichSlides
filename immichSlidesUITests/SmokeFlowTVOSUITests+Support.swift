@@ -109,11 +109,18 @@ extension SmokeFlowTVOSUITests {
         }
         for _ in 0..<16 {
             var observation: Observation?
+            var didAwaitInitialFocus = false
             try tvSmokeExpect(app, guardWait: guardWait, file: file, line: line, step: "focus observation") {
-                guard $0.nodes[identifier] != nil, $0.allNodes.contains(where: { $0.hasFocus }) else { return false }
+                guard $0.nodes[identifier] != nil else { return false }
+                guard $0.allNodes.contains(where: { $0.hasFocus }) else {
+                    didAwaitInitialFocus = true
+                    return false
+                }
                 observation = $0
                 return true
             }
+            // Preserve the prior fresh read after the initial focus handoff, before issuing a direction.
+            if didAwaitInitialFocus { continue }
             guard let current = observation, let target = current.nodes[identifier] else {
                 try tvSmokeFail("focus observation", file: file, line: line)
             }
