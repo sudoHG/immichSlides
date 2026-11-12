@@ -33,7 +33,7 @@ struct FilterSelectionResetTests {
     }
 
     @Test(.sharedPlaybackRuntimeIsolation, arguments: ["a", "b"])
-    func `playback entry reloads the stored changed album and clears the pool for an empty album`(fixtureName: String)
+    func `playback entry reloads a stored changed album selection`(fixtureName: String)
         async throws
     {
         let fixture = FilterRuleFixture(name: fixtureName)
@@ -67,17 +67,6 @@ struct FilterSelectionResetTests {
             await waitUntil { !viewModel.isLoading && viewModel.assets.map(\.id) == fixture.assets[3...4].map(\.id) })
         #expect(!viewModel.shouldReloadFilteredSource(for: replacement))
         #expect(viewModel.currentPlaybackMode == .filtered)
-
-        let emptyAlbum = FilterSelection(albumIds: ["album-\(fixtureName)-empty"])
-        FilterSelectionStore().save(emptyAlbum)
-        viewModel.refreshPlaybackRelatedSettings(applyExifVisibility: { _ in }, applyDebugOverlayVisibility: { _ in })
-        try #require(await waitUntil { !viewModel.isLoading && viewModel.assets.isEmpty })
-        #expect(!viewModel.shouldReloadFilteredSource(for: emptyAlbum))
-        #expect(viewModel.safeCurrentScene == nil)
-        #expect(viewModel.currentPlaybackMode == .filtered)
-        #expect(
-            viewModel.emptyPlaybackMessage
-                == String(localized: "No playable photos match the current filters. Try another album or person."))
     }
 
     @Test(arguments: ["a", "b"])

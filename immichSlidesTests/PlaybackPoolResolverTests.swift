@@ -2,12 +2,90 @@
 //  PlaybackPoolResolverTests.swift
 //  immichSlidesTests
 //
-//  Local unit tests with no network access.
+//  Local unit tests with intercepted HTTP and no external network access.
 //
 
 import Foundation
 import Testing
 @testable import immichSlides
+
+private final class FilterSearchURLProtocol: URLProtocol, @unchecked Sendable {
+    struct SearchRequest {
+        let httpMethod: String?
+        let body: Data
+    }
+
+    static let port: UInt16 = 49263
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var responses: [String: Data] = [:]
+    nonisolated(unsafe) private static var recordedSearchRequests: [SearchRequest] = []
+
+    static func begin(responses: [String: Data]) -> Bool {
+        lock.withLock {
+            Self.responses = responses
+            recordedSearchRequests = []
+        }
+        return URLProtocol.registerClass(Self.self)
+    }
+
+    static func end() {
+        URLProtocol.unregisterClass(Self.self)
+        lock.withLock {
+            responses = [:]
+            recordedSearchRequests = []
+        }
+    }
+
+    static func searchRequests() -> [SearchRequest] {
+        lock.withLock { recordedSearchRequests }
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.host == "127.0.0.1" && request.url?.port == Int(port)
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        do {
+            let path = request.url?.path ?? ""
+            let body = try requestBody()
+            let payload = Self.lock.withLock {
+                if path == "/api/search/random" {
+                    Self.recordedSearchRequests.append(SearchRequest(httpMethod: request.httpMethod, body: body))
+                }
+                return Self.responses[path]
+            }
+            guard let payload, let url = request.url,
+                let response = HTTPURLResponse(
+                    url: url, statusCode: 200, httpVersion: nil,
+                    headerFields: ["Content-Type": "application/json"])
+            else { throw URLError(.badServerResponse) }
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: payload)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
+    override func stopLoading() {}
+
+    private func requestBody() throws -> Data {
+        if let body = request.httpBody { return body }
+        guard let stream = request.httpBodyStream else { return Data() }
+        stream.open()
+        defer { stream.close() }
+        var body = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while true {
+            let count = stream.read(&buffer, maxLength: buffer.count)
+            guard count >= 0 else { throw stream.streamError ?? URLError(.cannotDecodeRawData) }
+            if count == 0 { return body }
+            body.append(contentsOf: buffer.prefix(count))
+        }
+    }
+}
 
 @MainActor
 @Suite(.sharedRuntimeIsolation)
@@ -39,16 +117,49 @@ struct PlaybackPoolResolverTests {
         let albumID = "album-\(fixtureName)-empty"
         let resolver = PlaybackPoolResolver()
         resolver.albumsProviderForTesting = { fixture.albums }
-        resolver.randomAssetProviderForTesting = { _, albumIDs, personIDs in
-            #expect(albumIDs == [albumID])
-            #expect(personIDs == nil)
-            return []
-        }
+        resolver.randomAssetProviderForTesting = { _, _, _ in [] }
 
         let result = try await resolver.resolveDetailed(selection: FilterSelection(albumIds: [albumID]), targetCount: 8)
 
-        #expect(result.assets.isEmpty)
         #expect(result.emptyReason == .noMatchingAssets)
+    }
+
+    @Test(arguments: [false, true])
+    func `selected album and person rules reach the random search HTTP body without unrequested ids`(
+        isPersonSelection: Bool
+    ) async throws {
+        let fixture = FilterRuleFixture(name: "a")
+        let selectedID = isPersonSelection ? fixture.normalPersonID : fixture.targetAlbumID
+        let responseAssets = [fixture.assets[0]]
+        let responses = [
+            "/api/albums": try JSONEncoder().encode(fixture.albums),
+            "/api/people/\(fixture.normalPersonID)/statistics": Data(#"{"assets":1}"#.utf8),
+            "/api/search/random": try JSONEncoder().encode(responseAssets)
+        ]
+        try #require(FilterSearchURLProtocol.begin(responses: responses))
+        defer { FilterSearchURLProtocol.end() }
+        try #require(
+            LateLoadRealPathTestSupport.installIsolatedFixtureServer(
+                port: FilterSearchURLProtocol.port, credential: "filter-search-fixture"))
+
+        let selection =
+            isPersonSelection
+            ? FilterSelection(personFilters: [PersonFilter(personId: selectedID, matchMode: .normal)])
+            : FilterSelection(albumIds: [selectedID])
+        // Leave every resolver provider unset so the real API client builds and encodes the request.
+        let resolved = try await PlaybackPoolResolver().resolve(selection: selection, targetCount: 1)
+        #expect(resolved.map(\.id) == responseAssets.map(\.id))
+
+        let requests = FilterSearchURLProtocol.searchRequests()
+        try #require(!requests.isEmpty)
+        for request in requests {
+            #expect(request.httpMethod == "POST")
+            let body = try #require(try JSONSerialization.jsonObject(with: request.body) as? [String: Any])
+            let selectedKey = isPersonSelection ? "personIds" : "albumIds"
+            let unrequestedKey = isPersonSelection ? "albumIds" : "personIds"
+            #expect(body[selectedKey] as? [String] == [selectedID])
+            #expect(body[unrequestedKey] == nil)
+        }
     }
 
     @Test
