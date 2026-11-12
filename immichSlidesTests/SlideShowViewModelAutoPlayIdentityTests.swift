@@ -198,9 +198,10 @@ struct SlideShowViewModelAutoPlayIdentityTests {
         #expect(viewModel.safeCurrentScene?.primaryAssetId == "autoplay-2")
     }
 
-    @Test(arguments: [8.0])
+    @Test(arguments: [(8.0, 12.0)])
     func `a settings refresh applies autoplay changes to a non observing player without replacing its scene`(
-        interval: TimeInterval
+        interval: TimeInterval,
+        updatedInterval: TimeInterval
     ) throws {
         let sharedStore = PlaybackSettingsStore()
         let savedSharedSettings = sharedStore.load()
@@ -215,12 +216,14 @@ struct SlideShowViewModelAutoPlayIdentityTests {
         let scene = try #require(viewModel.safeCurrentScene)
         var settings = try #require(store.load())
         settings.autoPlayEnabled = false
+        settings.intervalSeconds = updatedInterval
         store.save(settings)
         #expect(viewModel.isAutoPlay)
 
         viewModel.refreshPlaybackRelatedSettings(
             applyExifVisibility: { _ in }, applyDebugOverlayVisibility: { _ in })
         #expect(!viewModel.isAutoPlay)
+        #expect(viewModel.autoPlayInterval == updatedInterval)
         #expect(viewModel.sceneRenderSnapshot.phase == .paused)
         #expect(viewModel.safeCurrentScene?.id == scene.id)
         #expect(viewModel.scenePresentationWakeUpScheduler.scheduledDeadlineForTesting == nil)
@@ -240,6 +243,15 @@ struct SlideShowViewModelAutoPlayIdentityTests {
         #expect(resumedLayer.opacity == pausedLayer.opacity)
         let deadline = try #require(viewModel.scenePresentationWakeUpScheduler.scheduledDeadlineForTesting)
         #expect(abs(deadline - clock.now - interval) < 0.0001)
+
+        // The current scene keeps its frozen interval; the next settled scene uses the newly applied interval.
+        clock.now = deadline
+        #expect(viewModel.fireScheduledScenePresentationWakeUpForTesting() == deadline)
+        completeCurrentScenePresentation(viewModel, clock: clock)
+        #expect(viewModel.safeCurrentScene?.primaryAssetId == "autoplay-1")
+        #expect(viewModel.sceneRenderSnapshot.frozenInterval == updatedInterval)
+        let updatedDeadline = try #require(viewModel.scenePresentationWakeUpScheduler.scheduledDeadlineForTesting)
+        #expect(abs(updatedDeadline - clock.now - updatedInterval) < 0.0001)
     }
 
     @Test(arguments: [false, true])

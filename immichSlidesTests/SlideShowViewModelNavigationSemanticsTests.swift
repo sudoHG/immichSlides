@@ -185,6 +185,7 @@ struct SlideShowViewModelNavigationSemanticsTests {
         await vm.firstPreload()
         let failedLayer = try #require(vm.sceneRenderSnapshot.layers.last { $0.role == .incoming })
         #expect(vm.safeCurrentScene?.primaryAssetId == "recovery-0")
+        #expect(vm.visibleOverlayScene == nil)
         failSceneRendererThroughRetryBudget(layer: failedLayer, viewModel: vm)
         try #require(await waitUntilForTesting { vm.safeCurrentScene?.primaryAssetId == "recovery-1" })
         completeCurrentScenePresentation(vm)
