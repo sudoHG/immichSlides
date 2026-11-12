@@ -152,7 +152,10 @@ the allowance is a whole minute because XCTest rounds upward),
 with the flow's 60-second navigation guard and existing bounded first-boot helper guards.
 The checker enforces contracted selector/inventory links and exclusion from default,
 Evidence and Xcode Cloud populations. Shadow evidence must pass `validate_group_evidence`,
-including the final verdict, complete ordered group, clean source and official exports. See the runner
+including the final verdict, complete ordered group, clean source and official exports.
+Late group gates invalidate affected passing flows while preserving each already
+failed flow's first failure kind and exit code; both roots also retain `group_failures`.
+See the runner
 guide for commands, evidence fields and Release/PIN limits.
 
 ## 0. When to write a test

@@ -99,12 +99,20 @@ raises `ValueError` (unreadable files raise `OSError`). The function returns the
 `expected_source_sha` is a required keyword argument supplied from the admitted
 checkout, not from the evidence being checked. A product gate invalidates every flow;
 a sensitive-scan gate uses `matched_files` to invalidate the owning flows, or the whole
-group when a match has no flow owner. Both flow records and their case manifests become
-FAIL/FAILED with the gate-specific kind; official native summaries stay unchanged.
+group when a match has no flow owner. An affected passing flow and its case manifest
+become FAIL/FAILED with the gate-specific kind. A flow that already failed keeps its
+first failure kind and exit code, including native test exit 65 or hang-guard exit 124;
+official native summaries stay unchanged. Both root files separately append the late
+gate to `group_failures` with its kind, exit code and affected flow IDs. The group exits
+2, and the validator rejects any nonempty `group_failures`, even if other fields claim
+success. Aggregation errors use `official-result`; final write errors use
+`evidence-finalization`.
 
 Helpers forward `file`/`line` to the flow's own assertion call site. `failure_locations`
 is null when unavailable, otherwise the existing reviewed projection of at most three
 project-relative Swift paths and positive line numbers, bound to the record's source SHA.
+Absolute failure paths must first match a known compilation-root string prefix
+(including the macOS `/private` alias) before filesystem resolution.
 Warm smoke receipts retain their compilation root privately in DerivedData so local
 reuse can normalize official locations after the compilation snapshot is removed;
 the absolute root is excluded from public warm-up JSON. No new failure-prefix vocabulary
