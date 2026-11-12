@@ -1035,6 +1035,51 @@ class SmokeManifestTests(unittest.TestCase):
                     patch.object(conv, "repository_timeout_inventory", return_value=[]):
                 self.assertEqual(1, conv.main(["--root", temporary]))
 
+    def test_main_checks_inventory_and_plan_exclusion_after_a_valid_compiled_manifest(self):
+        import io
+        from contextlib import redirect_stdout
+        from strict_e2e_smoke import MANIFEST
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "scripts").mkdir()
+            (root / "immichSlidesUITests").mkdir()
+            (root / "immichSlidesUITests/SmokeFlowIOSUITests.swift").write_text(
+                '#if os(iOS)\nfinal class SmokeFlowIOSUITests: XCTestCase {\nfunc testFirstBoot() {}\n}\n#endif\n')
+            selector = "SmokeFlowIOSUITests/testFirstBoot"
+            flow = {"id": "iphone-first-boot", "platform": "ios", "device": "iphone", "configuration": "Debug",
+                    "fixtures": ["a"], "selector": selector}
+            (root / MANIFEST).write_text(json.dumps({"schema_version": 1, "flows": [flow]}))
+            plan = {"smoke_flows": [{"id": flow["id"], "device": "iphone", "configuration": "Debug", "fixture": "a"}],
+                    "inventory": [{"kind": "ui", "identifier": selector, "target_home": "smoke", "smoke_flows": [flow["id"]]}]}
+            tier_path = root / "scripts/ci-test-tiers.json"
+            tier_path.write_text(json.dumps(plan))
+            for suffix in ("iOS", "tvOS"):
+                for stem, fields in (("immichSlides-", {"skippedTests": ["SmokeFlowIOSUITests", "SmokeFlowTVOSUITests"]}),
+                                     ("immichSlides-Evidence-", {"selectedTests": ["LegacyUITests"]}),
+                                     ("XcodeCloud-UI-", {"selectedTests": ["LegacyUITests"]})):
+                    (root / (stem + suffix + ".xctestplan")).write_text(json.dumps({"testTargets": [
+                        {"target": {"name": "immichSlidesUITests"}, **fields}]}))
+            with patch.object(conv, "check_repository", return_value=[]), patch.object(conv, "check_test_tier_plan", return_value=[]), \
+                    patch.object(conv, "repository_timeout_inventory", return_value=[]):
+                with redirect_stdout(io.StringIO()):
+                    self.assertEqual(0, conv.main(["--root", temporary]))
+                invalid = copy.deepcopy(plan)
+                invalid["inventory"][0]["target_home"] = "unit"
+                tier_path.write_text(json.dumps(invalid))
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    self.assertEqual(1, conv.main(["--root", temporary]))
+                self.assertIn("smoke-manifest-inventory", output.getvalue())
+                tier_path.write_text(json.dumps(plan))
+                path = root / "immichSlides-iOS.xctestplan"
+                leaked = json.loads(path.read_text())
+                leaked["testTargets"][0]["skippedTests"] = []
+                path.write_text(json.dumps(leaked))
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    self.assertEqual(1, conv.main(["--root", temporary]))
+                self.assertIn("smoke-manifest-exclusion", output.getvalue())
+
 
 class RepositoryTests(unittest.TestCase):
     def test_target_tier_plan_rejects_population_drift_and_unproved_coverage(self):

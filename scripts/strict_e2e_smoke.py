@@ -14,8 +14,8 @@ import time
 
 MANIFEST = "scripts/smoke-flows.json"
 # XCTest rounds method allowances up to whole minutes.
-METHOD_TIMEOUT_SECONDS = 60
-STARTUP_OVERHEAD_SECONDS = 120
+METHOD_TIMEOUT_SECONDS = 120
+STARTUP_OVERHEAD_SECONDS = 150
 FLOW_TIMEOUT_SECONDS = METHOD_TIMEOUT_SECONDS + STARTUP_OVERHEAD_SECONDS
 FLOW_METHODS = {
     "album-selection": "testAlbumSelection", "background-return": "testBackgroundReturn",
@@ -105,7 +105,7 @@ def validate_exclusions(flows, methods, plans):
                 raise ValueError(f"smoke-manifest-exclusion: {name} includes {sorted(leaked)!r}")
 
 
-def validate_group_evidence(evidence, flows, device, configuration, *, expected_source_sha=None):
+def validate_group_evidence(evidence, flows, device, configuration, *, expected_source_sha):
     """Return complete ordered first-result records, or fail closed for shadow consumers."""
     evidence = Path(evidence)
     case = json.loads((evidence / "case-manifest.json").read_text())
@@ -120,7 +120,7 @@ def validate_group_evidence(evidence, flows, device, configuration, *, expected_
     sha = case.get("source_sha")
     if not isinstance(sha, str) or len(sha) != 40 or any(c not in "0123456789abcdef" for c in sha):
         raise ValueError("smoke-group-evidence: invalid source SHA")
-    if result.get("source_sha") != sha or expected_source_sha is not None and sha != expected_source_sha:
+    if result.get("source_sha") != sha or sha != expected_source_sha:
         raise ValueError("smoke-group-evidence: source SHA differs")
     records = result.get("flows", [])
     if ([record.get("id") for record in records] != [flow["id"] for flow in selected]
@@ -188,6 +188,61 @@ def select_flows(flows, device, configuration, flow_id=None):
     return selected
 
 
+def fail_gate_flows(evidence, records, gate):
+    """Keep flow verdicts consistent with the evidence gate that invalidated them."""
+    affected = {record["id"] for record in records}
+    if gate == "sensitive-scan":
+        try:
+            matched = json.loads((evidence / "sensitive-scan.json").read_text())["matched_files"]
+            owners = [Path(path).parts[0] if isinstance(path, str) and path and not Path(path).is_absolute()
+                      and ".." not in Path(path).parts else None for path in matched]
+            if owners and all(owner in affected for owner in owners):
+                affected = set(owners)
+        except (OSError, ValueError, KeyError, TypeError, IndexError):
+            pass  # An unlocalised privacy failure invalidates the whole group.
+    for record in records:
+        if record["id"] in affected:
+            record.update(outcome="FAIL", exit_code=2, failure_kind=gate)
+    for record in records:
+        if record["id"] in affected:
+            path = evidence / record["id"] / "case-manifest.json"
+            case = json.loads(path.read_text())
+            case.update(flow=record, result="FAILED", exit_code=2)
+            write_json(path, case)
+
+
+def flow_failure_locations(tests, selector, source_roots):
+    """Project only reviewed relative source coordinates from the selected official failure."""
+    from ci_bounded_diagnostics import MAX_FAILURE_LOCATIONS, public_failure_locations
+    locations = []
+    roots = {Path(root).resolve() for root in source_roots if isinstance(root, (str, Path))}
+    def visit(node, selected=False):
+        if not isinstance(node, dict):
+            return
+        if node.get("nodeType") == "Test Case":
+            identifier = node.get("nodeIdentifier")
+            selected = node.get("result") == "Failed" and isinstance(identifier, str) and identifier.removesuffix("()") == selector
+        if selected and node.get("nodeType") == "Failure Message":
+            source = node.get("sourceLocation", {})
+            source = source if isinstance(source, dict) else {}
+            path = source.get("filePath")
+            if isinstance(path, str) and Path(path).is_absolute():
+                for root in roots:
+                    try:
+                        relative = Path(path).resolve().relative_to(root).as_posix()
+                    except (OSError, ValueError, RuntimeError):
+                        continue
+                    value = {"path": relative, "line": source.get("lineNumber")}
+                    if public_failure_locations([value]) is not None and value not in locations:
+                        locations.append(value)
+                        break
+        for child in node.get("children", []):
+            visit(child, selected)
+    for node in tests.get("testNodes", []):
+        visit(node)
+    return public_failure_locations(locations[:MAX_FAILURE_LOCATIONS])
+
+
 def run(arguments, root, runner, stdout, stderr):
     """Reuse strict privacy/reset/export contracts without legacy visual judges or retries."""
     from strict_e2e_build import load_warm_build, validate_paths, validate_warm_products, warm_up
@@ -247,17 +302,21 @@ def run(arguments, root, runner, stdout, stderr):
                 "configuration": case["configuration"], "selection": case["selection"],
                 "result": case["result"], "exit_code": case["exit_code"], "flows": records})
         write_state()
+        gate = None
         try:
             if case["source_dirty_paths"] != []:
                 raise runner.CommandError("smoke-flow requires a clean tested checkout")
             code = 0
             for flow in selected:
-                record = execute_flow(flow, root, arguments, source_run, runner, evidence)
+                record = execute_flow(flow, root, arguments, source_run, runner, evidence,
+                                      build_source_root=receipt.get("source_root", str(root)))
                 records.append(record)
                 code = code or record["exit_code"]
                 write_state()
                 print(f"{flow['id']}: {record['outcome']} ({record['elapsed_seconds']:.3f}s)", file=stdout, flush=True)
+            gate = "warm-products"
             validate_warm_products(derived, receipt)
+            gate = "official-result"
             summaries = [json.loads((evidence / flow["id"] / "official-summary.json").read_text())
                          for flow in selected if (evidence / flow["id"] / "official-summary.json").is_file()]
             if len(summaries) != len(selected):
@@ -271,29 +330,36 @@ def run(arguments, root, runner, stdout, stderr):
             write_json(evidence / "official-tests.json", tests)
             case["official_tests_sha256"] = hashlib.sha256((evidence / "official-tests.json").read_bytes()).hexdigest()
             if owned_derived is not None:
+                gate = "build-cleanup"
                 cleanup_path, owned_derived = owned_derived, None
                 shutil.rmtree(cleanup_path)
+            gate = "sensitive-scan"
             runner.write_sensitive_scan(evidence, [PUBLIC_API_KEY, runner.WRONG_PUBLIC_API_KEY])
+            gate = "evidence-finalization"
             write_json(evidence / "official-summary.json", summary)
             case.update(result="Passed" if code == 0 else "FAILED", exit_code=code, official_summary=summary)
             write_state()
             return code
         except BaseException as error:
             case.update(result="FAILED", exit_code=getattr(error, "code", 2) or 2)
-            summary_path = evidence / "official-summary.json"
-            if summary_path.is_file():
-                summary = json.loads(summary_path.read_text())
-                summary["result"] = "Failed"
-                write_json(summary_path, summary)
-                case["official_summary"] = summary
-            write_state()
+            try:
+                if gate is not None:
+                    fail_gate_flows(evidence, records, gate)
+                summary_path = evidence / "official-summary.json"
+                if summary_path.is_file():
+                    summary = json.loads(summary_path.read_text())
+                    summary["result"] = "Failed"
+                    write_json(summary_path, summary)
+                    case["official_summary"] = summary
+            finally:
+                write_state()
             raise
     finally:
         if owned_derived is not None:
             shutil.rmtree(owned_derived)
 
 
-def execute_flow(flow, root, arguments, source_run, runner, evidence):
+def execute_flow(flow, root, arguments, source_run, runner, evidence, *, build_source_root=None):
     from strict_e2e_build import prepare_test_run, warm_test_command
     from strict_e2e_server import PUBLIC_API_KEY
     directory = evidence / flow["id"]
@@ -303,6 +369,7 @@ def execute_flow(flow, root, arguments, source_run, runner, evidence):
               "source_sha": runner.read_source_sha(root), "source_dirty_paths": runner.read_source_dirty_paths(root),
               "failure_kind": "infrastructure",
               "official_execution_complete": False, "official_summary": None, "official_tests_sha256": None,
+              "failure_locations": None,
               "elapsed_seconds": 0, "first_public_failure_message": None, "exit_code": 2}
     private_evidence = evidence.parent / "private" / evidence.name / flow["id"]
     private_evidence.mkdir(mode=0o700, parents=True)
@@ -317,10 +384,12 @@ def execute_flow(flow, root, arguments, source_run, runner, evidence):
         for fixture in flow["fixtures"]:
             ready = directory / f"service-{fixture}-ready.json"
             startup = directory / f"service-{fixture}-startup.log"
+            peer = [name for name in flow["fixtures"] if name != fixture]
+            peer_arguments = ["--peer-fixture-set", peer[0]] if peer else []
             with startup.open("wb") as output:
                 process = subprocess.Popen([sys.executable, str(root / "scripts/strict_e2e_server.py"),
                     "--host", "127.0.0.1", "--port", "0", "--fixture-set", fixture, "--scenario", "normal",
-                    "--ready-file", str(ready), "--log-file", str(private_evidence / f"service-{fixture}.log")],
+                    "--ready-file", str(ready), "--log-file", str(private_evidence / f"service-{fixture}.log"), *peer_arguments],
                     cwd=root, stdout=output, stderr=subprocess.DEVNULL)
             processes.append(process)
             host, port = runner.wait_for_service(ready, process, startup_log=startup)
@@ -355,6 +424,8 @@ def execute_flow(flow, root, arguments, source_run, runner, evidence):
         exported = True
         summary = json.loads((directory / "official-summary.json").read_text())
         public_tests = json.loads((directory / "official-tests.json").read_text())
+        record["failure_locations"] = flow_failure_locations(public_tests, flow["selector"],
+                                                             [root, build_source_root or root])
         failures = []
         def visit(node):
             if isinstance(node, dict):

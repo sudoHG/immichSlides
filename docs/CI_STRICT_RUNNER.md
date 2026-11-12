@@ -44,9 +44,10 @@ no yellow outcome. Legacy suites, plans, matrix rows and assertions remain uncha
 Each iOS flow starts a default unscaled **60-second** navigation guard and passes it
 to its own steps. Existing first-boot helpers retain their own bounded navigation
 and keyboard-focus guards. XCTest rounds method allowances up to whole minutes;
-the method allowance is **60 seconds**, with an explicit **120-second** launch/runner
-overhead budget: the native invocation cap is
-**180 seconds**. A stuck action records a failed flow and a nonzero suite
+the method allowance is **120 seconds**, with an explicit **150-second** budget for
+launch, timeout diagnostics and result finalization. The native invocation cap is
+**270 seconds**. This exceeds the initial 180-second target so XCTest can finish its
+own timeout and preserve the official failed execution. A stuck action records a failed flow and a nonzero suite
 exit; simulator reset, fixture preparation and official export retain their separate
 infrastructure bounds. `elapsed_seconds` measures native XCTest invocation time;
 `total_elapsed_seconds` also includes preparation/export/cleanup.
@@ -60,14 +61,16 @@ official evidence remains a failure. Public messages use the existing redacted f
 projection. Original result bundles remain private and follow the strict disposal path.
 Screenshots, recordings, pixels, glyphs and second-level product windows are not smoke
 judges. The Debug iOS controls flow reads the existing published history AX probe,
-so repeated photos in different scenes cannot masquerade as a lost Next action; Release flows
+so repeated photos in different scenes cannot masquerade as a lost Next action. The flag
+is DEBUG-gated and also enables request-lifecycle bookkeeping; Release flows
 use real controls and persistence without DEBUG hooks. Synthetic PIN smoke uses the
 existing Debug UserDefaults path and does not prove production Keychain behavior.
 
 The per-flow record additionally carries `source_sha`, `failure_kind`,
 `official_execution_complete`, `official_summary`, `official_tests_sha256` and
 `request_logs`. `failure_kind` is `none`, `test`, `hang-guard`, `infrastructure`,
-`official-result` or `cleanup`; `test` means an officially failed selected method,
+`official-result`, `cleanup`, `warm-products`, `sensitive-scan`, `build-cleanup`,
+or `evidence-finalization`; `test` means an officially failed selected method,
 not an established App cause. Official completeness requires exactly the selected
 method once, one passed or failed official execution, no skips and consistent summary
 counts. A failed method can be complete; passing still requires all official facts
@@ -81,6 +84,10 @@ Every flow retains the complete fixture request logs, including on failure, unde
 private evidence, not public records; the server's existing redaction stays intact.
 The public `request_logs` map contains only fixture key, availability state, byte count,
 SHA-256 and completed request count. It never contains request lines, URLs or headers.
+For a dual-fixture smoke invocation, each server receives the other fixture's known
+synthetic IDs. A request for a peer asset still returns 404; only its private log gains
+`fixture_asset_id=peer:A1` or `peer:B1` (the peer's public synthetic label). Arbitrary
+IDs remain redacted. The public request-log projection is unchanged.
 Both root records start with `result: RUNNING, exit_code: null`. Their final verdict
 is written after warm-product validation and the sensitive scan; a late exception
 rewrites both to `FAILED`. The root official summary is written after those gates.
@@ -89,6 +96,20 @@ manifest["flows"], device, configuration, expected_source_sha=sha)` rather than 
 PASS strings. It requires a complete ordered group, clean source binding and matching
 passing official exports; single-flow, missing, skipped, altered or failed evidence
 raises `ValueError` (unreadable files raise `OSError`). The function returns the records.
+`expected_source_sha` is a required keyword argument supplied from the admitted
+checkout, not from the evidence being checked. A product gate invalidates every flow;
+a sensitive-scan gate uses `matched_files` to invalidate the owning flows, or the whole
+group when a match has no flow owner. Both flow records and their case manifests become
+FAIL/FAILED with the gate-specific kind; official native summaries stay unchanged.
+
+Helpers forward `file`/`line` to the flow's own assertion call site. `failure_locations`
+is null when unavailable, otherwise the existing reviewed projection of at most three
+project-relative Swift paths and positive line numbers, bound to the record's source SHA.
+Warm smoke receipts retain their compilation root privately in DerivedData so local
+reuse can normalize official locations after the compilation snapshot is removed;
+the absolute root is excluded from public warm-up JSON. No new failure-prefix vocabulary
+is introduced: iOS and TV assertions both use `Smoke flow: <step>.`, projected to the
+single reviewed `Smoke flow: ` prefix with phase `unknown` and class `control_state`.
 
 Smoke classes are excluded from default fixture plans, hence PR area selection and
 complete nightly fixture shards. Core-area entries account for the source inventory
