@@ -73,7 +73,10 @@ struct SlideShowViewModelCacheReloadTests {
         await fixture.vm.forceReloadCurrentAssetAfterCacheClear()
         #expect(manager.isReady(assetId: fixture.currentId, size: .fullsize))
         #expect(manager.isReady(assetId: fixture.currentId, size: .preview))
-        #expect(http.completedCount(assetId: fixture.currentId) == 2)
+        #expect(
+            http.completedCount(assetId: fixture.currentId) == 2,
+            "First reload observedAtUptime=\(ProcessInfo.processInfo.systemUptime) requests=\(http.completedRequests().map(\.path))"
+        )
         let fullsizeURL = try #require(manager.findURL(assetId: fixture.currentId, size: .fullsize))
         let previewURL = try #require(manager.findURL(assetId: fixture.currentId, size: .preview))
         #expect(SDImageCache.shared.diskImageDataExists(withKey: fullsizeURL.absoluteString))
@@ -92,13 +95,22 @@ struct SlideShowViewModelCacheReloadTests {
 
         #expect(manager.isReady(assetId: fixture.currentId, size: .fullsize))
         #expect(manager.isReady(assetId: fixture.currentId, size: .preview))
-        #expect(http.completedCount(assetId: fixture.currentId) == 4)
+        #expect(
+            http.completedCount(assetId: fixture.currentId) == 4,
+            "Second reload observedAtUptime=\(ProcessInfo.processInfo.systemUptime) requests=\(http.completedRequests().map(\.path))"
+        )
         #expect(http.enteredCount(assetId: fixture.neighborId) == 0)
         #expect(fixture.vm.safeCurrentScene?.primaryAssetId == fixture.currentId)
-        let requests = http.completedRequests()
-        #expect(requests.filter { $0.path.hasSuffix("size=fullsize") }.count == 2)
-        #expect(requests.filter { $0.path.hasSuffix("size=preview") }.count == 2)
-        #expect(requests.allSatisfy { $0.apiKey == LateLoadRealPathFixture.fixtureCredential })
+        let allRequests = http.completedRequests()
+        // Late traffic can belong to other tests; the size counts describe this fixture's current photo.
+        let requests = allRequests.filter { $0.assetId == fixture.currentId }
+        let requestDiagnostic =
+            "ObservedAtUptime=\(ProcessInfo.processInfo.systemUptime) requests=\(allRequests.map(\.path))"
+        #expect(requests.count == 4, "\(requestDiagnostic)")
+        #expect(!allRequests.contains { $0.assetId == fixture.neighborId }, "\(requestDiagnostic)")
+        #expect(requests.filter { $0.path.hasSuffix("size=fullsize") }.count == 2, "\(requestDiagnostic)")
+        #expect(requests.filter { $0.path.hasSuffix("size=preview") }.count == 2, "\(requestDiagnostic)")
+        #expect(allRequests.allSatisfy { $0.apiKey == LateLoadRealPathFixture.fixtureCredential })
     }
 
     @Test
@@ -202,9 +214,11 @@ struct SlideShowViewModelCacheReloadTests {
         let vm = makeIsolatedViewModel()
         #expect(vm.downloadManager === AssetsDownloadManager.shared)
 
-        let currentId = "current"
-        let neighborId = "neighbor"
-        let currentURL = URL(fileURLWithPath: "/tmp/immichslides-cache-reload-current.jpg")
+        // The singleton keys downloads by asset ID, so each fixture needs its own namespace.
+        let runId = UUID().uuidString
+        let currentId = "cache-current-\(runId)"
+        let neighborId = "cache-neighbor-\(runId)"
+        let currentURL = URL(fileURLWithPath: "/tmp/immichslides-cache-reload-\(runId).jpg")
         // setURL lives in a private extension, so the test can only write the existing public dictionaries.
         vm.downloadManager.assetURLs[currentId] = currentURL
         vm.downloadManager.assetPreviewURLs[currentId] = currentURL
@@ -356,17 +370,8 @@ struct SlideShowViewModelCacheReloadTests {
     }
 
     private func resetSharedDownloadManager(_ downloadManager: AssetsDownloadManager) {
-        downloadManager.assetStates = [:]
-        downloadManager.assetPreviewStates = [:]
-        downloadManager.assetThumbnailStates = [:]
-        downloadManager.assetURLs = [:]
-        downloadManager.assetPreviewURLs = [:]
-        downloadManager.assetThumbnailURLs = [:]
+        LateLoadRealPathTestSupport.resetDownloadManager(downloadManager)
         downloadManager.resetPlaybackImageRequestLifecycleDiagnostics()
-        downloadManager.clearSeededRunningPhotoLoadForTesting(assetId: "current", size: .fullsize)
-        downloadManager.clearSeededRunningPhotoLoadForTesting(assetId: "current", size: .preview)
-        downloadManager.clearSeededRunningPhotoLoadForTesting(assetId: "neighbor", size: .fullsize)
-        downloadManager.clearSeededRunningPhotoLoadForTesting(assetId: "neighbor", size: .preview)
     }
 }
 #endif
