@@ -127,14 +127,16 @@ struct ContentView: View {
 
     @State private var shouldShowSettingsPage: Bool = false
 
-    @StateObject private var slideShowVM: SlideShowViewModel
+    @StateObject private var playbackCoordinator: ContentPlaybackCoordinator
+    private var slideShowVM: SlideShowViewModel { playbackCoordinator.viewModel }
     @StateObject private var onboardingFilterVM = FilterViewModel()
 
     init() {
         // On cold launch, create the VM from the saved mode so default random and filtered loads do not compete.
 
-        _slideShowVM = StateObject(
-            wrappedValue: SlideShowViewModel(source: Self.initialPlaybackSourceForColdLaunch())
+        _playbackCoordinator = StateObject(
+            wrappedValue: ContentPlaybackCoordinator(
+                viewModel: SlideShowViewModel(source: Self.initialPlaybackSourceForColdLaunch()))
         )
     }
 
@@ -248,8 +250,7 @@ struct ContentView: View {
                 SettingsView()
                     .onDisappear {
                         Task {
-                            await slideShowVM.firstPreload()
-                            await slideShowVM.forceReloadCurrentAssetAfterCacheClear()
+                            await playbackCoordinator.settingsDidDisappear()
                         }
                     }
             }
@@ -269,7 +270,11 @@ struct ContentView: View {
         }
         .onAppear {
             initializeFlowIfNeeded()
+            playbackCoordinator.route = flow.route
             syncAccessProtectionState()
+        }
+        .onChange(of: flow.route) { _, route in
+            playbackCoordinator.route = route
         }
         .onReceive(NotificationCenter.default.publisher(for: .accessProtectionStateDidChange)) { _ in
             syncAccessProtectionState()

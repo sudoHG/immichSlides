@@ -28,6 +28,7 @@ struct LateLoadRecordedRequest: Sendable, Equatable {
     let assetId: String?
     let host: String?
     let apiKey: String?
+    let body: Data
 }
 
 final class LateLoadLocalHTTPFixture: Sendable {
@@ -42,6 +43,7 @@ final class LateLoadLocalHTTPFixture: Sendable {
         var port: UInt16 = 0
         var boundHost: String?
         var isUsingSystemAssignedPort = false
+        var randomAssetsResponse: Data?
     }
 
     private let stateLock = OSAllocatedUnfairLock(initialState: State())
@@ -196,6 +198,10 @@ final class LateLoadLocalHTTPFixture: Sendable {
         }
     }
 
+    func setRandomAssetsResponse(_ response: Data) {
+        stateLock.withLock { $0.randomAssetsResponse = response }
+    }
+
     func enteredRequests() -> [LateLoadRecordedRequest] {
         stateLock.withLock { $0.entered }
     }
@@ -291,9 +297,20 @@ final class LateLoadLocalHTTPFixture: Sendable {
                 return
             }
             let headerData = next.subdata(in: next.startIndex..<headerRange.lowerBound)
-            guard let headerText = String(data: headerData, encoding: .utf8),
-                let parsed = Self.parseHTTPRequest(headerText)
-            else {
+            guard let headerText = String(data: headerData, encoding: .utf8) else {
+                self.send(status: 400, body: Data(), on: connection)
+                return
+            }
+            let contentLength =
+                headerText.components(separatedBy: "\r\n").first {
+                    $0.lowercased().hasPrefix("content-length:")
+                }.flatMap { Int($0.dropFirst("content-length:".count).trimmingCharacters(in: .whitespaces)) } ?? 0
+            guard next.count - headerRange.upperBound >= contentLength else {
+                self.receiveRequest(on: connection, buffer: next)
+                return
+            }
+            let body = next.subdata(in: headerRange.upperBound..<(headerRange.upperBound + contentLength))
+            guard let parsed = Self.parseHTTPRequest(headerText, body: body) else {
                 self.send(status: 400, body: Data(), on: connection)
                 return
             }
@@ -325,12 +342,16 @@ final class LateLoadLocalHTTPFixture: Sendable {
         }
 
         let jsonResponse: Data?
+        let randomAssetsResponse = stateLock.withLock { $0.randomAssetsResponse } ?? self.randomAssetsResponse
         switch request.path.split(separator: "?").first.map(String.init) {
         case "/api/search/random": jsonResponse = randomAssetsResponse
         case "/api/api-keys/me" where randomAssetsResponse != nil:
             jsonResponse = Data(#"{"permissions":["all"]}"#.utf8)
         case "/api/albums" where randomAssetsResponse != nil: jsonResponse = Data("[]".utf8)
         case "/api/people" where randomAssetsResponse != nil: jsonResponse = Data(#"{"people":[]}"#.utf8)
+        case let path?
+        where randomAssetsResponse != nil && path.hasPrefix("/api/people/") && path.hasSuffix("/statistics"):
+            jsonResponse = Data(#"{"assets":12}"#.utf8)
         default: jsonResponse = nil
         }
         let body =
@@ -371,7 +392,7 @@ final class LateLoadLocalHTTPFixture: Sendable {
             })
     }
 
-    private static func parseHTTPRequest(_ headerText: String) -> LateLoadRecordedRequest? {
+    private static func parseHTTPRequest(_ headerText: String, body: Data) -> LateLoadRecordedRequest? {
         let lines = headerText.split(whereSeparator: \.isNewline).map {
             $0.trimmingCharacters(in: .whitespacesAndNewlines)
         }
@@ -392,7 +413,8 @@ final class LateLoadLocalHTTPFixture: Sendable {
             path: path,
             assetId: assetId(from: path),
             host: headers["host"],
-            apiKey: headers["x-api-key"]
+            apiKey: headers["x-api-key"],
+            body: body
         )
     }
 

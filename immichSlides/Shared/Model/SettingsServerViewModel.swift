@@ -245,7 +245,8 @@ final class SettingsServerViewModel: ObservableObject {
                 // Clear cross-server state only when the config really changed, so saving again does not wipe filters.
 
                 let latestServer = ImmichServer.load()
-                let serverChanged = !ImmichServer.isSameConfiguration(previousServer, latestServer)
+                let serverChanged =
+                    previousServer != nil && !ImmichServer.isSameConfiguration(previousServer, latestServer)
                 if serverChanged {
                     // Invalidate playback synchronously before any task can use the new API configuration.
                     NotificationCenter.default.post(name: .serverConfigurationWillChange, object: nil)

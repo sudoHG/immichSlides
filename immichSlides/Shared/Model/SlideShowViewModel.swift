@@ -60,6 +60,7 @@ class SlideShowViewModel: ObservableObject {
     let playbackSettingsStore: PlaybackSettingsStore
     private var playbackSettingsChangeObserver: NSObjectProtocol?
     private var serverConfigurationChangeObserver: NSObjectProtocol?
+    private var refillTask: (id: UUID, task: Task<Void, Never>)?
 
     // The facade and loader share this file so no external caller can apply raw projection updates.
     private let poolLoader: PlaybackPoolLoader
@@ -512,6 +513,7 @@ class SlideShowViewModel: ObservableObject {
     }
 
     deinit {
+        refillTask?.task.cancel()
         #if DEBUG
         automaticFadeMidpointPauseTask?.cancel()
         #endif
@@ -1941,6 +1943,8 @@ extension SlideShowViewModel {
             "playback source reset from=\(self.logName(for: self.source), privacy: .public) to=\(self.logName(for: newSource), privacy: .public) oldAssetCount=\(self.assets.count, privacy: .public) oldCurrentIndex=\(self.currentIndex, privacy: .public)"
         )
         resetSmartFillStartupRuntimeEvidence()
+        refillTask?.task.cancel()
+        refillTask = nil
         poolLoader.resetSource(to: newSource, invalidationReason: invalidationReason, update: applyPlaybackPoolUpdate)
         clearAutoPlayRecoveryMessage()
         #if DEBUG
@@ -1979,6 +1983,25 @@ extension SlideShowViewModel {
     }
 
     func loadMoreAssets() async {
+        if let refillTask {
+            await refillTask.task.value
+            return
+        }
+        let id = UUID()
+        let task = Task { await self.performRefill() }
+        refillTask = (id, task)
+        await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
+        if refillTask?.id == id {
+            refillTask = nil
+        }
+    }
+
+    private func performRefill() async {
+        guard !Task.isCancelled else { return }
         let request = poolLoader.beginRefill(
             context: playbackPoolSessionContext, update: applyPlaybackPoolUpdate)
         defer { poolLoader.finishLoadingMore(request, update: applyPlaybackPoolUpdate) }
