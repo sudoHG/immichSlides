@@ -26,6 +26,8 @@ from ci_summary import (ContractError, identity_key, observation, parse_identity
 REPO_ROOT = Path(__file__).resolve().parent.parent
 GIT_METADATA_TIMEOUT_SECONDS = 120  # Bound local identity reads through hosted simulator first-boot starvation.
 GROUP_TERM_GRACE_SECONDS = 5
+SHARD_STARTUP_ALLOWANCE_SECONDS = 120
+SHARD_FINALIZATION_MARGIN_SECONDS = 5
 HOST_CHECKS = [
     ("swift-format lint", ["xcrun", "swift-format", "lint", "--strict", "--recursive", "--parallel",
                            "immichSlides", "immichSlidesTests", "immichSlidesUITests", "TestSupport"]),
@@ -88,7 +90,7 @@ def merge_host_shards(template, parts, shards):
     """Keep the published v1 contract, admitting only a complete same-source union."""
     require(len(shards) == 2 and sorted(number for number, _, _ in shards) == [1, 2],
             "both Python shards are required")
-    compiled, observed = [], []
+    compiled, observed, infrastructure = [], [], []
     def keys(entries):
         tokens = [identity_key(entry) for entry in entries]
         require(len(tokens) == len(set(tokens)), "duplicate host shard identity")
@@ -96,14 +98,11 @@ def merge_host_shards(template, parts, shards):
     require(keys(parts[0] + parts[1]) == keys(template["population"]["declared"]),
             "host shard union differs from declared population")
     for number, payload, code in sorted(shards, key=lambda entry: entry[0]):
-        require(code == 0 and payload is not None, f"Python shard {number} did not complete successfully")
+        require(payload is not None, f"Python shard {number} receipt is missing or unparseable")
         shard = parse_summary(payload)
         require(shard["identity"] == template["identity"] and shard["source"] == template["source"]
                 and shard["hashes"] == template["hashes"], "host shards must use the same source SHA and policy")
         require(shard["run"] == dict(template["run"], shard="python-" + str(number)), "wrong host shard run")
-        require(shard["status"] in {"passed", "unverified"}
-                and all(entry["code"] == "policy-proposed" for entry in shard["infrastructure"]),
-                "host shard failed or has infrastructure errors")
         population = shard["population"]
         expected = keys(parts[number - 1])
         require(keys(population["declared"]) == expected and keys(population["compiled"]) == expected
@@ -112,14 +111,19 @@ def merge_host_shards(template, parts, shards):
                 "host shard execution differs from its exact declared population")
         compiled.extend(population["compiled"])
         observed.extend(population["observed"])
+        # Proposed skip exceptions are evaluated again against the complete union.
+        infrastructure.extend(entry for entry in shard["infrastructure"] if entry["code"] != "policy-proposed")
     require(keys(compiled) == keys(template["population"]["declared"])
             and keys([row["identity"] for row in observed]) == keys(compiled), "incomplete host shard execution")
-    return compiled, observed
+    return compiled, observed, infrastructure
 
 
 def run_parallel_shards(output, *, timeout_seconds, host_platform, workflow_path):
     """Start both bounded children before waiting; cancellation reaps both process groups."""
     children, completed = {}, []
+    # The child starts its execution budget after metadata/discovery, then reaps its step group.
+    backstop_seconds = (timeout_seconds + SHARD_STARTUP_ALLOWANCE_SECONDS
+                        + GROUP_TERM_GRACE_SECONDS + SHARD_FINALIZATION_MARGIN_SECONDS)
     def interrupted(signum, frame):
         raise KeyboardInterrupt
     def stop_child(process):
@@ -150,7 +154,7 @@ def run_parallel_shards(output, *, timeout_seconds, host_platform, workflow_path
             for number in sorted(pending):
                 process, started, directory = children[number]
                 code = process.poll()
-                if code is None and time.monotonic() - started >= timeout_seconds:
+                if code is None and time.monotonic() - started >= backstop_seconds:
                     stop_child(process)
                     code = 124
                 if code is None:
@@ -536,13 +540,17 @@ def main():
             summary["population"]["declared"] = declared
             summary["population"]["compiled"] = [entry for entry in declared if entry["kind"] == "host"]
             steps = partition_steps(complete, declared, output, args.host_platform)
+        shard_commands_passed = True
         if args.python_shards == 2:
             require(any(entry["kind"] == "python" for entry in complete), "empty complete Python inventory")
             parts = python_shard_populations(declared, python_shard_weights())
             children = run_parallel_shards(output, timeout_seconds=args.timeout_seconds,
                                            host_platform=args.host_platform, workflow_path=args.workflow_path)
-            compiled, observed = merge_host_shards(summary, parts, children)
+            compiled, observed, infrastructure = merge_host_shards(summary, parts, children)
             summary["population"].update(compiled=compiled, observed=observed)
+            summary["infrastructure"].extend(infrastructure)
+            shard_commands_passed = all(code == 0 and payload["status"] in {"passed", "unverified"}
+                                        for _, payload, code in children)
             records = [entry for entry in observed if entry["identity"]["kind"] == "host"]
         else:
             records, infrastructure = run_steps(steps, REPO_ROOT, timeout_seconds=args.timeout_seconds)
@@ -555,7 +563,8 @@ def main():
                 summary["population"]["observed"].extend(python["observed"])
             except (OSError, ValueError, KeyError, TypeError):
                 summary["infrastructure"].append({"code": "missing-python-results", "message": "Python result identities are missing or malformed"})
-        command_passed = not summary["infrastructure"] and all(entry["outcome"] == "passed" for entry in records)
+        command_passed = (shard_commands_passed and not summary["infrastructure"]
+                          and all(entry["outcome"] == "passed" for entry in records))
         # Coverage is evaluated separately from command success. Candidate policy
         # consumption here is informational; a trusted gate selects its own policy.
         summary["status"] = "passed" if command_passed else "failed"

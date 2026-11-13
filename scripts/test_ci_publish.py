@@ -1860,6 +1860,11 @@ class PublisherTests(unittest.TestCase):
             pack_scoped_selection(population, durations, algorithm="untrusted")
 
     def test_split_host_reader_binds_disjoint_base_owned_populations_and_refuses_partial_jobs(self):
+        for option in ("", " --python-shards 2"):
+            with self.subTest(option=option):
+                self.assert_split_host_reader_binds_complete_population(option)
+
+    def assert_split_host_reader_binds_complete_population(self, option):
         from run_host_checks import HOST_CHECKS, MACOS_PYTHON_TESTS
         from test_ci_verdict import approval_record
         population = [test_identity("host", name) for name, _ in HOST_CHECKS]
@@ -1872,7 +1877,7 @@ class PublisherTests(unittest.TestCase):
             source += f'''  host-{scope}:
     name: host-{scope}
     steps:
-      - run: python3 scripts/run_host_checks.py --host-platform {scope} --python-shards 2
+      - run: python3 scripts/run_host_checks.py --host-platform {scope}{option}
       - uses: actions/upload-artifact@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
         with: {{name: host-{scope}-summary, path: records/summary.json}}
 '''

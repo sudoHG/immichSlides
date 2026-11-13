@@ -68,19 +68,27 @@ still requires hosted measurement.
 
 Each child receives the existing `--timeout-seconds` budget, capped at 1200;
 shard 1's static checks consume part of its budget. Both children start before the
-parent waits. The parent also enforces each child's budget from process launch,
-prints each wall time and exit code, and stops/reaps both child groups on cancellation
-or an exception. A failing child does not suppress the other child. No retry is added.
+parent waits. Its launch-time backstop adds a 120-second startup allowance, the
+five-second step-group termination grace and a five-second finalization margin to
+the unchanged child budget. This lets the child publish its own timeout receipt
+after cleanup. The parent prints each wall time and exit code, and stops/reaps both
+child groups on cancellation or an exception. A failing child does not suppress
+the other child. No retry is added.
 
-The parent accepts exactly two completed, zero-exit receipts. Their full source
+The parent accepts exactly two parseable receipts, including failed runs. Their full source
 identities (including commit and tree SHA), run/attempt, source metadata and policy
 hashes must match. Each receipt must declare, discover and observe exactly its
 assigned identities, without duplicates or deselections, and the combined sets must
 equal the parent's complete admitted population. A legitimately empty internal shard
 still executes full discovery and writes a receipt; it supplies no public coverage
-exception. Missing, cancelled, timed-out, stale-source or incomplete children fail
-closed. Only the merged population receives the ordinary public coverage/skip verdict;
-the trusted publisher independently checks that same complete platform population.
+exception. Valid failed receipts retain their observations and diagnostics, including
+`step-timeout`, `interrupted` and `missing-python-results`; `policy-proposed` is
+recomputed for the complete union. Nonzero child exits and failed child statuses
+keep the public run failed. Missing, unparseable, stale-source or incomplete receipts
+produce `record-invalid`. Cancelled or timed-out children cannot pass even if their
+last receipt was complete. Only the merged population receives the ordinary public
+coverage/skip verdict; the trusted publisher independently checks that same complete
+platform population.
 Internal receipts are not uploaded and introduce no public schema fields.
 
 The shared host/strict group probe on macOS uses `ps -g <group> -o pgid=,stat=`
