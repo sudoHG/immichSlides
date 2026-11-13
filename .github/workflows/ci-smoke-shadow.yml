@@ -1,0 +1,161 @@
+name: ci-smoke-shadow
+
+on:
+  workflow_run:
+    workflows: [ci-nightly]
+    branches: [main]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      nightly_run_id:
+        description: Completed main ci-nightly run to compare at its head SHA
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: >-
+    ${{ (github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' ||
+    (github.event_name == 'workflow_run' && github.event.workflow_run.head_repository.full_name == github.repository &&
+    github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.path == '.github/workflows/ci-nightly.yml' &&
+    github.event.workflow_run.status == 'completed' && (github.event.workflow_run.event == 'schedule' ||
+    (github.event.workflow_run.event == 'workflow_dispatch' && github.event.workflow_run.display_title == 'ci-nightly full'))))) &&
+    (github.event_name != 'workflow_run' || contains(fromJSON('["failure","success"]'), github.event.workflow_run.conclusion)) &&
+    'ci-smoke-shadow' || format('ci-smoke-shadow-rejected-{0}', github.run_id) }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.path == '.github/workflows/ci-nightly.yml' &&
+      github.event.workflow_run.status == 'completed' &&
+      (github.event.workflow_run.event == 'schedule' ||
+      (github.event.workflow_run.event == 'workflow_dispatch' && github.event.workflow_run.display_title == 'ci-nightly full'))))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      head_sha: ${{ steps.plan.outputs.head_sha }}
+      execute: ${{ steps.plan.outputs.execute }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Reject private configuration and install the pinned reader environment
+        run: /usr/bin/python3 -B scripts/ci_smoke_shadow.py setup
+      - name: Bind the completed nightly and enumerate manifest groups
+        id: plan
+        env:
+          SMOKE_NIGHTLY_RUN_ID: ${{ inputs.nightly_run_id }}
+          SMOKE_TOKEN: ${{ github.token }}
+        run: '"$RUNNER_TEMP/smoke-python/bin/python3" -B scripts/ci_smoke_shadow.py plan'
+      - name: Publish this first attempt's immutable plan
+        if: steps.plan.outputs.records_safe == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: smoke-shadow-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/smoke-plan/plan.json
+          retention-days: 7
+          if-no-files-found: error
+
+  flows:
+    needs: plan
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.execute == 'true' }}
+    name: smoke-shadow-${{ matrix.id }}
+    runs-on: xcode-27
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Stage the trusted control entry point before selecting tested source
+        run: /usr/bin/python3 -B scripts/ci_smoke_shadow.py stage
+      # The plan admits only a same-repository main ancestor, never a PR artifact or checkout.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.plan.outputs.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Reject private configuration and verify pinned tools
+        run: /usr/bin/python3 -B "$RUNNER_TEMP/smoke-control/ci_smoke_shadow.py" setup
+      - name: Download only this shadow attempt's plan as data
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: smoke-shadow-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-artifacts/smoke-plan
+      - name: Build once and run the group's first results against loopback fixtures
+        id: run
+        env:
+          SMOKE_GROUP: ${{ matrix.id }}
+          SMOKE_TOKEN: ${{ github.token }}
+        run: '"$RUNNER_TEMP/smoke-python/bin/python3" -B "$RUNNER_TEMP/smoke-control/ci_smoke_shadow.py" run'
+      - name: Publish scanned raw first-result records, including failures
+        if: always() && steps.run.outputs.records_safe == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: smoke-shadow-group-${{ matrix.id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/smoke-records
+          retention-days: 7
+          if-no-files-found: error
+      - name: Dispose only this group's simulator and products
+        if: always()
+        run: '"$RUNNER_TEMP/smoke-python/bin/python3" -B "$RUNNER_TEMP/smoke-control/ci_smoke_shadow.py" cleanup'
+
+  aggregate:
+    needs: [plan, flows]
+    if: ${{ always() && github.ref == 'refs/heads/main' && needs.plan.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Reject private configuration and install pinned reader packages
+        run: /usr/bin/python3 -B scripts/ci_smoke_shadow.py setup
+      - name: Download this attempt's plan
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: smoke-shadow-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-artifacts/smoke-plan
+      - name: Download only this attempt's group records
+        if: always() && needs.plan.outputs.execute == 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: smoke-shadow-group-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-artifacts/smoke-groups
+      - name: Require every raw result and write the comparison table
+        id: aggregate
+        if: always()
+        env:
+          SMOKE_MATRIX_RESULT: ${{ needs.flows.result }}
+        run: '"$RUNNER_TEMP/smoke-python/bin/python3" -B scripts/ci_smoke_shadow.py aggregate'
+      - name: Publish the scanned comparison record for 90 days
+        if: always() && steps.aggregate.outputs.records_safe == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: smoke-shadow-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/smoke-shadow
+          retention-days: 90
+          if-no-files-found: error

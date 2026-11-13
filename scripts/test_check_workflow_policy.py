@@ -4,6 +4,7 @@ import copy
 import re
 import contextlib
 import io
+import json
 import sys
 import tempfile
 import unittest
@@ -17,6 +18,7 @@ import check_workflow_policy as policy
 
 SHA = "11d5960a326750d5838078e36cf38b85af677262"
 TRUSTED = ".github/workflows/ci-publish.yml"
+SHADOW = ".github/workflows/ci-smoke-shadow.yml"
 
 
 def workflow():
@@ -26,6 +28,101 @@ def workflow():
         "jobs": {"check": {"runs-on": "macos-latest", "timeout-minutes": 5,
                            "steps": [{"uses": f"actions/checkout@{SHA}"}]}},
     }
+
+
+class SmokeShadowWorkflowPolicyTests(unittest.TestCase):
+    def document(self):
+        root = Path(__file__).resolve().parent.parent
+        return yaml.load((root / SHADOW).read_text(), Loader=policy.WorkflowLoader)
+
+    def violations(self, document, path=SHADOW):
+        return policy.check_workflow(path, yaml.safe_dump(document), run_named_workflows={"ci-nightly"})
+
+    def test_shadow_contract_rejects_weaker_triggers_authority_budget_and_raw_result_gates(self):
+        from ci_nightly_change import FULL_MANUAL_TITLE, REAL_RESULT_CONCLUSIONS
+        baseline = self.document()
+        self.assertEqual(self.violations(baseline), [])
+        title_condition = "display_title == '" + FULL_MANUAL_TITLE + "'"
+        self.assertIn(title_condition, baseline["jobs"]["plan"]["if"])
+        self.assertIn(title_condition, policy.SHADOW_PLAN_GUARD)
+        self.assertIn(policy.SHADOW_PLAN_GUARD, policy.SHADOW_CONCURRENCY_GROUP)
+        self.assertIn("fromJSON('" + json.dumps(sorted(REAL_RESULT_CONCLUSIONS), separators=(",", ":")) + "')",
+                      baseline["concurrency"]["group"])
+        cases = [
+            (lambda doc: doc["on"]["workflow_run"].update(types=["requested"]), "smoke-shadow-contract"),
+            (lambda doc: doc["on"]["workflow_run"].update(branches=["topic"]), "smoke-shadow-contract"),
+            (lambda doc: doc["permissions"].update(contents="read"), "smoke-shadow-contract"),
+            (lambda doc: doc["jobs"]["plan"].update({"if": "true"}), "smoke-shadow-contract"),
+            (lambda doc: doc["jobs"]["flows"].update({"continue-on-error": True}), "smoke-shadow-contract"),
+            (lambda doc: doc["jobs"]["flows"].update({"timeout-minutes": 30}), "smoke-shadow-contract"),
+            (lambda doc: doc["jobs"]["flows"]["strategy"].update({"fail-fast": True}), "smoke-shadow-contract"),
+            (lambda doc: doc["jobs"]["flows"]["strategy"].update(matrix={"id": ["iphone-debug"]}), "smoke-shadow-contract"),
+            (lambda doc: doc["jobs"]["flows"]["steps"][1].update(run=policy.SHADOW_SETUP), "smoke-shadow-contract"),
+            (lambda doc: doc["jobs"]["flows"]["steps"][-1].update({"if": "success()"}), "smoke-shadow-contract"),
+            (lambda doc: doc["jobs"]["plan"]["permissions"].update(actions="write"), "smoke-shadow-contract"),
+            (lambda doc: doc["jobs"]["aggregate"]["steps"][-1]["with"].update({"retention-days": 7}), "trusted-action"),
+            (lambda doc: doc["concurrency"].update(group="per-run-${{ github.run_id }}"), "smoke-shadow-contract"),
+            (lambda doc: doc["concurrency"].update(group="ci-smoke-shadow"), "smoke-shadow-contract"),
+            (lambda doc: doc["concurrency"].update({"cancel-in-progress": True}), "smoke-shadow-contract"),
+            (lambda doc: doc.update(env={"SMOKE_TOKEN": "${{ github.token }}"}), "smoke-shadow-contract"),
+            (lambda doc: doc["jobs"]["plan"]["outputs"].update(head_sha="${{ github.sha }}"), "smoke-shadow-contract"),
+            (lambda doc: doc["jobs"]["plan"]["steps"][2].update(id="other"), "smoke-shadow-contract"),
+            (lambda doc: doc["jobs"]["flows"]["steps"][-1].update(env={"SMOKE_TOKEN": "${{ github.token }}"}), "smoke-shadow-contract"),
+        ]
+        for role in ("plan", "flows", "aggregate"):
+            for field, value in (("env", {"SMOKE_TOKEN": "${{ github.token }}"}), ("environment", "ci-publisher"),
+                                 ("runs-on", "ubuntu-latest"), ("needs", "other"), ("if", "true")):
+                cases.append((lambda doc, role=role, field=field, value=value:
+                              doc["jobs"][role].update({field: value}), "smoke-shadow-contract"))
+            phase = "run" if role == "flows" else role
+            index = next(index for index, step in enumerate(baseline["jobs"][role]["steps"]) if step.get("id") == phase)
+            first_run = next(index for index, step in enumerate(baseline["jobs"][role]["steps"]) if "run" in step)
+            cases.extend([
+                (lambda doc, role=role, index=index: doc["jobs"][role]["steps"][index].pop("env"), "smoke-shadow-contract"),
+                (lambda doc, role=role, index=index: doc["jobs"][role]["steps"][index].update({"if": "false"}), "smoke-shadow-contract"),
+                (lambda doc, role=role, index=first_run: doc["jobs"][role]["steps"][index].update(
+                    env={"SMOKE_TOKEN": "${{ github.token }}"}), "smoke-shadow-contract"),
+            ])
+        cases.append((lambda doc: doc["jobs"]["flows"]["permissions"].pop("actions"), "smoke-shadow-contract"))
+        for mutate, rule in cases:
+            with self.subTest(rule=rule, mutation=mutate):
+                document = copy.deepcopy(baseline)
+                mutate(document)
+                self.assertIn(rule, {item.rule for item in self.violations(document)})
+
+    def test_shadow_trusted_exceptions_cannot_execute_foreign_code_or_publish_unscanned_data(self):
+        baseline = self.document()
+        cases = [
+            (lambda doc: doc["jobs"]["flows"]["steps"][2]["with"].update(ref="${{ github.event.workflow_run.head_sha }}"), "trusted-checkout"),
+            (lambda doc: doc["jobs"]["plan"]["steps"][0]["with"].update(ref="topic"), "trusted-checkout"),
+            (lambda doc: doc["jobs"]["flows"]["steps"][5].update(run="python3 downloaded.py"), "trusted-run"),
+            (lambda doc: doc["jobs"]["flows"]["steps"][5]["env"].update(SMOKE_GROUP="other"), "trusted-environment"),
+            (lambda doc: doc["jobs"]["flows"]["steps"][6]["with"].update(path="${{ runner.temp }}/smoke-execution"), "trusted-action"),
+            (lambda doc: doc["jobs"]["flows"]["steps"][6].update({"if": "always()"}), "trusted-action"),
+            (lambda doc: doc["jobs"]["aggregate"]["steps"][3]["with"].update(pattern="smoke-shadow-group-*"), "trusted-action"),
+            (lambda doc: doc["jobs"]["aggregate"]["steps"][3].update(uses=doc["jobs"]["aggregate"]["steps"][3]["uses"].replace(
+                "actions/download-artifact", "Actions/Download-Artifact")), "trusted-action"),
+            (lambda doc: doc["jobs"]["aggregate"]["steps"][3].update(uses="actions/download-artifact@" + "a" * 40), "trusted-action"),
+            (lambda doc: doc["jobs"]["flows"]["steps"][6].update(uses="actions/upload-artifact@" + "a" * 40), "trusted-action"),
+            (lambda doc: doc["jobs"]["plan"]["steps"][-1].pop("if", None), "trusted-action"),
+            (lambda doc: doc["jobs"]["plan"]["steps"][-1]["with"].update({"retention-days": 90}), "trusted-action"),
+            (lambda doc: doc["jobs"]["flows"]["steps"][6]["with"].update({"retention-days": 90}), "trusted-action"),
+        ]
+        for role in ("plan", "flows", "aggregate"):
+            for index, step in enumerate(baseline["jobs"][role]["steps"]):
+                if step.get("uses", "").startswith("actions/checkout@"):
+                    for field, value in (("persist-credentials", True), ("fetch-depth", 1)):
+                        cases.append((lambda doc, role=role, index=index, field=field, value=value:
+                                      doc["jobs"][role]["steps"][index]["with"].update({field: value}), "trusted-checkout"))
+        for mutate, rule in cases:
+            with self.subTest(rule=rule, mutation=mutate):
+                document = copy.deepcopy(baseline)
+                mutate(document)
+                self.assertIn(rule, {item.rule for item in self.violations(document)})
+        document = workflow()
+        document["on"] = {"workflow_run": {"workflows": ["ci-nightly"], "types": ["completed"]}}
+        document["jobs"]["check"]["steps"] = [{"run": "/usr/bin/python3 -B scripts/ci_smoke_shadow.py setup"}]
+        self.assertIn("trusted-run", {item.rule for item in self.violations(document, TRUSTED)})
 
 
 class WorkflowPolicyTests(unittest.TestCase):

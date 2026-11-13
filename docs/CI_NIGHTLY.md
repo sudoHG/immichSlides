@@ -63,6 +63,184 @@ The optional dispatch `shard` input diagnoses one known shard exactly once. It r
 the complete scheduling record; missing shards and the diagnostic marker make aggregate
 equality fail. This run cannot substitute for a complete nightly, and does not retry cases.
 
+## Smoke shadow (informational, before the tier switch)
+
+`ci-smoke-shadow` is a separate, read-only workflow. It starts only after a
+same-repository main full `ci-nightly` has completed: a schedule, or a manual
+dispatch with the exact `ci_nightly_change.FULL_MANUAL_TITLE` (`ci-nightly full`).
+Diagnostic dispatches, including environment probes, shard, UI-only, strict-only
+and live-only runs, are refused. The trigger uses
+`workflow_run` filtered to main and completion. It independently verifies
+the producer workflow ID/path, repository, event, attempt and head SHA against
+the API and main ancestry. Its tested checkout is that nightly's head SHA,
+even when main has moved. Pull requests, fork heads, branch nightlies and
+unfinished nightlies are refused. This workflow changes no nightly job, retry,
+yellow rule, verdict, reporter input, required check or release eligibility.
+Device jobs stage only this workflow's trusted control entry point from main
+outside the checkout, then select the admitted nightly SHA. All runner modules,
+App sources and the manifest come from that tested SHA. This supports nightlies
+that already contain the smoke runner but predate the shadow control entry point;
+downloaded artifacts remain data and are never executed.
+Jobs may read different main control-script versions if main moves during a
+run; incompatible versions fail closed. This accepted limitation does not permit
+untrusted checkout or artifact execution.
+Only the reviewed complete artifact `uses` strings, including their exact pins,
+receive narrow upload/download exceptions; aliases and other 40-digit commits
+cannot bypass attempt/path restrictions.
+
+Qualified source events share the fixed `ci-smoke-shadow` concurrency group,
+without cancelling an active shadow. Events rejected by the source guard, or
+automatic events with unusable nightly conclusions, use a per-run group and
+cannot displace a pending qualified shadow. Planning checks the API for any main `ci-nightly`
+in `ci_nightly_change.ACTIVE_RUN_STATUSES`, including queued, in-progress,
+waiting, pending and requested. If one exists, no device group starts, including
+for manual shadow dispatches: the scanned plan and final record name the blocking
+nightly IDs and an explicit `not_run_reason`; `comparison_eligible` is false.
+There remains a race with a backup nightly that starts after this check. The
+shadow does not lock or change the old nightly, so such an overlap must be
+identified in the first hosted observations. GitHub may replace an older pending
+shadow in its concurrency queue; cancelled runs never count as observations.
+Manual dispatches on main always join the shared queue before API admission;
+even a subsequently refused manual target can replace a pending automatic
+shadow. The concurrency expression cannot see that target nightly's conclusion.
+An admitted full nightly whose conclusion is not `success` or `failure` also produces an
+explicit non-counting `not-run` record, for automatic and manual shadow dispatches;
+it never schedules device groups.
+
+After merge, a coordinator can request an extra observation with:
+
+```bash
+gh workflow run ci-smoke-shadow.yml --ref main -f nightly_run_id=<completed-main-nightly-run-id>
+```
+
+The selected nightly must contain the smoke runner and its CI-trusted
+[`smoke-flows.json`](../scripts/smoke-flows.json). Planning reads that manifest
+at the tested SHA, rather than the planning-only tier inventory. Distinct
+platform/device/configuration tuples form the matrix; flow counts are not
+hard-coded in the workflow. The approved manifest currently produces these groups:
+
+| Device | Debug flows | Release flows |
+|---|---:|---:|
+| iPhone | 6 | 2 |
+| iPad | 4 | 1 |
+| Apple TV | 6 | 4 |
+
+Each group uses the pinned simulator and the existing strict build, fixture
+service, readiness/reset, official-result export, privacy-scan and process-group
+cleanup helpers. It builds once and reuses those products for the group's flows.
+No whole-flow retry, listed retry, nightly retry or tool-failure allowance is
+enabled. A classification such as infrastructure, XCTest tool or assertion is
+only a label: a failed first result remains failed. Missing results, a failed
+runner after passing XCTest, invalid provenance or incomplete execution stay red.
+After a verified runner-group stop, timeout/interruption retains every available
+validated first flow result and marks unfinished flows `not-run`; the original
+nonzero exit and failed group remain intact. Unverified process cleanup does not
+read potentially changing evidence or dispose its inputs.
+Only scanned compact records are uploaded; raw bundles, logs and media are not.
+The consumer requires `selection=group` in both root records, including groups
+with only one flow; a diagnostic `--smoke-flow` result cannot stand in for a
+complete group. The runner's shared `validate_group_evidence` decides whether
+a group is wholly successful, with the expected source SHA passed explicitly;
+its verdict and rejection reason are retained in `group_validation`. Failed or
+interrupted groups still retain individually verified first results, while a
+rejected all-pass group stays red. The consumer checks clean source state and
+the root, first-result and per-flow source SHAs,
+official hashes, selected method and counts, and the runner's
+`official_execution_complete` flag. Each compact row retains `failure_kind`,
+source-bound reviewed relative `failure_locations`, and the raw runner outcome.
+Late warm-product, privacy, build-cleanup or evidence-finalization failures stay
+failed even when native XCTest passed; the native official result is retained.
+The runner's separately recorded `group_failures` also remain attached to group
+validation without replacing an earlier test/65 or hang-guard/124 first failure.
+`failure_kind=test` means an official method failed;
+it does not establish an App root cause. Full fixture request logs under
+`evidence.parent/private/<evidence-name>/<flow-id>/` and native `xcodebuild.log` remain outside the
+published records and are disposed with job-owned execution inputs.
+
+The plan and Linux aggregate each have a five-minute timeout. Each device group
+has a 25-minute timeout, with at most three groups running together and fail-fast
+disabled. Six groups therefore have a 60-minute execution envelope
+(`5 + 2 × 25 + 5`); the expected wall time is 35–55 minutes with three runners
+available. These are budgets and estimates, **NOT_VERIFIED** on hosted CI.
+The 22-minute inner group deadline starts at the current attempt's GitHub job
+`started_at`, read through the existing complete-attempt jobs API reader. Thus
+checkout, setup and plan download consume that same budget. Groups have only
+read access to actions for this clock lookup. Missing, ambiguous or invalid job
+start evidence fails closed. The budget bounds build plus flows; it does not multiply
+the runner's 270-second per-flow limit (120 seconds for the method and 150 for
+startup/teardown) into a larger job budget. A group that exhausts this
+budget fails and records unfinished flows, even if every per-flow limit has not
+been reached.
+The clock token is removed from the process environment and control context
+immediately after lookup, including on lookup failure, before tested runner
+processes can inherit it.
+GitHub queue delays are measured separately from that envelope. Reaching a cap
+fails; it does not extend product waits or produce passing evidence.
+
+An automatically triggered shadow after a **verified unchanged-night skip**
+writes an explicit `not-run` record and summary without scheduling device jobs.
+It does not count as execution. With no active main nightly, a manual shadow
+executes the selected SHA, including when that nightly skipped; the record still says the old nightly
+was skipped, so it is not a comparable old/new executed pair. An unverified old
+nightly remains explicitly unverified in the paired metadata. The old nightly's
+conclusion and its own first results/retries remain untouched.
+
+The aggregate job writes the flow ID, device, configuration, raw outcome,
+elapsed seconds, failure class and first public failure message to its job
+summary. Unknown fields stay unknown; missing flows stay `not-run`. The
+`smoke-shadow-<run>-<attempt>` artifact retains `shadow.json`, `summary.md` and
+the shared sensitive-scan receipt for 90 days. The attempt-bound plan and
+per-group compact artifacts have seven-day retention; the plan is scanned before
+upload too. `shadow.json` schema 1
+contains the repository, tested `head_sha`, manifest SHA-256, shadow run/event/
+attempt, old nightly run ID/attempt/conclusion/execution state, matrix job
+result, `nightly_run_id` pairing key, suppression reason/blocking IDs, group
+validation verdicts/reasons, job/build phase timings, errors and per-flow records.
+`failure_category` is the displayed failure
+class; it is separate from the existing diagnostic enum named `failure_class`.
+`executed` means every expected flow has actual first-attempt execution evidence;
+`comparison_eligible` additionally requires valid complete shadow records and a
+completed old nightly at the same SHA with a conclusion in
+`ci_nightly_change.REAL_RESULT_CONCLUSIONS` (`success` or `failure`), which is not
+a verified unchanged skip. A cancelled old nightly cannot count.
+The shadow's own `counts_as_shadow` rule determines this; the old nightly's
+unchanged-skip baseline `real` verdict is not a counting gate. Old yellow,
+`environment_limited` and infrastructure-incomplete results do not prevent a
+complete first shadow execution from counting. Available bound old aggregate
+`status`, `environment_limited`, `errors`, `matrix` and `tiers` fields are retained
+unchanged under `nightly.aggregate`; unavailable or mismatched old evidence stays
+explicitly unavailable/unverified. Genuine red executed pairs remain red and can
+be compared; these booleans never promote a failure or verify old-nightly health.
+
+The coordinator counts at most one `comparison_eligible` observation per
+`nightly_run_id` toward the approved **5–7 comparable runs**, and records the cause of every red before
+deciding on the separately reviewed switch. Automatic skips, manual runs paired
+with verified skipped nightlies, new-shadow cancellation, missing groups,
+`single-flow` and `not-run` flows do not count. Only first shadow attempts are accepted; to collect another
+observation, dispatch a new run rather than re-running jobs. Multiple shadow IDs
+or nightly attempts paired with the same nightly ID do not add observations;
+the exported pairing key is the deduplication key. Distinct nightly IDs at the
+same source SHA may each count once. The observation for each nightly ID is the
+earliest eligible shadow, by smallest numeric shadow run ID. Later shadows never replace it, and any later red must still be
+explained; redispatch is not a retry or a way to replace the first outcome.
+After the switch, the independent requirement remains 10 actually executed nights with no
+unexplained red. Shadow success gates nothing and does not activate the switch.
+
+Hosted execution is **NOT_RUN before merge**. The first hosted dispatch must
+show the selected nightly SHA in every group, all manifest groups and all 23
+officially executed first results, no retry/yellow promotion, a complete
+comparison table with a nightly link, scanned 90-day artifacts, and disposal of
+only job-owned simulators/products. A failing flow must make both its group and
+the shadow conclusion fail. A verified skipped automatic night must show only
+plan/aggregate with `not-run`; manually selecting it must execute the groups.
+The first hosted report must include each group's warm-up/build phase duration
+and each flow's native and total elapsed seconds from `group_timings` and `flows`.
+Compare the API's `started_at` with the first step of each matrix job, especially
+groups delayed by `max-parallel`; the job-clock assumption remains unverified
+until that hosted observation.
+Measure actual queue, build, execution/export and total wall times before
+claiming the budget is met.
+
 ## Early failure diagnostics
 
 The reporter retains scheduled strict cases as missing when a shard has no valid
