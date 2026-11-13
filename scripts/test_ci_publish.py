@@ -1872,7 +1872,7 @@ class PublisherTests(unittest.TestCase):
             source += f'''  host-{scope}:
     name: host-{scope}
     steps:
-      - run: python3 scripts/run_host_checks.py --host-platform {scope}
+      - run: python3 scripts/run_host_checks.py --host-platform {scope} --python-shards 2
       - uses: actions/upload-artifact@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
         with: {{name: host-{scope}-summary, path: records/summary.json}}
 '''

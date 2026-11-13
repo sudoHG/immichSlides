@@ -7,6 +7,7 @@ import argparse
 import copy
 import hashlib
 import json
+import math
 import os
 import platform
 import plistlib
@@ -20,7 +21,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from ci_summary import (ContractError, identity_key, observation, parse_identity, parse_summary,
-                        render_markdown, test_identity, validate_observation, validate_test_identity, write_summary)
+                        render_markdown, require, test_identity, validate_observation, validate_test_identity, write_summary)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 GIT_METADATA_TIMEOUT_SECONDS = 120  # Bound local identity reads through hosted simulator first-boot starvation.
@@ -42,6 +43,134 @@ MACOS_PYTHON_TESTS = frozenset({
     "test_strict_e2e_filter_contract.DisplayPolicyVisualContractTests.test_swift_capture_candidate_recognizes_public_fit_without_rewriting_evidence",
     "test_strict_e2e_photo_identity.IOSVisualIdentityJSONEncodingTests.test_nil_mark_is_valid_json_object",
 })
+
+
+def python_shard_populations(population, weights):
+    """Pack whole modules by frozen observed time, keeping static checks in shard one."""
+    parts, modules, seen = [[], []], {}, set()
+    for entry in population:
+        validate_test_identity(entry)
+        token = identity_key(entry)
+        require(token not in seen and entry["kind"] in {"host", "python"}, "invalid host shard inventory")
+        seen.add(token)
+        if entry["kind"] == "host":
+            parts[0].append(entry)
+        else:
+            modules.setdefault(entry["key"].split(".")[0], []).append(entry)
+    loads = [sum(weights["host_checks"].get(entry["key"], 0) for entry in parts[0]), 0]
+    cases = weights.get("python_tests", {})
+    separate_cases = set(cases) | MACOS_PYTHON_TESTS
+    costs = {}
+    for module, entries in modules.items():
+        portable = [entry for entry in entries if entry["key"] not in separate_cases]
+        costs[module] = (weights["python_modules"].get(module, len(portable)) if portable else 0)
+        costs[module] += sum(cases.get(entry["key"], 1) for entry in entries if entry["key"] in separate_cases)
+    for module in sorted(modules, key=lambda key: (-costs[key], key)):
+        shard = min(range(2), key=lambda index: (loads[index], index))
+        parts[shard].extend(modules[module])
+        loads[shard] += costs[module]
+    return [sorted(part, key=identity_key) for part in parts]
+
+
+def python_shard_weights():
+    weights = json.loads((REPO_ROOT / "scripts/ci-host-durations.json").read_text())
+    require(isinstance(weights, dict) and set(weights) == {"schema_version", "source", "python_modules", "python_tests", "host_checks"}
+            and type(weights["schema_version"]) is int and weights["schema_version"] == 1,
+            "invalid host duration weights")
+    for field in ("python_modules", "python_tests", "host_checks"):
+        require(isinstance(weights[field], dict) and all(isinstance(key, str) and key
+                and type(value) in {int, float} and math.isfinite(value) and value >= 0
+                for key, value in weights[field].items()), "invalid host duration weight")
+    return weights
+
+
+def merge_host_shards(template, parts, shards):
+    """Keep the published v1 contract, admitting only a complete same-source union."""
+    require(len(shards) == 2 and sorted(number for number, _, _ in shards) == [1, 2],
+            "both Python shards are required")
+    compiled, observed = [], []
+    def keys(entries):
+        tokens = [identity_key(entry) for entry in entries]
+        require(len(tokens) == len(set(tokens)), "duplicate host shard identity")
+        return set(tokens)
+    require(keys(parts[0] + parts[1]) == keys(template["population"]["declared"]),
+            "host shard union differs from declared population")
+    for number, payload, code in sorted(shards, key=lambda entry: entry[0]):
+        require(code == 0 and payload is not None, f"Python shard {number} did not complete successfully")
+        shard = parse_summary(payload)
+        require(shard["identity"] == template["identity"] and shard["source"] == template["source"]
+                and shard["hashes"] == template["hashes"], "host shards must use the same source SHA and policy")
+        require(shard["run"] == dict(template["run"], shard="python-" + str(number)), "wrong host shard run")
+        require(shard["status"] in {"passed", "unverified"}
+                and all(entry["code"] == "policy-proposed" for entry in shard["infrastructure"]),
+                "host shard failed or has infrastructure errors")
+        population = shard["population"]
+        expected = keys(parts[number - 1])
+        require(keys(population["declared"]) == expected and keys(population["compiled"]) == expected
+                and keys([row["identity"] for row in population["observed"]]) == expected
+                and not population["deselected"] and not population["removed_by_pr"],
+                "host shard execution differs from its exact declared population")
+        compiled.extend(population["compiled"])
+        observed.extend(population["observed"])
+    require(keys(compiled) == keys(template["population"]["declared"])
+            and keys([row["identity"] for row in observed]) == keys(compiled), "incomplete host shard execution")
+    return compiled, observed
+
+
+def run_parallel_shards(output, *, timeout_seconds, host_platform, workflow_path):
+    """Start both bounded children before waiting; cancellation reaps both process groups."""
+    children, completed = {}, []
+    def interrupted(signum, frame):
+        raise KeyboardInterrupt
+    def stop_child(process):
+        if process.poll() is None:
+            try:
+                process.terminate()
+                # The child must finish its own five-second step-group cleanup first.
+                process.wait(timeout=GROUP_TERM_GRACE_SECONDS + 2)
+            except (ProcessLookupError, subprocess.TimeoutExpired):
+                pass
+        stop_group(process)
+    previous = {signum: signal.signal(signum, interrupted) for signum in (signal.SIGINT, signal.SIGTERM)}
+    try:
+        for number in (1, 2):
+            directory = output / ("python-" + str(number))
+            command = [sys.executable, "-B", str(REPO_ROOT / "scripts/run_host_checks.py"),
+                       "--python-shard", str(number), "--output-dir", str(directory),
+                       "--timeout-seconds", str(timeout_seconds)]
+            if host_platform:
+                command += ["--host-platform", host_platform]
+            if workflow_path:
+                command += ["--workflow-path", workflow_path]
+            started = time.monotonic()
+            process = subprocess.Popen(command, cwd=REPO_ROOT, env=clean_environment(), start_new_session=True)
+            children[number] = (process, started, directory)
+        pending = set(children)
+        while pending:
+            for number in sorted(pending):
+                process, started, directory = children[number]
+                code = process.poll()
+                if code is None and time.monotonic() - started >= timeout_seconds:
+                    stop_child(process)
+                    code = 124
+                if code is None:
+                    continue
+                pending.remove(number)
+                print(f"Python shard {number} wall time: {time.monotonic() - started:.3f}s (exit {code})", flush=True)
+                try:
+                    payload = json.loads((directory / "summary.json").read_text())
+                except (OSError, ValueError):
+                    payload = None
+                completed.append((number, payload, code))
+            if pending:
+                time.sleep(0.05)
+        return sorted(completed, key=lambda entry: entry[0])
+    finally:
+        # Do not leave the other shard running after an exception, timeout or cancellation.
+        for process, _, _ in children.values():
+            stop_child(process)
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
 
 
 def host_partition(population, scope):
@@ -329,6 +458,10 @@ def main():
     parser.add_argument("--timeout-seconds", type=float, default=900, help="Total host-check budget; default 900")
     parser.add_argument("--workflow-path", help="Enable CI identity; assert this path against GITHUB_WORKFLOW_REF. Omit for local identity, regardless of CI environment")
     parser.add_argument("--host-platform", choices=("linux", "macos"), help="Run the admitted platform partition; default runs the complete host suite")
+    shards = parser.add_mutually_exclusive_group()
+    shards.add_argument("--python-shards", type=int, choices=(1, 2), default=1,
+                        help="Run all Python tests in one process (default) or two parallel time-balanced shards")
+    shards.add_argument("--python-shard", type=int, choices=(1, 2), help=argparse.SUPPRESS)
     parser.add_argument("--no-summary-path", action="store_true", help="Suppress the record path in the final report")
     args = parser.parse_args()
     if not 0 < args.timeout_seconds <= 1200:
@@ -340,6 +473,8 @@ def main():
     for filename in ("python-results.json", "summary.json", "summary.md", "run-identity.json"):
         if (output / filename).exists():
             parser.error("--output-dir must not contain results of an earlier run")
+    if any((output / ("python-" + str(number))).exists() for number in (1, 2)):
+        parser.error("--output-dir must not contain results of an earlier shard")
     initial = None
     try:
         identity = run_identity(os.environ, ci=args.workflow_path is not None)
@@ -355,7 +490,8 @@ def main():
                               "event": identity["event"], "fork_originated": fork, "ci_changing": None},
                    "run": {"id": os.environ.get("GITHUB_RUN_ID") if is_ci else None,
                            "attempt": int(os.environ.get("GITHUB_RUN_ATTEMPT", "1")) if is_ci else 1,
-                           "tier": "host", "job": "host-" + args.host_platform if args.host_platform else "host-checks", "shard": None},
+                           "tier": "host", "job": "host-" + args.host_platform if args.host_platform else "host-checks",
+                           "shard": "python-" + str(args.python_shard) if args.python_shard else None},
                    "hashes": {
                        "manifests": {"ci-pins": hashlib.sha256((REPO_ROOT / "scripts/ci-pins.json").read_bytes()).hexdigest()}
                        if is_ci else {},
@@ -389,27 +525,43 @@ def main():
             summary["infrastructure"].append({"code": "population-invalid", "message": f"Static inventory: {error}"})
         steps = [(name, command + (["--output", str(output / "python-results.json")] if name == "python tests" else []))
                  for name, command in HOST_CHECKS]
+        complete = declared
         if args.host_platform:
-            complete = declared
             declared = admitted_host_partition(identity, complete, args.host_platform)
             summary["population"]["declared"] = declared
             summary["population"]["compiled"] = [entry for entry in declared if entry["kind"] == "host"]
             steps = partition_steps(complete, declared, output, args.host_platform)
-        records, infrastructure = run_steps(steps, REPO_ROOT, timeout_seconds=args.timeout_seconds)
-        admitted_checks = {entry["key"] for entry in declared if entry["kind"] == "host"}
-        summary["population"]["observed"] = [entry for entry in records if entry["identity"]["key"] in admitted_checks]
-        summary["infrastructure"].extend(infrastructure)
-        try:
-            python = json.loads((output / "python-results.json").read_text(encoding="utf-8"))
-            summary["population"]["compiled"].extend(python["compiled"])
-            summary["population"]["observed"].extend(python["observed"])
-        except (OSError, ValueError, KeyError, TypeError):
-            summary["infrastructure"].append({"code": "missing-python-results", "message": "Python result identities are missing or malformed"})
+        if args.python_shard:
+            declared = python_shard_populations(declared, python_shard_weights())[args.python_shard - 1]
+            summary["population"]["declared"] = declared
+            summary["population"]["compiled"] = [entry for entry in declared if entry["kind"] == "host"]
+            steps = partition_steps(complete, declared, output, args.host_platform)
+        if args.python_shards == 2:
+            require(any(entry["kind"] == "python" for entry in complete), "empty complete Python inventory")
+            parts = python_shard_populations(declared, python_shard_weights())
+            children = run_parallel_shards(output, timeout_seconds=args.timeout_seconds,
+                                           host_platform=args.host_platform, workflow_path=args.workflow_path)
+            compiled, observed = merge_host_shards(summary, parts, children)
+            summary["population"].update(compiled=compiled, observed=observed)
+            records = [entry for entry in observed if entry["identity"]["kind"] == "host"]
+        else:
+            records, infrastructure = run_steps(steps, REPO_ROOT, timeout_seconds=args.timeout_seconds)
+            admitted_checks = {entry["key"] for entry in declared if entry["kind"] == "host"}
+            summary["population"]["observed"] = [entry for entry in records if entry["identity"]["key"] in admitted_checks]
+            summary["infrastructure"].extend(infrastructure)
+            try:
+                python = json.loads((output / "python-results.json").read_text(encoding="utf-8"))
+                summary["population"]["compiled"].extend(python["compiled"])
+                summary["population"]["observed"].extend(python["observed"])
+            except (OSError, ValueError, KeyError, TypeError):
+                summary["infrastructure"].append({"code": "missing-python-results", "message": "Python result identities are missing or malformed"})
         command_passed = not summary["infrastructure"] and all(entry["outcome"] == "passed" for entry in records)
         # Coverage is evaluated separately from command success. Candidate policy
         # consumption here is informational; a trusted gate selects its own policy.
         summary["status"] = "passed" if command_passed else "failed"
-        if command_passed:
+        # An empty internal shard still runs discovery and writes a same-source receipt.
+        # Only the complete published population receives the ordinary verdict.
+        if command_passed and (declared or not args.python_shard):
             coverage = evaluate_population(summary, declared, policy, environment="hermetic")
             skipped = [entry for entry in summary["population"]["observed"] if entry["outcome"] == "skipped"]
             proposed_skips_only = (bool(skipped) and coverage["errors"] == [

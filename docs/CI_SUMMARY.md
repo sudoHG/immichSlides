@@ -45,6 +45,44 @@ stops the child process group and records remaining checks as `not-run`.
 The hosted Linux partition explicitly uses 1200 seconds inside its 25-minute job;
 the macOS partition and local default retain 900 seconds.
 
+### Parallel Python execution
+
+`--python-shards 2` runs the complete admitted Python population in two parallel
+child processes. `scripts/check_all.sh --python-shards 2` exposes the same option;
+its default remains one process running every check and test. Both hosted gate
+partitions and the toolchain workflow enable two shards inside their existing jobs.
+Job names, uploaded files, artifact names and the published version 1 summary stay
+unchanged, so the existing trusted base reader can validate them without a rollout.
+
+[`ci-host-durations.json`](../scripts/ci-host-durations.json) freezes the successful
+main run's per-test observations, summed by portable Python module, with separate
+weights for macOS-only cases and static checks. Whole modules retain their unittest
+fixture lifecycle. Sort modules by descending cost, then module name; assign each to
+the least-loaded shard, breaking ties by shard number. Static checks belong only to
+shard 1 and their recorded cost participates in balancing. An unrecorded module costs
+one second per admitted method. Added methods execute with their module, removed
+methods vanish from the inventory, and obsolete weights never select a test. The
+same source and weights produce identical assignments regardless of discovery order.
+This balances observed time, not test counts; simultaneous CPU or disk contention
+still requires hosted measurement.
+
+Each child receives the existing `--timeout-seconds` budget, capped at 1200;
+shard 1's static checks consume part of its budget. Both children start before the
+parent waits. The parent also enforces each child's budget from process launch,
+prints each wall time and exit code, and stops/reaps both child groups on cancellation
+or an exception. A failing child does not suppress the other child. No retry is added.
+
+The parent accepts exactly two completed, zero-exit receipts. Their full source
+identities (including commit and tree SHA), run/attempt, source metadata and policy
+hashes must match. Each receipt must declare, discover and observe exactly its
+assigned identities, without duplicates or deselections, and the combined sets must
+equal the parent's complete admitted population. A legitimately empty internal shard
+still executes full discovery and writes a receipt; it supplies no public coverage
+exception. Missing, cancelled, timed-out, stale-source or incomplete children fail
+closed. Only the merged population receives the ordinary public coverage/skip verdict;
+the trusted publisher independently checks that same complete platform population.
+Internal receipts are not uploaded and introduce no public schema fields.
+
 The shared host/strict group probe on macOS uses `ps -g <group> -o pgid=,stat=`
 to select the runner's process group instead of inspecting every simulator process.
 Its existing five-second deadline remains unchanged. Empty stdout/stderr with exit 1
@@ -1827,7 +1865,8 @@ The gate producer now activates both partitions. Each Python executor first
 checks full dynamic discovery against the complete static inventory, then runs
 its base-owned subset. Linux uses the existing pinned Python packages and zstd;
 macOS executes the base-listed Swift-calling methods and swift-format. The default local host
-command remains unsplit and still runs every host check and Python method.
+command remains unsplit and still runs every host check and Python method; the
+[parallel option](#parallel-python-execution) preserves the same admitted population.
 
 The Python executor flushes `PYTHON START` and `PYTHON FINISH` lines with the
 discovered test identity, outcome and elapsed time. If one test (or discovery or

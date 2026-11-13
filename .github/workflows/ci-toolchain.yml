@@ -44,4 +44,4 @@ jobs:
       - name: Run existing host checks in the pinned environment
         run: |
           export PATH="$RUNNER_TEMP/ci-python/bin:$PATH"
-          "$RUNNER_TEMP/ci-python/bin/python3" -B scripts/run_host_checks.py --timeout-seconds 1200
+          "$RUNNER_TEMP/ci-python/bin/python3" -B scripts/run_host_checks.py --python-shards 2 --timeout-seconds 1200

@@ -84,6 +84,9 @@ class CheckAllTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("unknown argument", result.stderr)
         self.assertEqual(self.calls(), [])
+        invalid = self.run_check_all("--python-shards", "3")
+        self.assertEqual(invalid.returncode, 2)
+        self.assertEqual(self.calls(), [])
 
     def test_interrupt_does_not_start_the_next_unit_platform(self):
         for signum in (signal.SIGINT, signal.SIGTERM):

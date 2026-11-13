@@ -2708,6 +2708,202 @@ print('parsed 3 nightly retry records without image or runner dependencies')
                 self.assertEqual(python_identities(portable, macos_python_tests=set()),
                                  [ci_summary.test_identity("python", macos_key)])
 
+    def test_python_shards_balance_recorded_time_and_admit_new_methods_exactly_once(self):
+        population = [ci_summary.test_identity("host", "test conventions")]
+        population += [ci_summary.test_identity("python", key) for key in
+                       ("test_a.C.testOne", "test_a.C.testTwo", "test_b.C.testOne", "test_c.C.testOne")]
+        weights = {"python_modules": {"test_a": 8, "test_b": 6, "test_c": 2},
+                   "host_checks": {"test conventions": 4}}
+        parts = run_host_checks.python_shard_populations(population, weights)
+        self.assertEqual(parts, run_host_checks.python_shard_populations(list(reversed(population)), weights))
+        self.assertEqual([entry["key"] for entry in parts[0]], ["test conventions", "test_b.C.testOne"])
+        self.assertEqual([entry["key"] for entry in parts[1]], ["test_a.C.testOne", "test_a.C.testTwo", "test_c.C.testOne"])
+        for candidate in (population + [ci_summary.test_identity("python", "test_new.C.testAdded")], population[1:-1]):
+            shards = run_host_checks.python_shard_populations(candidate, weights)
+            keys = [ci_summary.identity_key(entry) for shard in shards for entry in shard]
+            self.assertEqual(sorted(keys), sorted(map(ci_summary.identity_key, candidate)))
+            self.assertEqual(len(keys), len(set(keys)))
+        with self.assertRaises(ci_summary.ContractError):
+            run_host_checks.python_shard_populations(population + population[-1:], weights)
+        mac = ci_summary.test_identity("python", sorted(run_host_checks.MACOS_PYTHON_TESTS)[0])
+        portable = ci_summary.test_identity("python", "portable.C.testAdded")
+        new_case_weights = {"python_modules": {mac["key"].split(".")[0]: 200, "portable": 3},
+                            "host_checks": {"test conventions": 4}}
+        self.assertEqual(run_host_checks.python_shard_populations([population[0], mac, portable], new_case_weights)[0],
+                         [population[0]])
+
+    def test_host_shard_merge_fails_closed_for_incomplete_or_unbound_execution(self):
+        template = valid_summary()
+        parts = [[ci_summary.test_identity("python", "test_a.C.testOne")],
+                 [ci_summary.test_identity("python", "test_b.C.testTwo")]]
+        template["population"].update(declared=parts[0] + parts[1], compiled=[], observed=[])
+        shards = []
+        for number, entries in enumerate(parts, 1):
+            shard = copy.deepcopy(template)
+            shard["run"]["shard"] = "python-" + str(number)
+            shard["population"].update(declared=entries, compiled=entries,
+                observed=[ci_summary.observation(entry, "passed", 1) for entry in entries])
+            shards.append((number, shard, 0))
+        compiled, observed = run_host_checks.merge_host_shards(template, parts, shards)
+        self.assertEqual(compiled, parts[0] + parts[1])
+        self.assertEqual([row["identity"] for row in observed], compiled)
+        def different_source(value):
+            value[1][1]["identity"]["tree_sha"] = "c" * 40
+        def duplicate(value):
+            value[1][1]["population"]["observed"] *= 2
+        def missing(value):
+            value[1][1]["population"]["observed"] = []
+        def compiled_missing(value):
+            value[1][1]["population"]["compiled"] = []
+        def wrong_partition(value):
+            value[1][1]["population"] = copy.deepcopy(value[0][1]["population"])
+        def failed(value):
+            value[1][1]["status"] = "failed"
+        def cancelled(value):
+            value[1] = (2, value[1][1], -signal.SIGTERM)
+        def timed_out(value):
+            value[1] = (2, value[1][1], 124)
+        for defect in (lambda value: value.pop(), different_source, duplicate, missing, compiled_missing,
+                       wrong_partition, failed, cancelled, timed_out):
+            bad = copy.deepcopy(shards)
+            defect(bad)
+            with self.subTest(defect=defect.__name__), self.assertRaises(ci_summary.ContractError):
+                run_host_checks.merge_host_shards(template, parts, bad)
+
+    def test_parallel_host_children_launch_together_and_keep_independent_budgets(self):
+        template = valid_summary()
+        template["population"]["declared"] = []
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "scripts").mkdir()
+            # A rendezvous makes sequential execution fail without measuring a fast host's timing.
+            (root / "scripts/run_host_checks.py").write_text('''import argparse, json, pathlib, time
+p = argparse.ArgumentParser()
+p.add_argument('--output-dir', type=pathlib.Path)
+p.add_argument('--python-shard', type=int)
+p.add_argument('--timeout-seconds', type=float)
+a = p.parse_args()
+a.output_dir.mkdir(parents=True)
+(a.output_dir / 'started').touch()
+other = a.output_dir.parent / ('python-' + str(3 - a.python_shard)) / 'started'
+deadline = time.monotonic() + 5
+while not other.exists() and time.monotonic() < deadline:
+    time.sleep(.01)
+if not other.exists() or a.timeout_seconds != 7:
+    raise SystemExit(1)
+summary = json.loads((a.output_dir.parent / 'template.json').read_text())
+summary['run']['shard'] = 'python-' + str(a.python_shard)
+(a.output_dir / 'summary.json').write_text(json.dumps(summary))
+''')
+            (root / "template.json").write_text(json.dumps(template))
+            with patch.object(run_host_checks, "REPO_ROOT", root), contextlib.redirect_stdout(io.StringIO()) as log:
+                shards = run_host_checks.run_parallel_shards(root, timeout_seconds=7, host_platform=None, workflow_path=None)
+            self.assertEqual([(number, code) for number, _, code in shards], [(1, 0), (2, 0)])
+            self.assertIn("Python shard 1 wall time:", log.getvalue())
+            self.assertIn("Python shard 2 wall time:", log.getvalue())
+            (root / "scripts/run_host_checks.py").write_text("import time\ntime.sleep(2)\n")
+            with patch.object(run_host_checks, "REPO_ROOT", root), contextlib.redirect_stdout(io.StringIO()):
+                timed_out = run_host_checks.run_parallel_shards(root / "timeout", timeout_seconds=.1,
+                                                               host_platform=None, workflow_path=None)
+            self.assertEqual([(number, code) for number, _, code in timed_out], [(1, 124), (2, 124)])
+            self.assertTrue(all(payload is None for _, payload, _ in timed_out))
+
+    def test_host_shard_timeout_allows_child_step_group_cleanup_before_killing_the_child(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "scripts").mkdir()
+            (root / "scripts/run_host_checks.py").write_text('''import argparse, pathlib, signal, subprocess, sys, time
+p = argparse.ArgumentParser()
+p.add_argument('--output-dir', type=pathlib.Path)
+p.add_argument('--python-shard')
+p.add_argument('--timeout-seconds')
+a = p.parse_args()
+child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], start_new_session=True)
+def stop(signum, frame):
+    time.sleep(.3)
+    child.terminate()
+    child.wait()
+    raise SystemExit(1)
+signal.signal(signal.SIGTERM, stop)
+a.output_dir.mkdir(parents=True)
+(a.output_dir / 'descendant.pid').write_text(str(child.pid))
+time.sleep(30)
+''')
+            try:
+                with patch.object(run_host_checks, "REPO_ROOT", root), \
+                        patch.object(run_host_checks, "GROUP_TERM_GRACE_SECONDS", .05), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    shards = run_host_checks.run_parallel_shards(root, timeout_seconds=1, host_platform=None, workflow_path=None)
+                self.assertEqual([code for _, _, code in shards], [124, 124])
+                for number in (1, 2):
+                    pid = int((root / ("python-" + str(number)) / "descendant.pid").read_text())
+                    with self.assertRaises(ProcessLookupError):
+                        os.kill(pid, 0)
+            finally:
+                for path in root.glob("python-*/descendant.pid"):
+                    try:
+                        os.kill(int(path.read_text()), signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+
+    def test_host_duration_weights_refuse_invalid_or_nonfinite_costs(self):
+        weights = {"schema_version": 1, "source": {}, "python_modules": {"test_a": 1},
+                   "python_tests": {}, "host_checks": {}}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "scripts").mkdir()
+            path = root / "scripts/ci-host-durations.json"
+            path.write_text(json.dumps(weights))
+            with patch.object(run_host_checks, "REPO_ROOT", root):
+                self.assertEqual(run_host_checks.python_shard_weights(), weights)
+                invalid = [dict(weights, schema_version=True), dict(weights, host_checks=[])]
+                invalid += [dict(weights, python_modules={"test_a": cost}) for cost in (-1, True, float("inf"), "1")]
+                for candidate in invalid:
+                    path.write_text(json.dumps(candidate))
+                    with self.subTest(candidate=candidate), self.assertRaises(ci_summary.ContractError):
+                        run_host_checks.python_shard_weights()
+
+    def test_internal_host_shards_run_static_checks_once_and_preserve_empty_shard_receipts(self):
+        python = [ci_summary.test_identity("python", "portable.Sample.test_rule"),
+                  ci_summary.test_identity("python", sorted(run_host_checks.MACOS_PYTHON_TESTS)[0])]
+        complete = [ci_summary.test_identity("host", name) for name, _ in run_host_checks.HOST_CHECKS] + python
+        weights = {"python_modules": {}, "host_checks": {}}
+        for scope in (None, "linux", "macos"):
+            recorded, static = [], []
+            expected = run_host_checks.host_partition(complete, scope) if scope else complete
+            for number in (1, 2):
+                with self.subTest(scope=scope, shard=number), tempfile.TemporaryDirectory() as directory:
+                    output = Path(directory)
+                    def steps(commands, *args, **kwargs):
+                        manifest = json.loads((output / "python-selection.json").read_text())
+                        self.assertEqual(manifest["inventory"], python)
+                        static.extend(name for name, _ in commands if name != "python tests")
+                        (output / "python-results.json").write_text(json.dumps({"compiled": manifest["selected"],
+                            "observed": [ci_summary.observation(entry, "passed", 0) for entry in manifest["selected"]]}))
+                        return [ci_summary.observation(ci_summary.test_identity("host", name), "passed", 0)
+                                for name, _ in commands], []
+                    arguments = ["run_host_checks.py", "--python-shard", str(number), "--output-dir", str(output)]
+                    if scope:
+                        arguments += ["--host-platform", scope]
+                    with patch("sys.argv", arguments), \
+                            patch.object(run_host_checks, "run_identity", return_value=valid_summary()["identity"]), \
+                            patch.object(run_host_checks, "toolchain", return_value=valid_summary()["toolchain"]), \
+                            patch.object(run_host_checks, "python_shard_weights", return_value=weights), \
+                            patch("ci_population.python_identities", return_value=python), \
+                            patch.object(run_host_checks, "run_steps", side_effect=steps), \
+                            contextlib.redirect_stdout(io.StringIO()):
+                        self.assertEqual(run_host_checks.main(), 0)
+                    summary = ci_summary.parse_summary((output / "summary.json").read_text())
+                    population = summary["population"]
+                    keys = lambda entries: sorted(map(ci_summary.identity_key, entries))
+                    self.assertEqual(summary["status"], "passed")
+                    self.assertEqual(keys(population["declared"]), keys(population["compiled"]))
+                    self.assertEqual(keys(population["compiled"]), keys([row["identity"] for row in population["observed"]]))
+                    recorded.extend(population["declared"])
+            self.assertEqual(keys(recorded), keys(expected))
+            self.assertEqual(sorted(static), sorted(entry["key"] for entry in expected
+                if entry["kind"] == "host" and entry["key"] != "python tests"))
+
     def test_current_summary_round_trips_and_names_failures_in_markdown(self):
         summary = valid_summary()
         self.assertEqual(ci_summary.parse_summary(json.dumps(summary)), summary)

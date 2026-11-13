@@ -148,6 +148,10 @@ To keep its JSON and short Markdown records locally, run
 and optional unit bundles in `DIR`; choose a fresh directory. Without it, temporary
 host records are removed on exit. The final terminal report lists each host result
 and all nonpassing Python identities.
+Use `scripts/check_all.sh --python-shards 2` for two deterministic, time-balanced
+Python processes with static checks once. Omitting this option still runs the whole
+suite in one process. The direct host runner accepts the same option; both retain
+the existing per-child budget (900 seconds by default, at most 1200).
 See [the summary contract](docs/CI_SUMMARY.md) for validation, identity, result
 accounting and the current workflow boundary. Existing privacy checks remain required.
 
