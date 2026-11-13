@@ -291,8 +291,9 @@ extension SlideShowViewModelStartupTests {
         fixture.serverA.hold(assetIds: Set(candidates.map(\.id)))
         let coordinator = ContentPlaybackCoordinator(viewModel: vm)
         coordinator.flow.initializeRoute(isServerConfigured: true)
-        vm.refreshPlaybackRelatedSettings(applyExifVisibility: { _ in }, applyDebugOverlayVisibility: { _ in })
-        defer { fixture.serverA.releaseAll() }
+        let sourceSwitch = try #require(
+            vm.refreshPlaybackRelatedSettings(applyExifVisibility: { _ in }, applyDebugOverlayVisibility: { _ in }))
+        defer { sourceSwitch.cancel(); fixture.serverA.releaseAll() }
         try #require(
             await waitUntil { candidates.prefix(2).allSatisfy { fixture.serverA.enteredCount(assetId: $0.id) > 0 } })
         try #require(vm.isSoloOnlyPlaybackSource && vm.isLoading)
@@ -304,6 +305,7 @@ extension SlideShowViewModelStartupTests {
         try #require(settings.didSaveConfig)
         let requestsAAfterSave = fixture.serverA.enteredRequests()
         fixture.serverA.releaseAll()
+        await sourceSwitch.value
         await coordinator.settingsDidDisappear()
         try #require(await waitUntil { vm.didFirstPreload && !vm.isLoading })
         completePausedServerSwitchScene(vm)
