@@ -28,6 +28,7 @@ Options:
   --allow-private-config  Explicitly use local private configuration; never for public evidence.
   --config NAME=VALUE     Explicit runtime test configuration (repeatable).
   --snapshot-record PATH  Keep the tested tree receipt outside the repository.
+  --python-shards N       Run all Python tests in one process (default) or two parallel shards.
   --with-unit-tests        Also run scripts/run_offline_unit_tests.py for iOS and tvOS.
   --ios-destination DEST   xcodebuild destination for iOS, e.g. 'platform=iOS Simulator,id=<UDID>'.
   --tvos-destination DEST  xcodebuild destination for tvOS, e.g. 'platform=tvOS Simulator,id=<UDID>'.
@@ -62,6 +63,7 @@ with_unit_tests=0
 ios_destination=""
 tvos_destination=""
 output_dir=""
+python_shards=1
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -73,12 +75,13 @@ while [[ $# -gt 0 ]]; do
         with_unit_tests=1
         shift
         ;;
-    --ios-destination | --tvos-destination | --output-dir)
+    --ios-destination | --tvos-destination | --output-dir | --python-shards)
         [[ $# -ge 2 && -n "$2" ]] || die_usage "$1 needs a value"
         case "$1" in
         --ios-destination) ios_destination="$2" ;;
         --tvos-destination) tvos_destination="$2" ;;
         --output-dir) output_dir="$2" ;;
+        --python-shards) python_shards="$2" ;;
         esac
         shift 2
         ;;
@@ -87,6 +90,7 @@ while [[ $# -gt 0 ]]; do
         ;;
     esac
 done
+[[ "$python_shards" = 1 || "$python_shards" = 2 ]] || die_usage "--python-shards must be 1 or 2"
 
 if [[ $with_unit_tests -eq 1 ]]; then
     [[ -n "$ios_destination" ]] || die_usage "--with-unit-tests needs --ios-destination"
@@ -142,7 +146,7 @@ else
     trap 'rm -rf "$host_output"' EXIT
     host_args=(--output-dir "$host_output" --no-summary-path)
 fi
-run_step "host checks" "$python" -B scripts/run_host_checks.py "${host_args[@]}"
+run_step "host checks" "$python" -B scripts/run_host_checks.py "${host_args[@]}" --python-shards "$python_shards"
 
 if [[ $with_unit_tests -eq 1 ]]; then
     stamp="$(date +%Y%m%d-%H%M%S)"

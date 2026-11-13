@@ -71,7 +71,7 @@ jobs:
         env:
           PYTHONDONTWRITEBYTECODE: '1'
         run: |
-          "$PYTHON" -B scripts/run_host_checks.py --host-platform linux \
+          "$PYTHON" -B scripts/run_host_checks.py --host-platform linux --python-shards 2 \
             --output-dir "$RUNNER_TEMP/host-summary" \
             --workflow-path .github/workflows/ci-gate.yml --timeout-seconds 1200
       - name: Validate and display the records
@@ -119,7 +119,7 @@ jobs:
         env:
           PYTHONDONTWRITEBYTECODE: '1'
         run: |
-          "$PYTHON" -B scripts/run_host_checks.py --host-platform macos \
+          "$PYTHON" -B scripts/run_host_checks.py --host-platform macos --python-shards 2 \
             --output-dir "$RUNNER_TEMP/host-summary" \
             --workflow-path .github/workflows/ci-gate.yml \
             --timeout-seconds 900

@@ -2708,6 +2708,449 @@ print('parsed 3 nightly retry records without image or runner dependencies')
                 self.assertEqual(python_identities(portable, macos_python_tests=set()),
                                  [ci_summary.test_identity("python", macos_key)])
 
+    def test_python_shards_balance_recorded_time_and_admit_new_methods_exactly_once(self):
+        population = [ci_summary.test_identity("host", "test conventions")]
+        population += [ci_summary.test_identity("python", key) for key in
+                       ("test_a.C.testOne", "test_a.C.testTwo", "test_b.C.testOne", "test_c.C.testOne")]
+        weights = {"python_modules": {"test_a": 8, "test_b": 6, "test_c": 2},
+                   "host_checks": {"test conventions": 4}}
+        parts = run_host_checks.python_shard_populations(population, weights)
+        self.assertEqual(parts, run_host_checks.python_shard_populations(list(reversed(population)), weights))
+        self.assertEqual([entry["key"] for entry in parts[0]], ["test conventions", "test_b.C.testOne"])
+        self.assertEqual([entry["key"] for entry in parts[1]], ["test_a.C.testOne", "test_a.C.testTwo", "test_c.C.testOne"])
+        for candidate in (population + [ci_summary.test_identity("python", "test_new.C.testAdded")], population[1:-1]):
+            shards = run_host_checks.python_shard_populations(candidate, weights)
+            keys = [ci_summary.identity_key(entry) for shard in shards for entry in shard]
+            self.assertEqual(sorted(keys), sorted(map(ci_summary.identity_key, candidate)))
+            self.assertEqual(len(keys), len(set(keys)))
+        with self.assertRaises(ci_summary.ContractError):
+            run_host_checks.python_shard_populations(population + population[-1:], weights)
+        mac = ci_summary.test_identity("python", sorted(run_host_checks.MACOS_PYTHON_TESTS)[0])
+        portable = ci_summary.test_identity("python", "portable.C.testAdded")
+        new_case_weights = {"python_modules": {mac["key"].split(".")[0]: 200, "portable": 3},
+                            "host_checks": {"test conventions": 4}}
+        self.assertEqual(run_host_checks.python_shard_populations([population[0], mac, portable], new_case_weights)[0],
+                         [population[0]])
+
+    def test_host_shard_merge_fails_closed_for_incomplete_or_unbound_execution(self):
+        template = valid_summary()
+        parts = [[ci_summary.test_identity("python", "test_a.C.testOne")],
+                 [ci_summary.test_identity("python", "test_b.C.testTwo")]]
+        template["population"].update(declared=parts[0] + parts[1], compiled=[], observed=[])
+        shards = []
+        for number, entries in enumerate(parts, 1):
+            shard = copy.deepcopy(template)
+            shard["run"]["shard"] = "python-" + str(number)
+            shard["population"].update(declared=list(entries), compiled=list(entries),
+                observed=[ci_summary.observation(entry, "passed", 1) for entry in entries])
+            shards.append((number, shard, 0))
+        compiled, observed, infrastructure = run_host_checks.merge_host_shards(template, parts, shards)
+        self.assertEqual(compiled, parts[0] + parts[1])
+        self.assertEqual([row["identity"] for row in observed], compiled)
+        self.assertEqual(infrastructure, [])
+        def different_source(value):
+            value[1][1]["identity"]["tree_sha"] = "c" * 40
+        def duplicate(value):
+            value[1][1]["population"]["observed"] *= 2
+        def missing(value):
+            value[1][1]["population"]["observed"] = []
+        def compiled_missing(value):
+            value[1][1]["population"]["compiled"] = []
+        def wrong_partition(value):
+            value[1][1]["population"] = copy.deepcopy(value[0][1]["population"])
+        def missing_receipt(value):
+            value[1] = (2, None, -signal.SIGTERM)
+        def malformed(value):
+            value[1][1]["status"] = "invalid"
+        def swapped_execution(value):
+            first, second = (entry[1]["population"] for entry in value)
+            for field in ("compiled", "observed"):
+                first[field], second[field] = second[field], first[field]
+        for defect in (lambda value: value.pop(), different_source, duplicate, missing, compiled_missing,
+                       wrong_partition, missing_receipt, malformed, swapped_execution):
+            bad = copy.deepcopy(shards)
+            defect(bad)
+            with self.subTest(defect=defect.__name__), self.assertRaises(ci_summary.ContractError):
+                run_host_checks.merge_host_shards(template, parts, bad)
+        def extra_compiled(value):
+            value[1][1]["population"]["compiled"].append(ci_summary.test_identity("python", "test_extra.C.testOther"))
+        def declared_missing(value):
+            value[1][1]["population"]["declared"] = []
+        def cross_assignment(value):
+            value[1][1]["population"]["observed"] = copy.deepcopy(value[0][1]["population"]["observed"])
+        def wrong_run(value):
+            value[1][1]["run"]["attempt"] += 1
+        def wrong_hash(value):
+            value[1][1]["hashes"]["policies"]["workflow-policy"] = "f" * 64
+        for defect in (different_source, duplicate, wrong_partition, declared_missing, extra_compiled,
+                       cross_assignment, wrong_run, wrong_hash):
+            bad = copy.deepcopy(shards)
+            bad[1][1]["status"] = "failed"
+            defect(bad)
+            with self.subTest(failed_defect=defect.__name__), self.assertRaises(ci_summary.ContractError):
+                run_host_checks.merge_host_shards(template, parts, bad)
+        bad = copy.deepcopy(shards)
+        cross_assignment(bad)
+        bad[0][1]["population"]["observed"] = []
+        for _, shard, _ in bad:
+            shard["status"] = "failed"
+        with self.assertRaisesRegex(ci_summary.ContractError, "host shard execution differs"):
+            run_host_checks.merge_host_shards(template, parts, bad)
+        bad = copy.deepcopy(shards)
+        for _, shard, _ in bad:
+            shard["status"] = "failed"
+            shard["population"]["observed"].append(ci_summary.observation(
+                ci_summary.test_identity("python", "setUpClass (test_extra.C)"), "failed", 0))
+        with self.assertRaisesRegex(ci_summary.ContractError, "duplicate host shard identity"):
+            run_host_checks.merge_host_shards(template, parts, bad)
+
+    def test_parallel_host_main_publishes_success_and_preserves_failed_shard_evidence(self):
+        python = [ci_summary.test_identity("python", "test_a.C.testOne"),
+                  ci_summary.test_identity("python", "test_b.C.testTwo")]
+        weights = {"python_modules": {}, "host_checks": {}}
+        class Broken(unittest.TestCase):
+            @classmethod
+            def setUpClass(cls):
+                raise RuntimeError("fixture setup failed")
+
+            def testTwo(self):
+                self.fail("a broken fixture must not execute its member")
+        Broken.__module__, Broken.__qualname__ = "test_b", "C"
+        fixture, fixture_code = run_python_tests.run_suite(
+            unittest.defaultTestLoader.loadTestsFromTestCase(Broken), io.StringIO())
+        self.assertEqual(fixture_code, 1)
+        for failure in (None, "python", "fixture", "static", "interrupted", "missing-python-results",
+                        "failed-status", "cancelled", "parent-timeout", "policy-proposed"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory)
+                def children(*args, **kwargs):
+                    template = json.loads((output / "summary.json").read_text())
+                    template["hashes"]["policies"]["test-policy"] = hashlib.sha256(
+                        (run_host_checks.REPO_ROOT / "scripts/ci-test-policy.json").read_bytes()).hexdigest()
+                    template["population"]["declared"].extend(python)
+                    parts = run_host_checks.python_shard_populations(template["population"]["declared"], weights)
+                    receipts = []
+                    for number, entries in enumerate(parts, 1):
+                        shard = copy.deepcopy(template)
+                        shard["run"]["shard"] = "python-" + str(number)
+                        rows = [ci_summary.observation(entry, "passed", 0) for entry in entries]
+                        code = 0
+                        if failure == "static" and number == 1 or failure == "python" and number == 2:
+                            target = next(row for row in rows if row["identity"]["kind"] ==
+                                          ("host" if failure == "static" else "python"))
+                            rows[rows.index(target)] = ci_summary.observation(target["identity"], "failed", 0, exit_code=1)
+                            code = 1
+                        compiled = entries
+                        if number == 2 and failure == "fixture":
+                            compiled, rows, code = fixture["compiled"], fixture["observed"], fixture_code
+                        if number == 2 and failure in {"interrupted", "missing-python-results"}:
+                            shard["infrastructure"] = [{"code": failure, "message": "child diagnostic"}]
+                            compiled, rows = [], []
+                            code = 1
+                        if number == 2 and failure in {"cancelled", "parent-timeout"}:
+                            code = -signal.SIGTERM if failure == "cancelled" else 124
+                        shard["status"] = ("failed" if (code and failure not in {"cancelled", "parent-timeout"}
+                                                      or failure == "failed-status" and number == 2) else "passed")
+                        if failure == "policy-proposed":
+                            shard["status"] = "unverified"
+                            shard["infrastructure"] = [{"code": "policy-proposed", "message": "recompute on union"}]
+                        shard["population"].update(declared=entries, compiled=compiled, observed=rows)
+                        receipts.append((number, shard, code))
+                    return receipts
+                with patch("sys.argv", ["run_host_checks.py", "--python-shards", "2", "--output-dir", str(output)]), \
+                        patch.object(run_host_checks, "run_identity", return_value=valid_summary()["identity"]), \
+                        patch.object(run_host_checks, "toolchain", return_value=valid_summary()["toolchain"]), \
+                        patch.object(run_host_checks, "python_shard_weights", return_value=weights), \
+                        patch("ci_population.python_identities", return_value=python), \
+                        patch.object(run_host_checks, "run_parallel_shards", side_effect=children) as launch, \
+                        patch.object(run_host_checks, "run_steps") as steps, \
+                        contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    code = run_host_checks.main()
+                succeeds = failure in {None, "policy-proposed"}
+                self.assertEqual(code, 0 if succeeds else 1)
+                launch.assert_called_once_with(output.resolve(), timeout_seconds=900, host_platform=None, workflow_path=None)
+                steps.assert_not_called()
+                summary = ci_summary.parse_summary((output / "summary.json").read_text())
+                self.assertEqual(summary["status"], "passed" if succeeds else "failed")
+                rows = summary["population"]["observed"]
+                expected = summary["population"]["declared"]
+                if failure == "fixture":
+                    expected = expected + [ci_summary.test_identity("python", "setUpClass (test_b.C)")]
+                elif failure in {"interrupted", "missing-python-results"}:
+                    expected = [entry for entry in expected if entry != python[1]]
+                self.assertEqual({ci_summary.identity_key(row["identity"]) for row in rows},
+                                 {ci_summary.identity_key(entry) for entry in expected})
+                self.assertTrue(any(row["identity"]["kind"] == "python" and row["outcome"] == "passed" for row in rows))
+                if failure == "python":
+                    self.assertEqual([row["identity"] for row in rows if row["outcome"] == "failed"
+                                      and row["identity"]["kind"] == "python"], python[1:])
+                    self.assertIn(python[1]["key"], (output / "summary.md").read_text())
+                if failure in {"python", "fixture", "failed-status", "cancelled", "parent-timeout"}:
+                    self.assertEqual(next(row["outcome"] for row in rows
+                        if row["identity"] == ci_summary.test_identity("host", "python tests")), "failed")
+                if failure == "fixture":
+                    failed = next(row for row in rows if row["identity"]["key"] == "setUpClass (test_b.C)")
+                    self.assertEqual(failed["outcome"], "failed")
+                    self.assertIn("fixture setup failed", failed["attempts"][0]["message"])
+                    self.assertIn("setUpClass (test_b.C)", (output / "summary.md").read_text())
+                if failure == "static":
+                    self.assertTrue(any(row["identity"]["kind"] == "host" and row["outcome"] == "failed" for row in rows))
+                    self.assertEqual(next(row["outcome"] for row in rows
+                        if row["identity"] == ci_summary.test_identity("host", "python tests")), "passed")
+                expected_codes = [failure] if failure in {"interrupted", "missing-python-results"} else []
+                self.assertEqual([entry["code"] for entry in summary["infrastructure"]], expected_codes)
+
+    def test_child_deadline_wait_stops_when_parent_changes_or_never_publishes(self):
+        for reason in ("parent changed", "timed out"):
+            with self.subTest(reason=reason), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "deadline.json"
+                parents = [42, 42, 43] if reason == "parent changed" else [42, 42, 42]
+                with patch.object(run_host_checks.os, "getppid", side_effect=parents), \
+                        patch.object(run_host_checks.time, "monotonic", side_effect=[0, 0, 31]), \
+                        patch.object(run_host_checks.time, "sleep", side_effect=[None, AssertionError("unbounded wait")]):
+                    with self.assertRaisesRegex(ci_summary.ContractError, reason):
+                        run_host_checks.shard_execution_deadline(path)
+                self.assertTrue(path.with_suffix(".ready").exists())
+
+    def test_shared_execution_clock_excludes_sleep_on_macos(self):
+        with patch.object(run_host_checks.time, "CLOCK_UPTIME_RAW", 8, create=True):
+            for host, clock in (("darwin", 8), ("linux", run_host_checks.time.CLOCK_MONOTONIC)):
+                with self.subTest(host=host), patch.object(run_host_checks.sys, "platform", host), \
+                        patch.object(run_host_checks.time, "clock_gettime", return_value=123) as read:
+                    self.assertEqual(run_host_checks.execution_clock(), 123)
+                    read.assert_called_once_with(clock)
+
+    def test_child_deadline_receipt_is_published_as_step_timeout(self):
+        python = [ci_summary.test_identity("python", "test_a.C.testOne"),
+                  ci_summary.test_identity("python", "test_b.C.testTwo")]
+        weights = {"python_modules": {}, "host_checks": {}}
+        launch = run_host_checks.run_parallel_shards
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "output"
+            (root / "scripts").mkdir()
+            def children(*args, **kwargs):
+                template = json.loads((output / "summary.json").read_text())
+                template["hashes"]["policies"]["test-policy"] = hashlib.sha256(
+                    (run_host_checks.REPO_ROOT / "scripts/ci-test-policy.json").read_bytes()).hexdigest()
+                template["population"]["declared"].extend(python)
+                parts = run_host_checks.python_shard_populations(template["population"]["declared"], weights)
+                receipts = []
+                for number, entries in enumerate(parts, 1):
+                    shard = copy.deepcopy(template)
+                    shard["run"]["shard"] = "python-" + str(number)
+                    shard["population"].update(declared=entries, compiled=[], observed=[])
+                    receipts.append(shard)
+                (root / "receipts.json").write_text(json.dumps(receipts))
+                (root / "scripts/run_host_checks.py").write_text('''import argparse, json, pathlib, sys, time
+sys.path.insert(0, SCRIPTS)
+import run_host_checks as host
+p = argparse.ArgumentParser()
+p.add_argument('--output-dir', type=pathlib.Path)
+p.add_argument('--python-shard', type=int)
+p.add_argument('--timeout-seconds', type=float)
+p.add_argument('--shard-deadline-path', type=pathlib.Path)
+a = p.parse_args()
+assert a.timeout_seconds == 1
+time.sleep(.2)  # Startup precedes the child's full execution budget.
+deadline = host.shard_execution_deadline(a.shard_deadline_path)
+receipt = json.loads((a.output_dir.parent.parent / 'receipts.json').read_text())[a.python_shard - 1]
+hosts = [entry for entry in receipt['population']['declared'] if entry['kind'] == 'host']
+steps = [(entry['key'], ['true']) for entry in hosts if entry['key'] != 'python tests']
+steps.append(('python tests', [sys.executable, '-c', 'import time; time.sleep(30)']))
+rows, infrastructure = host.run_steps(steps, a.output_dir, timeout_seconds=a.timeout_seconds,
+                                    deadline_monotonic=deadline)
+receipt['population'].update(compiled=hosts, observed=[row for row in rows if row['identity'] in hosts])
+receipt['infrastructure'] = infrastructure + [{'code': 'missing-python-results', 'message': 'Python result identities are missing or malformed'}]
+receipt['status'] = 'failed'
+time.sleep(.1)  # Receipt finalization must finish before the parent's kill backstop.
+(a.output_dir / 'summary.json').write_text(json.dumps(receipt))
+raise SystemExit(1)
+'''.replace("SCRIPTS", repr(str(Path(run_host_checks.__file__).parent))))
+                with patch.object(run_host_checks, "REPO_ROOT", root):
+                    return launch(*args, **kwargs)
+            with patch("sys.argv", ["run_host_checks.py", "--python-shards", "2", "--timeout-seconds", "1",
+                                    "--output-dir", str(output)]), \
+                    patch.object(run_host_checks, "run_identity", return_value=valid_summary()["identity"]), \
+                    patch.object(run_host_checks, "toolchain", return_value=valid_summary()["toolchain"]), \
+                    patch.object(run_host_checks, "python_shard_weights", return_value=weights), \
+                    patch("ci_population.python_identities", return_value=python), \
+                    patch.object(run_host_checks, "run_parallel_shards", side_effect=children), \
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(run_host_checks.main(), 1)
+            summary = ci_summary.parse_summary((output / "summary.json").read_text())
+            self.assertEqual(summary["status"], "failed")
+            self.assertEqual([entry["code"] for entry in summary["infrastructure"]],
+                             ["step-timeout", "missing-python-results"] * 2, summary["infrastructure"])
+            self.assertEqual([entry["message"] for entry in summary["infrastructure"] if entry["code"] == "step-timeout"],
+                             ["python tests: host-check time budget exhausted"] * 2)
+            self.assertEqual(sorted(map(ci_summary.identity_key, summary["population"]["compiled"])),
+                             sorted(ci_summary.identity_key(ci_summary.test_identity("host", name))
+                                    for name, _ in run_host_checks.HOST_CHECKS))
+            self.assertEqual(len(summary["population"]["observed"]), len(run_host_checks.HOST_CHECKS))
+            self.assertIn("timed-out", [row["outcome"] for row in summary["population"]["observed"]])
+
+    def test_parallel_host_children_launch_together_and_keep_independent_budgets(self):
+        template = valid_summary()
+        template["population"]["declared"] = []
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "scripts").mkdir()
+            # A rendezvous makes sequential execution fail without measuring a fast host's timing.
+            (root / "scripts/run_host_checks.py").write_text('''import argparse, json, pathlib, sys, time
+sys.path.insert(0, SCRIPTS)
+import run_host_checks as host
+p = argparse.ArgumentParser()
+p.add_argument('--output-dir', type=pathlib.Path)
+p.add_argument('--python-shard', type=int)
+p.add_argument('--timeout-seconds', type=float)
+p.add_argument('--shard-deadline-path', type=pathlib.Path)
+a = p.parse_args()
+(a.output_dir / 'started').touch()
+other = a.output_dir.parent / ('python-' + str(3 - a.python_shard)) / 'started'
+deadline = time.monotonic() + 5
+while not other.exists() and time.monotonic() < deadline:
+    time.sleep(.01)
+if not other.exists() or a.timeout_seconds != 7:
+    raise SystemExit(1)
+time.sleep(.2)  # Startup must not consume the child's execution budget.
+ready = host.execution_clock()
+execution_deadline = host.shard_execution_deadline(a.shard_deadline_path)
+assert execution_deadline >= ready + a.timeout_seconds
+summary = json.loads((a.output_dir.parent / 'template.json').read_text())
+summary['run']['shard'] = 'python-' + str(a.python_shard)
+(a.output_dir / 'summary.json').write_text(json.dumps(summary))
+'''.replace("SCRIPTS", repr(str(Path(run_host_checks.__file__).parent))))
+            (root / "template.json").write_text(json.dumps(template))
+            with patch.object(run_host_checks, "REPO_ROOT", root), contextlib.redirect_stdout(io.StringIO()) as log:
+                shards = run_host_checks.run_parallel_shards(root, timeout_seconds=7, host_platform=None, workflow_path=None)
+            self.assertEqual([(number, code) for number, _, code in shards], [(1, 0), (2, 0)])
+            self.assertIn("Python shard 1 wall time:", log.getvalue())
+            self.assertIn("Python shard 2 wall time:", log.getvalue())
+            (root / "scripts/run_host_checks.py").write_text('''import argparse, pathlib, sys, time
+sys.path.insert(0, SCRIPTS)
+import run_host_checks as host
+p = argparse.ArgumentParser()
+p.add_argument('--output-dir')
+p.add_argument('--python-shard')
+p.add_argument('--timeout-seconds')
+p.add_argument('--shard-deadline-path', type=pathlib.Path)
+a = p.parse_args()
+host.shard_execution_deadline(a.shard_deadline_path)
+time.sleep(2)
+'''.replace("SCRIPTS", repr(str(Path(run_host_checks.__file__).parent))))
+            with patch.object(run_host_checks, "REPO_ROOT", root), \
+                    patch.object(run_host_checks, "GROUP_TERM_GRACE_SECONDS", .05), \
+                    patch.object(run_host_checks, "SHARD_FINALIZATION_MARGIN_SECONDS", 0), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                timed_out = run_host_checks.run_parallel_shards(root / "timeout", timeout_seconds=.1,
+                                                               host_platform=None, workflow_path=None)
+            self.assertEqual([(number, code) for number, _, code in timed_out], [(1, 124), (2, 124)])
+            self.assertTrue(all(payload is None for _, payload, _ in timed_out))
+
+    def test_host_shard_timeout_allows_child_step_group_cleanup_before_killing_the_child(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "scripts").mkdir()
+            (root / "scripts/run_host_checks.py").write_text('''import argparse, pathlib, signal, subprocess, sys, time
+sys.path.insert(0, SCRIPTS)
+import run_host_checks as host
+p = argparse.ArgumentParser()
+p.add_argument('--output-dir', type=pathlib.Path)
+p.add_argument('--python-shard')
+p.add_argument('--timeout-seconds')
+p.add_argument('--shard-deadline-path', type=pathlib.Path)
+a = p.parse_args()
+child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], start_new_session=True)
+def stop(signum, frame):
+    time.sleep(.3)
+    child.terminate()
+    child.wait()
+    raise SystemExit(1)
+signal.signal(signal.SIGTERM, stop)
+(a.output_dir / 'descendant.pid').write_text(str(child.pid))
+host.shard_execution_deadline(a.shard_deadline_path)
+time.sleep(30)
+'''.replace("SCRIPTS", repr(str(Path(run_host_checks.__file__).parent))))
+            try:
+                with patch.object(run_host_checks, "REPO_ROOT", root), \
+                        patch.object(run_host_checks, "SHARD_FINALIZATION_MARGIN_SECONDS", 0), \
+                        patch.object(run_host_checks, "GROUP_TERM_GRACE_SECONDS", .05), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    shards = run_host_checks.run_parallel_shards(root, timeout_seconds=1, host_platform=None, workflow_path=None)
+                self.assertEqual([code for _, _, code in shards], [124, 124])
+                for number in (1, 2):
+                    pid = int((root / ("python-" + str(number)) / "descendant.pid").read_text())
+                    with self.assertRaises(ProcessLookupError):
+                        os.kill(pid, 0)
+            finally:
+                for path in root.glob("python-*/descendant.pid"):
+                    try:
+                        os.kill(int(path.read_text()), signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+
+    def test_host_duration_weights_refuse_invalid_or_nonfinite_costs(self):
+        weights = {"schema_version": 1, "source": {}, "python_modules": {"test_a": 1},
+                   "python_tests": {}, "host_checks": {}}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "scripts").mkdir()
+            path = root / "scripts/ci-host-durations.json"
+            path.write_text(json.dumps(weights))
+            with patch.object(run_host_checks, "REPO_ROOT", root):
+                self.assertEqual(run_host_checks.python_shard_weights(), weights)
+                invalid = [dict(weights, schema_version=True), dict(weights, host_checks=[])]
+                invalid += [dict(weights, python_modules={"test_a": cost}) for cost in (-1, True, float("inf"), "1")]
+                for candidate in invalid:
+                    path.write_text(json.dumps(candidate))
+                    with self.subTest(candidate=candidate), self.assertRaises(ci_summary.ContractError):
+                        run_host_checks.python_shard_weights()
+
+    def test_internal_host_shards_run_static_checks_once_and_preserve_empty_shard_receipts(self):
+        python = [ci_summary.test_identity("python", "portable.Sample.test_rule"),
+                  ci_summary.test_identity("python", sorted(run_host_checks.MACOS_PYTHON_TESTS)[0])]
+        complete = [ci_summary.test_identity("host", name) for name, _ in run_host_checks.HOST_CHECKS] + python
+        weights = {"python_modules": {}, "host_checks": {}}
+        keys = lambda entries: sorted(map(ci_summary.identity_key, entries))
+        for scope in (None, "linux", "macos"):
+            recorded, static = [], []
+            expected = run_host_checks.host_partition(complete, scope) if scope else complete
+            for number in (1, 2):
+                with self.subTest(scope=scope, shard=number), tempfile.TemporaryDirectory() as directory:
+                    output = Path(directory)
+                    def steps(commands, *args, **kwargs):
+                        self.assertEqual(kwargs.get("deadline_monotonic"), 17)
+                        manifest = json.loads((output / "python-selection.json").read_text())
+                        self.assertEqual(manifest["inventory"], python)
+                        static.extend(name for name, _ in commands if name != "python tests")
+                        (output / "python-results.json").write_text(json.dumps({"compiled": manifest["selected"],
+                            "observed": [ci_summary.observation(entry, "passed", 0) for entry in manifest["selected"]]}))
+                        return [ci_summary.observation(ci_summary.test_identity("host", name), "passed", 0)
+                                for name, _ in commands], []
+                    arguments = ["run_host_checks.py", "--python-shard", str(number), "--output-dir", str(output),
+                                 "--shard-deadline-path", str(output / "execution-deadline.json")]
+                    if scope:
+                        arguments += ["--host-platform", scope]
+                    with patch("sys.argv", arguments), \
+                            patch.object(run_host_checks, "run_identity", return_value=valid_summary()["identity"]), \
+                            patch.object(run_host_checks, "toolchain", return_value=valid_summary()["toolchain"]), \
+                            patch.object(run_host_checks, "python_shard_weights", return_value=weights), \
+                            patch.object(run_host_checks, "shard_execution_deadline", return_value=17), \
+                            patch("ci_population.python_identities", return_value=python), \
+                            patch.object(run_host_checks, "run_steps", side_effect=steps), \
+                            contextlib.redirect_stdout(io.StringIO()):
+                        self.assertEqual(run_host_checks.main(), 0)
+                    summary = ci_summary.parse_summary((output / "summary.json").read_text())
+                    population = summary["population"]
+                    self.assertEqual(summary["status"], "passed")
+                    self.assertEqual(keys(population["declared"]), keys(population["compiled"]))
+                    self.assertEqual(keys(population["compiled"]), keys([row["identity"] for row in population["observed"]]))
+                    recorded.extend(population["declared"])
+            self.assertEqual(keys(recorded), keys(expected))
+            self.assertEqual(sorted(static), sorted(entry["key"] for entry in expected
+                if entry["kind"] == "host" and entry["key"] != "python tests"))
+
     def test_current_summary_round_trips_and_names_failures_in_markdown(self):
         summary = valid_summary()
         self.assertEqual(ci_summary.parse_summary(json.dumps(summary)), summary)
@@ -3335,6 +3778,12 @@ class HostResultTests(unittest.TestCase):
             for entry in records[1:]:
                 self.assertEqual(entry["outcome"], "not-run")
                 self.assertIn("not run after interruption", entry["attempts"][0]["message"])
+            with patch.object(run_host_checks.subprocess, "Popen") as spawn, \
+                    contextlib.redirect_stdout(io.StringIO()):
+                records, infrastructure = run_host_checks.run_steps(steps, root, timeout_seconds=3,
+                                                                    deadline_monotonic=0)
+            spawn.assert_not_called()
+            self.assertEqual([entry["outcome"] for entry in records], ["not-run"] * len(steps))
 
     def test_timeout_kills_a_surviving_child_after_the_parent_exits(self):
         code = """import os, signal, time

@@ -84,6 +84,9 @@ class CheckAllTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("unknown argument", result.stderr)
         self.assertEqual(self.calls(), [])
+        invalid = self.run_check_all("--python-shards", "3")
+        self.assertEqual(invalid.returncode, 2)
+        self.assertEqual(self.calls(), [])
 
     def test_interrupt_does_not_start_the_next_unit_platform(self):
         for signum in (signal.SIGINT, signal.SIGTERM):
@@ -171,6 +174,18 @@ class CheckAllTests(unittest.TestCase):
         self.assertIn("FAIL: host checks (exit 3", result.stdout)
         self.assertIn("RESULT: FAIL (1 step(s) failed)", result.stdout)
         self.assertEqual(len(self.calls()), 1)
+
+    def test_python_shard_count_reaches_the_host_runner_with_single_process_default(self):
+        for arguments, expected in (((), "1"), (("--python-shards", "2"), "2")):
+            with self.subTest(arguments=arguments):
+                self.log.unlink(missing_ok=True)
+                result = self.run_check_all(*arguments)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(len(self.calls()), 1)
+                command = self.calls()[0].split()
+                self.assertIn("scripts/run_host_checks.py", command)
+                self.assertIn("--python-shards", command)
+                self.assertEqual(command[command.index("--python-shards") + 1], expected)
 
     def test_unit_tests_run_for_both_platforms_with_bundles_in_output_dir(self):
         selected = self.tmp / "venv-python"

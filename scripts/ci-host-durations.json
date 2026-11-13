@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "source": {
+    "run_url": "https://github.com/sudoHG/immichSlides/actions/runs/43331446489",
+    "commit_sha": "b5257db3ba8eb659b650f1b48958084a7e14607a",
+    "summary_sha256": {
+      "linux": "d4bd4dbe49ca21cedae40e4dd521c81ff949ceb8f9ce1369642bd0fc64fb3643",
+      "macos": "78ac2d5b074fd0cd688c8d291b0b3d1481c3a2d524f232e652a7d027741bc399"
+    }
+  },
+  "python_modules": {
+    "test_access_lifecycle_contract": 45.785215,
+    "test_album_server_narrow_contract": 111.349505,
+    "test_build_privacy_policy_page": 0.091728,
+    "test_check_all": 0.228337,
+    "test_check_release_guards": 10.210566,
+    "test_check_smartfill_visual_fallbacks": 0.434622,
+    "test_check_test_conventions": 56.92212,
+    "test_check_workflow_policy": 13.187952,
+    "test_check_xcode_cloud_archive": 0.095593,
+    "test_ci_build_archive": 49.092406,
+    "test_ci_flaky": 0.057304,
+    "test_ci_local": 14.205333,
+    "test_ci_population": 0.047363,
+    "test_ci_publish": 13.993868,
+    "test_ci_report": 3.981818,
+    "test_ci_summary": 15.837381,
+    "test_ci_verdict": 2.427013,
+    "test_ci_xcode_cloud": 23.74934,
+    "test_clean_stale_catalog_entries": 0.000284,
+    "test_excluded_ui_tests_have_a_runner": 22.948958,
+    "test_git_privacy_gate": 15.823415,
+    "test_ipad_pause_host": 0.647456,
+    "test_probe_ci_toolchain": 0.009203,
+    "test_release_localization_semantics": 0.000378,
+    "test_required_test_tools": 0.002325,
+    "test_run_access_lifecycle_ios": 0.791759,
+    "test_run_access_lifecycle_tvos": 16.255485,
+    "test_run_album_server_narrow": 0.002494,
+    "test_run_fixture_ui_tests": 1.798561,
+    "test_run_offline_unit_tests": 1.628845,
+    "test_run_strict_e2e": 70.989876,
+    "test_scan_chinese_strings": 0.001636,
+    "test_strict_e2e_filter_contract": 154.727839,
+    "test_strict_e2e_out_of_order_contract": 6.968253,
+    "test_strict_e2e_p2_contract": 1.233413,
+    "test_strict_e2e_photo_identity": 200.594558,
+    "test_strict_e2e_server": 0.995398,
+    "test_validate_localization_catalog": 0.216295
+  },
+  "python_tests": {
+    "test_strict_e2e_filter_contract.DisplayPolicyVisualContractTests.test_swift_capture_candidate_recognizes_public_fit_without_rewriting_evidence": 135.110063
+  },
+  "host_checks": {
+    "Python test prerequisites": 0.032016,
+    "Xcode Cloud UI contract": 4.926472,
+    "known-flaky registry": 11.48992,
+    "localization catalog": 0.064062,
+    "localization usage": 0.866137,
+    "release guards": 8.786868,
+    "swift-format lint": 3.216836,
+    "test conventions": 32.297739,
+    "workflow policy": 29.838139
+  }
+}
