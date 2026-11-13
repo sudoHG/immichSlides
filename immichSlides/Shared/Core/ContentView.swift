@@ -248,6 +248,7 @@ struct ContentView: View {
                 SettingsView()
                     .onDisappear {
                         Task {
+                            await slideShowVM.firstPreload()
                             await slideShowVM.forceReloadCurrentAssetAfterCacheClear()
                         }
                     }

@@ -226,6 +226,7 @@ class AssetsDownloadManager: ObservableObject {
     #endif
 
     func loadPhoto(assetId: String, size: ThumbnailSize, priority: DownloadPriority) async {
+        guard !Task.isCancelled else { return }
         let key = TaskKey(assetId: assetId, size: size)
         if isReady(assetId: assetId, size: size) {
             return

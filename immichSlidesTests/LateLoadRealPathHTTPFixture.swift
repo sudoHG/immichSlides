@@ -49,6 +49,7 @@ final class LateLoadLocalHTTPFixture: Sendable {
     private static let listenerStartTimeoutSeconds: TimeInterval = 10
     private static let receiveChunkSizeBytes: Int = 16 * 1024
     private let defaultJPEG: Data
+    private let randomAssetsResponse: Data?
 
     var port: UInt16 {
         stateLock.withLock { $0.port }
@@ -70,8 +71,9 @@ final class LateLoadLocalHTTPFixture: Sendable {
         }
     }
 
-    init() {
+    init(randomAssetsResponse: Data? = nil) {
         defaultJPEG = Self.makeJPEG(red: 0.2, green: 0.4, blue: 0.8) ?? Data()
+        self.randomAssetsResponse = randomAssetsResponse
     }
 
     deinit {
@@ -322,17 +324,30 @@ final class LateLoadLocalHTTPFixture: Sendable {
             }
         }
 
-        let body = stateLock.withLock { state in
-            if let assetId = request.assetId, let jpeg = state.jpegByAssetId[assetId] {
-                return jpeg
-            }
-            return defaultJPEG
+        let jsonResponse: Data?
+        switch request.path.split(separator: "?").first.map(String.init) {
+        case "/api/search/random": jsonResponse = randomAssetsResponse
+        case "/api/api-keys/me" where randomAssetsResponse != nil:
+            jsonResponse = Data(#"{"permissions":["all"]}"#.utf8)
+        case "/api/albums" where randomAssetsResponse != nil: jsonResponse = Data("[]".utf8)
+        case "/api/people" where randomAssetsResponse != nil: jsonResponse = Data(#"{"people":[]}"#.utf8)
+        default: jsonResponse = nil
         }
+        let body =
+            jsonResponse
+            ?? stateLock.withLock { state in
+                if let assetId = request.assetId, let jpeg = state.jpegByAssetId[assetId] {
+                    return jpeg
+                }
+                return defaultJPEG
+            }
 
         let contentType =
-            body.starts(with: Data([0x89, 0x50, 0x4E, 0x47]))
-            ? "image/png"
-            : "image/jpeg"
+            jsonResponse != nil
+            ? "application/json"
+            : body.starts(with: Data([0x89, 0x50, 0x4E, 0x47]))
+                ? "image/png"
+                : "image/jpeg"
         send(status: 200, body: body, contentType: contentType, on: connection)
 
         stateLock.withLock { state in

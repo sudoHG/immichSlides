@@ -242,17 +242,22 @@ final class SettingsServerViewModel: ObservableObject {
 
             let result = await saveServerConfigActionForTesting(currentServerURL, currentAPIKey)
             if result.isSuccess {
-                // Refresh the API singleton right after a successful save so this process stops calling the old server.
-
-                ImmichAPIService.shared.reloadServerConfiguration()
-
                 // Clear cross-server state only when the config really changed, so saving again does not wipe filters.
 
                 let latestServer = ImmichServer.load()
                 let serverChanged = !ImmichServer.isSameConfiguration(previousServer, latestServer)
                 if serverChanged {
+                    // Invalidate playback synchronously before any task can use the new API configuration.
+                    NotificationCenter.default.post(name: .serverConfigurationWillChange, object: nil)
+                    let settingsStore = PlaybackSettingsStore()
+                    var settings = settingsStore.load() ?? PlaybackSettings()
+                    settings.defaultPlaybackMode = .random
+                    settingsStore.save(settings)
                     FilterSelectionStore().clear()
                     AssetsDownloadManager.shared.resetForServerConfigurationChange()
+                }
+                ImmichAPIService.shared.reloadServerConfiguration()
+                if serverChanged {
                     await SoloVisionPoolFilter.shared.resetForServerConfigurationChange()
                     NotificationCenter.default.post(name: .serverConfigurationDidChange, object: nil)
                 }
