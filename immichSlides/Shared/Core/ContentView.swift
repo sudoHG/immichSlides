@@ -119,22 +119,22 @@ struct AppFlowStateMachine {
 struct ContentView: View {
 
     @State private var server: ImmichServer? = ImmichServer.load()
-    // The root flow owns the onboarding session and revokes it (and the back navigation) once a PIN is enabled;
-    // slideshowBackTarget is for unit tests only and the playback screen does not read it.
-    @State private var flow = AppFlowStateMachine()
-
     @State private var hasInitializedFlow: Bool = false
 
     @State private var shouldShowSettingsPage: Bool = false
 
-    @StateObject private var slideShowVM: SlideShowViewModel
+    @StateObject private var playbackCoordinator: ContentPlaybackCoordinator
+    // Navigation and server-change restarts read the same flow, including after onboarding transitions.
+    private var flow: AppFlowStateMachine { playbackCoordinator.flow }
+    private var slideShowVM: SlideShowViewModel { playbackCoordinator.viewModel }
     @StateObject private var onboardingFilterVM = FilterViewModel()
 
     init() {
         // On cold launch, create the VM from the saved mode so default random and filtered loads do not compete.
 
-        _slideShowVM = StateObject(
-            wrappedValue: SlideShowViewModel(source: Self.initialPlaybackSourceForColdLaunch())
+        _playbackCoordinator = StateObject(
+            wrappedValue: ContentPlaybackCoordinator(
+                viewModel: SlideShowViewModel(source: Self.initialPlaybackSourceForColdLaunch()))
         )
     }
 
@@ -185,7 +185,7 @@ struct ContentView: View {
                 // Do not await pool building on the summary screen; switch the playback source, then open playback.
 
                 slideShowVM.preparePlaybackSourceForPresentation(to: onboardingFilterVM.playbackSource)
-                flow.handleFilteredPlaybackStarted()
+                playbackCoordinator.flow.handleFilteredPlaybackStarted()
             }
         )
     }
@@ -212,7 +212,7 @@ struct ContentView: View {
             isOnboardingOnly: flow.isOnboardingSession,
             onStartPlaybackRequested: { _ in
                 slideShowVM.preparePlaybackSourceForPresentation(to: onboardingFilterVM.playbackSource)
-                flow.handleFilteredPlaybackStarted()
+                playbackCoordinator.flow.handleFilteredPlaybackStarted()
             }
         )
     }
@@ -248,7 +248,7 @@ struct ContentView: View {
                 SettingsView()
                     .onDisappear {
                         Task {
-                            await slideShowVM.forceReloadCurrentAssetAfterCacheClear()
+                            await playbackCoordinator.settingsDidDisappear()
                         }
                     }
             }
@@ -281,16 +281,16 @@ struct ContentView: View {
 
     private func handleFirstBootConfigured() {
         reloadServer()
-        flow.handleFirstBootConfigured(isServerConfigured: (server?.isConfigured ?? false))
+        playbackCoordinator.flow.handleFirstBootConfigured(isServerConfigured: (server?.isConfigured ?? false))
     }
 
     private func handleOnboardingModeDone(_ mode: SlideMode) {
-        flow.handleOnboardingModeDone(mode)
+        playbackCoordinator.flow.handleOnboardingModeDone(mode)
     }
 
     // Only an onboarding session may go back to mode selection.
     private func returnToOnboardingModeSelection() {
-        flow.returnToOnboardingModeSelection()
+        playbackCoordinator.flow.returnToOnboardingModeSelection()
     }
 
     private func initializeFlowIfNeeded() {
@@ -304,10 +304,10 @@ struct ContentView: View {
             // A configured cold launch goes straight to playback; only the UI-test override turns it into an
             // onboarding session.
 
-            flow.startOnboardingSession()
+            playbackCoordinator.flow.startOnboardingSession()
             return
         }
-        flow.initializeRoute(isServerConfigured: (server?.isConfigured ?? false))
+        playbackCoordinator.flow.initializeRoute(isServerConfigured: (server?.isConfigured ?? false))
     }
 
     private func reloadServer() {
@@ -361,7 +361,7 @@ struct ContentView: View {
     #endif
 
     private func syncAccessProtectionState() {
-        flow.syncAccessProtection(isEnabled: AccessProtectionStore.shared.isEnabled)
+        playbackCoordinator.flow.syncAccessProtection(isEnabled: AccessProtectionStore.shared.isEnabled)
     }
 }
 

@@ -106,7 +106,7 @@ actor SoloVisionPoolFilter {
             var failedCount = 0
             var incompleteCount = 0
 
-            while activeAuditCount < maxParallelAudits,
+            while !Task.isCancelled, activeAuditCount < maxParallelAudits,
                 nextCandidateIndex < candidates.count
             {
                 let asset = candidates[nextCandidateIndex]
@@ -131,6 +131,10 @@ actor SoloVisionPoolFilter {
                 }
 
                 activeAuditCount -= 1
+                guard !Task.isCancelled else {
+                    group.cancelAll()
+                    break
+                }
 
                 switch decision.outcome {
                 case .finished:
@@ -150,7 +154,7 @@ actor SoloVisionPoolFilter {
                     break
                 }
 
-                while activeAuditCount < maxParallelAudits,
+                while !Task.isCancelled, activeAuditCount < maxParallelAudits,
                     nextCandidateIndex < candidates.count
                 {
                     let nextAsset = candidates[nextCandidateIndex]
@@ -198,6 +202,7 @@ actor SoloVisionPoolFilter {
         _ asset: Asset,
         apiService: ImmichAPIService
     ) async -> SoloVisionDecision {
+        guard !Task.isCancelled else { return SoloVisionDecision(shouldKeep: false, outcome: .incomplete) }
         if let cachedDecision = cachedDecision(for: asset.id) {
             logger.debug(
                 "solo vision cached decision assetId=\(asset.id, privacy: .private) keep=\(cachedDecision.shouldKeep ? "true" : "false", privacy: .private)"
@@ -207,14 +212,16 @@ actor SoloVisionPoolFilter {
 
         guard let previewURL = await previewURL(for: asset.id, apiService: apiService) else {
             let decision = SoloVisionDecision(shouldKeep: false, outcome: .incomplete)
-            storeDecision(decision, for: asset.id)
+            if !Task.isCancelled { storeDecision(decision, for: asset.id) }
             logger.warning(
                 "solo vision drop preview url unavailable assetId=\(asset.id, privacy: .private)"
             )
             return decision
         }
+        guard !Task.isCancelled else { return SoloVisionDecision(shouldKeep: false, outcome: .incomplete) }
 
         let apiKey = await apiService.getApiKey()
+        guard !Task.isCancelled else { return SoloVisionDecision(shouldKeep: false, outcome: .incomplete) }
         guard let modifier = ImmichRequestModifier.create(apiKey: apiKey) else {
             let decision = SoloVisionDecision(shouldKeep: false, outcome: .incomplete)
             storeDecision(decision, for: asset.id)
@@ -226,23 +233,26 @@ actor SoloVisionPoolFilter {
 
         guard let image = await loadPreviewImage(assetId: asset.id, url: previewURL, modifier: modifier) else {
             let decision = SoloVisionDecision(shouldKeep: false, outcome: .incomplete)
-            storeDecision(decision, for: asset.id)
+            if !Task.isCancelled { storeDecision(decision, for: asset.id) }
             logger.warning(
                 "solo vision drop preview image unavailable assetId=\(asset.id, privacy: .private)"
             )
             return decision
         }
+        guard !Task.isCancelled else { return SoloVisionDecision(shouldKeep: false, outcome: .incomplete) }
 
         let state = await VisionFaceAuditService.audit(
             assetId: asset.id,
             imageSource: .preview,
             image: image
         )
+        guard !Task.isCancelled else { return SoloVisionDecision(shouldKeep: false, outcome: .incomplete) }
 
         await SDImageCache.shared.removeImage(
             forKey: previewURL.absoluteString,
             fromDisk: false
         )
+        guard !Task.isCancelled else { return SoloVisionDecision(shouldKeep: false, outcome: .incomplete) }
 
         let decision: SoloVisionDecision
         switch state {
@@ -279,6 +289,7 @@ actor SoloVisionPoolFilter {
 
         do {
             let url = try await apiService.getThumbnailURL(id: assetId, size: .preview)
+            guard !Task.isCancelled else { return nil }
             storePreviewURL(url, for: assetId)
             return url
         } catch {

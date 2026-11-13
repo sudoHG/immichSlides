@@ -59,6 +59,8 @@ class SlideShowViewModel: ObservableObject {
     var source: PlaybackSource { poolLoader.currentSource }
     let playbackSettingsStore: PlaybackSettingsStore
     private var playbackSettingsChangeObserver: NSObjectProtocol?
+    private var serverConfigurationChangeObserver: NSObjectProtocol?
+    private var refillTask: (id: UUID, task: Task<Void, Never>)?
 
     // The facade and loader share this file so no external caller can apply raw projection updates.
     private let poolLoader: PlaybackPoolLoader
@@ -483,6 +485,14 @@ class SlideShowViewModel: ObservableObject {
                 isRunningXCTest: isRunningXCTest
             )
         guard shouldObserveSettingsChanges else { return }
+        serverConfigurationChangeObserver = NotificationCenter.default.addObserver(
+            forName: .serverConfigurationWillChange, object: nil, queue: nil
+        ) { [weak self] _ in
+            // Settings posts on the main actor; an asynchronous hop would admit old IDs on the new server.
+            MainActor.assumeIsolated {
+                self?.resetPlaybackSourceState(to: .random, invalidationReason: .serverChanged)
+            }
+        }
         playbackSettingsChangeObserver = NotificationCenter.default.addObserver(
             forName: .playbackSettingsDidChange,
             object: nil,
@@ -503,11 +513,15 @@ class SlideShowViewModel: ObservableObject {
     }
 
     deinit {
+        refillTask?.task.cancel()
         #if DEBUG
         automaticFadeMidpointPauseTask?.cancel()
         #endif
         if let playbackSettingsChangeObserver {
             NotificationCenter.default.removeObserver(playbackSettingsChangeObserver)
+        }
+        if let serverConfigurationChangeObserver {
+            NotificationCenter.default.removeObserver(serverConfigurationChangeObserver)
         }
     }
 
@@ -954,8 +968,10 @@ class SlideShowViewModel: ObservableObject {
     // slide-change path.
 
     func forceReloadCurrentAssetAfterCacheClear() async {
+        let generation = playbackSourceGeneration
         guard let currentId = safeCurrentScene?.primaryAssetId else { return }
         await downloadManager.loadPhoto(assetId: currentId, size: .fullsize, priority: .high)
+        guard generation == playbackSourceGeneration else { return }
         await downloadManager.loadPhoto(assetId: currentId, size: .preview, priority: .high)
     }
 
@@ -1917,15 +1933,19 @@ extension SlideShowViewModel {
     // Switch source while running and reload the first screen right away.
     func switchPlaybackSource(to newSource: PlaybackSource) async {
         resetPlaybackSourceState(to: newSource)
-        await prepareInitialAssets()
+        await firstPreload()
     }
 
-    private func resetPlaybackSourceState(to newSource: PlaybackSource) {
+    private func resetPlaybackSourceState(
+        to newSource: PlaybackSource, invalidationReason: PlaybackSessionInvalidationReason = .sourceChanged
+    ) {
         logger.notice(
             "playback source reset from=\(self.logName(for: self.source), privacy: .public) to=\(self.logName(for: newSource), privacy: .public) oldAssetCount=\(self.assets.count, privacy: .public) oldCurrentIndex=\(self.currentIndex, privacy: .public)"
         )
         resetSmartFillStartupRuntimeEvidence()
-        poolLoader.resetSource(to: newSource, update: applyPlaybackPoolUpdate)
+        refillTask?.task.cancel()
+        refillTask = nil
+        poolLoader.resetSource(to: newSource, invalidationReason: invalidationReason, update: applyPlaybackPoolUpdate)
         clearAutoPlayRecoveryMessage()
         #if DEBUG
         clearVisionFaceAuditState()
@@ -1963,6 +1983,25 @@ extension SlideShowViewModel {
     }
 
     func loadMoreAssets() async {
+        if let refillTask {
+            await refillTask.task.value
+            return
+        }
+        let id = UUID()
+        let task = Task { await self.performRefill() }
+        refillTask = (id, task)
+        await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
+        if refillTask?.id == id {
+            refillTask = nil
+        }
+    }
+
+    private func performRefill() async {
+        guard !Task.isCancelled else { return }
         let request = poolLoader.beginRefill(
             context: playbackPoolSessionContext, update: applyPlaybackPoolUpdate)
         defer { poolLoader.finishLoadingMore(request, update: applyPlaybackPoolUpdate) }
@@ -2384,11 +2423,13 @@ fileprivate final class PlaybackPoolLoader {
         update(.emptyMessage(nil))
     }
 
-    func resetSource(to newSource: PlaybackSource, update: (Update) -> Void) {
+    func resetSource(
+        to newSource: PlaybackSource, invalidationReason: PlaybackSessionInvalidationReason, update: (Update) -> Void
+    ) {
         source = newSource
         generation += 1
         // Reset the index and first preload on a source change, so leftovers from the old mode are not reused.
-        update(.replacePool([], .sourceChanged))
+        update(.replacePool([], invalidationReason))
         setLoading(true, update: update)
         loadMoreLoadingRequestID = nil
         setLoadingMore(false, update: update)

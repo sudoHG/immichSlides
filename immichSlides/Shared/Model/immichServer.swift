@@ -9,6 +9,7 @@ import Foundation
 import Security
 
 extension Notification.Name {
+    static let serverConfigurationWillChange = Notification.Name("serverConfigurationWillChange")
     static let serverConfigurationDidChange = Notification.Name("serverConfigurationDidChange")
 }
 

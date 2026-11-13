@@ -548,6 +548,7 @@ final class PlaybackPoolResolver {
         albumIds: [String]?,
         personIds: [String]?
     ) async throws -> [Asset] {
+        try Task.checkCancellation()
         #if DEBUG
         if let randomAssetProviderForTesting {
             return try await randomAssetProviderForTesting(size, albumIds, personIds)
@@ -562,6 +563,7 @@ final class PlaybackPoolResolver {
     }
 
     private func fetchPersonAssetsCount(id: String) async throws -> Int {
+        try Task.checkCancellation()
         #if DEBUG
         if let personAssetsCountProviderForTesting {
             return try await personAssetsCountProviderForTesting(id)
@@ -761,6 +763,7 @@ final class PlaybackPoolResolver {
 
         do {
             for roundIndex in 1...maxRounds {
+                try Task.checkCancellation()
                 if acceptedAssets.count >= desiredQualifiedCount {
                     break
                 }
