@@ -26,7 +26,6 @@ from ci_summary import (ContractError, identity_key, observation, parse_identity
 REPO_ROOT = Path(__file__).resolve().parent.parent
 GIT_METADATA_TIMEOUT_SECONDS = 120  # Bound local identity reads through hosted simulator first-boot starvation.
 GROUP_TERM_GRACE_SECONDS = 5
-SHARD_STARTUP_ALLOWANCE_SECONDS = 120
 SHARD_FINALIZATION_MARGIN_SECONDS = 5
 HOST_CHECKS = [
     ("swift-format lint", ["xcrun", "swift-format", "lint", "--strict", "--recursive", "--parallel",
@@ -87,7 +86,7 @@ def python_shard_weights():
 
 
 def merge_host_shards(template, parts, shards):
-    """Keep the published v1 contract, admitting only a complete same-source union."""
+    """Require complete clean coverage while preserving bound failed-run evidence."""
     require(len(shards) == 2 and sorted(number for number, _, _ in shards) == [1, 2],
             "both Python shards are required")
     compiled, observed, infrastructure = [], [], []
@@ -97,6 +96,7 @@ def merge_host_shards(template, parts, shards):
         return set(tokens)
     require(keys(parts[0] + parts[1]) == keys(template["population"]["declared"]),
             "host shard union differs from declared population")
+    clean_shards = True
     for number, payload, code in sorted(shards, key=lambda entry: entry[0]):
         require(payload is not None, f"Python shard {number} receipt is missing or unparseable")
         shard = parse_summary(payload)
@@ -105,25 +105,52 @@ def merge_host_shards(template, parts, shards):
         require(shard["run"] == dict(template["run"], shard="python-" + str(number)), "wrong host shard run")
         population = shard["population"]
         expected = keys(parts[number - 1])
-        require(keys(population["declared"]) == expected and keys(population["compiled"]) == expected
-                and keys([row["identity"] for row in population["observed"]]) == expected
-                and not population["deselected"] and not population["removed_by_pr"],
+        discovered = keys(population["compiled"])
+        recorded = keys([row["identity"] for row in population["observed"]])
+        clean = code == 0 and shard["status"] in {"passed", "unverified"}
+        clean_shards = clean_shards and clean
+        require(keys(population["declared"]) == expected
+                and not population["deselected"] and not population["removed_by_pr"]
+                and (discovered == recorded == expected if clean else
+                     discovered <= expected and not recorded & keys(parts[2 - number])),
                 "host shard execution differs from its exact declared population")
         compiled.extend(population["compiled"])
         observed.extend(population["observed"])
         # Proposed skip exceptions are evaluated again against the complete union.
         infrastructure.extend(entry for entry in shard["infrastructure"] if entry["code"] != "policy-proposed")
-    require(keys(compiled) == keys(template["population"]["declared"])
-            and keys([row["identity"] for row in observed]) == keys(compiled), "incomplete host shard execution")
+    recorded_union = keys([row["identity"] for row in observed])
+    if clean_shards:
+        require(keys(compiled) == keys(template["population"]["declared"])
+                and recorded_union == keys(compiled), "incomplete host shard execution")
+    # Only shard one owns the public host row; its outcome also includes shard two.
+    failures = [(number, code, payload["status"]) for number, payload, code in shards
+                if number == 2 and payload["status"] not in {"passed", "unverified"}]
+    for index, row in enumerate(observed):
+        if row["identity"] == test_identity("host", "python tests") and row["outcome"] == "passed" and failures:
+            observed[index] = observation(row["identity"], "failed", row["duration_seconds"], exit_code=1,
+                message="python tests: " + "; ".join(f"Python shard {number} exited {code} ({status})"
+                                                    for number, code, status in failures))
     return compiled, observed, infrastructure
+
+
+def shard_execution_deadline(path):
+    """Request the parent's absolute deadline only after child preparation is complete."""
+    path.with_suffix(".ready").touch()
+    while not path.exists():
+        time.sleep(0.01)
+    deadline = json.loads(path.read_text())
+    require(type(deadline) in {int, float} and math.isfinite(deadline), "invalid shard execution deadline")
+    return deadline
+
+
+def execution_clock():
+    # Python 3.9 on macOS gives time.monotonic() a per-process origin.
+    return time.clock_gettime(time.CLOCK_MONOTONIC)
 
 
 def run_parallel_shards(output, *, timeout_seconds, host_platform, workflow_path):
     """Start both bounded children before waiting; cancellation reaps both process groups."""
-    children, completed = {}, []
-    # The child starts its execution budget after metadata/discovery, then reaps its step group.
-    backstop_seconds = (timeout_seconds + SHARD_STARTUP_ALLOWANCE_SECONDS
-                        + GROUP_TERM_GRACE_SECONDS + SHARD_FINALIZATION_MARGIN_SECONDS)
+    children, completed, deadlines = {}, [], {}
     def interrupted(signum, frame):
         raise KeyboardInterrupt
     def stop_child(process):
@@ -139,9 +166,11 @@ def run_parallel_shards(output, *, timeout_seconds, host_platform, workflow_path
     try:
         for number in (1, 2):
             directory = output / ("python-" + str(number))
+            directory.mkdir(parents=True)
             command = [sys.executable, "-B", str(REPO_ROOT / "scripts/run_host_checks.py"),
                        "--python-shard", str(number), "--output-dir", str(directory),
-                       "--timeout-seconds", str(timeout_seconds)]
+                       "--timeout-seconds", str(timeout_seconds),
+                       "--shard-deadline-path", str(directory / "execution-deadline.json")]
             if host_platform:
                 command += ["--host-platform", host_platform]
             if workflow_path:
@@ -154,7 +183,14 @@ def run_parallel_shards(output, *, timeout_seconds, host_platform, workflow_path
             for number in sorted(pending):
                 process, started, directory = children[number]
                 code = process.poll()
-                if code is None and time.monotonic() - started >= backstop_seconds:
+                path = directory / "execution-deadline.json"
+                if code is None and number not in deadlines and path.with_suffix(".ready").exists():
+                    deadlines[number] = execution_clock() + timeout_seconds
+                    pending_path = path.with_suffix(".tmp")
+                    pending_path.write_text(json.dumps(deadlines[number]))
+                    pending_path.replace(path)
+                if (code is None and number in deadlines and execution_clock() >= deadlines[number]
+                        + GROUP_TERM_GRACE_SECONDS + SHARD_FINALIZATION_MARGIN_SECONDS):
                     stop_child(process)
                     code = 124
                 if code is None:
@@ -374,14 +410,14 @@ def stop_group(process):
     process.wait()
 
 
-def run_steps(steps, repo_root, *, timeout_seconds=900):
+def run_steps(steps, repo_root, *, timeout_seconds=900, deadline_monotonic=None):
     records, infrastructure = [], []
-    deadline = time.monotonic() + timeout_seconds
+    deadline = execution_clock() + timeout_seconds if deadline_monotonic is None else deadline_monotonic
     interrupted = False
     for name, command in steps:
         print(f"\n==> {name}", flush=True)
         started = time.monotonic()
-        remaining = deadline - started
+        remaining = deadline - execution_clock()
         code, outcome = None, "not-run"
         message = f"{name}: not run after interruption" if interrupted else f"{name}: host-check time budget exhausted"
         process = None
@@ -466,10 +502,13 @@ def main():
     shards.add_argument("--python-shards", type=int, choices=(1, 2), default=1,
                         help="Run all Python tests in one process (default) or two parallel time-balanced shards")
     shards.add_argument("--python-shard", type=int, choices=(1, 2), help=argparse.SUPPRESS)
+    parser.add_argument("--shard-deadline-path", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--no-summary-path", action="store_true", help="Suppress the record path in the final report")
     args = parser.parse_args()
     if not 0 < args.timeout_seconds <= 1200:
         parser.error("--timeout-seconds must be in (0, 1200]")
+    if args.shard_deadline_path and not args.python_shard:
+        parser.error("--shard-deadline-path requires an internal Python shard")
     output = (args.output_dir or Path(tempfile.mkdtemp(prefix="immichslides-host-"))).resolve()
     if output == REPO_ROOT or REPO_ROOT in output.parents:
         parser.error("--output-dir must be outside the repository")
@@ -553,7 +592,9 @@ def main():
                                         for _, payload, code in children)
             records = [entry for entry in observed if entry["identity"]["kind"] == "host"]
         else:
-            records, infrastructure = run_steps(steps, REPO_ROOT, timeout_seconds=args.timeout_seconds)
+            deadline_options = ({"deadline_monotonic": shard_execution_deadline(args.shard_deadline_path)}
+                                if args.shard_deadline_path else {})
+            records, infrastructure = run_steps(steps, REPO_ROOT, timeout_seconds=args.timeout_seconds, **deadline_options)
             admitted_checks = {entry["key"] for entry in declared if entry["kind"] == "host"}
             summary["population"]["observed"] = [entry for entry in records if entry["identity"]["key"] in admitted_checks]
             summary["infrastructure"].extend(infrastructure)

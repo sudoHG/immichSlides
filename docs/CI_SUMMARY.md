@@ -68,24 +68,38 @@ still requires hosted measurement.
 
 Each child receives the existing `--timeout-seconds` budget, capped at 1200;
 shard 1's static checks consume part of its budget. Both children start before the
-parent waits. Its launch-time backstop adds a 120-second startup allowance, the
-five-second step-group termination grace and a five-second finalization margin to
-the unchanged child budget. This lets the child publish its own timeout receipt
-after cleanup. The parent prints each wall time and exit code, and stops/reaps both
+parent waits. After each child completes metadata, discovery and selection, it
+signals readiness; the parent atomically sends it an absolute `CLOCK_MONOTONIC` deadline
+one unchanged execution budget later. The child uses that deadline for its steps;
+`clock_gettime` provides a shared origin even on macOS Python 3.9, whose
+`time.monotonic()` origin differs between processes.
+the parent's kill backstop is that same deadline plus the five-second step-group
+termination grace and five-second finalization margin. Startup cannot exhaust a
+fixed parent allowance before the child starts its budget. Metadata commands keep
+their existing bounds, and the enclosing workflow job still bounds preparation.
+This lets the child publish its own timeout receipt after cleanup.
+The parent prints each wall time and exit code, and stops/reaps both
 child groups on cancellation or an exception. A failing child does not suppress
 the other child. No retry is added.
 
 The parent accepts exactly two parseable receipts, including failed runs. Their full source
 identities (including commit and tree SHA), run/attempt, source metadata and policy
-hashes must match. Each receipt must declare, discover and observe exactly its
-assigned identities, without duplicates or deselections, and the combined sets must
-equal the parent's complete admitted population. A legitimately empty internal shard
+hashes must match. Each receipt must declare exactly its assigned identities with no
+deselections. A clean receipt (exit 0 and status `passed` or `unverified`) must also
+discover and observe exactly that assignment. A failed receipt may discover a subset
+and omit observations or add fixture rows such as `setUpClass (test_x.C)`; its observed
+identities must remain unique and cannot overlap the other shard's assignment.
+The merged observations must also be unique. Only an entirely clean run requires
+the complete discovered/observed union before the ordinary coverage verdict.
+A legitimately empty internal shard
 still executes full discovery and writes a receipt; it supplies no public coverage
 exception. Valid failed receipts retain their observations and diagnostics, including
 `step-timeout`, `interrupted` and `missing-python-results`; `policy-proposed` is
 recomputed for the complete union. Nonzero child exits and failed child statuses
-keep the public run failed. Missing, unparseable, stale-source or incomplete receipts
-produce `record-invalid`. Cancelled or timed-out children cannot pass even if their
+keep the public run failed. The public `python tests` host row retains shard 1's
+step evidence and also fails when shard 2 reports failure; its duration remains
+shard 1's step wall time. Missing, unparseable, stale-source, wrong-assignment or
+incomplete clean receipts produce `record-invalid`. Cancelled or timed-out children cannot pass even if their
 last receipt was complete. Only the merged population receives the ordinary public
 coverage/skip verdict; the trusted publisher independently checks that same complete
 platform population.
