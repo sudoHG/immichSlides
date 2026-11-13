@@ -1933,7 +1933,7 @@ extension SlideShowViewModel {
     // Switch source while running and reload the first screen right away.
     func switchPlaybackSource(to newSource: PlaybackSource) async {
         resetPlaybackSourceState(to: newSource)
-        await prepareInitialAssets()
+        await firstPreload()
     }
 
     private func resetPlaybackSourceState(

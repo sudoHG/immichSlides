@@ -52,7 +52,7 @@ extension SlideShowViewModelStartupTests {
         await pendingReload?.value
         vm.refreshPlaybackRelatedSettings(applyExifVisibility: { _ in }, applyDebugOverlayVisibility: { _ in })
         let coordinator = ContentPlaybackCoordinator(viewModel: vm)
-        coordinator.route = .slideshow
+        coordinator.flow.initializeRoute(isServerConfigured: true)
         await coordinator.settingsDidDisappear()
         completePausedServerSwitchScene(vm)
 
@@ -112,7 +112,9 @@ extension SlideShowViewModelStartupTests {
         defer { fixture.stop() }
         let vm = fixture.player
         let coordinator = ContentPlaybackCoordinator(viewModel: vm)
-        coordinator.route = .slideshow
+        coordinator.flow.handleFirstBootConfigured(isServerConfigured: true)
+        coordinator.flow.handleOnboardingModeDone(.filtered)
+        coordinator.flow.handleFilteredPlaybackStarted()
         let oldSession = vm.playbackSession.currentSessionIdentity.playbackSessionId
         fixture.serverB.hold(assetIds: [fixture.assetsB[0].id])
         let settings = SettingsServerViewModel()
@@ -145,13 +147,17 @@ extension SlideShowViewModelStartupTests {
     }
 
     @Test
-    func `a first server save preserves the filtered default and emits no server change`() async throws {
+    func `a first server save clears stale filters and caches without restarting or rewriting the default`()
+        async throws
+    {
         let fixture = try await makeServerSwitchFixture(isFiltered: true)
         defer { fixture.stop() }
         ImmichServer.clearSavedConfiguration()
         try #require(ImmichServer.load() == nil)
         let session = fixture.player.playbackSession.currentSessionIdentity.playbackSessionId
-        let selection = FilterSelectionStore().load()
+        let oldAsset = try #require(fixture.player.safeCurrentAsset?.id)
+        try #require(fixture.player.downloadManager.findURL(assetId: oldAsset, size: .fullsize) != nil)
+        try #require(FilterSelectionStore().load()?.isEmpty == false)
         var changes: [Notification.Name] = []
         let observers = [Notification.Name.serverConfigurationWillChange, .serverConfigurationDidChange].map { name in
             NotificationCenter.default.addObserver(forName: name, object: nil, queue: nil) { _ in
@@ -160,17 +166,19 @@ extension SlideShowViewModelStartupTests {
         }
         defer { observers.forEach(NotificationCenter.default.removeObserver) }
         let coordinator = ContentPlaybackCoordinator(viewModel: fixture.player)
-        coordinator.route = .firstBoot
+        #expect(coordinator.flow.route == .firstBoot)
         let settings = SettingsServerViewModel()
         settings.serverURL = fixture.urlB
         settings.apiKey = fixtureKey
         await settings.saveServerConfig().value
 
         try #require(settings.didSaveConfig)
-        #expect(changes.isEmpty)
+        #expect(changes == [.serverConfigurationDidChange])
         #expect(fixture.player.playbackSession.currentSessionIdentity.playbackSessionId == session)
         #expect(PlaybackSettingsStore().load()?.defaultPlaybackMode == .filtered)
-        #expect(FilterSelectionStore().load() == selection)
+        #expect(FilterSelectionStore().load()?.isEmpty != false)
+        #expect(fixture.player.downloadManager.findURL(assetId: oldAsset, size: .fullsize) == nil)
+        #expect(fixture.serverB.enteredRequests().filter { $0.path == "/api/search/random" }.count == 1)
     }
 
     @Test
@@ -179,7 +187,7 @@ extension SlideShowViewModelStartupTests {
         defer { fixture.stop() }
         let vm = fixture.player
         let coordinator = ContentPlaybackCoordinator(viewModel: vm)
-        coordinator.route = .slideshow
+        coordinator.flow.initializeRoute(isServerConfigured: true)
         let session = vm.playbackSession.currentSessionIdentity.playbackSessionId
         fixture.serverA.setRandomAssetsResponse(try JSONEncoder().encode(fixture.assetsB))
         let settings = SettingsServerViewModel()
@@ -236,7 +244,7 @@ extension SlideShowViewModelStartupTests {
         fixture.serverA.setRandomAssetsResponse(try JSONEncoder().encode(refillAssets))
         fixture.serverA.hold(assetIds: Set(refillAssets.map(\.id)))
         let coordinator = ContentPlaybackCoordinator(viewModel: vm)
-        coordinator.route = .slideshow
+        coordinator.flow.initializeRoute(isServerConfigured: true)
         let refill = Task { await vm.loadMoreAssets() }
         defer { refill.cancel(); fixture.serverA.releaseAll() }
         try #require(
@@ -262,6 +270,54 @@ extension SlideShowViewModelStartupTests {
                 ($0.assetId == nil || fixture.assetsB.map(\.id).contains($0.assetId!))
                     && !$0.path.contains(personId)
                     && !String(decoding: $0.body, as: UTF8.self).contains(personId)
+            })
+    }
+
+    @Test
+    func `a server switch cancels the settings solo person load before old IDs or the new key leak`() async throws {
+        let fixture = try await makeServerSwitchFixture(isFiltered: true)
+        defer { fixture.stop() }
+        let vm = fixture.player
+        try #require(await waitUntil { vm.downloadManager.activeTaskCount == 0 })
+        let personId = "person-a-\(UUID().uuidString)"
+        let selection = FilterSelection(personFilters: [PersonFilter(personId: personId, matchMode: .soloOnly)])
+        FilterSelectionStore().save(selection)
+        let candidates = (1...4).map {
+            makeAsset(
+                id: "settings-a-\(UUID().uuidString)-\($0)",
+                people: [People(id: personId, name: "Fixture person", isHidden: false, isFavorite: false)])
+        }
+        fixture.serverA.setRandomAssetsResponse(try JSONEncoder().encode(candidates))
+        fixture.serverA.hold(assetIds: Set(candidates.map(\.id)))
+        let coordinator = ContentPlaybackCoordinator(viewModel: vm)
+        coordinator.flow.initializeRoute(isServerConfigured: true)
+        vm.refreshPlaybackRelatedSettings(applyExifVisibility: { _ in }, applyDebugOverlayVisibility: { _ in })
+        defer { fixture.serverA.releaseAll() }
+        try #require(
+            await waitUntil { candidates.prefix(2).allSatisfy { fixture.serverA.enteredCount(assetId: $0.id) > 0 } })
+        try #require(vm.isSoloOnlyPlaybackSource && vm.isLoading)
+        let settings = SettingsServerViewModel()
+        let newKey = fixtureKey + "-server-b"
+        settings.serverURL = fixture.urlB
+        settings.apiKey = newKey
+        await settings.saveServerConfig().value
+        try #require(settings.didSaveConfig)
+        let requestsAAfterSave = fixture.serverA.enteredRequests()
+        fixture.serverA.releaseAll()
+        await coordinator.settingsDidDisappear()
+        try #require(await waitUntil { vm.didFirstPreload && !vm.isLoading })
+        completePausedServerSwitchScene(vm)
+
+        #expect(vm.currentPlaybackMode == .random)
+        #expect(vm.safeCurrentAsset?.id == fixture.assetsB[0].id)
+        #expect(fixture.serverA.enteredRequests() == requestsAAfterSave)
+        #expect(!fixture.serverA.enteredRequests().contains { $0.apiKey == newKey })
+        #expect(
+            fixture.serverB.enteredRequests().allSatisfy {
+                ($0.assetId == nil || fixture.assetsB.map(\.id).contains($0.assetId!))
+                    && !$0.path.contains(personId)
+                    && !String(decoding: $0.body, as: UTF8.self).contains(personId)
+                    && !String(decoding: $0.body, as: UTF8.self).contains("settings-a-")
             })
     }
 

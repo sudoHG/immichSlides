@@ -3,7 +3,7 @@ import Foundation
 
 @MainActor
 final class ContentPlaybackCoordinator: ObservableObject {
-    var route: AppRoute = .firstBoot
+    @Published var flow = AppFlowStateMachine()
     let viewModel: SlideShowViewModel
     private var serverChangeObserver: NSObjectProtocol?
     private var restartTask: Task<Void, Never>?
@@ -27,7 +27,7 @@ final class ContentPlaybackCoordinator: ObservableObject {
     }
 
     private func restartAfterServerChange() {
-        guard route == .slideshow else { return }
+        guard flow.route == .slideshow else { return }
         restartTask?.cancel()
         restartTask = Task { [viewModel] in
             await viewModel.firstPreload()
