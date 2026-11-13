@@ -18,7 +18,10 @@ RECEIPT = "strict-warm-build.json"
 
 def build_settings(platform, suite, configuration=None):
     scheme, plan, _ = PLATFORM_SETTINGS[platform]
-    if suite in SETTINGS_RESUME_SUITES:
+    if suite == "smoke-flow":
+        # The UI-only scheme avoids compiling @testable unit targets against a Release app.
+        scheme += "-settings-resume"
+    elif suite in SETTINGS_RESUME_SUITES:
         scheme += "-settings-resume"
         if configuration not in (None, "Release"):
             raise CommandError("Settings-resume suites require Release.")
@@ -111,8 +114,12 @@ def warm_up(*, root, platform, suite, configuration, destination, derived, packa
     receipt = {"schema_version": 1, "identity": identity, "signing_mode": signature,
                "xctestrun": runs[0].name, "products": inventory(products),
                "duration_seconds": time.monotonic() - started, "timeout_seconds": timeout}
+    if suite == "smoke-flow":
+        # Reused local builds can outlive their isolated compilation checkout.
+        receipt["source_root"] = str(root.resolve())
     write_json(derived / RECEIPT, receipt)
-    write_json(evidence / "warm-up.json", {key: value for key, value in receipt.items() if key != "products"})
+    write_json(evidence / "warm-up.json", {key: value for key, value in receipt.items()
+                                         if key not in {"products", "source_root"}})
     return receipt
 
 

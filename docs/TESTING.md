@@ -35,8 +35,8 @@ become CI-trusted before any reader uses it to select execution.
 The unit-coverage PRs and this tier plan change no App behavior and retire no E2E
 assertions. The duplicate-removal batch (#721) is separate: it removes only reviewed
 duplicates whose assertions still run in retained tests, before the future tier switch.
-The current inventory is 377 UI source methods and 94 strict matrix rows, separately
-identified; it is not 471 nightly executions. The current complete nightly schedules
+UI source methods and strict matrix rows are separately identified in the inventory;
+their sum is not a count of nightly executions. The current complete nightly schedules
 306 fixture UI device identities plus 94 strict rows, or 400 scheduling identities.
 A strict row may invoke more than one XCTest method.
 
@@ -131,6 +131,70 @@ nights. Keep first failures, retries, yellow, infrastructure errors, human findi
 elapsed time separate; do not relabel old failures. The 60–120 minute nightly budget and
 estimated 0.2–0.6 red events per run are planning estimates, `NOT_VERIFIED` until measured
 on comparable runs; fewer scheduled identities do not prove better App correctness.
+
+### Shadow smoke execution
+
+The separate [`smoke-flow` suite](CI_STRICT_RUNNER.md#short-smoke-flow-suite) executes
+the approved short paths from the CI-trusted `scripts/smoke-flows.json`, selected by
+device and configuration. The host checker rejects disagreement with the planning
+file and missing, duplicated or platform-incompatible selectors. This does not activate
+the future nightly switch or retire any existing assertion.
+
+`SmokeFlowIOSUITests` and `SmokeFlowTVOSUITests` belong only to that runner. Default
+fixture plans exclude their compiled classes, so neither PR UI area selection nor
+nightly fixture shards execute them. They are absent from the strict matrix and
+Evidence selections. New methods receive separate smoke inventory rows; existing
+rows retain their destinations. Core-area source accounting does not override a
+default-plan exclusion. Each selected flow starts with clean App state, uses public
+fixtures, records the first result without retries/yellow, and has a shared 270-second
+native invocation cap (120-second XCTest method allowance plus 150 seconds for startup and finalization;
+the allowance is a whole minute because XCTest rounds upward),
+with the flow's 60-second navigation guard and existing bounded first-boot helper guards.
+The checker enforces contracted selector/inventory links and exclusion from default,
+Evidence and Xcode Cloud populations. Shadow evidence must pass `validate_group_evidence`,
+including the final verdict, complete ordered group, clean source and official exports.
+Late group gates invalidate affected passing flows while preserving each already
+failed flow's first failure kind and exit code; both roots also retain `group_failures`.
+See the runner
+guide for commands, evidence fields and Release/PIN limits.
+
+The Apple TV class has ten short remote flows, with navigation in its `+Support`
+extension. Each method shares one default `TestWait.hangGuard()` across launch,
+navigation and its eventual outcome.
+
+| Flow | Method | Configuration | Remote boundary |
+|---|---|---|---|
+| `tv-album-selection` | `testAlbumSelection` | Debug | Move between album cards, Select, Back and start playback |
+| `tv-background-return` | `testBackgroundReturn` | Release | Home, foreground return and operable Play/Pause |
+| `tv-directional-wake` | `testDirectionalWake` | Debug | Each direction wakes hidden controls with operable Play/Pause focus |
+| `tv-first-boot` | `testFirstBoot` | Debug | System keyboard, connection/save, cold launch and default playback focus |
+| `tv-pause-resume` | `testPauseResume` | Release | Select pauses, Next advances while paused, physical Play/Pause resumes |
+| `tv-person-selection` | `testPersonSelection` | Debug | Person grid, Select, physical Play/Pause solo shortcut and Back |
+| `tv-pin-gate` | `testPinGate` | Debug | Synthetic PIN sheet rejects a wrong PIN and unlocks Settings with the correct PIN |
+| `tv-playback-controls` | `testPlaybackControls` | Debug | One eventual automatic advance, remote Next and Previous |
+| `tv-server-switch` | `testServerSwitch` | Release | Save B during random A playback, require B playback, then inspect B filter lists |
+| `tv-settings-relaunch` | `testSettingsRelaunch` | Release | Change autoplay, cold relaunch, verify persistence and Back to playback |
+
+Release flows configure the public loopback server through the real form and set
+no Debug launch hooks. The synthetic PIN path does not verify production Keychain
+behavior. The playback-controls flow uses existing read-only Debug scene references
+and phase probes to observe its eventual automatic advance and navigate after the
+scene settles; it asserts no timing window. The server-switch flow changes only display mode to
+single photo before switching, so public EXIF can identify a photo without pixels.
+It must observe A playback, then a B-exclusive EXIF label (currently Fixture 7)
+before changing any filter or playback source; entering Filtered first could hide the stale-pool defect
+tracked in [#725](https://github.com/sudoHG/immichSlides/issues/725). Only after that
+proof does it open the real empty-filter alert and inspect unselected B album/person
+lists. The B manifest supplies the maximum Next count and the EXIF labels absent
+from A; observing any such label during that bounded traversal satisfies identity.
+It does not wait for automatic playback to happen upon B's exclusive photo. Its two
+phases share the same guard and report their elapsed time and Next count.
+`smoke-tv-server-switch-timing.json` retains the Next-loop entry time, Next count,
+direct-switch completion and total completion against that same guard, even if
+an assertion stops the method before its final print. In random mode A starts
+without selected filters, so the list phase does not establish clearing a nonempty
+old selection. That guarantee comes from
+`FilterSelectionResetTests/reset removes old album and person ids so a new store instance cannot read them`.
 
 ## 0. When to write a test
 

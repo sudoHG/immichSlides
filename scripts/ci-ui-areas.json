@@ -40,6 +40,8 @@
         "AppStoreScreenshotUITests",
         "FilterSummaryIOSVisualUITests/testAlertLookupRejectsUnrelatedAlertAndAcceptsMatchingText",
         "PrivateEvidenceDirectoryTests",
+        "SmokeFlowIOSUITests",
+        "SmokeFlowTVOSUITests",
         "StrictE2ELateImageFocusAuditTests",
         "StrictE2ELateImageIOSUITests",
         "StrictE2ELateImageTVOSUITests",

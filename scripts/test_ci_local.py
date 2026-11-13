@@ -10,13 +10,146 @@ import sys
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
+from contextlib import contextmanager
 
 import ci_local
 from ci_local import SnapshotCleanupError, clean_environment, local_main, select_mode, snapshot
 
 
 class LocalModeTests(unittest.TestCase):
+    def test_child_cleanup_failure_keeps_the_observed_child_exit(self):
+        for failed_probe in (True, False):
+            with self.subTest(failed_probe=failed_probe):
+                process = Mock(pid=12345)
+                process.wait.return_value = 65
+                with patch("ci_local.subprocess.Popen", return_value=process), \
+                        patch("ci_local.remember_groups"), patch("ci_local.signal_groups"), \
+                        patch("ci_local.wait_for_groups", side_effect=subprocess.TimeoutExpired("ps", 30)
+                              if failed_probe else lambda *args: False), \
+                        self.assertRaises(SnapshotCleanupError) as caught:
+                    ci_local.run_child(["synthetic-child"], Path("."), {})
+                self.assertEqual(65, caught.exception.entry_point_exit_code)
+
+    def test_launch_cleanup_receipt_keeps_available_child_exits_and_omits_unknown_exits(self):
+        for failure in ("child-cleanup", "entry-point-marker", "unknown-exit"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory, "source").resolve()
+                entry = root / "scripts/run_strict_e2e.py"
+                entry.parent.mkdir(parents=True)
+                entry.write_text("pass\n")
+                evidence = Path(directory, "evidence")
+                receipt = {"mode": "snapshot", "tree_sha": "a" * 40}
+                @contextmanager
+                def isolated(*args, **kwargs):
+                    yield root, receipt
+                def child(*args, **kwargs):
+                    if failure == "entry-point-marker":
+                        (root.parent / "cleanup-failed").touch()
+                        return 65
+                    error = SnapshotCleanupError("synthetic child cleanup failed")
+                    if failure == "child-cleanup":
+                        error.entry_point_exit_code = 65
+                    raise error
+                with patch("ci_local.snapshot", isolated), patch("ci_local.run_child", side_effect=child):
+                    with self.assertRaises(SnapshotCleanupError):
+                        ci_local.launch(entry, ["--suite", "smoke-flow", "--evidence-dir", str(evidence)])
+                saved = json.loads((evidence / "local-snapshot.json").read_text())
+                self.assertEqual(2, saved["exit_code"])
+                if failure == "unknown-exit":
+                    self.assertNotIn("entry_point_exit_code", saved)
+                else:
+                    self.assertEqual(65, saved["entry_point_exit_code"])
+                self.assertEqual("entry-point-cleanup" if failure == "entry-point-marker" else "child-processes",
+                                 saved["cleanup_failure"]["phase"])
+
+    def test_snapshot_cleanup_failure_records_phase_retention_and_preserves_native_failure(self):
+        import strict_e2e_smoke as smoke
+        for failure in ("occupancy-timeout", "occupancy-busy", "removal-timeout", "directory-failure", "evidence-error"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory, "repo")
+                entry = root / "scripts/run_strict_e2e.py"
+                entry.parent.mkdir(parents=True)
+                entry.write_text("pass\n")
+                subprocess.run(["git", "init", "-q", str(root)], check=True)
+                for key, value in (("user.name", "immichSlides local snapshot"), ("user.email", "local-snapshot@invalid")):
+                    subprocess.run(["git", "config", key, value], cwd=root, check=True)
+                subprocess.run(["git", "add", "."], cwd=root, check=True)
+                subprocess.run(["git", "commit", "-qm", "initial"], cwd=root, check=True)
+                evidence = Path(directory, "evidence")
+                held, probes = {}, []
+                original_run, original_git, original_rmtree = subprocess.run, ci_local.git, shutil.rmtree
+                def execute(command, checkout, environment):
+                    held["checkout"] = checkout
+                    evidence.mkdir()
+                    records = [{"id": "iphone-first-boot", "outcome": "FAIL", "exit_code": 65, "failure_kind": "test"},
+                               {"id": "iphone-connection-error", "outcome": "PASS", "exit_code": 0, "failure_kind": "none"}]
+                    payload = {"suite": "smoke-flow", "flows": records, "result": "FAILED", "exit_code": 65,
+                               "group_failures": [], "official_summary": {"result": "Failed", "failedTests": 1}}
+                    for name in ("case-manifest.json", "smoke-flow-results.json"):
+                        (evidence / name).write_text(json.dumps(payload))
+                    (evidence / "official-summary.json").write_text(json.dumps(payload["official_summary"]))
+                    for record in records:
+                        flow = evidence / record["id"]
+                        flow.mkdir()
+                        (flow / "case-manifest.json").write_text(json.dumps({"flow": record,
+                            "result": "FAILED" if record["exit_code"] else "Passed", "exit_code": record["exit_code"]}))
+                        (flow / "official-summary.json").write_text(json.dumps({"result": "Failed" if record["exit_code"] else "Passed"}))
+                    return 65
+                def run(command, *args, **kwargs):
+                    if command[:3] == ["lsof", "-t", "+D"]:
+                        probes.append(kwargs["timeout"])
+                        if failure in {"occupancy-timeout", "evidence-error"}:
+                            raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+                        return subprocess.CompletedProcess(command, 0 if failure == "occupancy-busy" else 1, "", "")
+                    return original_run(command, *args, **kwargs)
+                def git(checkout, *arguments, **kwargs):
+                    if arguments[:2] == ("worktree", "remove") and failure == "removal-timeout":
+                        raise subprocess.TimeoutExpired(["git", *arguments], 120)
+                    return original_git(checkout, *arguments, **kwargs)
+                def rmtree(path, *args, **kwargs):
+                    if failure == "directory-failure" and Path(path) == held["checkout"].parent:
+                        raise OSError("synthetic directory cleanup failed")
+                    return original_rmtree(path, *args, **kwargs)
+                try:
+                    with patch.dict(os.environ, clean_environment(os.environ), clear=True), \
+                            patch("ci_local.run_child", side_effect=execute), \
+                            patch("ci_local.subprocess.run", side_effect=run), patch("ci_local.git", side_effect=git), \
+                            patch("ci_local.shutil.rmtree", side_effect=rmtree), \
+                            patch.object(smoke, "record_cleanup_failure", wraps=smoke.record_cleanup_failure,
+                                         side_effect=OSError("synthetic evidence write failed") if failure == "evidence-error" else None), \
+                            patch.object(sys, "argv", [str(entry), "--suite", "smoke-flow", "--evidence-dir", str(evidence)]):
+                        self.assertEqual(2, local_main(lambda: 0, str(entry)))
+                    receipt = json.loads((evidence / "local-snapshot.json").read_text())
+                    self.assertEqual((2, 65), (receipt["exit_code"], receipt["entry_point_exit_code"]))
+                    details = receipt["cleanup_failure"]
+                    self.assertEqual({"removal-timeout": "snapshot-removal", "directory-failure": "snapshot-directory"}.get(failure, "snapshot-occupancy"), details["phase"])
+                    self.assertEqual({"occupancy-busy": "SnapshotCleanupError", "directory-failure": "OSError"}.get(failure, "TimeoutExpired"), details["error_type"])
+                    self.assertEqual(str(held["checkout"].parent if failure == "directory-failure" else held["checkout"]), details["retained_path"])
+                    self.assertTrue(Path(details["retained_path"]).is_dir())
+                    self.assertEqual([30], probes)
+                    if failure == "evidence-error":
+                        self.assertEqual("OSError", receipt["cleanup_evidence_error"])
+                        continue
+                    for name in ("case-manifest.json", "smoke-flow-results.json"):
+                        payload = json.loads((evidence / name).read_text())
+                        self.assertEqual(("FAILED", 2), (payload["result"], payload["exit_code"]))
+                        first, second = payload["flows"]
+                        self.assertEqual(("FAIL", 65, "test"), (first["outcome"], first["exit_code"], first["failure_kind"]))
+                        self.assertEqual(("FAIL", 2, "cleanup"), (second["outcome"], second["exit_code"], second["failure_kind"]))
+                        gate = payload["group_failures"][0]
+                        self.assertEqual(("cleanup", details["phase"], details["error_type"], True),
+                                         (gate["failure_kind"], gate["phase"], gate["error_type"], gate["retained_snapshot"]))
+                        self.assertNotIn("retained_path", gate)
+                    self.assertEqual("Failed", json.loads((evidence / "iphone-first-boot/official-summary.json").read_text())["result"])
+                    self.assertEqual("Passed", json.loads((evidence / "iphone-connection-error/official-summary.json").read_text())["result"])
+                finally:
+                    retained = held.get("checkout")
+                    if retained is not None and retained.exists():
+                        original_git(root, "worktree", "remove", "--force", str(retained))
+                    if retained is not None and retained.parent.exists():
+                        shutil.rmtree(retained.parent)
+
     def test_interrupt_finalizes_detached_build_before_disposing_the_snapshot(self):
         for signum in (None, signal.SIGINT, signal.SIGTERM):
             with self.subTest(signal=signum), tempfile.TemporaryDirectory() as directory:

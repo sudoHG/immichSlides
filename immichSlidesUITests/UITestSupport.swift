@@ -473,7 +473,9 @@ extension XCUIApplication {
 struct IOSFirstBootNavigation {
     let app: XCUIApplication
 
-    func focusTextField(_ field: XCUIElement, identifier: String) -> XCUIElementSnapshot? {
+    func focusTextField(
+        _ field: XCUIElement, identifier: String, file: StaticString? = nil, line: UInt? = nil
+    ) -> XCUIElementSnapshot? {
         field.tapForFailureEvidence()
         // Tap delivery can be slow; focus arrival has its own window after the sole tap returns.
         let timeout = UITestSupportWaitTiming.elementAppearanceTimeoutSeconds
@@ -500,7 +502,11 @@ struct IOSFirstBootNavigation {
             return true
         }
         if isReady { return focusedSnapshot }
-        XCTFail("First-boot input must have keyboard focus before typing.")
+        if let file, let line {
+            XCTFail("First-boot input must have keyboard focus before typing.", file: file, line: line)
+        } else {
+            XCTFail("First-boot input must have keyboard focus before typing.")
+        }
         return nil
     }
 

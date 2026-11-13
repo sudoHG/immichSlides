@@ -73,6 +73,10 @@ def reachable_runner_selectors() -> dict[str, set[str]]:
                 continue
     if "filter-person" in run_strict_e2e.RUNNER_SUITES:
         selectors["ios"].update(session["selector"] for session in run_strict_e2e.FILTER_PERSON_SESSIONS)
+    from strict_e2e_smoke import load_manifest
+    manifest, _, _ = load_manifest(ROOT)
+    for flow in manifest["flows"]:
+        selectors[flow["platform"]].add(flow["selector"])
     selectors["ios"].add(run_access_lifecycle_ios.DEVICE_SELECTOR)
     selectors["tvos"].add(run_access_lifecycle_tvos.TVOS_DEVICE_SELECTOR)
     return {platform: {s.removeprefix(f"{UI_TARGET}/") for s in found} for platform, found in selectors.items()}

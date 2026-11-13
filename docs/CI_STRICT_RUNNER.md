@@ -1,5 +1,143 @@
 # Strict runner warm-build tracer
 
+## Short smoke-flow suite
+
+`--suite smoke-flow` is an independent, first-result-only runner for the 23 approved
+device flows in the CI-trusted [`smoke-flows.json`](../scripts/smoke-flows.json).
+Changing that manifest requires exact-head CI approval. The host conventions checker
+compares every ID, device, platform, configuration and fixture list with the approved
+tier plan, rejects missing/duplicate flows, and resolves every selector against its
+compiled platform. The tier plan remains planning data; it does not select execution.
+The checker also binds each ID to its contracted smoke method, requires bidirectional
+smoke inventory links, and rejects smoke selectors in default, Evidence or Xcode Cloud
+plan populations. Legacy rows that will retire into smoke remain separate rows.
+
+```bash
+python3 -B scripts/run_strict_e2e.py --suite smoke-flow --platform ios \
+  --smoke-device iphone --configuration Debug \
+  --destination 'platform=iOS Simulator,id=<UDID>' \
+  --warm-up-only --derived-data-path '<task-derived>/iphone-debug' \
+  --evidence-dir '<fresh-outside-repo>/warm-iphone-debug'
+python3 -B scripts/run_strict_e2e.py --suite smoke-flow --platform ios \
+  --smoke-device iphone --configuration Debug \
+  --destination 'platform=iOS Simulator,id=<UDID>' \
+  --test-without-building --derived-data-path '<task-derived>/iphone-debug' \
+  --evidence-dir '<fresh-outside-repo>/iphone-debug'
+```
+
+Use `ipad` with `ios`, or `tv` with `tvos`, and the matching pinned simulator.
+Configuration is explicit. A selection runs every matching flow in manifest order;
+an empty selection fails. Without explicit warm-up/reuse the runner builds once in
+disposable DerivedData. Reuse retains the strict signed Products/source identity checks.
+Smoke uses the existing UI-only `settings-resume` scheme with the explicitly requested
+Debug or Release configuration. This avoids building `@testable` unit targets against
+the non-testable Release App; App compiler settings and legacy suite routing stay unchanged.
+For local debugging, `--smoke-flow <manifest-id>` selects exactly that member of the
+device/configuration group. It rejects unknown IDs or members of another group and
+records `selection: single-flow`; a complete group records `selection: group`.
+Single-flow evidence cannot count as complete shadow execution. The warm build can
+be reused for either selection while source, device and configuration stay identical.
+Each flow gets a fresh uninstall, keychain/privacy reset and public loopback fixture A;
+TV server switching also starts B. No test or flow is retried, and smoke-flow grants
+no yellow outcome. Legacy suites, plans, matrix rows and assertions remain unchanged.
+
+Each iOS flow starts a default unscaled **60-second** navigation guard and passes it
+to its own steps. Existing first-boot helpers retain their own bounded navigation
+and keyboard-focus guards. XCTest rounds method allowances up to whole minutes;
+the method allowance is **120 seconds**, with an explicit **150-second** budget for
+launch, timeout diagnostics and result finalization. The native invocation cap is
+**270 seconds**. This exceeds the initial 180-second target so XCTest can finish its
+own timeout and preserve the official failed execution. A stuck action records a failed flow and a nonzero suite
+exit; simulator reset, fixture preparation and official export retain their separate
+infrastructure bounds. `elapsed_seconds` measures native XCTest invocation time;
+`total_elapsed_seconds` also includes preparation/export/cleanup.
+
+`smoke-flow-results.json` and the root `case-manifest.json` contain ordered flow IDs,
+selectors, PASS/FAIL, elapsed seconds, exit codes and the first public failure message
+(null when unavailable). Each flow directory retains the standard `official-tests.json`,
+`official-summary.json`, fixture/reset records and private-result disposal/quarantine
+receipt. The root official summary sums only exported official outcomes; missing
+official evidence remains a failure. Public messages use the existing redacted failure
+projection. Original result bundles remain private and follow the strict disposal path.
+Screenshots, recordings, pixels, glyphs and second-level product windows are not smoke
+judges. The Debug iOS controls flow reads the existing published history AX probe,
+so repeated photos in different scenes cannot masquerade as a lost Next action. The flag
+is DEBUG-gated and also enables request-lifecycle bookkeeping; Release flows
+use real controls and persistence without DEBUG hooks. Synthetic PIN smoke uses the
+existing Debug UserDefaults path and does not prove production Keychain behavior.
+
+The per-flow record additionally carries `source_sha`, `failure_kind`,
+`official_execution_complete`, `official_summary`, `official_tests_sha256` and
+`request_logs`. `failure_kind` is `none`, `test`, `hang-guard`, `infrastructure`,
+`official-result`, `cleanup`, `warm-products`, `sensitive-scan`, `build-cleanup`,
+or `evidence-finalization`; `test` means an officially failed selected method,
+not an established App cause. Official completeness requires exactly the selected
+method once, one passed or failed official execution, no skips and consistent summary
+counts. A failed method can be complete; passing still requires all official facts
+and exit zero. `source_sha` is the tested checkout commit in both root files and each
+flow; `source_dirty_paths` must be `[]` in the tested checkout. The warm identity separately binds source content. Local snapshots also retain
+`local-snapshot.json` with the caller commit, tested snapshot commit and tree SHA.
+
+Every flow retains the complete fixture request logs, including on failure, under
+`<evidence-parent>/private/<evidence-name>/<flow-id>/service-a.log` and (when selected)
+`service-b.log`, outside the public evidence directory. These files are
+private evidence, not public records; the server's existing redaction stays intact.
+The public `request_logs` map contains only fixture key, availability state, byte count,
+SHA-256 and completed request count. It never contains request lines, URLs or headers.
+For a dual-fixture smoke invocation, each server receives the other fixture's known
+synthetic IDs. A request for a peer asset still returns 404; only its private log gains
+`fixture_asset_id=peer:A1` or `peer:B1` (the peer's public synthetic label). Arbitrary
+IDs remain redacted. The public request-log projection is unchanged.
+Both root records start with `result: RUNNING, exit_code: null`. Their final verdict
+is written after warm-product validation and the sensitive scan; a late exception
+rewrites both to `FAILED`. The root official summary is written after those gates.
+Shadow consumers call `strict_e2e_smoke.validate_group_evidence(evidence_path,
+manifest["flows"], device, configuration, expected_source_sha=sha)` rather than counting
+PASS strings. It requires a complete ordered group, clean source binding and matching
+passing official exports; single-flow, missing, skipped, altered or failed evidence
+raises `ValueError` (unreadable files raise `OSError`). The function returns the records.
+`expected_source_sha` is a required keyword argument supplied from the admitted
+checkout, not from the evidence being checked. A product gate invalidates every flow;
+a sensitive-scan gate uses `matched_files` to invalidate the owning flows, or the whole
+group when a match has no flow owner. An affected passing flow and its case manifest
+become FAIL/FAILED with the gate-specific kind. A flow that already failed keeps its
+first failure kind and exit code, including native test exit 65 or hang-guard exit 124;
+official native summaries stay unchanged. Both root files separately append the late
+gate to `group_failures` with its kind, exit code and affected flow IDs. The group exits
+2, and the validator rejects any nonempty `group_failures`, even if other fields claim
+success. Aggregation errors use `official-result`; final write errors use
+`evidence-finalization`.
+
+Local snapshot cleanup keeps its existing single 30-second occupancy probe and
+120-second Git removal deadline. A timeout or unverifiable occupancy retains the
+snapshot and exits 2. When the launcher observed the child's exit before cleanup
+failed, `local-snapshot.json` records `entry_point_exit_code` separately from the
+final exit; an unavailable child exit is omitted. This includes post-exit child-group
+cleanup and the entry-point cleanup marker. It also records `cleanup_failure` with its phase, error type and retained
+path. Smoke roots become FAILED with a separate `cleanup` group gate before any
+per-flow rewrites; existing native failures and official per-flow summaries remain
+intact. The public gate records the phase, type and retention Boolean, without the
+absolute path. A secondary evidence-write error is recorded in the local receipt.
+
+Helpers forward `file`/`line` to the flow's own assertion call site. `failure_locations`
+is null when unavailable, otherwise the existing reviewed projection of at most three
+project-relative Swift paths and positive line numbers, bound to the record's source SHA.
+Absolute failure paths must first match a known compilation-root string prefix
+(including the macOS `/private` alias) before filesystem resolution.
+Warm smoke receipts retain their compilation root privately in DerivedData so local
+reuse can normalize official locations after the compilation snapshot is removed;
+the absolute root is excluded from public warm-up JSON. No new failure-prefix vocabulary
+is introduced: iOS and TV assertions both use `Smoke flow: <step>.`, projected to the
+single reviewed `Smoke flow: ` prefix with phase `unknown` and class `control_state`.
+
+Smoke classes are excluded from default fixture plans, hence PR area selection and
+complete nightly fixture shards. Core-area entries account for the source inventory
+without selecting excluded methods. Strict matrix selectors never name these classes.
+Each new UI method has its own `target_home: smoke` inventory row linking its device
+flows and review group; no existing inventory destination changes. Smoke is selected
+only through its manifest, outside legacy execution. Retirement and the nightly switch
+still require the approved shadow and executed-night gates.
+
 The approved [target tier plan](TESTING.md#approved-target-tiers-planning-only)
 records future rule, smoke and human-review responsibilities. It supplies no
 runner inputs. The unit-coverage PRs retire no strict assertions; duplicate-removal
@@ -2465,6 +2603,7 @@ New enum meanings and why the previous vocabulary cannot express them:
 
 | Fixed source prefix | Phase | Class | Public source |
 |---|---|---|---|
+| `Smoke flow: ` | `unknown` | `control_state` | [SmokeFlowIOSUITests.swift](../immichSlidesUITests/SmokeFlowIOSUITests.swift); suffixes are discarded because steps span first boot, PIN, filters, playback and settings |
 | `System Reduce Motion command: ` | `settings_navigation` | `control_state` | [HostReduceMotionSetting in ReduceMotionUITests.swift](../immichSlidesUITests/ReduceMotionUITests.swift) |
 | `App Reduce Motion: ` | `settings_navigation` | `control_state` | [HostReduceMotionSetting.confirm in ReduceMotionUITests.swift](../immichSlidesUITests/ReduceMotionUITests.swift) |
 | `The app did not return to the foreground after changing system Reduce Motion.` | `settings_navigation` | `control_state` | [bringToForeground in ReduceMotionUITests.swift](../immichSlidesUITests/ReduceMotionUITests.swift) |

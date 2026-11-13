@@ -1383,6 +1383,23 @@ def check_test_tier_plan(root: Path) -> list[Violation]:
     return [Violation(TEST_TIER_PLAN_PATH, 1, error.split(":", 1)[0], "target tiers", error) for error in errors]
 
 
+def check_smoke_manifest(root: Path) -> list[Violation]:
+    from strict_e2e_smoke import MANIFEST, load_manifest, validate_manifest, validate_exclusions
+    try:
+        manifest, planned, methods = load_manifest(root)
+        inventory = json.loads((root / TEST_TIER_PLAN_PATH).read_text())["inventory"]
+        flows = validate_manifest(manifest, planned, methods, inventory)
+        plans = {platform: {name: json.loads((root / name).read_text()) for name in (
+            f"immichSlides-{'iOS' if platform == 'ios' else 'tvOS'}.xctestplan",
+            f"immichSlides-Evidence-{'iOS' if platform == 'ios' else 'tvOS'}.xctestplan",
+            f"XcodeCloud-UI-{'iOS' if platform == 'ios' else 'tvOS'}.xctestplan")}
+            for platform in ("ios", "tvos")}
+        validate_exclusions(flows, methods, plans)
+    except (ValueError, KeyError, OSError, TypeError) as error:
+        return [Violation(MANIFEST, 1, "smoke-manifest", "smoke flows", str(error))]
+    return []
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--root", default=".", help="repository root")
@@ -1408,6 +1425,7 @@ def main(argv: list[str] | None = None) -> int:
     unallowed, stale = partition_against_allowlist(ordinary, allowlist)
     unallowed.extend(v for v in violations if v.rule == "product-wait-factor")
     unallowed.extend(check_test_tier_plan(root))
+    unallowed.extend(check_smoke_manifest(root))
 
     timeout_path = root / TIMEOUT_ALLOWLIST_PATH
     timeout_allowed = json.loads(timeout_path.read_text(encoding="utf-8")) if timeout_path.is_file() else []
