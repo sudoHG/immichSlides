@@ -29,6 +29,74 @@ def workflow():
 
 
 class WorkflowPolicyTests(unittest.TestCase):
+    def test_ui_archive_redownload_cannot_change_provenance_or_bypass_verification(self):
+        for path, jobs in ((".github/workflows/ci-ui.yml", ("iphone-shards", "ipad-shards", "appletv-shards")),
+                           (".github/workflows/ci-nightly.yml", ("ui-shards",))):
+            original = yaml.load((Path(__file__).resolve().parent.parent / path).read_text(), Loader=policy.WorkflowLoader)
+            self.assertNotIn("archive-redownload", self.rules(original, path))
+            for job in jobs:
+                for mutation in ("missing-gate", "skip-gate", "ignore-gate", "gate-command", "late-gate",
+                                 "different-id", "different-run", "different-repository", "different-action",
+                                 "same-stage", "skip-redownload", "third-download", "test-bypass",
+                                 "skip-first-gate", "ignore-first-gate", "no-prepare-redownload", "first-download-options",
+                                 "unguarded-first-cleanup", "unguarded-retry-cleanup", "missing-cleanup",
+                                 "skip-cleanup", "first-cleanup-env", "retry-cleanup-env", "missing-cleanup-target"):
+                    document = copy.deepcopy(original)
+                    steps = document["jobs"][job]["steps"]
+                    by_id = {step.get("id"): step for step in steps}
+                    gate, retry = by_id["verify_redownload"], by_id["redownload"]
+                    if mutation == "missing-gate":
+                        steps.remove(gate)
+                    elif mutation == "skip-gate":
+                        gate["if"] = "false"
+                    elif mutation == "ignore-gate":
+                        gate["continue-on-error"] = True
+                    elif mutation == "gate-command":
+                        gate["run"] += "\ntrue\n"
+                    elif mutation == "late-gate":
+                        steps.remove(gate)
+                        steps.append(gate)
+                    elif mutation.startswith("different-"):
+                        field = {"different-id": "artifact-ids", "different-run": "run-id",
+                                 "different-repository": "repository"}.get(mutation)
+                        if field:
+                            retry["with"][field] = "other"
+                        else:
+                            retry["uses"] = "actions/download-artifact@" + "a" * 40
+                    elif mutation == "same-stage":
+                        retry["with"]["path"] = by_id["download"]["with"]["path"]
+                    elif mutation == "skip-redownload":
+                        retry["if"] = "false"
+                    elif mutation == "third-download":
+                        steps.insert(steps.index(gate), copy.deepcopy(retry))
+                    elif mutation == "test-bypass":
+                        next(step for step in steps if "ci_ui_tests.py run " in step.get("run", ""))["if"] = "always()"
+                    elif mutation == "skip-first-gate":
+                        by_id["verify_download"]["if"] = "false"
+                    elif mutation == "ignore-first-gate":
+                        by_id["verify_download"]["continue-on-error"] = True
+                    elif mutation == "no-prepare-redownload":
+                        by_id["verify_download"]["run"] = by_id["verify_download"]["run"].replace("--prepare-redownload", "")
+                    elif mutation == "first-download-options":
+                        by_id["download"]["with"]["artifact-ids"] = "other"
+                    elif mutation.startswith("unguarded-"):
+                        variable = "ARCHIVE_STAGING" if mutation == "unguarded-first-cleanup" else "ARCHIVE_REDOWNLOAD_STAGING"
+                        cleanup = next(step for step in steps if step.get("name") == "Display summary and remove task-owned products")
+                        guarded = '${' + variable + ':+"$' + variable + '"}'
+                        cleanup["run"] = cleanup["run"].replace(guarded, '"$' + variable + '"')
+                    elif "cleanup" in mutation:
+                        cleanup = next(step for step in steps if step.get("name") == "Display summary and remove task-owned products")
+                        if mutation == "missing-cleanup":
+                            steps.remove(cleanup)
+                        elif mutation == "skip-cleanup":
+                            cleanup["if"] = "false"
+                        elif mutation.endswith("-env"):
+                            cleanup["env"]["ARCHIVE_STAGING" if mutation == "first-cleanup-env" else "ARCHIVE_REDOWNLOAD_STAGING"] = "other"
+                        else:
+                            cleanup["run"] = cleanup["run"].replace('"$RUNNER_TEMP/ui-relocated" ', "")
+                    with self.subTest(path=path, job=job, mutation=mutation):
+                        self.assertIn("archive-redownload", self.rules(document, path))
+
     def test_area_map_errors_identify_the_area_map_and_its_own_rule(self):
         from ci_summary import ContractError
         from ci_ui_selection import AREA_MAP_PATH

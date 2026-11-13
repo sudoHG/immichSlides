@@ -295,6 +295,81 @@ def trusted_action_allowed(uses, options):
     return allowed_inputs is not None and set(options) <= allowed_inputs
 
 
+def verified_archive_transfer(job, *, nightly, group):
+    """Require two same-provenance transfers, each followed by an unavoidable integrity gate."""
+    steps = job.get("steps", [])
+    if (not isinstance(steps, list) or any(not isinstance(step, dict)
+            or not isinstance(step.get("run", ""), str) or not isinstance(step.get("with", {}), dict) for step in steps)):
+        return False
+    ids = ("staging", "download", "verify_download", "redownload", "verify_redownload")
+    selected = [[(index, step) for index, step in enumerate(steps) if step.get("id") == name] for name in ids]
+    if any(len(matches) != 1 for matches in selected):
+        return False
+    positions = [matches[0][0] for matches in selected]
+    staging, download, first, retry, final = [matches[0][1] for matches in selected]
+    runners = [(index, step) for index, step in enumerate(steps) if "ci_ui_tests.py run " in step.get("run", "")]
+    if (positions != sorted(positions) or len(runners) != 1 or runners[0][0] <= positions[-1]
+            or runners[0][1].get("if") or runners[0][1].get("continue-on-error", False)):
+        return False
+    if nightly:
+        artifact = "${{ matrix.device == 'appletv' && needs.ui-archive.outputs.tvos_artifact_id || needs.ui-archive.outputs.ios_artifact_id }}"
+        run = "${{ matrix.device == 'appletv' && needs.ui-archive.outputs.tvos_producer_run_id || needs.ui-archive.outputs.ios_producer_run_id }}"
+    else:
+        artifact = "${{ needs." + group + "-wait.outputs.artifact_id }}"
+        run = "${{ needs." + group + "-wait.outputs.producer_run_id }}"
+    options = {"artifact-ids": artifact, "path": "${{ steps.staging.outputs.staging_path }}", "merge-multiple": True,
+               "github-token": "${{ github.token }}", "repository": "${{ github.repository }}", "run-id": run}
+    retry_condition = "${{ !cancelled() && steps.verify_download.outputs.retry_required == 'true' }}"
+    if (download.get("with") != options or retry.get("with") != {**options, "path": "${{ steps.verify_download.outputs.staging_path }}"}
+            or not str(download.get("uses", "")).startswith("actions/download-artifact@")
+            or retry.get("uses") != download.get("uses") or download.get("if") or retry.get("if") != retry_condition
+            or download.get("continue-on-error") is not True or retry.get("continue-on-error") is not True
+            or sum("artifact-ids" in step.get("with", {}) for step in steps) != 2):
+        return False
+    stage_command = '''"$PYTHON" -B scripts/ci_ui_tests.py stage-download --device '${{ matrix.device }}' --shard '${{ matrix.shard }}' '''
+    def tokens(command):
+        try:
+            return shlex.split(command.replace("\\\n", " "))
+        except (ValueError, AttributeError):
+            return None
+    if (staging.get("if") or staging.get("continue-on-error", False) or staging.get("working-directory") != "ui-source"
+            or tokens(staging.get("run", "")) != tokens(stage_command)):
+        return False
+    for step, name, condition, flag in ((first, "download", "${{ !cancelled() && steps.staging.outcome == 'success' }}", "--prepare-redownload"),
+                                         (final, "redownload", retry_condition, '--previous-receipt-path "$RUNNER_TEMP/ui-download.json"')):
+        stage = "staging" if name == "download" else "verify_download"
+        environment = {"ARCHIVE_STAGING": "${{ steps." + stage + ".outputs.staging_path }}",
+            "ARCHIVE_TRANSFER_STARTED": "${{ steps.staging.outputs.transfer_started }}",
+            "ARCHIVE_ACTION_OUTCOME": "${{ steps." + name + ".outcome }}", "ARCHIVE_ARTIFACT_ID": artifact,
+            "ARCHIVE_PLATFORM": "${{ matrix.device == 'appletv' && 'tvos' || 'ios' }}"}
+        command = '''"$PYTHON" -B scripts/ci_ui_tests.py gate-archive --device '${{ matrix.device }}' --shard '${{ matrix.shard }}'
+            --staging-dir "$ARCHIVE_STAGING" --archive-dir "$RUNNER_TEMP/ui-archive"
+            --selection-path "$RUNNER_TEMP/ui-selection/archive-selection-$ARCHIVE_PLATFORM.json"
+            --artifact-id "$ARCHIVE_ARTIFACT_ID" --action-outcome "$ARCHIVE_ACTION_OUTCOME"
+            --transfer-started "$ARCHIVE_TRANSFER_STARTED" --download-receipt-path "$RUNNER_TEMP/ui-download.json"
+            --output-dir "$RUNNER_TEMP/ui-records" ''' + flag
+        if not nightly:
+            command += ' --destination "$UI_DESTINATION" --compiled-from-official-results'
+        if (step.get("env") != environment or step.get("if") != condition or step.get("continue-on-error", False)
+                or step.get("working-directory") != "ui-source" or tokens(step.get("run", "")) != tokens(command)):
+            return False
+    cleanup = [step for step in steps if step.get("name") == "Display summary and remove task-owned products"]
+    if len(cleanup) != 1:
+        return False
+    cleanup = cleanup[0]
+    targets = '"$RUNNER_TEMP/ui-relocated" "$RUNNER_TEMP/ui-archive" '
+    if nightly:
+        targets += '"$RUNNER_TEMP/ui-identity" '
+    targets += '${ARCHIVE_STAGING:+"$ARCHIVE_STAGING"} ${ARCHIVE_REDOWNLOAD_STAGING:+"$ARCHIVE_REDOWNLOAD_STAGING"}'
+    removals = [tokens(line.strip()) for line in cleanup.get("run", "").splitlines() if line.strip().startswith("rm -")]
+    if (cleanup.get("if") != "always()" or cleanup.get("env") != {
+            "ARCHIVE_STAGING": "${{ steps.staging.outputs.staging_path }}",
+            "ARCHIVE_REDOWNLOAD_STAGING": "${{ steps.verify_download.outputs.staging_path }}"}
+            or removals != [tokens("rm -rf " + targets), tokens('rm -f "$RUNNER_TEMP/ui-download.json"')]):
+        return False
+    return True
+
+
 def top_level_terms(condition, operator):
     """Split at an operator outside quotes and parentheses; None when the text is malformed."""
     terms, depth, quote, start, index = [], 0, None, 0, 0
@@ -589,6 +664,11 @@ def check_workflow(path: str, source: str, *, ui_shards=None, run_named_workflow
         permissions = job.get("permissions", document.get("permissions"))
         if not explicit_permissions(permissions):
             flag(location, "permissions", "Job needs explicit permissions, directly or inherited")
+        if (path == ".github/workflows/ci-ui.yml" and job_id in {"iphone-shards", "ipad-shards", "appletv-shards"}
+                or path == LIVE_WORKFLOW and job_id == "ui-shards"):
+            if not verified_archive_transfer(job, nightly=path == LIVE_WORKFLOW,
+                                             group="tvos" if job_id == "appletv-shards" else "ios"):
+                flag(location, "archive-redownload", "UI archives require at most one same-ID/run/pin re-download, both integrity gates before tests, and guarded cleanup")
         if path == ".github/workflows/ci-ui.yml" and "selection" in jobs and job_id in {"ios-wait", "tvos-wait", "iphone-shards", "ipad-shards", "appletv-shards"}:
             group = "tvos" if job_id in {"tvos-wait", "appletv-shards"} else "ios"
             is_wait = job_id.endswith("-wait")

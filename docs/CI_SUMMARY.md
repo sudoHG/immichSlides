@@ -829,7 +829,7 @@ The receipt has exactly these fields; unknown fields and free-text reasons are r
 | `digests_matched` | Exactly `manifest` and `tar`, each boolean or null (not reached) |
 | `size_matched` | Boolean or null; every manifest-declared tar member size matches (the manifest has no compressed total size) |
 | `transfer_extract_seconds` | Finite elapsed action time from 0 through 6600 seconds (the 110-minute UI job cap), or null when unavailable; transfer and extraction are combined |
-| `gate_seconds` | Finite elapsed validation/publication time from 0 through 6600 seconds, or null when unavailable |
+| `gate_seconds` | Finite elapsed validation/publication time from 0 through 6600 seconds, or null when unavailable; sums both gates when the consumer re-downloads once |
 | `free_disk_bytes` | Integer available bytes from 0 through 1 PiB (2^50 bytes), or null when unavailable |
 | `failure_reason` | Null for a successful gate, otherwise one of the closed-set codes below |
 
@@ -850,6 +850,12 @@ duplicating those coordinates in the receipt. It does not excuse any later test
 or infrastructure failure. Summary Markdown displays the compact measurements
 and reason; null measurements display as `unavailable`. An invalid shard summary
 can make the trusted reporter drop the whole nightly attempt, rather than only that shard.
+
+The [verified transfer protocol](CI_UI.md#classification-and-archive-selection)
+keeps this schema unchanged. Download count and the first rejection appear only
+in step logs and the job summary; adding those fields to this receipt requires
+reader-first rollout. `transfer_extract_seconds` covers both transfers from the
+original staging allocation, including intervening gate and scheduling time.
 
 Source repository/event must match the identity. CI requires a workflow path below
 `.github/workflows/`, a run ID and a boolean fork-origin flag. The producer derives

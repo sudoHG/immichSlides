@@ -112,15 +112,68 @@ jobs:
         with:
           name: ${{ needs.ios-wait.outputs.selection_artifact }}
           path: ${{ runner.temp }}/ui-selection
+      - name: Allocate this attempt's archive staging directory
+        id: staging
+        working-directory: ui-source
+        run: |
+          "$PYTHON" -B scripts/ci_ui_tests.py stage-download --device '${{ matrix.device }}' --shard '${{ matrix.shard }}'
       - name: Download by verified immutable archive ID
+        id: download
+        continue-on-error: true
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           artifact-ids: ${{ needs.ios-wait.outputs.artifact_id }}
-          path: ${{ runner.temp }}/ui-archive
+          path: ${{ steps.staging.outputs.staging_path }}
           merge-multiple: true
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
           run-id: ${{ needs.ios-wait.outputs.producer_run_id }}
+      - name: Verify the first download and prepare one fresh transfer if rejected
+        id: verify_download
+        if: ${{ !cancelled() && steps.staging.outcome == 'success' }}
+        working-directory: ui-source
+        env:
+          ARCHIVE_STAGING: ${{ steps.staging.outputs.staging_path }}
+          ARCHIVE_TRANSFER_STARTED: ${{ steps.staging.outputs.transfer_started }}
+          ARCHIVE_ACTION_OUTCOME: ${{ steps.download.outcome }}
+          ARCHIVE_ARTIFACT_ID: ${{ needs.ios-wait.outputs.artifact_id }}
+          ARCHIVE_PLATFORM: ${{ matrix.device == 'appletv' && 'tvos' || 'ios' }}
+        run: |
+          "$PYTHON" -B scripts/ci_ui_tests.py gate-archive --device '${{ matrix.device }}' --shard '${{ matrix.shard }}' \
+            --staging-dir "$ARCHIVE_STAGING" --archive-dir "$RUNNER_TEMP/ui-archive" \
+            --selection-path "$RUNNER_TEMP/ui-selection/archive-selection-$ARCHIVE_PLATFORM.json" \
+            --artifact-id "$ARCHIVE_ARTIFACT_ID" --action-outcome "$ARCHIVE_ACTION_OUTCOME" \
+            --transfer-started "$ARCHIVE_TRANSFER_STARTED" --download-receipt-path "$RUNNER_TEMP/ui-download.json" \
+            --output-dir "$RUNNER_TEMP/ui-records" --prepare-redownload --destination "$UI_DESTINATION" --compiled-from-official-results
+      - name: Re-download the same verified immutable archive ID once
+        id: redownload
+        if: ${{ !cancelled() && steps.verify_download.outputs.retry_required == 'true' }}
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.ios-wait.outputs.artifact_id }}
+          path: ${{ steps.verify_download.outputs.staging_path }}
+          merge-multiple: true
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ needs.ios-wait.outputs.producer_run_id }}
+      - name: Verify and publish the re-downloaded archive before running tests
+        id: verify_redownload
+        if: ${{ !cancelled() && steps.verify_download.outputs.retry_required == 'true' }}
+        working-directory: ui-source
+        env:
+          ARCHIVE_STAGING: ${{ steps.verify_download.outputs.staging_path }}
+          ARCHIVE_TRANSFER_STARTED: ${{ steps.staging.outputs.transfer_started }}
+          ARCHIVE_ACTION_OUTCOME: ${{ steps.redownload.outcome }}
+          ARCHIVE_ARTIFACT_ID: ${{ needs.ios-wait.outputs.artifact_id }}
+          ARCHIVE_PLATFORM: ${{ matrix.device == 'appletv' && 'tvos' || 'ios' }}
+        run: |
+          "$PYTHON" -B scripts/ci_ui_tests.py gate-archive --device '${{ matrix.device }}' --shard '${{ matrix.shard }}' \
+            --staging-dir "$ARCHIVE_STAGING" --archive-dir "$RUNNER_TEMP/ui-archive" \
+            --selection-path "$RUNNER_TEMP/ui-selection/archive-selection-$ARCHIVE_PLATFORM.json" \
+            --artifact-id "$ARCHIVE_ARTIFACT_ID" --action-outcome "$ARCHIVE_ACTION_OUTCOME" \
+            --transfer-started "$ARCHIVE_TRANSFER_STARTED" --download-receipt-path "$RUNNER_TEMP/ui-download.json" \
+            --output-dir "$RUNNER_TEMP/ui-records" --previous-receipt-path "$RUNNER_TEMP/ui-download.json" --destination "$UI_DESTINATION" --compiled-from-official-results
       - name: Run the UI target from relocated Products
         working-directory: ui-source
         run: |
@@ -169,6 +222,9 @@ jobs:
           if-no-files-found: error
       - name: Display summary and remove task-owned products
         if: always()
+        env:
+          ARCHIVE_STAGING: ${{ steps.staging.outputs.staging_path }}
+          ARCHIVE_REDOWNLOAD_STAGING: ${{ steps.verify_download.outputs.staging_path }}
         run: |
           if test -f "$RUNNER_TEMP/ui-records/summary.md"; then
             cat "$RUNNER_TEMP/ui-records/summary.md" >> "$GITHUB_STEP_SUMMARY"
@@ -177,7 +233,8 @@ jobs:
             xcrun simctl shutdown "$UI_SIMULATOR" || true
             xcrun simctl delete "$UI_SIMULATOR"
           fi
-          rm -rf "$RUNNER_TEMP/ui-relocated" "$RUNNER_TEMP/ui-archive"
+          rm -rf "$RUNNER_TEMP/ui-relocated" "$RUNNER_TEMP/ui-archive" ${ARCHIVE_STAGING:+"$ARCHIVE_STAGING"} ${ARCHIVE_REDOWNLOAD_STAGING:+"$ARCHIVE_REDOWNLOAD_STAGING"}
+          rm -f "$RUNNER_TEMP/ui-download.json"
 
   ipad-shards:
     name: ui-ipad-${{ matrix.shard }}
@@ -220,15 +277,68 @@ jobs:
         with:
           name: ${{ needs.ios-wait.outputs.selection_artifact }}
           path: ${{ runner.temp }}/ui-selection
+      - name: Allocate this attempt's archive staging directory
+        id: staging
+        working-directory: ui-source
+        run: |
+          "$PYTHON" -B scripts/ci_ui_tests.py stage-download --device '${{ matrix.device }}' --shard '${{ matrix.shard }}'
       - name: Download by verified immutable archive ID
+        id: download
+        continue-on-error: true
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           artifact-ids: ${{ needs.ios-wait.outputs.artifact_id }}
-          path: ${{ runner.temp }}/ui-archive
+          path: ${{ steps.staging.outputs.staging_path }}
           merge-multiple: true
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
           run-id: ${{ needs.ios-wait.outputs.producer_run_id }}
+      - name: Verify the first download and prepare one fresh transfer if rejected
+        id: verify_download
+        if: ${{ !cancelled() && steps.staging.outcome == 'success' }}
+        working-directory: ui-source
+        env:
+          ARCHIVE_STAGING: ${{ steps.staging.outputs.staging_path }}
+          ARCHIVE_TRANSFER_STARTED: ${{ steps.staging.outputs.transfer_started }}
+          ARCHIVE_ACTION_OUTCOME: ${{ steps.download.outcome }}
+          ARCHIVE_ARTIFACT_ID: ${{ needs.ios-wait.outputs.artifact_id }}
+          ARCHIVE_PLATFORM: ${{ matrix.device == 'appletv' && 'tvos' || 'ios' }}
+        run: |
+          "$PYTHON" -B scripts/ci_ui_tests.py gate-archive --device '${{ matrix.device }}' --shard '${{ matrix.shard }}' \
+            --staging-dir "$ARCHIVE_STAGING" --archive-dir "$RUNNER_TEMP/ui-archive" \
+            --selection-path "$RUNNER_TEMP/ui-selection/archive-selection-$ARCHIVE_PLATFORM.json" \
+            --artifact-id "$ARCHIVE_ARTIFACT_ID" --action-outcome "$ARCHIVE_ACTION_OUTCOME" \
+            --transfer-started "$ARCHIVE_TRANSFER_STARTED" --download-receipt-path "$RUNNER_TEMP/ui-download.json" \
+            --output-dir "$RUNNER_TEMP/ui-records" --prepare-redownload --destination "$UI_DESTINATION" --compiled-from-official-results
+      - name: Re-download the same verified immutable archive ID once
+        id: redownload
+        if: ${{ !cancelled() && steps.verify_download.outputs.retry_required == 'true' }}
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.ios-wait.outputs.artifact_id }}
+          path: ${{ steps.verify_download.outputs.staging_path }}
+          merge-multiple: true
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ needs.ios-wait.outputs.producer_run_id }}
+      - name: Verify and publish the re-downloaded archive before running tests
+        id: verify_redownload
+        if: ${{ !cancelled() && steps.verify_download.outputs.retry_required == 'true' }}
+        working-directory: ui-source
+        env:
+          ARCHIVE_STAGING: ${{ steps.verify_download.outputs.staging_path }}
+          ARCHIVE_TRANSFER_STARTED: ${{ steps.staging.outputs.transfer_started }}
+          ARCHIVE_ACTION_OUTCOME: ${{ steps.redownload.outcome }}
+          ARCHIVE_ARTIFACT_ID: ${{ needs.ios-wait.outputs.artifact_id }}
+          ARCHIVE_PLATFORM: ${{ matrix.device == 'appletv' && 'tvos' || 'ios' }}
+        run: |
+          "$PYTHON" -B scripts/ci_ui_tests.py gate-archive --device '${{ matrix.device }}' --shard '${{ matrix.shard }}' \
+            --staging-dir "$ARCHIVE_STAGING" --archive-dir "$RUNNER_TEMP/ui-archive" \
+            --selection-path "$RUNNER_TEMP/ui-selection/archive-selection-$ARCHIVE_PLATFORM.json" \
+            --artifact-id "$ARCHIVE_ARTIFACT_ID" --action-outcome "$ARCHIVE_ACTION_OUTCOME" \
+            --transfer-started "$ARCHIVE_TRANSFER_STARTED" --download-receipt-path "$RUNNER_TEMP/ui-download.json" \
+            --output-dir "$RUNNER_TEMP/ui-records" --previous-receipt-path "$RUNNER_TEMP/ui-download.json" --destination "$UI_DESTINATION" --compiled-from-official-results
       - name: Run the UI target from relocated Products
         working-directory: ui-source
         run: |
@@ -277,6 +387,9 @@ jobs:
           if-no-files-found: error
       - name: Display summary and remove task-owned products
         if: always()
+        env:
+          ARCHIVE_STAGING: ${{ steps.staging.outputs.staging_path }}
+          ARCHIVE_REDOWNLOAD_STAGING: ${{ steps.verify_download.outputs.staging_path }}
         run: |
           if test -f "$RUNNER_TEMP/ui-records/summary.md"; then
             cat "$RUNNER_TEMP/ui-records/summary.md" >> "$GITHUB_STEP_SUMMARY"
@@ -285,7 +398,8 @@ jobs:
             xcrun simctl shutdown "$UI_SIMULATOR" || true
             xcrun simctl delete "$UI_SIMULATOR"
           fi
-          rm -rf "$RUNNER_TEMP/ui-relocated" "$RUNNER_TEMP/ui-archive"
+          rm -rf "$RUNNER_TEMP/ui-relocated" "$RUNNER_TEMP/ui-archive" ${ARCHIVE_STAGING:+"$ARCHIVE_STAGING"} ${ARCHIVE_REDOWNLOAD_STAGING:+"$ARCHIVE_REDOWNLOAD_STAGING"}
+          rm -f "$RUNNER_TEMP/ui-download.json"
 
   ios-wait:
     name: ui-cloud-wait-ios
@@ -430,15 +544,68 @@ jobs:
         with:
           name: ${{ needs.tvos-wait.outputs.selection_artifact }}
           path: ${{ runner.temp }}/ui-selection
+      - name: Allocate this attempt's archive staging directory
+        id: staging
+        working-directory: ui-source
+        run: |
+          "$PYTHON" -B scripts/ci_ui_tests.py stage-download --device '${{ matrix.device }}' --shard '${{ matrix.shard }}'
       - name: Download by verified immutable archive ID
+        id: download
+        continue-on-error: true
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           artifact-ids: ${{ needs.tvos-wait.outputs.artifact_id }}
-          path: ${{ runner.temp }}/ui-archive
+          path: ${{ steps.staging.outputs.staging_path }}
           merge-multiple: true
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
           run-id: ${{ needs.tvos-wait.outputs.producer_run_id }}
+      - name: Verify the first download and prepare one fresh transfer if rejected
+        id: verify_download
+        if: ${{ !cancelled() && steps.staging.outcome == 'success' }}
+        working-directory: ui-source
+        env:
+          ARCHIVE_STAGING: ${{ steps.staging.outputs.staging_path }}
+          ARCHIVE_TRANSFER_STARTED: ${{ steps.staging.outputs.transfer_started }}
+          ARCHIVE_ACTION_OUTCOME: ${{ steps.download.outcome }}
+          ARCHIVE_ARTIFACT_ID: ${{ needs.tvos-wait.outputs.artifact_id }}
+          ARCHIVE_PLATFORM: ${{ matrix.device == 'appletv' && 'tvos' || 'ios' }}
+        run: |
+          "$PYTHON" -B scripts/ci_ui_tests.py gate-archive --device '${{ matrix.device }}' --shard '${{ matrix.shard }}' \
+            --staging-dir "$ARCHIVE_STAGING" --archive-dir "$RUNNER_TEMP/ui-archive" \
+            --selection-path "$RUNNER_TEMP/ui-selection/archive-selection-$ARCHIVE_PLATFORM.json" \
+            --artifact-id "$ARCHIVE_ARTIFACT_ID" --action-outcome "$ARCHIVE_ACTION_OUTCOME" \
+            --transfer-started "$ARCHIVE_TRANSFER_STARTED" --download-receipt-path "$RUNNER_TEMP/ui-download.json" \
+            --output-dir "$RUNNER_TEMP/ui-records" --prepare-redownload --destination "$UI_DESTINATION" --compiled-from-official-results
+      - name: Re-download the same verified immutable archive ID once
+        id: redownload
+        if: ${{ !cancelled() && steps.verify_download.outputs.retry_required == 'true' }}
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.tvos-wait.outputs.artifact_id }}
+          path: ${{ steps.verify_download.outputs.staging_path }}
+          merge-multiple: true
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ needs.tvos-wait.outputs.producer_run_id }}
+      - name: Verify and publish the re-downloaded archive before running tests
+        id: verify_redownload
+        if: ${{ !cancelled() && steps.verify_download.outputs.retry_required == 'true' }}
+        working-directory: ui-source
+        env:
+          ARCHIVE_STAGING: ${{ steps.verify_download.outputs.staging_path }}
+          ARCHIVE_TRANSFER_STARTED: ${{ steps.staging.outputs.transfer_started }}
+          ARCHIVE_ACTION_OUTCOME: ${{ steps.redownload.outcome }}
+          ARCHIVE_ARTIFACT_ID: ${{ needs.tvos-wait.outputs.artifact_id }}
+          ARCHIVE_PLATFORM: ${{ matrix.device == 'appletv' && 'tvos' || 'ios' }}
+        run: |
+          "$PYTHON" -B scripts/ci_ui_tests.py gate-archive --device '${{ matrix.device }}' --shard '${{ matrix.shard }}' \
+            --staging-dir "$ARCHIVE_STAGING" --archive-dir "$RUNNER_TEMP/ui-archive" \
+            --selection-path "$RUNNER_TEMP/ui-selection/archive-selection-$ARCHIVE_PLATFORM.json" \
+            --artifact-id "$ARCHIVE_ARTIFACT_ID" --action-outcome "$ARCHIVE_ACTION_OUTCOME" \
+            --transfer-started "$ARCHIVE_TRANSFER_STARTED" --download-receipt-path "$RUNNER_TEMP/ui-download.json" \
+            --output-dir "$RUNNER_TEMP/ui-records" --previous-receipt-path "$RUNNER_TEMP/ui-download.json" --destination "$UI_DESTINATION" --compiled-from-official-results
       - name: Run the UI target from relocated Products
         working-directory: ui-source
         run: |
@@ -487,6 +654,9 @@ jobs:
           if-no-files-found: error
       - name: Display summary and remove task-owned products
         if: always()
+        env:
+          ARCHIVE_STAGING: ${{ steps.staging.outputs.staging_path }}
+          ARCHIVE_REDOWNLOAD_STAGING: ${{ steps.verify_download.outputs.staging_path }}
         run: |
           if test -f "$RUNNER_TEMP/ui-records/summary.md"; then
             cat "$RUNNER_TEMP/ui-records/summary.md" >> "$GITHUB_STEP_SUMMARY"
@@ -495,4 +665,5 @@ jobs:
             xcrun simctl shutdown "$UI_SIMULATOR" || true
             xcrun simctl delete "$UI_SIMULATOR"
           fi
-          rm -rf "$RUNNER_TEMP/ui-relocated" "$RUNNER_TEMP/ui-archive"
+          rm -rf "$RUNNER_TEMP/ui-relocated" "$RUNNER_TEMP/ui-archive" ${ARCHIVE_STAGING:+"$ARCHIVE_STAGING"} ${ARCHIVE_REDOWNLOAD_STAGING:+"$ARCHIVE_REDOWNLOAD_STAGING"}
+          rm -f "$RUNNER_TEMP/ui-download.json"

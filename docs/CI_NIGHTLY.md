@@ -376,7 +376,7 @@ This branch evidence remains self-reported and diagnostic. Live admission and
 credential-bearing jobs retain their independent main-only boundary.
 
 Each nightly UI consumer downloads to a fresh directory owned by its run/attempt.
-After the download and before the UI run step, a 120-second integrity gate verifies
+After the download and before the UI run step, an integrity gate verifies
 the selected ID/run/attempt and identity, requires exactly `manifest.json` and
 `build.tar.gz`, and reuses the manifest and tar inventory
 validators. The selection already validated the immutable artifact ID in this run;
@@ -384,8 +384,20 @@ the gate makes no network request. It reads through the gzip trailer before chec
 the compressed SHA256: truncation (`EOFError`) reports `archive-download-incomplete`,
 while corrupt deflate data or a bad gzip CRC continues to the digest check and reports
 `archive-hash-mismatch`. It then checks every declared member size and atomically
-renames the verified directory to the run step's archive path. No manifest or
-selection schema changes are needed.
+renames the verified directory to the run step's archive path. On a transfer-type
+rejection (missing/incomplete members, truncated gzip/tar, or size/digest mismatch),
+and only while validation time remains, it
+deletes this run's staging directory and permits exactly one fresh download of
+the same immutable artifact ID/repository/run, using the identical pinned action.
+The second transfer must pass the same gate. Both gates share 120 seconds total;
+there is no third download. Identity, toolchain, invalid manifest, extra-member,
+already-published and exhausted-budget rejections fail immediately. Cleanup guards
+both optional staging paths so an unset output never becomes an empty `rm` argument.
+Inventory/size failures after matching the pinned tar digest also fail immediately;
+the downloaded bytes already match the producer's archive.
+A second rejection retains its existing infrastructure
+reason and leaves every case `NOT_RUN`. No manifest or selection schema changes
+are needed. PR UI shards use the same [verified transfer protocol](CI_UI.md#classification-and-archive-selection).
 
 Run [39618104921](https://github.com/sudoHG/immichSlides/actions/runs/39618104921)
 retained 13 successful gate receipts (0.98–4.62 seconds) and one iPad visual-d
@@ -414,7 +426,13 @@ size. Unexpected exceptions retain the current section's reason and still write 
 receipt; stderr includes only the exception type and the closed-set reason.
 A gate refusal is infrastructure failure with no compiled or executed cases; those
 cases remain `NOT_RUN`. Missing diagnostics are null and render as `unavailable`
-without a unit. The gate adds no retry or budget change.
+without a unit. Transfer attempts and the first rejection's closed-set reason are
+printed in the step log and job summary. They are deliberately absent from the
+unchanged machine-readable receipt until a separate reader-first extension lands;
+a successful second transfer emits exactly the same receipt schema and verdict
+semantics as a successful first transfer. This transfer retry adds no test retry,
+yellow exception or timeout budget. Strict shards cold-build their own products
+and do not download these archives, so their jobs are unchanged.
 
 The standalone simulator creation/boot step runs before the archive downloads.
 A gate refusal skips the run step and never reaches XCTest; it does not prevent

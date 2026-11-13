@@ -31,7 +31,8 @@ from ci_execution_diagnostics import active, diagnostic_session
 from ci_nightly_ui import default_plan_populations
 from ci_publish import ArtifactRedirect, RateLimitWaitingGitHub, json_member, rate_limit_wait, verify_workflow
 from ci_summary import (ContractError, decode, observation, parse_identity, parse_summary, require, test_identity, write_summary)
-from ci_summary import (ARCHIVE_DOWNLOAD_MAX_DISK_BYTES, ARCHIVE_DOWNLOAD_MAX_SECONDS, identity_key, validate_test_identity)
+from ci_summary import (ARCHIVE_DOWNLOAD_FAILURES, ARCHIVE_DOWNLOAD_MAX_DISK_BYTES, ARCHIVE_DOWNLOAD_MAX_SECONDS,
+                        identity_key, validate_test_identity)
 from ci_ui_shards import DEVICES, MANIFEST_PATH, parse_shard_manifest, shard_populations
 from ci_verdict import classify_changes
 from run_host_checks import run_identity, source_metadata
@@ -44,6 +45,8 @@ NIGHTLY_WORKFLOW = ".github/workflows/ci-nightly.yml"
 GATE_PENDING_PAUSE_SECONDS = 50 * 60  # 120 + 50 = 170-minute cap leaves 15 minutes of the 185-minute job for final reads and downloads
 MAX_ARCHIVE_BYTES = 128 * 1024 * 1024
 ARCHIVE_GATE_SECONDS = 120
+ARCHIVE_TRANSFER_FAILURES = frozenset({"archive-download-incomplete", "archive-member-missing",
+                                      "archive-size-mismatch", "archive-hash-mismatch"})
 
 
 def write_json(path, value):
@@ -96,12 +99,28 @@ def gate_archive(args):
         receipt["free_disk_bytes"] = free if 0 <= free <= ARCHIVE_DOWNLOAD_MAX_DISK_BYTES else None
     except OSError:
         pass
-    reason = "archive-download-incomplete"
+    previous_receipt = getattr(args, "previous_receipt_path", None)
+    attempts = 2 if previous_receipt else 1
+    first_rejection, previous_gate_seconds = None, 0
+    reason = "archive-identity-mismatch"
     def timed_out(signum, frame):
         raise TimeoutError("archive-gate-timeout")
     previous = signal.signal(signal.SIGALRM, timed_out)
     try:
-        signal.setitimer(signal.ITIMER_REAL, ARCHIVE_GATE_SECONDS)
+        if previous_receipt:
+            first = decode(previous_receipt.read_text())
+            require(first["failure_reason"] in ARCHIVE_DOWNLOAD_FAILURES, reason)
+            first_rejection = first["failure_reason"]
+            require(first["artifact_id"] == args.artifact_id, reason)
+            measured = first["gate_seconds"]
+            require(type(measured) in (int, float) and math.isfinite(measured)
+                    and 0 <= measured <= ARCHIVE_DOWNLOAD_MAX_SECONDS, reason)
+            previous_gate_seconds = measured
+        reason = "archive-gate-timeout"
+        if previous_gate_seconds >= ARCHIVE_GATE_SECONDS:
+            raise TimeoutError(reason)
+        signal.setitimer(signal.ITIMER_REAL, ARCHIVE_GATE_SECONDS - previous_gate_seconds)
+        reason = "archive-download-incomplete"
         staging = args.staging_dir
         for name in receipt["member_bytes"]:
             path = staging / name
@@ -114,8 +133,8 @@ def gate_archive(args):
         reason = "archive-identity-mismatch"
         prefix = f"ui-download-{ctx['run']['id']}-{ctx['run']['attempt']}-"
         require(staging.name.startswith(prefix), reason)
-        names = {path.name for path in staging.iterdir()}
         reason = "archive-member-missing"
+        names = {path.name for path in staging.iterdir()}
         require({"build.tar.gz", "manifest.json"} <= names, reason)
         reason = "archive-member-extra"
         require(names == {"build.tar.gz", "manifest.json"}, reason)
@@ -130,9 +149,10 @@ def gate_archive(args):
         selection = decode(args.selection_path.read_text())
         platform_name = DEVICES[args.device]
         require(parse_identity(selection["identity"]) == ctx["identity"] and selection["platform"] == platform_name
-                and selection["producer_run_id"] == ctx["run"]["id"]
-                and selection["producer_attempt"] == ctx["run"]["attempt"]
                 and selection["artifact_id"] == args.artifact_id, reason)
+        if ctx["identity"]["event"] in {"schedule", "workflow_dispatch"}:
+            require(selection["producer_run_id"] == ctx["run"]["id"]
+                    and selection["producer_attempt"] == ctx["run"]["attempt"], reason)
         reason = "archive-hash-mismatch"
         receipt["digests_matched"]["manifest"] = file_hash(staging / "manifest.json") == selection["build_manifest_sha256"]
         require(receipt["digests_matched"]["manifest"], reason)
@@ -140,7 +160,7 @@ def gate_archive(args):
         manifest = decode((staging / "manifest.json").read_text())
         pins = decode((ROOT / "scripts/ci-pins.json").read_text())
         try:
-            validate_manifest(manifest, ctx["identity"], ctx["run"]["id"], ctx["run"]["attempt"],
+            validate_manifest(manifest, ctx["identity"], selection["producer_run_id"], selection["producer_attempt"],
                               platform_name, pins["xcode"]["build"], file_hash(ROOT / "scripts/ci-pins.json"))
         except ContractError as error:
             if str(error) in {"build identity mismatch", "producer run or attempt mismatch", "build platform mismatch"}:
@@ -182,16 +202,53 @@ def gate_archive(args):
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
         signal.signal(signal.SIGALRM, previous)
-    receipt["gate_seconds"] = min(time.monotonic() - started, ARCHIVE_DOWNLOAD_MAX_SECONDS)
+    receipt["gate_seconds"] = min(previous_gate_seconds + time.monotonic() - started, ARCHIVE_DOWNLOAD_MAX_SECONDS)
     receipt["failure_reason"] = reason
     write_json(args.download_receipt_path, receipt)
+    if getattr(args, "prepare_redownload", False):
+        output("retry_required", "false")
+        # A matching tar digest makes later inventory/size failures producer defects, not transfer corruption.
+        if (reason in ARCHIVE_TRANSFER_FAILURES and receipt["digests_matched"]["tar"] is not True
+                and receipt["gate_seconds"] < ARCHIVE_GATE_SECONDS):
+            # Only dispose of this run's task-owned stage, never an arbitrary supplied directory.
+            ctx = context()
+            prefix = f"ui-download-{ctx['run']['id']}-{ctx['run']['attempt']}-"
+            staging = args.staging_dir
+            if (staging.name.startswith(prefix) and not staging.is_symlink()
+                    and staging.parent.resolve() == Path(os.environ["RUNNER_TEMP"]).resolve()):
+                try:
+                    if staging.exists():
+                        shutil.rmtree(staging)
+                    fresh = tempfile.mkdtemp(prefix=prefix, dir=staging.parent)
+                except OSError:
+                    reason = "archive-publish-failed"
+                    receipt["failure_reason"] = reason
+                    write_json(args.download_receipt_path, receipt)
+                else:
+                    output("staging_path", fresh)
+                    output("retry_required", "true")
+                    report_archive_transfer(attempts, reason, "redownload-required")
+                    return 0
+    report_archive_transfer(attempts, first_rejection or reason, reason or "success")
     if reason:
         # Nightly gates bind the full shard even when the downloaded selection is unreadable.
-        failure_args = argparse.Namespace(**{**vars(args), "selection_path": None})
+        nightly = context()["identity"]["event"] in {"schedule", "workflow_dispatch"}
+        failure_args = argparse.Namespace(**{**vars(args),
+            "selection_path": None if nightly else args.selection_path,
+            "download_receipt_path": args.download_receipt_path if nightly else None})
         failed_shard(failure_args, archive_failure(reason))
         print(reason, file=sys.stderr)
         return 1
     return 0
+
+
+def report_archive_transfer(attempts, first_rejection, result):
+    # Keep the receipt schema readable by the trusted base; transfer diagnostics are operational only.
+    message = f"Archive download: attempts={attempts}; first rejection={first_rejection or 'none'}; result={result}."
+    print(message, flush=True)
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as handle:
+            handle.write(message + "\n")
 
 
 def attach_download_receipt(args, summary):
@@ -1029,6 +1086,11 @@ def main(argv=None):
     gate.add_argument("--transfer-started", type=float, required=True)
     gate.add_argument("--download-receipt-path", type=Path, required=True)
     gate.add_argument("--output-dir", type=Path, required=True)
+    retry = gate.add_mutually_exclusive_group()
+    retry.add_argument("--prepare-redownload", action="store_true")
+    retry.add_argument("--previous-receipt-path", type=Path)
+    gate.add_argument("--destination")
+    gate.add_argument("--compiled-from-official-results", action="store_true")
     selection = commands.add_parser("select")
     selection.add_argument("--output-dir", type=Path, required=True)
     selection.add_argument("--pack-scoped-ui", action="store_true")

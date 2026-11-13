@@ -106,15 +106,40 @@ or missing exact-identity archive or timeout fails selection. A rerun job cannot
 reuse an earlier attempt's archive; a retained
 successful build job keeps its original archive and evidence attempt.
 
-Shards download that exact artifact ID/run. Before simulator preparation, the
-consumer requires regular, non-symlink `manifest.json` and `build.tar.gz` files.
-A missing directory or member fails with `archive-member-missing`; a present
-nonregular member (directory or symlink) fails with `archive-download-incomplete`.
+Shards download that exact artifact ID/run into a fresh run/attempt-owned staging
+directory. The [staging integrity gate](CI_NIGHTLY.md#complete-fixture-ui) verifies
+the selection's artifact ID, full source identity and producer coordinates,
+manifest SHA256, compressed tar SHA256 and required member inventory before
+publishing the archive for use. PR producers may come from a separate gate run;
+nightly producers must belong to the current nightly run/attempt.
+If the action fails or verification finds missing/incomplete members, truncated
+gzip/tar content, or a size/digest mismatch, and validation time remains, the consumer
+deletes that staging directory, downloads the same artifact ID from the same
+repository/run once into a fresh directory, and repeats every check. Both action
+steps use the identical full pinned `uses` string and read-only token. Their
+`continue-on-error` permits the integrity gate to account for transfer failure;
+neither gate ignores errors. The two gates share the existing 120-second validation
+allowance, and the job timeout stays 110 minutes. Identity, toolchain, invalid
+manifest, extra-member and already-published rejections fail immediately, as does
+an exhausted validation allowance. A second rejection fails as
+infrastructure with the existing reason: missing members are
+`archive-member-missing`, and nonregular members are `archive-download-incomplete`.
+Inventory/size failures after matching the pinned tar digest fail immediately:
+another transfer cannot repair the producer's archive.
 The infrastructure summary records no executed tests; scoped discovery shards
 record declared tests as `not-run`, even if the download action reported success.
-This presence check does not retry downloads or replace the
-nightly's [staging integrity gate](CI_NIGHTLY.md#complete-fixture-ui).
-The PR workflow still downloads directly to the consumer directory.
+Workflow policy rejects changed transfer provenance, extra transfers, skipped
+verification and a test step that bypasses either gate. Cleanup retains every
+task-owned target and omits unset staging paths instead of passing empty arguments
+to `rm`; policy requires those guards in all four consumers.
+
+Download attempt count and the first closed-set rejection reason appear in step
+logs and `GITHUB_STEP_SUMMARY`, including successful re-downloads. The existing
+nightly download receipt schema is unchanged, and PR summaries do not acquire
+that nightly-only field. Adding attempt diagnostics to the machine-readable
+receipt needs a separate reader-first rollout. A verified re-download has the
+same test verdict rules as a first-try archive: this is one artifact-transfer
+retry, with no test retry, yellow exception or result reclassification.
 Shards then repeat the full
 [archive validation](CI_BUILD_ARCHIVE.md), validate architecture, extract and
 inspect files/permissions/links, measure the app's ad-hoc signature and require
