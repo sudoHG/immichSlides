@@ -5,6 +5,7 @@ import Testing
 
 extension SlideShowViewModelStartupTests {
     private var fixtureKey: String { LateLoadRealPathFixture.fixtureCredential }
+    private var serverSwitchCompletionTimeout: Duration { .seconds(TestWait.seconds(.product(8))) }
 
     @Test(arguments: [false, true], [false, true])
     func `saving a different server discards old playback and returns in random mode`(
@@ -128,7 +129,7 @@ extension SlideShowViewModelStartupTests {
         await save.value
         try #require(settings.didSaveConfig)
         let requestsAAfterSave = fixture.serverA.enteredRequests()
-        try #require(await waitUntil(timeout: .seconds(8)) { vm.didFirstPreload && !vm.isLoading })
+        try #require(await waitUntil(timeout: serverSwitchCompletionTimeout) { vm.didFirstPreload && !vm.isLoading })
         completePausedServerSwitchScene(vm)
         #expect(vm.currentPlaybackMode == .random)
         #expect(vm.safeCurrentAsset?.id == fixture.assetsB[0].id)
