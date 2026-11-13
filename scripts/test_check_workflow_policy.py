@@ -37,7 +37,10 @@ class WorkflowPolicyTests(unittest.TestCase):
             for job in jobs:
                 for mutation in ("missing-gate", "skip-gate", "ignore-gate", "gate-command", "late-gate",
                                  "different-id", "different-run", "different-repository", "different-action",
-                                 "same-stage", "skip-redownload", "third-download", "test-bypass"):
+                                 "same-stage", "skip-redownload", "third-download", "test-bypass",
+                                 "skip-first-gate", "ignore-first-gate", "no-prepare-redownload", "first-download-options",
+                                 "unguarded-first-cleanup", "unguarded-retry-cleanup", "missing-cleanup",
+                                 "skip-cleanup", "first-cleanup-env", "retry-cleanup-env", "missing-cleanup-target"):
                     document = copy.deepcopy(original)
                     steps = document["jobs"][job]["steps"]
                     by_id = {step.get("id"): step for step in steps}
@@ -68,6 +71,29 @@ class WorkflowPolicyTests(unittest.TestCase):
                         steps.insert(steps.index(gate), copy.deepcopy(retry))
                     elif mutation == "test-bypass":
                         next(step for step in steps if "ci_ui_tests.py run " in step.get("run", ""))["if"] = "always()"
+                    elif mutation == "skip-first-gate":
+                        by_id["verify_download"]["if"] = "false"
+                    elif mutation == "ignore-first-gate":
+                        by_id["verify_download"]["continue-on-error"] = True
+                    elif mutation == "no-prepare-redownload":
+                        by_id["verify_download"]["run"] = by_id["verify_download"]["run"].replace("--prepare-redownload", "")
+                    elif mutation == "first-download-options":
+                        by_id["download"]["with"]["artifact-ids"] = "other"
+                    elif mutation.startswith("unguarded-"):
+                        variable = "ARCHIVE_STAGING" if mutation == "unguarded-first-cleanup" else "ARCHIVE_REDOWNLOAD_STAGING"
+                        cleanup = next(step for step in steps if step.get("name") == "Display summary and remove task-owned products")
+                        guarded = '${' + variable + ':+"$' + variable + '"}'
+                        cleanup["run"] = cleanup["run"].replace(guarded, '"$' + variable + '"')
+                    elif "cleanup" in mutation:
+                        cleanup = next(step for step in steps if step.get("name") == "Display summary and remove task-owned products")
+                        if mutation == "missing-cleanup":
+                            steps.remove(cleanup)
+                        elif mutation == "skip-cleanup":
+                            cleanup["if"] = "false"
+                        elif mutation.endswith("-env"):
+                            cleanup["env"]["ARCHIVE_STAGING" if mutation == "first-cleanup-env" else "ARCHIVE_REDOWNLOAD_STAGING"] = "other"
+                        else:
+                            cleanup["run"] = cleanup["run"].replace('"$RUNNER_TEMP/ui-relocated" ', "")
                     with self.subTest(path=path, job=job, mutation=mutation):
                         self.assertIn("archive-redownload", self.rules(document, path))
 

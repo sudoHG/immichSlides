@@ -582,7 +582,7 @@ jobs:
             xcrun simctl shutdown "$UI_SIMULATOR" || true
             xcrun simctl delete "$UI_SIMULATOR"
           fi
-          rm -rf "$RUNNER_TEMP/ui-relocated" "$RUNNER_TEMP/ui-archive" "$RUNNER_TEMP/ui-identity" "$ARCHIVE_STAGING" "$ARCHIVE_REDOWNLOAD_STAGING"
+          rm -rf "$RUNNER_TEMP/ui-relocated" "$RUNNER_TEMP/ui-archive" "$RUNNER_TEMP/ui-identity" ${ARCHIVE_STAGING:+"$ARCHIVE_STAGING"} ${ARCHIVE_REDOWNLOAD_STAGING:+"$ARCHIVE_REDOWNLOAD_STAGING"}
           rm -f "$RUNNER_TEMP/ui-download.json"
 
 

@@ -353,6 +353,20 @@ def verified_archive_transfer(job, *, nightly, group):
         if (step.get("env") != environment or step.get("if") != condition or step.get("continue-on-error", False)
                 or step.get("working-directory") != "ui-source" or tokens(step.get("run", "")) != tokens(command)):
             return False
+    cleanup = [step for step in steps if step.get("name") == "Display summary and remove task-owned products"]
+    if len(cleanup) != 1:
+        return False
+    cleanup = cleanup[0]
+    targets = '"$RUNNER_TEMP/ui-relocated" "$RUNNER_TEMP/ui-archive" '
+    if nightly:
+        targets += '"$RUNNER_TEMP/ui-identity" '
+    targets += '${ARCHIVE_STAGING:+"$ARCHIVE_STAGING"} ${ARCHIVE_REDOWNLOAD_STAGING:+"$ARCHIVE_REDOWNLOAD_STAGING"}'
+    removals = [tokens(line.strip()) for line in cleanup.get("run", "").splitlines() if line.strip().startswith("rm -")]
+    if (cleanup.get("if") != "always()" or cleanup.get("env") != {
+            "ARCHIVE_STAGING": "${{ steps.staging.outputs.staging_path }}",
+            "ARCHIVE_REDOWNLOAD_STAGING": "${{ steps.verify_download.outputs.staging_path }}"}
+            or removals != [tokens("rm -rf " + targets), tokens('rm -f "$RUNNER_TEMP/ui-download.json"')]):
+        return False
     return True
 
 
@@ -654,7 +668,7 @@ def check_workflow(path: str, source: str, *, ui_shards=None, run_named_workflow
                 or path == LIVE_WORKFLOW and job_id == "ui-shards"):
             if not verified_archive_transfer(job, nightly=path == LIVE_WORKFLOW,
                                              group="tvos" if job_id == "appletv-shards" else "ios"):
-                flag(location, "archive-redownload", "UI archives require at most one same-ID/run/pin re-download and both integrity gates before tests")
+                flag(location, "archive-redownload", "UI archives require at most one same-ID/run/pin re-download, both integrity gates before tests, and guarded cleanup")
         if path == ".github/workflows/ci-ui.yml" and "selection" in jobs and job_id in {"ios-wait", "tvos-wait", "iphone-shards", "ipad-shards", "appletv-shards"}:
             group = "tvos" if job_id in {"tvos-wait", "appletv-shards"} else "ios"
             is_wait = job_id.endswith("-wait")

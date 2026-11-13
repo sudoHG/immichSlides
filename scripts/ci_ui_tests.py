@@ -45,6 +45,8 @@ NIGHTLY_WORKFLOW = ".github/workflows/ci-nightly.yml"
 GATE_PENDING_PAUSE_SECONDS = 50 * 60  # 120 + 50 = 170-minute cap leaves 15 minutes of the 185-minute job for final reads and downloads
 MAX_ARCHIVE_BYTES = 128 * 1024 * 1024
 ARCHIVE_GATE_SECONDS = 120
+ARCHIVE_TRANSFER_FAILURES = frozenset({"archive-download-incomplete", "archive-member-missing",
+                                      "archive-size-mismatch", "archive-hash-mismatch"})
 
 
 def write_json(path, value):
@@ -205,7 +207,9 @@ def gate_archive(args):
     write_json(args.download_receipt_path, receipt)
     if getattr(args, "prepare_redownload", False):
         output("retry_required", "false")
-        if reason:
+        # A matching tar digest makes later inventory/size failures producer defects, not transfer corruption.
+        if (reason in ARCHIVE_TRANSFER_FAILURES and receipt["digests_matched"]["tar"] is not True
+                and receipt["gate_seconds"] < ARCHIVE_GATE_SECONDS):
             # Only dispose of this run's task-owned stage, never an arbitrary supplied directory.
             ctx = context()
             prefix = f"ui-download-{ctx['run']['id']}-{ctx['run']['attempt']}-"

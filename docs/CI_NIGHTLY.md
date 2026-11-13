@@ -384,11 +384,18 @@ the gate makes no network request. It reads through the gzip trailer before chec
 the compressed SHA256: truncation (`EOFError`) reports `archive-download-incomplete`,
 while corrupt deflate data or a bad gzip CRC continues to the digest check and reports
 `archive-hash-mismatch`. It then checks every declared member size and atomically
-renames the verified directory to the run step's archive path. On rejection it
+renames the verified directory to the run step's archive path. On a transfer-type
+rejection (missing/incomplete members, truncated gzip/tar, or size/digest mismatch),
+and only while validation time remains, it
 deletes this run's staging directory and permits exactly one fresh download of
 the same immutable artifact ID/repository/run, using the identical pinned action.
 The second transfer must pass the same gate. Both gates share 120 seconds total;
-there is no third download. A second rejection retains its existing infrastructure
+there is no third download. Identity, toolchain, invalid manifest, extra-member,
+already-published and exhausted-budget rejections fail immediately. Cleanup guards
+both optional staging paths so an unset output never becomes an empty `rm` argument.
+Inventory/size failures after matching the pinned tar digest also fail immediately;
+the downloaded bytes already match the producer's archive.
+A second rejection retains its existing infrastructure
 reason and leaves every case `NOT_RUN`. No manifest or selection schema changes
 are needed. PR UI shards use the same [verified transfer protocol](CI_UI.md#classification-and-archive-selection).
 

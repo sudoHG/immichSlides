@@ -1,6 +1,7 @@
 """Regression checks for workspace preflight, artifact selection and extraction safety."""
 import contextlib
 import copy
+import gzip
 import io
 import json
 import base64
@@ -50,7 +51,10 @@ class BuildArchiveTests(unittest.TestCase):
         pins = json.loads((ui.ROOT / "scripts/ci-pins.json").read_text())
         for event, platform_name in ((event, name) for event in ("schedule", "pull_request") for name in ("ios", "tvos")):
             for defect in ("success", "missing", "truncated", "twice-missing", "twice-truncated", "second-manifest-hash", "changed-id", "changed-selection-id",
-                           "missing-receipt", "private-receipt", "invalid-timing", "budget-exhausted", "action-failure"):
+                           "missing-receipt", "private-receipt", "invalid-timing", "budget-exhausted", "action-failure",
+                           "first-identity", "first-toolchain", "first-published", "first-budget-exhausted",
+                           "first-budget-remaining", "first-hash", "first-size", "first-tar-incomplete",
+                           "first-extra", "first-manifest-invalid", "first-tar-invalid", "first-size-invalid", "first-timeout"):
                 with self.subTest(event=event, platform=platform_name, defect=defect), tempfile.TemporaryDirectory() as temporary:
                     root = Path(temporary)
                     identity = (archive_download_summary()["identity"] if event == "schedule" else self.identity)
@@ -81,7 +85,39 @@ class BuildArchiveTests(unittest.TestCase):
                         outputs = dict(call.args for call in exported.call_args_list)
                         staging = Path(outputs["staging_path"])
                         shutil.copytree(good, staging, dirs_exist_ok=True)
-                        if defect not in {"success", "action-failure"}:
+                        if defect == "first-identity":
+                            selected = json.loads((root / "selection.json").read_text())
+                            selected["artifact_id"] = 457
+                            ui.write_json(root / "selection.json", selected)
+                        elif defect in {"first-toolchain", "first-size-invalid", "first-tar-invalid", "first-manifest-invalid"}:
+                            if defect == "first-toolchain":
+                                manifest["xcode_build"] = "other"
+                            elif defect == "first-size-invalid":
+                                next(entry for entry in manifest["files"] if entry["kind"] == "file")["size"] += 1
+                            elif defect == "first-manifest-invalid":
+                                manifest["schema_version"] = 999
+                            else:
+                                # Matching pinned digests identify an invalid producer archive, not damaged transfer bytes.
+                                packed = staging / "build.tar.gz"
+                                packed.write_bytes(gzip.compress(gzip.decompress(packed.read_bytes())[:600]))
+                                manifest["archive_sha256"] = archive.file_hash(packed)
+                            ui.write_json(staging / "manifest.json", manifest)
+                            selected = json.loads((root / "selection.json").read_text())
+                            selected["build_manifest_sha256"] = archive.file_hash(staging / "manifest.json")
+                            ui.write_json(root / "selection.json", selected)
+                        elif defect == "first-published":
+                            (root / "published").mkdir()
+                        elif defect == "first-extra":
+                            (staging / "extra").touch()
+                        elif defect == "first-hash":
+                            manifest_path = staging / "manifest.json"
+                            manifest_path.write_text(manifest_path.read_text() + " ")
+                        elif defect == "first-tar-incomplete":
+                            packed = staging / "build.tar.gz"
+                            packed.write_bytes(gzip.compress(gzip.decompress(packed.read_bytes())[:600]))
+                        elif defect == "first-size":
+                            (staging / "manifest.json").write_bytes(b" " * (4 * 1024 * 1024 + 1))
+                        elif defect not in {"success", "action-failure", "first-timeout"}:
                             if defect == "truncated":
                                 packed = staging / "build.tar.gz"
                                 packed.write_bytes(packed.read_bytes()[:-8])
@@ -95,9 +131,30 @@ class BuildArchiveTests(unittest.TestCase):
                                 "--transfer-started", outputs["transfer_started"],
                                 "--download-receipt-path", str(receipt), "--output-dir", str(root / "records"), *extra])
                         exported.reset_mock()
-                        self.assertEqual(gate(staging, "456", "--prepare-redownload"), 0)
+                        immediate_reason = {"first-identity": "archive-identity-mismatch",
+                                            "first-toolchain": "archive-toolchain-mismatch",
+                                            "first-published": "archive-publish-failed",
+                                            "first-extra": "archive-member-extra",
+                                            "first-manifest-invalid": "archive-manifest-invalid",
+                                            "first-tar-invalid": "archive-manifest-invalid",
+                                            "first-size-invalid": "archive-size-mismatch",
+                                            "first-timeout": "archive-gate-timeout",
+                                            "first-budget-exhausted": "archive-member-missing"}.get(defect)
+                        # Controlled elapsed time tests both sides of the shared allowance without waiting.
+                        seconds = (ui.ARCHIVE_GATE_SECONDS if defect == "first-budget-exhausted" else
+                                   ui.ARCHIVE_GATE_SECONDS - 0.001 if defect == "first-budget-remaining" else 0.01)
+                        with patch.object(ui.time, "monotonic", side_effect=[100, 100 + seconds]), \
+                                patch.object(ui, "file_hash", side_effect=TimeoutError if defect == "first-timeout" else archive.file_hash):
+                            self.assertEqual(gate(staging, "456", "--prepare-redownload"), int(immediate_reason is not None))
                         outputs.update(dict(call.args for call in exported.call_args_list))
-                        self.assertEqual(outputs["retry_required"], "false" if defect == "success" else "true")
+                        self.assertEqual(outputs["retry_required"], "false" if defect == "success" or immediate_reason else "true")
+                        if immediate_reason:
+                            self.assertEqual(json.loads(receipt.read_text())["failure_reason"], immediate_reason)
+                            self.assertEqual(str(failed.call_args.args[1]), immediate_reason)
+                            self.assertTrue(staging.exists())
+                            self.assertNotIn("redownload-required", logs.getvalue())
+                            self.assertIn(f"attempts=1; first rejection={immediate_reason}", summary.read_text())
+                            continue
                         if defect != "success":
                             self.assertFalse(staging.exists(), "rejected staging must be deleted before re-download")
                             retry_staging = Path(outputs["staging_path"])
@@ -105,6 +162,12 @@ class BuildArchiveTests(unittest.TestCase):
                             self.assertEqual(list(retry_staging.iterdir()), [])
                             self.assertFalse((root / "published").exists())
                             failed.assert_not_called()
+                            if defect == "first-budget-remaining":
+                                continue  # Scheduling is allowed even with only a fraction of the allowance left.
+                            # Restore the original good selection after a transfer-only first rejection.
+                            ui.write_json(root / "selection.json", {"identity": identity, "platform": platform_name,
+                                "producer_run_id": producer, "producer_attempt": 1, "artifact_id": 456,
+                                "build_manifest_sha256": archive.file_hash(good / "manifest.json")})
                             shutil.copytree(good, retry_staging, dirs_exist_ok=True)
                             if defect == "twice-missing":
                                 (retry_staging / "manifest.json").unlink()
@@ -154,8 +217,9 @@ class BuildArchiveTests(unittest.TestCase):
                         self.assertEqual(set(final), set(archive_download_summary()["archive_download"]),
                                          "the trusted base reader must accept the unchanged receipt schema")
                         attempts = 1 if defect == "success" else 2
-                        first = "none" if defect == "success" else ("archive-download-incomplete" if defect in {"truncated", "action-failure"}
-                                                                 else "archive-member-missing")
+                        first = {"success": "none", "truncated": "archive-download-incomplete", "action-failure": "archive-download-incomplete",
+                                 "first-hash": "archive-hash-mismatch", "first-size": "archive-size-mismatch",
+                                 "first-tar-incomplete": "archive-hash-mismatch"}.get(defect, "archive-member-missing")
                         if defect not in {"missing-receipt", "private-receipt"}:
                             for content in (logs.getvalue(), summary.read_text()):
                                 self.assertIn(f"attempts={attempts}; first rejection={first}", content)
