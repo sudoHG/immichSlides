@@ -27,6 +27,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 GIT_METADATA_TIMEOUT_SECONDS = 120  # Bound local identity reads through hosted simulator first-boot starvation.
 GROUP_TERM_GRACE_SECONDS = 5
 SHARD_FINALIZATION_MARGIN_SECONDS = 5
+SHARD_DEADLINE_WAIT_SECONDS = 30
 HOST_CHECKS = [
     ("swift-format lint", ["xcrun", "swift-format", "lint", "--strict", "--recursive", "--parallel",
                            "immichSlides", "immichSlidesTests", "immichSlidesUITests", "TestSupport"]),
@@ -124,7 +125,7 @@ def merge_host_shards(template, parts, shards):
                 and recorded_union == keys(compiled), "incomplete host shard execution")
     # Only shard one owns the public host row; its outcome also includes shard two.
     failures = [(number, code, payload["status"]) for number, payload, code in shards
-                if number == 2 and payload["status"] not in {"passed", "unverified"}]
+                if number == 2 and (code != 0 or payload["status"] not in {"passed", "unverified"})]
     for index, row in enumerate(observed):
         if row["identity"] == test_identity("host", "python tests") and row["outcome"] == "passed" and failures:
             observed[index] = observation(row["identity"], "failed", row["duration_seconds"], exit_code=1,
@@ -135,8 +136,12 @@ def merge_host_shards(template, parts, shards):
 
 def shard_execution_deadline(path):
     """Request the parent's absolute deadline only after child preparation is complete."""
+    parent_pid = os.getppid()
+    wait_deadline = time.monotonic() + SHARD_DEADLINE_WAIT_SECONDS
     path.with_suffix(".ready").touch()
     while not path.exists():
+        require(os.getppid() == parent_pid, "shard deadline parent changed")
+        require(time.monotonic() < wait_deadline, "timed out waiting for shard execution deadline")
         time.sleep(0.01)
     deadline = json.loads(path.read_text())
     require(type(deadline) in {int, float} and math.isfinite(deadline), "invalid shard execution deadline")
@@ -145,7 +150,8 @@ def shard_execution_deadline(path):
 
 def execution_clock():
     # Python 3.9 on macOS gives time.monotonic() a per-process origin.
-    return time.clock_gettime(time.CLOCK_MONOTONIC)
+    clock = time.CLOCK_UPTIME_RAW if sys.platform == "darwin" else time.CLOCK_MONOTONIC
+    return time.clock_gettime(clock)
 
 
 def run_parallel_shards(output, *, timeout_seconds, host_platform, workflow_path):

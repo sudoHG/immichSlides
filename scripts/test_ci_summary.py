@@ -2885,7 +2885,7 @@ print('parsed 3 nightly retry records without image or runner dependencies')
                     self.assertEqual([row["identity"] for row in rows if row["outcome"] == "failed"
                                       and row["identity"]["kind"] == "python"], python[1:])
                     self.assertIn(python[1]["key"], (output / "summary.md").read_text())
-                if failure in {"python", "fixture", "failed-status"}:
+                if failure in {"python", "fixture", "failed-status", "cancelled", "parent-timeout"}:
                     self.assertEqual(next(row["outcome"] for row in rows
                         if row["identity"] == ci_summary.test_identity("host", "python tests")), "failed")
                 if failure == "fixture":
@@ -2899,6 +2899,26 @@ print('parsed 3 nightly retry records without image or runner dependencies')
                         if row["identity"] == ci_summary.test_identity("host", "python tests")), "passed")
                 expected_codes = [failure] if failure in {"interrupted", "missing-python-results"} else []
                 self.assertEqual([entry["code"] for entry in summary["infrastructure"]], expected_codes)
+
+    def test_child_deadline_wait_stops_when_parent_changes_or_never_publishes(self):
+        for reason in ("parent changed", "timed out"):
+            with self.subTest(reason=reason), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "deadline.json"
+                parents = [42, 42, 43] if reason == "parent changed" else [42, 42, 42]
+                with patch.object(run_host_checks.os, "getppid", side_effect=parents), \
+                        patch.object(run_host_checks.time, "monotonic", side_effect=[0, 0, 31]), \
+                        patch.object(run_host_checks.time, "sleep", side_effect=[None, AssertionError("unbounded wait")]):
+                    with self.assertRaisesRegex(ci_summary.ContractError, reason):
+                        run_host_checks.shard_execution_deadline(path)
+                self.assertTrue(path.with_suffix(".ready").exists())
+
+    def test_shared_execution_clock_excludes_sleep_on_macos(self):
+        with patch.object(run_host_checks.time, "CLOCK_UPTIME_RAW", 8, create=True):
+            for host, clock in (("darwin", 8), ("linux", run_host_checks.time.CLOCK_MONOTONIC)):
+                with self.subTest(host=host), patch.object(run_host_checks.sys, "platform", host), \
+                        patch.object(run_host_checks.time, "clock_gettime", return_value=123) as read:
+                    self.assertEqual(run_host_checks.execution_clock(), 123)
+                    read.assert_called_once_with(clock)
 
     def test_child_deadline_receipt_is_published_as_step_timeout(self):
         python = [ci_summary.test_identity("python", "test_a.C.testOne"),
@@ -2936,7 +2956,7 @@ time.sleep(.2)  # Startup precedes the child's full execution budget.
 deadline = host.shard_execution_deadline(a.shard_deadline_path)
 receipt = json.loads((a.output_dir.parent.parent / 'receipts.json').read_text())[a.python_shard - 1]
 hosts = [entry for entry in receipt['population']['declared'] if entry['kind'] == 'host']
-steps = [(entry['key'], [sys.executable, '-c', 'pass']) for entry in hosts if entry['key'] != 'python tests']
+steps = [(entry['key'], ['true']) for entry in hosts if entry['key'] != 'python tests']
 steps.append(('python tests', [sys.executable, '-c', 'import time; time.sleep(30)']))
 rows, infrastructure = host.run_steps(steps, a.output_dir, timeout_seconds=a.timeout_seconds,
                                     deadline_monotonic=deadline)

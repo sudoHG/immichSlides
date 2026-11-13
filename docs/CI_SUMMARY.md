@@ -69,11 +69,13 @@ still requires hosted measurement.
 Each child receives the existing `--timeout-seconds` budget, capped at 1200;
 shard 1's static checks consume part of its budget. Both children start before the
 parent waits. After each child completes metadata, discovery and selection, it
-signals readiness; the parent atomically sends it an absolute `CLOCK_MONOTONIC` deadline
+signals readiness; the parent atomically sends it an absolute shared-clock deadline
 one unchanged execution budget later. The child uses that deadline for its steps;
-`clock_gettime` provides a shared origin even on macOS Python 3.9, whose
-`time.monotonic()` origin differs between processes.
-the parent's kill backstop is that same deadline plus the five-second step-group
+`clock_gettime` uses `CLOCK_UPTIME_RAW` on macOS (shared across processes and stopped
+during sleep) and `CLOCK_MONOTONIC` elsewhere. This provides a shared origin even on
+macOS Python 3.9, whose `time.monotonic()` origin differs between processes.
+The child fails if its parent changes or no deadline arrives within 30 seconds.
+The parent's kill backstop is that same deadline plus the five-second step-group
 termination grace and five-second finalization margin. Startup cannot exhaust a
 fixed parent allowance before the child starts its budget. Metadata commands keep
 their existing bounds, and the enclosing workflow job still bounds preparation.
