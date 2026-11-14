@@ -8107,10 +8107,55 @@ finally:
 
 class SmokeFlowResultTests(unittest.TestCase):
     def test_smoke_shared_failure_prefix_redacts_values_without_claiming_a_playback_phase(self):
-        from ci_failure_diagnostics import classify_messages, public_failure_messages
+        from ci_failure_diagnostics import (classify_messages, environment_timing_v5, public_failure_messages,
+                                            scan_diagnostic_json, validate_failure_messages)
         messages = ["XCTAssertTrue failed - Smoke flow: first boot synthetic-private-value."]
         self.assertEqual(["Smoke flow: "], public_failure_messages(messages))
         self.assertEqual({"failure_phase": "unknown", "failure_class": "control_state"}, classify_messages(messages))
+        steps = (
+            "required element must be ready: pinEntry.error.message",
+            "required element must be available: firstboot.serverURL.field",
+            "control appears: filterSummary.person.button",
+            "remote focus moves toward settings.item.accessProtection",
+            "remote cannot focus settings.playback.mode.filtered.button",
+            "App accessibility snapshot must succeed",
+            "action exceeded the shared hang guard",
+            "wrong PIN keeps Settings locked",
+            "Play/Pause state is play",
+        )
+        for step in steps:
+            with self.subTest(step=step):
+                message = "Smoke flow: " + step + "."
+                projected = public_failure_messages(["XCTAssertTrue failed - " + message])
+                self.assertEqual(projected, [message])
+                self.assertEqual(public_failure_messages(projected), projected)
+                validate_failure_messages(projected)
+                scan_diagnostic_json(json.dumps({"failure_messages": projected}).encode())
+                with tempfile.TemporaryDirectory() as raw:
+                    directory = Path(raw)
+                    (directory / "official-tests.json").write_text(json.dumps({"failure_messages": projected}))
+                    write_sensitive_scan(directory, ["private-peer-label"])
+                    self.assertEqual(json.loads((directory / "sensitive-scan.json").read_text())["result"], "PASS")
+                self.assertEqual(classify_messages(projected),
+                                 {"failure_phase": "unknown", "failure_class": "control_state"})
+                failure = {"source": "xctest", "app": "running-foreground", "step": "wait-scene",
+                           "element": "app-window", "surface": "playback", "control_bar": "visible",
+                           "scene_status": "MATCH", "wait_elapsed_seconds": 60, "deadline_seconds": 60}
+                self.assertFalse(environment_timing_v5(failure, "control_state", projected))
+        refused = (
+            "control appears: personFilter.person.private-person.button",
+            "required element must be ready: pinEntry.digit.1.button",
+            "peer:private-peer-label",
+            "required element must be ready: pinEntry.error.message. private-peer-label",
+            "control appears: filterSummary.person.button.\nprivate-peer-label",
+            "wrong PIN keeps Settings locked. private-peer-label",
+        )
+        for step in refused:
+            with self.subTest(refused=step):
+                message = "Smoke flow: " + step + "."
+                self.assertEqual(public_failure_messages([message]), ["Smoke flow: "])
+                with self.assertRaises(ValueError):
+                    scan_diagnostic_json(json.dumps({"failure_messages": [message]}).encode())
 
     @staticmethod
     def passed_official(selector):

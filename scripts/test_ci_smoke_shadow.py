@@ -576,7 +576,8 @@ class SmokeShadowTests(unittest.TestCase):
 
     def test_runner_adapter_classifies_official_failures_without_promoting_tool_failures(self):
         cases = [("Failed to get matching snapshots: Timed out while evaluating UI query", "xctest-tool"),
-                 ("First-boot form must show the API Key field.", "assertion")]
+                 ("First-boot form must show the API Key field.", "assertion"),
+                 ("Smoke flow: control appears: filterSummary.person.button.", "assertion")]
         for message, category in cases:
             with self.subTest(category=category), tempfile.TemporaryDirectory() as raw:
                 directory = Path(raw)
@@ -586,6 +587,20 @@ class SmokeShadowTests(unittest.TestCase):
                 self.assertEqual((rows[0]["outcome"], rows[0]["executed"], rows[0]["failure_category"]),
                                  ("failed", True, category))
                 self.assertEqual(rows[0]["first_failure_message"], message)
+                scheduling = plan()
+                groups = group_records(scheduling)
+                groups[0]["flows"] = rows
+                groups[0]["runner_exit_code"] = 65
+                groups[0]["group_validation"] = {"outcome": "failed", "reason": "failed first result"}
+                result = shadow.aggregate(scheduling, groups, "failure")
+                self.assertEqual(result["outcome"], "failed")
+                self.assertEqual(result["flows"][0]["first_failure_message"], message)
+                self.assertIn(message, shadow.markdown(result))
+                compact = directory / "compact"
+                shadow.write_json(compact / "shadow.json", result)
+                (compact / "summary.md").write_text(shadow.markdown(result))
+                shadow.scan_records(compact)
+                self.assertEqual(json.loads((compact / "sensitive-scan.json").read_text())["result"], "PASS")
 
     def test_runner_adapter_obeys_shared_group_validator_and_records_its_rejection(self):
         from strict_e2e_smoke import validate_group_evidence

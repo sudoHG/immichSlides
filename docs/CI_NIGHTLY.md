@@ -198,6 +198,11 @@ result, `nightly_run_id` pairing key, suppression reason/blocking IDs, group
 validation verdicts/reasons, job/build phase timings, errors and per-flow records.
 `failure_category` is the displayed failure
 class; it is separate from the existing diagnostic enum named `failure_class`.
+The first smoke assertion message retains only the runner's reviewed, complete
+code-defined step/control vocabulary; arbitrary suffixes, PIN digits, picker IDs
+and fixture/peer labels remain redacted. The shared projection and public-message
+scanner use the same closed table, including the reader's second projection;
+see [the smoke diagnostic contract](CI_STRICT_RUNNER.md#short-smoke-flow-suite).
 `executed` means every expected flow has actual first-attempt execution evidence;
 `comparison_eligible` additionally requires valid complete shadow records and a
 completed old nightly at the same SHA with a conclusion in

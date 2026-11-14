@@ -95,6 +95,67 @@ EMITTED_ENVIRONMENT_POLICY_VERSION = 5
 FAILURE_MESSAGES_FIELD = "failure_messages"
 MAX_FAILURE_MESSAGES = 16
 UNRECOGNIZED_FAILURE_MESSAGE = "[unrecognized XCTest failure]"
+# Complete code-defined smoke steps only; picker IDs, PIN digits and fixture labels stay private.
+SMOKE_FLOW_CONTROL_IDS = (
+    "firstboot.serverURL.field", "firstboot.apiKey.field", "firstboot.testConnection.button",
+    "firstboot.saveConfig.button", "firstboot.connection.success", "server.keyboard.done.button",
+    "mode.random.button", "mode.filtered.button", "mode.continue.button",
+    "filterSummary.album.button", "filterSummary.person.button", "filterSummary.startPlayback.button",
+    "personFilter.back.button", "filter.editor.album.entry", "filter.editor.person.entry", "filter.editor.done.button",
+    "pinEntry.close.button", "pinEntry.error.message",
+    "settings.item.playback", "settings.item.accessProtection", "settings.item.server", "settings.item.about",
+    "settings.pin.input.enable", "settings.pin.input.enableConfirm", "settings.pin.enable.button",
+    "settings.pin.disable.button", "settings.server.feedback.save.success",
+    "settings.playback.autoPlay.link", "settings.playback.autoPlay.off.button",
+    "settings.playback.displayMode.link", "settings.playback.displayMode.singlePhoto.button",
+    "settings.playback.mode.link", "settings.playback.mode.filtered.button", "settings.playback.showExif.toggle",
+    "settings.about.opensource.link", "settings.about.opensource.page", "settings.about.opensource.back.button",
+    "slideshow.control.settings.button", "slideshow.control.playPause.button",
+    "slideshow.control.next.button", "slideshow.control.previous.button", "slideshow.entryHint.banner",
+)
+SMOKE_FLOW_FAILURE_MESSAGES = frozenset(
+    {"Smoke flow: " + step + "." for step in (
+        "App accessibility snapshot is missing", "App accessibility snapshot must succeed",
+        "Back must reach Settings root or playback", "Back must return from the person picker to the selected summary",
+        "EXIF setting must be readable", "Home must background the app", "Next must publish another scene while paused",
+        "Previous must return to the prior scene", "Settings Back is missing", "Settings must apply the changed EXIF value",
+        "Settings must offer Back", "Settings value must survive cold relaunch", "action exceeded the shared hang guard",
+        "activation must return the app to foreground", "authorization error must be recoverable on first boot",
+        "authorization failure must explain the rejected key", "authorization failure must not enable Save",
+        "fixture metadata must be supplied", "input must have keyboard focus", "picker target is missing",
+        "playback control observation is missing", "playback control snapshot is missing",
+        "playback must expose its published history position", "playback must publish a scene before navigation",
+        "public fixture must provide a picker target", "required element snapshot is missing",
+        "required playback control must be ready", "rotation must reach a landscape App window",
+        "selected mode must reach its destination", "selected person must stay on its picker with a solo switch",
+        "target album identifier must exist", "target album metadata must exist",
+        "the correct synthetic PIN must unlock Settings", "the public URL must reach the real text field",
+        "B lists return to filter editor", "Home leaves playback", "Next advances while paused", "album selected",
+        "cold playback has usable default focus", "controls hide before directional wake",
+        "correct synthetic PIN opens Settings", "direction wakes operable Play/Pause",
+        "one eventual automatic scene advance", "paused navigation starts from a settled scene",
+        "person picker returns to startable summary", "person selected in normal mode",
+        "physical Play/Pause selects solo mode", "relaunch retains autoplay off", "remote Next advances scene",
+        "remote Previous returns to scene", "saved server reaches mode default focus",
+        "server A photo is playing before switch", "server B playback advances", "server B save succeeds",
+        "synthetic PIN enabled", "wrong PIN keeps Settings locked", "B list has no A entries or stale selections",
+        "Back completes its page and focus handoff", "Back returns to playback", "PIN gate appears",
+        "Set Up Filters has focus", "Settings opens", "Settings or playback is ready for Back",
+        "choice Back returns to playback settings", "connection action is available", "empty-filter alert appears",
+        "empty-filter alert focus", "empty-filter alert focus moves", "focus observation", "initial remote focus",
+        "keyboard returns focus to field", "keyboard submission settles", "playback controls visible",
+        "playback has a current scene", "playback index", "public fixture connection succeeds",
+        "public switch fixture metadata is required", "real mode path opens filter editor",
+        "settled scene has observable references", "settled scene references", "system keyboard opens",
+        "system keyboard submit", "system keyboard submit has focus", "usable playback surface",
+        "verified connection enables Save", "Play/Pause must reach play", "Play/Pause must reach pause",
+        "Play/Pause state is play", "Play/Pause state is pause", "playback option saved: autoPlay",
+        "playback option saved: displayMode", "launch", "terminate", "activate", "remote", "type",
+    )}
+    | {"Smoke flow: " + step + identifier + "." for step in (
+        "required element must be available: ", "required element must be ready: ", "control appears: ",
+        "remote focus moves toward ", "remote cannot focus ",
+    ) for identifier in SMOKE_FLOW_CONTROL_IDS})
 ENVIRONMENT_IDLE_MAX_PERCENT = 5
 # Bound to AccessLifecycleContract.hiddenControlStabilitySeconds by the source audit.
 FIRST_WAKE_HIDDEN_STABILITY_SECONDS = 0.6
@@ -281,6 +342,7 @@ def validate_failure_messages(messages):
             "failure messages: expected a bounded complete failure list")
     prefixes = {prefix for prefix, _, _ in PREFIX_RULES}
     require(all(isinstance(message, str) and (message in prefixes or message == UNRECOGNIZED_FAILURE_MESSAGE
+                or message in SMOKE_FLOW_FAILURE_MESSAGES
                 or re.fullmatch(TVOS_PUBLICATION_FAILURE_PATTERN, message)
                 or xctest_tool_class(message) is not None) for message in messages),
             "failure messages: unreviewed public message")
@@ -296,6 +358,9 @@ def public_failure_messages(messages):
             public.append(message)
             continue
         text = normalized_xctest_failure(message)
+        if text in SMOKE_FLOW_FAILURE_MESSAGES:
+            public.append(text)
+            continue
         if text is not None and re.fullmatch(TVOS_PUBLICATION_FAILURE_PATTERN, text):
             public.append(text)
             continue
@@ -1328,7 +1393,7 @@ def public_validator_failure_message(value):
 # ScenePresentationContractUITests, FilterSummaryIOSVisualUITests+Exif,
 # FilterSummaryIOSVisualUITests+Launch, their public drivers and XCTest.
 # Source locations and enum meanings: docs/CI_STRICT_RUNNER.md#reviewed-prefix-table.
-# No activity marker exists in these flows. Suffixes (including values) are discarded.
+# No activity marker exists in these flows. Unreviewed suffixes (including values) are discarded.
 PREFIX_RULES = (
     ("Smoke flow: ", "unknown", "control_state"),
     ("System Reduce Motion command: ", "settings_navigation", "control_state"),
