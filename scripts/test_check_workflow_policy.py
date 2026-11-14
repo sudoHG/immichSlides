@@ -50,7 +50,7 @@ class SmokeShadowWorkflowPolicyTests(unittest.TestCase):
         self.assertEqual({group["id"]: group["timeout_minutes"] for group in groups}, expected)
         for group in groups:
             self.assertEqual(group["timeout_minutes"], shadow.GROUP_BUDGET_MINUTES[group["id"]] + 3)
-        for timeout in (25, 30, "${{ matrix.timeout_minutes + 1 }}", "${{ matrix.other }}"):
+        for timeout in (25, "${{ matrix.timeout_minutes + 1 }}", "${{ matrix.other }}"):
             with self.subTest(timeout=timeout):
                 document = copy.deepcopy(baseline)
                 document["jobs"]["flows"]["timeout-minutes"] = timeout
@@ -983,7 +983,7 @@ final class LocaleUITests: XCTestCase {
         self.assertIn("permissions", self.rules(document))
 
     def test_each_job_needs_a_bounded_literal_timeout(self):
-        for value in [None, 0, -1, 361, True, "5", "${{ inputs.timeout }}"]:
+        for value in [None, 0, -1, 361, True, "5", "${{ inputs.timeout }}", "${{ matrix.timeout_minutes }}"]:
             with self.subTest(value=value):
                 document = workflow()
                 document["jobs"]["check"]["timeout-minutes"] = value

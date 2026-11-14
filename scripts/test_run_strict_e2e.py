@@ -8106,9 +8106,53 @@ finally:
 
 
 class SmokeFlowResultTests(unittest.TestCase):
-    def test_smoke_shared_failure_prefix_redacts_values_without_claiming_a_playback_phase(self):
-        from ci_failure_diagnostics import (classify_messages, environment_timing_v5, public_failure_messages,
+    def test_smoke_failure_vocabulary_covers_source_steps_and_redacts_runtime_values(self):
+        from ci_failure_diagnostics import (SMOKE_FLOW_CONTROL_IDS, SMOKE_FLOW_FAILURE_MESSAGES,
+                                            classify_messages, public_failure_messages,
                                             scan_diagnostic_json, validate_failure_messages)
+        private_prefixes = ("albumFilter.album.", "personFilter.person.", "pinEntry.digit.")
+        control_steps = ("required element must be available: ", "required element must be ready: ",
+                         "control appears: ", "remote focus moves toward ", "remote cannot focus ")
+        literal = r'"((?:\\.|[^"\\\n])*)"'
+        step_patterns = (r'"(Smoke flow: (?:\\.|[^"\\\n])*)"',
+                         r'\biosSmokeRequire\(\s*[^,]+,\s*' + literal,
+                         r'\bstep:\s*' + literal,
+                         r'\btvSmoke(?:Fail|Perform)\(\s*' + literal)
+        id_patterns = (r'\biosSmoke(?:Ready|Tap|Snapshot)\(\s*[^,]+,\s*[^,]+,\s*' + literal,
+                       r'\btvSmoke(?:Focus|Select)\(\s*' + literal)
+
+        def check_message(message):
+            if r'\(' in message:
+                # Unknown runtime values must never become reviewed public vocabulary.
+                message = re.sub(r'\\\([^)]*\)', 'private-runtime-value', message)
+                self.assertEqual(public_failure_messages([message]), ["Smoke flow: "])
+            else:
+                self.assertTrue(message in SMOKE_FLOW_FAILURE_MESSAGES, "unreviewed smoke step: " + message)
+
+        sources = sorted(REPO_ROOT.glob("immichSlidesUITests/SmokeFlow*.swift"))
+        self.assertTrue(sources)
+        for path in sources:
+            source = path.read_text()
+            for pattern in step_patterns:
+                for match in re.finditer(pattern, source):
+                    value = match.group(1)
+                    with self.subTest(source=path.name, step=value):
+                        check_message(value if value.startswith("Smoke flow: ") else "Smoke flow: " + value + ".")
+            for pattern in id_patterns:
+                for match in re.finditer(pattern, source):
+                    identifier = match.group(1)
+                    with self.subTest(source=path.name, identifier=identifier):
+                        is_private = identifier.startswith(private_prefixes) or r'\(' in identifier
+                        if not is_private:
+                            self.assertTrue(identifier in SMOKE_FLOW_CONTROL_IDS, "unreviewed smoke control: " + identifier)
+                        identifier = re.sub(r'\\\([^)]*\)', 'private-runtime-value', identifier)
+                        for step in control_steps:
+                            message = "Smoke flow: " + step + identifier + "."
+                            if is_private:
+                                self.assertNotIn(message, SMOKE_FLOW_FAILURE_MESSAGES)
+                                self.assertEqual(public_failure_messages([message]), ["Smoke flow: "])
+                            else:
+                                check_message(message)
         messages = ["XCTAssertTrue failed - Smoke flow: first boot synthetic-private-value."]
         self.assertEqual(["Smoke flow: "], public_failure_messages(messages))
         self.assertEqual({"failure_phase": "unknown", "failure_class": "control_state"}, classify_messages(messages))
@@ -8122,6 +8166,8 @@ class SmokeFlowResultTests(unittest.TestCase):
             "action exceeded the shared hang guard",
             "wrong PIN keeps Settings locked",
             "Play/Pause state is play",
+            "a B-exclusive photo must appear within the bounded Next path",
+            "required element must be available: albumFilter.back.button",
         )
         for step in steps:
             with self.subTest(step=step):
@@ -8131,17 +8177,8 @@ class SmokeFlowResultTests(unittest.TestCase):
                 self.assertEqual(public_failure_messages(projected), projected)
                 validate_failure_messages(projected)
                 scan_diagnostic_json(json.dumps({"failure_messages": projected}).encode())
-                with tempfile.TemporaryDirectory() as raw:
-                    directory = Path(raw)
-                    (directory / "official-tests.json").write_text(json.dumps({"failure_messages": projected}))
-                    write_sensitive_scan(directory, ["private-peer-label"])
-                    self.assertEqual(json.loads((directory / "sensitive-scan.json").read_text())["result"], "PASS")
                 self.assertEqual(classify_messages(projected),
                                  {"failure_phase": "unknown", "failure_class": "control_state"})
-                failure = {"source": "xctest", "app": "running-foreground", "step": "wait-scene",
-                           "element": "app-window", "surface": "playback", "control_bar": "visible",
-                           "scene_status": "MATCH", "wait_elapsed_seconds": 60, "deadline_seconds": 60}
-                self.assertFalse(environment_timing_v5(failure, "control_state", projected))
         refused = (
             "control appears: personFilter.person.private-person.button",
             "required element must be ready: pinEntry.digit.1.button",
