@@ -8111,6 +8111,10 @@ class SmokeFlowResultTests(unittest.TestCase):
                                             classify_messages, public_failure_messages,
                                             scan_diagnostic_json, validate_failure_messages)
         private_prefixes = ("albumFilter.album.", "personFilter.person.", "pinEntry.digit.")
+        for value in (*SMOKE_FLOW_CONTROL_IDS, *SMOKE_FLOW_FAILURE_MESSAGES):
+            with self.subTest(vocabulary=value):
+                self.assertFalse(value.removeprefix("Smoke flow: ").startswith(private_prefixes))
+                self.assertNotIn(r'\(', value)
         control_steps = ("required element must be available: ", "required element must be ready: ",
                          "control appears: ", "remote focus moves toward ", "remote cannot focus ")
         literal = r'"((?:\\.|[^"\\\n])*)"'
@@ -8130,16 +8134,20 @@ class SmokeFlowResultTests(unittest.TestCase):
                 self.assertTrue(message in SMOKE_FLOW_FAILURE_MESSAGES, "unreviewed smoke step: " + message)
 
         sources = sorted(REPO_ROOT.glob("immichSlidesUITests/SmokeFlow*.swift"))
-        self.assertTrue(sources)
+        for name in ("SmokeFlowIOSUITests.swift", "SmokeFlowTVOSUITests.swift", "SmokeFlowTVOSUITests+Support.swift"):
+            self.assertIn(name, {path.name for path in sources})
+        match_counts = dict.fromkeys((*step_patterns, *id_patterns), 0)
         for path in sources:
             source = path.read_text()
             for pattern in step_patterns:
                 for match in re.finditer(pattern, source):
+                    match_counts[pattern] += 1
                     value = match.group(1)
                     with self.subTest(source=path.name, step=value):
                         check_message(value if value.startswith("Smoke flow: ") else "Smoke flow: " + value + ".")
             for pattern in id_patterns:
                 for match in re.finditer(pattern, source):
+                    match_counts[pattern] += 1
                     identifier = match.group(1)
                     with self.subTest(source=path.name, identifier=identifier):
                         is_private = identifier.startswith(private_prefixes) or r'\(' in identifier
@@ -8153,6 +8161,9 @@ class SmokeFlowResultTests(unittest.TestCase):
                                 self.assertEqual(public_failure_messages([message]), ["Smoke flow: "])
                             else:
                                 check_message(message)
+        for pattern, count in match_counts.items():
+            with self.subTest(pattern=pattern):
+                self.assertGreater(count, 0, "smoke source scan must match every regex family")
         messages = ["XCTAssertTrue failed - Smoke flow: first boot synthetic-private-value."]
         self.assertEqual(["Smoke flow: "], public_failure_messages(messages))
         self.assertEqual({"failure_phase": "unknown", "failure_class": "control_state"}, classify_messages(messages))

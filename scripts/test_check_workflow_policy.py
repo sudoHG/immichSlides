@@ -987,6 +987,8 @@ final class LocaleUITests: XCTestCase {
             with self.subTest(value=value):
                 document = workflow()
                 document["jobs"]["check"]["timeout-minutes"] = value
+                if value == "${{ matrix.timeout_minutes }}":
+                    document["jobs"]["flows"] = document["jobs"].pop("check")
                 self.assertIn("timeout", self.rules(document))
         document = workflow()
         document["jobs"]["other"] = {"runs-on": "ubuntu-latest", "steps": [{"run": "true"}]}
