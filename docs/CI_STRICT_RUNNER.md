@@ -127,8 +127,16 @@ Absolute failure paths must first match a known compilation-root string prefix
 Warm smoke receipts retain their compilation root privately in DerivedData so local
 reuse can normalize official locations after the compilation snapshot is removed;
 the absolute root is excluded from public warm-up JSON. No new failure-prefix vocabulary
-is introduced: iOS and TV assertions both use `Smoke flow: <step>.`, projected to the
-single reviewed `Smoke flow: ` prefix with phase `unknown` and class `control_state`.
+is introduced: iOS and TV assertions both use `Smoke flow: <step>.`, with phase
+`unknown` and class `control_state`. The shared failure-message projection retains
+only complete sentences from `ci_failure_diagnostics.SMOKE_FLOW_FAILURE_MESSAGES`:
+fixed code-defined steps, or five fixed readiness/focus templates paired with a
+finite list of code-defined control identifiers. The same table validates public
+`failure_messages` and survives the shadow reader's second projection. Unreviewed
+steps, extra suffixes, picker object IDs, PIN digit identifiers and fixture/peer
+labels retain only `Smoke flow: `. No runtime values or arbitrary identifiers are
+admitted. Existing sensitive scans, classifications, verdicts and private peer logs
+are unchanged; newly added steps remain redacted until explicitly reviewed.
 
 Smoke classes are excluded from default fixture plans, hence PR area selection and
 complete nightly fixture shards. Core-area entries account for the source inventory
@@ -2342,7 +2350,7 @@ Failed method nodes in `official-tests*.json` and the tracer's
 The code-defined allowlists and reviewed assertion-prefix table live in
 [`ci_failure_diagnostics.py`](../scripts/ci_failure_diagnostics.py). The lifecycle
 and History flows have no existing phase activity marker, so the mapper reads
-private official legacy failure summaries and discards all message suffixes.
+private official legacy failure summaries and discards unreviewed message suffixes.
 Only `testFailureSummaries` supplies messages; a `testWarningSummaries` entry
 for the same method cannot replace or obscure its failure label.
 XCTest assertion and the known Swift `AssertionError.message` and
@@ -2391,8 +2399,9 @@ yield unknown for both fields. The interval-setup assertions
 `Autoplay must be on for the pause/background cases.` identify `interval_setup/control_state`.
 These labels locate a check; they do not establish a product or infrastructure
 root cause. The phase/class mapper adds no assertion text, observed value, path,
-identifier or frame; the separately reviewed message path above retains only its
-fixed sentences and the three tvOS booleans.
+identifier or frame. The separately reviewed message path above retains its
+fixed sentences and the three tvOS booleans; smoke additionally retains only the
+closed step/control vocabulary described in the short smoke-flow contract.
 
 iOS lifecycle Play/Pause preparation closes its appearance receipt wait before
 starting its existing readiness wait. Both still use their original durations;
@@ -2603,7 +2612,7 @@ New enum meanings and why the previous vocabulary cannot express them:
 
 | Fixed source prefix | Phase | Class | Public source |
 |---|---|---|---|
-| `Smoke flow: ` | `unknown` | `control_state` | [SmokeFlowIOSUITests.swift](../immichSlidesUITests/SmokeFlowIOSUITests.swift); suffixes are discarded because steps span first boot, PIN, filters, playback and settings |
+| `Smoke flow: ` | `unknown` | `control_state` | [SmokeFlowIOSUITests.swift](../immichSlidesUITests/SmokeFlowIOSUITests.swift), [SmokeFlowTVOSUITests+Support.swift](../immichSlidesUITests/SmokeFlowTVOSUITests+Support.swift); only the closed step/control vocabulary above survives projection; the shared phase stays unknown because steps span first boot, PIN, filters, playback and settings |
 | `System Reduce Motion command: ` | `settings_navigation` | `control_state` | [HostReduceMotionSetting in ReduceMotionUITests.swift](../immichSlidesUITests/ReduceMotionUITests.swift) |
 | `App Reduce Motion: ` | `settings_navigation` | `control_state` | [HostReduceMotionSetting.confirm in ReduceMotionUITests.swift](../immichSlidesUITests/ReduceMotionUITests.swift) |
 | `The app did not return to the foreground after changing system Reduce Motion.` | `settings_navigation` | `control_state` | [bringToForeground in ReduceMotionUITests.swift](../immichSlidesUITests/ReduceMotionUITests.swift) |

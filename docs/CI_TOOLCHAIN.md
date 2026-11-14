@@ -174,7 +174,10 @@ The rules are:
   a literal `./` path without parent traversal.
 - Permissions must be explicit mappings, including `{}` for no grants. A workflow-level
   mapping may supply each job's permissions; jobs may override it. Blanket permission
-  strings are rejected. Each job needs a literal `timeout-minutes` from 1 through 360.
+  strings are rejected. Each job needs a literal `timeout-minutes` from 1 through 360,
+  except the smoke-shadow `flows` job's exact `${{ matrix.timeout_minutes }}` binding.
+  Its trusted plan derives all six timeouts from the runner budgets plus three minutes;
+  policy regressions enforce that reserve ([budget table](CI_NIGHTLY.md)).
   Issue writes are reserved for the exact `ci-probe.yml` and `ci-report.yml` paths.
   `ci-probe.yml` additionally requires the display name `ci-probe`, both scheduled and
   manual triggers only, workflow permissions `{}`, and exactly `contents: read` plus

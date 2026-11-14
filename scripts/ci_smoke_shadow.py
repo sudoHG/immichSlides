@@ -23,7 +23,9 @@ from ci_summary import ContractError, decode, markdown_text, require, sha
 WORKFLOW = ".github/workflows/ci-smoke-shadow.yml"
 NIGHTLY = ".github/workflows/ci-nightly.yml"
 MANIFEST = "scripts/smoke-flows.json"
-GROUP_BUDGET_SECONDS = 22 * 60  # The 25-minute job also reserves setup, upload and cleanup.
+GROUP_BUDGET_MINUTES = {"iphone-debug": 22, "iphone-release": 22, "ipad-debug": 27,
+                        "ipad-release": 27, "tv-debug": 22, "tv-release": 22}
+JOB_RESERVE_MINUTES = 3  # Keep upload and cleanup headroom outside the inner deadline.
 
 
 def shadow_context(environment):
@@ -65,7 +67,9 @@ def admit(environment, payload, run, workflow):
 def manifest_groups(manifest):
     groups = sorted({(flow["platform"], flow["device"], flow["configuration"]) for flow in manifest["flows"]})
     return [{"id": device + "-" + configuration.lower(), "platform": platform, "device": device,
-             "configuration": configuration} for platform, device, configuration in groups]
+             "configuration": configuration,
+             "timeout_minutes": GROUP_BUDGET_MINUTES[device + "-" + configuration.lower()] + JOB_RESERVE_MINUTES}
+            for platform, device, configuration in groups]
 
 
 def make_plan(environment, run, manifest, manifest_hash, nightly_execution, nightly_aggregate=None):
@@ -577,7 +581,7 @@ def run_group(scheduling, environment, temporary):
         udid = create_and_boot_simulator("appletv" if group["device"] == "tv" else group["device"], "smoke-" + group_id)
         destination = "platform=" + ("tvOS" if group["platform"] == "tvos" else "iOS") + " Simulator,id=" + udid
         for warm, name in ((False, "warm-up"), (True, "flows")):
-            remaining = record["job_started_epoch"] + GROUP_BUDGET_SECONDS - time.time()
+            remaining = record["job_started_epoch"] + GROUP_BUDGET_MINUTES[group_id] * 60 - time.time()
             command = runner_command(group, destination, root, root / name, warm=warm)
             if remaining <= 0:
                 raise subprocess.TimeoutExpired(command, 0)
