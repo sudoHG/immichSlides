@@ -38,6 +38,24 @@ class SmokeShadowWorkflowPolicyTests(unittest.TestCase):
     def violations(self, document, path=SHADOW):
         return policy.check_workflow(path, yaml.safe_dump(document), run_named_workflows={"ci-nightly"})
 
+    def test_shadow_job_timeouts_follow_runner_budgets_with_three_minutes_reserved(self):
+        import ci_smoke_shadow as shadow
+        baseline = self.document()
+        self.assertEqual(self.violations(baseline), [])
+        self.assertEqual(baseline["jobs"]["flows"]["timeout-minutes"], "${{ matrix.timeout_minutes }}")
+        smoke_manifest = json.loads((shadow.ROOT / shadow.MANIFEST).read_text())
+        groups = shadow.manifest_groups(smoke_manifest)
+        expected = {"iphone-debug": 25, "iphone-release": 25, "ipad-debug": 30,
+                    "ipad-release": 30, "tv-debug": 25, "tv-release": 25}
+        self.assertEqual({group["id"]: group["timeout_minutes"] for group in groups}, expected)
+        for group in groups:
+            self.assertEqual(group["timeout_minutes"], shadow.GROUP_BUDGET_MINUTES[group["id"]] + 3)
+        for timeout in (25, 30, "${{ matrix.timeout_minutes + 1 }}", "${{ matrix.other }}"):
+            with self.subTest(timeout=timeout):
+                document = copy.deepcopy(baseline)
+                document["jobs"]["flows"]["timeout-minutes"] = timeout
+                self.assertIn("smoke-shadow-contract", {item.rule for item in self.violations(document)})
+
     def test_shadow_contract_rejects_weaker_triggers_authority_budget_and_raw_result_gates(self):
         from ci_nightly_change import FULL_MANUAL_TITLE, REAL_RESULT_CONCLUSIONS
         baseline = self.document()

@@ -425,19 +425,32 @@ class SmokeShadowTests(unittest.TestCase):
             with self.assertRaisesRegex(ContractError, "job clock context differs"):
                 shadow.job_started_epoch(dict(environment(), GITHUB_RUN_ID="0"), "iphone-debug")
 
-    def test_group_setup_time_consumes_the_unchanged_budget(self):
-        scheduling = plan()
-        with tempfile.TemporaryDirectory() as raw, patch.object(shadow, "git", return_value=HEAD), \
-                patch("ci_build_archive.file_hash", return_value="c" * 64), \
-                patch("ci_build_archive.workspace_preflight"), patch("run_offline_unit_tests.ensure_disk_for_xcodebuild"), \
-                patch("ci_simulator.create_and_boot_simulator", return_value="synthetic"), \
-                patch.object(shadow, "job_started_epoch", return_value=time.time() - shadow.GROUP_BUDGET_SECONDS - 1, create=True), \
-                patch("run_strict_ci_tracer.run_runner", return_value=0) as runner:
-            self.assertEqual(shadow.run_group(scheduling, dict(environment(), SMOKE_GROUP="iphone-debug"), Path(raw)), 1)
-            runner.assert_not_called()
-            record = json.loads((Path(raw) / "smoke-records/group.json").read_text())
-            self.assertEqual(record["runner_exit_code"], 124)
-            self.assertIn("group-budget-exhausted", record["errors"])
+    def test_group_setup_time_consumes_the_selected_budget(self):
+        smoke_manifest = json.loads((shadow.ROOT / shadow.MANIFEST).read_text())
+        scheduling = shadow.make_plan(environment(), nightly(), smoke_manifest, "c" * 64, "real")
+        expected = {"iphone-debug": 22, "iphone-release": 22, "ipad-debug": 27,
+                    "ipad-release": 27, "tv-debug": 22, "tv-release": 22}
+        self.assertEqual({group["id"] for group in scheduling["groups"]}, set(expected))
+        for group_id, minutes in expected.items():
+            for setup_seconds in (20 * 60, minutes * 60 + 1):
+                with self.subTest(group=group_id, setup_seconds=setup_seconds), \
+                        tempfile.TemporaryDirectory() as raw, patch.object(shadow, "git", return_value=HEAD), \
+                        patch("ci_build_archive.file_hash", return_value="c" * 64), \
+                        patch("ci_build_archive.workspace_preflight"), patch("run_offline_unit_tests.ensure_disk_for_xcodebuild"), \
+                        patch("ci_simulator.create_and_boot_simulator", return_value="synthetic"), \
+                        patch.object(shadow.time, "time", return_value=2000), \
+                        patch.object(shadow, "job_started_epoch", return_value=2000 - setup_seconds), \
+                        patch("run_strict_ci_tracer.run_runner", return_value=65) as runner:
+                    self.assertEqual(shadow.run_group(scheduling, dict(environment(), SMOKE_GROUP=group_id), Path(raw)), 1)
+                    record = json.loads((Path(raw) / "smoke-records/group.json").read_text())
+                    if setup_seconds < minutes * 60:
+                        self.assertEqual(runner.call_count, 1)
+                        self.assertEqual(runner.call_args.kwargs["timeout_seconds"], minutes * 60 - setup_seconds)
+                        self.assertEqual(record["runner_exit_code"], 65)
+                    else:
+                        runner.assert_not_called()
+                        self.assertEqual(record["runner_exit_code"], 124)
+                        self.assertIn("group-budget-exhausted", record["errors"])
 
     def test_group_removes_its_api_token_before_any_tested_runner_can_inherit_it(self):
         from ci_build_archive import file_hash

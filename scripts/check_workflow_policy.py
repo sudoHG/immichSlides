@@ -492,7 +492,7 @@ def check_shadow_contract(document, events, flag):
             continue
         steps = job.get("steps", [])
         valid &= (job.get("runs-on") == ("xcode-27" if role == "flows" else "ubuntu-24.04")
-                  and job.get("timeout-minutes") == (25 if role == "flows" else 5)
+                  and job.get("timeout-minutes") == ("${{ matrix.timeout_minutes }}" if role == "flows" else 5)
                   and job.get("permissions") == ({"contents": "read", "actions": "read"} if role in {"plan", "flows"} else {"contents": "read"})
                   and " ".join(str(job.get("if", "")).split()) == conditions[role]
                   and "continue-on-error" not in job and "environment" not in job and not job.get("env")
@@ -521,7 +521,7 @@ def check_shadow_contract(document, events, flag):
         if role == "flows" and runs:
             valid &= runs[-1].get("if") == "always()"
     if not valid:
-        flag("workflow", "smoke-shadow-contract", "Shadow keeps main-only completion/manual admission, manifest groups, read-only authority and a 60-minute execution budget")
+        flag("workflow", "smoke-shadow-contract", "Shadow keeps main-only completion/manual admission, manifest groups, read-only authority and a 70-minute execution budget")
 
 
 def check_workflow(path: str, source: str, *, ui_shards=None, run_named_workflows=()) -> list[Violation]:
@@ -880,7 +880,9 @@ def check_workflow(path: str, source: str, *, ui_shards=None, run_named_workflow
                     or job.get("concurrency") != {"group": "ci-report-state", "cancel-in-progress": False}):
                 flag(location, "report-contract", "Reporter is serialized, main-only, excludes branch nightly, is environment-free and has only issue write")
         timeout = job.get("timeout-minutes")
-        if type(timeout) is not int or not 1 <= timeout <= 360:
+        shadow_matrix_timeout = (path == SHADOW_WORKFLOW and job_id == "flows"
+                                 and timeout == "${{ matrix.timeout_minutes }}")
+        if not shadow_matrix_timeout and (type(timeout) is not int or not 1 <= timeout <= 360):
             flag(location, "timeout", "Job needs a literal timeout-minutes from 1 to 360")
         if "environment" in job:
             environment = job["environment"]

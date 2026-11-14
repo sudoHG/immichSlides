@@ -72,7 +72,7 @@ jobs:
     if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.execute == 'true' }}
     name: smoke-shadow-${{ matrix.id }}
     runs-on: xcode-27
-    timeout-minutes: 25
+    timeout-minutes: ${{ matrix.timeout_minutes }}
     permissions:
       contents: read
       actions: read
