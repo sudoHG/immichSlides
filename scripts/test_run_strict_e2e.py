@@ -8211,7 +8211,7 @@ class SmokeFlowResultTests(unittest.TestCase):
                 {"testNodes": [{"nodeType": "Test Case", "nodeIdentifier": selector + "()", "result": "Passed"}]})
 
     def execute_record(self, root, *, code=0, cleanup=False, invalid_official=False, official_failed=False,
-                       failure_nodes=(), build_source_root=None, real_peer_requests=False):
+                       failure_nodes=(), build_source_root=None, real_peer_requests=False, first_failure=None):
         import plistlib
         from types import SimpleNamespace
         import strict_e2e_smoke as smoke
@@ -8230,6 +8230,11 @@ class SmokeFlowResultTests(unittest.TestCase):
         if invalid_official:
             summary["totalTestCount"] = 0
         def export(bundle, directory, *args, **kwargs):
+            if kwargs.get("first_failure_spool") is not None:
+                from ci_failure_diagnostics import collect_first_failure_spool
+                spool, selectors = kwargs["first_failure_spool"]
+                collect_first_failure_spool(spool, selectors, [tests["testNodes"][0]] if official_failed else [],
+                                            directory / "first-failure")
             smoke.write_json(directory / "official-summary.json", summary)
             smoke.write_json(directory / "official-tests.json", tests)
             return hashlib.sha256((directory / "official-tests.json").read_bytes()).hexdigest()
@@ -8253,6 +8258,15 @@ class SmokeFlowResultTests(unittest.TestCase):
             export_private_result_bundle=mock.Mock(side_effect=export), stop_exact_process=mock.Mock(),
             finalize_private_result_bundle=mock.Mock(return_value=["failed"] if cleanup else []))
         runner.fixture_commands = fixture_commands
+        if first_failure is not None:
+            def capture(command, **_kwargs):
+                target = plistlib.loads(Path(command[command.index("-xctestrun") + 1]).read_bytes())["TestConfigurations"][0]["TestTargets"][0]
+                runner.prepared_target = target
+                inputs = target["EnvironmentVariables"]
+                if "STRICT_E2E_FIRST_FAILURE_DIR" in inputs:
+                    (Path(inputs["STRICT_E2E_FIRST_FAILURE_DIR"]) / "0.json").write_text(json.dumps(first_failure))
+                return code
+            runner.run_command = mock.Mock(side_effect=capture)
         if real_peer_requests:
             import http.client
             from strict_e2e_server import PUBLIC_API_KEY
@@ -8290,6 +8304,29 @@ class SmokeFlowResultTests(unittest.TestCase):
                 record, runner, _ = self.execute_record(Path(temporary), code=code, cleanup=cleanup, invalid_official=invalid)
                 self.assertEqual(expected, (record["outcome"], record["exit_code"], record["failure_kind"]))
                 self.assertEqual(1, runner.run_command.call_count)
+
+    def test_smoke_first_failure_spool_reaches_the_official_export_without_changing_the_first_result(self):
+        from ci_failure_diagnostics import unavailable_first_failure
+        receipt = unavailable_first_failure("xctest", step="query-element", element="slideshow.control.settings.button")
+        receipt["action"] = "tap"
+        receipt["timing"].update(since_action_issued_seconds=16, action_duration_seconds=9,
+                                 wait_elapsed_seconds=7, deadline_seconds=7)
+        receipt["screenshot"]["status"] = "withheld-privacy"
+        with tempfile.TemporaryDirectory() as temporary:
+            record, runner, evidence = self.execute_record(Path(temporary), code=65, official_failed=True, first_failure=receipt)
+            self.assertEqual((record["outcome"], record["exit_code"], record["failure_kind"]), ("FAIL", 65, "test"))
+            target = runner.prepared_target
+            self.assertEqual(target["PreferredScreenCaptureFormat"], "screenshots")
+            self.assertEqual(target["SystemAttachmentLifetime"], "deleteOnSuccess")
+            inputs = target["EnvironmentVariables"]
+            self.assertEqual(inputs["STRICT_E2E_FIRST_FAILURE_SCREENSHOT"], "1")
+            self.assertEqual(json.loads(inputs["STRICT_E2E_FIRST_FAILURE_TESTS"]), {record["selector"]: 0})
+            spool, selectors = runner.export_private_result_bundle.call_args.kwargs["first_failure_spool"]
+            self.assertEqual(str(spool), inputs["STRICT_E2E_FIRST_FAILURE_DIR"])
+            self.assertEqual(selectors, [record["selector"]])
+            public = json.loads((evidence / record["id"] / "official-tests.json").read_text())
+            self.assertEqual(public["testNodes"][0]["first_failure"], receipt)
+            self.assertFalse(spool.exists())
 
     def test_smoke_request_logs_are_private_and_only_fixed_metadata_is_public(self):
         with tempfile.TemporaryDirectory() as temporary:

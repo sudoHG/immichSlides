@@ -927,6 +927,36 @@ print('parsed 3 nightly retry records without image or runner dependencies')
         attach_native_tap_failure([node], {key: ["Failed to get matching snapshot"]})
         self.assertNotIn("native_tap_failure", node["first_failure"])
 
+    def test_native_method_allowance_is_public_only_with_an_exact_numeric_grammar_and_stays_red(self):
+        from ci_failure_diagnostics import (environment_limit_evidence, failure_messages_diagnostics,
+            public_failure_messages, scan_diagnostic_json, validate_failure_messages, xctest_tool_class)
+        for seconds in ("0", "120", "1234567890"):
+            message = f"Exceeded execution time allowance of {seconds} seconds"
+            with self.subTest(seconds=seconds):
+                self.assertEqual(public_failure_messages([message]), [message])
+                validate_failure_messages([message])
+                scan_diagnostic_json(json.dumps({"failure_messages": [message]}).encode())
+                self.assertIsNone(xctest_tool_class(message))
+                self.assertEqual(failure_messages_diagnostics([message]),
+                                 {"failure_phase": "unknown", "failure_class": "unknown"})
+                summary, _ = hosted_v5_summary(tool=True)
+                row = summary["population"]["observed"][0]
+                for target in (row, row["attempts"][0]):
+                    target.update(failure_messages=[message], **failure_messages_diagnostics([message]))
+                self.assertIsNone(environment_limit_evidence(summary, row, [], runner_hosted=True, policy_version=5))
+        template = "Exceeded execution time allowance of {} seconds"
+        rejected = [template.format(value) for value in ("private", "120 private", "", "-1", "+1", "1.5", "１２０",
+                                                           "120\n", "12345678901")]
+        rejected += [template.format("120") + suffix for suffix in (".", " private", "\n")]
+        rejected += ["XCTAssertTrue failed - " + template.format("120"), "Unreviewed native private failure"]
+        for message in rejected:
+            with self.subTest(message=message):
+                self.assertEqual(public_failure_messages([message]), ["[unrecognized XCTest failure]"])
+                with self.assertRaisesRegex(ValueError, "unreviewed public message"):
+                    validate_failure_messages([message])
+                with self.assertRaisesRegex(ValueError, "unreviewed public message"):
+                    scan_diagnostic_json(json.dumps({"failure_messages": [message]}).encode())
+
     def test_v5_readers_bind_complete_messages_and_keep_functional_or_missing_evidence_red(self):
         from ci_failure_diagnostics import environment_limit_evidence, scan_diagnostic_json
         for ui, tool in ((False, False), (False, True), (True, True)):

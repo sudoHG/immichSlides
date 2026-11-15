@@ -117,6 +117,7 @@ def counts_as_shadow(plan, *, executed, errors, matrix_result):
 
 def aggregate(plan, records, matrix_result):
     from ci_bounded_diagnostics import public_failure_locations
+    from ci_failure_diagnostics import validate_first_failure
     errors, observed, seen = [], {}, set()
     validations = {}
     timings = {}
@@ -174,6 +175,8 @@ def aggregate(plan, records, matrix_result):
                 if row.get("failure_locations") is not None and public_failure_locations(row["failure_locations"]) is None:
                     errors.append("invalid public failure locations: " + row["id"])
                     continue
+                if "first_failure" in row:
+                    validate_first_failure(row["first_failure"])
                 observed[row["id"]] = row
             record_errors = record.get("errors")
             if not isinstance(record_errors, list) or any(not isinstance(error, str) for error in record_errors):
@@ -235,6 +238,7 @@ def aggregate(plan, records, matrix_result):
 
 
 def markdown(record):
+    from ci_failure_diagnostics import render_first_failure
     nightly = record["nightly"]
     old_status = (nightly.get("aggregate") or {}).get("status", "unknown")
     url = f"https://github.com/{record['repository']}/actions/runs/{nightly['id']}/attempts/{nightly['attempt']}"
@@ -243,11 +247,12 @@ def markdown(record):
              f"({nightly['conclusion']}; evidence: {nightly['execution']}; aggregate: {markdown_text(old_status)}).", "",
              f"Executed: {record['executed']}; comparable executed shadow: {record['comparison_eligible']}. "
              "Informational only; first results, no retries or yellow.", "",
-             "| Flow | Device | Configuration | Outcome | Elapsed (s) | Failure class | First public failure |",
-             "|---|---|---|---|---:|---|---|"]
+             "| Flow | Device | Configuration | Outcome | Elapsed (s) | Failure class | First public failure | First failure context |",
+             "|---|---|---|---|---:|---|---|---|"]
     for row in record["flows"]:
         values = [row["id"], row["device"], row["configuration"], row["outcome"], row["elapsed_seconds"],
-                  row.get("failure_category"), row.get("first_failure_message")]
+                  row.get("failure_category"), row.get("first_failure_message"),
+                  render_first_failure(row["first_failure"]) if "first_failure" in row else None]
         lines.append("| " + " | ".join(markdown_text(value) if value is not None else "unknown" for value in values) + " |")
     if record["group_timings"]:
         lines += ["", "| Group | Warm-up/build phase (s) | Job elapsed (s) |", "|---|---:|---:|"]
@@ -288,6 +293,43 @@ def scan_records(directory):
     from run_strict_e2e import write_sensitive_scan, WRONG_PUBLIC_API_KEY
     from strict_e2e_server import PUBLIC_API_KEY
     write_sensitive_scan(directory, [PUBLIC_API_KEY, WRONG_PUBLIC_API_KEY])
+
+
+def copy_first_failure_images(evidence, records, rows):
+    """Copy only the recorder's validated single-method image, never arbitrary attachments."""
+    from ci_failure_diagnostics import validate_first_failure, validate_first_failure_image
+    for index, row in enumerate(rows):
+        receipt = row.get("first_failure")
+        if receipt is None or receipt["screenshot"]["status"] != "captured":
+            continue
+        source = evidence / row["id"] / "first-failure/0.png"
+        target = records / "failure-screenshots/first-failure-attempt-1" / f"{index}.png"
+        try:
+            validate_first_failure(receipt)
+            require(all(folder.is_dir() and not folder.is_symlink() for folder in
+                        (evidence, source.parent.parent, source.parent)), "invalid first failure source directory")
+            validate_first_failure_image(source, receipt)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, target)
+        except (OSError, ValueError):
+            target.unlink(missing_ok=True)
+            if target.parent.is_dir() and not any(target.parent.iterdir()):
+                target.parent.rmdir()
+            # Optional image loss does not replace the official first result or its safe timing facts.
+            receipt["screenshot"] = {"status": "unavailable", "width": None, "height": None, "bytes": None}
+
+
+def check_group_upload(directory, record):
+    from ci_failure_diagnostics import validate_first_failure, validate_ui_first_failure_images
+    declared = [{"key": row["selector"]} for row in record["flows"]]
+    observed = []
+    for identity, row in zip(declared, record["flows"]):
+        if "first_failure" in row:
+            validate_first_failure(row["first_failure"])
+            observed.append({"identity": identity, "attempts": [{"number": 1, "first_failure": row["first_failure"]}]})
+    scan_records(directory)
+    validate_ui_first_failure_images(directory / "failure-screenshots",
+                                     {"population": {"declared": declared, "observed": observed}})
 
 
 def setup(environment):
@@ -497,6 +539,8 @@ def read_runner_flows(evidence, scheduling, selected, destination, *, validation
             row["executed"] = row["official_execution_complete"] = True
             row["official_summary"] = official
             detail = test_node_diagnostics(tests).get(flow["selector"], {})
+            if "first_failure" in detail:
+                row["first_failure"] = detail["first_failure"]
             messages = detail.get(FAILURE_MESSAGES_FIELD, [])
             if messages:
                 row["diagnostics"] = failure_messages_diagnostics(messages)
@@ -635,8 +679,9 @@ def run_group(scheduling, environment, temporary):
             "id": flow["id"], "selector": flow["selector"], "outcome": "not-run", "elapsed_seconds": None,
             "executed": False, "official_execution_complete": False,
             "failure_category": "infra", "first_failure_message": "No first-result evidence."}) for flow in flows]
+        copy_first_failure_images(root / "flows", records, record["flows"])
         write_json(records / "group.json", record)
-        scan_records(records)
+        check_group_upload(records, record)
         output(environment, "records_safe", "true")
     return 0 if record["runner_exit_code"] == 0 and not record["errors"] and all(
         row["outcome"] == "passed" for row in record["flows"]) else 1

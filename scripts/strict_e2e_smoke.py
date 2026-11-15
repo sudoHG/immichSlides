@@ -438,7 +438,11 @@ def execute_flow(flow, root, arguments, source_run, runner, evidence, *, build_s
                                                    server_url_b=urls[1] if len(urls) == 2 else None)
         environment["STRICT_E2E_EVIDENCE_DIR"] = str(directory)
         bundle = runner.prepare_private_result_bundle_path("smoke-flow")
-        private_run = prepare_test_run(source_run, bundle.parent / "run", environment)
+        spool = bundle.parent / "run/first-failure-spool"
+        spool.mkdir(mode=0o700, parents=True)
+        first_failure_spool = (spool, [flow["selector"]])
+        private_run = prepare_test_run(source_run, bundle.parent / "run", environment,
+                                       first_failure_spool=first_failure_spool, failure_screenshots=True)
         command = warm_test_command(private_run, arguments.destination, bundle,
                                     "immichSlidesUITests/" + flow["selector"])
         command += ["-test-timeouts-enabled", "YES", "-default-test-execution-time-allowance", str(METHOD_TIMEOUT_SECONDS),
@@ -456,7 +460,8 @@ def execute_flow(flow, root, arguments, source_run, runner, evidence, *, build_s
         budget = runner.OfficialExportBudget()
         stage = "official-result"
         digest = runner.export_private_result_bundle(bundle, directory, [PUBLIC_API_KEY, runner.WRONG_PUBLIC_API_KEY],
-                                                     export_budget=budget, enrich_failure_diagnostics=True)
+                                                     export_budget=budget, enrich_failure_diagnostics=True,
+                                                     first_failure_spool=first_failure_spool)
         exported = True
         summary = json.loads((directory / "official-summary.json").read_text())
         public_tests = json.loads((directory / "official-tests.json").read_text())

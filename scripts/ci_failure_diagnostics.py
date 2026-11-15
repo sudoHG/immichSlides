@@ -338,6 +338,12 @@ def xctest_tool_class(message):
     return None
 
 
+def reviewed_native_failure(message):
+    # Diagnostic text only; this grammar grants no XCTest tool or yellow eligibility.
+    return isinstance(message, str) and re.fullmatch(
+        r"Exceeded execution time allowance of [0-9]{1,10} seconds", message) is not None
+
+
 def validate_failure_messages(messages):
     from ci_summary import require
     require(isinstance(messages, list) and 0 < len(messages) <= MAX_FAILURE_MESSAGES,
@@ -346,6 +352,7 @@ def validate_failure_messages(messages):
     require(all(isinstance(message, str) and (message in prefixes or message == UNRECOGNIZED_FAILURE_MESSAGE
                 or message in SMOKE_FLOW_FAILURE_MESSAGES
                 or re.fullmatch(TVOS_PUBLICATION_FAILURE_PATTERN, message)
+                or reviewed_native_failure(message)
                 or xctest_tool_class(message) is not None) for message in messages),
             "failure messages: unreviewed public message")
 
@@ -356,7 +363,7 @@ def public_failure_messages(messages):
         return None
     public = []
     for message in messages:
-        if xctest_tool_class(message) is not None:
+        if xctest_tool_class(message) is not None or reviewed_native_failure(message):
             public.append(message)
             continue
         text = normalized_xctest_failure(message)
