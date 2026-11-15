@@ -126,6 +126,24 @@ def plan_fixture(temporary, stack, *, ancestor=0):
 
 
 class SmokeShadowTests(unittest.TestCase):
+    def test_suppressed_shared_plans_preserve_not_run_without_requiring_a_historical_archive_reader(self):
+        for reason in ("active", "unchanged", "conclusion"):
+            with self.subTest(reason=reason), tempfile.TemporaryDirectory() as raw, ExitStack() as stack:
+                temporary = Path(raw)
+                context, api, _reader = plan_fixture(temporary, stack)
+                if reason == "active":
+                    api.pages.side_effect = lambda _path, _collection, **filters: [dict(nightly(), id=101, status=filters["status"])]
+                elif reason == "unchanged":
+                    stack.enter_context(patch("ci_nightly_change.run_evidence", return_value="skipped"))
+                else:
+                    run = dict(nightly(), conclusion="cancelled")
+                    api.repo.side_effect = lambda path: run if path == "actions/runs/100" else {"id": 7, "path": shadow.NIGHTLY}
+                shared = stack.enter_context(patch.object(shadow, "plan_shared", side_effect=AssertionError("suppressed plan checked archive support")))
+                self.assertEqual(shadow.plan_run(context, temporary / "plan", shared=True), 0)
+                shared.assert_not_called()
+                scheduling = json.loads((temporary / "plan/plan.json").read_text())
+                self.assertEqual(shadow.aggregate(scheduling, [], "skipped")["outcome"], "not-run")
+
     def test_shared_control_requires_authoritative_main_run_and_keeps_the_staged_source_separate(self):
         with tempfile.TemporaryDirectory() as raw:
             context = dict(environment(), RUNNER_TEMP=raw,

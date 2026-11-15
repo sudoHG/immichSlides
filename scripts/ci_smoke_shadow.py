@@ -666,8 +666,6 @@ def plan_run(environment, directory, *, shared=False):
     except (OSError, ValueError, KeyError, TypeError):
         old_aggregate = {"availability": "unverified"}
     scheduling = make_plan(environment, run, manifest, manifest_hash, execution, old_aggregate)
-    if shared:
-        plan_shared(scheduling, environment, api)
     active = set()
     for status in sorted(ACTIVE_RUN_STATUSES):
         for candidate in api.pages("actions/workflows/ci-nightly.yml/runs", "workflow_runs", branch="main", status=status):
@@ -682,6 +680,8 @@ def plan_run(environment, directory, *, shared=False):
                           not_run_reason="Main nightly is active; shadow was not run.")
     if run.get("conclusion") not in REAL_RESULT_CONCLUSIONS:
         scheduling.update(execute=False, not_run_reason="Nightly conclusion is not success/failure; shadow was not run.")
+    if shared and scheduling["execute"]:
+        plan_shared(scheduling, environment, api)
     write_json(directory / "plan.json", scheduling)
     scan_records(directory)
     output(environment, "head_sha", head)
