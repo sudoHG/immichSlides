@@ -56,7 +56,11 @@ class NavigationWaitTests(unittest.TestCase):
             smoke = f'func {function}() {{ let wait = TestWait.hangGuard(timeoutSeconds: 120) }}'
             self.assertEqual([], conv.check_navigation_waits(path, smoke))
             for candidate_path, source in (
+                    (path, smoke.replace('120', '60')),
+                    (path, smoke.replace('120', '121')),
                     (path, smoke.replace('120', '180')),
+                    (path, smoke.replace('120', '1200')),
+                    (path, smoke.replace('120', '120.0')),
                     (path, smoke.replace(function, 'otherNavigation')),
                     ('immichSlidesUITests/Flow.swift', smoke)):
                 with self.subTest(path=candidate_path, source=source):

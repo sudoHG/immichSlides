@@ -73,7 +73,7 @@ and passes it to its own steps. The shared `TestWait.hangGuard` default remains
 and keyboard-focus guards. XCTest rounds method allowances up to whole minutes;
 the smoke method allowance is **180 seconds**, with an explicit **150-second** budget for
 launch, timeout diagnostics and result finalization. The native invocation cap is
-**330 seconds**. This exceeds the initial 180-second target so XCTest can finish its
+**330 seconds**. This exceeds the original 180-second per-flow target so XCTest can finish its
 own timeout and preserve the official failed execution. A stuck action records a failed flow and a nonzero suite
 exit; simulator reset, fixture preparation and official export retain their separate
 infrastructure bounds. `elapsed_seconds` measures native XCTest invocation time;

@@ -342,7 +342,9 @@ Snapshots expose enabled state, not hittability, so pause-stage evidence uses `*
 
 For navigation without a product response limit, create `TestWait.hangGuard()` once
 before appearance/preparation and share it with nested steps. Its unscaled 60-second
-monotonic deadline is never refreshed. Each `transaction()` permits one action;
+monotonic deadline is never refreshed. The two approved smoke functions use the
+[120-second exception](TEST_WAITS.md#approved-smoke-flow-guard-exception);
+the shared default stays 60 seconds. Each `transaction()` permits one action;
 `perform` refuses a second action or an action issued after the deadline.
 `until` accepts a satisfied observation started before expiry even if it returns
 late. An action issued before expiry permits exactly one subsequent observation,

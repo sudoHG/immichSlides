@@ -240,8 +240,11 @@ Hogan approved the smoke-only guard increase from 60 to 120 seconds on 2026-11-1
 with matching method/native caps of 180/330 seconds, after five hosted first failures
 exhausted the guard while the App showed normal playback. The
 [runner guide](CI_STRICT_RUNNER.md#short-smoke-flow-suite) records the evidence and scope.
-Group budgets above stay fixed. A flow failing at the shared guard may use up to
-60 seconds more; the added group time is at most the flow count times 60 seconds:
+Group budgets above stay fixed. In a worst-case-to-worst-case comparison of guard
+sums or native-cap sums, added group time is at most the flow count times 60 seconds.
+This does not bound the change for an individual execution: a flow formerly stopped
+at the 60-second guard may now continue and fail later in a native operation, up to
+the 180-second method allowance / 330-second native invocation cap.
 
 | Group | Flows | Guard time before → after | Added time | Native caps after (before) |
 |---|---:|---:|---:|---:|
@@ -252,17 +255,25 @@ Group budgets above stay fixed. A flow failing at the shared guard may use up to
 | TV Debug | 6 | 360 → 720 s | 360 s | 1980 s (1620 s) |
 | TV Release | 4 | 240 → 480 s | 240 s | 1320 s (1080 s) |
 
-For the per-group cold-build path before #751, the 1200-second build cap plus guard time is
+For the per-group cold-build path before #751, the 1200-second build cap plus guard time
+changes from 1560/1320/1440/1260/1560/1440 to
 1920/1440/1680/1320/1920/1680 seconds in table order, before other overhead.
+On that historical path, iPhone Debug (1560 → 1920 seconds) and iPad Debug
+(1440 → 1680 seconds) flip from fitting to not fitting the 1620-second inner budget.
+Both TV groups already exceed their 1320-second budget before the increase.
 Build plus native caps is 3180/1860/2520/1530/3180/2520 seconds. Thus complete
 worst-case execution does **not** fit all groups' 1620-second iOS / 1320-second TV
 inner deadlines. Even the old six-flow native sum was `6 × 270 = 1620` seconds
-before build or overhead, so this limitation predates the increase.
+before build or overhead: the native-cap worst-case limitation already existed,
+while the two guard-case fit reversals above are specific to the historical path.
 
 With the merged iOS shared-build path in
 [#751](https://github.com/sudoHG/immichSlides/pull/751), iOS consumers avoid their
 per-group cold build: their guard sums are 720/240/480/120 seconds and native sums
 1980/660/1320/330 seconds, plus download, verification, preparation and export.
+This PR is based on #751, so no merged head with the approved 120-second guard can
+take the historical iOS per-group cold-build path. With shared builds, no group's
+build-plus-guard sum flips from fitting to not fitting; overhead is additional.
 TV retains its cold build and the values above. Shared builds reduce repeated work
 but cannot make a six-flow `6 × 330 = 1980`-second native worst case fit 27 minutes.
 The unchanged group deadline terminates such a group, retains first results and
