@@ -8539,6 +8539,9 @@ class SmokeFlowResultTests(unittest.TestCase):
             cloned_source_packages_path=root / "packages", test_without_building=True, warm_up_only=False)
         for key, value in (overrides or {}).items():
             setattr(arguments, key, value)
+        if getattr(arguments, "smoke_archive", False):
+            arguments.smoke_control_path = root / "expected-control.json"
+            arguments.smoke_control_path.write_text(json.dumps({"id": "200"}))
         if late == "owned-cleanup":
             arguments.derived_data_path = None
             (root / "owned").mkdir()
@@ -8591,7 +8594,7 @@ class SmokeFlowResultTests(unittest.TestCase):
                 mock.patch("strict_e2e_build.load_warm_build", return_value=({"identity": "warm", "source_root": "/retired/compilation-root"}, root / "run")), \
                 mock.patch("strict_e2e_build.load_smoke_archive", side_effect=CommandError("archive rejected") if late == "archive" else None,
                     return_value=({"identity": "generic", "source_root": "/retired/compilation-root", "control": {"id": "200"},
-                                   "archive_sha256": "b" * 64}, root / "run", {"device": "iphone"})), \
+                                   "archive_sha256": "b" * 64}, root / "run", {"device": "iphone"})) as archive_load, \
                 mock.patch("strict_e2e_build.warm_up", side_effect=AssertionError("consumer compiled")), \
                 mock.patch("strict_e2e_build.validate_warm_products", side_effect=lambda *args: assert_running("products")), \
                 mock.patch.object(smoke.tempfile, "mkdtemp", return_value=str(root / "owned")), \
@@ -8600,6 +8603,8 @@ class SmokeFlowResultTests(unittest.TestCase):
                 mock.patch.object(smoke, "execute_flow", side_effect=execute) as execution:
             try:
                 code = smoke.run(arguments, root, runner, io.StringIO(), io.StringIO())
+                if getattr(arguments, "smoke_archive", False):
+                    self.assertEqual(archive_load.call_args.kwargs["control"], {"id": "200"})
             except (CommandError, OSError, ValueError):
                 code = 2
             return code, flows, evidence, execution.call_count

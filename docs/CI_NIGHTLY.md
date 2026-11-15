@@ -76,14 +76,15 @@ the API and main ancestry. Its tested checkout is that nightly's head SHA,
 even when main has moved. Pull requests, fork heads, branch nightlies and
 unfinished nightlies are refused. This workflow changes no nightly job, retry,
 yellow rule, verdict, reporter input, required check or release eligibility.
-Device jobs stage only this workflow's trusted control entry point from main
+The plan outputs its exact control commit; every later job checks out that SHA.
+Planning and each job require that control to be equal to or an ancestor of main.
+Device jobs stage only this workflow's trusted control entry point from that commit
 outside the checkout, then select the admitted nightly SHA. All runner modules,
 App sources and the manifest come from that tested SHA. This supports nightlies
 that already contain the smoke runner but predate the shadow control entry point;
 downloaded artifacts remain data and are never executed.
-Jobs may read different main control-script versions if main moves during a
-run; incompatible versions fail closed. This accepted limitation does not permit
-untrusted checkout or artifact execution.
+Main may advance during a shadow without changing its planned control or breaking
+archive admission. Artifacts remain data, never a source of executable control.
 Only the reviewed complete artifact `uses` strings, including their exact pins,
 receive narrow upload/download exceptions; aliases and other 40-digit commits
 cannot bypass attempt/path restrictions.
@@ -134,11 +135,23 @@ existing per-group build/execution and wait at the same producer barrier.
 At most two producers precede at most three concurrent flow groups; they never
 overlap as five macOS jobs. A failed/missing producer or rejected archive leaves
 affected flows `not-run`, fails aggregation and cannot count as an observation.
-The always-run aggregate writes every missing group even if the barrier failed.
+The matrix starts after both producers finish regardless of their result: TV groups
+and the other configuration run normally. The failed configuration fails closed in
+selection and writes not-run evidence. The always-run aggregate writes every missing
+group, reports archive admission failures and retains each group's errors and phases.
 There is no latest/name fallback, download retry or silent rebuild.
 The [separate archive identities and compatibility gate](CI_BUILD_ARCHIVE.md#smoke-archive-reader-explicit-opt-in)
 bind both the admitted nightly source and the authoritative shadow control run.
-Historical tested commits without the v2 reader fail explicitly.
+Historical tested commits without the complete v2 reader, source-plist preflight and
+explicit expected-control contract write a suppressed plan with the reason and a
+90-day not-run record. They never fall back to per-group iOS compilation.
+
+Download, hash, inventory and identity verification precede simulator creation/boot.
+The unchanged 120-second archive allowance covers download and verification; simulator
+creation is charged only to the existing group budget. Loading then checks the pinned
+execution target and the independently supplied expected control. Removing cold builds
+also removes their simulator warm-up buffer before each group's first flow. Hosted
+first-flow failure rates require separate observation; no additional wait is introduced.
 
 Each group uses the pinned simulator and the existing fixture service,
 readiness/reset, official-result export, privacy-scan and process-group cleanup helpers.
@@ -291,10 +304,14 @@ the shadow conclusion fail. A verified skipped automatic night must show only
 plan/aggregate with `not-run`; manually selecting it must execute the groups.
 Legacy group records retain schema 1 and `warm-up, flows` timing. Archive group
 records use schema 2 / `timing_mode=smoke-archive-v2` and require
-`archive-verify, flows`, build provenance and separate transfer/verify durations;
+`archive-verify, flows` and build provenance, with separate transfer/verify diagnostics;
 they never invent a zero warm-up. Shared build runner seconds are counted once,
 from the two producer records. Per-flow native/total time retains preparation,
 reset, export and cleanup costs; queue time remains separate from job clocks.
+Transfer/upload step timings are read by the aggregate after the jobs finish.
+Missing, partial, invalid or failed timing reads stay `unknown` and never fail a
+producer, group or aggregate. Locally measured build/pack/verify times are diagnostics
+too; the existing job-budget start evidence and execution deadlines remain gates.
 The first hosted report must include both producer build/pack/upload durations,
 each iOS group's transfer/verification and each TV group's warm-up/build duration
 and each flow's native and total elapsed seconds from `group_timings` and `flows`.

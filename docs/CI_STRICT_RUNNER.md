@@ -41,8 +41,11 @@ python3 -B scripts/ci_smoke_shadow.py build-local --configuration Debug \
 After verifying the producer manifest/tar hashes and inventory with
 `ci_smoke_shadow.verify_smoke_archive`, extract to a different absolute
 `<relocated-derived>/Build/Products` path. Run the complete iPhone and iPad groups
-sequentially with `--smoke-archive --test-without-building --derived-data-path
-<relocated-derived>`, the concrete pinned destination and explicit configuration.
+sequentially with `--smoke-archive --test-without-building --smoke-control-path
+<absolute-expected-control.json> --derived-data-path <relocated-derived>`, the concrete
+pinned destination and explicit configuration. Derive the expected control independently
+from the admitted plan; for local snapshots use `{"mode":"local","head_sha":"<commit_sha
+from local-snapshot.json>"}`. Never copy it from the archive being admitted.
 Repeat with one Release archive. Keep the original build paths unavailable,
 inspect consumer logs for compilation, and recheck Products after execution.
 There is no compile fallback. Local build/pack timings do not measure hosted upload

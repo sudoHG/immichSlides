@@ -289,9 +289,12 @@ def run(arguments, root, runner, stdout, stderr):
             or arguments.scenario != "normal" or arguments.fixture_set != "a"):
         raise runner.CommandError("smoke-flow accepts no retry, scenario or fixture overrides")
     archive_mode = getattr(arguments, "smoke_archive", False)
+    control_path = getattr(arguments, "smoke_control_path", None)
     if archive_mode and (not arguments.test_without_building or arguments.warm_up_only
-                         or arguments.platform != "ios" or arguments.derived_data_path is None):
-        raise runner.CommandError("smoke archive requires explicit iOS test-without-building and relocated products")
+                         or arguments.platform != "ios" or arguments.derived_data_path is None or control_path is None):
+        raise runner.CommandError("smoke archive requires explicit iOS test-without-building, relocated products and expected control")
+    if control_path is not None and not archive_mode:
+        raise runner.CommandError("expected smoke control requires --smoke-archive")
     manifest, planned, methods = load_manifest(root)
     flows = validate_manifest(manifest, planned)
     selected = select_flows(flows, arguments.smoke_device, arguments.configuration, arguments.smoke_flow)
@@ -325,7 +328,8 @@ def run(arguments, root, runner, stdout, stderr):
         execution = None
         if archive_mode:
             receipt, source_run, execution = load_smoke_archive(root, arguments.configuration, arguments.destination,
-                                                               arguments.smoke_device, derived)
+                                                               arguments.smoke_device, derived,
+                                                               control=json.loads(control_path.read_text()))
         else:
             receipt, source_run = load_warm_build(root, arguments.platform, "smoke-flow", arguments.configuration,
                                                 arguments.destination, derived)

@@ -19,6 +19,7 @@ RECEIPT = "strict-warm-build.json"
 SMOKE_RECEIPT = "strict-smoke-archive.json"
 SMOKE_ARCHIVE_VERSION = 2
 SMOKE_SOURCE_PLIST_PREFLIGHT_VERSION = 1
+SMOKE_EXPECTED_CONTROL_VERSION = 1
 SMOKE_BUILD_DESTINATION = "generic/platform=iOS Simulator"
 
 
@@ -145,11 +146,11 @@ def build_smoke_archive(*, root, configuration, control, derived, packages, outp
                      "archive_sha256": receipt["archive_sha256"], "archive_bytes": (archive / "build.tar.gz").stat().st_size}
 
 
-def load_smoke_archive(root, configuration, destination, device, derived):
+def load_smoke_archive(root, configuration, destination, device, derived, *, control):
     workspace_preflight(root)
     receipt = json.loads((derived / SMOKE_RECEIPT).read_text())
     identity = smoke_build_identity(root, configuration)
-    validate_smoke_receipt(receipt, identity, receipt["control"])
+    validate_smoke_receipt(receipt, identity, control)
     execution = smoke_execution_identity(root, destination, device)
     validate_smoke_compatibility(identity, receipt["architectures"], execution,
                                  json.loads((root / "scripts/ci-pins.json").read_text()))

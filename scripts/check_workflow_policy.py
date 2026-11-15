@@ -500,7 +500,7 @@ def check_shared_shadow_contract(document, events, flag):
         guard = "${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.execute == 'true' }}"
         def plain(step):
             return {key: value for key, value in step.items() if key != "name"}
-        prefix = [{"uses": checkout, "with": {"ref": "main", "fetch-depth": 0, "persist-credentials": False}},
+        prefix = [{"uses": checkout, "with": {"ref": "${{ needs.plan.outputs.control_sha }}", "fetch-depth": 0, "persist-credentials": False}},
                   {"run": SHADOW_STAGE},
                   {"uses": checkout, "with": {"ref": "${{ needs.plan.outputs.head_sha }}", "fetch-depth": 0, "persist-credentials": False}},
                   {"run": SHADOW_STAGED_SETUP},
@@ -535,6 +535,9 @@ def check_shared_shadow_contract(document, events, flag):
             projected["jobs"].pop(role)
         plan_steps = jobs["plan"]["steps"]
         valid &= len(plan_steps) == 4 and plan_steps[2].get("run") == SHADOW_COMMAND + "plan-shared"
+        valid &= jobs["plan"]["outputs"] == {key: "${{ steps.plan.outputs." + key + " }}" for key in
+                                              ("matrix", "head_sha", "control_sha", "execute")}
+        projected["jobs"]["plan"]["outputs"].pop("control_sha")
         projected["jobs"]["plan"]["steps"][2]["run"] = SHADOW_COMMAND + "plan"
         flows = jobs["flows"]
         steps = flows["steps"]
@@ -542,7 +545,7 @@ def check_shared_shadow_contract(document, events, flag):
                          if key in {"SMOKE_GROUP", "SMOKE_TOKEN"} or any(key == "SMOKE_" + config + "_" + field
                             for config in ("DEBUG", "RELEASE") for field in ("ARTIFACT_ID", "MANIFEST_SHA256", "ARCHIVE_SHA256"))}
         valid &= (flows["needs"] == ["plan", "ios-debug", "ios-release"]
-                  and flows["if"] == guard[:-3] + " && needs.ios-debug.result == 'success' && needs.ios-release.result == 'success' }}"
+                  and flows["if"] == guard
                   and len(steps) == 10 and [plain(step) for step in steps[:5]] == prefix
                   and plain(steps[5]) == {"id": "select", "if": "matrix.platform == 'ios'", "env": selection_env,
                                           "run": SHADOW_GROUP_COMMAND + "select-archive"}
@@ -550,16 +553,24 @@ def check_shared_shadow_contract(document, events, flag):
                   and plain(steps[6]) == {"if": "matrix.platform == 'ios'", "uses": download,
                         "with": {"artifact-ids": "${{ steps.select.outputs.artifact_id }}", "path": "${{ runner.temp }}/ci-artifacts/smoke-build",
                                  "merge-multiple": True, "github-token": "${{ github.token }}", "repository": "${{ github.repository }}", "run-id": "${{ github.run_id }}"}}
+                  and steps[7].get("if") == "${{ !cancelled() }}"
                   and steps[8].get("uses") == upload and shadow_artifact_allowed(steps[8]))
         projected["jobs"]["flows"].update(needs="plan", **{"if": guard})
+        projected["jobs"]["flows"]["steps"][0]["with"]["ref"] = "main"
+        projected["jobs"]["flows"]["steps"][7].pop("if")
         del projected["jobs"]["flows"]["steps"][5:7]
         aggregate = jobs["aggregate"]
         valid &= (aggregate["needs"] == ["plan", "ios-debug", "ios-release", "flows"] and len(aggregate["steps"]) == 7
+                  and aggregate["permissions"] == {"contents": "read", "actions": "read"}
+                  and aggregate["steps"][0].get("with") == {"ref": "${{ needs.plan.outputs.control_sha }}",
+                                                                          "fetch-depth": 0, "persist-credentials": False}
                   and plain(aggregate["steps"][4]) == {"if": "always() && needs.plan.outputs.execute == 'true'", "uses": download,
                         "with": {"pattern": "smoke-shadow-producer-*" + suffix, "path": "${{ runner.temp }}/ci-artifacts/smoke-producers"}}
                   and aggregate["steps"][5].get("env") == {key: SHADOW_BINDINGS[key] for key in
-                        ("SMOKE_MATRIX_RESULT", "SMOKE_DEBUG_RESULT", "SMOKE_RELEASE_RESULT")})
+                        ("SMOKE_MATRIX_RESULT", "SMOKE_DEBUG_RESULT", "SMOKE_RELEASE_RESULT", "SMOKE_TOKEN")})
         projected["jobs"]["aggregate"]["needs"] = ["plan", "flows"]
+        projected["jobs"]["aggregate"]["permissions"] = {"contents": "read"}
+        projected["jobs"]["aggregate"]["steps"][0]["with"]["ref"] = "main"
         del projected["jobs"]["aggregate"]["steps"][4]
         projected["jobs"]["aggregate"]["steps"][4]["env"] = {"SMOKE_MATRIX_RESULT": SHADOW_BINDINGS["SMOKE_MATRIX_RESULT"]}
     except (KeyError, TypeError, IndexError, AttributeError):
@@ -1143,6 +1154,12 @@ def check_workflow(path: str, source: str, *, ui_shards=None, run_named_workflow
                 "workflow.jobs." + role + ".steps[2]" for role in ("flows", "ios-debug", "ios-release")})
             if shadow_tested_checkout:
                 allowed_refs.add("${{ needs.plan.outputs.head_sha }}")
+            shadow_control_checkout = (path == SHADOW_WORKFLOW and any(
+                role in document["jobs"] for role in ("ios-debug", "ios-release"))
+                and location in {"workflow.jobs." + role + ".steps[0]" for role in
+                                 ("ios-debug", "ios-release", "flows", "aggregate")})
+            if shadow_control_checkout:
+                allowed_refs.add("${{ needs.plan.outputs.control_sha }}")
             if path == PRIVACY_WORKFLOW and set(events) == {"pull_request_target"}:
                 allowed_refs.update({None, "${{ github.event.pull_request.base.sha }}"})
             repository = options.get("repository")
@@ -1153,7 +1170,8 @@ def check_workflow(path: str, source: str, *, ui_shards=None, run_named_workflow
             if path == REPORT_WORKFLOW and (ref != "main" or options.get("fetch-depth") != 0):
                 flag(location, "report-contract", "Reporter needs explicit main checkout and full history")
             if path == SHADOW_WORKFLOW and options != {
-                    "ref": "${{ needs.plan.outputs.head_sha }}" if shadow_tested_checkout else "main",
+                    "ref": "${{ needs.plan.outputs.head_sha }}" if shadow_tested_checkout else
+                           "${{ needs.plan.outputs.control_sha }}" if shadow_control_checkout else "main",
                     "fetch-depth": 0, "persist-credentials": False}:
                 flag(location, "trusted-checkout", "Shadow executes only the plan-admitted main ancestor, with full history and no stored token")
             if path in XCC_WORKFLOWS | {XCC_DISPATCH_WORKFLOW} and (ref != "main" or options.get("fetch-depth") != 0

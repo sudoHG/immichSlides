@@ -39,6 +39,10 @@ class SmokeShadowWorkflowPolicyTests(unittest.TestCase):
         select = next(index for index, step in enumerate(flow["steps"]) if step.get("id") == "select")
         download = select + 1
         cases = [
+            lambda doc: doc["jobs"]["flows"].update({"if": "${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.execute == 'true' && needs.ios-debug.result == 'success' }}"}),
+            lambda doc: doc["jobs"]["flows"]["steps"][0]["with"].update(ref="main"),
+            lambda doc: doc["jobs"]["aggregate"]["steps"][0]["with"].update(ref="main"),
+            lambda doc: doc["jobs"]["plan"]["outputs"].pop("control_sha"),
             lambda doc: doc["jobs"]["flows"]["steps"].pop(select),
             lambda doc: doc["jobs"]["flows"]["steps"][download]["with"].update(name="latest"),
             lambda doc: doc["jobs"]["flows"]["steps"][download]["with"].pop("artifact-ids"),
@@ -56,10 +60,10 @@ class SmokeShadowWorkflowPolicyTests(unittest.TestCase):
             changed = copy.deepcopy(baseline)
             mutation(changed)
             with self.subTest(mutation=mutation):
-                self.assertTrue(self.violations(changed))
+                self.assertIn("smoke-shadow-contract", {item.rule for item in self.violations(changed)})
         foreign = workflow()
         foreign["jobs"]["check"]["timeout-minutes"] = "${{ matrix.timeout_minutes }}"
-        self.assertTrue(self.violations(foreign, ".github/workflows/ci-gate.yml"))
+        self.assertIn("timeout", {item.rule for item in self.violations(foreign, ".github/workflows/ci-gate.yml")})
 
     def document(self):
         root = Path(__file__).resolve().parent.parent

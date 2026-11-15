@@ -43,6 +43,7 @@ jobs:
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
       head_sha: ${{ steps.plan.outputs.head_sha }}
+      control_sha: ${{ steps.plan.outputs.control_sha }}
       execute: ${{ steps.plan.outputs.execute }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -83,7 +84,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: main
+          ref: ${{ needs.plan.outputs.control_sha }}
           fetch-depth: 0
           persist-credentials: false
       - name: Stage the trusted control entry point before selecting tested source
@@ -154,7 +155,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: main
+          ref: ${{ needs.plan.outputs.control_sha }}
           fetch-depth: 0
           persist-credentials: false
       - name: Stage the trusted control entry point before selecting tested source
@@ -211,7 +212,7 @@ jobs:
 
   flows:
     needs: [plan, ios-debug, ios-release]
-    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.execute == 'true' && needs.ios-debug.result == 'success' && needs.ios-release.result == 'success' }}
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.execute == 'true' }}
     name: smoke-shadow-${{ matrix.id }}
     runs-on: xcode-27
     timeout-minutes: ${{ matrix.timeout_minutes }}
@@ -225,7 +226,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: main
+          ref: ${{ needs.plan.outputs.control_sha }}
           fetch-depth: 0
           persist-credentials: false
       - name: Stage the trusted control entry point before selecting tested source
@@ -268,6 +269,7 @@ jobs:
           run-id: ${{ github.run_id }}
       - name: Verify the archive and run first results against loopback fixtures
         id: run
+        if: ${{ !cancelled() }}
         env:
           SMOKE_GROUP: ${{ matrix.id }}
           SMOKE_TOKEN: ${{ github.token }}
@@ -291,10 +293,11 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
+      actions: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: main
+          ref: ${{ needs.plan.outputs.control_sha }}
           fetch-depth: 0
           persist-credentials: false
       - name: Reject private configuration and install pinned reader packages
@@ -323,6 +326,7 @@ jobs:
           SMOKE_MATRIX_RESULT: ${{ needs.flows.result }}
           SMOKE_DEBUG_RESULT: ${{ needs.ios-debug.result }}
           SMOKE_RELEASE_RESULT: ${{ needs.ios-release.result }}
+          SMOKE_TOKEN: ${{ github.token }}
         run: '"$RUNNER_TEMP/smoke-python/bin/python3" -B scripts/ci_smoke_shadow.py aggregate'
       - name: Publish the scanned comparison record for 90 days
         if: always() && steps.aggregate.outputs.records_safe == 'true'
