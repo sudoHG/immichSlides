@@ -143,7 +143,7 @@ def load_warm_build(root, platform, suite, configuration, destination, derived):
         raise CommandError("Warm build receipt is missing or invalid; run an explicit warm-up.") from error
 
 
-def prepare_test_run(source, directory, environment, *, first_failure_spool=None, failure_screenshots=False):
+def prepare_test_run(source, directory, environment):
     # xctestrun resolves __TESTROOT__ against its own parent. Absolutize it before
     # writing the per-case copy outside immutable Products.
     directory.mkdir(parents=True, exist_ok=True)
@@ -174,14 +174,6 @@ def prepare_test_run(source, directory, environment, *, first_failure_spool=None
     selected[0]["EnvironmentVariables"].update(
         {key: value for key, value in environment.items() if key.startswith("STRICT_E2E_")}
     )
-    if first_failure_spool is not None:
-        from ci_failure_diagnostics import first_failure_environment
-        spool, selectors = first_failure_spool
-        selected[0]["EnvironmentVariables"].update(
-            first_failure_environment(spool, selectors, screenshots=failure_screenshots))
-    if failure_screenshots:
-        selected[0]["PreferredScreenCaptureFormat"] = "screenshots"
-        selected[0]["SystemAttachmentLifetime"] = "deleteOnSuccess"
     path = directory / "case.xctestrun"
     path.write_bytes(plistlib.dumps(payload))
     return path

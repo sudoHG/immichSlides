@@ -8331,6 +8331,8 @@ class SmokeFlowResultTests(unittest.TestCase):
                 target = runner.prepared_target
                 self.assertEqual({key: target[key] for key in ("PreferredScreenCaptureFormat", "SystemAttachmentLifetime")
                                   if key in target}, capture_format)
+                self.assertFalse(any(key.startswith("STRICT_E2E_FIRST_FAILURE_")
+                                     for key in runner.run_command.call_args.kwargs["environment"]))
                 inputs = target["EnvironmentVariables"]
                 self.assertEqual(inputs["STRICT_E2E_FIRST_FAILURE_SCREENSHOT"], "1")
                 self.assertEqual(json.loads(inputs["STRICT_E2E_FIRST_FAILURE_TESTS"]), {record["selector"]: 0})
