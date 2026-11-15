@@ -8486,8 +8486,8 @@ class SmokeFlowResultTests(unittest.TestCase):
             command = runner.run_command.call_args.args[0]
             self.assertEqual("YES", command[command.index("-test-timeouts-enabled") + 1])
             for flag in ("-default-test-execution-time-allowance", "-maximum-test-execution-time-allowance"):
-                self.assertEqual("120", command[command.index(flag) + 1])
-            self.assertEqual(270, runner.run_command.call_args.kwargs["timeout_seconds"])
+                self.assertEqual("180", command[command.index(flag) + 1])
+            self.assertEqual(330, runner.run_command.call_args.kwargs["timeout_seconds"])
             self.assertEqual(150, smoke.STARTUP_OVERHEAD_SECONDS)
 
     def test_smoke_warm_source_root_stays_private_while_legacy_receipts_stay_unchanged(self):

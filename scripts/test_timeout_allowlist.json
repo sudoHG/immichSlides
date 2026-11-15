@@ -300,6 +300,18 @@
     "count": 1
   },
   {
+    "path": "immichSlidesUITests/SmokeFlowIOSUITests.swift",
+    "function": "SmokeFlowIOSUITests.iosSmokeFlow",
+    "literal": "letguardWait=TestWait.hangGuard(timeoutSeconds:120)",
+    "count": 1
+  },
+  {
+    "path": "immichSlidesUITests/SmokeFlowTVOSUITests+Support.swift",
+    "function": "SmokeFlowTVOSUITests.tvSmokeRunFlow",
+    "literal": "letguardWait=TestWait.hangGuard(timeoutSeconds:120)",
+    "count": 1
+  },
+  {
     "path": "TestSupport/AccessLifecycleContract.swift",
     "function": "AccessLifecycleContract.assertSystemPauseIdentityTiming",
     "literal": "letwindow=screenshotOrder[(before+1)..<after]",

@@ -174,8 +174,8 @@ recorder's `withheld-privacy` status and publish no image. The sensitive scan co
 the entire group immediately before its upload-safety output, including the PNGs.
 Smoke keeps the original XCTest screen-capture format and attachment lifetime;
 only the recorder requests its own `XCUIScreen.main.screenshot()`. The recorder's
-synchronous AX snapshot, screenshot and thumbnail work counts toward the unchanged
-120-second method allowance and 270-second native invocation cap. When comparing
+synchronous AX snapshot, screenshot and thumbnail work counts toward the smoke
+180-second method allowance and 330-second native invocation cap. When comparing
 earlier shadows, treat a failure-category shift (for example `xctest-tool` to
 `unknown`, or a new `hang-guard`) as possibly caused by this failure-path work.
 At aggregation, an invalid or stale optional `first_failure` receipt is dropped
@@ -226,7 +226,7 @@ checkout, setup and plan download consume that same budget. Groups have only
 read access to actions for this clock lookup. Missing, ambiguous or invalid job
 start evidence fails closed. The budget bounds transfer/verification plus flows
 (or TV build plus flows); it does not multiply
-the runner's 270-second per-flow limit (120 seconds for the method and 150 for
+the runner's 330-second per-flow limit (180 seconds for the method and 150 for
 startup/teardown) into a larger job budget. A group that exhausts this
 budget fails and records unfinished flows, even if every per-flow limit has not
 been reached.
@@ -235,6 +235,40 @@ immediately after lookup, including on lookup failure, before tested runner
 processes can inherit it.
 GitHub queue delays are measured separately from that envelope. Reaching a cap
 fails; it does not extend product waits or produce passing evidence.
+
+Hogan approved the smoke-only guard increase from 60 to 120 seconds on 2026-11-15,
+with matching method/native caps of 180/330 seconds, after five hosted first failures
+exhausted the guard while the App showed normal playback. The
+[runner guide](CI_STRICT_RUNNER.md#short-smoke-flow-suite) records the evidence and scope.
+Group budgets above stay fixed. A flow failing at the shared guard may use up to
+60 seconds more; the added group time is at most the flow count times 60 seconds:
+
+| Group | Flows | Guard time before → after | Added time | Native caps after (before) |
+|---|---:|---:|---:|---:|
+| iPhone Debug | 6 | 360 → 720 s | 360 s | 1980 s (1620 s) |
+| iPhone Release | 2 | 120 → 240 s | 120 s | 660 s (540 s) |
+| iPad Debug | 4 | 240 → 480 s | 240 s | 1320 s (1080 s) |
+| iPad Release | 1 | 60 → 120 s | 60 s | 330 s (270 s) |
+| TV Debug | 6 | 360 → 720 s | 360 s | 1980 s (1620 s) |
+| TV Release | 4 | 240 → 480 s | 240 s | 1320 s (1080 s) |
+
+For the per-group cold-build path before #751, the 1200-second build cap plus guard time is
+1920/1440/1680/1320/1920/1680 seconds in table order, before other overhead.
+Build plus native caps is 3180/1860/2520/1530/3180/2520 seconds. Thus complete
+worst-case execution does **not** fit all groups' 1620-second iOS / 1320-second TV
+inner deadlines. Even the old six-flow native sum was `6 × 270 = 1620` seconds
+before build or overhead, so this limitation predates the increase.
+
+With the merged iOS shared-build path in
+[#751](https://github.com/sudoHG/immichSlides/pull/751), iOS consumers avoid their
+per-group cold build: their guard sums are 720/240/480/120 seconds and native sums
+1980/660/1320/330 seconds, plus download, verification, preparation and export.
+TV retains its cold build and the values above. Shared builds reduce repeated work
+but cannot make a six-flow `6 × 330 = 1980`-second native worst case fit 27 minutes.
+The unchanged group deadline terminates such a group, retains first results and
+marks unfinished flows `not-run`; that incomplete shadow does not count toward
+the approved 5–7 shadow runs or 10 actually executed nights. No complete worst-case
+or hosted completion guarantee follows from the common guard-failure arithmetic.
 
 An automatically triggered shadow after a **verified unchanged-night skip**
 writes an explicit `not-run` record and summary without scheduling device jobs.

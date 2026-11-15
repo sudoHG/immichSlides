@@ -2,6 +2,7 @@ import sys
 import unittest
 import copy
 import json
+import re
 import tempfile
 from unittest.mock import patch
 from pathlib import Path
@@ -47,6 +48,33 @@ class NavigationWaitTests(unittest.TestCase):
                              ('immichSlidesUITests/Flow.swift', focus)):
             with self.subTest(path=path, source=source):
                 self.assertEqual(['hang-guard-duration'], rules(conv.check_navigation_waits(path, source)))
+        smoke_paths = {
+            'immichSlidesUITests/SmokeFlowIOSUITests.swift': 'iosSmokeFlow',
+            'immichSlidesUITests/SmokeFlowTVOSUITests+Support.swift': 'tvSmokeRunFlow',
+        }
+        for path, function in smoke_paths.items():
+            smoke = f'func {function}() {{ let wait = TestWait.hangGuard(timeoutSeconds: 120) }}'
+            self.assertEqual([], conv.check_navigation_waits(path, smoke))
+            for candidate_path, source in (
+                    (path, smoke.replace('120', '180')),
+                    (path, smoke.replace(function, 'otherNavigation')),
+                    ('immichSlidesUITests/Flow.swift', smoke)):
+                with self.subTest(path=candidate_path, source=source):
+                    self.assertEqual(['hang-guard-duration'], rules(conv.check_navigation_waits(candidate_path, source)))
+
+    def test_smoke_guard_overrides_preserve_the_shared_default(self):
+        allowed = json.loads((REPO_ROOT / conv.TIMEOUT_ALLOWLIST_PATH).read_text())
+        for relative in ('immichSlidesUITests/SmokeFlowIOSUITests.swift',
+                         'immichSlidesUITests/SmokeFlowTVOSUITests+Support.swift'):
+            with self.subTest(path=relative):
+                source = conv.mask_comments((REPO_ROOT / relative).read_text(), mask_strings=True)
+                self.assertEqual(['timeoutSeconds: 120'],
+                                 re.findall(r'\bTestWait\.hangGuard\s*\(([^)]*)\)', source))
+                self.assertEqual(([], []), conv.partition_timeout_allowlist(
+                    conv.timeout_literal_inventory(relative, source),
+                    [entry for entry in allowed if entry['path'] == relative]))
+        shared = conv.mask_comments((REPO_ROOT / 'TestSupport/TestWait.swift').read_text(), mask_strings=True)
+        self.assertRegex(shared, r'\bstatic func hangGuard\(\s*timeoutSeconds: TimeInterval = 60,')
 
 
 class ForbiddenNameTests(unittest.TestCase):
