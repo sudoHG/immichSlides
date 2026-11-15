@@ -384,6 +384,9 @@ def aggregate(plan, records, matrix_result, *, producers=None, producer_results=
             archive_mode = plan.get("build_mode") == ARCHIVE_MODE and group["platform"] == "ios"
             if archive_mode and group["configuration"] not in admitted_builds:
                 continue
+            if archive_mode and record.get("build_provenance") != admitted_builds[group["configuration"]]:
+                errors.append("group archive provenance differs: " + group_id)
+                continue
             if (record.get("schema_version") != (2 if archive_mode else 1) or record.get("shadow") != plan["shadow"]
                     or record.get("head_sha") != plan["head_sha"]
                     or record.get("manifest_sha256") != plan["manifest_sha256"]):
@@ -923,6 +926,8 @@ def run_group(scheduling, environment, temporary):
                 if archive_mode and not warm:
                     from strict_e2e_build import load_smoke_archive, smoke_build_identity
                     selection = decode((temporary / "smoke-archive-selection.json").read_text())
+                    require(0 <= time.time() - selection["transfer_started_epoch"] <= 120,
+                            "smoke archive transfer/verification allowance exhausted")
                     provenance = selection["provenance"]
                     validate_build_provenance(provenance, scheduling, group["configuration"])
                     identity = smoke_build_identity(ROOT, group["configuration"])
@@ -932,6 +937,8 @@ def run_group(scheduling, environment, temporary):
                         expected_identity=identity, control=scheduling["control"],
                         manifest_hash=provenance["manifest_sha256"], archive_hash=provenance["archive_sha256"])
                     load_smoke_archive(ROOT, group["configuration"], destination, group["device"], root / "derived")
+                    require(time.time() - selection["transfer_started_epoch"] <= 120,
+                            "smoke archive transfer/verification allowance exhausted")
                     record["build_provenance"] = provenance
                     code = 0
                 else:
@@ -1012,15 +1019,30 @@ def cleanup(environment, temporary):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("phase", choices=("stage", "setup", "plan", "plan-shared", "build", "producer-record",
-                                          "select-archive", "build-local", "run", "aggregate", "cleanup"))
+                                          "select-archive", "build-local", "verify-local", "run", "aggregate", "cleanup"))
     parser.add_argument("--configuration", choices=("Debug", "Release"))
     parser.add_argument("--derived-data-path", type=Path)
     parser.add_argument("--packages-path", type=Path)
     parser.add_argument("--output-dir", type=Path)
+    parser.add_argument("--archive-dir", type=Path)
+    parser.add_argument("--relocated-path", type=Path)
+    parser.add_argument("--manifest-sha256")
+    parser.add_argument("--archive-sha256")
     args = parser.parse_args(argv)
     environment = dict(os.environ)
     temporary = Path(environment.get("RUNNER_TEMP", "/tmp"))
     try:
+        if args.phase == "verify-local":
+            from strict_e2e_build import smoke_build_identity
+            require(os.environ.get("GITHUB_ACTIONS") != "true" and args.configuration and args.archive_dir
+                    and args.relocated_path and args.manifest_sha256 and args.archive_sha256,
+                    "local archive verification requires explicit configuration, paths and producer hashes")
+            verify_smoke_archive(args.archive_dir.resolve(), args.relocated_path.resolve(),
+                expected_identity=smoke_build_identity(ROOT, args.configuration),
+                control={"mode": "local", "head_sha": git("rev-parse", "HEAD")},
+                manifest_hash=args.manifest_sha256, archive_hash=args.archive_sha256)
+            print("Relocated smoke archive verified; no compilation", flush=True)
+            return 0
         if args.phase == "build-local":
             from ci_build_archive import disk_check
             from strict_e2e_build import build_smoke_archive
@@ -1092,4 +1114,7 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    if sys.argv[1:2] in (["build-local"], ["verify-local"]):
+        from ci_local import local_main
+        raise SystemExit(local_main(main, __file__))
     raise SystemExit(main())

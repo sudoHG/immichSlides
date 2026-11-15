@@ -26,6 +26,29 @@ python3 -B scripts/run_strict_e2e.py --suite smoke-flow --platform ios \
 ```
 
 Use `ipad` with `ios`, or `tv` with `tvos`, and the matching pinned simulator.
+The shadow iOS groups instead explicitly select the
+[smoke archive v2 protocol](CI_BUILD_ARCHIVE.md#smoke-archive-reader-explicit-opt-in).
+Its two generic producers preserve the same scheme, plan and configurations;
+concrete execution identities are checked separately against pins. For local
+relocation verification, build one archive per configuration from a clean commit:
+
+```bash
+python3 -B scripts/ci_smoke_shadow.py build-local --configuration Debug \
+  --derived-data-path '<task-derived>/generic-debug' \
+  --packages-path '<task-packages>' --output-dir '<fresh-outside-repo>/debug-producer'
+```
+
+After verifying the producer manifest/tar hashes and inventory with
+`ci_smoke_shadow.verify_smoke_archive`, extract to a different absolute
+`<relocated-derived>/Build/Products` path. Run the complete iPhone and iPad groups
+sequentially with `--smoke-archive --test-without-building --derived-data-path
+<relocated-derived>`, the concrete pinned destination and explicit configuration.
+Repeat with one Release archive. Keep the original build paths unavailable,
+inspect consumer logs for compilation, and recheck Products after execution.
+There is no compile fallback. Local build/pack timings do not measure hosted upload
+or transfer latency. Use the workspace heavy/device-slot/watchdog wrappers and
+80 GiB disk gate; dispose owned inputs only after their holder checks succeed.
+
 Configuration is explicit. A selection runs every matching flow in manifest order;
 an empty selection fails. Without explicit warm-up/reuse the runner builds once in
 disposable DerivedData. Reuse retains the strict signed Products/source identity checks.

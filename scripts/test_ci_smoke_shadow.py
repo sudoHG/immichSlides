@@ -7,6 +7,7 @@ import os
 import plistlib
 import tempfile
 import time
+import tarfile
 import unittest
 from contextlib import ExitStack
 from pathlib import Path
@@ -125,6 +126,27 @@ def plan_fixture(temporary, stack, *, ancestor=0):
 
 
 class SmokeShadowTests(unittest.TestCase):
+    def test_shared_control_requires_authoritative_main_run_and_keeps_the_staged_source_separate(self):
+        with tempfile.TemporaryDirectory() as raw:
+            context = dict(environment(), RUNNER_TEMP=raw,
+                           GITHUB_WORKFLOW_REF=REPOSITORY + "/" + shadow.WORKFLOW + "@refs/heads/main")
+            run = dict(nightly(), id=200, path=shadow.WORKFLOW, workflow_id=8, head_sha="b" * 40, event="workflow_run")
+            workflow = {"id": 8, "path": shadow.WORKFLOW}
+            api = SimpleNamespace(repo=lambda path: run if path == "actions/runs/200" else workflow)
+            with patch.object(shadow.subprocess, "call", return_value=0), patch.object(shadow, "git", return_value="c" * 40):
+                control = shadow.authoritative_control(context, api)
+                self.assertEqual((control["api_head_sha"], control["control_source_sha"], control["run_id"]),
+                                 ("b" * 40, "c" * 40, "200"))
+                for field, value in (("head_sha", HEAD), ("head_branch", "topic"), ("run_attempt", 2),
+                                     ("workflow_id", 9), ("path", shadow.NIGHTLY),
+                                     ("repository", {"full_name": "other/repo"})):
+                    changed = dict(run, **{field: value})
+                    bad_api = SimpleNamespace(repo=lambda path: changed if path == "actions/runs/200" else workflow)
+                    with self.subTest(field=field), self.assertRaisesRegex(ValueError, "control API provenance"):
+                        shadow.authoritative_control(context, bad_api)
+            with patch.object(shadow.subprocess, "call", return_value=1), self.assertRaisesRegex(ValueError, "admitted main"):
+                shadow.authoritative_control(context, api)
+
     def test_smoke_archive_gate_rejects_hash_inventory_links_configuration_and_signature_before_admission(self):
         import ci_build_archive as archive
         import strict_e2e_build as build
@@ -147,13 +169,18 @@ class SmokeShadowTests(unittest.TestCase):
                 if defect == "inventory":
                     next(entry for entry in receipt["products"] if entry["kind"] == "file")["sha256"] = "f" * 64
                 if defect == "link":
+                    (products / "escape").symlink_to("../../outside")
+                    with tarfile.open(directory / "build.tar.gz", "w:gz", dereference=False) as packed:
+                        packed.add(products, arcname="Products")
                     receipt["products"].append({"path": "Products/escape", "kind": "symlink", "mode": 511, "target": "../../outside"})
+                    receipt["archive_sha256"] = archive.file_hash(directory / "build.tar.gz")
                 if defect == "configuration":
                     receipt["identity"]["configuration"] = "Debug"
                 shadow.write_json(directory / "manifest.json", receipt)
                 digest = archive.file_hash(directory / "manifest.json")
                 if defect == "manifest":
-                    (directory / "manifest.json").write_text("{}")
+                    with (directory / "manifest.json").open("a") as handle:
+                        handle.write("\n")
                 if defect == "tar":
                     with (directory / "build.tar.gz").open("ab") as handle:
                         handle.write(b"changed")

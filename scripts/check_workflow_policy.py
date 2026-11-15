@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import re
 import shlex
 import sys
@@ -38,6 +39,12 @@ SHADOW_CONCURRENCY_GROUP = ("${{ (" + SHADOW_PLAN_GUARD + ") && "
     "'ci-smoke-shadow' || format('ci-smoke-shadow-rejected-{0}', github.run_id) }}")
 SHADOW_BINDINGS = {"SMOKE_NIGHTLY_RUN_ID": "${{ inputs.nightly_run_id }}", "SMOKE_TOKEN": "${{ github.token }}",
                    "SMOKE_GROUP": "${{ matrix.id }}", "SMOKE_MATRIX_RESULT": "${{ needs.flows.result }}"}
+SHADOW_CONFIGURATION = "${{ github.job == 'ios-debug' && 'Debug' || 'Release' }}"
+SHADOW_BINDINGS.update(SMOKE_CONFIGURATION=SHADOW_CONFIGURATION, SMOKE_ARTIFACT_ID="${{ steps.archive.outputs.artifact-id }}")
+for _configuration in ("debug", "release"):
+    SHADOW_BINDINGS["SMOKE_" + _configuration.upper() + "_RESULT"] = "${{ needs.ios-" + _configuration + ".result }}"
+    for _field in ("artifact_id", "manifest_sha256", "archive_sha256"):
+        SHADOW_BINDINGS["SMOKE_" + _configuration.upper() + "_" + _field.upper()] = "${{ needs.ios-" + _configuration + ".outputs." + _field + " }}"
 SHADOW_SETUP = "/usr/bin/python3 -B scripts/ci_smoke_shadow.py setup"
 SHADOW_STAGE = "/usr/bin/python3 -B scripts/ci_smoke_shadow.py stage"
 SHADOW_STAGED_SETUP = '/usr/bin/python3 -B "$RUNNER_TEMP/smoke-control/ci_smoke_shadow.py" setup'
@@ -255,8 +262,9 @@ def trusted_run_allowed(script, path, events):
         return False
     script = script.strip()
     if path == SHADOW_WORKFLOW and set(events) == {"workflow_run", "workflow_dispatch"}:
-        return script in {SHADOW_SETUP, SHADOW_STAGE, SHADOW_STAGED_SETUP, SHADOW_COMMAND + "plan", SHADOW_COMMAND + "aggregate",
-                          SHADOW_GROUP_COMMAND + "run", SHADOW_GROUP_COMMAND + "cleanup"}
+        return script in {SHADOW_SETUP, SHADOW_STAGE, SHADOW_STAGED_SETUP, SHADOW_COMMAND + "plan", SHADOW_COMMAND + "plan-shared",
+                          SHADOW_COMMAND + "aggregate", SHADOW_GROUP_COMMAND + "build", SHADOW_GROUP_COMMAND + "producer-record",
+                          SHADOW_GROUP_COMMAND + "select-archive", SHADOW_GROUP_COMMAND + "run", SHADOW_GROUP_COMMAND + "cleanup"}
     if path == XCC_DISPATCH_WORKFLOW and set(events) == {"workflow_run"}:
         if script in {'"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_xcode_cloud_dispatch.py',
                       '/usr/bin/python3 scripts/setup_ci_publisher_python.py --venv "$RUNNER_TEMP/ci-python"'}:
@@ -460,18 +468,111 @@ def shadow_artifact_allowed(item):
     if uses == "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093":
         return options in (
             {"name": "smoke-shadow-plan" + suffix, "path": "${{ runner.temp }}/ci-artifacts/smoke-plan"},
-            {"pattern": "smoke-shadow-group-*" + suffix, "path": "${{ runner.temp }}/ci-artifacts/smoke-groups"})
+            {"pattern": "smoke-shadow-group-*" + suffix, "path": "${{ runner.temp }}/ci-artifacts/smoke-groups"},
+            {"pattern": "smoke-shadow-producer-*" + suffix, "path": "${{ runner.temp }}/ci-artifacts/smoke-producers"},
+            {"artifact-ids": "${{ steps.select.outputs.artifact_id }}", "path": "${{ runner.temp }}/ci-artifacts/smoke-build",
+             "merge-multiple": True, "github-token": "${{ github.token }}", "repository": "${{ github.repository }}", "run-id": "${{ github.run_id }}"})
     if uses != "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02":
         return False
+    if (options == {"name": "${{ steps.build.outputs.artifact_name }}", "path": "${{ runner.temp }}/smoke-producer/output/archive",
+                    "retention-days": 1, "compression-level": 0, "if-no-files-found": "error"}
+            and item.get("if") == "steps.build.outputs.archive_safe == 'true'"):
+        return True
     return any(options == {"retention-days": retention, "if-no-files-found": "error", "name": name + suffix,
                            "path": "${{ runner.temp }}/" + path}
                and item.get("if") == guard for name, path, guard, retention in (
                    ("smoke-shadow-plan", "smoke-plan/plan.json", "steps.plan.outputs.records_safe == 'true'", 7),
                    ("smoke-shadow-group-${{ matrix.id }}", "smoke-records", "always() && steps.run.outputs.records_safe == 'true'", 7),
+                   ("smoke-shadow-producer-${{ github.job }}", "smoke-producer-records", "always() && steps.record.outputs.records_safe == 'true'", 7),
                    ("smoke-shadow", "smoke-shadow", "always() && steps.aggregate.outputs.records_safe == 'true'", 90)))
 
 
+def check_shared_shadow_contract(document, events, flag):
+    """Validate the added graph, then preserve every original shadow rule on its projection."""
+    jobs = document["jobs"]
+    projected = copy.deepcopy(document)
+    valid = set(jobs) == {"plan", "ios-debug", "ios-release", "flows", "aggregate"}
+    try:
+        upload = "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        download = "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
+        checkout = "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
+        suffix = "-${{ github.run_id }}-${{ github.run_attempt }}"
+        guard = "${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.execute == 'true' }}"
+        def plain(step):
+            return {key: value for key, value in step.items() if key != "name"}
+        prefix = [{"uses": checkout, "with": {"ref": "main", "fetch-depth": 0, "persist-credentials": False}},
+                  {"run": SHADOW_STAGE},
+                  {"uses": checkout, "with": {"ref": "${{ needs.plan.outputs.head_sha }}", "fetch-depth": 0, "persist-credentials": False}},
+                  {"run": SHADOW_STAGED_SETUP},
+                  {"uses": download, "with": {"name": "smoke-shadow-plan" + suffix,
+                                              "path": "${{ runner.temp }}/ci-artifacts/smoke-plan"}}]
+        config_env = {"SMOKE_CONFIGURATION": SHADOW_CONFIGURATION}
+        build_env = dict(config_env, SMOKE_TOKEN=SHADOW_BINDINGS["SMOKE_TOKEN"])
+        for role in ("ios-debug", "ios-release"):
+            job = jobs[role]
+            valid &= (set(job) == {"needs", "if", "name", "runs-on", "timeout-minutes", "permissions", "outputs", "steps"}
+                      and job["needs"] == "plan" and job["if"] == guard and job["name"] == "smoke-shadow-" + role
+                      and job["runs-on"] == "xcode-27" and job["timeout-minutes"] == 30
+                      and job["permissions"] == {"contents": "read", "actions": "read"}
+                      and job["outputs"] == {"artifact_id": "${{ steps.archive.outputs.artifact-id }}",
+                           "manifest_sha256": "${{ steps.build.outputs.manifest_sha256 }}",
+                           "archive_sha256": "${{ steps.build.outputs.archive_sha256 }}"})
+            steps = job["steps"]
+            expected = prefix + [
+                {"id": "build", "env": build_env, "run": SHADOW_GROUP_COMMAND + "build"},
+                {"id": "archive", "if": "steps.build.outputs.archive_safe == 'true'", "uses": upload,
+                 "with": {"name": "${{ steps.build.outputs.artifact_name }}", "path": "${{ runner.temp }}/smoke-producer/output/archive",
+                          "retention-days": 1, "compression-level": 0, "if-no-files-found": "error"}},
+                {"id": "record", "if": "always()", "env": dict(build_env, SMOKE_ARTIFACT_ID=SHADOW_BINDINGS["SMOKE_ARTIFACT_ID"]),
+                 "run": SHADOW_GROUP_COMMAND + "producer-record"},
+                {"if": "always() && steps.record.outputs.records_safe == 'true'", "uses": upload,
+                 "with": {"name": "smoke-shadow-producer-${{ github.job }}" + suffix, "path": "${{ runner.temp }}/smoke-producer-records",
+                          "retention-days": 7, "if-no-files-found": "error"}},
+                {"if": "always()", "env": config_env, "run": SHADOW_GROUP_COMMAND + "cleanup"}]
+            valid &= ([plain(step) for step in steps] == expected
+                      and steps[5].get("name") == "Build the generic smoke configuration"
+                      and steps[6].get("name") == "Publish the immutable configuration archive")
+            projected["jobs"].pop(role)
+        plan_steps = jobs["plan"]["steps"]
+        valid &= len(plan_steps) == 4 and plan_steps[2].get("run") == SHADOW_COMMAND + "plan-shared"
+        projected["jobs"]["plan"]["steps"][2]["run"] = SHADOW_COMMAND + "plan"
+        flows = jobs["flows"]
+        steps = flows["steps"]
+        selection_env = {key: value for key, value in SHADOW_BINDINGS.items()
+                         if key in {"SMOKE_GROUP", "SMOKE_TOKEN"} or any(key == "SMOKE_" + config + "_" + field
+                            for config in ("DEBUG", "RELEASE") for field in ("ARTIFACT_ID", "MANIFEST_SHA256", "ARCHIVE_SHA256"))}
+        valid &= (flows["needs"] == ["plan", "ios-debug", "ios-release"]
+                  and flows["if"] == guard[:-3] + " && needs.ios-debug.result == 'success' && needs.ios-release.result == 'success' }}"
+                  and len(steps) == 10 and [plain(step) for step in steps[:5]] == prefix
+                  and plain(steps[5]) == {"id": "select", "if": "matrix.platform == 'ios'", "env": selection_env,
+                                          "run": SHADOW_GROUP_COMMAND + "select-archive"}
+                  and steps[6].get("name") == "Download the selected configuration archive"
+                  and plain(steps[6]) == {"if": "matrix.platform == 'ios'", "uses": download,
+                        "with": {"artifact-ids": "${{ steps.select.outputs.artifact_id }}", "path": "${{ runner.temp }}/ci-artifacts/smoke-build",
+                                 "merge-multiple": True, "github-token": "${{ github.token }}", "repository": "${{ github.repository }}", "run-id": "${{ github.run_id }}"}}
+                  and steps[8].get("uses") == upload and shadow_artifact_allowed(steps[8]))
+        projected["jobs"]["flows"].update(needs="plan", **{"if": guard})
+        del projected["jobs"]["flows"]["steps"][5:7]
+        aggregate = jobs["aggregate"]
+        valid &= (aggregate["needs"] == ["plan", "ios-debug", "ios-release", "flows"] and len(aggregate["steps"]) == 7
+                  and plain(aggregate["steps"][4]) == {"if": "always() && needs.plan.outputs.execute == 'true'", "uses": download,
+                        "with": {"pattern": "smoke-shadow-producer-*" + suffix, "path": "${{ runner.temp }}/ci-artifacts/smoke-producers"}}
+                  and aggregate["steps"][5].get("env") == {key: SHADOW_BINDINGS[key] for key in
+                        ("SMOKE_MATRIX_RESULT", "SMOKE_DEBUG_RESULT", "SMOKE_RELEASE_RESULT")})
+        projected["jobs"]["aggregate"]["needs"] = ["plan", "flows"]
+        del projected["jobs"]["aggregate"]["steps"][4]
+        projected["jobs"]["aggregate"]["steps"][4]["env"] = {"SMOKE_MATRIX_RESULT": SHADOW_BINDINGS["SMOKE_MATRIX_RESULT"]}
+    except (KeyError, TypeError, IndexError, AttributeError):
+        valid = False
+    if not valid:
+        flag("workflow", "smoke-shadow-contract", "Shared shadow requires two 27/30-minute producers, immutable configuration downloads, verification, read-only provenance and always aggregation; capacity is 100 minutes / 230 runner minutes")
+    else:
+        check_shadow_contract(projected, events, flag)
+
+
 def check_shadow_contract(document, events, flag):
+    if any(role in document["jobs"] for role in ("ios-debug", "ios-release")):
+        return check_shared_shadow_contract(document, events, flag)
     expected_events = {"workflow_run": {"workflows": ["ci-nightly"], "branches": ["main"], "types": ["completed"]},
         "workflow_dispatch": {"inputs": {"nightly_run_id": {
             "description": "Completed main ci-nightly run to compare at its head SHA", "required": True, "type": "string"}}}}
@@ -1038,7 +1139,9 @@ def check_workflow(path: str, source: str, *, ui_shards=None, run_named_workflow
         if isinstance(uses, str) and uses.split("@")[0].lower() == "actions/checkout":
             ref = options.get("ref")
             allowed_refs = {"main", "refs/heads/main", "${{ github.event.repository.default_branch }}"}
-            if path == SHADOW_WORKFLOW and location == "workflow.jobs.flows.steps[2]":
+            shadow_tested_checkout = (path == SHADOW_WORKFLOW and location in {
+                "workflow.jobs." + role + ".steps[2]" for role in ("flows", "ios-debug", "ios-release")})
+            if shadow_tested_checkout:
                 allowed_refs.add("${{ needs.plan.outputs.head_sha }}")
             if path == PRIVACY_WORKFLOW and set(events) == {"pull_request_target"}:
                 allowed_refs.update({None, "${{ github.event.pull_request.base.sha }}"})
@@ -1050,7 +1153,7 @@ def check_workflow(path: str, source: str, *, ui_shards=None, run_named_workflow
             if path == REPORT_WORKFLOW and (ref != "main" or options.get("fetch-depth") != 0):
                 flag(location, "report-contract", "Reporter needs explicit main checkout and full history")
             if path == SHADOW_WORKFLOW and options != {
-                    "ref": "${{ needs.plan.outputs.head_sha }}" if location == "workflow.jobs.flows.steps[2]" else "main",
+                    "ref": "${{ needs.plan.outputs.head_sha }}" if shadow_tested_checkout else "main",
                     "fetch-depth": 0, "persist-credentials": False}:
                 flag(location, "trusted-checkout", "Shadow executes only the plan-admitted main ancestor, with full history and no stored token")
             if path in XCC_WORKFLOWS | {XCC_DISPATCH_WORKFLOW} and (ref != "main" or options.get("fetch-depth") != 0
