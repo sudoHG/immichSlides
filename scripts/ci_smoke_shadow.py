@@ -131,7 +131,8 @@ def verify_smoke_archive(directory, derived, *, expected_identity, control, mani
 
 def plan_shared(scheduling, environment, api):
     support = git("show", scheduling["head_sha"] + ":scripts/strict_e2e_build.py")
-    require("SMOKE_ARCHIVE_VERSION = 2" in support, "tested source predates the smoke archive v2 reader")
+    require("SMOKE_ARCHIVE_VERSION = 2" in support and "SMOKE_SOURCE_PLIST_PREFLIGHT_VERSION = 1" in support,
+            "tested source predates the complete smoke archive v2 producer contract")
     scheduling.update(build_mode=ARCHIVE_MODE, tested_source=source_at_commit(scheduling["head_sha"]),
                       control=authoritative_control(environment, api))
 

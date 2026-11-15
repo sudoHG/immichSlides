@@ -15,6 +15,11 @@ Control provenance separately binds the shadow repository, run, first attempt,
 workflow ID/path, API head, admitted-main flag and staged main control commit.
 The artifact API head identifies that control run; it must never substitute for
 the admitted nightly's tested commit, even when two commits have the same tree.
+Before and after compilation, the producer repeats workspace preflight and verifies
+that the regular source Info.plist's server fields contain only their exact build-variable
+references. After compilation it also requires the resolved product fields to be empty.
+Historical tested heads need both the v2 receipt and source-plist preflight capabilities;
+the controller never modifies an old checkout to manufacture support.
 
 An immutable configuration-specific artifact ID and producer-output manifest/tar
 hashes precede extraction. The existing traversal/link, complete inventory, plist

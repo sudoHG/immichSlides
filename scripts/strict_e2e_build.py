@@ -18,6 +18,7 @@ from strict_e2e_runner_support import CommandError, PLATFORM_SETTINGS, SETTINGS_
 RECEIPT = "strict-warm-build.json"
 SMOKE_RECEIPT = "strict-smoke-archive.json"
 SMOKE_ARCHIVE_VERSION = 2
+SMOKE_SOURCE_PLIST_PREFLIGHT_VERSION = 1
 SMOKE_BUILD_DESTINATION = "generic/platform=iOS Simulator"
 
 
@@ -101,9 +102,18 @@ def validate_smoke_receipt(receipt, expected_identity, control):
     validate_links(receipt["products"])
 
 
+def check_smoke_source_plist(root):
+    path = root / "immichSlides/Info.plist"
+    require(path.is_file() and not path.is_symlink(), "source app plist must be a regular file")
+    values = plistlib.loads(path.read_bytes())
+    require(isinstance(values, dict) and all(values.get(key) == "$(" + key + ")"
+            for key in ("IMMICH_SERVER_URL", "IMMICH_API_KEY")), "source app plist server fields differ")
+
+
 def build_smoke_archive(*, root, configuration, control, derived, packages, output, execute, timeout=1200):
     """A distinct envelope; never broaden the schema-1 exact-destination reader."""
     workspace_preflight(root)
+    check_smoke_source_plist(root)
     require(not output.exists(), "smoke archive output must be fresh")
     output.mkdir(parents=True)
     identity = smoke_build_identity(root, configuration)
@@ -113,6 +123,7 @@ def build_smoke_archive(*, root, configuration, control, derived, packages, outp
                    evidence=output, timeout=timeout, execute=execute)
     build_seconds = time.monotonic() - started
     workspace_preflight(root)
+    check_smoke_source_plist(root)
     require(smoke_build_identity(root, configuration) == identity, "smoke build changed source, lock or toolchain")
     products = derived / "Build/Products"
     check_products(products, configuration=configuration)

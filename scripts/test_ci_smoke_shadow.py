@@ -126,6 +126,63 @@ def plan_fixture(temporary, stack, *, ancestor=0):
 
 
 class SmokeShadowTests(unittest.TestCase):
+    def test_shared_plan_refuses_tested_heads_without_the_complete_producer_contract(self):
+        for version in ("", "SMOKE_ARCHIVE_VERSION = 2", "SMOKE_SOURCE_PLIST_PREFLIGHT_VERSION = 1",
+                        "SMOKE_ARCHIVE_VERSION = 2\nSMOKE_SOURCE_PLIST_PREFLIGHT_VERSION = 1"):
+            with self.subTest(version=version), patch.object(shadow, "git", return_value=version), \
+                    patch.object(shadow, "source_at_commit", return_value={"head_sha": HEAD}), \
+                    patch.object(shadow, "authoritative_control", return_value={"run_id": "200"}) as admission:
+                scheduling = plan()
+                if "\n" in version:
+                    shadow.plan_shared(scheduling, environment(), None)
+                    self.assertEqual(scheduling["build_mode"], shadow.ARCHIVE_MODE)
+                else:
+                    with self.assertRaisesRegex(ValueError, "predates the complete"):
+                        shadow.plan_shared(scheduling, environment(), None)
+                    admission.assert_not_called()
+
+    def test_generic_producer_checks_source_server_fields_before_and_after_compilation(self):
+        import strict_e2e_build as build
+        for defect in (None, "before", "after", "symlink"):
+            with self.subTest(defect=defect), tempfile.TemporaryDirectory() as raw:
+                root = Path(raw)
+                source = root / "source"
+                plist = source / "immichSlides/Info.plist"
+                plist.parent.mkdir(parents=True)
+                values = {key: "$(" + key + ")" for key in ("IMMICH_SERVER_URL", "IMMICH_API_KEY")}
+                plist.write_bytes(plistlib.dumps(dict(values, IMMICH_API_KEY="synthetic-key") if defect == "before" else values))
+                if defect == "symlink":
+                    target = source / "synthetic.plist"
+                    target.write_bytes(plist.read_bytes())
+                    plist.unlink()
+                    plist.symlink_to(target)
+                derived = root / "derived"
+                def compile(**_options):
+                    products = derived / "Build/Products"
+                    app = products / "Debug-iphonesimulator/immichSlides.app"
+                    app.mkdir(parents=True)
+                    (app / "Info.plist").write_bytes(plistlib.dumps({key: "" for key in values}))
+                    (app / "immichSlides").write_bytes(b"synthetic-binary")
+                    (products / "one.xctestrun").write_bytes(b"synthetic-run")
+                    if defect == "after":
+                        plist.write_bytes(plistlib.dumps(dict(values, IMMICH_SERVER_URL="synthetic-server")))
+                    return {"signing_mode": "adhoc", "xctestrun": "one.xctestrun"}
+                identity = {"configuration": "Debug", "source": {"head_sha": HEAD}}
+                with patch.object(build, "workspace_preflight"), patch.object(build, "smoke_build_identity", return_value=identity), \
+                        patch.object(build, "warm_up", side_effect=compile) as compilation, \
+                        patch.object(build.subprocess, "check_output", return_value="arm64"):
+                    options = dict(root=source, configuration="Debug", control={}, derived=derived, packages=root / "packages",
+                                   output=root / "output", execute=None)
+                    if defect is None:
+                        build.build_smoke_archive(**options)
+                        self.assertTrue((root / "output/archive/manifest.json").is_file())
+                    else:
+                        with self.assertRaisesRegex(ValueError, "source app plist"):
+                            build.build_smoke_archive(**options)
+                        self.assertFalse((root / "output/archive/manifest.json").exists())
+                        if defect in {"before", "symlink"}:
+                            compilation.assert_not_called()
+
     def test_producer_cleanup_refusal_preserves_owned_products(self):
         from run_strict_ci_tracer import RunnerGroupCleanupError
         scheduling = dict(plan(), build_mode=shadow.ARCHIVE_MODE, tested_source={"head_sha": HEAD}, control={"run_id": "200"})
