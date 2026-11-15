@@ -424,10 +424,11 @@ def produce_environment_limits(summary, results, *, informational=(), policy_ver
                  and all(ENVIRONMENT_LIMIT_FIELD in entry for entry in nonpassing)) else 1
 
 
-def run_runner(command, repo_root, log_path, *, timeout_seconds, truncation_seen=None, failure_report=None):
+def run_runner(command, repo_root, log_path, *, timeout_seconds, truncation_seen=None, failure_report=None, environment=None):
     with log_path.open("a+") as log:
         offset = log.tell()
-        process = subprocess.Popen(command, cwd=repo_root, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+        process = subprocess.Popen(command, cwd=repo_root, stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
+                                   **({"env": environment} if environment is not None else {}))
         code = None
         try:
             code = process.wait(timeout=timeout_seconds)

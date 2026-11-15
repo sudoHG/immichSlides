@@ -76,14 +76,15 @@ the API and main ancestry. Its tested checkout is that nightly's head SHA,
 even when main has moved. Pull requests, fork heads, branch nightlies and
 unfinished nightlies are refused. This workflow changes no nightly job, retry,
 yellow rule, verdict, reporter input, required check or release eligibility.
-Device jobs stage only this workflow's trusted control entry point from main
+The plan outputs its exact control commit; every later job checks out that SHA.
+Planning and each job require that control to be equal to or an ancestor of main.
+Device jobs stage only this workflow's trusted control entry point from that commit
 outside the checkout, then select the admitted nightly SHA. All runner modules,
 App sources and the manifest come from that tested SHA. This supports nightlies
 that already contain the smoke runner but predate the shadow control entry point;
 downloaded artifacts remain data and are never executed.
-Jobs may read different main control-script versions if main moves during a
-run; incompatible versions fail closed. This accepted limitation does not permit
-untrusted checkout or artifact execution.
+Main may advance during a shadow without changing its planned control or breaking
+archive admission. Artifacts remain data, never a source of executable control.
 Only the reviewed complete artifact `uses` strings, including their exact pins,
 receive narrow upload/download exceptions; aliases and other 40-digit commits
 cannot bypass attempt/path restrictions.
@@ -125,9 +126,35 @@ hard-coded in the workflow. The approved manifest currently produces these group
 | iPad | 4 | 1 |
 | Apple TV | 6 | 4 |
 
-Each group uses the pinned simulator and the existing strict build, fixture
-service, readiness/reset, official-result export, privacy-scan and process-group
-cleanup helpers. It builds once and reuses those products for the group's flows.
+The graph is `plan → (ios-debug, ios-release) → six flows groups → aggregate`.
+Two named producers each build the existing smoke UI-only scheme/plan once for
+`generic/platform=iOS Simulator`, with explicit Debug or Release. Four iOS groups
+select their configuration's immutable ID, download once, verify manifest/tar
+hashes and inventory, and use only `test-without-building`. TV groups retain their
+existing per-group build/execution and wait at the same producer barrier.
+At most two producers precede at most three concurrent flow groups; they never
+overlap as five macOS jobs. A failed/missing producer or rejected archive leaves
+affected flows `not-run`, fails aggregation and cannot count as an observation.
+The matrix starts after both producers finish regardless of their result: TV groups
+and the other configuration run normally. The failed configuration fails closed in
+selection and writes not-run evidence. The always-run aggregate writes every missing
+group, reports archive admission failures and retains each group's errors and phases.
+There is no latest/name fallback, download retry or silent rebuild.
+The [separate archive identities and compatibility gate](CI_BUILD_ARCHIVE.md#smoke-archive-reader-explicit-opt-in)
+bind both the admitted nightly source and the authoritative shadow control run.
+Historical tested commits without the complete v2 reader, source-plist preflight and
+explicit expected-control contract write a suppressed plan with the reason and a
+90-day not-run record. They never fall back to per-group iOS compilation.
+
+Download, hash, inventory and identity verification precede simulator creation/boot.
+The unchanged 120-second archive allowance covers download and verification; simulator
+creation is charged only to the existing group budget. Loading then checks the pinned
+execution target and the independently supplied expected control. Removing cold builds
+also removes their simulator warm-up buffer before each group's first flow. Hosted
+first-flow failure rates require separate observation; no additional wait is introduced.
+
+Each group uses the pinned simulator and the existing fixture service,
+readiness/reset, official-result export, privacy-scan and process-group cleanup helpers.
 No whole-flow retry, listed retry, nightly retry or tool-failure allowance is
 enabled. A classification such as infrastructure, XCTest tool or assertion is
 only a label: a failed first result remains failed. Missing results, a failed
@@ -185,18 +212,20 @@ these budgets, with at most three groups running together and fail-fast disabled
 The plan matrix derives every job timeout from the script's inner budget plus
 the same three-minute reserve; workflow policy requires that matrix field, and
 the policy regression checks the reserve against all six runner budgets.
-Six groups have a conservative 70-minute execution envelope
-(`5 + 2 × 30 + 5`) at `max-parallel: 3`: six groups need at most two waves,
-and the largest job timeout remains 30 minutes. Raising the two iPhone groups
-from 22/25 to 27/30 adds at most 10 runner minutes per shadow
-(two groups × five minutes) relative to the previous budgets, not an automatic
-charge for unused capacity. These are budgets, **NOT_VERIFIED** on hosted CI;
+Each producer has a 27-minute inner budget, a 30-minute job timeout and the
+unchanged 1200-second cold xcodebuild cap. The conservative workflow envelope is
+**100 minutes** (`5 + 30 + 60 + 5`): plan, producer wave, two flow waves, aggregate.
+Timeout capacity is **230 runner minutes** (`2×30 + 4×30 + 2×25`), up from 170.
+These capacity numbers are separate from the observed-workload estimate of about
+**21–35 runner minutes saved per shadow**, which is not a hosted measurement.
+These budgets are **NOT_VERIFIED** on hosted CI;
 the larger iPhone and iPad caps do not establish an expected completion time.
 Each inner group deadline starts at the current attempt's GitHub job
 `started_at`, read through the existing complete-attempt jobs API reader. Thus
 checkout, setup and plan download consume that same budget. Groups have only
 read access to actions for this clock lookup. Missing, ambiguous or invalid job
-start evidence fails closed. The budget bounds build plus flows; it does not multiply
+start evidence fails closed. The budget bounds transfer/verification plus flows
+(or TV build plus flows); it does not multiply
 the runner's 270-second per-flow limit (120 seconds for the method and 150 for
 startup/teardown) into a larger job budget. A group that exhausts this
 budget fails and records unfinished flows, even if every per-flow limit has not
@@ -223,8 +252,10 @@ a remaining-time measurement; nulls and unknown fields stay unknown. Missing flo
 stay `not-run`. The
 `smoke-shadow-<run>-<attempt>` artifact retains `shadow.json`, `summary.md` and
 the shared sensitive-scan receipt for 90 days. The attempt-bound plan and
-per-group compact artifacts have seven-day retention; the plan is scanned before
-upload too. `shadow.json` schema 1
+per-group and compact producer artifacts have seven-day retention; configuration
+archives have one-day retention and compression level 0. The plan is scanned before
+upload too. Producer provenance, artifact ID, manifest/tar hashes and build/pack/upload
+timing remain in the 90-day summary after binary expiry. `shadow.json` schema 1
 contains the repository, tested `head_sha`, manifest SHA-256, shadow run/event/
 attempt, old nightly run ID/attempt/conclusion/execution state, matrix job
 result, `nightly_run_id` pairing key, suppression reason/blocking IDs, group
@@ -271,7 +302,20 @@ comparison table with a nightly link, scanned 90-day artifacts, and disposal of
 only job-owned simulators/products. A failing flow must make both its group and
 the shadow conclusion fail. A verified skipped automatic night must show only
 plan/aggregate with `not-run`; manually selecting it must execute the groups.
-The first hosted report must include each group's warm-up/build phase duration
+Legacy group records retain schema 1 and `warm-up, flows` timing. Archive group
+records use schema 2 / `timing_mode=smoke-archive-v2` and require
+`archive-verify, flows` and build provenance, with separate transfer/verify diagnostics;
+they never invent a zero warm-up. Shared build runner seconds are counted once,
+from the two producer records. Per-flow native/total time retains preparation,
+reset, export and cleanup costs; queue time remains separate from job clocks.
+Transfer/upload step timings are read by the aggregate after the jobs finish.
+Missing, partial, invalid or failed timing reads stay `unknown` and never fail a
+producer, group or aggregate. Producer build/pack times and group `transfer_seconds`
+and `verify_seconds` are diagnostics too. Group `job_started_epoch`,
+`job_elapsed_seconds` and every phase's `elapsed_seconds` must remain valid;
+job-budget start evidence and execution deadlines remain gates.
+The first hosted report must include both producer build/pack/upload durations,
+each iOS group's transfer/verification and each TV group's warm-up/build duration
 and each flow's native and total elapsed seconds from `group_timings` and `flows`.
 Compare the API's `started_at` with the first step of each matrix job, especially
 groups delayed by `max-parallel`; the job-clock assumption remains unverified

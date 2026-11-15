@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import io
 from datetime import datetime
 import hashlib
 import json
@@ -14,6 +15,7 @@ import signal
 import subprocess
 import sys
 import time
+import tarfile
 from pathlib import Path
 
 # The trusted entry point is staged outside the checkout before selecting a historical main SHA.
@@ -26,6 +28,271 @@ MANIFEST = "scripts/smoke-flows.json"
 GROUP_BUDGET_MINUTES = {"iphone-debug": 27, "iphone-release": 27, "ipad-debug": 27,
                         "ipad-release": 27, "tv-debug": 22, "tv-release": 22}
 JOB_RESERVE_MINUTES = 3  # Keep upload and cleanup headroom outside the inner deadline.
+ARCHIVE_MODE = "smoke-archive-v2"
+PRODUCER_BUDGET_MINUTES = 27
+
+
+def smoke_artifact_name(configuration, control):
+    require(configuration in {"Debug", "Release"}, "smoke build configuration differs")
+    return f"smoke-build-{configuration.lower()}-{control['run_id']}-{control['attempt']}"
+
+
+def source_at_commit(head):
+    """Use the same path/content digest as the working-checkout reader, without checkout."""
+    raw = subprocess.check_output(["git", "archive", "--format=tar", head], cwd=ROOT, timeout=60)
+    entries = []
+    with tarfile.open(fileobj=io.BytesIO(raw)) as archive:
+        for member in archive.getmembers():
+            if member.isdir() or "__pycache__" in Path(member.name).parts or member.name.endswith(".pyc"):
+                continue
+            require(member.isfile() or member.issym(), "unsupported tested source entry")
+            value = os.fsencode(member.linkname) if member.issym() else hashlib.sha256(archive.extractfile(member).read()).hexdigest().encode()
+            entries.append((os.fsencode(member.name), value))
+    digest = hashlib.sha256()
+    for name, value in sorted(entries):
+        digest.update(name + b"\0" + value)
+    return {"head_sha": head, "tree_sha": git("rev-parse", head + "^{tree}"),
+            "source_sha256": digest.hexdigest(), "clean": True}
+
+
+def authoritative_control(environment, api):
+    run_id = environment["GITHUB_RUN_ID"]
+    run = api.repo("actions/runs/" + run_id)
+    workflow = api.repo("actions/workflows/ci-smoke-shadow.yml")
+    repository = environment["GITHUB_REPOSITORY"]
+    require(environment.get("GITHUB_REF") == "refs/heads/main" and environment.get("GITHUB_RUN_ATTEMPT") == "1"
+            and environment.get("GITHUB_WORKFLOW_REF") == repository + "/" + WORKFLOW + "@refs/heads/main"
+            and str(run.get("id")) == run_id and run.get("run_attempt") == 1
+            and run.get("head_sha") == environment.get("GITHUB_SHA") and run.get("head_branch") == "main"
+            and run.get("event") == environment.get("GITHUB_EVENT_NAME")
+            and run.get("repository", {}).get("full_name") == repository
+            and (run.get("head_repository") or {}).get("full_name") == repository
+            and run.get("workflow_id") == workflow.get("id") and run.get("path") == workflow.get("path") == WORKFLOW,
+            "shadow control API provenance differs")
+    sha(run["head_sha"])
+    require(subprocess.call(["git", "merge-base", "--is-ancestor", run["head_sha"], "origin/main"],
+                            cwd=ROOT, timeout=30) == 0, "shadow API control head is not admitted main")
+    stage = Path(environment["RUNNER_TEMP"]) / "smoke-control/stage.json"
+    source = decode(stage.read_text())["head_sha"] if stage.is_file() else git("rev-parse", "HEAD")
+    require(subprocess.call(["git", "merge-base", "--is-ancestor", source, "origin/main"], cwd=ROOT, timeout=30) == 0,
+            "staged control source is not admitted main")
+    return {"repository": repository, "run_id": run_id, "attempt": 1, "workflow_id": workflow["id"],
+            "workflow_path": WORKFLOW, "api_head_sha": run["head_sha"], "control_source_sha": source,
+            "main_admitted": True}
+
+
+def validate_smoke_artifact(metadata, control, configuration, artifact_id, producer):
+    require(type(artifact_id) is int and artifact_id > 0 and metadata.get("id") == artifact_id
+            and metadata.get("expired") is False and metadata.get("name") == smoke_artifact_name(configuration, control),
+            "smoke archive ID, expiry or configuration differs")
+    run = metadata.get("workflow_run", {})
+    require(str(run.get("id")) == control["run_id"] and run.get("head_sha") == control["api_head_sha"],
+            "smoke archive API control source differs")
+    require(producer.get("name") == "smoke-shadow-ios-" + configuration.lower()
+            and producer.get("conclusion") == "success" and producer.get("run_attempt") == control["attempt"],
+            "smoke archive producer did not succeed in this attempt")
+
+
+def validate_build_provenance(provenance, plan, configuration):
+    require(isinstance(provenance, dict) and set(provenance) == {
+        "configuration", "artifact_id", "manifest_sha256", "archive_sha256", "control", "source", "producer_job"},
+        "smoke archive build provenance fields differ")
+    require(provenance["configuration"] == configuration and provenance["control"] == plan["control"]
+            and provenance["source"] == plan["tested_source"]
+            and provenance["producer_job"] == "smoke-shadow-ios-" + configuration.lower()
+            and type(provenance["artifact_id"]) is int and provenance["artifact_id"] > 0,
+            "smoke archive build provenance differs")
+    sha(provenance["manifest_sha256"], 64)
+    sha(provenance["archive_sha256"], 64)
+
+
+def verify_smoke_archive(directory, derived, *, expected_identity, control, manifest_hash, archive_hash=None):
+    from ci_build_archive import extract_products, file_hash, measure_signing
+    from strict_e2e_build import SMOKE_RECEIPT, validate_smoke_receipt
+    require(set(path.name for path in directory.iterdir()) == {"manifest.json", "build.tar.gz"}
+            and all(path.is_file() and not path.is_symlink() for path in directory.iterdir()),
+            "smoke archive must contain only a regular manifest and tar")
+    sha(manifest_hash, 64)
+    require(file_hash(directory / "manifest.json") == manifest_hash, "smoke manifest hash differs")
+    receipt = decode((directory / "manifest.json").read_text())
+    validate_smoke_receipt(receipt, expected_identity, control)
+    if archive_hash is not None:
+        sha(archive_hash, 64)
+        require(receipt["archive_sha256"] == archive_hash, "smoke tar hash differs from producer output")
+    extract_products(directory / "build.tar.gz", derived / "Build",
+                     {"files": receipt["products"], "archive_sha256": receipt["archive_sha256"]},
+                     configuration=expected_identity["configuration"])
+    products = derived / "Build/Products"
+    require(measure_signing(products / f"{expected_identity['configuration']}-iphonesimulator/immichSlides.app") == "adhoc",
+            "smoke archive signature differs")
+    write_json(derived / SMOKE_RECEIPT, receipt)
+    return receipt
+
+
+def plan_shared(scheduling, environment, api):
+    support = git("show", scheduling["head_sha"] + ":scripts/strict_e2e_build.py")
+    if any(capability not in support for capability in ("SMOKE_ARCHIVE_VERSION = 2",
+            "SMOKE_SOURCE_PLIST_PREFLIGHT_VERSION = 1", "SMOKE_EXPECTED_CONTROL_VERSION = 1")):
+        reason = "tested source predates the complete smoke archive v2 producer contract"
+        print(reason, flush=True)
+        scheduling.update(execute=False, not_run_reason=reason)
+        return
+    scheduling.update(build_mode=ARCHIVE_MODE, tested_source=source_at_commit(scheduling["head_sha"]),
+                      control=authoritative_control(environment, api))
+
+
+def current_control(scheduling, environment):
+    from ci_publish import GitHub
+    api = GitHub(environment["GITHUB_REPOSITORY"], environment.get("SMOKE_TOKEN"))
+    control = authoritative_control(environment, api)
+    require(control == scheduling["control"], "shadow control changed since planning")
+    return api, control
+
+
+def producer_job(api, control, configuration):
+    from ci_publish import complete_attempt_jobs
+    jobs = complete_attempt_jobs(api, {"id": int(control["run_id"]), "run_attempt": control["attempt"]})
+    matches = [job for job in jobs if job.get("name") == "smoke-shadow-ios-" + configuration.lower()]
+    require(len(matches) == 1, "smoke producer job is missing or ambiguous")
+    return matches[0]
+
+
+def step_seconds(job, name):
+    # Actions may still report an uploaded/downloaded step as in progress.
+    try:
+        steps = [step for step in job.get("steps", []) if step.get("name") == name]
+        if len(steps) != 1 or steps[0].get("conclusion") != "success":
+            return None
+        def timestamp(key):
+            value = datetime.fromisoformat(steps[0][key].replace("Z", "+00:00"))
+            require(value.tzinfo is not None, "smoke transfer clock is invalid")
+            return value.timestamp()
+        return diagnostic_seconds(timestamp("completed_at") - timestamp("started_at"))
+    except (ValueError, KeyError, TypeError, AttributeError, OverflowError):
+        return None
+
+
+def diagnostic_seconds(value):
+    return value if type(value) in (int, float) and math.isfinite(value) and value >= 0 else None
+
+
+def read_transfer_timings(scheduling, producers, records, environment):
+    """Read completed jobs only; diagnostics never authorize or invalidate execution."""
+    if scheduling.get("build_mode") != ARCHIVE_MODE or not scheduling["execute"]:
+        return
+    try:
+        from ci_publish import GitHub, complete_attempt_jobs
+        api = GitHub(environment["GITHUB_REPOSITORY"], environment.get("SMOKE_TOKEN"))
+        jobs = complete_attempt_jobs(api, {"id": int(scheduling["shadow"]["id"]), "run_attempt": 1})
+        def elapsed(name, step):
+            matches = [job for job in jobs if job.get("name") == name]
+            return step_seconds(matches[0], step) if len(matches) == 1 else None
+        for producer in producers:
+            if isinstance(producer, dict) and isinstance(producer.get("timing"), dict):
+                producer["timing"]["upload_seconds"] = elapsed("smoke-shadow-ios-" + producer["configuration"].lower(),
+                                                                "Publish the immutable configuration archive")
+        for record in records:
+            if isinstance(record, dict) and record.get("timing_mode") == ARCHIVE_MODE:
+                record["transfer_seconds"] = elapsed("smoke-shadow-" + record["group"]["id"],
+                                                       "Download the selected configuration archive")
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, OverflowError, subprocess.SubprocessError):
+        # Unreadable/partial diagnostics retain the producer/consumer's unknown values.
+        return
+
+
+def run_producer(scheduling, environment, temporary):
+    from strict_e2e_build import build_smoke_archive, smoke_source_identity
+    from run_strict_ci_tracer import run_runner, RunnerGroupCleanupError
+    from ci_build_archive import disk_check, workspace_preflight
+    configuration = environment["SMOKE_CONFIGURATION"]
+    api, control = current_control(scheduling, environment)
+    require(scheduling.get("build_mode") == ARCHIVE_MODE and scheduling["execute"], "smoke producer is not admitted")
+    require(smoke_source_identity(ROOT) == scheduling["tested_source"], "smoke producer tested source differs")
+    started = job_started_epoch(environment, "ios-" + configuration.lower())
+    environment.pop("SMOKE_TOKEN", None)
+    os.environ.pop("SMOKE_TOKEN", None)
+    workspace_preflight(ROOT)
+    disk_check(30)
+    root = temporary / "smoke-producer"
+    require(not root.exists(), "smoke producer output must be fresh")
+    root.mkdir()
+    write_json(root / "ownership.json", scheduling["shadow"])
+    def execute(command, **options):
+        remaining = started + PRODUCER_BUDGET_MINUTES * 60 - time.time()
+        require(remaining > 0, "smoke producer inner budget exhausted")
+        try:
+            return run_runner(command, ROOT, options["log_path"], timeout_seconds=min(1200, remaining),
+                              environment=options.get("environment"))
+        except RunnerGroupCleanupError:
+            (temporary / "smoke-cleanup-blocked").touch()
+            raise
+    receipt, measurements = build_smoke_archive(root=ROOT, configuration=configuration, control=control,
+        derived=root / "derived", packages=root / "packages", output=root / "output", execute=execute)
+    require(time.time() <= started + PRODUCER_BUDGET_MINUTES * 60, "smoke producer inner budget exhausted")
+    write_json(root / "build.json", {"configuration": configuration, "job_started_epoch": started,
+                                     "source": receipt["identity"]["source"], "measurements": measurements})
+    output(environment, "manifest_sha256", measurements["manifest_sha256"])
+    output(environment, "archive_sha256", measurements["archive_sha256"])
+    output(environment, "artifact_name", smoke_artifact_name(configuration, control))
+    output(environment, "archive_safe", "true")
+    return 0
+
+
+def finish_producer(scheduling, environment, temporary):
+    configuration = environment["SMOKE_CONFIGURATION"]
+    record = {"schema_version": 1, "configuration": configuration, "outcome": "failed", "provenance": None,
+              "timing": None, "control": scheduling["control"], "source": scheduling["tested_source"]}
+    try:
+        api, control = current_control(scheduling, environment)
+        build = decode((temporary / "smoke-producer/build.json").read_text())
+        require(build["configuration"] == configuration and build["source"] == scheduling["tested_source"],
+                "smoke producer build record differs")
+        artifact_id = int(environment["SMOKE_ARTIFACT_ID"])
+        metadata = api.repo("actions/artifacts/" + str(artifact_id))
+        job = producer_job(api, control, configuration)
+        # The build record and immutable upload ID exist; consumers require overall job success later.
+        validate_smoke_artifact(metadata, control, configuration, artifact_id,
+                                dict(job, conclusion="success"))
+        measured = build["measurements"]
+        provenance = {"configuration": configuration, "artifact_id": artifact_id,
+                      "manifest_sha256": measured["manifest_sha256"], "archive_sha256": measured["archive_sha256"],
+                      "control": control, "source": build["source"], "producer_job": job["name"]}
+        validate_build_provenance(provenance, scheduling, configuration)
+        job_started = diagnostic_seconds(build.get("job_started_epoch"))
+        record.update(outcome="passed", provenance=provenance,
+                      timing={"build_seconds": diagnostic_seconds(measured.get("build_seconds")),
+                              "pack_seconds": diagnostic_seconds(measured.get("pack_seconds")),
+                              "upload_seconds": None, "job_elapsed_seconds": max(0, time.time() - job_started)
+                              if job_started is not None else None})
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        pass
+    directory = temporary / "smoke-producer-records"
+    write_json(directory / "producer.json", record)
+    scan_records(directory)
+    output(environment, "records_safe", "true")
+    return int(record["outcome"] != "passed")
+
+
+def select_archive(scheduling, environment, temporary):
+    from strict_e2e_build import smoke_build_identity
+    configuration = next(group for group in scheduling["groups"] if group["id"] == environment["SMOKE_GROUP"])["configuration"]
+    api, control = current_control(scheduling, environment)
+    require(scheduling.get("build_mode") == ARCHIVE_MODE and scheduling["execute"], "smoke archive selection is not admitted")
+    prefix = "SMOKE_" + configuration.upper()
+    artifact_id = int(environment[prefix + "_ARTIFACT_ID"])
+    metadata = api.repo("actions/artifacts/" + str(artifact_id))
+    validate_smoke_artifact(metadata, control, configuration, artifact_id, producer_job(api, control, configuration))
+    identity = smoke_build_identity(ROOT, configuration)
+    require(identity["source"] == scheduling["tested_source"], "smoke consumer tested source differs")
+    selection = {"configuration": configuration, "artifact_id": artifact_id,
+                 "manifest_sha256": environment[prefix + "_MANIFEST_SHA256"],
+                 "archive_sha256": environment[prefix + "_ARCHIVE_SHA256"], "control": control,
+                 "source": scheduling["tested_source"], "producer_job": "smoke-shadow-ios-" + configuration.lower()}
+    validate_build_provenance(selection, scheduling, configuration)
+    write_json(temporary / "smoke-archive-selection.json", {"provenance": selection, "identity": identity,
+                                                           "transfer_started_epoch": time.time()})
+    output(environment, "artifact_id", str(artifact_id))
+    return 0
 
 
 def shadow_context(environment):
@@ -115,12 +382,30 @@ def counts_as_shadow(plan, *, executed, errors, matrix_result):
             and plan["nightly"]["conclusion"] in REAL_RESULT_CONCLUSIONS)
 
 
-def aggregate(plan, records, matrix_result):
+def aggregate(plan, records, matrix_result, *, producers=None, producer_results=None):
     from ci_bounded_diagnostics import public_failure_locations
     from ci_failure_diagnostics import validate_first_failure
     errors, observed, seen = [], {}, set()
     validations = {}
     timings = {}
+    builds, admitted_builds = {}, {}
+    if plan.get("build_mode") == ARCHIVE_MODE and plan["execute"]:
+        for configuration in ("Debug", "Release"):
+            candidates = [record for record in producers or [] if record.get("configuration") == configuration]
+            try:
+                require(len(candidates) == 1, "missing or duplicate producer")
+                producer = candidates[0]
+                builds[configuration] = producer
+                require(producer.get("schema_version") == 1 and producer.get("outcome") == "passed"
+                        and (producer_results or {}).get(configuration) == "success", "producer did not succeed")
+                validate_build_provenance(producer.get("provenance"), plan, configuration)
+                timing = producer.get("timing")
+                timing = timing if isinstance(timing, dict) else {}
+                builds[configuration] = dict(producer, timing={key: diagnostic_seconds(timing.get(key)) for key in
+                    ("build_seconds", "pack_seconds", "upload_seconds", "job_elapsed_seconds")})
+                admitted_builds[configuration] = producer["provenance"]
+            except (ValueError, TypeError, KeyError):
+                errors.append("missing or failed smoke producer: " + configuration)
     groups = {group["id"]: group for group in plan["groups"]}
     if plan["execute"]:
         for record in records:
@@ -136,7 +421,12 @@ def aggregate(plan, records, matrix_result):
                 errors.append("duplicate group: " + group_id)
                 continue
             seen.add(group_id)
-            if (record.get("schema_version") != 1 or record.get("shadow") != plan["shadow"]
+            archive_mode = plan.get("build_mode") == ARCHIVE_MODE and group["platform"] == "ios"
+            archive_admitted = (not archive_mode or group["configuration"] in admitted_builds
+                                and record.get("build_provenance") == admitted_builds[group["configuration"]])
+            if not archive_admitted:
+                errors.append("archive admission failed: " + group_id)
+            if (record.get("schema_version") != (2 if archive_mode else 1) or record.get("shadow") != plan["shadow"]
                     or record.get("head_sha") != plan["head_sha"]
                     or record.get("manifest_sha256") != plan["manifest_sha256"]):
                 errors.append("group provenance differs: " + group_id)
@@ -181,7 +471,8 @@ def aggregate(plan, records, matrix_result):
                     except (ContractError, ValueError, TypeError, KeyError, OverflowError):
                         # Optional diagnostics from older tested heads cannot invalidate first results.
                         row = {key: value for key, value in row.items() if key != "first_failure"}
-                observed[row["id"]] = row
+                if archive_admitted:
+                    observed[row["id"]] = row
             record_errors = record.get("errors")
             if not isinstance(record_errors, list) or any(not isinstance(error, str) for error in record_errors):
                 errors.append("invalid group errors: " + group_id)
@@ -202,12 +493,25 @@ def aggregate(plan, records, matrix_result):
                 and all(isinstance(phase, dict) and set(phase) == {"name", "elapsed_seconds", "exit_code"}
                         and type(phase["elapsed_seconds"]) in (int, float) and math.isfinite(phase["elapsed_seconds"])
                         and phase["elapsed_seconds"] >= 0 and type(phase["exit_code"]) is int for phase in phases)
-                and [phase["name"] for phase in phases] == ["warm-up", "flows"][:len(phases)]
+                and [phase["name"] for phase in phases] == ["archive-verify" if archive_mode else "warm-up", "flows"][:len(phases)]
                 and (not all(row.get("executed") is True for row in rows) or len(phases) == 2))
+            if archive_mode:
+                valid_timing &= (record.get("timing_mode") == ARCHIVE_MODE
+                    and isinstance(phases, list) and len(phases) <= 2
+                    and all(isinstance(phase, dict) and set(phase) == {"name", "elapsed_seconds", "exit_code"}
+                            and type(phase["exit_code"]) is int for phase in phases)
+                    and [phase["name"] for phase in phases] == ["archive-verify", "flows"][:len(phases)]
+                    and (not all(row.get("executed") is True for row in rows) or len(phases) == 2))
             if not valid_timing:
                 errors.append("invalid group job timing: " + group_id)
-            timings[group_id] = ({key: record[key] for key in ("job_started_epoch", "job_elapsed_seconds", "phases")}
+            timings[group_id] = ({key: record.get(key) for key in ("job_started_epoch", "job_elapsed_seconds", "phases")}
                                  if valid_timing else {"job_started_epoch": None, "job_elapsed_seconds": None, "phases": []})
+            if archive_mode and valid_timing:
+                timings[group_id].update({key: record.get(key) for key in ("timing_mode", "build_provenance")})
+                timings[group_id].update({key: diagnostic_seconds(record.get(key)) for key in
+                                          ("job_started_epoch", "job_elapsed_seconds", "transfer_seconds", "verify_seconds")})
+                timings[group_id]["phases"] = [dict(phase, elapsed_seconds=diagnostic_seconds(phase.get("elapsed_seconds")))
+                                                for phase in phases]
             code = record.get("runner_exit_code")
             if type(code) is not int or code != 0 and all(row.get("outcome") == "passed" for row in rows):
                 errors.append("runner failed without a failing flow: " + group_id)
@@ -238,7 +542,13 @@ def aggregate(plan, records, matrix_result):
             "comparison_eligible": counts_as_shadow(plan, executed=executed, errors=errors, matrix_result=matrix_result),
             "wall_seconds": max(0, time.time() - plan["started_epoch"]),
             "matrix_job_result": matrix_result, "errors": errors, "group_validation": validations,
-            "group_timings": timings, "flows": flows}
+            "group_timings": timings, "flows": flows,
+            **({"build_mode": ARCHIVE_MODE, "build_producers": builds,
+                "shared_build_runner_seconds": (sum(builds[configuration]["timing"]["job_elapsed_seconds"]
+                                                    for configuration in admitted_builds)
+                    if all(builds[configuration]["timing"]["job_elapsed_seconds"] is not None
+                           for configuration in admitted_builds) else None)}
+               if plan.get("build_mode") == ARCHIVE_MODE else {})}
 
 
 def markdown(record):
@@ -253,17 +563,29 @@ def markdown(record):
              "Informational only; first results, no retries or yellow.", "",
              "| Flow | Device | Configuration | Outcome | Elapsed (s) | Failure class | First public failure | First failure context |",
              "|---|---|---|---|---:|---|---|---|"]
+    if record.get("not_run_reason"):
+        lines[6:6] = ["Not run: " + markdown_text(record["not_run_reason"]), ""]
     for row in record["flows"]:
         values = [row["id"], row["device"], row["configuration"], row["outcome"], row["elapsed_seconds"],
                   row.get("failure_category"), row.get("first_failure_message"),
                   render_first_failure(row["first_failure"]) if "first_failure" in row else None]
         lines.append("| " + " | ".join(markdown_text(value) if value is not None else "unknown" for value in values) + " |")
     if record["group_timings"]:
-        lines += ["", "| Group | Warm-up/build phase (s) | Job elapsed (s) |", "|---|---:|---:|"]
+        lines += ["", "| Group | Warm-up/build (s) | Transfer (s) | Archive verify (s) | Job elapsed (s) |", "|---|---:|---:|---:|---:|"]
         for group_id, timing in record["group_timings"].items():
             warm = next((phase["elapsed_seconds"] for phase in timing.get("phases") or [] if phase["name"] == "warm-up"), None)
             lines.append("| " + " | ".join(markdown_text(value) if value is not None else "unknown"
-                         for value in (group_id, warm, timing["job_elapsed_seconds"])) + " |")
+                         for value in (group_id, warm, timing.get("transfer_seconds"), timing.get("verify_seconds"), timing["job_elapsed_seconds"])) + " |")
+    if "build_producers" in record:
+        lines += ["", "| Producer | Build (s) | Pack (s) | Upload (s) | Artifact ID | Manifest SHA-256 | Tar SHA-256 |",
+                  "|---|---:|---:|---:|---|---|---|"]
+        for configuration, producer in record["build_producers"].items():
+            timing, provenance = producer.get("timing") or {}, producer.get("provenance") or {}
+            lines.append("| " + " | ".join(markdown_text(value) if value is not None else "unknown" for value in (
+                configuration, timing.get("build_seconds"), timing.get("pack_seconds"), timing.get("upload_seconds"),
+                provenance.get("artifact_id"), provenance.get("manifest_sha256"), provenance.get("archive_sha256"))) + " |")
+        lines += ["", f"Shared build runner seconds (counted once): {record['shared_build_runner_seconds'] if record['shared_build_runner_seconds'] is not None else 'unknown'}. ",
+                  "Capacity: 100-minute envelope (5 + 30 + 60 + 5), 230 runner minutes; observed-workload estimate saves about 21–35 runner minutes, NOT_VERIFIED on this graph."]
     if record["errors"]:
         lines += ["", "Errors: " + "; ".join(markdown_text(error) for error in record["errors"])]
     return "\n".join(lines) + "\n"
@@ -370,7 +692,7 @@ def paired_nightly_aggregate(api, run):
             ("status", "environment_limited", "errors", "matrix", "tiers")}}
 
 
-def plan_run(environment, directory):
+def plan_run(environment, directory, *, shared=False):
     from ci_publish import GitHub
     from ci_nightly_change import run_evidence, ACTIVE_RUN_STATUSES, REAL_RESULT_CONCLUSIONS
     payload = decode(Path(environment["GITHUB_EVENT_PATH"]).read_text())
@@ -408,9 +730,17 @@ def plan_run(environment, directory):
                           not_run_reason="Main nightly is active; shadow was not run.")
     if run.get("conclusion") not in REAL_RESULT_CONCLUSIONS:
         scheduling.update(execute=False, not_run_reason="Nightly conclusion is not success/failure; shadow was not run.")
+    if shared and scheduling["execute"]:
+        plan_shared(scheduling, environment, api)
+    if shared:
+        scheduling["control_source_sha"] = git("rev-parse", "HEAD")
+        require(subprocess.call(["git", "merge-base", "--is-ancestor", scheduling["control_source_sha"], "origin/main"],
+                                cwd=ROOT, timeout=30) == 0, "planned control source is not admitted main")
     write_json(directory / "plan.json", scheduling)
     scan_records(directory)
     output(environment, "head_sha", head)
+    if shared:
+        output(environment, "control_sha", scheduling["control_source_sha"])
     output(environment, "execute", str(scheduling["execute"]).lower())
     output(environment, "matrix", json.dumps({"include": scheduling["groups"]}, separators=(",", ":")))
     output(environment, "records_safe", "true")
@@ -433,12 +763,13 @@ def job_started_epoch(environment, group_id):
     return started.timestamp()
 
 
-def runner_command(group, destination, root, evidence, *, warm):
+def runner_command(group, destination, root, evidence, *, warm, archive=False):
     return [sys.executable, "-B", str(ROOT / "scripts/run_strict_e2e.py"), "--suite", "smoke-flow",
             "--platform", group["platform"], "--smoke-device", group["device"],
             "--configuration", group["configuration"], "--destination", destination,
             "--derived-data-path", str(root / "derived"), "--cloned-source-packages-path", str(root / "packages"),
             "--evidence-dir", str(evidence), "--min-free-gib", "20" if os.environ.get("GITHUB_ACTIONS") == "true" else "80",
+            *(["--smoke-archive", "--smoke-control-path", str(root / "expected-control.json")] if archive else []),
             *(["--test-without-building", "--warm-timeout-seconds", "600", "--simulator-boot-submitted"] if warm
               else ["--warm-up-only", "--cold-timeout-seconds", "1200"])]
 
@@ -600,6 +931,7 @@ def run_group(scheduling, environment, temporary):
     group_id = environment["SMOKE_GROUP"]
     flows = group_flows(scheduling, group_id)
     group = next(group for group in scheduling["groups"] if group["id"] == group_id)
+    archive_mode = scheduling.get("build_mode") == ARCHIVE_MODE and group["platform"] == "ios"
     require(scheduling["execute"], "suppressed shadow plan cannot execute a smoke group")
     root, records = temporary / "smoke-execution", temporary / "smoke-records"
     require(not os.path.lexists(root) and not os.path.lexists(records), "smoke group output must be fresh")
@@ -611,6 +943,9 @@ def run_group(scheduling, environment, temporary):
               "group_validation": {"outcome": "unavailable", "reason": "No group evidence."},
               "selection": "unavailable", "elapsed_seconds": 0, "errors": [], "flows": [],
               "job_started_epoch": None, "job_elapsed_seconds": None, "phases": []}
+    if archive_mode:
+        record.update(schema_version=2, timing_mode=ARCHIVE_MODE, build_provenance=None,
+                      transfer_seconds=None, verify_seconds=None)
     started = time.monotonic()
     attempted_flows = False
 
@@ -626,11 +961,41 @@ def run_group(scheduling, environment, temporary):
             environment.pop("SMOKE_TOKEN", None)
         workspace_preflight(ROOT)
         ensure_disk_for_xcodebuild(default_data_available_gib, 20)
+        if archive_mode:
+            from strict_e2e_build import load_smoke_archive, smoke_build_identity
+            phase_started = time.monotonic()
+            phase = {"name": "archive-verify", "exit_code": None}
+            try:
+                selection = decode((temporary / "smoke-archive-selection.json").read_text())
+                require(0 <= time.time() - selection["transfer_started_epoch"] <= 120,
+                        "smoke archive transfer/verification allowance exhausted")
+                provenance = selection["provenance"]
+                validate_build_provenance(provenance, scheduling, group["configuration"])
+                identity = smoke_build_identity(ROOT, group["configuration"])
+                require(identity == selection["identity"] and identity["source"] == scheduling["tested_source"],
+                        "smoke archive execution source differs")
+                verify_smoke_archive(temporary / "ci-artifacts/smoke-build", root / "derived",
+                    expected_identity=identity, control=scheduling["control"],
+                    manifest_hash=provenance["manifest_sha256"], archive_hash=provenance["archive_sha256"])
+                require(time.time() - selection["transfer_started_epoch"] <= 120,
+                        "smoke archive transfer/verification allowance exhausted")
+                write_json(root / "expected-control.json", scheduling["control"])
+                phase["exit_code"] = 0
+            finally:
+                phase["elapsed_seconds"] = time.monotonic() - phase_started
+                record["phases"].append(phase)
+                record["verify_seconds"] = phase["elapsed_seconds"]
         udid = create_and_boot_simulator("appletv" if group["device"] == "tv" else group["device"], "smoke-" + group_id)
         destination = "platform=" + ("tvOS" if group["platform"] == "tvos" else "iOS") + " Simulator,id=" + udid
-        for warm, name in ((False, "warm-up"), (True, "flows")):
+        if archive_mode:
+            load_smoke_archive(ROOT, group["configuration"], destination, group["device"], root / "derived",
+                               control=scheduling["control"])
+            record["build_provenance"] = provenance
+        for warm, name in ((False, "archive-verify" if archive_mode else "warm-up"), (True, "flows")):
+            if archive_mode and not warm:
+                continue
             remaining = record["job_started_epoch"] + GROUP_BUDGET_MINUTES[group_id] * 60 - time.time()
-            command = runner_command(group, destination, root, root / name, warm=warm)
+            command = runner_command(group, destination, root, root / name, warm=warm, archive=archive_mode)
             if remaining <= 0:
                 raise subprocess.TimeoutExpired(command, 0)
             attempted_flows = warm
@@ -644,7 +1009,7 @@ def run_group(scheduling, environment, temporary):
                 record["phases"].append(phase)
             record["runner_exit_code"] = code
             if not warm and code:
-                record["errors"].append("cold-build-failed")
+                record["errors"].append("archive-verification-failed" if archive_mode else "cold-build-failed")
             if code:
                 break
     except RunnerGroupCleanupError:
@@ -693,7 +1058,7 @@ def run_group(scheduling, environment, temporary):
 
 def cleanup(environment, temporary):
     require(not (temporary / "smoke-cleanup-blocked").exists(), "runner cleanup unverified; retain owned inputs")
-    root = temporary / "smoke-execution"
+    root = temporary / ("smoke-producer" if environment.get("SMOKE_CONFIGURATION") else "smoke-execution")
     if root.exists():
         require(decode((root / "ownership.json").read_text()) == shadow_context(environment), "cleanup ownership differs")
     udid = environment.get("UI_SIMULATOR")
@@ -711,26 +1076,78 @@ def cleanup(environment, temporary):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("phase", choices=("stage", "setup", "plan", "run", "aggregate", "cleanup"))
+    parser.add_argument("phase", choices=("stage", "setup", "plan", "plan-shared", "build", "producer-record",
+                                          "select-archive", "build-local", "verify-local", "run", "aggregate", "cleanup"))
+    parser.add_argument("--configuration", choices=("Debug", "Release"))
+    parser.add_argument("--derived-data-path", type=Path)
+    parser.add_argument("--packages-path", type=Path)
+    parser.add_argument("--output-dir", type=Path)
+    parser.add_argument("--archive-dir", type=Path)
+    parser.add_argument("--relocated-path", type=Path)
+    parser.add_argument("--manifest-sha256")
+    parser.add_argument("--archive-sha256")
     args = parser.parse_args(argv)
     environment = dict(os.environ)
-    temporary = Path(environment["RUNNER_TEMP"])
     try:
+        if args.phase not in {"build-local", "verify-local"}:
+            require(bool(environment.get("RUNNER_TEMP")), "RUNNER_TEMP is required for hosted shadow stages")
+        temporary = Path(environment.get("RUNNER_TEMP") or "/tmp")
+        if args.phase == "verify-local":
+            from strict_e2e_build import smoke_build_identity
+            require(os.environ.get("GITHUB_ACTIONS") != "true" and args.configuration and args.archive_dir
+                    and args.relocated_path and args.manifest_sha256 and args.archive_sha256,
+                    "local archive verification requires explicit configuration, paths and producer hashes")
+            verify_smoke_archive(args.archive_dir.resolve(), args.relocated_path.resolve(),
+                expected_identity=smoke_build_identity(ROOT, args.configuration),
+                control={"mode": "local", "head_sha": git("rev-parse", "HEAD")},
+                manifest_hash=args.manifest_sha256, archive_hash=args.archive_sha256)
+            print("Relocated smoke archive verified; no compilation", flush=True)
+            return 0
+        if args.phase == "build-local":
+            from ci_build_archive import disk_check
+            from strict_e2e_build import build_smoke_archive
+            from run_strict_e2e import run_command
+            require(os.environ.get("GITHUB_ACTIONS") != "true" and args.configuration is not None
+                    and args.derived_data_path and args.packages_path and args.output_dir,
+                    "local smoke build requires configuration and explicit owned paths")
+            disk_check(80)
+            _, measurements = build_smoke_archive(root=ROOT, configuration=args.configuration,
+                control={"mode": "local", "head_sha": git("rev-parse", "HEAD")},
+                derived=args.derived_data_path.resolve(), packages=args.packages_path.resolve(),
+                output=args.output_dir.resolve(), execute=run_command)
+            print(json.dumps(measurements, sort_keys=True), flush=True)
+            return 0
         if args.phase == "stage":
+            head = git("rev-parse", "HEAD")
+            require(subprocess.call(["git", "merge-base", "--is-ancestor", head, "origin/main"], cwd=ROOT, timeout=30) == 0,
+                    "staged control source is not admitted main")
             destination = temporary / "smoke-control"
             destination.mkdir()
             shutil.copyfile(Path(__file__), destination / "ci_smoke_shadow.py")
+            write_json(destination / "stage.json", {"head_sha": head})
             return 0
         if args.phase == "setup":
             return setup(environment)
-        if args.phase == "plan":
-            return plan_run(environment, temporary / "smoke-plan")
+        if args.phase in {"plan", "plan-shared"}:
+            return plan_run(environment, temporary / "smoke-plan", shared=args.phase == "plan-shared")
         if args.phase == "cleanup":
             return cleanup(environment, temporary)
         scheduling = decode((temporary / "ci-artifacts/smoke-plan/plan.json").read_text())
         validate_plan(scheduling, environment)
+        sha(scheduling["control_source_sha"])
+        staged = temporary / "smoke-control/stage.json"
+        source = decode(staged.read_text())["head_sha"] if staged.is_file() else git("rev-parse", "HEAD")
+        require(source == scheduling["control_source_sha"], "shadow control checkout differs from plan")
+        require(subprocess.call(["git", "merge-base", "--is-ancestor", source, "origin/main"], cwd=ROOT, timeout=30) == 0,
+                "planned control source is not admitted main")
         manifest, manifest_hash = manifest_at_head(scheduling["head_sha"])
         validate_plan(scheduling, environment, manifest_hash=manifest_hash, manifest=manifest)
+        if args.phase == "build":
+            return run_producer(scheduling, environment, temporary)
+        if args.phase == "producer-record":
+            return finish_producer(scheduling, environment, temporary)
+        if args.phase == "select-archive":
+            return select_archive(scheduling, environment, temporary)
         if args.phase == "run":
             return run_group(scheduling, environment, temporary)
         if args.phase == "aggregate":
@@ -740,7 +1157,16 @@ def main(argv=None):
                     records.append(decode(path.read_text()))
                 except (OSError, ValueError):
                     unreadable = True
-            record = aggregate(scheduling, records, environment.get("SMOKE_MATRIX_RESULT", "unknown"))
+            producers = []
+            for path in sorted((temporary / "ci-artifacts/smoke-producers").glob("*/producer.json")):
+                try:
+                    producers.append(decode(path.read_text()))
+                except (OSError, ValueError):
+                    unreadable = True
+            read_transfer_timings(scheduling, producers, records, environment)
+            record = aggregate(scheduling, records, environment.get("SMOKE_MATRIX_RESULT", "unknown"), producers=producers,
+                               producer_results={configuration: environment.get("SMOKE_" + configuration.upper() + "_RESULT")
+                                                 for configuration in ("Debug", "Release")})
             if unreadable:
                 record["errors"].append("unreadable group record")
                 record.update(outcome="failed", comparison_eligible=False)
@@ -758,4 +1184,7 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    if sys.argv[1:2] in (["build-local"], ["verify-local"]):
+        from ci_local import local_main
+        raise SystemExit(local_main(main, __file__))
     raise SystemExit(main())

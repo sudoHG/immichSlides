@@ -31,6 +31,41 @@ def workflow():
 
 
 class SmokeShadowWorkflowPolicyTests(unittest.TestCase):
+    def test_shared_smoke_graph_rejects_missing_verification_name_download_and_producer_drift(self):
+        baseline = self.document()
+        self.assertEqual(self.violations(baseline), [])
+        self.assertEqual(set(baseline["jobs"]), {"plan", "ios-debug", "ios-release", "flows", "aggregate"})
+        flow = baseline["jobs"]["flows"]
+        select = next(index for index, step in enumerate(flow["steps"]) if step.get("id") == "select")
+        download = select + 1
+        cases = [
+            lambda doc: doc["jobs"]["flows"].update({"if": "${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.execute == 'true' && needs.ios-debug.result == 'success' }}"}),
+            lambda doc: doc["jobs"]["flows"]["steps"][0]["with"].update(ref="main"),
+            lambda doc: doc["jobs"]["aggregate"]["steps"][0]["with"].update(ref="main"),
+            lambda doc: doc["jobs"]["plan"]["outputs"].pop("control_sha"),
+            lambda doc: next(step for step in doc["jobs"]["flows"]["steps"] if step.get("id") == "run").update({"if": "${{ !cancelled() }}"}),
+            lambda doc: doc["jobs"]["flows"]["steps"].pop(select),
+            lambda doc: doc["jobs"]["flows"]["steps"][download]["with"].update(name="latest"),
+            lambda doc: doc["jobs"]["flows"]["steps"][download]["with"].pop("artifact-ids"),
+            lambda doc: doc["jobs"]["flows"]["steps"][select]["env"].update(SMOKE_DEBUG_ARTIFACT_ID="${{ needs.ios-release.outputs.artifact_id }}"),
+            lambda doc: doc["jobs"]["ios-debug"].update({"timeout-minutes": 31}),
+            lambda doc: doc["jobs"]["ios-release"].update(strategy={"matrix": {"configuration": ["Debug", "Release"]}}),
+            lambda doc: doc["jobs"]["ios-debug"].update(environment="immich-test-server"),
+            lambda doc: doc["jobs"]["ios-debug"]["permissions"].update(actions="write"),
+            lambda doc: doc["jobs"]["flows"].update(needs="plan"),
+            lambda doc: doc["jobs"]["flows"]["strategy"].update({"max-parallel": 4}),
+            lambda doc: doc["jobs"]["aggregate"].update({"if": "success()"}),
+            lambda doc: doc["jobs"]["ios-debug"]["outputs"].update(artifact_id="${{ needs.ios-release.outputs.artifact_id }}"),
+        ]
+        for mutation in cases:
+            changed = copy.deepcopy(baseline)
+            mutation(changed)
+            with self.subTest(mutation=mutation):
+                self.assertIn("smoke-shadow-contract", {item.rule for item in self.violations(changed)})
+        foreign = workflow()
+        foreign["jobs"]["check"]["timeout-minutes"] = "${{ matrix.timeout_minutes }}"
+        self.assertIn("timeout", {item.rule for item in self.violations(foreign, ".github/workflows/ci-gate.yml")})
+
     def document(self):
         root = Path(__file__).resolve().parent.parent
         return yaml.load((root / SHADOW).read_text(), Loader=policy.WorkflowLoader)
@@ -48,6 +83,9 @@ class SmokeShadowWorkflowPolicyTests(unittest.TestCase):
         expected = {"iphone-debug": 30, "iphone-release": 30, "ipad-debug": 30,
                     "ipad-release": 30, "tv-debug": 25, "tv-release": 25}
         self.assertEqual({group["id"]: group["timeout_minutes"] for group in groups}, expected)
+        self.assertEqual(shadow.PRODUCER_BUDGET_MINUTES, 27)
+        self.assertEqual(2 * (shadow.PRODUCER_BUDGET_MINUTES + shadow.JOB_RESERVE_MINUTES)
+                         + sum(expected.values()), 230)
         for group in groups:
             self.assertEqual(group["timeout_minutes"], shadow.GROUP_BUDGET_MINUTES[group["id"]] + 3)
         for timeout in (25, "${{ matrix.timeout_minutes + 1 }}", "${{ matrix.other }}"):
@@ -110,21 +148,23 @@ class SmokeShadowWorkflowPolicyTests(unittest.TestCase):
 
     def test_shadow_trusted_exceptions_cannot_execute_foreign_code_or_publish_unscanned_data(self):
         baseline = self.document()
+        run_index = next(index for index, step in enumerate(baseline["jobs"]["flows"]["steps"]) if step.get("id") == "run")
+        upload_index = run_index + 1
         cases = [
             (lambda doc: doc["jobs"]["flows"]["steps"][2]["with"].update(ref="${{ github.event.workflow_run.head_sha }}"), "trusted-checkout"),
             (lambda doc: doc["jobs"]["plan"]["steps"][0]["with"].update(ref="topic"), "trusted-checkout"),
-            (lambda doc: doc["jobs"]["flows"]["steps"][5].update(run="python3 downloaded.py"), "trusted-run"),
-            (lambda doc: doc["jobs"]["flows"]["steps"][5]["env"].update(SMOKE_GROUP="other"), "trusted-environment"),
-            (lambda doc: doc["jobs"]["flows"]["steps"][6]["with"].update(path="${{ runner.temp }}/smoke-execution"), "trusted-action"),
-            (lambda doc: doc["jobs"]["flows"]["steps"][6].update({"if": "always()"}), "trusted-action"),
+            (lambda doc: doc["jobs"]["flows"]["steps"][run_index].update(run="python3 downloaded.py"), "trusted-run"),
+            (lambda doc: doc["jobs"]["flows"]["steps"][run_index]["env"].update(SMOKE_GROUP="other"), "trusted-environment"),
+            (lambda doc: doc["jobs"]["flows"]["steps"][upload_index]["with"].update(path="${{ runner.temp }}/smoke-execution"), "trusted-action"),
+            (lambda doc: doc["jobs"]["flows"]["steps"][upload_index].update({"if": "always()"}), "trusted-action"),
             (lambda doc: doc["jobs"]["aggregate"]["steps"][3]["with"].update(pattern="smoke-shadow-group-*"), "trusted-action"),
             (lambda doc: doc["jobs"]["aggregate"]["steps"][3].update(uses=doc["jobs"]["aggregate"]["steps"][3]["uses"].replace(
                 "actions/download-artifact", "Actions/Download-Artifact")), "trusted-action"),
             (lambda doc: doc["jobs"]["aggregate"]["steps"][3].update(uses="actions/download-artifact@" + "a" * 40), "trusted-action"),
-            (lambda doc: doc["jobs"]["flows"]["steps"][6].update(uses="actions/upload-artifact@" + "a" * 40), "trusted-action"),
+            (lambda doc: doc["jobs"]["flows"]["steps"][upload_index].update(uses="actions/upload-artifact@" + "a" * 40), "trusted-action"),
             (lambda doc: doc["jobs"]["plan"]["steps"][-1].pop("if", None), "trusted-action"),
             (lambda doc: doc["jobs"]["plan"]["steps"][-1]["with"].update({"retention-days": 90}), "trusted-action"),
-            (lambda doc: doc["jobs"]["flows"]["steps"][6]["with"].update({"retention-days": 90}), "trusted-action"),
+            (lambda doc: doc["jobs"]["flows"]["steps"][upload_index]["with"].update({"retention-days": 90}), "trusted-action"),
         ]
         for role in ("plan", "flows", "aggregate"):
             for index, step in enumerate(baseline["jobs"][role]["steps"]):

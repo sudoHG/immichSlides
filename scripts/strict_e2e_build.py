@@ -5,15 +5,163 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import platform as host_platform
 import plistlib
 import subprocess
 import time
 from pathlib import Path
 
-from ci_build_archive import file_hash, inventory, measure_signing, workspace_preflight
+from ci_build_archive import check_products, file_hash, inventory, measure_signing, pack_products, workspace_preflight
+from ci_summary import require, sha
 from strict_e2e_runner_support import CommandError, PLATFORM_SETTINGS, SETTINGS_RESUME_SUITES, _is_forbidden_key
 
 RECEIPT = "strict-warm-build.json"
+SMOKE_RECEIPT = "strict-smoke-archive.json"
+SMOKE_ARCHIVE_VERSION = 2
+SMOKE_SOURCE_PLIST_PREFLIGHT_VERSION = 1
+SMOKE_EXPECTED_CONTROL_VERSION = 1
+SMOKE_BUILD_DESTINATION = "generic/platform=iOS Simulator"
+
+
+def smoke_source_identity(root):
+    def git(*args):
+        return subprocess.check_output(["git", *args], cwd=root, text=True, timeout=30).strip()
+    require(git("status", "--porcelain") == "", "smoke archive requires a clean tested checkout")
+    return {"head_sha": git("rev-parse", "HEAD"), "tree_sha": git("rev-parse", "HEAD^{tree}"),
+            "source_sha256": source_fingerprint(root), "clean": True}
+
+
+def smoke_build_identity(root, configuration):
+    require(configuration in {"Debug", "Release"}, "smoke archive configuration differs")
+    def read(*args):
+        return subprocess.check_output(list(args), text=True, timeout=60).strip()
+    developer = Path(os.environ.get("DEVELOPER_DIR") or read("xcode-select", "-p"))
+    version = developer.parent / "version.plist"
+    pins = json.loads((root / "scripts/ci-pins.json").read_text())
+    xcode_build = plistlib.loads(version.read_bytes())["ProductBuildVersion"]
+    require(xcode_build == pins["xcode"]["build"], "smoke archive requires the pinned Xcode")
+    return {"source": smoke_source_identity(root), "platform": "ios",
+            "scheme": "immichSlides-iOS-settings-resume", "test_plan": "StrictE2E-iOS",
+            "configuration": configuration, "destination": SMOKE_BUILD_DESTINATION,
+            "toolchain": {"xcode_version_sha256": file_hash(version), "xcode_build": xcode_build,
+                          "pins_sha256": file_hash(root / "scripts/ci-pins.json"),
+                          "sdk_version": read("xcrun", "--sdk", "iphonesimulator", "--show-sdk-version"),
+                          "sdk_build": read("xcrun", "--sdk", "iphonesimulator", "--show-sdk-build-version"),
+                          "package_lock_sha256": file_hash(root / "immichSlides.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved")}}
+
+
+def smoke_execution_identity(root, destination, device):
+    require(destination.startswith("platform=iOS Simulator,id=") and destination.count(",") == 1,
+            "smoke archive requires a concrete iOS Simulator destination")
+    udid = destination.partition(",id=")[2]
+    def listing(name):
+        return json.loads(subprocess.check_output(["xcrun", "simctl", "list", name, "--json"], text=True, timeout=60))
+    devices, runtimes, types = listing("devices"), listing("runtimes"), listing("devicetypes")
+    matches = [(runtime, item) for runtime, items in devices["devices"].items() for item in items
+               if item.get("udid") == udid and item.get("isAvailable") is True]
+    require(len(matches) == 1, "smoke archive execution device is unavailable")
+    runtime_id, item = matches[0]
+    runtime = [value for value in runtimes["runtimes"] if value["identifier"] == runtime_id and value.get("isAvailable") is True]
+    device_types = [value for value in types["devicetypes"] if value["identifier"] == item.get("deviceTypeIdentifier")]
+    require(len(runtime) == len(device_types) == 1, "smoke archive execution runtime or device type is unavailable")
+    return {"platform": "iOS Simulator", "udid": udid, "device": device, "device_type": device_types[0]["name"],
+            "runtime": {"runtime": runtime_id, "version": runtime[0]["version"], "build": runtime[0]["buildversion"]},
+            "architecture": host_platform.machine()}
+
+
+def validate_smoke_compatibility(identity, architectures, execution, pins):
+    require(identity.get("destination") == SMOKE_BUILD_DESTINATION and identity.get("platform") == "ios"
+            and identity.get("scheme") == "immichSlides-iOS-settings-resume"
+            and identity.get("test_plan") == "StrictE2E-iOS", "smoke archive generic build semantics differ")
+    device = execution.get("device")
+    require(device in {"iphone", "ipad"} and execution.get("platform") == "iOS Simulator"
+            and execution.get("device_type") == pins["device_types"].get(device)
+            and execution.get("runtime") == pins["simulators"]["ios"] and bool(execution.get("udid")),
+            "smoke archive is incompatible with the pinned execution target")
+    require(isinstance(architectures, list) and architectures and len(architectures) == len(set(architectures))
+            and set(architectures) <= {"arm64", "x86_64"} and execution.get("architecture") in architectures,
+            "smoke archive execution architecture is absent")
+
+
+def validate_smoke_receipt(receipt, expected_identity, control):
+    require(set(receipt) == {"schema_version", "kind", "identity", "control", "architectures", "signing_mode",
+                             "private_configuration_present", "xctestrun", "products", "archive_sha256", "source_root"},
+            "smoke archive receipt fields differ")
+    require(type(receipt["schema_version"]) is int and receipt["schema_version"] == 2
+            and receipt["kind"] == "smoke-archive", "smoke archive receipt version differs")
+    require(receipt["identity"] == expected_identity, "smoke archive tested source or build identity differs")
+    require(receipt["control"] == control, "smoke archive control provenance differs")
+    require(receipt["signing_mode"] == "adhoc" and receipt["private_configuration_present"] is False,
+            "smoke archive signing or private configuration differs")
+    sha(receipt["archive_sha256"], 64)
+    require(isinstance(receipt["source_root"], str) and Path(receipt["source_root"]).is_absolute(),
+            "smoke archive compilation root differs")
+    name = receipt["xctestrun"]
+    require(isinstance(name, str) and Path(name).name == name and name.endswith(".xctestrun"),
+            "smoke archive xctestrun differs")
+    from ci_build_archive import validate_links
+    validate_links(receipt["products"])
+
+
+def check_smoke_source_plist(root):
+    path = root / "immichSlides/Info.plist"
+    require(path.is_file() and not path.is_symlink(), "source app plist must be a regular file")
+    values = plistlib.loads(path.read_bytes())
+    require(isinstance(values, dict) and all(values.get(key) == "$(" + key + ")"
+            for key in ("IMMICH_SERVER_URL", "IMMICH_API_KEY")), "source app plist server fields differ")
+
+
+def build_smoke_archive(*, root, configuration, control, derived, packages, output, execute, timeout=1200):
+    """A distinct envelope; never broaden the schema-1 exact-destination reader."""
+    workspace_preflight(root)
+    check_smoke_source_plist(root)
+    require(not output.exists(), "smoke archive output must be fresh")
+    output.mkdir(parents=True)
+    identity = smoke_build_identity(root, configuration)
+    started = time.monotonic()
+    warm = warm_up(root=root, platform="ios", suite="smoke-flow", configuration=configuration,
+                   destination=SMOKE_BUILD_DESTINATION, derived=derived, packages=packages,
+                   evidence=output, timeout=timeout, execute=execute)
+    build_seconds = time.monotonic() - started
+    workspace_preflight(root)
+    check_smoke_source_plist(root)
+    require(smoke_build_identity(root, configuration) == identity, "smoke build changed source, lock or toolchain")
+    products = derived / "Build/Products"
+    check_products(products, configuration=configuration)
+    binary = products / f"{configuration}-iphonesimulator/immichSlides.app/immichSlides"
+    architectures = subprocess.check_output(["xcrun", "lipo", "-archs", str(binary)], text=True, timeout=60).split()
+    archive = output / "archive"
+    archive.mkdir()
+    started = time.monotonic()
+    pack_products(products, archive / "build.tar.gz")
+    receipt = {"schema_version": 2, "kind": "smoke-archive", "identity": identity, "control": control,
+               "architectures": architectures, "signing_mode": warm["signing_mode"],
+               "private_configuration_present": False, "xctestrun": warm["xctestrun"],
+               "products": inventory(products), "archive_sha256": file_hash(archive / "build.tar.gz"),
+               "source_root": str(root.resolve())}
+    validate_smoke_receipt(receipt, identity, control)
+    write_json(archive / "manifest.json", receipt)
+    return receipt, {"build_seconds": build_seconds, "pack_seconds": time.monotonic() - started,
+                     "manifest_sha256": file_hash(archive / "manifest.json"),
+                     "archive_sha256": receipt["archive_sha256"], "archive_bytes": (archive / "build.tar.gz").stat().st_size}
+
+
+def load_smoke_archive(root, configuration, destination, device, derived, *, control):
+    workspace_preflight(root)
+    receipt = json.loads((derived / SMOKE_RECEIPT).read_text())
+    identity = smoke_build_identity(root, configuration)
+    validate_smoke_receipt(receipt, identity, control)
+    execution = smoke_execution_identity(root, destination, device)
+    validate_smoke_compatibility(identity, receipt["architectures"], execution,
+                                 json.loads((root / "scripts/ci-pins.json").read_text()))
+    validate_warm_products(derived, receipt)
+    products = derived / "Build/Products"
+    check_products(products, configuration=configuration)
+    require(measure_signing(products / f"{configuration}-iphonesimulator/immichSlides.app") == "adhoc",
+            "smoke archive signature differs")
+    run = products / receipt["xctestrun"]
+    require(run.is_file() and not run.is_symlink(), "smoke archive xctestrun is unavailable")
+    return receipt, run, execution
 
 
 def build_settings(platform, suite, configuration=None):

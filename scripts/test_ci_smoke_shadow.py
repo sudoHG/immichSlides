@@ -4,8 +4,11 @@ import copy
 import hashlib
 import json
 import os
+import plistlib
+import subprocess
 import tempfile
 import time
+import tarfile
 import unittest
 from contextlib import ExitStack
 from pathlib import Path
@@ -13,6 +16,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import ci_smoke_shadow as shadow
+import strict_e2e_build
 from ci_summary import ContractError
 
 
@@ -43,6 +47,26 @@ def manifest():
 
 def plan():
     return shadow.make_plan(environment(), nightly(), manifest(), "c" * 64, "real")
+
+
+def shared_plan():
+    return dict(plan(), build_mode=shadow.ARCHIVE_MODE, tested_source={"head_sha": HEAD},
+                control={"run_id": "200", "attempt": 1, "api_head_sha": "b" * 40})
+
+
+def archive_provenance(scheduling):
+    return {"configuration": "Debug", "artifact_id": 91, "manifest_sha256": "d" * 64,
+            "archive_sha256": "e" * 64, "control": scheduling["control"],
+            "source": scheduling["tested_source"], "producer_job": "smoke-shadow-ios-debug"}
+
+
+def archive_api():
+    job = {"name": "smoke-shadow-ios-debug", "run_attempt": 1, "conclusion": "success", "steps": [
+        {"name": "Build the generic smoke configuration", "conclusion": "success"},
+        {"name": "Publish the immutable configuration archive", "conclusion": None}]}
+    metadata = {"id": 91, "name": "smoke-build-debug-200-1", "expired": False,
+                "workflow_run": {"id": 200, "head_sha": "b" * 40}}
+    return SimpleNamespace(repo=Mock(return_value=metadata)), job
 
 
 def group_records(scheduling):
@@ -124,6 +148,587 @@ def plan_fixture(temporary, stack, *, ancestor=0):
 
 
 class SmokeShadowTests(unittest.TestCase):
+    def test_aggregate_requires_the_planned_main_control_even_for_suppressed_plans(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            def commit(value):
+                (root / "source").write_text(value)
+                subprocess.run(["git", "add", "."], cwd=root, check=True)
+                subprocess.run(["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+                                "commit", "-qm", "fixture"], cwd=root, check=True)
+                return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+            planned = commit("planned")
+            advanced = commit("advanced main")
+            subprocess.run(["git", "update-ref", "refs/remotes/origin/main", advanced], cwd=root, check=True)
+            subprocess.run(["git", "checkout", "-q", "--detach", planned], cwd=root, check=True)
+            foreign = commit("outside main")
+            temporary = root / ".git/runner"
+            context = dict(environment(), RUNNER_TEMP=str(temporary), SMOKE_MATRIX_RESULT="skipped",
+                           GITHUB_STEP_SUMMARY=str(temporary / "summary.md"))
+            for case in ("planned", "checkout-changed", "staged-changed", "outside-main", "missing-archive", "missing-shared"):
+                with self.subTest(case=case), ExitStack() as stack:
+                    scheduling = dict(plan(), execute=False, not_run_reason="Synthetic suppression.",
+                                      build_mode=shadow.ARCHIVE_MODE, control_source_sha=planned)
+                    checkout = advanced if case == "checkout-changed" else foreign if case == "outside-main" else planned
+                    subprocess.run(["git", "checkout", "-q", "--detach", checkout], cwd=root, check=True)
+                    staged = temporary / "smoke-control/stage.json"
+                    if case == "staged-changed":
+                        shadow.write_json(staged, {"head_sha": advanced})
+                    elif staged.exists():
+                        staged.unlink()
+                    if case == "outside-main":
+                        scheduling["control_source_sha"] = foreign
+                    elif case.startswith("missing"):
+                        scheduling.pop("control_source_sha")
+                        if case == "missing-shared":
+                            scheduling.pop("build_mode")
+                    shadow.write_json(temporary / "ci-artifacts/smoke-plan/plan.json", scheduling)
+                    stack.enter_context(patch.dict(os.environ, context, clear=True))
+                    stack.enter_context(patch.object(shadow, "ROOT", root))
+                    reader = stack.enter_context(patch.object(shadow, "manifest_at_head", return_value=(manifest(), "c" * 64)))
+                    stack.enter_context(patch.object(shadow, "read_transfer_timings"))
+                    stack.enter_context(patch.object(shadow, "scan_records"))
+                    self.assertEqual(shadow.main(["aggregate"]), 0 if case == "planned" else 1)
+                    if case == "planned":
+                        reader.assert_called_once_with(HEAD)
+                        result = json.loads((temporary / "smoke-shadow/shadow.json").read_text())
+                        self.assertEqual(result["outcome"], "not-run")
+                    else:
+                        reader.assert_not_called()
+
+    def test_source_at_commit_matches_the_clean_checkout_fingerprint(self):
+        from strict_e2e_build import smoke_source_identity
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            (root / "nested").mkdir()
+            (root / "nested/photo.txt").write_bytes(b"synthetic\x00content\n")
+            (root / "unicode-\u00e9.txt").write_text("fixture")
+            (root / "link").symlink_to("nested/photo.txt")
+            subprocess.run(["git", "add", "."], cwd=root, check=True)
+            subprocess.run(["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+                            "commit", "-qm", "fixture"], cwd=root, check=True)
+            with patch.object(shadow, "ROOT", root):
+                self.assertEqual(shadow.source_at_commit(shadow.git("rev-parse", "HEAD")), smoke_source_identity(root))
+
+    def test_current_control_keeps_the_planned_commit_when_main_advances(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            def commit(value):
+                (root / "source").write_text(value)
+                subprocess.run(["git", "add", "."], cwd=root, check=True)
+                subprocess.run(["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+                                "commit", "-qm", "fixture"], cwd=root, check=True)
+                return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+            planned = commit("planned")
+            subprocess.run(["git", "update-ref", "refs/remotes/origin/main", planned], cwd=root, check=True)
+            temporary = root / ".git/runner"
+            context = dict(environment(), RUNNER_TEMP=str(temporary), GITHUB_SHA=planned,
+                           GITHUB_WORKFLOW_REF=REPOSITORY + "/" + shadow.WORKFLOW + "@refs/heads/main")
+            run = dict(nightly(), id=200, workflow_id=8, path=shadow.WORKFLOW, head_sha=planned, event="workflow_run")
+            api = SimpleNamespace(repo=lambda path: run if path == "actions/runs/200" else {"id": 8, "path": shadow.WORKFLOW})
+            with patch.object(shadow, "ROOT", root), patch("ci_publish.GitHub", return_value=api):
+                control = shadow.authoritative_control(context, api)
+                advanced = commit("advanced")
+                subprocess.run(["git", "update-ref", "refs/remotes/origin/main", advanced], cwd=root, check=True)
+                subprocess.run(["git", "checkout", "-q", "--detach", planned], cwd=root, check=True)
+                shadow.write_json(temporary / "smoke-control/stage.json", {"head_sha": planned})
+                self.assertEqual(shadow.current_control({"control": control}, context), (api, control))
+                shadow.write_json(temporary / "smoke-control/stage.json", {"head_sha": advanced})
+                with self.assertRaisesRegex(ValueError, "control changed"):
+                    shadow.current_control({"control": control}, context)
+
+    def test_select_archive_uses_api_admission_and_producer_hashes(self):
+        scheduling = shared_plan()
+        for defect in (None, "expired", "failed-producer", "source"):
+            with self.subTest(defect=defect), tempfile.TemporaryDirectory() as raw:
+                temporary = Path(raw)
+                api, job = archive_api()
+                if defect == "expired":
+                    api.repo.return_value["expired"] = True
+                if defect == "failed-producer":
+                    job["conclusion"] = "failure"
+                identity = {"source": {"head_sha": "f" * 40} if defect == "source" else scheduling["tested_source"]}
+                context = dict(environment(), SMOKE_GROUP="iphone-debug", SMOKE_DEBUG_ARTIFACT_ID="91",
+                               SMOKE_DEBUG_MANIFEST_SHA256="d" * 64, SMOKE_DEBUG_ARCHIVE_SHA256="e" * 64)
+                with patch.object(shadow, "current_control", return_value=(api, scheduling["control"])), \
+                        patch.object(shadow, "producer_job", return_value=job), \
+                        patch("strict_e2e_build.smoke_build_identity", return_value=identity):
+                    if defect:
+                        with self.assertRaises(ValueError):
+                            shadow.select_archive(scheduling, context, temporary)
+                        self.assertFalse((temporary / "smoke-archive-selection.json").exists())
+                    else:
+                        self.assertEqual(shadow.select_archive(scheduling, context, temporary), 0)
+                        selection = json.loads((temporary / "smoke-archive-selection.json").read_text())
+                        self.assertEqual(selection["provenance"], archive_provenance(scheduling))
+                        api.repo.assert_called_once_with("actions/artifacts/91")
+
+    def test_producer_record_keeps_unknown_upload_timing_without_failing_admission(self):
+        scheduling = shared_plan()
+        for defect in (None, "expired", "build-source"):
+            with self.subTest(defect=defect), tempfile.TemporaryDirectory() as raw:
+                temporary = Path(raw)
+                api, job = archive_api()
+                if defect == "expired":
+                    api.repo.return_value["expired"] = True
+                source = {} if defect == "build-source" else scheduling["tested_source"]
+                shadow.write_json(temporary / "smoke-producer/build.json", {"configuration": "Debug", "source": source,
+                    "job_started_epoch": time.time(), "measurements": {"build_seconds": 10, "pack_seconds": 1,
+                    "manifest_sha256": "d" * 64, "archive_sha256": "e" * 64}})
+                with patch.object(shadow, "current_control", return_value=(api, scheduling["control"])), \
+                        patch.object(shadow, "producer_job", return_value=job), patch.object(shadow, "scan_records"):
+                    code = shadow.finish_producer(scheduling, dict(environment(), SMOKE_CONFIGURATION="Debug",
+                                                  SMOKE_ARTIFACT_ID="91"), temporary)
+                record = json.loads((temporary / "smoke-producer-records/producer.json").read_text())
+                self.assertEqual((code, record["outcome"]), (1, "failed") if defect else (0, "passed"))
+                if not defect:
+                    self.assertEqual(record["provenance"], archive_provenance(scheduling))
+                    self.assertIsNone(record["timing"]["upload_seconds"])
+
+    def test_aggregate_transfer_diagnostics_tolerate_incomplete_steps_and_api_failure(self):
+        scheduling = shared_plan()
+        for state in ("complete", "running", "missing", "api-error", "invalid-clock"):
+            with self.subTest(state=state):
+                step = {"name": "Publish the immutable configuration archive", "conclusion": "success",
+                        "started_at": "2026-11-15T00:00:00Z", "completed_at": "2026-11-15T00:00:02Z"}
+                if state == "running":
+                    step.update(conclusion=None, completed_at=None)
+                if state == "invalid-clock":
+                    step["completed_at"] = "invalid"
+                jobs = [{"name": "smoke-shadow-ios-debug", "steps": [] if state == "missing" else [step]},
+                        {"name": "smoke-shadow-iphone-debug", "steps": [dict(step, name="Download the selected configuration archive")]}]
+                producers = [{"configuration": "Debug", "timing": {"upload_seconds": None}}]
+                records = [{"timing_mode": shadow.ARCHIVE_MODE, "group": {"id": "iphone-debug"}, "transfer_seconds": None}]
+                with patch("ci_publish.GitHub"), patch("ci_publish.complete_attempt_jobs", return_value=jobs,
+                        side_effect=OSError("unavailable") if state == "api-error" else None):
+                    shadow.read_transfer_timings(scheduling, producers, records, environment())
+                self.assertEqual(producers[0]["timing"]["upload_seconds"], 2 if state == "complete" else None)
+                self.assertEqual(records[0]["transfer_seconds"], 2 if state in {"complete", "missing"} else None)
+
+    def test_archive_group_verifies_planned_expectations_before_slow_simulator_creation(self):
+        scheduling = shared_plan()
+        for defect in (None, "control", "manifest", "allowance", "selection"):
+            with self.subTest(defect=defect), tempfile.TemporaryDirectory() as raw, ExitStack() as stack:
+                temporary = Path(raw)
+                provenance = archive_provenance(scheduling)
+                identity = {"source": scheduling["tested_source"]}
+                clock = [100.0]
+                shadow.write_json(temporary / "smoke-archive-selection.json", {"provenance": provenance,
+                    "identity": identity, "transfer_started_epoch": 100.0})
+                if defect == "selection":
+                    (temporary / "smoke-archive-selection.json").unlink()
+                shadow.write_json(temporary / "ci-artifacts/smoke-build/manifest.json", {"control": {"run_id": "untrusted"}})
+                calls = []
+                def verify(*_args, **options):
+                    calls.append("verify")
+                    self.assertEqual(options["control"], scheduling["control"])
+                    self.assertEqual(options["manifest_hash"], "d" * 64)
+                    self.assertEqual(options["archive_hash"], "e" * 64)
+                    clock[0] += 121 if defect == "allowance" else 1
+                    if defect in {"control", "manifest"}:
+                        raise ValueError("archive admission rejected")
+                def create(*_args):
+                    calls.append("create")
+                    clock[0] += 150
+                    return "synthetic"
+                stack.enter_context(patch.object(shadow.time, "time", side_effect=lambda: clock[0]))
+                stack.enter_context(patch.object(shadow.time, "monotonic", side_effect=lambda: clock[0]))
+                stack.enter_context(patch.object(shadow, "git", return_value=HEAD))
+                stack.enter_context(patch("ci_build_archive.file_hash", return_value="c" * 64))
+                stack.enter_context(patch.object(shadow, "job_started_epoch", return_value=100.0))
+                stack.enter_context(patch("ci_publish.complete_attempt_jobs", return_value=[{"name": "smoke-shadow-iphone-debug", "steps": [
+                    {"name": "Download the selected configuration archive", "conclusion": None}]}]))
+                stack.enter_context(patch("ci_build_archive.workspace_preflight"))
+                stack.enter_context(patch("run_offline_unit_tests.ensure_disk_for_xcodebuild"))
+                stack.enter_context(patch("ci_simulator.create_and_boot_simulator", side_effect=create))
+                stack.enter_context(patch("strict_e2e_build.smoke_build_identity", return_value=identity))
+                stack.enter_context(patch.object(shadow, "verify_smoke_archive", side_effect=verify))
+                load = stack.enter_context(patch("strict_e2e_build.load_smoke_archive"))
+                run = stack.enter_context(patch("run_strict_ci_tracer.run_runner", return_value=0))
+                def evidence(*_args, validation, **_options):
+                    validation.update(outcome="passed", reason=None)
+                    return group_records(scheduling)[0]["flows"], []
+                stack.enter_context(patch.object(shadow, "read_runner_flows", side_effect=evidence))
+                stack.enter_context(patch.object(shadow, "check_group_upload"))
+                def execute(*_args, **_options):
+                    shadow.write_json(temporary / "smoke-execution/flows/case-manifest.json", {"selection": "group"})
+                    return 0
+                run.side_effect = execute
+                code = shadow.run_group(scheduling, dict(environment(), SMOKE_GROUP="iphone-debug"), temporary)
+                record = json.loads((temporary / "smoke-records/group.json").read_text())
+                if defect:
+                    self.assertEqual(code, 1)
+                    self.assertEqual(calls, [] if defect == "selection" else ["verify"])
+                    run.assert_not_called()
+                    load.assert_not_called()
+                    self.assertEqual(record["flows"][0]["outcome"], "not-run")
+                    self.assertFalse(record["flows"][0]["executed"])
+                else:
+                    self.assertEqual((code, calls), (0, ["verify", "create"]))
+                    self.assertEqual(record["build_provenance"], provenance)
+                    self.assertEqual(record["verify_seconds"], 1)
+                    self.assertIsNone(record["transfer_seconds"])
+                    self.assertEqual(load.call_args.kwargs["control"], scheduling["control"])
+                    self.assertIn("--test-without-building", run.call_args.args[0])
+
+    def test_historical_shared_head_writes_a_suppressed_plan_and_reason(self):
+        with tempfile.TemporaryDirectory() as raw, ExitStack() as stack:
+            temporary = Path(raw)
+            context, _api, _reader = plan_fixture(temporary, stack)
+            stack.enter_context(patch.object(shadow, "git", return_value=HEAD))
+            self.assertEqual(shadow.plan_run(context, temporary / "plan", shared=True), 0)
+            scheduling = json.loads((temporary / "plan/plan.json").read_text())
+            self.assertFalse(scheduling["execute"])
+            self.assertIn("predates the complete", scheduling["not_run_reason"])
+            record = shadow.aggregate(scheduling, [], "skipped")
+            self.assertEqual((record["outcome"], record["comparison_eligible"]), ("not-run", False))
+            self.assertIn("predates the complete", shadow.markdown(record))
+
+    def test_hosted_stages_require_runner_temp_before_any_filesystem_action(self):
+        for phase in ("stage", "setup", "plan", "plan-shared", "build", "producer-record", "select-archive", "run", "aggregate", "cleanup"):
+            with self.subTest(phase=phase), patch.dict(os.environ, {}, clear=True), \
+                    patch.object(shadow, "git", side_effect=AssertionError("stage touched git")), \
+                    patch.object(shadow, "setup", side_effect=AssertionError("setup ran")), \
+                    patch.object(shadow, "cleanup", side_effect=AssertionError("cleanup ran")):
+                self.assertEqual(shadow.main([phase]), 1)
+
+    def test_hosted_producer_passes_the_filtered_build_environment_to_the_runner(self):
+        scheduling = shared_plan()
+        with tempfile.TemporaryDirectory() as raw, ExitStack() as stack:
+            temporary = Path(raw)
+            stack.enter_context(patch.object(shadow, "current_control", return_value=(None, scheduling["control"])))
+            stack.enter_context(patch.object(shadow, "job_started_epoch", return_value=time.time()))
+            stack.enter_context(patch("strict_e2e_build.smoke_source_identity", return_value=scheduling["tested_source"]))
+            stack.enter_context(patch("ci_build_archive.workspace_preflight"))
+            stack.enter_context(patch("ci_build_archive.disk_check"))
+            def build(**options):
+                options["execute"](["synthetic-build"], log_path=temporary / "build.log", environment={"PATH": "/filtered"})
+                return {"identity": {"source": scheduling["tested_source"]}}, {
+                    "manifest_sha256": "d" * 64, "archive_sha256": "e" * 64}
+            stack.enter_context(patch("strict_e2e_build.build_smoke_archive", side_effect=build))
+            run = stack.enter_context(patch("run_strict_ci_tracer.run_runner", return_value=0))
+            self.assertEqual(shadow.run_producer(scheduling, dict(environment(), SMOKE_CONFIGURATION="Debug"), temporary), 0)
+            self.assertEqual(run.call_args.kwargs["environment"], {"PATH": "/filtered"})
+
+    def test_archive_loader_checks_the_explicit_expected_control(self):
+        import strict_e2e_build as build
+        identity = {"source": {"head_sha": HEAD}, "configuration": "Debug"}
+        receipt = {"schema_version": 2, "kind": "smoke-archive", "identity": identity, "control": {"run_id": "wrong"},
+                   "architectures": ["arm64"], "signing_mode": "adhoc", "private_configuration_present": False,
+                   "xctestrun": "one.xctestrun", "products": [], "archive_sha256": "f" * 64, "source_root": "/source"}
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            shadow.write_json(root / build.SMOKE_RECEIPT, receipt)
+            with patch.object(build, "workspace_preflight"), patch.object(build, "smoke_build_identity", return_value=identity), \
+                    patch.object(build, "smoke_execution_identity", side_effect=AssertionError("unadmitted control reached simulator")):
+                with self.assertRaisesRegex(ValueError, "control provenance differs"):
+                    build.load_smoke_archive(root, "Debug", "platform=iOS Simulator,id=synthetic", "iphone", root,
+                                             control={"run_id": "200"})
+
+    def test_runner_child_receives_only_the_explicit_build_environment(self):
+        import sys
+        from run_strict_ci_tracer import run_runner
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            with patch.dict(os.environ, {"UI_TEST_SYNTHETIC": "ambient"}):
+                code = run_runner([sys.executable, "-c", "import os; print(os.environ.get('UI_TEST_SYNTHETIC', 'absent'))"],
+                                  root, root / "runner.log", timeout_seconds=10, environment={"PATH": "/filtered"})
+            self.assertEqual(code, 0)
+            self.assertEqual((root / "runner.log").read_text().strip(), "absent")
+
+    def test_shared_plan_refuses_tested_heads_without_the_complete_producer_contract(self):
+        capabilities = ("SMOKE_ARCHIVE_VERSION = 2", "SMOKE_SOURCE_PLIST_PREFLIGHT_VERSION = 1", "SMOKE_EXPECTED_CONTROL_VERSION = 1")
+        for version in ("", *("\n".join(value for value in capabilities if value != missing) for missing in capabilities),
+                        "\n".join(capabilities)):
+            with self.subTest(version=version), patch.object(shadow, "git", return_value=version), \
+                    patch.object(shadow, "source_at_commit", return_value={"head_sha": HEAD}), \
+                    patch.object(shadow, "authoritative_control", return_value={"run_id": "200"}) as admission:
+                scheduling = plan()
+                if all(value in version for value in capabilities):
+                    shadow.plan_shared(scheduling, environment(), None)
+                    self.assertEqual(scheduling["build_mode"], shadow.ARCHIVE_MODE)
+                else:
+                    shadow.plan_shared(scheduling, environment(), None)
+                    self.assertFalse(scheduling["execute"])
+                    self.assertIn("predates the complete", scheduling["not_run_reason"])
+                    admission.assert_not_called()
+
+    def test_generic_producer_checks_source_server_fields_before_and_after_compilation(self):
+        import strict_e2e_build as build
+        for defect in (None, "before", "after", "symlink"):
+            with self.subTest(defect=defect), tempfile.TemporaryDirectory() as raw:
+                root = Path(raw)
+                source = root / "source"
+                plist = source / "immichSlides/Info.plist"
+                plist.parent.mkdir(parents=True)
+                values = {key: "$(" + key + ")" for key in ("IMMICH_SERVER_URL", "IMMICH_API_KEY")}
+                plist.write_bytes(plistlib.dumps(dict(values, IMMICH_API_KEY="synthetic-key") if defect == "before" else values))
+                if defect == "symlink":
+                    target = source / "synthetic.plist"
+                    target.write_bytes(plist.read_bytes())
+                    plist.unlink()
+                    plist.symlink_to(target)
+                derived = root / "derived"
+                def compile(**_options):
+                    products = derived / "Build/Products"
+                    app = products / "Debug-iphonesimulator/immichSlides.app"
+                    app.mkdir(parents=True)
+                    (app / "Info.plist").write_bytes(plistlib.dumps({key: "" for key in values}))
+                    (app / "immichSlides").write_bytes(b"synthetic-binary")
+                    (products / "one.xctestrun").write_bytes(b"synthetic-run")
+                    if defect == "after":
+                        plist.write_bytes(plistlib.dumps(dict(values, IMMICH_SERVER_URL="synthetic-server")))
+                    return {"signing_mode": "adhoc", "xctestrun": "one.xctestrun"}
+                identity = {"configuration": "Debug", "source": {"head_sha": HEAD}}
+                with patch.object(build, "workspace_preflight"), patch.object(build, "smoke_build_identity", return_value=identity), \
+                        patch.object(build, "warm_up", side_effect=compile) as compilation, \
+                        patch.object(build.subprocess, "check_output", return_value="arm64"):
+                    options = dict(root=source, configuration="Debug", control={}, derived=derived, packages=root / "packages",
+                                   output=root / "output", execute=None)
+                    if defect is None:
+                        build.build_smoke_archive(**options)
+                        self.assertTrue((root / "output/archive/manifest.json").is_file())
+                    else:
+                        with self.assertRaisesRegex(ValueError, "source app plist"):
+                            build.build_smoke_archive(**options)
+                        self.assertFalse((root / "output/archive/manifest.json").exists())
+                        if defect in {"before", "symlink"}:
+                            compilation.assert_not_called()
+
+    def test_producer_cleanup_refusal_preserves_owned_products(self):
+        from run_strict_ci_tracer import RunnerGroupCleanupError
+        scheduling = dict(plan(), build_mode=shadow.ARCHIVE_MODE, tested_source={"head_sha": HEAD}, control={"run_id": "200"})
+        with tempfile.TemporaryDirectory() as raw:
+            temporary = Path(raw)
+            def build(**options):
+                options["execute"](["synthetic-build"], log_path=temporary / "build.log")
+            with patch.object(shadow, "current_control", return_value=(None, scheduling["control"])), \
+                    patch.object(shadow, "job_started_epoch", return_value=time.time()), \
+                    patch("strict_e2e_build.smoke_source_identity", return_value=scheduling["tested_source"]), \
+                    patch("strict_e2e_build.build_smoke_archive", side_effect=build), \
+                    patch("ci_build_archive.workspace_preflight"), patch("ci_build_archive.disk_check"), \
+                    patch("run_strict_ci_tracer.run_runner", side_effect=RunnerGroupCleanupError("synthetic refusal")):
+                with self.assertRaises(RunnerGroupCleanupError):
+                    shadow.run_producer(scheduling, dict(environment(), SMOKE_CONFIGURATION="Debug"), temporary)
+            self.assertTrue((temporary / "smoke-cleanup-blocked").exists())
+            with self.assertRaisesRegex(ValueError, "cleanup unverified"):
+                shadow.cleanup(dict(environment(), SMOKE_CONFIGURATION="Debug"), temporary)
+            self.assertTrue((temporary / "smoke-producer/ownership.json").is_file())
+
+    def test_suppressed_shared_plans_preserve_not_run_without_requiring_a_historical_archive_reader(self):
+        for reason in ("active", "unchanged", "conclusion"):
+            with self.subTest(reason=reason), tempfile.TemporaryDirectory() as raw, ExitStack() as stack:
+                temporary = Path(raw)
+                context, api, _reader = plan_fixture(temporary, stack)
+                if reason == "active":
+                    api.pages.side_effect = lambda _path, _collection, **filters: [dict(nightly(), id=101, status=filters["status"])]
+                elif reason == "unchanged":
+                    stack.enter_context(patch("ci_nightly_change.run_evidence", return_value="skipped"))
+                else:
+                    run = dict(nightly(), conclusion="cancelled")
+                    api.repo.side_effect = lambda path: run if path == "actions/runs/100" else {"id": 7, "path": shadow.NIGHTLY}
+                shared = stack.enter_context(patch.object(shadow, "plan_shared", side_effect=AssertionError("suppressed plan checked archive support")))
+                self.assertEqual(shadow.plan_run(context, temporary / "plan", shared=True), 0)
+                shared.assert_not_called()
+                scheduling = json.loads((temporary / "plan/plan.json").read_text())
+                self.assertEqual(shadow.aggregate(scheduling, [], "skipped")["outcome"], "not-run")
+
+    def test_shared_control_requires_authoritative_main_run_and_keeps_the_staged_source_separate(self):
+        with tempfile.TemporaryDirectory() as raw:
+            context = dict(environment(), RUNNER_TEMP=raw,
+                           GITHUB_WORKFLOW_REF=REPOSITORY + "/" + shadow.WORKFLOW + "@refs/heads/main")
+            run = dict(nightly(), id=200, path=shadow.WORKFLOW, workflow_id=8, head_sha="b" * 40, event="workflow_run")
+            workflow = {"id": 8, "path": shadow.WORKFLOW}
+            api = SimpleNamespace(repo=lambda path: run if path == "actions/runs/200" else workflow)
+            with patch.object(shadow.subprocess, "call", return_value=0), patch.object(shadow, "git", return_value="c" * 40):
+                control = shadow.authoritative_control(context, api)
+                self.assertEqual((control["api_head_sha"], control["control_source_sha"], control["run_id"]),
+                                 ("b" * 40, "c" * 40, "200"))
+                for field, value in (("head_sha", HEAD), ("head_branch", "topic"), ("run_attempt", 2),
+                                     ("workflow_id", 9), ("path", shadow.NIGHTLY),
+                                     ("repository", {"full_name": "other/repo"})):
+                    changed = dict(run, **{field: value})
+                    bad_api = SimpleNamespace(repo=lambda path: changed if path == "actions/runs/200" else workflow)
+                    with self.subTest(field=field), self.assertRaisesRegex(ValueError, "control API provenance"):
+                        shadow.authoritative_control(context, bad_api)
+            with patch.object(shadow.subprocess, "call", return_value=1), self.assertRaisesRegex(ValueError, "admitted main"):
+                shadow.authoritative_control(context, api)
+
+    def test_smoke_archive_gate_rejects_hash_inventory_links_configuration_and_signature_before_admission(self):
+        import ci_build_archive as archive
+        import strict_e2e_build as build
+        for defect in (None, "manifest", "tar", "inventory", "link", "configuration", "signature"):
+            with self.subTest(defect=defect), tempfile.TemporaryDirectory() as raw:
+                root = Path(raw)
+                products = root / "Products"
+                app = products / "Release-iphonesimulator/immichSlides.app"
+                app.mkdir(parents=True)
+                (app / "Info.plist").write_bytes(plistlib.dumps({"IMMICH_SERVER_URL": "", "IMMICH_API_KEY": ""}))
+                (products / "one.xctestrun").write_bytes(b"synthetic")
+                identity = {"configuration": "Release", "source": {"head_sha": HEAD}}
+                receipt = {"schema_version": 2, "kind": "smoke-archive", "identity": identity, "control": {},
+                    "architectures": ["arm64"], "signing_mode": "adhoc", "private_configuration_present": False,
+                    "xctestrun": "one.xctestrun", "products": archive.inventory(products), "source_root": "/retired/source"}
+                directory = root / "archive"
+                directory.mkdir()
+                archive.pack_products(products, directory / "build.tar.gz")
+                receipt["archive_sha256"] = archive.file_hash(directory / "build.tar.gz")
+                if defect == "inventory":
+                    next(entry for entry in receipt["products"] if entry["kind"] == "file")["sha256"] = "f" * 64
+                if defect == "link":
+                    (products / "escape").symlink_to("../../outside")
+                    with tarfile.open(directory / "build.tar.gz", "w:gz", dereference=False) as packed:
+                        packed.add(products, arcname="Products")
+                    receipt["products"].append({"path": "Products/escape", "kind": "symlink", "mode": 511, "target": "../../outside"})
+                    receipt["archive_sha256"] = archive.file_hash(directory / "build.tar.gz")
+                if defect == "configuration":
+                    receipt["identity"]["configuration"] = "Debug"
+                shadow.write_json(directory / "manifest.json", receipt)
+                digest = archive.file_hash(directory / "manifest.json")
+                if defect == "manifest":
+                    with (directory / "manifest.json").open("a") as handle:
+                        handle.write("\n")
+                if defect == "tar":
+                    with (directory / "build.tar.gz").open("ab") as handle:
+                        handle.write(b"changed")
+                with patch("ci_build_archive.measure_signing", side_effect=ContractError("signature") if defect == "signature" else None,
+                           return_value="adhoc"):
+                    if defect is None:
+                        admitted = shadow.verify_smoke_archive(directory, root / "relocated", expected_identity=identity,
+                                                               control={}, manifest_hash=digest)
+                        build.validate_warm_products(root / "relocated", admitted)
+                        (root / "relocated/Build/Products/one.xctestrun").write_bytes(b"changed")
+                        with self.assertRaisesRegex(build.CommandError, "Products changed"):
+                            build.validate_warm_products(root / "relocated", admitted)
+                    else:
+                        with self.assertRaises(ValueError):
+                            shadow.verify_smoke_archive(directory, root / "relocated", expected_identity={"configuration": "Release", "source": {"head_sha": HEAD}},
+                                                        control={}, manifest_hash=digest)
+                        self.assertFalse((root / "relocated" / build.SMOKE_RECEIPT).exists())
+
+    def test_archive_timing_requires_provenance_and_failed_producers_cannot_count(self):
+        scheduling = plan()
+        scheduling.update(build_mode=shadow.ARCHIVE_MODE, control={"run_id": "200"}, tested_source={"head_sha": HEAD})
+        provenance = {"configuration": "Debug", "artifact_id": 91, "manifest_sha256": "d" * 64,
+                      "archive_sha256": "e" * 64, "control": scheduling["control"], "source": scheduling["tested_source"],
+                      "producer_job": "smoke-shadow-ios-debug"}
+        producers = [{"schema_version": 1, "configuration": configuration, "outcome": "passed",
+                      "provenance": dict(provenance, configuration=configuration, producer_job="smoke-shadow-ios-" + configuration.lower()),
+                      "timing": {"build_seconds": 10, "pack_seconds": 1, "upload_seconds": 2, "job_elapsed_seconds": 20}}
+                     for configuration in ("Debug", "Release")]
+        records = group_records(scheduling)
+        records[0].update(schema_version=2, timing_mode=shadow.ARCHIVE_MODE, build_provenance=provenance,
+                          transfer_seconds=2, verify_seconds=1)
+        records[0]["phases"][0]["name"] = "archive-verify"
+        good = shadow.aggregate(scheduling, records, "success", producers=producers, producer_results={"Debug": "success", "Release": "success"})
+        self.assertEqual((good["outcome"], good["executed"], good["comparison_eligible"]), ("passed", True, True))
+        self.assertEqual(good["shared_build_runner_seconds"], 40)
+        self.assertIn("archive-verify", str(good["group_timings"]))
+        unknown_records, unknown_producers = copy.deepcopy(records), copy.deepcopy(producers)
+        unknown_records[0]["transfer_seconds"] = None
+        unknown_records[0]["verify_seconds"] = "incomplete"
+        unknown_producers[0]["timing"]["upload_seconds"] = None
+        unknown = shadow.aggregate(scheduling, unknown_records, "success", producers=unknown_producers,
+                                   producer_results={"Debug": "success", "Release": "success"})
+        self.assertEqual((unknown["outcome"], unknown["comparison_eligible"]), ("passed", True))
+        self.assertIsNone(unknown["group_timings"]["iphone-debug"]["transfer_seconds"])
+        self.assertIsNone(unknown["group_timings"]["iphone-debug"]["verify_seconds"])
+        for index in (0, 1):
+            for field in ("job_started_epoch", "job_elapsed_seconds", "phase-0", "phase-1"):
+                with self.subTest(group=records[index]["group"]["id"], field=field):
+                    invalid = copy.deepcopy(records)
+                    if field.startswith("phase-"):
+                        invalid[index]["phases"][int(field[-1])]["elapsed_seconds"] = None
+                    else:
+                        invalid[index][field] = None
+                    result = shadow.aggregate(scheduling, invalid, "success", producers=producers,
+                                              producer_results={"Debug": "success", "Release": "success"})
+                    self.assertIn("invalid group job timing: " + records[index]["group"]["id"], result["errors"])
+                    self.assertEqual((result["outcome"], result["comparison_eligible"]), ("failed", False))
+        rejected = copy.deepcopy(records)
+        rejected[0].update(build_provenance=None, runner_exit_code=1, errors=["archive-verification-failed"])
+        rejected[0]["phases"] = [{"name": "archive-verify", "elapsed_seconds": 12, "exit_code": 1}]
+        rejected[0]["flows"][0].update(outcome="not-run", elapsed_seconds=None, executed=False, official_execution_complete=False)
+        rejection = shadow.aggregate(scheduling, rejected, "failure", producers=producers,
+                                     producer_results={"Debug": "success", "Release": "success"})
+        self.assertIn("archive admission failed: iphone-debug", rejection["errors"])
+        self.assertIn("iphone-debug: archive-verification-failed", rejection["errors"])
+        self.assertEqual(rejection["group_timings"]["iphone-debug"]["phases"], rejected[0]["phases"])
+        for defect in ("missing-provenance", "zero-warm", "failed-producer", "missing-producer", "missing-group", "partial"):
+            changed, builds = copy.deepcopy(records), copy.deepcopy(producers)
+            if defect == "missing-provenance":
+                changed[0].pop("build_provenance")
+            elif defect == "zero-warm":
+                changed[0]["phases"][0].update(name="warm-up", elapsed_seconds=0)
+            elif defect == "failed-producer":
+                builds[0]["outcome"] = "failed"
+            elif defect == "missing-producer":
+                builds.pop(0)
+            elif defect == "missing-group":
+                changed.pop()
+            elif defect == "partial":
+                changed[0]["selection"] = "single-flow"
+                changed.append(copy.deepcopy(changed[0]))
+            result = shadow.aggregate(scheduling, changed, "success", producers=builds, producer_results={"Debug": "success", "Release": "success"})
+            with self.subTest(defect=defect):
+                self.assertEqual(result["outcome"], "failed")
+                self.assertFalse(result["comparison_eligible"])
+                if defect in {"missing-producer", "failed-producer"}:
+                    self.assertEqual(result["flows"][0]["outcome"], "not-run")
+        failed_api = shadow.aggregate(scheduling, records, "success", producers=producers,
+                                      producer_results={"Debug": "failure", "Release": "success"})
+        self.assertFalse(failed_api["comparison_eligible"])
+
+    def test_smoke_archive_manifest_binds_tested_source_and_control_independently(self):
+        import strict_e2e_build as build
+        identity = {"source": {"head_sha": HEAD, "tree_sha": "d" * 40, "source_sha256": "e" * 64, "clean": True},
+                    "configuration": "Debug"}
+        control = {"repository": REPOSITORY, "run_id": "200", "attempt": 1, "workflow_id": 8,
+                   "workflow_path": shadow.WORKFLOW, "api_head_sha": "b" * 40, "main_admitted": True}
+        receipt = {"schema_version": 2, "kind": "smoke-archive", "identity": identity, "control": control,
+                   "architectures": ["arm64"], "signing_mode": "adhoc", "private_configuration_present": False,
+                   "xctestrun": "one.xctestrun", "products": [{"path": "Products", "mode": 493, "kind": "directory"}],
+                   "archive_sha256": "f" * 64, "source_root": "/private/synthetic/source"}
+        build.validate_smoke_receipt(receipt, identity, control)
+        cases = [("source", "head_sha", "b" * 40), ("source", "head_sha", "f" * 40),
+                 ("source", "tree_sha", "f" * 40), ("source", "source_sha256", "f" * 64),
+                 ("control", "attempt", 2), ("control", "workflow_id", 9),
+                 ("control", "workflow_path", shadow.NIGHTLY), ("control", "api_head_sha", HEAD),
+                 ("control", "main_admitted", False), ("configuration", None, "Release"),
+                 ("signing_mode", None, "unsigned"), ("private_configuration_present", None, True)]
+        for section, key, value in cases:
+            changed = copy.deepcopy(receipt)
+            if section == "source":
+                changed["identity"]["source"][key] = value
+            elif section == "configuration":
+                changed["identity"][section] = value
+            elif key:
+                changed[section][key] = value
+            else:
+                changed[section] = value
+            with self.subTest(section=section, key=key), self.assertRaises(ValueError):
+                build.validate_smoke_receipt(changed, identity, control)
+
+    def test_smoke_archive_api_provenance_requires_successful_configuration_producer(self):
+        control = {"repository": REPOSITORY, "run_id": "200", "attempt": 1, "workflow_id": 8,
+                   "workflow_path": shadow.WORKFLOW, "api_head_sha": "b" * 40,
+                   "control_source_sha": "c" * 40, "main_admitted": True}
+        metadata = {"id": 91, "name": "smoke-build-debug-200-1", "expired": False,
+                    "workflow_run": {"id": 200, "head_sha": "b" * 40}}
+        producer = {"name": "smoke-shadow-ios-debug", "conclusion": "success", "run_attempt": 1}
+        shadow.validate_smoke_artifact(metadata, control, "Debug", 91, producer)
+        for field, value in (("id", 92), ("name", "smoke-build-release-200-1"), ("expired", True),
+                             ("workflow_run", {"id": 200, "head_sha": HEAD}),
+                             ("workflow_run", {"id": 201, "head_sha": "b" * 40})):
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                shadow.validate_smoke_artifact(dict(metadata, **{field: value}), control, "Debug", 91, producer)
+        for change in ({"name": "smoke-shadow-ios-release"}, {"conclusion": "failure"}, {"run_attempt": 2}):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                shadow.validate_smoke_artifact(metadata, control, "Debug", 91, dict(producer, **change))
+
     def test_aggregate_drops_invalid_optional_first_failure_without_changing_results(self):
         from ci_failure_diagnostics import unavailable_first_failure
         scheduling = plan()

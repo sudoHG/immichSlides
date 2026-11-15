@@ -809,6 +809,8 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
     parser.add_argument("--suite", choices=(*RUNNER_SUITES, "smoke-flow"), default="smoke")
     parser.add_argument("--smoke-device", choices=("iphone", "ipad", "tv"))
     parser.add_argument("--smoke-flow", help="Debug one manifest flow; never a complete smoke group")
+    parser.add_argument("--smoke-archive", action="store_true", help="Explicitly admit relocated smoke archive v2 products")
+    parser.add_argument("--smoke-control-path", type=Path, help="Independent expected smoke archive control JSON")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--warm-up-only", action="store_true", help="build this shard once without starting a test or recording")
     mode.add_argument("--test-without-building", action="store_true", help="require and reuse an explicit shard warm-up")
@@ -838,7 +840,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
         except (CommandError, ValueError, OSError, subprocess.SubprocessError) as error:
             print(f"CommandError: {error}", file=stderr)
             return getattr(error, "code", 2)
-    if arguments.smoke_device or arguments.smoke_flow:
+    if arguments.smoke_device or arguments.smoke_flow or arguments.smoke_archive or arguments.smoke_control_path:
         parser.error("--smoke-device/--smoke-flow require --suite smoke-flow")
     from ci_flaky import nightly_retry_enabled
     nightly_retry = nightly_retry_enabled(REPO_ROOT, os.environ)

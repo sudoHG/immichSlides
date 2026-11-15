@@ -43,6 +43,7 @@ jobs:
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
       head_sha: ${{ steps.plan.outputs.head_sha }}
+      control_sha: ${{ steps.plan.outputs.control_sha }}
       execute: ${{ steps.plan.outputs.execute }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -57,7 +58,7 @@ jobs:
         env:
           SMOKE_NIGHTLY_RUN_ID: ${{ inputs.nightly_run_id }}
           SMOKE_TOKEN: ${{ github.token }}
-        run: '"$RUNNER_TEMP/smoke-python/bin/python3" -B scripts/ci_smoke_shadow.py plan'
+        run: '"$RUNNER_TEMP/smoke-python/bin/python3" -B scripts/ci_smoke_shadow.py plan-shared'
       - name: Publish this first attempt's immutable plan
         if: steps.plan.outputs.records_safe == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -67,8 +68,150 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
-  flows:
+  ios-debug:
     needs: plan
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.execute == 'true' }}
+    name: smoke-shadow-ios-debug
+    runs-on: xcode-27
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      artifact_id: ${{ steps.archive.outputs.artifact-id }}
+      manifest_sha256: ${{ steps.build.outputs.manifest_sha256 }}
+      archive_sha256: ${{ steps.build.outputs.archive_sha256 }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.plan.outputs.control_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Stage the trusted control entry point before selecting tested source
+        run: /usr/bin/python3 -B scripts/ci_smoke_shadow.py stage
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.plan.outputs.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Reject private configuration and verify pinned tools
+        run: /usr/bin/python3 -B "$RUNNER_TEMP/smoke-control/ci_smoke_shadow.py" setup
+      - name: Download only this shadow attempt's plan as data
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: smoke-shadow-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-artifacts/smoke-plan
+      - name: Build the generic smoke configuration
+        id: build
+        env:
+          SMOKE_CONFIGURATION: ${{ github.job == 'ios-debug' && 'Debug' || 'Release' }}
+          SMOKE_TOKEN: ${{ github.token }}
+        run: '"$RUNNER_TEMP/smoke-python/bin/python3" -B "$RUNNER_TEMP/smoke-control/ci_smoke_shadow.py" build'
+      - name: Publish the immutable configuration archive
+        id: archive
+        if: steps.build.outputs.archive_safe == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ steps.build.outputs.artifact_name }}
+          path: ${{ runner.temp }}/smoke-producer/output/archive
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+      - name: Record producer provenance and upload timing
+        id: record
+        if: always()
+        env:
+          SMOKE_CONFIGURATION: ${{ github.job == 'ios-debug' && 'Debug' || 'Release' }}
+          SMOKE_TOKEN: ${{ github.token }}
+          SMOKE_ARTIFACT_ID: ${{ steps.archive.outputs.artifact-id }}
+        run: '"$RUNNER_TEMP/smoke-python/bin/python3" -B "$RUNNER_TEMP/smoke-control/ci_smoke_shadow.py" producer-record'
+      - name: Publish scanned compact producer records
+        if: always() && steps.record.outputs.records_safe == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: smoke-shadow-producer-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/smoke-producer-records
+          retention-days: 7
+          if-no-files-found: error
+      - name: Dispose only this producer's products
+        if: always()
+        env:
+          SMOKE_CONFIGURATION: ${{ github.job == 'ios-debug' && 'Debug' || 'Release' }}
+        run: '"$RUNNER_TEMP/smoke-python/bin/python3" -B "$RUNNER_TEMP/smoke-control/ci_smoke_shadow.py" cleanup'
+
+  ios-release:
+    needs: plan
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.execute == 'true' }}
+    name: smoke-shadow-ios-release
+    runs-on: xcode-27
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      artifact_id: ${{ steps.archive.outputs.artifact-id }}
+      manifest_sha256: ${{ steps.build.outputs.manifest_sha256 }}
+      archive_sha256: ${{ steps.build.outputs.archive_sha256 }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.plan.outputs.control_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Stage the trusted control entry point before selecting tested source
+        run: /usr/bin/python3 -B scripts/ci_smoke_shadow.py stage
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.plan.outputs.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Reject private configuration and verify pinned tools
+        run: /usr/bin/python3 -B "$RUNNER_TEMP/smoke-control/ci_smoke_shadow.py" setup
+      - name: Download only this shadow attempt's plan as data
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: smoke-shadow-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-artifacts/smoke-plan
+      - name: Build the generic smoke configuration
+        id: build
+        env:
+          SMOKE_CONFIGURATION: ${{ github.job == 'ios-debug' && 'Debug' || 'Release' }}
+          SMOKE_TOKEN: ${{ github.token }}
+        run: '"$RUNNER_TEMP/smoke-python/bin/python3" -B "$RUNNER_TEMP/smoke-control/ci_smoke_shadow.py" build'
+      - name: Publish the immutable configuration archive
+        id: archive
+        if: steps.build.outputs.archive_safe == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ steps.build.outputs.artifact_name }}
+          path: ${{ runner.temp }}/smoke-producer/output/archive
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+      - name: Record producer provenance and upload timing
+        id: record
+        if: always()
+        env:
+          SMOKE_CONFIGURATION: ${{ github.job == 'ios-debug' && 'Debug' || 'Release' }}
+          SMOKE_TOKEN: ${{ github.token }}
+          SMOKE_ARTIFACT_ID: ${{ steps.archive.outputs.artifact-id }}
+        run: '"$RUNNER_TEMP/smoke-python/bin/python3" -B "$RUNNER_TEMP/smoke-control/ci_smoke_shadow.py" producer-record'
+      - name: Publish scanned compact producer records
+        if: always() && steps.record.outputs.records_safe == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: smoke-shadow-producer-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/smoke-producer-records
+          retention-days: 7
+          if-no-files-found: error
+      - name: Dispose only this producer's products
+        if: always()
+        env:
+          SMOKE_CONFIGURATION: ${{ github.job == 'ios-debug' && 'Debug' || 'Release' }}
+        run: '"$RUNNER_TEMP/smoke-python/bin/python3" -B "$RUNNER_TEMP/smoke-control/ci_smoke_shadow.py" cleanup'
+
+  flows:
+    needs: [plan, ios-debug, ios-release]
     if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.execute == 'true' }}
     name: smoke-shadow-${{ matrix.id }}
     runs-on: xcode-27
@@ -83,7 +226,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: main
+          ref: ${{ needs.plan.outputs.control_sha }}
           fetch-depth: 0
           persist-credentials: false
       - name: Stage the trusted control entry point before selecting tested source
@@ -95,14 +238,39 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Reject private configuration and verify pinned tools
+        id: setup
         run: /usr/bin/python3 -B "$RUNNER_TEMP/smoke-control/ci_smoke_shadow.py" setup
       - name: Download only this shadow attempt's plan as data
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: smoke-shadow-plan-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/ci-artifacts/smoke-plan
-      - name: Build once and run the group's first results against loopback fixtures
+      - name: Admit the successful configuration producer by immutable ID
+        id: select
+        if: matrix.platform == 'ios'
+        env:
+          SMOKE_GROUP: ${{ matrix.id }}
+          SMOKE_TOKEN: ${{ github.token }}
+          SMOKE_DEBUG_ARTIFACT_ID: ${{ needs.ios-debug.outputs.artifact_id }}
+          SMOKE_RELEASE_ARTIFACT_ID: ${{ needs.ios-release.outputs.artifact_id }}
+          SMOKE_DEBUG_MANIFEST_SHA256: ${{ needs.ios-debug.outputs.manifest_sha256 }}
+          SMOKE_RELEASE_MANIFEST_SHA256: ${{ needs.ios-release.outputs.manifest_sha256 }}
+          SMOKE_DEBUG_ARCHIVE_SHA256: ${{ needs.ios-debug.outputs.archive_sha256 }}
+          SMOKE_RELEASE_ARCHIVE_SHA256: ${{ needs.ios-release.outputs.archive_sha256 }}
+        run: '"$RUNNER_TEMP/smoke-python/bin/python3" -B "$RUNNER_TEMP/smoke-control/ci_smoke_shadow.py" select-archive'
+      - name: Download the selected configuration archive
+        if: matrix.platform == 'ios'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ steps.select.outputs.artifact_id }}
+          path: ${{ runner.temp }}/ci-artifacts/smoke-build
+          merge-multiple: true
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.run_id }}
+      - name: Verify the archive and run first results against loopback fixtures
         id: run
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         env:
           SMOKE_GROUP: ${{ matrix.id }}
           SMOKE_TOKEN: ${{ github.token }}
@@ -120,16 +288,17 @@ jobs:
         run: '"$RUNNER_TEMP/smoke-python/bin/python3" -B "$RUNNER_TEMP/smoke-control/ci_smoke_shadow.py" cleanup'
 
   aggregate:
-    needs: [plan, flows]
+    needs: [plan, ios-debug, ios-release, flows]
     if: ${{ always() && github.ref == 'refs/heads/main' && needs.plan.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
+      actions: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: main
+          ref: ${{ needs.plan.outputs.control_sha }}
           fetch-depth: 0
           persist-credentials: false
       - name: Reject private configuration and install pinned reader packages
@@ -145,11 +314,20 @@ jobs:
         with:
           pattern: smoke-shadow-group-*-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/ci-artifacts/smoke-groups
+      - name: Download this attempt's compact producer records
+        if: always() && needs.plan.outputs.execute == 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: smoke-shadow-producer-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-artifacts/smoke-producers
       - name: Require every raw result and write the comparison table
         id: aggregate
         if: always()
         env:
           SMOKE_MATRIX_RESULT: ${{ needs.flows.result }}
+          SMOKE_DEBUG_RESULT: ${{ needs.ios-debug.result }}
+          SMOKE_RELEASE_RESULT: ${{ needs.ios-release.result }}
+          SMOKE_TOKEN: ${{ github.token }}
         run: '"$RUNNER_TEMP/smoke-python/bin/python3" -B scripts/ci_smoke_shadow.py aggregate'
       - name: Publish the scanned comparison record for 90 days
         if: always() && steps.aggregate.outputs.records_safe == 'true'

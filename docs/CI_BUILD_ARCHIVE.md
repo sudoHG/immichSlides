@@ -1,5 +1,44 @@
 # Secret-free simulator build archives
 
+## Smoke archive reader (explicit opt-in)
+
+The smoke-only `strict-smoke-archive.json` envelope is schema 2 (`kind: smoke-archive`).
+It does not change the schema-1 warm receipt's exact destination comparison or the
+default Debug archive protocol used by PR UI, unit consumers and nightly. Release
+Products inspection/extraction requires an explicit `configuration=Release` argument;
+the shared helper's default remains Debug.
+
+The smoke envelope binds a generic iOS Simulator build of
+`immichSlides-iOS-settings-resume` / `StrictE2E-iOS` to the clean tested commit, tree,
+content fingerprint, package lock, pins, Xcode plist/build and SDK version/build.
+Control provenance separately binds the shadow repository, run, first attempt,
+workflow ID/path, API head, admitted-main flag and staged main control commit.
+The artifact API head identifies that control run; it must never substitute for
+the admitted nightly's tested commit, even when two commits have the same tree.
+Before and after compilation, the producer repeats workspace preflight and verifies
+that the regular source Info.plist's server fields contain only their exact build-variable
+references. After compilation it also requires the resolved product fields to be empty.
+Historical tested heads need the v2 receipt, source-plist preflight and explicit
+expected-control capabilities;
+the controller never modifies an old checkout to manufacture support.
+
+An immutable configuration-specific artifact ID and producer-output manifest/tar
+hashes precede extraction. The existing traversal/link, complete inventory, plist
+server/debug-field and measured ad-hoc-signature gates remain mandatory. Execution
+has a separate identity: concrete UDID, pinned iPhone 17e or iPad Air 11-inch (M4)
+device type, exact iOS runtime version/build and host architecture. The explicit
+compatibility validator connects these identities without rewriting the generic
+build destination. tvOS, real devices and other runtimes are rejected.
+
+`run_strict_e2e.py --suite smoke-flow --smoke-archive --test-without-building --smoke-control-path <expected-control.json>`
+requires explicitly relocated Products and never rebuilds. Each flow still uses
+its own private xctestrun; the full Products inventory is checked before and after
+execution. Old warm callers and workflows do not opt in implicitly.
+The expected-control JSON comes from the admitted plan, independently of the archive
+receipt. Local callers use the local snapshot's recorded commit and `mode: local`.
+Both archive verification and `load_smoke_archive(..., control=expected)` compare it;
+the loader never treats the receipt's own control as an expectation.
+
 `ci-gate` builds the default iOS and tvOS test plans once per platform, tested commit
 and producer attempt, with **Sign to Run Locally** simulator signing and both locked
 package-resolution flags. The [full unit consumers](CI_UNIT_TESTS.md) reuse these
