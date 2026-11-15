@@ -150,7 +150,7 @@ Download, hash, inventory and identity verification precede simulator creation/b
 The unchanged 120-second archive allowance covers download and verification; simulator
 creation is charged only to the existing group budget. Loading then checks the pinned
 execution target and the independently supplied expected control. Archive consumers run
-the existing `prepare_simulator(..., boot_submitted=True)` readiness gate before loading:
+the existing `prepare_simulator(..., boot_submitted=True, should_check_app=False)` readiness gate before loading:
 without a cold build, early boot can starve the loader's Git identity reads and simulator
 inventory queries. The existing preparation bounds consume the same group budget, outside
 the unchanged transfer/verification allowance. No command timeout is increased. TV retains
@@ -160,12 +160,33 @@ New group records include `setup_failure_step`, null unless setup fails. Its clo
 are `job-clock`, `preflight`, `archive-verify`, `simulator`, `simulator-ready`, `archive-load`
 and `runner-command`; the upload and aggregate readers reject unknown values, a zero exit
 or claimed flow execution alongside a setup failure. Historical records without the field
-remain readable. The aggregate retains it in `group_timings` and the group summary table;
-it contains no command, path, environment or subprocess output. Setup subprocess timeouts
-and the readiness gate's `InfrastructureTimeout` use `setup-step-timeout` / exit 124.
+remain readable. New records also include `setup_failure_command`, null unless a setup
+timeout occurs. Its closed values are `git`, `xcrun-sdk`, `simctl`, `codesign`, `readiness`
+and `other`. Known argv prefixes alone identify subprocess command families; readiness
+`InfrastructureTimeout` maps to `readiness`. Both readers reject unknown values or command
+attribution without a setup timeout, while accepting historical records without the field.
+The aggregate retains both fields in `group_timings` and the group summary table, showing
+`none` for explicit null and `unknown` for an absent historical field. Neither contains
+argv, paths, environment or subprocess output. Uncaught setup `TimeoutExpired` and the
+readiness gate's `InfrastructureTimeout` use `setup-step-timeout` / exit 124. The bounded
+log line names only the setup step and command family, plus integer seconds from
+`TimeoutExpired.timeout` when available. Simulator create/boot timeouts are converted to
+`ContractError` and retain exit 1 with the generic failure label.
 `group-budget-exhausted` remains the label for the group deadline and its bounded runner.
 Both stay red, with unavailable first results marked `not-run` / `infra`; attribution does
 not authorize archive admission, relax group validation or change comparison eligibility.
+
+Cleanup failures print only `cleanup-failed: step=<value>` before failing closed. The
+closed steps are `runner-cleanup`, `ownership`, `simctl-shutdown`, `simctl-delete`,
+`lsof-timeout`, `lsof-holders` and `remove`. Simulator output and holder details are never
+published. Ownership, verified runner stop, the 60-second shutdown/delete caps and the
+30-second empty holder check remain mandatory; unverifiable inputs are retained.
+For `lsof-holders`, at most five additional `cleanup-holder: family=<value>` lines
+classify only `lsof -Fc` command fields as `spotlight` (`mds*`/`mdworker*`), `simulator`
+(`CoreSimulator*`/`launchd_sim`/`simctl`), `xcode` (`xcodebuild`/`XCBBuildService`/`testmanagerd`),
+`python` or `other`. Families are deduplicated and sorted; unavailable names yield `other`.
+PIDs, paths, raw command names and stderr are never printed. A family is a diagnostic
+classification, not proof that the named service caused the failure.
 
 Each group uses the pinned simulator and the existing fixture service,
 readiness/reset, official-result export, privacy-scan and process-group cleanup helpers.

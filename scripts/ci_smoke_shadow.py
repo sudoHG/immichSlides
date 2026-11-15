@@ -32,6 +32,7 @@ ARCHIVE_MODE = "smoke-archive-v2"
 PRODUCER_BUDGET_MINUTES = 27
 SETUP_FAILURE_STEPS = {"job-clock", "preflight", "archive-verify", "simulator", "simulator-ready",
                        "archive-load", "runner-command"}
+SETUP_FAILURE_COMMANDS = {"git", "xcrun-sdk", "simctl", "codesign", "readiness", "other"}
 
 
 def smoke_artifact_name(configuration, control):
@@ -386,9 +387,26 @@ def counts_as_shadow(plan, *, executed, errors, matrix_result):
 
 def valid_setup_failure(record):
     step = record.get("setup_failure_step")
-    return (step is None or isinstance(step, str) and step in SETUP_FAILURE_STEPS
+    valid_step = (step is None or isinstance(step, str) and step in SETUP_FAILURE_STEPS
             and type(record.get("runner_exit_code")) is int and record["runner_exit_code"] != 0
             and not any(row.get("executed") is True for row in record.get("flows", [])))
+    if not valid_step:
+        return False
+    if "setup_failure_command" not in record:
+        return True
+    command, errors = record["setup_failure_command"], record.get("errors")
+    setup_timeout = (step is not None and record.get("runner_exit_code") == 124
+                     and isinstance(errors, list) and "setup-step-timeout" in errors)
+    return (isinstance(command, str) and command in SETUP_FAILURE_COMMANDS if setup_timeout else command is None)
+
+
+def timeout_command(argv):
+    if isinstance(argv, (list, tuple)):
+        for prefix, command in ((["git"], "git"), (["xcrun", "--sdk"], "xcrun-sdk"),
+                                (["xcrun", "simctl"], "simctl"), (["codesign"], "codesign")):
+            if list(argv[:len(prefix)]) == prefix:
+                return command
+    return "other"
 
 
 def aggregate(plan, records, matrix_result, *, producers=None, producer_results=None):
@@ -518,8 +536,9 @@ def aggregate(plan, records, matrix_result, *, producers=None, producer_results=
                 errors.append("invalid group job timing: " + group_id)
             timings[group_id] = ({key: record.get(key) for key in ("job_started_epoch", "job_elapsed_seconds", "phases")}
                                  if valid_timing else {"job_started_epoch": None, "job_elapsed_seconds": None, "phases": []})
-            if "setup_failure_step" in record:
-                timings[group_id]["setup_failure_step"] = record["setup_failure_step"] if setup_valid else None
+            for key in ("setup_failure_step", "setup_failure_command"):
+                if key in record:
+                    timings[group_id][key] = record[key] if setup_valid else None
             if archive_mode and valid_timing:
                 timings[group_id].update({key: record.get(key) for key in ("timing_mode", "build_provenance")})
                 timings[group_id].update({key: diagnostic_seconds(record.get(key)) for key in
@@ -585,12 +604,14 @@ def markdown(record):
                   render_first_failure(row["first_failure"]) if "first_failure" in row else None]
         lines.append("| " + " | ".join(markdown_text(value) if value is not None else "unknown" for value in values) + " |")
     if record["group_timings"]:
-        lines += ["", "| Group | Warm-up/build (s) | Transfer (s) | Archive verify (s) | Job elapsed (s) | Failed setup step |", "|---|---:|---:|---:|---:|---|"]
+        lines += ["", "| Group | Warm-up/build (s) | Transfer (s) | Archive verify (s) | Job elapsed (s) | Failed setup step | Timed-out setup command |", "|---|---:|---:|---:|---:|---|---|"]
         for group_id, timing in record["group_timings"].items():
             warm = next((phase["elapsed_seconds"] for phase in timing.get("phases") or [] if phase["name"] == "warm-up"), None)
+            setup = [("none" if timing[key] is None else timing[key]) if key in timing else "unknown"
+                     for key in ("setup_failure_step", "setup_failure_command")]
             lines.append("| " + " | ".join(markdown_text(value) if value is not None else "unknown"
                          for value in (group_id, warm, timing.get("transfer_seconds"), timing.get("verify_seconds"), timing["job_elapsed_seconds"],
-                                       timing.get("setup_failure_step"))) + " |")
+                                       *setup)) + " |")
     if "build_producers" in record:
         lines += ["", "| Producer | Build (s) | Pack (s) | Upload (s) | Artifact ID | Manifest SHA-256 | Tar SHA-256 |",
                   "|---|---:|---:|---:|---|---|---|"]
@@ -940,7 +961,7 @@ def read_runner_flows(evidence, scheduling, selected, destination, *, validation
 def run_group(scheduling, environment, temporary):
     from ci_build_archive import file_hash, workspace_preflight
     from ci_simulator import create_and_boot_simulator
-    from run_offline_unit_tests import default_data_available_gib, ensure_disk_for_xcodebuild
+    from run_offline_unit_tests import CommandError as OfflineCommandError, default_data_available_gib, ensure_disk_for_xcodebuild
     from run_strict_ci_tracer import run_runner, RunnerGroupCleanupError
     from strict_e2e_runner_support import CommandError, InfrastructureTimeout, prepare_simulator
     validate_plan(scheduling, environment, checkout_sha=git("rev-parse", "HEAD"),
@@ -959,7 +980,8 @@ def run_group(scheduling, environment, temporary):
               "manifest_sha256": scheduling["manifest_sha256"], "group": group, "runner_exit_code": 1,
               "group_validation": {"outcome": "unavailable", "reason": "No group evidence."},
               "selection": "unavailable", "elapsed_seconds": 0, "errors": [], "flows": [],
-              "job_started_epoch": None, "job_elapsed_seconds": None, "phases": [], "setup_failure_step": None}
+              "job_started_epoch": None, "job_elapsed_seconds": None, "phases": [], "setup_failure_step": None,
+              "setup_failure_command": None}
     if archive_mode:
         record.update(schema_version=2, timing_mode=ARCHIVE_MODE, build_provenance=None,
                       transfer_seconds=None, verify_seconds=None)
@@ -1011,7 +1033,7 @@ def run_group(scheduling, environment, temporary):
         if archive_mode:
             setup_step = "simulator-ready"
             # Archive consumers have no cold build to absorb first-boot work before identity reads.
-            prepare_simulator(udid, boot_submitted=True)
+            prepare_simulator(udid, boot_submitted=True, should_check_app=False)
             setup_step = "archive-load"
             load_smoke_archive(ROOT, group["configuration"], destination, group["device"], root / "derived",
                                control=scheduling["control"])
@@ -1043,13 +1065,18 @@ def run_group(scheduling, environment, temporary):
         (temporary / "smoke-cleanup-blocked").touch()
         record["errors"].append("runner-group-cleanup-unverified")
         record["runner_exit_code"] = 1
-    except (subprocess.TimeoutExpired, InfrastructureTimeout):
+    except (subprocess.TimeoutExpired, InfrastructureTimeout) as error:
         record["errors"].append("setup-step-timeout" if setup_step is not None else "group-budget-exhausted")
         record["runner_exit_code"] = 124
+        if setup_step is not None:
+            command = "readiness" if isinstance(error, InfrastructureTimeout) else timeout_command(error.cmd)
+            record["setup_failure_command"] = command
+            timeout = f"; timeout={int(error.timeout)}s" if isinstance(error, subprocess.TimeoutExpired) else ""
+            print(f"setup-step-timeout: step={setup_step}; command={command}{timeout}", file=sys.stderr, flush=True)
     except KeyboardInterrupt:
         record["errors"].append("group-interrupted")
         record["runner_exit_code"] = 130
-    except (CommandError, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+    except (CommandError, OfflineCommandError, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
         record["errors"].append("group-execution-or-official-evidence-failed")
         record["runner_exit_code"] = 1
     finally:
@@ -1085,21 +1112,61 @@ def run_group(scheduling, environment, temporary):
         row["outcome"] == "passed" for row in record["flows"]) else 1
 
 
+def cleanup_holder_families(commands):
+    families = set()
+    for field in commands.splitlines():
+        if not field.startswith(b"c"):
+            continue
+        name = field[1:]
+        if name.startswith((b"mds", b"mdworker")):
+            family = "spotlight"
+        elif name.startswith(b"CoreSimulator") or name in {b"launchd_sim", b"simctl"}:
+            family = "simulator"
+        elif name in {b"xcodebuild", b"XCBBuildService", b"testmanagerd"}:
+            family = "xcode"
+        elif name.lower().startswith(b"python"):
+            family = "python"
+        else:
+            family = "other"
+        families.add(family)
+    return sorted(families or {"other"})
+
+
 def cleanup(environment, temporary):
-    require(not (temporary / "smoke-cleanup-blocked").exists(), "runner cleanup unverified; retain owned inputs")
-    root = temporary / ("smoke-producer" if environment.get("SMOKE_CONFIGURATION") else "smoke-execution")
-    if root.exists():
-        require(decode((root / "ownership.json").read_text()) == shadow_context(environment), "cleanup ownership differs")
-    udid = environment.get("UI_SIMULATOR")
-    if udid:
-        subprocess.run(["xcrun", "simctl", "shutdown", udid], check=False, timeout=60,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        subprocess.run(["xcrun", "simctl", "delete", udid], check=True, timeout=60)
-    if root.exists():
-        holders = subprocess.run(["lsof", "-Fpc", "+D", str(root)], capture_output=True, timeout=30)
-        require(holders.returncode == 1 and not holders.stdout and not holders.stderr,
-                "owned build inputs still open or holder check unavailable; retain them")
-        shutil.rmtree(root)
+    step = "runner-cleanup"
+    holder_commands = b""
+    try:
+        require(not (temporary / "smoke-cleanup-blocked").exists(), "runner cleanup unverified; retain owned inputs")
+        step = "ownership"
+        root = temporary / ("smoke-producer" if environment.get("SMOKE_CONFIGURATION") else "smoke-execution")
+        if root.exists():
+            require(decode((root / "ownership.json").read_text()) == shadow_context(environment), "cleanup ownership differs")
+        udid = environment.get("UI_SIMULATOR")
+        if udid:
+            step = "simctl-shutdown"
+            subprocess.run(["xcrun", "simctl", "shutdown", udid], check=False, timeout=60,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            step = "simctl-delete"
+            subprocess.run(["xcrun", "simctl", "delete", udid], check=True, timeout=60,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if root.exists():
+            step = "lsof-holders"
+            try:
+                holders = subprocess.run(["lsof", "-Fc", "+D", str(root)], capture_output=True, timeout=30)
+            except subprocess.TimeoutExpired:
+                step = "lsof-timeout"
+                raise
+            holder_commands = holders.stdout
+            require(holders.returncode == 1 and not holders.stdout and not holders.stderr,
+                    "owned build inputs still open or holder check unavailable; retain them")
+            step = "remove"
+            shutil.rmtree(root)
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        print(f"cleanup-failed: step={step}", file=sys.stderr, flush=True)
+        if step == "lsof-holders":
+            for family in cleanup_holder_families(holder_commands):
+                print(f"cleanup-holder: family={family}", file=sys.stderr, flush=True)
+        raise
     return 0
 
 
