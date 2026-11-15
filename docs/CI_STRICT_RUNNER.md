@@ -59,6 +59,20 @@ selectors, PASS/FAIL, elapsed seconds, exit codes and the first public failure m
 receipt. The root official summary sums only exported official outcomes; missing
 official evidence remains a failure. Public messages use the existing redacted failure
 projection. Original result bundles remain private and follow the strict disposal path.
+Smoke enables the existing first-failure recorder in a private per-flow spool and
+passes it to the official-result exporter. Only officially failed selected methods
+receive its validated `first_failure` JSON and, when privacy permits, canonical PNG.
+The screenshot request goes only to the recorder; the prepared XCTest run retains
+its original screen-capture format and attachment lifetime.
+The shadow adapter copies this JSON into the flow row and only that method's approved
+image into the group records, then repeats the sensitive scan and UI image upload
+check. Raw spool files and other attachments are never copied. The same existing
+first-boot, secure-field, PIN, server-settings and unknown-surface withholding applies.
+Missing or invalid optional images become unavailable without replacing the first
+official result. Historical runs without receipts remain readable. The shared UI
+Markdown renderer supplies step, element, time since action, wait, deadline and
+screenshot status; action, surface and the other existing timing fields remain in
+JSON. No new remaining-time field or guard measurement is inferred.
 Screenshots, recordings, pixels, glyphs and second-level product windows are not smoke
 judges. The Debug iOS controls flow reads the existing published history AX probe,
 so repeated photos in different scenes cannot masquerade as a lost Next action. The flag
@@ -2356,6 +2370,13 @@ for the same method cannot replace or obscure its failure label.
 XCTest assertion and the known Swift `AssertionError.message` and
 `Failure(message:)` wrappers are recognized;
 unmatched, missing or conflicting messages yield `unknown` for both fields.
+A separate diagnostic-only native grammar preserves exactly
+`Test exceeded execution time allowance of N minute` or `minutes`, where N is
+1–10 ASCII decimal digits. Matching precedes assertion-wrapper removal and admits
+no suffix, newline, fraction, sign or free text. Other unreviewed native text still becomes
+`[unrecognized XCTest failure]`. This does not change classification,
+`xctest_tool_class`, yellow eligibility, retry admission or verdicts; the allowance
+message retains `unknown/unknown` diagnostics and stays red.
 Snapshot/hittability failures identify only the class, with an unknown phase.
 The shared iOS credential-entry gate publishes exactly
 `First-boot input must have keyboard focus before typing.` as

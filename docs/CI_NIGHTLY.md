@@ -136,7 +136,23 @@ After a verified runner-group stop, timeout/interruption retains every available
 validated first flow result and marks unfinished flows `not-run`; the original
 nonzero exit and failed group remain intact. Unverified process cleanup does not
 read potentially changing evidence or dispose its inputs.
-Only scanned compact records are uploaded; raw bundles, logs and media are not.
+Only scanned compact records and the existing recorder's approved first-failure
+PNGs are uploaded. Raw bundles, logs, arbitrary attachments and recordings are not.
+Each officially failed flow can retain the UI shards' validated `first_failure`
+JSON in its group row. Images come only from that flow's validated recorder export,
+are rechecked with the UI upload validator, and stay in the seven-day group artifact;
+the 90-day aggregate retains JSON and the shared `render_first_failure` text only.
+First boot, secure fields, PIN, server settings and unknown surfaces retain the
+recorder's `withheld-privacy` status and publish no image. The sensitive scan covers
+the entire group immediately before its upload-safety output, including the PNGs.
+Smoke keeps the original XCTest screen-capture format and attachment lifetime;
+only the recorder requests its own `XCUIScreen.main.screenshot()`. The recorder's
+synchronous AX snapshot, screenshot and thumbnail work counts toward the unchanged
+120-second method allowance and 270-second native invocation cap. When comparing
+earlier shadows, treat a failure-category shift (for example `xctest-tool` to
+`unknown`, or a new `hang-guard`) as possibly caused by this failure-path work.
+At aggregation, an invalid or stale optional `first_failure` receipt is dropped
+from that row without changing its outcome, execution or comparison eligibility.
 The consumer requires `selection=group` in both root records, including groups
 with only one flow; a diagnostic `--smoke-flow` result cannot stand in for a
 complete group. The runner's shared `validate_group_evidence` decides whether
@@ -201,7 +217,10 @@ conclusion and its own first results/retries remain untouched.
 
 The aggregate job writes the flow ID, device, configuration, raw outcome,
 elapsed seconds, failure class and first public failure message to its job
-summary. Unknown fields stay unknown; missing flows stay `not-run`. The
+summary, plus the same first-failure context rendered by UI shards when available.
+The JSON retains the recorder's action, surface and timing fields without inventing
+a remaining-time measurement; nulls and unknown fields stay unknown. Missing flows
+stay `not-run`. The
 `smoke-shadow-<run>-<attempt>` artifact retains `shadow.json`, `summary.md` and
 the shared sensitive-scan receipt for 90 days. The attempt-bound plan and
 per-group compact artifacts have seven-day retention; the plan is scanned before

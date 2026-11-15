@@ -62,7 +62,7 @@ def group_records(scheduling):
     return records
 
 
-def runner_evidence(directory, *, failed=False, message=None):
+def runner_evidence(directory, *, failed=False, message=None, first_failure=None):
     flow = manifest()["flows"][0]
     result = {"id": flow["id"], "selector": flow["selector"], "outcome": "FAIL" if failed else "PASS",
               "source_sha": HEAD, "source_dirty_paths": [],
@@ -73,6 +73,8 @@ def runner_evidence(directory, *, failed=False, message=None):
     if failed and message:
         from ci_failure_diagnostics import failure_messages_diagnostics
         node.update(failure_messages=[message], **failure_messages_diagnostics([message]))
+    if first_failure is not None:
+        node["first_failure"] = first_failure
     tests = {"testNodes": [{"nodeType": "Unit test bundle", "name": "immichSlidesUITests", "children": [node]}]}
     summary = {"totalTestCount": 1, "passedTests": 0 if failed else 1, "failedTests": 1 if failed else 0,
                "skippedTests": 0, "result": "Failed" if failed else "Passed"}
@@ -122,6 +124,26 @@ def plan_fixture(temporary, stack, *, ancestor=0):
 
 
 class SmokeShadowTests(unittest.TestCase):
+    def test_aggregate_drops_invalid_optional_first_failure_without_changing_results(self):
+        from ci_failure_diagnostics import unavailable_first_failure
+        scheduling = plan()
+        records = group_records(scheduling)
+        records[0]["flows"][0].update(outcome="failed", failure_category="unknown")
+        records[0].update(runner_exit_code=65, group_validation={"outcome": "failed", "reason": "test"})
+        baseline = shadow.aggregate(scheduling, records, "failure")
+        stale = unavailable_first_failure("xctest")
+        stale["element"] = "retired-control"
+        for receipt in (stale, None, {"schema_version": 1}):
+            with self.subTest(receipt=receipt):
+                changed = copy.deepcopy(records)
+                changed[0]["flows"][0]["first_failure"] = receipt
+                result = shadow.aggregate(scheduling, changed, "failure")
+                self.assertEqual((result["outcome"], result["executed"], result["comparison_eligible"]),
+                                 ("failed", True, True))
+                self.assertNotIn("first_failure", result["flows"][0])
+                for key in ("outcome", "executed", "comparison_eligible", "errors", "flows"):
+                    self.assertEqual(result[key], baseline[key])
+
     def test_admission_refuses_untrusted_or_unfinished_nightly_and_non_main_dispatch(self):
         run = nightly()
         payload = {"workflow_run": run}
@@ -614,6 +636,134 @@ class SmokeShadowTests(unittest.TestCase):
                 (compact / "summary.md").write_text(shadow.markdown(result))
                 shadow.scan_records(compact)
                 self.assertEqual(json.loads((compact / "sensitive-scan.json").read_text())["result"], "PASS")
+
+    def test_group_copies_only_validated_first_failure_json_and_privacy_approved_pngs(self):
+        import io
+        from PIL import Image
+        from ci_build_archive import file_hash
+        from ci_failure_diagnostics import render_first_failure, unavailable_first_failure
+        picture = io.BytesIO()
+        Image.new("RGB", (64, 32), "blue").save(picture, format="PNG")
+        png = picture.getvalue()
+        safe = unavailable_first_failure("xctest", step="query-element", element="slideshow.control.settings.button")
+        safe["action"] = "tap"
+        safe["timing"].update(since_action_issued_seconds=16, since_action_returned_seconds=7,
+                              action_duration_seconds=9, wait_elapsed_seconds=7, deadline_seconds=7)
+        safe["state"].update(app="running-foreground", surface="playback", observation="failure-snapshot")
+        safe["screenshot"].update(status="captured", width=64, height=32, bytes=len(png))
+        for defect in (None, "withheld-firstboot", "withheld-unknown", "withheld-private-controls", "invalid-receipt",
+                       "forged-firstboot", "symlink-image", "noncanonical-image"):
+            with self.subTest(defect=defect), tempfile.TemporaryDirectory() as raw:
+                temporary = Path(raw)
+                receipt = copy.deepcopy(safe)
+                if defect and defect.startswith("withheld-"):
+                    receipt["screenshot"] = {"status": "withheld-privacy", "width": None, "height": None, "bytes": None}
+                    receipt["state"]["surface"] = "firstboot" if defect == "withheld-firstboot" else "unknown" if defect == "withheld-unknown" else "playback-settings"
+                elif defect == "invalid-receipt":
+                    receipt["element"] = "private-input-sentinel"
+                elif defect == "forged-firstboot":
+                    receipt["state"]["surface"] = "firstboot"
+                context = dict(environment(), SMOKE_GROUP="iphone-debug", GITHUB_OUTPUT=str(temporary / "output"))
+
+                def invoke(command, *_args, **_kwargs):
+                    if "--test-without-building" in command:
+                        evidence = Path(command[command.index("--evidence-dir") + 1])
+                        runner_evidence(evidence, failed=True, message="Smoke flow: action exceeded the shared hang guard.",
+                                        first_failure=receipt)
+                        images = evidence / "phone-one/first-failure"
+                        images.mkdir()
+                        (images / "0.png").write_bytes(png + (b"private-input-sentinel" if defect == "noncanonical-image" else b""))
+                        (images / "unselected.png").write_bytes(png)
+                        (images / "raw.log").write_text("private-input-sentinel")
+                        if defect == "symlink-image":
+                            (images / "0.png").unlink()
+                            (images / "0.png").symlink_to(images / "unselected.png")
+                    return 65 if "--test-without-building" in command else 0
+
+                def bound_hash(path):
+                    return "c" * 64 if path == shadow.ROOT / shadow.MANIFEST else file_hash(path)
+
+                with patch.object(shadow, "git", return_value=HEAD), \
+                        patch.object(shadow, "job_started_epoch", return_value=time.time()), \
+                        patch("ci_build_archive.file_hash", side_effect=bound_hash), \
+                        patch("ci_build_archive.workspace_preflight"), patch("run_offline_unit_tests.ensure_disk_for_xcodebuild"), \
+                        patch("ci_simulator.create_and_boot_simulator", return_value="synthetic"), \
+                        patch("run_strict_ci_tracer.run_runner", side_effect=invoke):
+                    self.assertEqual(shadow.run_group(plan(), context, temporary), 1)
+                records = temporary / "smoke-records"
+                group = json.loads((records / "group.json").read_text())
+                row = group["flows"][0]
+                self.assertEqual((group["runner_exit_code"], row["outcome"], row["executed"], row["exit_code"]), (65, "failed", True, 65))
+                retained = sorted(records.rglob("*.png"))
+                self.assertEqual(len(retained), 1 if defect is None else 0)
+                if defect in {"invalid-receipt", "forged-firstboot"}:
+                    self.assertNotIn("first_failure", row)
+                elif defect in {"symlink-image", "noncanonical-image"}:
+                    self.assertEqual(row["first_failure"]["screenshot"]["status"], "unavailable")
+                else:
+                    self.assertEqual(row["first_failure"], receipt)
+                if retained:
+                    self.assertEqual(retained[0].read_bytes(), png)
+                    self.assertEqual(retained[0].relative_to(records).as_posix(), "failure-screenshots/first-failure-attempt-1/0.png")
+                self.assertEqual(json.loads((records / "sensitive-scan.json").read_text())["result"], "PASS")
+                self.assertFalse(any(path.suffix in {".log", ".xcresult"} for path in records.rglob("*")))
+                self.assertNotIn("private-input-sentinel", (records / "group.json").read_text())
+                groups = group_records(plan())
+                groups[0] = group
+                result = shadow.aggregate(plan(), groups, "failure")
+                self.assertEqual((result["outcome"], result["executed"], result["comparison_eligible"]), ("failed", True, True))
+                if "first_failure" in row:
+                    self.assertEqual(result["flows"][0]["first_failure"], row["first_failure"])
+                    self.assertIn(render_first_failure(row["first_failure"]), shadow.markdown(result))
+
+    def test_group_image_copy_and_upload_check_preserve_the_second_flow_index(self):
+        import io
+        from PIL import Image
+        from ci_failure_diagnostics import unavailable_first_failure
+        picture = io.BytesIO()
+        Image.new("RGB", (64, 32), "blue").save(picture, format="PNG")
+        png = picture.getvalue()
+        group = group_records(plan())[0]
+        second = copy.deepcopy(group["flows"][0])
+        second.update(id="phone-two", selector="Smoke/testPhoneTwo", outcome="failed")
+        receipt = unavailable_first_failure("xctest")
+        receipt["state"].update(app="running-foreground", surface="playback")
+        receipt["screenshot"].update(status="captured", width=64, height=32, bytes=len(png))
+        second["first_failure"] = receipt
+        group["flows"].append(second)
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            evidence, records = root / "evidence", root / "records"
+            source = evidence / "phone-two/first-failure/0.png"
+            source.parent.mkdir(parents=True)
+            source.write_bytes(png)
+            records.mkdir()
+            shadow.copy_first_failure_images(evidence, records, group["flows"])
+            shadow.write_json(records / "group.json", group)
+            shadow.check_group_upload(records, group)
+            retained = sorted(path.relative_to(records).as_posix() for path in records.rglob("*.png"))
+            self.assertEqual(retained, ["failure-screenshots/first-failure-attempt-1/1.png"])
+            self.assertEqual((records / retained[0]).read_bytes(), png)
+
+    def test_group_upload_check_rejects_unbound_images_even_on_a_withheld_surface(self):
+        import io
+        from PIL import Image
+        from ci_failure_diagnostics import unavailable_first_failure
+        picture = io.BytesIO()
+        Image.new("RGB", (64, 32), "blue").save(picture, format="PNG")
+        with tempfile.TemporaryDirectory() as raw:
+            records = Path(raw)
+            group = group_records(plan())[0]
+            row = group["flows"][0]
+            row["first_failure"] = unavailable_first_failure("xctest")
+            row["first_failure"]["screenshot"]["status"] = "withheld-privacy"
+            shadow.write_json(records / "group.json", group)
+            shadow.check_group_upload(records, group)
+            image = records / "failure-screenshots/first-failure-attempt-1/0.png"
+            image.parent.mkdir(parents=True)
+            image.write_bytes(picture.getvalue())
+            with self.assertRaisesRegex(ValueError, "invalid first failure package directory"):
+                shadow.check_group_upload(records, group)
 
     def test_runner_adapter_obeys_shared_group_validator_and_records_its_rejection(self):
         from strict_e2e_smoke import validate_group_evidence
