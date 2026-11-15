@@ -930,9 +930,9 @@ print('parsed 3 nightly retry records without image or runner dependencies')
     def test_native_method_allowance_is_public_only_with_an_exact_numeric_grammar_and_stays_red(self):
         from ci_failure_diagnostics import (environment_limit_evidence, failure_messages_diagnostics,
             public_failure_messages, scan_diagnostic_json, validate_failure_messages, xctest_tool_class)
-        for seconds in ("0", "120", "1234567890"):
-            message = f"Exceeded execution time allowance of {seconds} seconds"
-            with self.subTest(seconds=seconds):
+        for allowance in ("0 minutes", "1 minute", "2 minutes", "1234567890 minutes"):
+            message = f"Test exceeded execution time allowance of {allowance}"
+            with self.subTest(allowance=allowance):
                 self.assertEqual(public_failure_messages([message]), [message])
                 validate_failure_messages([message])
                 scan_diagnostic_json(json.dumps({"failure_messages": [message]}).encode())
@@ -944,11 +944,13 @@ print('parsed 3 nightly retry records without image or runner dependencies')
                 for target in (row, row["attempts"][0]):
                     target.update(failure_messages=[message], **failure_messages_diagnostics([message]))
                 self.assertIsNone(environment_limit_evidence(summary, row, [], runner_hosted=True, policy_version=5))
-        template = "Exceeded execution time allowance of {} seconds"
+        template = "Test exceeded execution time allowance of {} minutes"
         rejected = [template.format(value) for value in ("private", "120 private", "", "-1", "+1", "1.5", "１２０",
                                                            "120\n", "12345678901")]
         rejected += [template.format("120") + suffix for suffix in (".", " private", "\n")]
-        rejected += ["XCTAssertTrue failed - " + template.format("120"), "Unreviewed native private failure"]
+        rejected += ["XCTAssertTrue failed - " + template.format("120"), "Unreviewed native private failure",
+                     "Exceeded execution time allowance of 120 seconds",
+                     "Test exceeded execution time allowance of 120 seconds"]
         for message in rejected:
             with self.subTest(message=message):
                 self.assertEqual(public_failure_messages([message]), ["[unrecognized XCTest failure]"])

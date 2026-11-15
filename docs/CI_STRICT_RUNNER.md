@@ -2371,9 +2371,9 @@ XCTest assertion and the known Swift `AssertionError.message` and
 `Failure(message:)` wrappers are recognized;
 unmatched, missing or conflicting messages yield `unknown` for both fields.
 A separate diagnostic-only native grammar preserves exactly
-`Exceeded execution time allowance of N seconds`, where N is 1–10 ASCII decimal
-digits. Matching precedes assertion-wrapper removal and admits no suffix, newline,
-fraction, sign or free text. Other unreviewed native text still becomes
+`Test exceeded execution time allowance of N minute` or `minutes`, where N is
+1–10 ASCII decimal digits. Matching precedes assertion-wrapper removal and admits
+no suffix, newline, fraction, sign or free text. Other unreviewed native text still becomes
 `[unrecognized XCTest failure]`. This does not change classification,
 `xctest_tool_class`, yellow eligibility, retry admission or verdicts; the allowance
 message retains `unknown/unknown` diagnostics and stays red.

@@ -341,7 +341,7 @@ def xctest_tool_class(message):
 def reviewed_native_failure(message):
     # Diagnostic text only; this grammar grants no XCTest tool or yellow eligibility.
     return isinstance(message, str) and re.fullmatch(
-        r"Exceeded execution time allowance of [0-9]{1,10} seconds", message) is not None
+        r"Test exceeded execution time allowance of [0-9]{1,10} minutes?", message) is not None
 
 
 def validate_failure_messages(messages):
