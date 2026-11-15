@@ -138,11 +138,12 @@ def inventory(products):
     return entries
 
 
-def check_products(products):
-    apps = list(products.glob("Debug-*simulator/immichSlides.app/Info.plist"))
+def check_products(products, *, configuration="Debug"):
+    require(configuration in {"Debug", "Release"}, "unsupported product configuration")
+    apps = list(products.glob(f"{configuration}-*simulator/immichSlides.app/Info.plist"))
     # Also support synthetic product names in contract tests; nested frameworks are inspected separately.
     if not apps:
-        apps = list(products.glob("Debug-*simulator/*.app/Info.plist"))
+        apps = list(products.glob(f"{configuration}-*simulator/*.app/Info.plist"))
     require(bool(apps), "archive has no app Info.plist")
     for path in products.rglob("*.plist"):
         require(not path.is_symlink(), "plist symlinks are unsupported")
@@ -284,7 +285,7 @@ def validated_tar_members(handle, manifest):
     return members
 
 
-def extract_products(path, destination, manifest):
+def extract_products(path, destination, manifest, *, configuration="Debug"):
     require(file_hash(path) == manifest["archive_sha256"], "archive hash mismatch")
     require(not os.path.lexists(destination), "extraction path must be fresh")
     with tarfile.open(path, "r:gz") as handle:
@@ -294,7 +295,7 @@ def extract_products(path, destination, manifest):
         for member in sorted(members, key=lambda item: (not item.isdir(), len(PurePosixPath(item.name).parts))):
             handle.extract(member, destination, set_attrs=True)
     require(inventory(destination / "Products") == manifest["files"], "extracted file hashes or metadata mismatch")
-    check_products(destination / "Products")
+    check_products(destination / "Products", configuration=configuration)
 
 
 def disk_check(min_free_gib):

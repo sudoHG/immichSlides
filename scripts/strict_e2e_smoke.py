@@ -279,7 +279,7 @@ def flow_failure_locations(tests, selector, source_roots):
 
 def run(arguments, root, runner, stdout, stderr):
     """Reuse strict privacy/reset/export contracts without legacy visual judges or retries."""
-    from strict_e2e_build import load_warm_build, validate_paths, validate_warm_products, warm_up
+    from strict_e2e_build import load_smoke_archive, load_warm_build, validate_paths, validate_warm_products, warm_up
     from strict_e2e_server import PUBLIC_API_KEY
 
     if (not arguments.smoke_device or not arguments.configuration
@@ -288,6 +288,10 @@ def run(arguments, root, runner, stdout, stderr):
     if (arguments.listed_retry_device or arguments.nightly_retry_method or arguments.nightly_retry_source
             or arguments.scenario != "normal" or arguments.fixture_set != "a"):
         raise runner.CommandError("smoke-flow accepts no retry, scenario or fixture overrides")
+    archive_mode = getattr(arguments, "smoke_archive", False)
+    if archive_mode and (not arguments.test_without_building or arguments.warm_up_only
+                         or arguments.platform != "ios" or arguments.derived_data_path is None):
+        raise runner.CommandError("smoke archive requires explicit iOS test-without-building and relocated products")
     manifest, planned, methods = load_manifest(root)
     flows = validate_manifest(manifest, planned)
     selected = select_flows(flows, arguments.smoke_device, arguments.configuration, arguments.smoke_flow)
@@ -318,8 +322,13 @@ def run(arguments, root, runner, stdout, stderr):
         if arguments.warm_up_only:
             runner.write_sensitive_scan(evidence, [PUBLIC_API_KEY, runner.WRONG_PUBLIC_API_KEY])
             return 0
-        receipt, source_run = load_warm_build(root, arguments.platform, "smoke-flow", arguments.configuration,
-                                              arguments.destination, derived)
+        execution = None
+        if archive_mode:
+            receipt, source_run, execution = load_smoke_archive(root, arguments.configuration, arguments.destination,
+                                                               arguments.smoke_device, derived)
+        else:
+            receipt, source_run = load_warm_build(root, arguments.platform, "smoke-flow", arguments.configuration,
+                                                arguments.destination, derived)
         records = []
         case = {"source_sha": runner.read_source_sha(root), "source_dirty_paths": runner.read_source_dirty_paths(root),
                 "platform": arguments.platform,
@@ -330,6 +339,9 @@ def run(arguments, root, runner, stdout, stderr):
                 "destination": arguments.destination, "warm_build_identity": receipt["identity"],
                 "human_review": "NOT_RUN", "result": "RUNNING", "exit_code": None, "flows": records,
                 "group_failures": []}
+        if archive_mode:
+            case.update(build_mode="smoke-archive-v2", execution_identity=execution,
+                        build_provenance={"control": receipt["control"], "archive_sha256": receipt["archive_sha256"]})
         def write_state():
             runner.write_case_manifest(evidence, case)
             write_json(evidence / "smoke-flow-results.json", {"schema_version": 1, "source_sha": case["source_sha"],

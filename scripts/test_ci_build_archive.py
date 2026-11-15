@@ -44,6 +44,30 @@ def share_ui_source_fixture(test):
 
 
 class BuildArchiveTests(unittest.TestCase):
+    def test_release_products_require_explicit_configuration_and_retain_private_field_gates(self):
+        with tempfile.TemporaryDirectory() as raw:
+            products = Path(raw) / "Products"
+            app = products / "Release-iphonesimulator/immichSlides.app"
+            app.mkdir(parents=True)
+            plist = app / "Info.plist"
+            values = {"IMMICH_SERVER_URL": "", "IMMICH_API_KEY": "", "ENABLE_DEBUG_TEST": "0"}
+            plist.write_bytes(plistlib.dumps(values))
+            (products / "one.xctestrun").write_bytes(b"synthetic")
+            with self.assertRaisesRegex(ContractError, "no app Info.plist"):
+                archive.check_products(products)
+            archive.check_products(products, configuration="Release")
+            for key, value in (("IMMICH_SERVER_URL", "private-sentinel"), ("IMMICH_API_KEY", "private-sentinel"),
+                               ("ENABLE_DEBUG_TEST", "YES")):
+                plist.write_bytes(plistlib.dumps(dict(values, **{key: value})))
+                with self.subTest(key=key), self.assertRaises(ContractError):
+                    archive.check_products(products, configuration="Release")
+            plist.write_bytes(plistlib.dumps(values))
+            packed = Path(raw) / "build.tar.gz"
+            archive.pack_products(products, packed)
+            manifest = {"archive_sha256": archive.file_hash(packed), "files": archive.inventory(products)}
+            archive.extract_products(packed, Path(raw) / "relocated", manifest, configuration="Release")
+            self.assertEqual(archive.inventory(Path(raw) / "relocated/Products"), manifest["files"])
+
     def test_verified_redownload_is_bounded_and_bound_to_the_original_artifact(self):
         from ci_summary import parse_summary
         from test_ci_summary import archive_download_summary

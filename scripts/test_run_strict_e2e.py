@@ -8106,6 +8106,41 @@ finally:
 
 
 class SmokeFlowResultTests(unittest.TestCase):
+    def test_smoke_archive_compatibility_requires_the_pinned_ios_device_runtime_and_architecture(self):
+        import strict_e2e_build as build
+        pins = json.loads((Path(__file__).resolve().parent / "ci-pins.json").read_text())
+        identity = {"destination": build.SMOKE_BUILD_DESTINATION, "platform": "ios",
+                    "scheme": "immichSlides-iOS-settings-resume", "test_plan": "StrictE2E-iOS"}
+        for device in ("iphone", "ipad"):
+            execution = {"platform": "iOS Simulator", "udid": "synthetic", "device": device,
+                         "device_type": pins["device_types"][device], "runtime": pins["simulators"]["ios"],
+                         "architecture": "arm64"}
+            build.validate_smoke_compatibility(identity, ["arm64", "x86_64"], execution, pins)
+            for change in ({"platform": "iOS"}, {"platform": "tvOS Simulator"}, {"device": "tv"},
+                           {"device_type": "iPhone Other"}, {"runtime": dict(execution["runtime"], build="wrong")},
+                           {"architecture": "missing"}):
+                with self.subTest(device=device, change=change), self.assertRaises(ValueError):
+                    build.validate_smoke_compatibility(identity, ["arm64", "x86_64"], dict(execution, **change), pins)
+            with self.assertRaises(ValueError):
+                build.validate_smoke_compatibility(dict(identity, destination="platform=iOS Simulator,id=other"),
+                                                   ["arm64"], execution, pins)
+
+    def test_legacy_warm_receipt_still_requires_the_exact_destination(self):
+        import strict_e2e_build as build
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            products = root / "Build/Products"
+            products.mkdir(parents=True)
+            (products / "one.xctestrun").write_bytes(b"synthetic")
+            identity = {"destination": "platform=iOS Simulator,id=one"}
+            receipt = {"schema_version": 1, "identity": identity, "products": build.inventory(products),
+                       "xctestrun": "one.xctestrun"}
+            build.write_json(root / build.RECEIPT, receipt)
+            with mock.patch.object(build, "workspace_preflight"), mock.patch.object(build, "shard_identity",
+                    return_value=dict(identity, destination="platform=iOS Simulator,id=two")):
+                with self.assertRaisesRegex(build.CommandError, "does not match"):
+                    build.load_warm_build(root, "ios", "smoke-flow", "Debug", "unused", root)
+
     def test_smoke_failure_vocabulary_covers_source_steps_and_redacts_runtime_values(self):
         from ci_failure_diagnostics import (SMOKE_FLOW_CONTROL_IDS, SMOKE_FLOW_FAILURE_MESSAGES,
                                             classify_messages, public_failure_messages,
@@ -8554,6 +8589,10 @@ class SmokeFlowResultTests(unittest.TestCase):
                 {flow["selector"]: {"ios"} for flow in flows})), mock.patch("ci_flaky.simulator_device_class"), \
                 mock.patch("strict_e2e_build.validate_paths"), \
                 mock.patch("strict_e2e_build.load_warm_build", return_value=({"identity": "warm", "source_root": "/retired/compilation-root"}, root / "run")), \
+                mock.patch("strict_e2e_build.load_smoke_archive", side_effect=CommandError("archive rejected") if late == "archive" else None,
+                    return_value=({"identity": "generic", "source_root": "/retired/compilation-root", "control": {"id": "200"},
+                                   "archive_sha256": "b" * 64}, root / "run", {"device": "iphone"})), \
+                mock.patch("strict_e2e_build.warm_up", side_effect=AssertionError("consumer compiled")), \
                 mock.patch("strict_e2e_build.validate_warm_products", side_effect=lambda *args: assert_running("products")), \
                 mock.patch.object(smoke.tempfile, "mkdtemp", return_value=str(root / "owned")), \
                 mock.patch.object(smoke.shutil, "rmtree", side_effect=OSError("cleanup failed") if late == "owned-cleanup" else None), \
@@ -8564,6 +8603,22 @@ class SmokeFlowResultTests(unittest.TestCase):
             except (CommandError, OSError, ValueError):
                 code = 2
             return code, flows, evidence, execution.call_count
+
+    def test_smoke_archive_rejection_starts_no_flow_and_success_reuses_only_admitted_products(self):
+        for rejected in (False, True):
+            with self.subTest(rejected=rejected), tempfile.TemporaryDirectory() as raw:
+                code, flows, evidence, calls = self.run_group(Path(raw), overrides={"smoke_archive": True},
+                                                             late="archive" if rejected else None)
+                self.assertEqual((code, calls), (2, 0) if rejected else (0, len(flows)))
+                if not rejected:
+                    case = json.loads((evidence / "case-manifest.json").read_text())
+                    self.assertEqual(case["build_mode"], "smoke-archive-v2")
+                    self.assertEqual(case["execution_identity"], {"device": "iphone"})
+                    self.assertEqual(case["warm_build_identity"], "generic")
+        for change in ({"test_without_building": False}, {"warm_up_only": True}, {"derived_data_path": None}):
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as raw:
+                code, _, _, calls = self.run_group(Path(raw), overrides={"smoke_archive": True, **change})
+                self.assertEqual((code, calls), (2, 0))
 
     def test_smoke_group_aggregates_first_results_and_labels_single_flow(self):
         for single, failed in ((False, False), (True, False), (False, True)):

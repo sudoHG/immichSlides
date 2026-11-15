@@ -4,6 +4,7 @@ import copy
 import hashlib
 import json
 import os
+import plistlib
 import tempfile
 import time
 import unittest
@@ -124,6 +125,143 @@ def plan_fixture(temporary, stack, *, ancestor=0):
 
 
 class SmokeShadowTests(unittest.TestCase):
+    def test_smoke_archive_gate_rejects_hash_inventory_links_configuration_and_signature_before_admission(self):
+        import ci_build_archive as archive
+        import strict_e2e_build as build
+        for defect in (None, "manifest", "tar", "inventory", "link", "configuration", "signature"):
+            with self.subTest(defect=defect), tempfile.TemporaryDirectory() as raw:
+                root = Path(raw)
+                products = root / "Products"
+                app = products / "Release-iphonesimulator/immichSlides.app"
+                app.mkdir(parents=True)
+                (app / "Info.plist").write_bytes(plistlib.dumps({"IMMICH_SERVER_URL": "", "IMMICH_API_KEY": ""}))
+                (products / "one.xctestrun").write_bytes(b"synthetic")
+                identity = {"configuration": "Release", "source": {"head_sha": HEAD}}
+                receipt = {"schema_version": 2, "kind": "smoke-archive", "identity": identity, "control": {},
+                    "architectures": ["arm64"], "signing_mode": "adhoc", "private_configuration_present": False,
+                    "xctestrun": "one.xctestrun", "products": archive.inventory(products), "source_root": "/retired/source"}
+                directory = root / "archive"
+                directory.mkdir()
+                archive.pack_products(products, directory / "build.tar.gz")
+                receipt["archive_sha256"] = archive.file_hash(directory / "build.tar.gz")
+                if defect == "inventory":
+                    next(entry for entry in receipt["products"] if entry["kind"] == "file")["sha256"] = "f" * 64
+                if defect == "link":
+                    receipt["products"].append({"path": "Products/escape", "kind": "symlink", "mode": 511, "target": "../../outside"})
+                if defect == "configuration":
+                    receipt["identity"]["configuration"] = "Debug"
+                shadow.write_json(directory / "manifest.json", receipt)
+                digest = archive.file_hash(directory / "manifest.json")
+                if defect == "manifest":
+                    (directory / "manifest.json").write_text("{}")
+                if defect == "tar":
+                    with (directory / "build.tar.gz").open("ab") as handle:
+                        handle.write(b"changed")
+                with patch("ci_build_archive.measure_signing", side_effect=ContractError("signature") if defect == "signature" else None,
+                           return_value="adhoc"):
+                    if defect is None:
+                        admitted = shadow.verify_smoke_archive(directory, root / "relocated", expected_identity=identity,
+                                                               control={}, manifest_hash=digest)
+                        build.validate_warm_products(root / "relocated", admitted)
+                        (root / "relocated/Build/Products/one.xctestrun").write_bytes(b"changed")
+                        with self.assertRaisesRegex(build.CommandError, "Products changed"):
+                            build.validate_warm_products(root / "relocated", admitted)
+                    else:
+                        with self.assertRaises(ValueError):
+                            shadow.verify_smoke_archive(directory, root / "relocated", expected_identity={"configuration": "Release", "source": {"head_sha": HEAD}},
+                                                        control={}, manifest_hash=digest)
+                        self.assertFalse((root / "relocated" / build.SMOKE_RECEIPT).exists())
+
+    def test_archive_timing_requires_provenance_and_failed_producers_cannot_count(self):
+        scheduling = plan()
+        scheduling.update(build_mode=shadow.ARCHIVE_MODE, control={"run_id": "200"}, tested_source={"head_sha": HEAD})
+        provenance = {"configuration": "Debug", "artifact_id": 91, "manifest_sha256": "d" * 64,
+                      "archive_sha256": "e" * 64, "control": scheduling["control"], "source": scheduling["tested_source"],
+                      "producer_job": "smoke-shadow-ios-debug"}
+        producers = [{"schema_version": 1, "configuration": configuration, "outcome": "passed",
+                      "provenance": dict(provenance, configuration=configuration, producer_job="smoke-shadow-ios-" + configuration.lower()),
+                      "timing": {"build_seconds": 10, "pack_seconds": 1, "upload_seconds": 2, "job_elapsed_seconds": 20}}
+                     for configuration in ("Debug", "Release")]
+        records = group_records(scheduling)
+        records[0].update(schema_version=2, timing_mode=shadow.ARCHIVE_MODE, build_provenance=provenance,
+                          transfer_seconds=2, verify_seconds=1)
+        records[0]["phases"][0]["name"] = "archive-verify"
+        good = shadow.aggregate(scheduling, records, "success", producers=producers, producer_results={"Debug": "success", "Release": "success"})
+        self.assertEqual((good["outcome"], good["executed"], good["comparison_eligible"]), ("passed", True, True))
+        self.assertEqual(good["shared_build_runner_seconds"], 40)
+        self.assertIn("archive-verify", str(good["group_timings"]))
+        for defect in ("missing-provenance", "zero-warm", "failed-producer", "missing-producer", "missing-group", "partial"):
+            changed, builds = copy.deepcopy(records), copy.deepcopy(producers)
+            if defect == "missing-provenance":
+                changed[0].pop("build_provenance")
+            elif defect == "zero-warm":
+                changed[0]["phases"][0].update(name="warm-up", elapsed_seconds=0)
+            elif defect == "failed-producer":
+                builds[0]["outcome"] = "failed"
+            elif defect == "missing-producer":
+                builds.pop(0)
+            elif defect == "missing-group":
+                changed.pop()
+            elif defect == "partial":
+                changed[0]["selection"] = "single-flow"
+                changed.append(copy.deepcopy(changed[0]))
+            result = shadow.aggregate(scheduling, changed, "success", producers=builds, producer_results={"Debug": "success", "Release": "success"})
+            with self.subTest(defect=defect):
+                self.assertEqual(result["outcome"], "failed")
+                self.assertFalse(result["comparison_eligible"])
+                if defect in {"missing-producer", "failed-producer"}:
+                    self.assertEqual(result["flows"][0]["outcome"], "not-run")
+        failed_api = shadow.aggregate(scheduling, records, "success", producers=producers,
+                                      producer_results={"Debug": "failure", "Release": "success"})
+        self.assertFalse(failed_api["comparison_eligible"])
+
+    def test_smoke_archive_manifest_binds_tested_source_and_control_independently(self):
+        import strict_e2e_build as build
+        identity = {"source": {"head_sha": HEAD, "tree_sha": "d" * 40, "source_sha256": "e" * 64, "clean": True},
+                    "configuration": "Debug"}
+        control = {"repository": REPOSITORY, "run_id": "200", "attempt": 1, "workflow_id": 8,
+                   "workflow_path": shadow.WORKFLOW, "api_head_sha": "b" * 40, "main_admitted": True}
+        receipt = {"schema_version": 2, "kind": "smoke-archive", "identity": identity, "control": control,
+                   "architectures": ["arm64"], "signing_mode": "adhoc", "private_configuration_present": False,
+                   "xctestrun": "one.xctestrun", "products": [{"path": "Products", "mode": 493, "kind": "directory"}],
+                   "archive_sha256": "f" * 64, "source_root": "/private/synthetic/source"}
+        build.validate_smoke_receipt(receipt, identity, control)
+        cases = [("source", "head_sha", "b" * 40), ("source", "head_sha", "f" * 40),
+                 ("source", "tree_sha", "f" * 40), ("source", "source_sha256", "f" * 64),
+                 ("control", "attempt", 2), ("control", "workflow_id", 9),
+                 ("control", "workflow_path", shadow.NIGHTLY), ("control", "api_head_sha", HEAD),
+                 ("control", "main_admitted", False), ("configuration", None, "Release"),
+                 ("signing_mode", None, "unsigned"), ("private_configuration_present", None, True)]
+        for section, key, value in cases:
+            changed = copy.deepcopy(receipt)
+            if section == "source":
+                changed["identity"]["source"][key] = value
+            elif section == "configuration":
+                changed["identity"][section] = value
+            elif key:
+                changed[section][key] = value
+            else:
+                changed[section] = value
+            with self.subTest(section=section, key=key), self.assertRaises(ValueError):
+                build.validate_smoke_receipt(changed, identity, control)
+
+    def test_smoke_archive_api_provenance_requires_successful_configuration_producer(self):
+        control = {"repository": REPOSITORY, "run_id": "200", "attempt": 1, "workflow_id": 8,
+                   "workflow_path": shadow.WORKFLOW, "api_head_sha": "b" * 40,
+                   "control_source_sha": "c" * 40, "main_admitted": True}
+        metadata = {"id": 91, "name": "smoke-build-debug-200-1", "expired": False,
+                    "workflow_run": {"id": 200, "head_sha": "b" * 40}}
+        producer = {"name": "smoke-shadow-ios-debug", "conclusion": "success", "run_attempt": 1}
+        shadow.validate_smoke_artifact(metadata, control, "Debug", 91, producer)
+        for field, value in (("id", 92), ("name", "smoke-build-release-200-1"), ("expired", True),
+                             ("workflow_run", {"id": 200, "head_sha": HEAD}),
+                             ("workflow_run", {"id": 201, "head_sha": "b" * 40})):
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                shadow.validate_smoke_artifact(dict(metadata, **{field: value}), control, "Debug", 91, producer)
+        for change in ({"name": "smoke-shadow-ios-release"}, {"conclusion": "failure"}, {"run_attempt": 2}):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                shadow.validate_smoke_artifact(metadata, control, "Debug", 91, dict(producer, **change))
+
     def test_aggregate_drops_invalid_optional_first_failure_without_changing_results(self):
         from ci_failure_diagnostics import unavailable_first_failure
         scheduling = plan()
