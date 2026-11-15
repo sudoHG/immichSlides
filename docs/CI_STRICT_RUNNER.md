@@ -62,6 +62,8 @@ projection. Original result bundles remain private and follow the strict disposa
 Smoke enables the existing first-failure recorder in a private per-flow spool and
 passes it to the official-result exporter. Only officially failed selected methods
 receive its validated `first_failure` JSON and, when privacy permits, canonical PNG.
+The screenshot request goes only to the recorder; the prepared XCTest run retains
+its original screen-capture format and attachment lifetime.
 The shadow adapter copies this JSON into the flow row and only that method's approved
 image into the group records, then repeats the sensitive scan and UI image upload
 check. Raw spool files and other attachments are never copied. The same existing

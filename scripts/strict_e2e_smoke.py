@@ -441,8 +441,9 @@ def execute_flow(flow, root, arguments, source_run, runner, evidence, *, build_s
         spool = bundle.parent / "run/first-failure-spool"
         spool.mkdir(mode=0o700, parents=True)
         first_failure_spool = (spool, [flow["selector"]])
-        private_run = prepare_test_run(source_run, bundle.parent / "run", environment,
-                                       first_failure_spool=first_failure_spool, failure_screenshots=True)
+        from ci_failure_diagnostics import first_failure_environment
+        environment.update(first_failure_environment(spool, [flow["selector"]], screenshots=True))
+        private_run = prepare_test_run(source_run, bundle.parent / "run", environment)
         command = warm_test_command(private_run, arguments.destination, bundle,
                                     "immichSlidesUITests/" + flow["selector"])
         command += ["-test-timeouts-enabled", "YES", "-default-test-execution-time-allowance", str(METHOD_TIMEOUT_SECONDS),

@@ -176,7 +176,11 @@ def aggregate(plan, records, matrix_result):
                     errors.append("invalid public failure locations: " + row["id"])
                     continue
                 if "first_failure" in row:
-                    validate_first_failure(row["first_failure"])
+                    try:
+                        validate_first_failure(row["first_failure"])
+                    except (ContractError, ValueError, TypeError, KeyError, OverflowError):
+                        # Optional diagnostics from older tested heads cannot invalidate first results.
+                        row = {key: value for key, value in row.items() if key != "first_failure"}
                 observed[row["id"]] = row
             record_errors = record.get("errors")
             if not isinstance(record_errors, list) or any(not isinstance(error, str) for error in record_errors):

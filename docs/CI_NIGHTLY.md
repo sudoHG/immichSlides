@@ -145,6 +145,14 @@ the 90-day aggregate retains JSON and the shared `render_first_failure` text onl
 First boot, secure fields, PIN, server settings and unknown surfaces retain the
 recorder's `withheld-privacy` status and publish no image. The sensitive scan covers
 the entire group immediately before its upload-safety output, including the PNGs.
+Smoke keeps the original XCTest screen-capture format and attachment lifetime;
+only the recorder requests its own `XCUIScreen.main.screenshot()`. The recorder's
+synchronous AX snapshot, screenshot and thumbnail work counts toward the unchanged
+120-second method allowance and 270-second native invocation cap. When comparing
+earlier shadows, treat a failure-category shift (for example `xctest-tool` to
+`unknown`, or a new `hang-guard`) as possibly caused by this failure-path work.
+At aggregation, an invalid or stale optional `first_failure` receipt is dropped
+from that row without changing its outcome, execution or comparison eligibility.
 The consumer requires `selection=group` in both root records, including groups
 with only one flow; a diagnostic `--smoke-flow` result cannot stand in for a
 complete group. The runner's shared `validate_group_evidence` decides whether

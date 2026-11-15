@@ -124,6 +124,26 @@ def plan_fixture(temporary, stack, *, ancestor=0):
 
 
 class SmokeShadowTests(unittest.TestCase):
+    def test_aggregate_drops_invalid_optional_first_failure_without_changing_results(self):
+        from ci_failure_diagnostics import unavailable_first_failure
+        scheduling = plan()
+        records = group_records(scheduling)
+        records[0]["flows"][0].update(outcome="failed", failure_category="unknown")
+        records[0].update(runner_exit_code=65, group_validation={"outcome": "failed", "reason": "test"})
+        baseline = shadow.aggregate(scheduling, records, "failure")
+        stale = unavailable_first_failure("xctest")
+        stale["element"] = "retired-control"
+        for receipt in (stale, None, {"schema_version": 1}):
+            with self.subTest(receipt=receipt):
+                changed = copy.deepcopy(records)
+                changed[0]["flows"][0]["first_failure"] = receipt
+                result = shadow.aggregate(scheduling, changed, "failure")
+                self.assertEqual((result["outcome"], result["executed"], result["comparison_eligible"]),
+                                 ("failed", True, True))
+                self.assertNotIn("first_failure", result["flows"][0])
+                for key in ("outcome", "executed", "comparison_eligible", "errors", "flows"):
+                    self.assertEqual(result[key], baseline[key])
+
     def test_admission_refuses_untrusted_or_unfinished_nightly_and_non_main_dispatch(self):
         run = nightly()
         payload = {"workflow_run": run}
@@ -695,6 +715,35 @@ class SmokeShadowTests(unittest.TestCase):
                 if "first_failure" in row:
                     self.assertEqual(result["flows"][0]["first_failure"], row["first_failure"])
                     self.assertIn(render_first_failure(row["first_failure"]), shadow.markdown(result))
+
+    def test_group_image_copy_and_upload_check_preserve_the_second_flow_index(self):
+        import io
+        from PIL import Image
+        from ci_failure_diagnostics import unavailable_first_failure
+        picture = io.BytesIO()
+        Image.new("RGB", (64, 32), "blue").save(picture, format="PNG")
+        png = picture.getvalue()
+        group = group_records(plan())[0]
+        second = copy.deepcopy(group["flows"][0])
+        second.update(id="phone-two", selector="Smoke/testPhoneTwo", outcome="failed")
+        receipt = unavailable_first_failure("xctest")
+        receipt["state"].update(app="running-foreground", surface="playback")
+        receipt["screenshot"].update(status="captured", width=64, height=32, bytes=len(png))
+        second["first_failure"] = receipt
+        group["flows"].append(second)
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            evidence, records = root / "evidence", root / "records"
+            source = evidence / "phone-two/first-failure/0.png"
+            source.parent.mkdir(parents=True)
+            source.write_bytes(png)
+            records.mkdir()
+            shadow.copy_first_failure_images(evidence, records, group["flows"])
+            shadow.write_json(records / "group.json", group)
+            shadow.check_group_upload(records, group)
+            retained = sorted(path.relative_to(records).as_posix() for path in records.rglob("*.png"))
+            self.assertEqual(retained, ["failure-screenshots/first-failure-attempt-1/1.png"])
+            self.assertEqual((records / retained[0]).read_bytes(), png)
 
     def test_group_upload_check_rejects_unbound_images_even_on_a_withheld_surface(self):
         import io
