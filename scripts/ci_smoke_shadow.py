@@ -496,7 +496,7 @@ def aggregate(plan, records, matrix_result, *, producers=None, producer_results=
                 and [phase["name"] for phase in phases] == ["archive-verify" if archive_mode else "warm-up", "flows"][:len(phases)]
                 and (not all(row.get("executed") is True for row in rows) or len(phases) == 2))
             if archive_mode:
-                valid_timing = (record.get("timing_mode") == ARCHIVE_MODE
+                valid_timing &= (record.get("timing_mode") == ARCHIVE_MODE
                     and isinstance(phases, list) and len(phases) <= 2
                     and all(isinstance(phase, dict) and set(phase) == {"name", "elapsed_seconds", "exit_code"}
                             and type(phase["exit_code"]) is int for phase in phases)
@@ -1134,12 +1134,12 @@ def main(argv=None):
             return cleanup(environment, temporary)
         scheduling = decode((temporary / "ci-artifacts/smoke-plan/plan.json").read_text())
         validate_plan(scheduling, environment)
-        if "control_source_sha" in scheduling:
-            staged = temporary / "smoke-control/stage.json"
-            source = decode(staged.read_text())["head_sha"] if staged.is_file() else git("rev-parse", "HEAD")
-            require(source == scheduling["control_source_sha"], "shadow control checkout differs from plan")
-            require(subprocess.call(["git", "merge-base", "--is-ancestor", source, "origin/main"], cwd=ROOT, timeout=30) == 0,
-                    "planned control source is not admitted main")
+        sha(scheduling["control_source_sha"])
+        staged = temporary / "smoke-control/stage.json"
+        source = decode(staged.read_text())["head_sha"] if staged.is_file() else git("rev-parse", "HEAD")
+        require(source == scheduling["control_source_sha"], "shadow control checkout differs from plan")
+        require(subprocess.call(["git", "merge-base", "--is-ancestor", source, "origin/main"], cwd=ROOT, timeout=30) == 0,
+                "planned control source is not admitted main")
         manifest, manifest_hash = manifest_at_head(scheduling["head_sha"])
         validate_plan(scheduling, environment, manifest_hash=manifest_hash, manifest=manifest)
         if args.phase == "build":

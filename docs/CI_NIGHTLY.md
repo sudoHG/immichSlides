@@ -310,8 +310,10 @@ from the two producer records. Per-flow native/total time retains preparation,
 reset, export and cleanup costs; queue time remains separate from job clocks.
 Transfer/upload step timings are read by the aggregate after the jobs finish.
 Missing, partial, invalid or failed timing reads stay `unknown` and never fail a
-producer, group or aggregate. Locally measured build/pack/verify times are diagnostics
-too; the existing job-budget start evidence and execution deadlines remain gates.
+producer, group or aggregate. Producer build/pack times and group `transfer_seconds`
+and `verify_seconds` are diagnostics too. Group `job_started_epoch`,
+`job_elapsed_seconds` and every phase's `elapsed_seconds` must remain valid;
+job-budget start evidence and execution deadlines remain gates.
 The first hosted report must include both producer build/pack/upload durations,
 each iOS group's transfer/verification and each TV group's warm-up/build duration
 and each flow's native and total elapsed seconds from `group_timings` and `flows`.

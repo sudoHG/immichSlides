@@ -148,6 +148,55 @@ def plan_fixture(temporary, stack, *, ancestor=0):
 
 
 class SmokeShadowTests(unittest.TestCase):
+    def test_aggregate_requires_the_planned_main_control_even_for_suppressed_plans(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            def commit(value):
+                (root / "source").write_text(value)
+                subprocess.run(["git", "add", "."], cwd=root, check=True)
+                subprocess.run(["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+                                "commit", "-qm", "fixture"], cwd=root, check=True)
+                return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+            planned = commit("planned")
+            advanced = commit("advanced main")
+            subprocess.run(["git", "update-ref", "refs/remotes/origin/main", advanced], cwd=root, check=True)
+            subprocess.run(["git", "checkout", "-q", "--detach", planned], cwd=root, check=True)
+            foreign = commit("outside main")
+            temporary = root / ".git/runner"
+            context = dict(environment(), RUNNER_TEMP=str(temporary), SMOKE_MATRIX_RESULT="skipped",
+                           GITHUB_STEP_SUMMARY=str(temporary / "summary.md"))
+            for case in ("planned", "checkout-changed", "staged-changed", "outside-main", "missing-archive", "missing-shared"):
+                with self.subTest(case=case), ExitStack() as stack:
+                    scheduling = dict(plan(), execute=False, not_run_reason="Synthetic suppression.",
+                                      build_mode=shadow.ARCHIVE_MODE, control_source_sha=planned)
+                    checkout = advanced if case == "checkout-changed" else foreign if case == "outside-main" else planned
+                    subprocess.run(["git", "checkout", "-q", "--detach", checkout], cwd=root, check=True)
+                    staged = temporary / "smoke-control/stage.json"
+                    if case == "staged-changed":
+                        shadow.write_json(staged, {"head_sha": advanced})
+                    elif staged.exists():
+                        staged.unlink()
+                    if case == "outside-main":
+                        scheduling["control_source_sha"] = foreign
+                    elif case.startswith("missing"):
+                        scheduling.pop("control_source_sha")
+                        if case == "missing-shared":
+                            scheduling.pop("build_mode")
+                    shadow.write_json(temporary / "ci-artifacts/smoke-plan/plan.json", scheduling)
+                    stack.enter_context(patch.dict(os.environ, context, clear=True))
+                    stack.enter_context(patch.object(shadow, "ROOT", root))
+                    reader = stack.enter_context(patch.object(shadow, "manifest_at_head", return_value=(manifest(), "c" * 64)))
+                    stack.enter_context(patch.object(shadow, "read_transfer_timings"))
+                    stack.enter_context(patch.object(shadow, "scan_records"))
+                    self.assertEqual(shadow.main(["aggregate"]), 0 if case == "planned" else 1)
+                    if case == "planned":
+                        reader.assert_called_once_with(HEAD)
+                        result = json.loads((temporary / "smoke-shadow/shadow.json").read_text())
+                        self.assertEqual(result["outcome"], "not-run")
+                    else:
+                        reader.assert_not_called()
+
     def test_source_at_commit_matches_the_clean_checkout_fingerprint(self):
         from strict_e2e_build import smoke_source_identity
         with tempfile.TemporaryDirectory() as raw:
@@ -261,7 +310,7 @@ class SmokeShadowTests(unittest.TestCase):
 
     def test_archive_group_verifies_planned_expectations_before_slow_simulator_creation(self):
         scheduling = shared_plan()
-        for defect in (None, "control", "manifest", "allowance"):
+        for defect in (None, "control", "manifest", "allowance", "selection"):
             with self.subTest(defect=defect), tempfile.TemporaryDirectory() as raw, ExitStack() as stack:
                 temporary = Path(raw)
                 provenance = archive_provenance(scheduling)
@@ -269,6 +318,8 @@ class SmokeShadowTests(unittest.TestCase):
                 clock = [100.0]
                 shadow.write_json(temporary / "smoke-archive-selection.json", {"provenance": provenance,
                     "identity": identity, "transfer_started_epoch": 100.0})
+                if defect == "selection":
+                    (temporary / "smoke-archive-selection.json").unlink()
                 shadow.write_json(temporary / "ci-artifacts/smoke-build/manifest.json", {"control": {"run_id": "untrusted"}})
                 calls = []
                 def verify(*_args, **options):
@@ -310,9 +361,11 @@ class SmokeShadowTests(unittest.TestCase):
                 record = json.loads((temporary / "smoke-records/group.json").read_text())
                 if defect:
                     self.assertEqual(code, 1)
-                    self.assertEqual(calls, ["verify"])
+                    self.assertEqual(calls, [] if defect == "selection" else ["verify"])
                     run.assert_not_called()
                     load.assert_not_called()
+                    self.assertEqual(record["flows"][0]["outcome"], "not-run")
+                    self.assertFalse(record["flows"][0]["executed"])
                 else:
                     self.assertEqual((code, calls), (0, ["verify", "create"]))
                     self.assertEqual(record["build_provenance"], provenance)
@@ -577,13 +630,24 @@ class SmokeShadowTests(unittest.TestCase):
         unknown_records, unknown_producers = copy.deepcopy(records), copy.deepcopy(producers)
         unknown_records[0]["transfer_seconds"] = None
         unknown_records[0]["verify_seconds"] = "incomplete"
-        unknown_records[0]["phases"][0]["elapsed_seconds"] = None
         unknown_producers[0]["timing"]["upload_seconds"] = None
         unknown = shadow.aggregate(scheduling, unknown_records, "success", producers=unknown_producers,
                                    producer_results={"Debug": "success", "Release": "success"})
         self.assertEqual((unknown["outcome"], unknown["comparison_eligible"]), ("passed", True))
         self.assertIsNone(unknown["group_timings"]["iphone-debug"]["transfer_seconds"])
         self.assertIsNone(unknown["group_timings"]["iphone-debug"]["verify_seconds"])
+        for index in (0, 1):
+            for field in ("job_started_epoch", "job_elapsed_seconds", "phase-0", "phase-1"):
+                with self.subTest(group=records[index]["group"]["id"], field=field):
+                    invalid = copy.deepcopy(records)
+                    if field.startswith("phase-"):
+                        invalid[index]["phases"][int(field[-1])]["elapsed_seconds"] = None
+                    else:
+                        invalid[index][field] = None
+                    result = shadow.aggregate(scheduling, invalid, "success", producers=producers,
+                                              producer_results={"Debug": "success", "Release": "success"})
+                    self.assertIn("invalid group job timing: " + records[index]["group"]["id"], result["errors"])
+                    self.assertEqual((result["outcome"], result["comparison_eligible"]), ("failed", False))
         rejected = copy.deepcopy(records)
         rejected[0].update(build_provenance=None, runner_exit_code=1, errors=["archive-verification-failed"])
         rejected[0]["phases"] = [{"name": "archive-verify", "elapsed_seconds": 12, "exit_code": 1}]

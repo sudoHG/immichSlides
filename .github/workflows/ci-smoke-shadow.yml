@@ -238,6 +238,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Reject private configuration and verify pinned tools
+        id: setup
         run: /usr/bin/python3 -B "$RUNNER_TEMP/smoke-control/ci_smoke_shadow.py" setup
       - name: Download only this shadow attempt's plan as data
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -269,7 +270,7 @@ jobs:
           run-id: ${{ github.run_id }}
       - name: Verify the archive and run first results against loopback fixtures
         id: run
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         env:
           SMOKE_GROUP: ${{ matrix.id }}
           SMOKE_TOKEN: ${{ github.token }}

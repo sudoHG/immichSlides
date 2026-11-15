@@ -541,22 +541,25 @@ def check_shared_shadow_contract(document, events, flag):
         projected["jobs"]["plan"]["steps"][2]["run"] = SHADOW_COMMAND + "plan"
         flows = jobs["flows"]
         steps = flows["steps"]
+        flow_prefix = copy.deepcopy(prefix)
+        flow_prefix[3]["id"] = "setup"
         selection_env = {key: value for key, value in SHADOW_BINDINGS.items()
                          if key in {"SMOKE_GROUP", "SMOKE_TOKEN"} or any(key == "SMOKE_" + config + "_" + field
                             for config in ("DEBUG", "RELEASE") for field in ("ARTIFACT_ID", "MANIFEST_SHA256", "ARCHIVE_SHA256"))}
         valid &= (flows["needs"] == ["plan", "ios-debug", "ios-release"]
                   and flows["if"] == guard
-                  and len(steps) == 10 and [plain(step) for step in steps[:5]] == prefix
+                  and len(steps) == 10 and [plain(step) for step in steps[:5]] == flow_prefix
                   and plain(steps[5]) == {"id": "select", "if": "matrix.platform == 'ios'", "env": selection_env,
                                           "run": SHADOW_GROUP_COMMAND + "select-archive"}
                   and steps[6].get("name") == "Download the selected configuration archive"
                   and plain(steps[6]) == {"if": "matrix.platform == 'ios'", "uses": download,
                         "with": {"artifact-ids": "${{ steps.select.outputs.artifact_id }}", "path": "${{ runner.temp }}/ci-artifacts/smoke-build",
                                  "merge-multiple": True, "github-token": "${{ github.token }}", "repository": "${{ github.repository }}", "run-id": "${{ github.run_id }}"}}
-                  and steps[7].get("if") == "${{ !cancelled() }}"
+                  and steps[7].get("if") == "${{ !cancelled() && steps.setup.outcome == 'success' }}"
                   and steps[8].get("uses") == upload and shadow_artifact_allowed(steps[8]))
         projected["jobs"]["flows"].update(needs="plan", **{"if": guard})
         projected["jobs"]["flows"]["steps"][0]["with"]["ref"] = "main"
+        projected["jobs"]["flows"]["steps"][3].pop("id")
         projected["jobs"]["flows"]["steps"][7].pop("if")
         del projected["jobs"]["flows"]["steps"][5:7]
         aggregate = jobs["aggregate"]

@@ -43,6 +43,7 @@ class SmokeShadowWorkflowPolicyTests(unittest.TestCase):
             lambda doc: doc["jobs"]["flows"]["steps"][0]["with"].update(ref="main"),
             lambda doc: doc["jobs"]["aggregate"]["steps"][0]["with"].update(ref="main"),
             lambda doc: doc["jobs"]["plan"]["outputs"].pop("control_sha"),
+            lambda doc: next(step for step in doc["jobs"]["flows"]["steps"] if step.get("id") == "run").update({"if": "${{ !cancelled() }}"}),
             lambda doc: doc["jobs"]["flows"]["steps"].pop(select),
             lambda doc: doc["jobs"]["flows"]["steps"][download]["with"].update(name="latest"),
             lambda doc: doc["jobs"]["flows"]["steps"][download]["with"].pop("artifact-ids"),
