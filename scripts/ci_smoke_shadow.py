@@ -166,7 +166,7 @@ def step_seconds(job, name):
 
 def run_producer(scheduling, environment, temporary):
     from strict_e2e_build import build_smoke_archive, smoke_source_identity
-    from run_strict_ci_tracer import run_runner
+    from run_strict_ci_tracer import run_runner, RunnerGroupCleanupError
     from ci_build_archive import disk_check, workspace_preflight
     configuration = environment["SMOKE_CONFIGURATION"]
     api, control = current_control(scheduling, environment)
@@ -184,7 +184,11 @@ def run_producer(scheduling, environment, temporary):
     def execute(command, **options):
         remaining = started + PRODUCER_BUDGET_MINUTES * 60 - time.time()
         require(remaining > 0, "smoke producer inner budget exhausted")
-        return run_runner(command, ROOT, options["log_path"], timeout_seconds=min(1200, remaining))
+        try:
+            return run_runner(command, ROOT, options["log_path"], timeout_seconds=min(1200, remaining))
+        except RunnerGroupCleanupError:
+            (temporary / "smoke-cleanup-blocked").touch()
+            raise
     receipt, measurements = build_smoke_archive(root=ROOT, configuration=configuration, control=control,
         derived=root / "derived", packages=root / "packages", output=root / "output", execute=execute)
     require(time.time() <= started + PRODUCER_BUDGET_MINUTES * 60, "smoke producer inner budget exhausted")

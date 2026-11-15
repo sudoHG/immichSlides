@@ -126,6 +126,26 @@ def plan_fixture(temporary, stack, *, ancestor=0):
 
 
 class SmokeShadowTests(unittest.TestCase):
+    def test_producer_cleanup_refusal_preserves_owned_products(self):
+        from run_strict_ci_tracer import RunnerGroupCleanupError
+        scheduling = dict(plan(), build_mode=shadow.ARCHIVE_MODE, tested_source={"head_sha": HEAD}, control={"run_id": "200"})
+        with tempfile.TemporaryDirectory() as raw:
+            temporary = Path(raw)
+            def build(**options):
+                options["execute"](["synthetic-build"], log_path=temporary / "build.log")
+            with patch.object(shadow, "current_control", return_value=(None, scheduling["control"])), \
+                    patch.object(shadow, "job_started_epoch", return_value=time.time()), \
+                    patch("strict_e2e_build.smoke_source_identity", return_value=scheduling["tested_source"]), \
+                    patch("strict_e2e_build.build_smoke_archive", side_effect=build), \
+                    patch("ci_build_archive.workspace_preflight"), patch("ci_build_archive.disk_check"), \
+                    patch("run_strict_ci_tracer.run_runner", side_effect=RunnerGroupCleanupError("synthetic refusal")):
+                with self.assertRaises(RunnerGroupCleanupError):
+                    shadow.run_producer(scheduling, dict(environment(), SMOKE_CONFIGURATION="Debug"), temporary)
+            self.assertTrue((temporary / "smoke-cleanup-blocked").exists())
+            with self.assertRaisesRegex(ValueError, "cleanup unverified"):
+                shadow.cleanup(dict(environment(), SMOKE_CONFIGURATION="Debug"), temporary)
+            self.assertTrue((temporary / "smoke-producer/ownership.json").is_file())
+
     def test_suppressed_shared_plans_preserve_not_run_without_requiring_a_historical_archive_reader(self):
         for reason in ("active", "unchanged", "conclusion"):
             with self.subTest(reason=reason), tempfile.TemporaryDirectory() as raw, ExitStack() as stack:
