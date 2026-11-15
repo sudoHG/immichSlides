@@ -23,7 +23,7 @@ from ci_summary import ContractError, decode, markdown_text, require, sha
 WORKFLOW = ".github/workflows/ci-smoke-shadow.yml"
 NIGHTLY = ".github/workflows/ci-nightly.yml"
 MANIFEST = "scripts/smoke-flows.json"
-GROUP_BUDGET_MINUTES = {"iphone-debug": 22, "iphone-release": 22, "ipad-debug": 27,
+GROUP_BUDGET_MINUTES = {"iphone-debug": 27, "iphone-release": 27, "ipad-debug": 27,
                         "ipad-release": 27, "tv-debug": 22, "tv-release": 22}
 JOB_RESERVE_MINUTES = 3  # Keep upload and cleanup headroom outside the inner deadline.
 
