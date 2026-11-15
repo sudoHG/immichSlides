@@ -30,6 +30,8 @@ GROUP_BUDGET_MINUTES = {"iphone-debug": 27, "iphone-release": 27, "ipad-debug": 
 JOB_RESERVE_MINUTES = 3  # Keep upload and cleanup headroom outside the inner deadline.
 ARCHIVE_MODE = "smoke-archive-v2"
 PRODUCER_BUDGET_MINUTES = 27
+SETUP_FAILURE_STEPS = {"job-clock", "preflight", "archive-verify", "simulator", "simulator-ready",
+                       "archive-load", "runner-command"}
 
 
 def smoke_artifact_name(configuration, control):
@@ -382,6 +384,13 @@ def counts_as_shadow(plan, *, executed, errors, matrix_result):
             and plan["nightly"]["conclusion"] in REAL_RESULT_CONCLUSIONS)
 
 
+def valid_setup_failure(record):
+    step = record.get("setup_failure_step")
+    return (step is None or isinstance(step, str) and step in SETUP_FAILURE_STEPS
+            and type(record.get("runner_exit_code")) is int and record["runner_exit_code"] != 0
+            and not any(row.get("executed") is True for row in record.get("flows", [])))
+
+
 def aggregate(plan, records, matrix_result, *, producers=None, producer_results=None):
     from ci_bounded_diagnostics import public_failure_locations
     from ci_failure_diagnostics import validate_first_failure
@@ -474,6 +483,9 @@ def aggregate(plan, records, matrix_result, *, producers=None, producer_results=
                 if archive_admitted:
                     observed[row["id"]] = row
             record_errors = record.get("errors")
+            setup_valid = valid_setup_failure(record)
+            if not setup_valid:
+                errors.append("invalid group setup failure: " + group_id)
             if not isinstance(record_errors, list) or any(not isinstance(error, str) for error in record_errors):
                 errors.append("invalid group errors: " + group_id)
             else:
@@ -506,6 +518,8 @@ def aggregate(plan, records, matrix_result, *, producers=None, producer_results=
                 errors.append("invalid group job timing: " + group_id)
             timings[group_id] = ({key: record.get(key) for key in ("job_started_epoch", "job_elapsed_seconds", "phases")}
                                  if valid_timing else {"job_started_epoch": None, "job_elapsed_seconds": None, "phases": []})
+            if "setup_failure_step" in record:
+                timings[group_id]["setup_failure_step"] = record["setup_failure_step"] if setup_valid else None
             if archive_mode and valid_timing:
                 timings[group_id].update({key: record.get(key) for key in ("timing_mode", "build_provenance")})
                 timings[group_id].update({key: diagnostic_seconds(record.get(key)) for key in
@@ -571,11 +585,12 @@ def markdown(record):
                   render_first_failure(row["first_failure"]) if "first_failure" in row else None]
         lines.append("| " + " | ".join(markdown_text(value) if value is not None else "unknown" for value in values) + " |")
     if record["group_timings"]:
-        lines += ["", "| Group | Warm-up/build (s) | Transfer (s) | Archive verify (s) | Job elapsed (s) |", "|---|---:|---:|---:|---:|"]
+        lines += ["", "| Group | Warm-up/build (s) | Transfer (s) | Archive verify (s) | Job elapsed (s) | Failed setup step |", "|---|---:|---:|---:|---:|---|"]
         for group_id, timing in record["group_timings"].items():
             warm = next((phase["elapsed_seconds"] for phase in timing.get("phases") or [] if phase["name"] == "warm-up"), None)
             lines.append("| " + " | ".join(markdown_text(value) if value is not None else "unknown"
-                         for value in (group_id, warm, timing.get("transfer_seconds"), timing.get("verify_seconds"), timing["job_elapsed_seconds"])) + " |")
+                         for value in (group_id, warm, timing.get("transfer_seconds"), timing.get("verify_seconds"), timing["job_elapsed_seconds"],
+                                       timing.get("setup_failure_step"))) + " |")
     if "build_producers" in record:
         lines += ["", "| Producer | Build (s) | Pack (s) | Upload (s) | Artifact ID | Manifest SHA-256 | Tar SHA-256 |",
                   "|---|---:|---:|---:|---|---|---|"]
@@ -647,6 +662,7 @@ def copy_first_failure_images(evidence, records, rows):
 
 def check_group_upload(directory, record):
     from ci_failure_diagnostics import validate_first_failure, validate_ui_first_failure_images
+    require(valid_setup_failure(record), "invalid group setup failure")
     declared = [{"key": row["selector"]} for row in record["flows"]]
     observed = []
     for identity, row in zip(declared, record["flows"]):
@@ -926,6 +942,7 @@ def run_group(scheduling, environment, temporary):
     from ci_simulator import create_and_boot_simulator
     from run_offline_unit_tests import default_data_available_gib, ensure_disk_for_xcodebuild
     from run_strict_ci_tracer import run_runner, RunnerGroupCleanupError
+    from strict_e2e_runner_support import CommandError, InfrastructureTimeout, prepare_simulator
     validate_plan(scheduling, environment, checkout_sha=git("rev-parse", "HEAD"),
                   manifest_hash=file_hash(ROOT / MANIFEST))
     group_id = environment["SMOKE_GROUP"]
@@ -942,12 +959,13 @@ def run_group(scheduling, environment, temporary):
               "manifest_sha256": scheduling["manifest_sha256"], "group": group, "runner_exit_code": 1,
               "group_validation": {"outcome": "unavailable", "reason": "No group evidence."},
               "selection": "unavailable", "elapsed_seconds": 0, "errors": [], "flows": [],
-              "job_started_epoch": None, "job_elapsed_seconds": None, "phases": []}
+              "job_started_epoch": None, "job_elapsed_seconds": None, "phases": [], "setup_failure_step": None}
     if archive_mode:
         record.update(schema_version=2, timing_mode=ARCHIVE_MODE, build_provenance=None,
                       transfer_seconds=None, verify_seconds=None)
     started = time.monotonic()
     attempted_flows = False
+    setup_step = "job-clock"
 
     def interrupt(_signum, _frame):
         raise KeyboardInterrupt
@@ -959,10 +977,12 @@ def run_group(scheduling, environment, temporary):
         finally:
             os.environ.pop("SMOKE_TOKEN", None)
             environment.pop("SMOKE_TOKEN", None)
+        setup_step = "preflight"
         workspace_preflight(ROOT)
         ensure_disk_for_xcodebuild(default_data_available_gib, 20)
         if archive_mode:
             from strict_e2e_build import load_smoke_archive, smoke_build_identity
+            setup_step = "archive-verify"
             phase_started = time.monotonic()
             phase = {"name": "archive-verify", "exit_code": None}
             try:
@@ -985,17 +1005,24 @@ def run_group(scheduling, environment, temporary):
                 phase["elapsed_seconds"] = time.monotonic() - phase_started
                 record["phases"].append(phase)
                 record["verify_seconds"] = phase["elapsed_seconds"]
+        setup_step = "simulator"
         udid = create_and_boot_simulator("appletv" if group["device"] == "tv" else group["device"], "smoke-" + group_id)
         destination = "platform=" + ("tvOS" if group["platform"] == "tvos" else "iOS") + " Simulator,id=" + udid
         if archive_mode:
+            setup_step = "simulator-ready"
+            # Archive consumers have no cold build to absorb first-boot work before identity reads.
+            prepare_simulator(udid, boot_submitted=True)
+            setup_step = "archive-load"
             load_smoke_archive(ROOT, group["configuration"], destination, group["device"], root / "derived",
                                control=scheduling["control"])
             record["build_provenance"] = provenance
         for warm, name in ((False, "archive-verify" if archive_mode else "warm-up"), (True, "flows")):
             if archive_mode and not warm:
                 continue
+            setup_step = "runner-command"
             remaining = record["job_started_epoch"] + GROUP_BUDGET_MINUTES[group_id] * 60 - time.time()
             command = runner_command(group, destination, root, root / name, warm=warm, archive=archive_mode)
+            setup_step = None
             if remaining <= 0:
                 raise subprocess.TimeoutExpired(command, 0)
             attempted_flows = warm
@@ -1016,17 +1043,19 @@ def run_group(scheduling, environment, temporary):
         (temporary / "smoke-cleanup-blocked").touch()
         record["errors"].append("runner-group-cleanup-unverified")
         record["runner_exit_code"] = 1
-    except subprocess.TimeoutExpired:
-        record["errors"].append("group-budget-exhausted")
+    except (subprocess.TimeoutExpired, InfrastructureTimeout):
+        record["errors"].append("setup-step-timeout" if setup_step is not None else "group-budget-exhausted")
         record["runner_exit_code"] = 124
     except KeyboardInterrupt:
         record["errors"].append("group-interrupted")
         record["runner_exit_code"] = 130
-    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+    except (CommandError, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
         record["errors"].append("group-execution-or-official-evidence-failed")
         record["runner_exit_code"] = 1
     finally:
         signal.signal(signal.SIGTERM, previous)
+        if record["runner_exit_code"] != 0:
+            record["setup_failure_step"] = setup_step
         if attempted_flows and not (temporary / "smoke-cleanup-blocked").exists():
             try:
                 evidence = root / "flows"

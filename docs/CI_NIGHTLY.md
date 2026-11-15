@@ -149,9 +149,23 @@ explicit expected-control contract write a suppressed plan with the reason and a
 Download, hash, inventory and identity verification precede simulator creation/boot.
 The unchanged 120-second archive allowance covers download and verification; simulator
 creation is charged only to the existing group budget. Loading then checks the pinned
-execution target and the independently supplied expected control. Removing cold builds
-also removes their simulator warm-up buffer before each group's first flow. Hosted
-first-flow failure rates require separate observation; no additional wait is introduced.
+execution target and the independently supplied expected control. Archive consumers run
+the existing `prepare_simulator(..., boot_submitted=True)` readiness gate before loading:
+without a cold build, early boot can starve the loader's Git identity reads and simulator
+inventory queries. The existing preparation bounds consume the same group budget, outside
+the unchanged transfer/verification allowance. No command timeout is increased. TV retains
+its build-first path. Hosted first-flow failure rates require separate observation.
+
+New group records include `setup_failure_step`, null unless setup fails. Its closed values
+are `job-clock`, `preflight`, `archive-verify`, `simulator`, `simulator-ready`, `archive-load`
+and `runner-command`; the upload and aggregate readers reject unknown values, a zero exit
+or claimed flow execution alongside a setup failure. Historical records without the field
+remain readable. The aggregate retains it in `group_timings` and the group summary table;
+it contains no command, path, environment or subprocess output. Setup subprocess timeouts
+and the readiness gate's `InfrastructureTimeout` use `setup-step-timeout` / exit 124.
+`group-budget-exhausted` remains the label for the group deadline and its bounded runner.
+Both stay red, with unavailable first results marked `not-run` / `infra`; attribution does
+not authorize archive admission, relax group validation or change comparison eligibility.
 
 Each group uses the pinned simulator and the existing fixture service,
 readiness/reset, official-result export, privacy-scan and process-group cleanup helpers.

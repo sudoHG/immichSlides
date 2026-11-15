@@ -322,6 +322,7 @@ class SmokeShadowTests(unittest.TestCase):
                     (temporary / "smoke-archive-selection.json").unlink()
                 shadow.write_json(temporary / "ci-artifacts/smoke-build/manifest.json", {"control": {"run_id": "untrusted"}})
                 calls = []
+                ready = [False]
                 def verify(*_args, **options):
                     calls.append("verify")
                     self.assertEqual(options["control"], scheduling["control"])
@@ -334,6 +335,14 @@ class SmokeShadowTests(unittest.TestCase):
                     calls.append("create")
                     clock[0] += 150
                     return "synthetic"
+                def prepare(*_args, **options):
+                    self.assertTrue(options["boot_submitted"])
+                    calls.append("ready")
+                    ready[0] = True
+                def load_archive(*_args, **_options):
+                    # Model the hosted post-boot Git timeout, before any flow can start.
+                    if not ready[0]:
+                        raise subprocess.TimeoutExpired(["git", "status", "--porcelain"], 30)
                 stack.enter_context(patch.object(shadow.time, "time", side_effect=lambda: clock[0]))
                 stack.enter_context(patch.object(shadow.time, "monotonic", side_effect=lambda: clock[0]))
                 stack.enter_context(patch.object(shadow, "git", return_value=HEAD))
@@ -344,9 +353,10 @@ class SmokeShadowTests(unittest.TestCase):
                 stack.enter_context(patch("ci_build_archive.workspace_preflight"))
                 stack.enter_context(patch("run_offline_unit_tests.ensure_disk_for_xcodebuild"))
                 stack.enter_context(patch("ci_simulator.create_and_boot_simulator", side_effect=create))
+                stack.enter_context(patch("strict_e2e_runner_support.prepare_simulator", side_effect=prepare))
                 stack.enter_context(patch("strict_e2e_build.smoke_build_identity", return_value=identity))
                 stack.enter_context(patch.object(shadow, "verify_smoke_archive", side_effect=verify))
-                load = stack.enter_context(patch("strict_e2e_build.load_smoke_archive"))
+                load = stack.enter_context(patch("strict_e2e_build.load_smoke_archive", side_effect=load_archive))
                 run = stack.enter_context(patch("run_strict_ci_tracer.run_runner", return_value=0))
                 def evidence(*_args, validation, **_options):
                     validation.update(outcome="passed", reason=None)
@@ -367,12 +377,68 @@ class SmokeShadowTests(unittest.TestCase):
                     self.assertEqual(record["flows"][0]["outcome"], "not-run")
                     self.assertFalse(record["flows"][0]["executed"])
                 else:
-                    self.assertEqual((code, calls), (0, ["verify", "create"]))
+                    self.assertEqual((code, calls), (0, ["verify", "create", "ready"]))
                     self.assertEqual(record["build_provenance"], provenance)
                     self.assertEqual(record["verify_seconds"], 1)
                     self.assertIsNone(record["transfer_seconds"])
                     self.assertEqual(load.call_args.kwargs["control"], scheduling["control"])
                     self.assertIn("--test-without-building", run.call_args.args[0])
+
+    def test_setup_failures_name_the_step_and_keep_subprocess_timeouts_distinct_from_the_group_budget(self):
+        from strict_e2e_runner_support import InfrastructureTimeout
+        scheduling = shared_plan()
+        for step in ("job-clock", "preflight", "archive-verify", "simulator", "simulator-ready", "archive-load"):
+            for timed_out in (True, False):
+                with self.subTest(step=step, timed_out=timed_out), tempfile.TemporaryDirectory() as raw, ExitStack() as stack:
+                    temporary = Path(raw)
+                    identity = {"source": scheduling["tested_source"]}
+                    shadow.write_json(temporary / "smoke-archive-selection.json", {
+                        "provenance": archive_provenance(scheduling), "identity": identity,
+                        "transfer_started_epoch": time.time()})
+                    failure = (subprocess.TimeoutExpired(["PRIVATE_SENTINEL"], 30, output="PRIVATE_SENTINEL")
+                               if timed_out else ValueError("PRIVATE_SENTINEL"))
+                    if timed_out and step == "simulator-ready":
+                        failure = InfrastructureTimeout("simulator-bootstatus", 300)
+                    stack.enter_context(patch.object(shadow, "git", return_value=HEAD))
+                    stack.enter_context(patch("ci_build_archive.file_hash", return_value="c" * 64))
+                    for name, target, value in (
+                        ("job-clock", "ci_smoke_shadow.job_started_epoch", time.time()),
+                        ("preflight", "ci_build_archive.workspace_preflight", None),
+                        ("archive-verify", "ci_smoke_shadow.verify_smoke_archive", None),
+                        ("simulator", "ci_simulator.create_and_boot_simulator", "synthetic"),
+                        ("simulator-ready", "strict_e2e_runner_support.prepare_simulator", None),
+                        ("archive-load", "strict_e2e_build.load_smoke_archive", None)):
+                        stack.enter_context(patch(target, return_value=value, side_effect=failure if name == step else None))
+                    stack.enter_context(patch("run_offline_unit_tests.ensure_disk_for_xcodebuild"))
+                    stack.enter_context(patch("strict_e2e_build.smoke_build_identity", return_value=identity))
+                    stack.enter_context(patch.object(shadow, "check_group_upload"))
+                    run = stack.enter_context(patch("run_strict_ci_tracer.run_runner"))
+                    self.assertEqual(shadow.run_group(scheduling, dict(environment(), SMOKE_GROUP="iphone-debug"), temporary), 1)
+                    text = (temporary / "smoke-records/group.json").read_text()
+                    record = json.loads(text)
+                    self.assertEqual(record["setup_failure_step"], step)
+                    self.assertEqual(record["runner_exit_code"], 124 if timed_out else 1)
+                    self.assertEqual(record["errors"], ["setup-step-timeout" if timed_out
+                                                     else "group-execution-or-official-evidence-failed"])
+                    self.assertEqual(record["flows"][0]["outcome"], "not-run")
+                    self.assertFalse(record["flows"][0]["executed"])
+                    self.assertNotIn("PRIVATE_SENTINEL", text)
+                    run.assert_not_called()
+                    result = shadow.aggregate(scheduling, [record], "failure")
+                    self.assertEqual((result["outcome"], result["comparison_eligible"]), ("failed", False))
+                    self.assertEqual(result["group_timings"]["iphone-debug"]["setup_failure_step"], step)
+                    self.assertIn(step, shadow.markdown(result))
+
+    def test_setup_attribution_rejects_unknown_steps_and_success_claims(self):
+        for step, code in (("archive-load", 0), ("/private/path", 1), (["archive-load"], 1), (True, 1)):
+            with self.subTest(step=step, code=code), tempfile.TemporaryDirectory() as raw:
+                records = group_records(plan())
+                records[0].update(setup_failure_step=step, runner_exit_code=code)
+                result = shadow.aggregate(plan(), records, "failure")
+                self.assertIn("invalid group setup failure: iphone-debug", result["errors"])
+                self.assertFalse(result["comparison_eligible"])
+                with self.assertRaisesRegex(ValueError, "invalid group setup failure"):
+                    shadow.check_group_upload(Path(raw), records[0])
 
     def test_historical_shared_head_writes_a_suppressed_plan_and_reason(self):
         with tempfile.TemporaryDirectory() as raw, ExitStack() as stack:
