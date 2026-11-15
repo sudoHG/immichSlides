@@ -406,7 +406,8 @@ class SmokeShadowTests(unittest.TestCase):
                     timed_out = kind == "timeout"
                     argv = {"job-clock": ["git", "status"], "preflight": [], "archive-verify": ["xcrun", "--sdk"],
                             "simulator": ["xcrun", "simctl"], "archive-load": ["codesign"]}.get(step, [])
-                    failure = {"timeout": subprocess.TimeoutExpired(argv + ["PRIVATE_SENTINEL"], 30, output="PRIVATE_SENTINEL"),
+                    timeout_seconds = {"archive-verify": 60, "simulator": 60, "archive-load": 120}.get(step, 30)
+                    failure = {"timeout": subprocess.TimeoutExpired(argv + ["PRIVATE_SENTINEL"], timeout_seconds, output="PRIVATE_SENTINEL"),
                                "value": ValueError("PRIVATE_SENTINEL"), "command": CommandError("PRIVATE_SENTINEL"),
                                "offline-command": OfflineCommandError("PRIVATE_SENTINEL")}[kind]
                     if timed_out and step == "simulator-ready":
@@ -443,7 +444,7 @@ class SmokeShadowTests(unittest.TestCase):
                     self.assertNotIn("PRIVATE_SENTINEL", text)
                     self.assertNotIn("PRIVATE_SENTINEL", log.getvalue())
                     self.assertEqual(log.getvalue(), (f"setup-step-timeout: step={step}; command={command}"
-                        + ("" if command == "readiness" else "; timeout=30s") + "\n") if timed_out else "")
+                        + ("" if command == "readiness" else f"; timeout={timeout_seconds}s") + "\n") if timed_out else "")
                     run.assert_not_called()
                     result = shadow.aggregate(scheduling, [record], "failure")
                     self.assertEqual((result["outcome"], result["comparison_eligible"]), ("failed", False))
@@ -502,7 +503,12 @@ class SmokeShadowTests(unittest.TestCase):
                 self.assertIs(shadow.valid_setup_failure(record), valid)
                 result = shadow.aggregate(plan(), records, "failure")
                 self.assertEqual("invalid group setup failure: iphone-debug" in result["errors"], not valid)
-                self.assertEqual(result["group_timings"]["iphone-debug"]["setup_failure_command"], command if valid else None)
+                timing = result["group_timings"]["iphone-debug"]
+                if valid:
+                    self.assertEqual(timing["setup_failure_command"], command)
+                else:
+                    self.assertNotIn("setup_failure_step", timing)
+                    self.assertNotIn("setup_failure_command", timing)
                 with patch.object(shadow, "scan_records"), patch("ci_failure_diagnostics.validate_ui_first_failure_images"):
                     if valid:
                         shadow.check_group_upload(Path(raw), record)
@@ -521,6 +527,24 @@ class SmokeShadowTests(unittest.TestCase):
                 result["group_timings"]["iphone-debug"].update(fields)
                 line = next(line for line in shadow.markdown(result).splitlines() if line.startswith("| iphone-debug |"))
                 self.assertTrue(line.endswith("| " + expected + " |"), line)
+
+    def test_invalid_setup_attribution_renders_unknown_without_claiming_no_failure(self):
+        for fields in ({"setup_failure_step": "invalid", "setup_failure_command": None},
+                {"setup_failure_step": "archive-load", "setup_failure_command": "invalid"}):
+            with self.subTest(fields=fields):
+                scheduling = plan()
+                records = group_records(scheduling)
+                records[0].update(fields, runner_exit_code=124, errors=["setup-step-timeout"])
+                records[0]["flows"][0].update(outcome="not-run", elapsed_seconds=None, executed=False,
+                                            official_execution_complete=False)
+                result = shadow.aggregate(scheduling, records, "failure")
+                self.assertIn("invalid group setup failure: iphone-debug", result["errors"])
+                self.assertEqual((result["outcome"], result["comparison_eligible"]), ("failed", False))
+                timing = result["group_timings"]["iphone-debug"]
+                self.assertNotIn("setup_failure_step", timing)
+                self.assertNotIn("setup_failure_command", timing)
+                line = next(line for line in shadow.markdown(result).splitlines() if line.startswith("| iphone-debug |"))
+                self.assertTrue(line.endswith("| unknown | unknown |"), line)
 
     def test_historical_shared_head_writes_a_suppressed_plan_and_reason(self):
         with tempfile.TemporaryDirectory() as raw, ExitStack() as stack:
@@ -1184,7 +1208,8 @@ class SmokeShadowTests(unittest.TestCase):
             self.assertFalse(root.exists())
 
     def test_cleanup_failure_names_only_the_closed_step_and_retains_owned_inputs(self):
-        for step in ("runner-cleanup", "ownership", "simctl-shutdown", "simctl-delete", "lsof-timeout", "lsof-holders", "lsof-unavailable", "remove"):
+        for step in ("runner-cleanup", "ownership", "simctl-shutdown", "simctl-delete", "lsof-timeout", "lsof-holders",
+                     "lsof-unavailable", "lsof-stderr", "lsof-empty", "lsof-exit", "lsof-exit-output", "remove"):
             with self.subTest(step=step), tempfile.TemporaryDirectory() as raw, ExitStack() as stack:
                 temporary = Path(raw)
                 root = temporary / "smoke-execution"
@@ -1193,14 +1218,23 @@ class SmokeShadowTests(unittest.TestCase):
                     (temporary / "smoke-cleanup-blocked").touch()
                 def run(argv, **options):
                     if argv[:2] == ["xcrun", "simctl"]:
-                        self.assertIs(options["stdout"], subprocess.DEVNULL)
-                        self.assertIs(options["stderr"], subprocess.DEVNULL)
+                        if argv[2] == "shutdown":
+                            self.assertIs(options["stdout"], subprocess.DEVNULL)
+                            self.assertIs(options["stderr"], subprocess.DEVNULL)
+                        else:
+                            self.assertEqual(options, {"check": True, "timeout": 60})
                         if step == "simctl-" + argv[2]:
                             raise subprocess.TimeoutExpired(["PRIVATE_SENTINEL"], 60, output="PRIVATE_SENTINEL")
                     elif step == "lsof-timeout":
                         raise subprocess.TimeoutExpired(["PRIVATE_SENTINEL"], 30, output="PRIVATE_SENTINEL")
                     elif step == "lsof-unavailable":
                         raise OSError("PRIVATE_SENTINEL")
+                    elif step == "lsof-stderr":
+                        return SimpleNamespace(returncode=1, stdout=b"", stderr=b"PRIVATE_SENTINEL")
+                    elif step == "lsof-empty":
+                        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+                    elif step in {"lsof-exit", "lsof-exit-output"}:
+                        return SimpleNamespace(returncode=2, stdout=b"cPython3\n" if step == "lsof-exit-output" else b"", stderr=b"")
                     return SimpleNamespace(returncode=1, stdout=(b"p123456\ncmdworker_PRIVATE_SENTINEL\ncPython3\n"
                         b"n/private/PRIVATE_SENTINEL\n" if step == "lsof-holders" else b""), stderr=b"")
                 stack.enter_context(patch.object(shadow.subprocess, "run", side_effect=run))
@@ -1208,9 +1242,8 @@ class SmokeShadowTests(unittest.TestCase):
                 log = stack.enter_context(redirect_stderr(io.StringIO()))
                 with self.assertRaises((OSError, ValueError, subprocess.SubprocessError)):
                     shadow.cleanup(dict(environment(), UI_SIMULATOR="PRIVATE_SENTINEL"), temporary)
-                expected = "lsof-holders" if step == "lsof-unavailable" else step
-                holder_log = ("cleanup-holder: family=python\ncleanup-holder: family=spotlight\n" if step == "lsof-holders"
-                              else "cleanup-holder: family=other\n" if step == "lsof-unavailable" else "")
+                expected = "lsof-probe" if step in {"lsof-unavailable", "lsof-stderr", "lsof-empty", "lsof-exit", "lsof-exit-output"} else step
+                holder_log = "cleanup-holder: family=python\ncleanup-holder: family=spotlight\n" if step == "lsof-holders" else ""
                 self.assertEqual(log.getvalue(), f"cleanup-failed: step={expected}\n" + holder_log)
                 self.assertNotIn("PRIVATE_SENTINEL", log.getvalue())
                 self.assertNotIn("123456", log.getvalue())
@@ -1221,6 +1254,7 @@ class SmokeShadowTests(unittest.TestCase):
     def test_cleanup_holder_families_use_only_lsof_command_fields_and_closed_names(self):
         for commands, expected in ((b"cmds\ncmds_stores\ncmdworker_shared\n", ["spotlight"]),
                 (b"cCoreSimulatorService\ncCoreSimulatorBridge\nclaunchd_sim\ncsimctl\n", ["simulator"]),
+                (b"ccom.apple.CoreSimulator.CoreSimulatorService\n", ["simulator"]),
                 (b"cxcodebuild\ncXCBBuildService\nctestmanagerd\n", ["xcode"]),
                 (b"cPython\ncpython3.9\n", ["python"]), (b"cPRIVATE_SENTINEL\n", ["other"]),
                 (b"p123456\nnmdworker_PRIVATE_SENTINEL\nf42\n", ["other"]), (b"", ["other"]),

@@ -166,8 +166,9 @@ and `other`. Known argv prefixes alone identify subprocess command families; rea
 `InfrastructureTimeout` maps to `readiness`. Both readers reject unknown values or command
 attribution without a setup timeout, while accepting historical records without the field.
 The aggregate retains both fields in `group_timings` and the group summary table, showing
-`none` for explicit null and `unknown` for an absent historical field. Neither contains
-argv, paths, environment or subprocess output. Uncaught setup `TimeoutExpired` and the
+`none` for explicit null and `unknown` for an absent historical field. Invalid setup
+attribution omits both fields from `group_timings`, displaying `unknown` for both.
+Neither contains argv, paths, environment or subprocess output. Uncaught setup `TimeoutExpired` and the
 readiness gate's `InfrastructureTimeout` use `setup-step-timeout` / exit 124. The bounded
 log line names only the setup step and command family, plus integer seconds from
 `TimeoutExpired.timeout` when available. Simulator create/boot timeouts are converted to
@@ -176,16 +177,21 @@ log line names only the setup step and command family, plus integer seconds from
 Both stay red, with unavailable first results marked `not-run` / `infra`; attribution does
 not authorize archive admission, relax group validation or change comparison eligibility.
 
-Cleanup failures print only `cleanup-failed: step=<value>` before failing closed. The
+Cleanup failures print `cleanup-failed: step=<value>` before failing closed. The
 closed steps are `runner-cleanup`, `ownership`, `simctl-shutdown`, `simctl-delete`,
-`lsof-timeout`, `lsof-holders` and `remove`. Simulator output and holder details are never
-published. Ownership, verified runner stop, the 60-second shutdown/delete caps and the
+`lsof-timeout`, `lsof-probe`, `lsof-holders` and `remove`. Shutdown output stays suppressed;
+delete retains its original stdout/stderr inheritance so simctl's own reason reaches
+the job log. Ownership, verified runner stop, the 60-second shutdown/delete caps and the
 30-second empty holder check remain mandatory; unverifiable inputs are retained.
+Only a non-empty stdout from a completed lsof returning 0 or 1 is attributed to
+`lsof-holders`. Launch errors, other return codes, stderr-only results and exit 0 with
+empty stdout use `lsof-probe` without a family line; a timeout uses `lsof-timeout`.
+The removal condition is unchanged: exit 1 with both stdout and stderr empty.
 For `lsof-holders`, at most five additional `cleanup-holder: family=<value>` lines
 classify only `lsof -Fc` command fields as `spotlight` (`mds*`/`mdworker*`), `simulator`
-(`CoreSimulator*`/`launchd_sim`/`simctl`), `xcode` (`xcodebuild`/`XCBBuildService`/`testmanagerd`),
+(`CoreSimulator*`/`com.apple.CoreSimulator*`/`launchd_sim`/`simctl`), `xcode` (`xcodebuild`/`XCBBuildService`/`testmanagerd`),
 `python` or `other`. Families are deduplicated and sorted; unavailable names yield `other`.
-PIDs, paths, raw command names and stderr are never printed. A family is a diagnostic
+The holder diagnostic never prints PIDs, paths, raw command names or lsof stderr. A family is a diagnostic
 classification, not proof that the named service caused the failure.
 
 Each group uses the pinned simulator and the existing fixture service,

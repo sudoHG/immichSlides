@@ -537,8 +537,8 @@ def aggregate(plan, records, matrix_result, *, producers=None, producer_results=
             timings[group_id] = ({key: record.get(key) for key in ("job_started_epoch", "job_elapsed_seconds", "phases")}
                                  if valid_timing else {"job_started_epoch": None, "job_elapsed_seconds": None, "phases": []})
             for key in ("setup_failure_step", "setup_failure_command"):
-                if key in record:
-                    timings[group_id][key] = record[key] if setup_valid else None
+                if setup_valid and key in record:
+                    timings[group_id][key] = record[key]
             if archive_mode and valid_timing:
                 timings[group_id].update({key: record.get(key) for key in ("timing_mode", "build_provenance")})
                 timings[group_id].update({key: diagnostic_seconds(record.get(key)) for key in
@@ -1120,7 +1120,7 @@ def cleanup_holder_families(commands):
         name = field[1:]
         if name.startswith((b"mds", b"mdworker")):
             family = "spotlight"
-        elif name.startswith(b"CoreSimulator") or name in {b"launchd_sim", b"simctl"}:
+        elif name.startswith((b"CoreSimulator", b"com.apple.CoreSimulator")) or name in {b"launchd_sim", b"simctl"}:
             family = "simulator"
         elif name in {b"xcodebuild", b"XCBBuildService", b"testmanagerd"}:
             family = "xcode"
@@ -1147,16 +1147,17 @@ def cleanup(environment, temporary):
             subprocess.run(["xcrun", "simctl", "shutdown", udid], check=False, timeout=60,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             step = "simctl-delete"
-            subprocess.run(["xcrun", "simctl", "delete", udid], check=True, timeout=60,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(["xcrun", "simctl", "delete", udid], check=True, timeout=60)
         if root.exists():
-            step = "lsof-holders"
+            step = "lsof-probe"
             try:
                 holders = subprocess.run(["lsof", "-Fc", "+D", str(root)], capture_output=True, timeout=30)
             except subprocess.TimeoutExpired:
                 step = "lsof-timeout"
                 raise
             holder_commands = holders.stdout
+            if holders.returncode in {0, 1} and holder_commands:
+                step = "lsof-holders"
             require(holders.returncode == 1 and not holders.stdout and not holders.stderr,
                     "owned build inputs still open or holder check unavailable; retain them")
             step = "remove"
