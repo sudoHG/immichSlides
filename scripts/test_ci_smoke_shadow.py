@@ -428,7 +428,7 @@ class SmokeShadowTests(unittest.TestCase):
     def test_group_setup_time_consumes_the_selected_budget(self):
         smoke_manifest = json.loads((shadow.ROOT / shadow.MANIFEST).read_text())
         scheduling = shadow.make_plan(environment(), nightly(), smoke_manifest, "c" * 64, "real")
-        expected = {"iphone-debug": 22, "iphone-release": 22, "ipad-debug": 27,
+        expected = {"iphone-debug": 27, "iphone-release": 27, "ipad-debug": 27,
                     "ipad-release": 27, "tv-debug": 22, "tv-release": 22}
         self.assertEqual({group["id"] for group in scheduling["groups"]}, set(expected))
         for group_id, minutes in expected.items():

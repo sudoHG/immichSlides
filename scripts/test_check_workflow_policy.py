@@ -45,7 +45,7 @@ class SmokeShadowWorkflowPolicyTests(unittest.TestCase):
         self.assertEqual(baseline["jobs"]["flows"]["timeout-minutes"], "${{ matrix.timeout_minutes }}")
         smoke_manifest = json.loads((shadow.ROOT / shadow.MANIFEST).read_text())
         groups = shadow.manifest_groups(smoke_manifest)
-        expected = {"iphone-debug": 25, "iphone-release": 25, "ipad-debug": 30,
+        expected = {"iphone-debug": 30, "iphone-release": 30, "ipad-debug": 30,
                     "ipad-release": 30, "tv-debug": 25, "tv-release": 25}
         self.assertEqual({group["id"]: group["timeout_minutes"] for group in groups}, expected)
         for group in groups:

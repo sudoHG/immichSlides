@@ -162,7 +162,7 @@ these budgets, with at most three groups running together and fail-fast disabled
 
 | Groups | Inner group budget | Job timeout |
 |---|---:|---:|
-| `iphone-debug`, `iphone-release` | 22 minutes | 25 minutes |
+| `iphone-debug`, `iphone-release` | 27 minutes | 30 minutes |
 | `ipad-debug`, `ipad-release` | 27 minutes | 30 minutes |
 | `tv-debug`, `tv-release` | 22 minutes | 25 minutes |
 
@@ -170,10 +170,12 @@ The plan matrix derives every job timeout from the script's inner budget plus
 the same three-minute reserve; workflow policy requires that matrix field, and
 the policy regression checks the reserve against all six runner budgets.
 Six groups have a conservative 70-minute execution envelope
-(`5 + 2 × 30 + 5`) at `max-parallel: 3`. The two iPad increases add at most
-10 runner minutes per shadow (two groups × five minutes), not an automatic
+(`5 + 2 × 30 + 5`) at `max-parallel: 3`: six groups need at most two waves,
+and the largest job timeout remains 30 minutes. Raising the two iPhone groups
+from 22/25 to 27/30 adds at most 10 runner minutes per shadow
+(two groups × five minutes) relative to the previous budgets, not an automatic
 charge for unused capacity. These are budgets, **NOT_VERIFIED** on hosted CI;
-the larger iPad caps do not establish an expected completion time.
+the larger iPhone and iPad caps do not establish an expected completion time.
 Each inner group deadline starts at the current attempt's GitHub job
 `started_at`, read through the existing complete-attempt jobs API reader. Thus
 checkout, setup and plan download consume that same budget. Groups have only
