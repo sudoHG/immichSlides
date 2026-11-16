@@ -324,8 +324,9 @@ class SmokeShadowTests(unittest.TestCase):
                 shadow.write_json(temporary / "ci-artifacts/smoke-build/manifest.json", {"control": {"run_id": "untrusted"}})
                 calls = []
                 ready = [False]
-                def verify(*_args, **options):
+                def verify(_directory, derived, **options):
                     calls.append("verify")
+                    self.assertTrue(derived.parent.name.endswith(".noindex"))
                     self.assertEqual(options["control"], scheduling["control"])
                     self.assertEqual(options["manifest_hash"], "d" * 64)
                     self.assertEqual(options["archive_hash"], "e" * 64)
@@ -366,7 +367,7 @@ class SmokeShadowTests(unittest.TestCase):
                 stack.enter_context(patch.object(shadow, "read_runner_flows", side_effect=evidence))
                 stack.enter_context(patch.object(shadow, "check_group_upload"))
                 def execute(*_args, **_options):
-                    shadow.write_json(temporary / "smoke-execution/flows/case-manifest.json", {"selection": "group"})
+                    shadow.write_json(temporary / "smoke-execution.noindex/flows/case-manifest.json", {"selection": "group"})
                     return 0
                 run.side_effect = execute
                 code = shadow.run_group(scheduling, dict(environment(), SMOKE_GROUP="iphone-debug"), temporary)
@@ -380,6 +381,7 @@ class SmokeShadowTests(unittest.TestCase):
                     self.assertFalse(record["flows"][0]["executed"])
                 else:
                     self.assertEqual((code, calls), (0, ["verify", "create", "ready"]))
+                    self.assertTrue((temporary / "smoke-execution.noindex/ownership.json").is_file())
                     self.assertEqual(record["build_provenance"], provenance)
                     self.assertEqual(record["verify_seconds"], 1)
                     self.assertIsNone(record["transfer_seconds"])
@@ -1184,7 +1186,7 @@ class SmokeShadowTests(unittest.TestCase):
     def test_cleanup_never_disposes_foreign_or_unverified_inputs(self):
         with tempfile.TemporaryDirectory() as raw:
             temporary = Path(raw)
-            root = temporary / "smoke-execution"
+            root = temporary / "smoke-execution.noindex"
             root.mkdir()
             marker = temporary / "smoke-cleanup-blocked"
             marker.touch()
@@ -1212,7 +1214,7 @@ class SmokeShadowTests(unittest.TestCase):
                      "lsof-unavailable", "lsof-stderr", "lsof-empty", "lsof-exit", "lsof-exit-output", "remove"):
             with self.subTest(step=step), tempfile.TemporaryDirectory() as raw, ExitStack() as stack:
                 temporary = Path(raw)
-                root = temporary / "smoke-execution"
+                root = temporary / "smoke-execution.noindex"
                 shadow.write_json(root / "ownership.json", shadow.shadow_context(environment()) if step != "ownership" else {})
                 if step == "runner-cleanup":
                     (temporary / "smoke-cleanup-blocked").touch()
@@ -1250,6 +1252,82 @@ class SmokeShadowTests(unittest.TestCase):
                 self.assertTrue(root.is_dir())
                 if step != "remove":
                     remove.assert_not_called()
+
+    def test_cleanup_reprobes_only_transient_spotlight_holders_once_before_deleting(self):
+        spotlight = SimpleNamespace(returncode=0, stdout=b"cmdworker_shared\n", stderr=b"")
+        clear = SimpleNamespace(returncode=1, stdout=b"", stderr=b"")
+        cases = [
+            ("clear", [spotlight, clear], 1, None, []),
+            ("held", [spotlight, spotlight, clear], 1, "lsof-holders", ["spotlight"]),
+            ("mixed", [SimpleNamespace(returncode=0, stdout=b"cmds\ncxcodebuild\n", stderr=b"")],
+             0, "lsof-holders", ["spotlight", "xcode"]),
+            ("stderr", [SimpleNamespace(returncode=0, stdout=b"cmds\n", stderr=b"PRIVATE_SENTINEL")],
+             0, "lsof-probe", []),
+            ("timeout", [spotlight, subprocess.TimeoutExpired(["PRIVATE_SENTINEL"], 30)],
+             1, "lsof-timeout", []),
+            ("other", [SimpleNamespace(returncode=0, stdout=b"cxcodebuild\n", stderr=b"")],
+             0, "lsof-holders", ["xcode"]),
+            ("exit-one", [SimpleNamespace(returncode=1, stdout=b"cmds\n", stderr=b"")],
+             0, "lsof-holders", ["spotlight"]),
+            ("exit-other", [SimpleNamespace(returncode=2, stdout=b"cmds\n", stderr=b"")],
+             0, "lsof-probe", []),
+            ("unavailable", [OSError("PRIVATE_SENTINEL")], 0, "lsof-probe", []),
+            ("retry-unavailable", [spotlight, OSError("PRIVATE_SENTINEL")], 1, "lsof-probe", []),
+            ("last-family", [spotlight, SimpleNamespace(returncode=0, stdout=b"cPython3\n", stderr=b"")],
+             1, "lsof-holders", ["python"]),
+        ]
+        for producer in (False, True):
+            for case, probes, retries, failure, families in cases:
+                with self.subTest(producer=producer, case=case), tempfile.TemporaryDirectory() as raw, ExitStack() as stack:
+                    temporary = Path(raw)
+                    root = temporary / ("smoke-producer" if producer else "smoke-execution.noindex")
+                    context = dict(environment(), **({"SMOKE_CONFIGURATION": "Debug"} if producer else {}))
+                    shadow.write_json(root / "ownership.json", shadow.shadow_context(context))
+                    events = []
+                    remaining = iter(probes)
+                    def probe(argv, **options):
+                        self.assertEqual(argv, ["lsof", "-Fc", "+D", str(root)])
+                        self.assertEqual(options, {"capture_output": True, "timeout": 30})
+                        events.append("probe")
+                        value = next(remaining)
+                        if isinstance(value, Exception):
+                            raise value
+                        return value
+                    run = stack.enter_context(patch.object(shadow.subprocess, "run", side_effect=probe))
+                    sleep = stack.enter_context(patch.object(shadow.time, "sleep", side_effect=lambda _seconds: events.append("sleep")))
+                    log = stack.enter_context(redirect_stderr(io.StringIO()))
+                    if failure:
+                        with self.assertRaises((OSError, ValueError, subprocess.SubprocessError)):
+                            shadow.cleanup(context, temporary)
+                        self.assertTrue(root.is_dir())
+                    else:
+                        self.assertEqual(shadow.cleanup(context, temporary), 0)
+                        self.assertFalse(root.exists())
+                    self.assertEqual(run.call_count, 1 + retries)
+                    self.assertEqual(sleep.call_args_list, [unittest.mock.call(5)] * retries)
+                    self.assertEqual(events, ["probe"] + ["sleep", "probe"] * retries)
+                    expected = "cleanup-retry: family=spotlight attempt=1\n" * retries
+                    if failure:
+                        expected += f"cleanup-failed: step={failure}\n"
+                    expected += "".join(f"cleanup-holder: family={family}\n" for family in families)
+                    self.assertEqual(log.getvalue(), expected)
+
+    def test_cleanup_does_not_classify_an_empty_probe_for_retry(self):
+        with tempfile.TemporaryDirectory() as raw, ExitStack() as stack:
+            temporary = Path(raw)
+            root = temporary / "smoke-execution.noindex"
+            shadow.write_json(root / "ownership.json", shadow.shadow_context(environment()))
+            stack.enter_context(patch.object(shadow.subprocess, "run",
+                return_value=SimpleNamespace(returncode=0, stdout=b"", stderr=b"")))
+            sleep = stack.enter_context(patch.object(shadow.time, "sleep"))
+            families = stack.enter_context(patch.object(shadow, "cleanup_holder_families"))
+            log = stack.enter_context(redirect_stderr(io.StringIO()))
+            with self.assertRaisesRegex(ContractError, "owned build inputs still open"):
+                shadow.cleanup(environment(), temporary)
+            families.assert_not_called()
+            sleep.assert_not_called()
+            self.assertEqual(log.getvalue(), "cleanup-failed: step=lsof-probe\n")
+            self.assertTrue(root.is_dir())
 
     def test_cleanup_holder_families_use_only_lsof_command_fields_and_closed_names(self):
         for commands, expected in ((b"cmds\ncmds_stores\ncmdworker_shared\n", ["spotlight"]),

@@ -184,7 +184,7 @@ delete retains its original stdout/stderr inheritance so simctl's own reason rea
 the job log. Ownership, verified runner stop, the 60-second shutdown/delete caps and the
 30-second empty holder check remain mandatory; unverifiable inputs are retained.
 Only a non-empty stdout from a completed lsof returning 0 or 1 is attributed to
-`lsof-holders`. Launch errors, other return codes, stderr-only results and exit 0 with
+`lsof-holders`, and only when stderr is empty. Launch errors, other return codes, any stderr and exit 0 with
 empty stdout use `lsof-probe` without a family line; a timeout uses `lsof-timeout`.
 The removal condition is unchanged: exit 1 with both stdout and stderr empty.
 For `lsof-holders`, at most five additional `cleanup-holder: family=<value>` lines
@@ -193,6 +193,20 @@ classify only `lsof -Fc` command fields as `spotlight` (`mds*`/`mdworker*`), `si
 `python` or `other`. Families are deduplicated and sorted; unavailable names yield `other`.
 The holder diagnostic never prints PIDs, paths, raw command names or lsof stderr. A family is a diagnostic
 classification, not proof that the named service caused the failure.
+
+Flow-group inputs live under `$RUNNER_TEMP/smoke-execution.noindex` to exclude them
+from Spotlight indexing. The producer root remains `smoke-producer`; ownership,
+freshness, `smoke-records` and uploaded contents are unchanged. For either root,
+cleanup makes exactly one additional probe only when lsof returns 0, stdout is
+nonempty, stderr is empty and the holder families are exactly `["spotlight"]`.
+It prints only `cleanup-retry: family=spotlight attempt=1`, sleeps five seconds and
+repeats the same 30-second lsof command. The last probe supplies failure attribution;
+mixed/non-Spotlight holders, stderr, other return codes and launch errors never retry.
+This does not loosen cleanup: removal still requires exit 1 with both output streams
+empty, and any reported holder retains the root. Shutdown/delete ordering and caps
+remain unchanged. The extra probe can add at most `5 + 30 = 35` seconds, leaving
+`180 - 35 = 145` seconds of the existing three-minute reserve for every flow group
+and both producers, above the two-minute minimum. No job or inner timeout changes.
 
 Each group uses the pinned simulator and the existing fixture service,
 readiness/reset, official-result export, privacy-scan and process-group cleanup helpers.
