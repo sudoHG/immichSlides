@@ -146,10 +146,13 @@ nightly fixture shards execute them. They are absent from the strict matrix and
 Evidence selections. New methods receive separate smoke inventory rows; existing
 rows retain their destinations. Core-area source accounting does not override a
 default-plan exclusion. Each selected flow starts with clean App state, uses public
-fixtures, records the first result without retries/yellow, and has a shared 270-second
-native invocation cap (120-second XCTest method allowance plus 150 seconds for startup and finalization;
+fixtures, records the first result without retries/yellow, and has a shared 330-second
+native invocation cap (180-second XCTest method allowance plus 150 seconds for startup and finalization;
 the allowance is a whole minute because XCTest rounds upward),
-with the flow's 60-second navigation guard and existing bounded first-boot helper guards.
+with the flow's explicit 120-second navigation guard and existing bounded first-boot helper guards.
+Hogan approved these smoke-only increases on 2026-11-15 after hosted first-failure
+receipts showed exhausted guards during normal playback; see the
+[approval and evidence](CI_STRICT_RUNNER.md#short-smoke-flow-suite).
 The checker enforces contracted selector/inventory links and exclusion from default,
 Evidence and Xcode Cloud populations. Shadow evidence must pass `validate_group_evidence`,
 including the final verdict, complete ordered group, clean source and official exports.
@@ -159,7 +162,7 @@ See the runner
 guide for commands, evidence fields and Release/PIN limits.
 
 The Apple TV class has ten short remote flows, with navigation in its `+Support`
-extension. Each method shares one default `TestWait.hangGuard()` across launch,
+extension. Each method shares one `TestWait.hangGuard(timeoutSeconds: 120)` across launch,
 navigation and its eventual outcome.
 
 | Flow | Method | Configuration | Remote boundary |
@@ -339,7 +342,9 @@ Snapshots expose enabled state, not hittability, so pause-stage evidence uses `*
 
 For navigation without a product response limit, create `TestWait.hangGuard()` once
 before appearance/preparation and share it with nested steps. Its unscaled 60-second
-monotonic deadline is never refreshed. Each `transaction()` permits one action;
+monotonic deadline is never refreshed. The two approved smoke functions use the
+[120-second exception](TEST_WAITS.md#approved-smoke-flow-guard-exception);
+the shared default stays 60 seconds. Each `transaction()` permits one action;
 `perform` refuses a second action or an action issued after the deadline.
 `until` accepts a satisfied observation started before expiry even if it returns
 late. An action issued before expiry permits exactly one subsequent observation,

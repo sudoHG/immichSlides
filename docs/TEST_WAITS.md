@@ -60,8 +60,26 @@ post-action observation. No focus means a fixed red assertion and no typing.
 The worst case remains 5 seconds plus one in-flight native query, without a new
 window, another tap, a software-keyboard requirement or a v5 failure exception.
 The conventions check admits this explicit duration only in that helper and only
-with the existing element-appearance constant; other UI navigation keeps the
-default HangGuard duration.
+with the existing element-appearance constant. Apart from this and the approved
+smoke-flow exception below, UI navigation keeps the default HangGuard duration.
+
+### Approved smoke-flow guard exception
+
+Hogan approved the smoke-only guard increase on 2026-11-15. The conventions check
+allows only the literal `timeoutSeconds: 120` in `iosSmokeFlow` in
+`immichSlidesUITests/SmokeFlowIOSUITests.swift` and `tvSmokeRunFlow` in
+`immichSlidesUITests/SmokeFlowTVOSUITests+Support.swift`.
+The matching `scripts/test_timeout_allowlist.json` entries are:
+
+| File | Qualified function | Normalized expression | Count |
+| --- | --- | --- | ---: |
+| `immichSlidesUITests/SmokeFlowIOSUITests.swift` | `SmokeFlowIOSUITests.iosSmokeFlow` | `letguardWait=TestWait.hangGuard(timeoutSeconds:120)` | 1 |
+| `immichSlidesUITests/SmokeFlowTVOSUITests+Support.swift` | `SmokeFlowTVOSUITests.tvSmokeRunFlow` | `letguardWait=TestWait.hangGuard(timeoutSeconds:120)` | 1 |
+
+Other values, functions, files and additional occurrences are not approved.
+The shared `TestWait.hangGuard` default stays 60 seconds; helper guards are unchanged.
+See the [smoke runner guide](CI_STRICT_RUNNER.md#short-smoke-flow-suite) for the
+approval evidence and matching outer limits.
 
 ## Runner factor and recording
 
@@ -106,7 +124,8 @@ deadline. Resolving a budget does not alter any elapsed-time assertion or
 sampling interval.
 
 `scripts/check_test_conventions.py` checks all existing test-target Swift file
-globs. `scripts/test_timeout_allowlist.json` freezes the pre-migration literals
+globs. `scripts/test_timeout_allowlist.json` records the frozen pre-migration literals
+and the two explicitly approved smoke-flow literals above
 by file, qualified function (or `<scope>` for declarations outside a function),
 normalized expression and occurrence count. No line numbers are stored.
 
@@ -124,7 +143,8 @@ Classified `TestWait.seconds`, `until` and `observe` budget/cadence arguments ar
 masked before numeric detection. Arithmetic literals outside those regions and
 raw waits inside predicates still count. The original inventory is from main
 `7516d4e`; migrated sites are removed individually while unmigrated and documented
-non-timeout entries remain. The allowlist is a
+non-timeout entries remain. The two approved smoke-flow entries are post-migration
+exceptions, not entries to remove as migration cleanup. The allowlist is a
 [CI-trusted input](CI_POPULATION.md#classification-and-gate-evaluation); every edit
 requires exact-head maintainer approval, including removals during migration.
 
@@ -132,7 +152,8 @@ An additional literal, including a duplicate in an already listed function,
 fails. A changed value, moved function/file, removed literal or decreased count
 leaves a stale entry and fails. Remove only the corresponding entries/counts
 after migration. There is no regeneration flag: regenerating this baseline to
-admit new waits defeats the ratchet. Run:
+admit new waits defeats the ratchet. The smoke-flow exception above is explicitly
+approved and recorded without regenerating that baseline. Run:
 
 ```bash
 python3 -B scripts/check_test_conventions.py

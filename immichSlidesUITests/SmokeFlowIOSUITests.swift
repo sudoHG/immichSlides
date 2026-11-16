@@ -260,7 +260,7 @@ final class SmokeFlowIOSUITests: XCTestCase {
         file: StaticString = #filePath, line: UInt = #line,
         _ body: (XCUIApplication, TestWait.HangGuard, StrictE2EInput) throws -> Void
     ) throws {
-        let guardWait = TestWait.hangGuard()
+        let guardWait = TestWait.hangGuard(timeoutSeconds: 120)
         let input = try requireStrictE2EInput()
         let app = XCUIApplication()
         if observePlaybackLedger { app.launchEnvironment["IMMICHSLIDES_PLAYBACK_CPU_DIAGNOSTICS"] = "1" }

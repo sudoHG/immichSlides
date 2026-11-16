@@ -67,16 +67,32 @@ Each flow gets a fresh uninstall, keychain/privacy reset and public loopback fix
 TV server switching also starts B. No test or flow is retried, and smoke-flow grants
 no yellow outcome. Legacy suites, plans, matrix rows and assertions remain unchanged.
 
-Each iOS flow starts a default unscaled **60-second** navigation guard and passes it
-to its own steps. Existing first-boot helpers retain their own bounded navigation
+Each iOS and TV flow starts an explicit unscaled **120-second** navigation guard
+and passes it to its own steps. The shared `TestWait.hangGuard` default remains
+**60 seconds** for other suites. Existing first-boot helpers retain their own bounded navigation
 and keyboard-focus guards. XCTest rounds method allowances up to whole minutes;
-the method allowance is **120 seconds**, with an explicit **150-second** budget for
+the smoke method allowance is **180 seconds**, with an explicit **150-second** budget for
 launch, timeout diagnostics and result finalization. The native invocation cap is
-**270 seconds**. This exceeds the initial 180-second target so XCTest can finish its
+**330 seconds**. This exceeds the original 180-second per-flow target so XCTest can finish its
 own timeout and preserve the official failed execution. A stuck action records a failed flow and a nonzero suite
 exit; simulator reset, fixture preparation and official export retain their separate
 infrastructure bounds. `elapsed_seconds` measures native XCTest invocation time;
 `total_elapsed_seconds` also includes preparation/export/cleanup.
+
+Hogan explicitly approved the smoke-only 60 → 120-second guard, 120 → 180-second
+method allowance and 270 → 330-second native cap on **2026-11-15** ("可以放宽").
+[Shadow 43720964202](https://github.com/sudoHG/immichSlides/actions/runs/43720964202)
+tested `10dd7bf` with the first-failure recorder from
+[#750](https://github.com/sudoHG/immichSlides/pull/750). All five failed flows
+(`iphone-background-return`, `iphone-pin-gate`, `iphone-settings-relaunch`,
+`ipad-first-boot`, `tv-server-switch`) recorded `deadline_seconds = 0`;
+their screenshots showed normal playback, and one relaunch took 11.5 seconds.
+The reported local durations were 20–55 seconds, with hosted runners 1.5–3× slower.
+Smoke checks eventual feature behavior; product timing belongs to deterministic
+unit tests and the App clock under the approved 2026-11-11 redesign.
+No assertion, helper guard, strict/UI/unit limit, group budget, retry or yellow rule
+changes. The [shadow budget arithmetic](CI_NIGHTLY.md#smoke-shadow-informational-before-the-tier-switch)
+retains the group deadline even when not every flow can finish at its native cap.
 
 `smoke-flow-results.json` and the root `case-manifest.json` contain ordered flow IDs,
 selectors, PASS/FAIL, elapsed seconds, exit codes and the first public failure message

@@ -17,7 +17,7 @@ extension SmokeFlowTVOSUITests {
         file: StaticString = #filePath, line: UInt = #line,
         _ flow: (XCUIApplication, TestWait.HangGuard) throws -> Void
     ) throws {
-        let guardWait = TestWait.hangGuard()
+        let guardWait = TestWait.hangGuard(timeoutSeconds: 120)
         peerExifLabels = []
         didObservePeerPhoto = false
         let input = try requireStrictE2EInput()
