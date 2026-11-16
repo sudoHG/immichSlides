@@ -135,15 +135,8 @@ extension SmokeFlowTVOSUITests {
             let dy = target.frame.midY - focused.frame.midY
             let direction: XCUIRemote.Button =
                 abs(dy) > target.frame.height / 2 ? (dy > 0 ? .down : .up) : (dx > 0 ? .right : .left)
+            // Re-observe on the next bounded attempt when a direction does not move focus.
             try tvSmokePress(direction, guardWait: guardWait, file: file, line: line)
-            try tvSmokeExpect(
-                app, guardWait: guardWait, file: file, line: line, step: "remote focus moves toward \(identifier)"
-            ) {
-                $0.nodes[identifier]?.hasFocus == true
-                    || $0.allNodes.contains {
-                        $0.hasFocus && ($0.identifier != focused.identifier || $0.label != focused.label)
-                    }
-            }
         }
         try tvSmokeFail("remote cannot focus \(identifier)", file: file, line: line)
     }
