@@ -17,6 +17,8 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import ci_smoke_shadow as shadow
+# Import before patching dependencies so the tracer cannot retain their mocks.
+import run_strict_ci_tracer as tracer
 import strict_e2e_build
 from ci_summary import ContractError
 
@@ -360,7 +362,7 @@ class SmokeShadowTests(unittest.TestCase):
                 stack.enter_context(patch("strict_e2e_build.smoke_build_identity", return_value=identity))
                 stack.enter_context(patch.object(shadow, "verify_smoke_archive", side_effect=verify))
                 load = stack.enter_context(patch("strict_e2e_build.load_smoke_archive", side_effect=load_archive))
-                run = stack.enter_context(patch("run_strict_ci_tracer.run_runner", return_value=0))
+                run = stack.enter_context(patch.object(tracer, "run_runner", return_value=0))
                 def evidence(*_args, validation, **_options):
                     validation.update(outcome="passed", reason=None)
                     return group_records(scheduling)[0]["flows"], []
@@ -429,7 +431,7 @@ class SmokeShadowTests(unittest.TestCase):
                                              side_effect=failure if kind == "offline-command" else None))
                     stack.enter_context(patch("strict_e2e_build.smoke_build_identity", return_value=identity))
                     stack.enter_context(patch.object(shadow, "check_group_upload"))
-                    run = stack.enter_context(patch("run_strict_ci_tracer.run_runner"))
+                    run = stack.enter_context(patch.object(tracer, "run_runner"))
                     log = stack.enter_context(redirect_stderr(io.StringIO()))
                     self.assertEqual(shadow.run_group(scheduling, dict(environment(), SMOKE_GROUP="iphone-debug"), temporary), 1)
                     text = (temporary / "smoke-records/group.json").read_text()
