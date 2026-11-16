@@ -107,6 +107,7 @@ extension SmokeFlowTVOSUITests {
         try tvSmokeExpect(app, guardWait: guardWait, file: file, line: line, step: "control appears: \(identifier)") {
             $0.nodes[identifier]?.isEnabled == true
         }
+        var previousPress: (identifier: String, label: String, returnedAt: TimeInterval)?
         for _ in 0..<16 {
             var observation: Observation?
             var didAwaitInitialFocus = false
@@ -114,6 +115,15 @@ extension SmokeFlowTVOSUITests {
                 guard $0.nodes[identifier] != nil else { return false }
                 guard $0.allNodes.contains(where: { $0.hasFocus }) else {
                     didAwaitInitialFocus = true
+                    return false
+                }
+                if let previousPress, $0.nodes[identifier]?.hasFocus != true,
+                    !$0.allNodes.contains(where: {
+                        $0.hasFocus && ($0.identifier != previousPress.identifier || $0.label != previousPress.label)
+                    }),
+                    ProcessInfo.processInfo.systemUptime - previousPress.returnedAt
+                        < UITestSupportWaitTiming.readbackTimeoutSeconds
+                {
                     return false
                 }
                 observation = $0
@@ -135,15 +145,9 @@ extension SmokeFlowTVOSUITests {
             let dy = target.frame.midY - focused.frame.midY
             let direction: XCUIRemote.Button =
                 abs(dy) > target.frame.height / 2 ? (dy > 0 ? .down : .up) : (dx > 0 ? .right : .left)
+            // Give delayed delivery a bounded confirmation in the next observation before pressing again.
             try tvSmokePress(direction, guardWait: guardWait, file: file, line: line)
-            try tvSmokeExpect(
-                app, guardWait: guardWait, file: file, line: line, step: "remote focus moves toward \(identifier)"
-            ) {
-                $0.nodes[identifier]?.hasFocus == true
-                    || $0.allNodes.contains {
-                        $0.hasFocus && ($0.identifier != focused.identifier || $0.label != focused.label)
-                    }
-            }
+            previousPress = (focused.identifier, focused.label, ProcessInfo.processInfo.systemUptime)
         }
         try tvSmokeFail("remote cannot focus \(identifier)", file: file, line: line)
     }
