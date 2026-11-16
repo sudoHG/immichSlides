@@ -1152,18 +1152,16 @@ def cleanup(environment, temporary):
             step = "lsof-probe"
             try:
                 holders = subprocess.run(["lsof", "-Fc", "+D", str(root)], capture_output=True, timeout=30)
-                for attempt in range(1, 2):
-                    if not (holders.returncode == 0 and holders.stdout and not holders.stderr
-                            and cleanup_holder_families(holders.stdout) == ["spotlight"]):
-                        break
-                    print(f"cleanup-retry: family=spotlight attempt={attempt}", file=sys.stderr, flush=True)
+                if (holders.returncode == 0 and holders.stdout and not holders.stderr
+                        and cleanup_holder_families(holders.stdout) == ["spotlight"]):
+                    print("cleanup-retry: family=spotlight attempt=1", file=sys.stderr, flush=True)
                     time.sleep(5)
                     holders = subprocess.run(["lsof", "-Fc", "+D", str(root)], capture_output=True, timeout=30)
             except subprocess.TimeoutExpired:
                 step = "lsof-timeout"
                 raise
             holder_commands = holders.stdout
-            if holders.returncode in {0, 1} and holder_commands and not holders.stderr:
+            if holders.returncode in {0, 1} and holder_commands:
                 step = "lsof-holders"
             require(holders.returncode == 1 and not holders.stdout and not holders.stderr,
                     "owned build inputs still open or holder check unavailable; retain them")

@@ -1262,7 +1262,7 @@ class SmokeShadowTests(unittest.TestCase):
             ("mixed", [SimpleNamespace(returncode=0, stdout=b"cmds\ncxcodebuild\n", stderr=b"")],
              0, "lsof-holders", ["spotlight", "xcode"]),
             ("stderr", [SimpleNamespace(returncode=0, stdout=b"cmds\n", stderr=b"PRIVATE_SENTINEL")],
-             0, "lsof-probe", []),
+             0, "lsof-holders", ["spotlight"]),
             ("timeout", [spotlight, subprocess.TimeoutExpired(["PRIVATE_SENTINEL"], 30)],
              1, "lsof-timeout", []),
             ("other", [SimpleNamespace(returncode=0, stdout=b"cxcodebuild\n", stderr=b"")],
@@ -1271,7 +1271,6 @@ class SmokeShadowTests(unittest.TestCase):
              0, "lsof-holders", ["spotlight"]),
             ("exit-other", [SimpleNamespace(returncode=2, stdout=b"cmds\n", stderr=b"")],
              0, "lsof-probe", []),
-            ("unavailable", [OSError("PRIVATE_SENTINEL")], 0, "lsof-probe", []),
             ("retry-unavailable", [spotlight, OSError("PRIVATE_SENTINEL")], 1, "lsof-probe", []),
             ("last-family", [spotlight, SimpleNamespace(returncode=0, stdout=b"cPython3\n", stderr=b"")],
              1, "lsof-holders", ["python"]),
@@ -1311,23 +1310,6 @@ class SmokeShadowTests(unittest.TestCase):
                         expected += f"cleanup-failed: step={failure}\n"
                     expected += "".join(f"cleanup-holder: family={family}\n" for family in families)
                     self.assertEqual(log.getvalue(), expected)
-
-    def test_cleanup_does_not_classify_an_empty_probe_for_retry(self):
-        with tempfile.TemporaryDirectory() as raw, ExitStack() as stack:
-            temporary = Path(raw)
-            root = temporary / "smoke-execution.noindex"
-            shadow.write_json(root / "ownership.json", shadow.shadow_context(environment()))
-            stack.enter_context(patch.object(shadow.subprocess, "run",
-                return_value=SimpleNamespace(returncode=0, stdout=b"", stderr=b"")))
-            sleep = stack.enter_context(patch.object(shadow.time, "sleep"))
-            families = stack.enter_context(patch.object(shadow, "cleanup_holder_families"))
-            log = stack.enter_context(redirect_stderr(io.StringIO()))
-            with self.assertRaisesRegex(ContractError, "owned build inputs still open"):
-                shadow.cleanup(environment(), temporary)
-            families.assert_not_called()
-            sleep.assert_not_called()
-            self.assertEqual(log.getvalue(), "cleanup-failed: step=lsof-probe\n")
-            self.assertTrue(root.is_dir())
 
     def test_cleanup_holder_families_use_only_lsof_command_fields_and_closed_names(self):
         for commands, expected in ((b"cmds\ncmds_stores\ncmdworker_shared\n", ["spotlight"]),

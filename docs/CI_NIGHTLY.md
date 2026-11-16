@@ -184,7 +184,7 @@ delete retains its original stdout/stderr inheritance so simctl's own reason rea
 the job log. Ownership, verified runner stop, the 60-second shutdown/delete caps and the
 30-second empty holder check remain mandatory; unverifiable inputs are retained.
 Only a non-empty stdout from a completed lsof returning 0 or 1 is attributed to
-`lsof-holders`, and only when stderr is empty. Launch errors, other return codes, any stderr and exit 0 with
+`lsof-holders`. Launch errors, other return codes, stderr-only results and exit 0 with
 empty stdout use `lsof-probe` without a family line; a timeout uses `lsof-timeout`.
 The removal condition is unchanged: exit 1 with both stdout and stderr empty.
 For `lsof-holders`, at most five additional `cleanup-holder: family=<value>` lines
@@ -194,19 +194,28 @@ classify only `lsof -Fc` command fields as `spotlight` (`mds*`/`mdworker*`), `si
 The holder diagnostic never prints PIDs, paths, raw command names or lsof stderr. A family is a diagnostic
 classification, not proof that the named service caused the failure.
 
-Flow-group inputs live under `$RUNNER_TEMP/smoke-execution.noindex` to exclude them
-from Spotlight indexing. The producer root remains `smoke-producer`; ownership,
+Flow-group inputs live under `$RUNNER_TEMP/smoke-execution.noindex`, using the
+`.noindex` suffix that Spotlight conventionally skips. The hosted effect is
+`NOT_VERIFIED`, and the single re-probe is a fallback. The producer root remains `smoke-producer`; ownership,
 freshness, `smoke-records` and uploaded contents are unchanged. For either root,
 cleanup makes exactly one additional probe only when lsof returns 0, stdout is
 nonempty, stderr is empty and the holder families are exactly `["spotlight"]`.
 It prints only `cleanup-retry: family=spotlight attempt=1`, sleeps five seconds and
 repeats the same 30-second lsof command. The last probe supplies failure attribution;
 mixed/non-Spotlight holders, stderr, other return codes and launch errors never retry.
+Nonempty stdout from exit 0 or 1 remains `lsof-holders` even alongside stderr.
 This does not loosen cleanup: removal still requires exit 1 with both output streams
 empty, and any reported holder retains the root. Shutdown/delete ordering and caps
-remain unchanged. The extra probe can add at most `5 + 30 = 35` seconds, leaving
-`180 - 35 = 145` seconds of the existing three-minute reserve for every flow group
-and both producers, above the two-minute minimum. No job or inner timeout changes.
+remain unchanged. The extra probe adds at most `5 + 30 = 35` seconds: the full
+cleanup worst case is `60 + 60 + 30 + 5 + 30 = 185` seconds for flow groups
+(previously 150) and `30 + 5 + 30 = 65` seconds for producers (previously 30).
+For a flow group, this can exhaust the existing three-minute job reserve only
+after the group has used its entire inner budget and is already red with exit 124;
+a passing group finishes well inside that budget. The reserve also covers
+finalization and uploads, so it is not a worst-case completion guarantee.
+The coordinator accepts this cleanup tail without changing any job or inner timeout.
+If the job timeout kills cleanup, the job stays red and the root is retained;
+nothing can turn green.
 
 Each group uses the pinned simulator and the existing fixture service,
 readiness/reset, official-result export, privacy-scan and process-group cleanup helpers.
