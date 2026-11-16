@@ -971,7 +971,7 @@ def run_group(scheduling, environment, temporary):
     group = next(group for group in scheduling["groups"] if group["id"] == group_id)
     archive_mode = scheduling.get("build_mode") == ARCHIVE_MODE and group["platform"] == "ios"
     require(scheduling["execute"], "suppressed shadow plan cannot execute a smoke group")
-    root, records = temporary / "smoke-execution", temporary / "smoke-records"
+    root, records = temporary / "smoke-execution.noindex", temporary / "smoke-records"
     require(not os.path.lexists(root) and not os.path.lexists(records), "smoke group output must be fresh")
     records.mkdir()
     root.mkdir()
@@ -1138,7 +1138,7 @@ def cleanup(environment, temporary):
     try:
         require(not (temporary / "smoke-cleanup-blocked").exists(), "runner cleanup unverified; retain owned inputs")
         step = "ownership"
-        root = temporary / ("smoke-producer" if environment.get("SMOKE_CONFIGURATION") else "smoke-execution")
+        root = temporary / ("smoke-producer" if environment.get("SMOKE_CONFIGURATION") else "smoke-execution.noindex")
         if root.exists():
             require(decode((root / "ownership.json").read_text()) == shadow_context(environment), "cleanup ownership differs")
         udid = environment.get("UI_SIMULATOR")
@@ -1152,6 +1152,11 @@ def cleanup(environment, temporary):
             step = "lsof-probe"
             try:
                 holders = subprocess.run(["lsof", "-Fc", "+D", str(root)], capture_output=True, timeout=30)
+                if (holders.returncode == 0 and holders.stdout and not holders.stderr
+                        and cleanup_holder_families(holders.stdout) == ["spotlight"]):
+                    print("cleanup-retry: family=spotlight attempt=1", file=sys.stderr, flush=True)
+                    time.sleep(5)
+                    holders = subprocess.run(["lsof", "-Fc", "+D", str(root)], capture_output=True, timeout=30)
             except subprocess.TimeoutExpired:
                 step = "lsof-timeout"
                 raise
