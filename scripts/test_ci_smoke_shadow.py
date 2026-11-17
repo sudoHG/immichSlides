@@ -11,7 +11,7 @@ import tempfile
 import time
 import tarfile
 import unittest
-from contextlib import ExitStack, redirect_stderr
+from contextlib import ExitStack, contextmanager, redirect_stderr
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -150,7 +150,263 @@ def plan_fixture(temporary, stack, *, ancestor=0):
     return context, api, reader
 
 
+@contextmanager
+def simulator_group_fixture(*, archive=True, group_id="iphone-debug", elapsed=0):
+    """Keep real group control/ownership and fake only host and official-result boundaries."""
+    with tempfile.TemporaryDirectory() as raw, ExitStack() as stack:
+        temporary = Path(raw)
+        scheduling = shared_plan() if archive else plan()
+        context = dict(environment(), SMOKE_GROUP=group_id, GITHUB_ENV=str(temporary / "github-env"))
+        clock = [1000.0]
+        identity = {"source": scheduling.get("tested_source")}
+        if archive:
+            shadow.write_json(temporary / "smoke-archive-selection.json", {
+                "provenance": archive_provenance(scheduling), "identity": identity,
+                "transfer_started_epoch": clock[0]})
+        stack.enter_context(patch.dict(os.environ, context))
+        stack.enter_context(patch.object(shadow.time, "time", side_effect=lambda: clock[0]))
+        stack.enter_context(patch.object(shadow, "git", return_value=HEAD))
+        stack.enter_context(patch("ci_build_archive.file_hash", return_value="c" * 64))
+        stack.enter_context(patch.object(shadow, "job_started_epoch", return_value=clock[0] - elapsed))
+        stack.enter_context(patch("ci_build_archive.workspace_preflight"))
+        stack.enter_context(patch("run_offline_unit_tests.ensure_disk_for_xcodebuild"))
+        stack.enter_context(patch("strict_e2e_build.smoke_build_identity", return_value=identity))
+        verify = stack.enter_context(patch.object(shadow, "verify_smoke_archive"))
+        load = stack.enter_context(patch("strict_e2e_build.load_smoke_archive"))
+        prepare = stack.enter_context(patch("strict_e2e_runner_support.prepare_simulator"))
+        created = []
+        def create(*_args):
+            udid = "synthetic-" + str(len(created) + 1)
+            created.append(udid)
+            with open(context["GITHUB_ENV"], "a") as handle:
+                handle.write(f"UI_SIMULATOR={udid}\nUI_DESTINATION=platform=iOS Simulator,id={udid}\nUI_PLATFORM=ios\n")
+            return udid
+        simulator = stack.enter_context(patch("ci_simulator.create_and_boot_simulator", side_effect=create))
+        retire = stack.enter_context(patch("strict_e2e_runner_support.simulator_command",
+                                          return_value=SimpleNamespace(returncode=0)))
+        def execute(command, *_args, **_options):
+            if "--test-without-building" in command:
+                shadow.write_json(temporary / "smoke-execution.noindex/flows/case-manifest.json", {"selection": "group"})
+            return 0
+        runner = stack.enter_context(patch.object(tracer, "run_runner", side_effect=execute))
+        def evidence(*_args, validation, **_options):
+            validation.update(outcome="passed", reason=None)
+            index = next(index for index, group in enumerate(scheduling["groups"]) if group["id"] == group_id)
+            return group_records(scheduling)[index]["flows"], []
+        stack.enter_context(patch.object(shadow, "read_runner_flows", side_effect=evidence))
+        stack.enter_context(patch.object(shadow, "scan_records"))
+        stack.enter_context(patch("ci_failure_diagnostics.validate_ui_first_failure_images"))
+        log = stack.enter_context(redirect_stderr(io.StringIO()))
+        yield SimpleNamespace(temporary=temporary, scheduling=scheduling, context=context, clock=clock,
+            verify=verify, load=load, prepare=prepare, create=create, simulator=simulator, retire=retire,
+            runner=runner, log=log,
+            run=lambda: shadow.run_group(scheduling, context, temporary),
+            record=lambda: json.loads((temporary / "smoke-records/group.json").read_text()))
+
+
 class SmokeShadowTests(unittest.TestCase):
+    def test_successful_setup_never_recreates_the_simulator(self):
+        for archive, group in ((True, "iphone-debug"), (False, "tv-release")):
+            with self.subTest(archive=archive), simulator_group_fixture(archive=archive, group_id=group) as fixture:
+                self.assertEqual(fixture.run(), 0)
+                self.assertEqual(fixture.simulator.call_count, 1)
+                fixture.retire.assert_not_called()
+                self.assertIsNone(fixture.record()["simulator_recreate"])
+                self.assertNotIn("setup-recreate:", fixture.log.getvalue())
+
+    def test_simulator_setup_failure_recreates_once_before_the_first_flow(self):
+        from strict_e2e_runner_support import CommandError, InfrastructureTimeout
+        for step in ("simulator", "simulator-ready"):
+            for kind in ("command", "timeout", "readiness-timeout", "converted-timeout"):
+                with self.subTest(step=step, kind=kind), simulator_group_fixture() as fixture:
+                    failure = {"command": CommandError("PRIVATE_SENTINEL"),
+                        "timeout": subprocess.TimeoutExpired(["xcrun", "simctl", "PRIVATE_SENTINEL"], 60),
+                        "readiness-timeout": InfrastructureTimeout("PRIVATE_SENTINEL", 300),
+                        "converted-timeout": ContractError("PRIVATE_SENTINEL")}[kind]
+                    command = "readiness" if kind == "readiness-timeout" else "simctl" if step == "simulator" or kind == "timeout" else "other"
+                    def create(*args):
+                        udid = fixture.create(*args)
+                        if fixture.simulator.call_count == 1 and step == "simulator":
+                            raise failure
+                        return udid
+                    fixture.simulator.side_effect = create
+                    if step == "simulator-ready":
+                        fixture.prepare.side_effect = [failure, None]
+                    self.assertEqual(fixture.run(), 0)
+                    self.assertEqual(fixture.simulator.call_count, 2)
+                    self.assertEqual(fixture.retire.call_count, 2)
+                    self.assertEqual([call.args[0] for call in fixture.retire.call_args_list], [
+                        ["xcrun", "simctl", action, "synthetic-1"] for action in ("shutdown", "delete")])
+                    for call in fixture.retire.call_args_list:
+                        self.assertEqual(call.kwargs["timeout_seconds"], 60)
+                    self.assertEqual(fixture.load.call_count, 1)
+                    self.assertEqual(fixture.runner.call_count, 1)
+                    self.assertEqual(fixture.record()["simulator_recreate"], {"step": step, "command": command})
+                    self.assertEqual(fixture.log.getvalue(), f"setup-recreate: step={step}; command={command}; attempt=1\n")
+                    self.assertIsNone(fixture.record()["setup_failure_step"])
+                    self.assertEqual(fixture.record()["errors"], [])
+                    self.assertEqual(fixture.load.call_args.args[2], "platform=iOS Simulator,id=synthetic-2")
+                    self.assertEqual(fixture.prepare.call_args.args, ("synthetic-2",))
+                    self.assertEqual(fixture.prepare.call_args.kwargs, {"boot_submitted": True, "should_check_app": False})
+                    self.assertNotIn("PRIVATE_SENTINEL", fixture.log.getvalue() + json.dumps(fixture.record()))
+
+    def test_second_setup_failure_stays_red_without_another_recreate(self):
+        from strict_e2e_runner_support import InfrastructureTimeout
+        for second in ("simulator", "simulator-ready"):
+            with self.subTest(second=second), simulator_group_fixture() as fixture:
+                failure = InfrastructureTimeout("PRIVATE_SENTINEL", 300)
+                fixture.prepare.side_effect = [failure, failure]
+                def create(*args):
+                    udid = fixture.create(*args)
+                    if fixture.simulator.call_count == 2 and second == "simulator":
+                        raise subprocess.TimeoutExpired(["git", "PRIVATE_SENTINEL"], 30)
+                    return udid
+                fixture.simulator.side_effect = create
+                self.assertEqual(fixture.run(), 1)
+                self.assertEqual(fixture.simulator.call_count, 2)
+                self.assertEqual(fixture.retire.call_count, 2)
+                record = fixture.record()
+                self.assertEqual(record["simulator_recreate"], {"step": "simulator-ready", "command": "readiness"})
+                self.assertEqual(record["setup_failure_step"], second)
+                self.assertEqual(record["setup_failure_command"], "git" if second == "simulator" else "readiness")
+                self.assertEqual(record["runner_exit_code"], 124)
+                self.assertEqual(record["errors"], ["setup-step-timeout"])
+                self.assertTrue(all(row["outcome"] == "not-run" and not row["executed"] for row in record["flows"]))
+                self.assertEqual(fixture.log.getvalue().count("setup-recreate:"), 1)
+                fixture.runner.assert_not_called()
+
+    def test_recreate_never_catches_archive_runner_or_group_budget_failures(self):
+        for boundary in ("archive-verify", "archive-load", "runner-command", "warm-up", "flows", "budget"):
+            with self.subTest(boundary=boundary), simulator_group_fixture(archive=boundary != "warm-up",
+                    elapsed=2000 if boundary == "budget" else 0) as fixture:
+                failure = subprocess.TimeoutExpired(["xcrun", "simctl", "PRIVATE_SENTINEL"], 60)
+                target = {"archive-verify": fixture.verify, "archive-load": fixture.load,
+                          "warm-up": fixture.runner, "flows": fixture.runner}.get(boundary)
+                if target is not None:
+                    target.side_effect = failure
+                with patch.object(shadow, "runner_command", side_effect=failure) if boundary == "runner-command" else ExitStack():
+                    self.assertEqual(fixture.run(), 1)
+                fixture.retire.assert_not_called()
+                self.assertLessEqual(fixture.simulator.call_count, 1)
+                self.assertIsNone(fixture.record()["simulator_recreate"])
+                self.assertEqual(fixture.record()["setup_failure_step"], boundary if boundary in {
+                    "archive-verify", "archive-load", "runner-command"} else None)
+                self.assertNotIn("setup-recreate:", fixture.log.getvalue())
+                if boundary == "budget":
+                    self.assertEqual(fixture.record()["errors"], ["group-budget-exhausted"])
+                    fixture.runner.assert_not_called()
+
+    def test_failed_retirement_keeps_the_original_setup_attribution_and_device(self):
+        from strict_e2e_runner_support import InfrastructureTimeout
+        for action in ("shutdown", "delete"):
+            for kind in ("exit", "timeout", "launch"):
+                with self.subTest(action=action, kind=kind), simulator_group_fixture() as fixture:
+                    fixture.prepare.side_effect = InfrastructureTimeout("PRIVATE_SENTINEL", 300)
+                    def retire(argv, *_args, **_options):
+                        if argv[2] == action:
+                            if kind == "timeout":
+                                raise InfrastructureTimeout("PRIVATE_SENTINEL", 60)
+                            if kind == "launch":
+                                raise OSError("PRIVATE_SENTINEL")
+                            return SimpleNamespace(returncode=1)
+                        return SimpleNamespace(returncode=0)
+                    fixture.retire.side_effect = retire
+                    self.assertEqual(fixture.run(), 1)
+                    self.assertEqual(fixture.simulator.call_count, 1)
+                    self.assertEqual(fixture.retire.call_count, 1 if action == "shutdown" else 2)
+                    self.assertEqual(fixture.context["UI_SIMULATOR"], "synthetic-1")
+                    record = fixture.record()
+                    self.assertIsNone(record["simulator_recreate"])
+                    self.assertEqual((record["setup_failure_step"], record["setup_failure_command"], record["runner_exit_code"]),
+                                     ("simulator-ready", "readiness", 124))
+                    self.assertEqual(fixture.log.getvalue(), "setup-step-timeout: step=simulator-ready; command=readiness\n")
+                    fixture.load.assert_not_called()
+
+    def test_recreate_budget_reserves_full_setup_all_native_flows_and_cleanup(self):
+        from strict_e2e_runner_support import InfrastructureTimeout
+        from strict_e2e_smoke import FLOW_TIMEOUT_SECONDS
+        smoke_manifest = json.loads((shadow.ROOT / shadow.MANIFEST).read_text())
+        scheduling = shadow.make_plan(environment(), nightly(), smoke_manifest, "c" * 64, "real")
+        for group in scheduling["groups"]:
+            count = len(shadow.group_flows(scheduling, group["id"]))
+            archive = group["platform"] == "ios"
+            required = 2 * 60 + 2 * 60 + (600 if archive else 1200) + count * FLOW_TIMEOUT_SECONDS
+            inner = shadow.GROUP_BUDGET_MINUTES[group["id"]] * 60
+            with self.subTest(group=group["id"]):
+                self.assertIs(shadow.can_recreate_simulator(group["id"], count, archive, 1000, now=1000), required <= inner)
+                if required <= inner:
+                    self.assertIs(shadow.can_recreate_simulator(group["id"], count, archive, 1000,
+                        now=1000 + inner - required), True)
+                    self.assertIs(shadow.can_recreate_simulator(group["id"], count, archive, 1000,
+                        now=1001 + inner - required), False)
+        for elapsed, retirement_seconds, expected in ((451, 0, 0), (450, 0, 1), (450, 121, 0)):
+            with self.subTest(elapsed=elapsed, retirement_seconds=retirement_seconds), simulator_group_fixture(elapsed=elapsed) as fixture:
+                fixture.prepare.side_effect = [InfrastructureTimeout("PRIVATE_SENTINEL", 300), None]
+                def retire(*_args, **_options):
+                    fixture.clock[0] += retirement_seconds / 2
+                    return SimpleNamespace(returncode=0)
+                fixture.retire.side_effect = retire
+                self.assertEqual(fixture.run(), 0 if expected else 1)
+                self.assertEqual(fixture.simulator.call_count, 1 + expected)
+                self.assertEqual(fixture.record()["simulator_recreate"] is not None, bool(expected))
+                if elapsed == 451:
+                    fixture.retire.assert_not_called()
+
+    def test_cleanup_uses_the_fresh_published_device_even_when_its_boot_fails(self):
+        from strict_e2e_runner_support import InfrastructureTimeout
+        for failure in (None, "boot", "create"):
+            with self.subTest(failure=failure), simulator_group_fixture() as fixture:
+                fixture.prepare.side_effect = [InfrastructureTimeout("PRIVATE_SENTINEL", 300), None]
+                def create(*args):
+                    if failure == "create" and fixture.simulator.call_count == 2:
+                        raise ContractError("PRIVATE_SENTINEL")
+                    udid = fixture.create(*args)
+                    if failure == "boot" and fixture.simulator.call_count == 2:
+                        raise ContractError("PRIVATE_SENTINEL")
+                    return udid
+                fixture.simulator.side_effect = create
+                self.assertEqual(fixture.run(), int(failure is not None))
+                published = dict(line.split("=", 1) for line in Path(fixture.context["GITHUB_ENV"]).read_text().splitlines())
+                self.assertEqual(published["UI_SIMULATOR"], "" if failure == "create" else "synthetic-2")
+                self.assertEqual(published["UI_DESTINATION"], "" if failure == "create" else "platform=iOS Simulator,id=synthetic-2")
+                self.assertEqual(fixture.context.get("UI_SIMULATOR"), None if failure == "create" else "synthetic-2")
+                calls = []
+                def dispose(argv, **_options):
+                    calls.append(argv)
+                    return SimpleNamespace(returncode=1, stdout=b"", stderr=b"")
+                with patch.object(shadow.subprocess, "run", side_effect=dispose):
+                    self.assertEqual(shadow.cleanup(dict(fixture.context, **published), fixture.temporary), 0)
+                self.assertEqual([argv for argv in calls if argv[0] == "xcrun"], [] if failure == "create" else [
+                    ["xcrun", "simctl", action, "synthetic-2"] for action in ("shutdown", "delete")])
+                self.assertFalse((fixture.temporary / "smoke-execution.noindex").exists())
+
+    def test_recreate_public_record_is_closed_and_old_records_default_to_none(self):
+        for value, valid in ((None, True), ({"step": "simulator", "command": "simctl"}, True),
+                ({"step": "simulator-ready", "command": "readiness"}, True),
+                ({"step": "archive-load", "command": "simctl"}, False),
+                ({"step": "simulator", "command": "PRIVATE_SENTINEL"}, False),
+                ({"step": ["simulator"], "command": "simctl"}, False),
+                ({"step": "simulator", "command": ["simctl"]}, False),
+                ({"step": "simulator", "command": "simctl", "udid": "PRIVATE_SENTINEL"}, False),
+                ("PRIVATE_SENTINEL", False)):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as raw:
+                records = group_records(plan())
+                records[0]["simulator_recreate"] = value
+                result = shadow.aggregate(plan(), records, "success")
+                self.assertEqual("invalid simulator recreate: iphone-debug" in result["errors"], not valid)
+                self.assertNotIn("PRIVATE_SENTINEL", shadow.markdown(result))
+                self.assertEqual(result["group_timings"]["iphone-debug"].get("simulator_recreate"), value if valid else None)
+                if valid:
+                    shadow.check_group_upload(Path(raw), records[0])
+                    self.assertTrue(result["comparison_eligible"])
+                    line = next(line for line in shadow.markdown(result).splitlines() if line.startswith("| iphone-debug |"))
+                    self.assertIn("none" if value is None else value["step"] + "/" + value["command"], line)
+                else:
+                    with self.assertRaisesRegex(ValueError, "invalid simulator recreate"):
+                        shadow.check_group_upload(Path(raw), records[0])
+        result = shadow.aggregate(plan(), group_records(plan()), "success")
+        self.assertIsNone(result["group_timings"]["iphone-debug"]["simulator_recreate"])
+
     def test_aggregate_requires_the_planned_main_control_even_for_suppressed_plans(self):
         with tempfile.TemporaryDirectory() as raw:
             root = Path(raw)

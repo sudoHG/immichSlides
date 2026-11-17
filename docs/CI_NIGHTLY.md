@@ -177,6 +177,22 @@ log line names only the setup step and command family, plus integer seconds from
 Both stay red, with unavailable first results marked `not-run` / `infra`; attribution does
 not authorize archive admission, relax group validation or change comparison eligibility.
 
+Smoke shadow alone may retire and re-create its simulator once when `simulator` or
+`simulator-ready` fails, including a timeout, before archive load, warm-up or any flow
+starts. Shutdown and delete must both succeed within their existing bounds; otherwise
+the original failure and device remain for cleanup. Re-creation uses the same pinned
+create/boot and readiness path, publishes the fresh device for cleanup, and prints
+`setup-recreate: step=<simulator|simulator-ready>; command=<closed token>; attempt=1`.
+The group field `simulator_recreate` is null (also the default for historical records)
+or `{"step": ..., "command": ...}`, using only the setup command vocabulary above;
+the group summary displays it. It requires enough of the unchanged group/job budget
+for retirement, a full second device setup (including TV warm-up), every selected
+flow at its normal 330-second native cap, and the existing three-minute cleanup reserve;
+the budget is checked again after retirement. There is no second re-create or flow
+retry: a second setup failure stays red with its own attribution. Complete official
+first flow results count normally; "attempt 1" in the counting rule means the workflow
+run attempt, which is unchanged. Legacy nightly, PR CI and UI shards are unaffected.
+
 Cleanup failures print `cleanup-failed: step=<value>` before failing closed. The
 closed steps are `runner-cleanup`, `ownership`, `simctl-shutdown`, `simctl-delete`,
 `lsof-timeout`, `lsof-probe`, `lsof-holders` and `remove`. Shutdown output stays suppressed;

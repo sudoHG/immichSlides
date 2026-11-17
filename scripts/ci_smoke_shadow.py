@@ -33,6 +33,9 @@ PRODUCER_BUDGET_MINUTES = 27
 SETUP_FAILURE_STEPS = {"job-clock", "preflight", "archive-verify", "simulator", "simulator-ready",
                        "archive-load", "runner-command"}
 SETUP_FAILURE_COMMANDS = {"git", "xcrun-sdk", "simctl", "codesign", "readiness", "other"}
+SIMULATOR_RECREATE_STEPS = {"simulator", "simulator-ready"}
+COLD_BUILD_TIMEOUT_SECONDS = 1200
+WARM_BUILD_TIMEOUT_SECONDS = 600
 
 
 def smoke_artifact_name(configuration, control):
@@ -409,6 +412,76 @@ def timeout_command(argv):
     return "other"
 
 
+def valid_simulator_recreate(value):
+    return (value is None or isinstance(value, dict) and set(value) == {"step", "command"}
+            and isinstance(value["step"], str) and value["step"] in SIMULATOR_RECREATE_STEPS
+            and isinstance(value["command"], str) and value["command"] in SETUP_FAILURE_COMMANDS)
+
+
+def setup_failure_command(error, step):
+    from strict_e2e_runner_support import InfrastructureTimeout
+    if isinstance(error, InfrastructureTimeout):
+        return "readiness"
+    if isinstance(error, subprocess.SubprocessError):
+        return timeout_command(getattr(error, "cmd", None))
+    # The create/boot helper converts its simctl failures to ContractError.
+    return "simctl" if step == "simulator" else "other"
+
+
+def can_recreate_simulator(group_id, flow_count, archive, started, *, now=None, retiring=True):
+    from ci_simulator import SIMULATOR_SETUP_COMMAND_TIMEOUT_SECONDS
+    from strict_e2e_runner_support import SIMULATOR_COMMAND_TIMEOUT_SECONDS, SIMULATOR_PREPARATION_TIMEOUT_SECONDS
+    from strict_e2e_smoke import FLOW_TIMEOUT_SECONDS
+    remaining = started + (GROUP_BUDGET_MINUTES[group_id] + JOB_RESERVE_MINUTES) * 60 - (time.time() if now is None else now)
+    setup = 2 * SIMULATOR_SETUP_COMMAND_TIMEOUT_SECONDS
+    setup += SIMULATOR_PREPARATION_TIMEOUT_SECONDS if archive else COLD_BUILD_TIMEOUT_SECONDS
+    retirement = 2 * SIMULATOR_COMMAND_TIMEOUT_SECONDS if retiring else 0
+    # The reserve is outside the inner deadline, never available to device setup or flows.
+    return remaining >= retirement + setup + flow_count * FLOW_TIMEOUT_SECONDS + JOB_RESERVE_MINUTES * 60
+
+
+def create_group_simulator(group, environment):
+    from ci_simulator import create_and_boot_simulator
+    environment.pop("UI_SIMULATOR", None)
+    publication = Path(environment["GITHUB_ENV"]) if environment.get("GITHUB_ENV") else None
+    offset = publication.stat().st_size if publication and publication.exists() else 0
+    udid = None
+    try:
+        udid = create_and_boot_simulator("appletv" if group["device"] == "tv" else group["device"], "smoke-" + group["id"])
+        return udid
+    finally:
+        # Boot can fail after the helper publishes ownership but before returning the UDID.
+        if publication and publication.exists():
+            with publication.open() as handle:
+                handle.seek(offset)
+                for line in handle:
+                    key, separator, value = line.rstrip("\n").partition("=")
+                    if separator and key in {"UI_SIMULATOR", "UI_DESTINATION", "UI_PLATFORM"}:
+                        environment[key] = value
+        if udid:
+            environment["UI_SIMULATOR"] = udid
+
+
+def retire_group_simulator(udid):
+    from strict_e2e_runner_support import simulator_command, SIMULATOR_COMMAND_TIMEOUT_SECONDS
+    for action in ("shutdown", "delete"):
+        completed = simulator_command(["xcrun", "simctl", action, udid], "simulator-retire",
+                                      timeout_seconds=SIMULATOR_COMMAND_TIMEOUT_SECONDS)
+        if completed.returncode != 0:
+            return False
+    return True
+
+
+def clear_retired_simulator(environment):
+    # Empty exports keep always-run cleanup correct if the next create never publishes a device.
+    keys = ("UI_SIMULATOR", "UI_DESTINATION", "UI_PLATFORM")
+    if environment.get("GITHUB_ENV"):
+        with open(environment["GITHUB_ENV"], "a") as handle:
+            handle.write("".join(key + "=\n" for key in keys))
+    for key in keys:
+        environment.pop(key, None)
+
+
 def aggregate(plan, records, matrix_result, *, producers=None, producer_results=None):
     from ci_bounded_diagnostics import public_failure_locations
     from ci_failure_diagnostics import validate_first_failure
@@ -539,6 +612,11 @@ def aggregate(plan, records, matrix_result, *, producers=None, producer_results=
             for key in ("setup_failure_step", "setup_failure_command"):
                 if setup_valid and key in record:
                     timings[group_id][key] = record[key]
+            recreate = record.get("simulator_recreate")
+            if valid_simulator_recreate(recreate):
+                timings[group_id]["simulator_recreate"] = recreate
+            else:
+                errors.append("invalid simulator recreate: " + group_id)
             if archive_mode and valid_timing:
                 timings[group_id].update({key: record.get(key) for key in ("timing_mode", "build_provenance")})
                 timings[group_id].update({key: diagnostic_seconds(record.get(key)) for key in
@@ -604,14 +682,16 @@ def markdown(record):
                   render_first_failure(row["first_failure"]) if "first_failure" in row else None]
         lines.append("| " + " | ".join(markdown_text(value) if value is not None else "unknown" for value in values) + " |")
     if record["group_timings"]:
-        lines += ["", "| Group | Warm-up/build (s) | Transfer (s) | Archive verify (s) | Job elapsed (s) | Failed setup step | Timed-out setup command |", "|---|---:|---:|---:|---:|---|---|"]
+        lines += ["", "| Group | Warm-up/build (s) | Transfer (s) | Archive verify (s) | Job elapsed (s) | Simulator re-create | Failed setup step | Timed-out setup command |", "|---|---:|---:|---:|---:|---|---|---|"]
         for group_id, timing in record["group_timings"].items():
             warm = next((phase["elapsed_seconds"] for phase in timing.get("phases") or [] if phase["name"] == "warm-up"), None)
             setup = [("none" if timing[key] is None else timing[key]) if key in timing else "unknown"
                      for key in ("setup_failure_step", "setup_failure_command")]
+            recreate = timing.get("simulator_recreate")
+            recreate = (recreate["step"] + "/" + recreate["command"] if recreate else "none") if valid_simulator_recreate(recreate) else "unknown"
             lines.append("| " + " | ".join(markdown_text(value) if value is not None else "unknown"
                          for value in (group_id, warm, timing.get("transfer_seconds"), timing.get("verify_seconds"), timing["job_elapsed_seconds"],
-                                       *setup)) + " |")
+                                       recreate, *setup)) + " |")
     if "build_producers" in record:
         lines += ["", "| Producer | Build (s) | Pack (s) | Upload (s) | Artifact ID | Manifest SHA-256 | Tar SHA-256 |",
                   "|---|---:|---:|---:|---|---|---|"]
@@ -684,6 +764,7 @@ def copy_first_failure_images(evidence, records, rows):
 def check_group_upload(directory, record):
     from ci_failure_diagnostics import validate_first_failure, validate_ui_first_failure_images
     require(valid_setup_failure(record), "invalid group setup failure")
+    require(valid_simulator_recreate(record.get("simulator_recreate")), "invalid simulator recreate")
     declared = [{"key": row["selector"]} for row in record["flows"]]
     observed = []
     for identity, row in zip(declared, record["flows"]):
@@ -807,8 +888,8 @@ def runner_command(group, destination, root, evidence, *, warm, archive=False):
             "--derived-data-path", str(root / "derived"), "--cloned-source-packages-path", str(root / "packages"),
             "--evidence-dir", str(evidence), "--min-free-gib", "20" if os.environ.get("GITHUB_ACTIONS") == "true" else "80",
             *(["--smoke-archive", "--smoke-control-path", str(root / "expected-control.json")] if archive else []),
-            *(["--test-without-building", "--warm-timeout-seconds", "600", "--simulator-boot-submitted"] if warm
-              else ["--warm-up-only", "--cold-timeout-seconds", "1200"])]
+            *(["--test-without-building", "--warm-timeout-seconds", str(WARM_BUILD_TIMEOUT_SECONDS), "--simulator-boot-submitted"] if warm
+              else ["--warm-up-only", "--cold-timeout-seconds", str(COLD_BUILD_TIMEOUT_SECONDS)])]
 
 
 def read_runner_flows(evidence, scheduling, selected, destination, *, validation=None):
@@ -960,7 +1041,6 @@ def read_runner_flows(evidence, scheduling, selected, destination, *, validation
 
 def run_group(scheduling, environment, temporary):
     from ci_build_archive import file_hash, workspace_preflight
-    from ci_simulator import create_and_boot_simulator
     from run_offline_unit_tests import CommandError as OfflineCommandError, default_data_available_gib, ensure_disk_for_xcodebuild
     from run_strict_ci_tracer import run_runner, RunnerGroupCleanupError
     from strict_e2e_runner_support import CommandError, InfrastructureTimeout, prepare_simulator
@@ -981,7 +1061,7 @@ def run_group(scheduling, environment, temporary):
               "group_validation": {"outcome": "unavailable", "reason": "No group evidence."},
               "selection": "unavailable", "elapsed_seconds": 0, "errors": [], "flows": [],
               "job_started_epoch": None, "job_elapsed_seconds": None, "phases": [], "setup_failure_step": None,
-              "setup_failure_command": None}
+              "setup_failure_command": None, "simulator_recreate": None}
     if archive_mode:
         record.update(schema_version=2, timing_mode=ARCHIVE_MODE, build_provenance=None,
                       transfer_seconds=None, verify_seconds=None)
@@ -1027,13 +1107,35 @@ def run_group(scheduling, environment, temporary):
                 phase["elapsed_seconds"] = time.monotonic() - phase_started
                 record["phases"].append(phase)
                 record["verify_seconds"] = phase["elapsed_seconds"]
-        setup_step = "simulator"
-        udid = create_and_boot_simulator("appletv" if group["device"] == "tv" else group["device"], "smoke-" + group_id)
-        destination = "platform=" + ("tvOS" if group["platform"] == "tvos" else "iOS") + " Simulator,id=" + udid
+        for attempt in range(2):
+            try:
+                setup_step = "simulator"
+                udid = create_group_simulator(group, environment)
+                destination = "platform=" + ("tvOS" if group["platform"] == "tvos" else "iOS") + " Simulator,id=" + udid
+                if archive_mode:
+                    setup_step = "simulator-ready"
+                    # Archive consumers have no cold build to absorb first-boot work before identity reads.
+                    prepare_simulator(udid, boot_submitted=True, should_check_app=False)
+                break
+            except (CommandError, OfflineCommandError, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
+                failed_udid = environment.get("UI_SIMULATOR")
+                if (attempt != 0 or not failed_udid or not can_recreate_simulator(
+                        group_id, len(flows), archive_mode, record["job_started_epoch"])):
+                    raise
+                try:
+                    retired = retire_group_simulator(failed_udid)
+                    if retired:
+                        clear_retired_simulator(environment)
+                except (CommandError, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+                    # Retirement never replaces the original setup failure or its timeout attribution.
+                    raise error
+                if not retired or not can_recreate_simulator(group_id, len(flows), archive_mode,
+                        record["job_started_epoch"], retiring=False):
+                    raise
+                command = setup_failure_command(error, setup_step)
+                record["simulator_recreate"] = {"step": setup_step, "command": command}
+                print(f"setup-recreate: step={setup_step}; command={command}; attempt=1", file=sys.stderr, flush=True)
         if archive_mode:
-            setup_step = "simulator-ready"
-            # Archive consumers have no cold build to absorb first-boot work before identity reads.
-            prepare_simulator(udid, boot_submitted=True, should_check_app=False)
             setup_step = "archive-load"
             load_smoke_archive(ROOT, group["configuration"], destination, group["device"], root / "derived",
                                control=scheduling["control"])
@@ -1069,7 +1171,7 @@ def run_group(scheduling, environment, temporary):
         record["errors"].append("setup-step-timeout" if setup_step is not None else "group-budget-exhausted")
         record["runner_exit_code"] = 124
         if setup_step is not None:
-            command = "readiness" if isinstance(error, InfrastructureTimeout) else timeout_command(error.cmd)
+            command = setup_failure_command(error, setup_step)
             record["setup_failure_command"] = command
             timeout = f"; timeout={int(error.timeout)}s" if isinstance(error, subprocess.TimeoutExpired) else ""
             print(f"setup-step-timeout: step={setup_step}; command={command}{timeout}", file=sys.stderr, flush=True)
