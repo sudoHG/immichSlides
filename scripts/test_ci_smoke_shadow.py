@@ -1680,6 +1680,70 @@ class SmokeShadowTests(unittest.TestCase):
             rows, errors = shadow.read_runner_flows(directory, plan(), [failed_flow], destination, validation=verdict)
             self.assertEqual((errors, rows[0]["outcome"], verdict["outcome"]), ([], "failed", "failed"))
 
+    def test_pretest_step_survives_projection_and_old_heads_render_unknown(self):
+        import strict_e2e_smoke as smoke
+        self.assertEqual(smoke.PRETEST_FAILURE_STEPS, shadow.PRETEST_FAILURE_STEPS)
+        flows = json.loads((Path(__file__).resolve().parent / "smoke-flows.json").read_text())["flows"]
+        for fixture in {fixture for flow in flows for fixture in flow["fixtures"]}:
+            self.assertIn("fixture-service:" + fixture, smoke.PRETEST_FAILURE_STEPS)
+            self.assertIn("fixture-service:" + fixture + ":timeout", smoke.PRETEST_FAILURE_STEPS)
+        cases = [(step, "infrastructure") for step in ("absent", None, *sorted(shadow.PRETEST_FAILURE_STEPS))]
+        cases.append(("first-failure-spool", "cleanup"))
+        for step, kind in cases:
+            with self.subTest(step=step, kind=kind), tempfile.TemporaryDirectory() as raw:
+                directory = Path(raw)
+                flow, destination = runner_evidence(directory, failed=step not in ("absent", None))
+                result = json.loads((directory / "smoke-flow-results.json").read_text())["flows"][0]
+                if step != "absent":
+                    result["pretest_failure_step"] = step
+                if step not in ("absent", None):
+                    result.update(failure_kind=kind, official_execution_complete=False, elapsed_seconds=0)
+                replace_runner_record(directory, result)
+                rows, _ = shadow.read_runner_flows(directory, plan(), [flow], destination)
+                if step == "absent":
+                    self.assertNotIn("pretest_failure_step", rows[0])
+                else:
+                    self.assertEqual(step, rows[0]["pretest_failure_step"])
+                records = group_records(plan())
+                records[0]["flows"] = rows
+                records[0]["runner_exit_code"] = result["exit_code"]
+                summary = shadow.aggregate(plan(), records, "failure" if step not in ("absent", None) else "success")
+                rendered = shadow.markdown(summary)
+                self.assertIn("Pre-test failure step", rendered)
+                expected = "unknown" if step == "absent" else "none" if step is None else step
+                flow_row = next(line for line in rendered.splitlines() if line.startswith("| " + flow["id"] + " |"))
+                self.assertEqual(expected, flow_row.split("|")[7].strip())
+                self.assertEqual(summary["flows"][0].get("pretest_failure_step"), rows[0].get("pretest_failure_step"))
+
+    def test_pretest_step_rejects_unknown_and_contradictory_diagnostics_at_every_reader(self):
+        cases = [{"pretest_failure_step": step} for step in ("private-input-sentinel", [], 7, "simulator-reset:terminate")]
+        failed = {"pretest_failure_step": "simulator-reset:terminate", "outcome": "FAIL", "exit_code": 2,
+                  "failure_kind": "infrastructure", "elapsed_seconds": 0, "official_execution_complete": False}
+        cases.extend(dict(failed, **change) for change in (
+            {"elapsed_seconds": 1}, {"official_execution_complete": True}, {"failure_kind": "hang-guard"}))
+        for change in cases:
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as raw:
+                directory = Path(raw)
+                flow, destination = runner_evidence(directory)
+                result = json.loads((directory / "smoke-flow-results.json").read_text())["flows"][0]
+                result.update(change)
+                replace_runner_record(directory, result)
+                with self.assertRaisesRegex(ContractError, "pretest failure step"):
+                    shadow.read_runner_flows(directory, plan(), [flow], destination)
+                records = group_records(plan())
+                records[0]["flows"][0].update(change)
+                if "outcome" in change:
+                    records[0]["flows"][0]["outcome"] = "failed"
+                if "official_execution_complete" in change:
+                    records[0]["flows"][0]["executed"] = change["official_execution_complete"]
+                summary = shadow.aggregate(plan(), records, "success")
+                self.assertEqual(summary["outcome"], "failed")
+                self.assertFalse(summary["comparison_eligible"])
+                self.assertTrue(any("pretest failure step" in error for error in summary["errors"]))
+                self.assertNotIn("private-input-sentinel", shadow.markdown(summary))
+                with patch.object(shadow, "scan_records"), self.assertRaisesRegex(ContractError, "pretest failure step"):
+                    shadow.check_group_upload(directory, records[0])
+
     def test_runner_adapter_keeps_late_gate_failures_red_and_source_locations_bounded(self):
         location = [{"path": "immichSlidesUITests/SmokeFlowIOSUITests.swift", "line": 42}]
         for gate in ("warm-products", "sensitive-scan", "build-cleanup", "evidence-finalization", "official-result"):

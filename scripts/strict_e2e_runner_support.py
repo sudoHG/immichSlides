@@ -531,7 +531,8 @@ def _is_already_booted(stderr: str) -> bool:
 
 
 def boot_simulator(simulator_udid: str, *, report: Callable[[str], None] | None = None,
-                   deadline: float | None = None, boot_submitted: bool = False) -> str:
+                   deadline: float | None = None, boot_submitted: bool = False,
+                   report_step: Callable[[str], None] | None = None) -> str:
     """Give cold boot its own deadline before any app-reset clock starts."""
     started = time.monotonic()
     deadline = min(deadline, started + SIMULATOR_BOOT_TIMEOUT_SECONDS) if deadline is not None else started + SIMULATOR_BOOT_TIMEOUT_SECONDS
@@ -541,6 +542,8 @@ def boot_simulator(simulator_udid: str, *, report: Callable[[str], None] | None 
     if not boot_submitted:
         steps.insert(0, ("boot", SIMULATOR_COMMAND_TIMEOUT_SECONDS))
     for step, cap in steps:
+        if report_step is not None:
+            report_step("simulator-reset:" + step)
         phase = "simulator-" + step
         phase_started = time.monotonic()
         outcome = "failed"
@@ -798,7 +801,8 @@ def _settle_simulator_boot(device: str, deadline: float) -> str:
 
 def prepare_simulator(simulator_udid: str, bundle_id: str = "com.331works.immichSlides", *,
                       report: Callable[[str], None] | None = None, boot_submitted: bool = False,
-                      should_check_app: bool = True, should_settle_boot: bool = False) -> tuple[str | None, str]:
+                      should_check_app: bool = True, should_settle_boot: bool = False,
+                      report_step: Callable[[str], None] | None = None) -> tuple[str | None, str]:
     """Gate preparation; prebuild callers may request service registration only, returning no container fact."""
     report = report or (lambda line: print(line, flush=True))
     recorder = active()
@@ -811,7 +815,10 @@ def prepare_simulator(simulator_udid: str, bundle_id: str = "com.331works.immich
     if recorder:
         start_event = recorder.event("preparation", "simulator-preparation", "started", sequence)
     try:
-        lines.extend(boot_simulator(simulator_udid, report=report, deadline=deadline, boot_submitted=boot_submitted).splitlines())
+        lines.extend(boot_simulator(simulator_udid, report=report, deadline=deadline,
+                                    boot_submitted=boot_submitted, report_step=report_step).splitlines())
+        if report_step is not None:
+            report_step("simulator-reset:readiness")
         if should_check_app:
             container, readiness_log = wait_for_simulator_app_response(simulator_udid, bundle_id, report=report, deadline=deadline)
         else:
@@ -841,13 +848,16 @@ def prepare_simulator(simulator_udid: str, bundle_id: str = "com.331works.immich
     return container, "\n".join(lines) + "\n"
 
 
-def _disable_password_autofill(simulator_udid: str, reset_deadline: float, report: Callable[[str], None]) -> list[str]:
+def _disable_password_autofill(simulator_udid: str, reset_deadline: float, report: Callable[[str], None], *,
+                               report_step: Callable[[str], None] | None = None) -> list[str]:
+    report_step = report_step or (lambda step: None)
     started = time.monotonic()
     deadline = min(reset_deadline, started + SIMULATOR_COMMAND_TIMEOUT_SECONDS)
     budget = max(0, deadline - started)
     lines, outcome = [], "failed"
 
     def command(argv: list[str], step: str):
+        report_step("simulator-reset:autofill-" + step)
         step_started = time.monotonic()
         try:
             return simulator_command(argv, "simulator-password-autofill-" + step, deadline=deadline)
@@ -882,8 +892,10 @@ def _disable_password_autofill(simulator_udid: str, reset_deadline: float, repor
                      f"value={readback.stdout.strip()!r}")
         if readback.returncode or readback.stdout.strip() != "false":
             raise CommandError("Simulator password AutoFill readback failed; cannot continue with isolated state.\n" + "\n".join(lines))
+        report_step("simulator-reset:autofill-deadline")
         if time.monotonic() >= deadline:
             raise InfrastructureTimeout("simulator-password-autofill", budget)
+        report_step("pretest-other")
         lines.append("password_autofill=disabled; domain=com.apple.WebUI; key=AutoFillPasswords; readback=false; verifier=host-plutil")
         report(lines[-1])
         outcome = "passed"
@@ -891,7 +903,11 @@ def _disable_password_autofill(simulator_udid: str, reset_deadline: float, repor
         line = (f"password-autofill: {outcome}; elapsed={time.monotonic() - started:.3f}s; budget={budget:.3f}s; "
                 f"reset_remaining={max(0, reset_deadline - time.monotonic()):.3f}s")
         lines.append(line)
-        report(line)
+        try:
+            report(line)
+        except (OSError, ValueError):
+            report_step("pretest-other")
+            raise
     return lines
 
 
@@ -910,18 +926,23 @@ def _simulator_reset_stderr_class(stderr: str) -> str:
 
 
 def reset_simulator_app(simulator_udid: str, bundle_id: str = "com.331works.immichSlides", *,
-                        platform: str, boot_submitted: bool = False) -> str:
+                        platform: str, boot_submitted: bool = False,
+                        report_step: Callable[[str], None] | None = None) -> str:
+    report_step = report_step or (lambda step: None)
+    report_step("pretest-other")
     if platform not in ("ios", "tvos"):
         raise CommandError(f"Unsupported simulator platform {platform!r}; expected 'ios' or 'tvos'.")
     # The fixed sleep waits for simctl to release the container lock; a second uninstall failure must stop the run.
     report = lambda line: print(line, flush=True)
-    container, preparation_log = prepare_simulator(simulator_udid, bundle_id, report=report, boot_submitted=boot_submitted)
+    container, preparation_log = prepare_simulator(simulator_udid, bundle_id, report=report,
+        boot_submitted=boot_submitted, report_step=report_step)
     lines = preparation_log.splitlines()
     installed = container is not None
     started = time.monotonic()
     deadline = started + SIMULATOR_RESET_TIMEOUT_SECONDS
     # Terminate stalled after cold boot on hosted runners; skip it only when the app is absent.
     if installed:
+        report_step("simulator-reset:terminate")
         terminate = simulator_command(
             ["xcrun", "simctl", "terminate", simulator_udid, bundle_id], "simulator-terminate", deadline=deadline,
         )
@@ -929,11 +950,13 @@ def reset_simulator_app(simulator_udid: str, bundle_id: str = "com.331works.immi
     else:
         lines.append("terminate_skipped=app-absent")
         report(lines[-1])
+    report_step("simulator-reset:uninstall")
     uninstall = simulator_command(
         ["xcrun", "simctl", "uninstall", simulator_udid, bundle_id], "simulator-uninstall", deadline=deadline,
     )
     lines.append(f"uninstall_exit={uninstall.returncode}")
     if uninstall.returncode != 0:
+        report_step("simulator-reset:uninstall-retry")
         time.sleep(1)
         retry = simulator_command(
             ["xcrun", "simctl", "uninstall", simulator_udid, bundle_id], "simulator-uninstall-retry", deadline=deadline,
@@ -945,6 +968,7 @@ def reset_simulator_app(simulator_udid: str, bundle_id: str = "com.331works.immi
             raise CommandError("Second uninstall failed; cannot continue with a clean install.\n" + "\n".join(lines))
     if uninstall.stderr.strip():
         lines.append(f"uninstall_stderr={uninstall.stderr.strip()}")
+    report_step("simulator-reset:container")
     time.sleep(1)
     container = simulator_app_container(simulator_udid, bundle_id, deadline=deadline)
     if container:
@@ -958,10 +982,12 @@ def reset_simulator_app(simulator_udid: str, bundle_id: str = "com.331works.immi
         ("keychain", ["xcrun", "simctl", "keychain", simulator_udid, "reset"]),
         ("privacy", ["xcrun", "simctl", "privacy", simulator_udid, "reset", "all"]),
     ):
+        report_step("simulator-reset:" + step)
         completed = simulator_command(command, f"simulator-{step}-reset", deadline=deadline)
         lines.append(f"{step}_reset_exit={completed.returncode}; stderr_class={_simulator_reset_stderr_class(completed.stderr)}")
         report(lines[-1])
         if completed.returncode != 0:
+            report_step("simulator-reset:" + step + "-retry")
             time.sleep(min(1, max(0, deadline - time.monotonic())))
             completed = simulator_command(command, f"simulator-{step}-reset-retry", deadline=deadline)
             lines.append(f"{step}_reset_retry_exit={completed.returncode}; stderr_class={_simulator_reset_stderr_class(completed.stderr)}")
@@ -969,7 +995,7 @@ def reset_simulator_app(simulator_udid: str, bundle_id: str = "com.331works.immi
         if completed.returncode != 0:
             raise CommandError(f"Simulator {step} reset failed; cannot continue with isolated state.\n" + "\n".join(lines))
     if platform == "ios":
-        lines.extend(_disable_password_autofill(simulator_udid, deadline, report))
+        lines.extend(_disable_password_autofill(simulator_udid, deadline, report, report_step=report_step))
     lines.append(f"simulator-reset: elapsed={time.monotonic() - started:.1f}s; total budget={SIMULATOR_RESET_TIMEOUT_SECONDS}s")
     report(lines[-1])
     return "\n".join(lines) + "\n"
