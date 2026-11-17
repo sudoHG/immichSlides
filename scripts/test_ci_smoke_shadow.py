@@ -158,56 +158,58 @@ class SimulatorGroupFixture(ExitStack):
         self.archive, self.group_id, self.elapsed = archive, group_id, elapsed
 
     def __enter__(self):
-        stack = self
-        archive, group_id, elapsed = self.archive, self.group_id, self.elapsed
-        temporary = Path(stack.enter_context(tempfile.TemporaryDirectory()))
-        scheduling = shared_plan() if archive else plan()
-        context = dict(environment(), SMOKE_GROUP=group_id, GITHUB_ENV=str(temporary / "github-env"))
-        clock = [1000.0]
-        identity = {"source": scheduling.get("tested_source")}
-        if archive:
-            shadow.write_json(temporary / "smoke-archive-selection.json", {
-                "provenance": archive_provenance(scheduling), "identity": identity,
-                "transfer_started_epoch": clock[0]})
-        stack.enter_context(patch.dict(os.environ, context))
-        stack.enter_context(patch.object(shadow.time, "time", side_effect=lambda: clock[0]))
-        stack.enter_context(patch.object(shadow, "git", return_value=HEAD))
-        stack.enter_context(patch("ci_build_archive.file_hash", return_value="c" * 64))
-        stack.enter_context(patch.object(shadow, "job_started_epoch", return_value=clock[0] - elapsed))
-        stack.enter_context(patch("ci_build_archive.workspace_preflight"))
-        stack.enter_context(patch("run_offline_unit_tests.ensure_disk_for_xcodebuild"))
-        stack.enter_context(patch("strict_e2e_build.smoke_build_identity", return_value=identity))
-        verify = stack.enter_context(patch.object(shadow, "verify_smoke_archive"))
-        load = stack.enter_context(patch("strict_e2e_build.load_smoke_archive"))
-        prepare = stack.enter_context(patch("strict_e2e_runner_support.prepare_simulator"))
-        created = []
-        def create(*_args):
-            udid = "synthetic-" + str(len(created) + 1)
-            created.append(udid)
-            with open(context["GITHUB_ENV"], "a") as handle:
-                handle.write(f"UI_SIMULATOR={udid}\nUI_DESTINATION=platform=iOS Simulator,id={udid}\nUI_PLATFORM=ios\n")
-            return udid
-        simulator = stack.enter_context(patch("ci_simulator.create_and_boot_simulator", side_effect=create))
-        retire = stack.enter_context(patch("strict_e2e_runner_support.simulator_command",
-                                          return_value=SimpleNamespace(returncode=0)))
-        def execute(command, *_args, **_options):
-            if "--test-without-building" in command:
-                shadow.write_json(temporary / "smoke-execution.noindex/flows/case-manifest.json", {"selection": "group"})
-            return 0
-        runner = stack.enter_context(patch.object(tracer, "run_runner", side_effect=execute))
-        def evidence(*_args, validation, **_options):
-            validation.update(outcome="passed", reason=None)
-            index = next(index for index, group in enumerate(scheduling["groups"]) if group["id"] == group_id)
-            return group_records(scheduling)[index]["flows"], []
-        stack.enter_context(patch.object(shadow, "read_runner_flows", side_effect=evidence))
-        stack.enter_context(patch.object(shadow, "scan_records"))
-        stack.enter_context(patch("ci_failure_diagnostics.validate_ui_first_failure_images"))
-        log = stack.enter_context(redirect_stderr(io.StringIO()))
-        return SimpleNamespace(temporary=temporary, scheduling=scheduling, context=context, clock=clock,
-            verify=verify, load=load, prepare=prepare, create=create, simulator=simulator, retire=retire,
-            runner=runner, log=log,
-            run=lambda: shadow.run_group(scheduling, context, temporary),
-            record=lambda: json.loads((temporary / "smoke-records/group.json").read_text()))
+        with ExitStack() as stack:
+            archive, group_id, elapsed = self.archive, self.group_id, self.elapsed
+            temporary = Path(stack.enter_context(tempfile.TemporaryDirectory()))
+            scheduling = shared_plan() if archive else plan()
+            context = dict(environment(), SMOKE_GROUP=group_id, GITHUB_ENV=str(temporary / "github-env"))
+            clock = [1000.0]
+            identity = {"source": scheduling.get("tested_source")}
+            if archive:
+                shadow.write_json(temporary / "smoke-archive-selection.json", {
+                    "provenance": archive_provenance(scheduling), "identity": identity,
+                    "transfer_started_epoch": clock[0]})
+            stack.enter_context(patch.dict(os.environ, context))
+            stack.enter_context(patch.object(shadow.time, "time", side_effect=lambda: clock[0]))
+            stack.enter_context(patch.object(shadow, "git", return_value=HEAD))
+            stack.enter_context(patch("ci_build_archive.file_hash", return_value="c" * 64))
+            stack.enter_context(patch.object(shadow, "job_started_epoch", return_value=clock[0] - elapsed))
+            stack.enter_context(patch("ci_build_archive.workspace_preflight"))
+            stack.enter_context(patch("run_offline_unit_tests.ensure_disk_for_xcodebuild"))
+            stack.enter_context(patch("strict_e2e_build.smoke_build_identity", return_value=identity))
+            verify = stack.enter_context(patch.object(shadow, "verify_smoke_archive"))
+            load = stack.enter_context(patch("strict_e2e_build.load_smoke_archive"))
+            prepare = stack.enter_context(patch("strict_e2e_runner_support.prepare_simulator"))
+            created = []
+            def create(*_args):
+                udid = "synthetic-" + str(len(created) + 1)
+                created.append(udid)
+                with open(context["GITHUB_ENV"], "a") as handle:
+                    handle.write(f"UI_SIMULATOR={udid}\nUI_DESTINATION=platform=iOS Simulator,id={udid}\nUI_PLATFORM=ios\n")
+                return udid
+            simulator = stack.enter_context(patch("ci_simulator.create_and_boot_simulator", side_effect=create))
+            retire = stack.enter_context(patch("strict_e2e_runner_support.simulator_command",
+                                              return_value=SimpleNamespace(returncode=0)))
+            def execute(command, *_args, **_options):
+                if "--test-without-building" in command:
+                    shadow.write_json(temporary / "smoke-execution.noindex/flows/case-manifest.json", {"selection": "group"})
+                return 0
+            runner = stack.enter_context(patch.object(tracer, "run_runner", side_effect=execute))
+            def evidence(*_args, validation, **_options):
+                validation.update(outcome="passed", reason=None)
+                index = next(index for index, group in enumerate(scheduling["groups"]) if group["id"] == group_id)
+                return group_records(scheduling)[index]["flows"], []
+            stack.enter_context(patch.object(shadow, "read_runner_flows", side_effect=evidence))
+            stack.enter_context(patch.object(shadow, "scan_records"))
+            stack.enter_context(patch("ci_failure_diagnostics.validate_ui_first_failure_images"))
+            log = stack.enter_context(redirect_stderr(io.StringIO()))
+            fixture = SimpleNamespace(temporary=temporary, scheduling=scheduling, context=context, clock=clock,
+                verify=verify, load=load, prepare=prepare, create=create, simulator=simulator, retire=retire,
+                runner=runner, log=log,
+                run=lambda: shadow.run_group(scheduling, context, temporary),
+                record=lambda: json.loads((temporary / "smoke-records/group.json").read_text()))
+            self.enter_context(stack.pop_all())
+            return fixture
 
 
 class SmokeShadowTests(unittest.TestCase):

@@ -242,7 +242,8 @@ cleanup worst case is `60 + 60 + 30 + 5 + 30 = 185` seconds for flow groups
 (previously 150) and `30 + 5 + 30 = 65` seconds for producers (previously 30).
 For a flow group, this can exhaust the existing three-minute job reserve only
 after the group has used its entire inner budget and is already red with exit 124;
-a passing group finishes well inside that budget. The reserve also covers
+a passing group usually finishes well inside that budget, but after a late re-create
+it can finish close to the inner deadline. The reserve also covers
 finalization and uploads, so it is not a worst-case completion guarantee.
 The coordinator accepts this cleanup tail without changing any job or inner timeout.
 If the job timeout kills cleanup, the job stays red and the root is retained;

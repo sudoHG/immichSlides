@@ -34,7 +34,8 @@ SETUP_FAILURE_STEPS = {"job-clock", "preflight", "archive-verify", "simulator", 
                        "archive-load", "runner-command"}
 SETUP_FAILURE_COMMANDS = {"git", "xcrun-sdk", "simctl", "codesign", "readiness", "other"}
 SIMULATOR_RECREATE_STEPS = {"simulator", "simulator-ready"}
-# Existing archive-load caps: git x3, xcrun-sdk x2, simctl-list x3, codesign x1.
+# Caps from strict_e2e_build.load_smoke_archive and ci_build_archive.measure_signing:
+# git x3, xcrun-sdk x2, simctl-list x3, codesign x1; xcode-select excluded because setup() exports DEVELOPER_DIR.
 ARCHIVE_LOAD_OWN_CAP_SECONDS = 3 * 30 + 2 * 60 + 3 * 60 + 120
 
 
