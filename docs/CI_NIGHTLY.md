@@ -177,6 +177,25 @@ log line names only the setup step and command family, plus integer seconds from
 Both stay red, with unavailable first results marked `not-run` / `infra`; attribution does
 not authorize archive admission, relax group validation or change comparison eligibility.
 
+Per-flow runner records and compact group rows retain `pretest_failure_step`, a
+closed diagnostic naming the observed preparation operation, not its root cause.
+It is cleared immediately before xcodebuild: explicit JSON `null` renders `none`,
+while an absent historical field remains valid and renders `unknown`. Only operations
+with real timeout sources admit `:timeout`, for `TimeoutExpired`, shared
+`InfrastructureTimeout` or `CommandError(code=124)`; the final AutoFill deadline
+has only that variant. `pretest-other` has no timeout variant and prevents stale
+attribution across preparation regions without a dedicated step. The staged controller
+owns its vocabulary independently of the tested runner; the two `PRETEST_STEPS`
+constants in [`strict_e2e_smoke.py`](../scripts/strict_e2e_smoke.py) and
+[`ci_smoke_shadow.py`](../scripts/ci_smoke_shadow.py), with their timeout sets, define
+the values. Runner admission, group upload and aggregation fail closed on unknown
+tokens or tokens accompanying a pass, official execution, nonzero native elapsed
+time, zero exit or a failure kind other than infrastructure/cleanup. Directory creation,
+source reads and private-directory creation precede the per-flow handler and still
+abort the group on failure. No exception text, paths, output, simulator IDs or URLs
+enter the field; existing failure messages, verdicts, exits, guards and retries remain
+unchanged, and a failed public-record write cannot promise per-flow attribution.
+
 Smoke shadow alone may retire and re-create its simulator once when `simulator` or
 `simulator-ready` fails, including a timeout, before archive load, warm-up or any flow
 starts. A create that never publishes a device is not re-created, even when the

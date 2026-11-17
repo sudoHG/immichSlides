@@ -17,6 +17,22 @@ MANIFEST = "scripts/smoke-flows.json"
 METHOD_TIMEOUT_SECONDS = 180
 STARTUP_OVERHEAD_SECONDS = 150
 FLOW_TIMEOUT_SECONDS = METHOD_TIMEOUT_SECONDS + STARTUP_OVERHEAD_SECONDS
+# Public diagnostics are code-defined steps, never exception text or command arguments.
+PRETEST_TIMEOUT_STEPS = frozenset({
+    "simulator-reset:terminate",
+    "simulator-reset:boot", "simulator-reset:bootstatus", "simulator-reset:readiness",
+    "simulator-reset:uninstall", "simulator-reset:uninstall-retry", "simulator-reset:container",
+    "simulator-reset:keychain", "simulator-reset:keychain-retry",
+    "simulator-reset:privacy", "simulator-reset:privacy-retry",
+    "simulator-reset:autofill-device", "simulator-reset:autofill-disable",
+    "simulator-reset:autofill-readback", "simulator-reset:autofill-deadline",
+    "fixture-service:a", "fixture-service:b",
+})
+PRETEST_STEPS = (PRETEST_TIMEOUT_STEPS - {"simulator-reset:autofill-deadline"}) | {
+    "pretest-other", "simulator-reset:log", "fixture-artifacts:a", "fixture-artifacts:b",
+    "private-result-bundle", "first-failure-spool", "prepare-run",
+}
+PRETEST_FAILURE_STEPS = PRETEST_STEPS | {step + ":timeout" for step in PRETEST_TIMEOUT_STEPS}
 FLOW_METHODS = {
     "album-selection": "testAlbumSelection", "background-return": "testBackgroundReturn",
     "connection-error": "testConnectionError", "first-boot": "testFirstBoot",
@@ -421,19 +437,26 @@ def execute_flow(flow, root, arguments, source_run, runner, evidence, *, build_s
               "source_sha": runner.read_source_sha(root), "source_dirty_paths": runner.read_source_dirty_paths(root),
               "failure_kind": "infrastructure",
               "official_execution_complete": False, "official_summary": None, "official_tests_sha256": None,
-              "failure_locations": None,
+              "failure_locations": None, "pretest_failure_step": None,
               "elapsed_seconds": 0, "first_public_failure_message": None, "exit_code": 2}
     private_evidence = evidence.parent / "private" / evidence.name / flow["id"]
     private_evidence.mkdir(mode=0o700, parents=True)
     processes, private_run, bundle, digest = [], None, None, None
     exported, summary, fixture_payload = False, None, None
     stage = "infrastructure"
+    pretest_step = "pretest-other"
+    def mark_pretest(step):
+        nonlocal pretest_step
+        pretest_step = step
     try:
-        reset = runner.reset_simulator_app(runner.destination_udid(arguments.destination), platform=arguments.platform,
-                                           boot_submitted=arguments.simulator_boot_submitted)
+        udid = runner.destination_udid(arguments.destination)
+        reset = runner.reset_simulator_app(udid, platform=arguments.platform,
+            boot_submitted=arguments.simulator_boot_submitted, report_step=mark_pretest)
+        mark_pretest("simulator-reset:log")
         (directory / "simulator-reset.log").write_text(reset)
         urls = []
         for fixture in flow["fixtures"]:
+            mark_pretest("fixture-service:" + fixture)
             ready = directory / f"service-{fixture}-ready.json"
             startup = directory / f"service-{fixture}-startup.log"
             peer = [name for name in flow["fixtures"] if name != fixture]
@@ -446,24 +469,32 @@ def execute_flow(flow, root, arguments, source_run, runner, evidence, *, build_s
             processes.append(process)
             host, port = runner.wait_for_service(ready, process, startup_log=startup)
             urls.append(f"http://{host}:{port}/api")
+        mark_pretest("fixture-artifacts:a")
         fixture_payload = runner.write_fixture_artifacts(directory, "a")
         if "b" in flow["fixtures"]:
+            mark_pretest("fixture-artifacts:b")
             write_json(directory / "fixture-manifest-b.json", runner.fixture_manifest("b"))
             runner.write_member_manifest(directory / "member-manifest-b.json", "b")
+        mark_pretest("pretest-other")
         environment = runner.make_test_environment(os.environ, server_url=urls[0], public_key=PUBLIC_API_KEY,
                                                    server_url_b=urls[1] if len(urls) == 2 else None)
         environment["STRICT_E2E_EVIDENCE_DIR"] = str(directory)
+        mark_pretest("private-result-bundle")
         bundle = runner.prepare_private_result_bundle_path("smoke-flow")
+        mark_pretest("first-failure-spool")
         spool = bundle.parent / "run/first-failure-spool"
         spool.mkdir(mode=0o700, parents=True)
         first_failure_spool = (spool, [flow["selector"]])
         from ci_failure_diagnostics import first_failure_environment
+        mark_pretest("prepare-run")
         private_run = prepare_test_run(source_run, bundle.parent / "run",
             {**environment, **first_failure_environment(spool, [flow["selector"]], screenshots=True)})
+        mark_pretest("pretest-other")
         command = warm_test_command(private_run, arguments.destination, bundle,
                                     "immichSlidesUITests/" + flow["selector"])
         command += ["-test-timeouts-enabled", "YES", "-default-test-execution-time-allowance", str(METHOD_TIMEOUT_SECONDS),
                     "-maximum-test-execution-time-allowance", str(METHOD_TIMEOUT_SECONDS)]
+        mark_pretest(None)
         execution_started = time.monotonic()
         try:
             code = runner.run_command(command, cwd=root, environment=environment, log_path=directory / "xcodebuild.log",
@@ -503,6 +534,11 @@ def execute_flow(flow, root, arguments, source_run, runner, evidence, *, build_s
             "test" if record["official_execution_complete"] and summary["failedTests"] == 1 else
             "infrastructure" if record["official_execution_complete"] else "official-result")
     except (runner.CommandError, ValueError, OSError, subprocess.SubprocessError) as error:
+        if pretest_step is not None:
+            from strict_e2e_runner_support import InfrastructureTimeout
+            timeout = (isinstance(error, (subprocess.TimeoutExpired, InfrastructureTimeout))
+                       or isinstance(error, runner.CommandError) and error.code == 124)
+            record["pretest_failure_step"] = pretest_step + (":timeout" if timeout and pretest_step in PRETEST_TIMEOUT_STEPS else "")
         record["exit_code"] = getattr(error, "code", 2)
         if record["failure_kind"] != "hang-guard":
             record["failure_kind"] = stage
