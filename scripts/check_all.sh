@@ -28,7 +28,7 @@ Options:
   --allow-private-config  Explicitly use local private configuration; never for public evidence.
   --config NAME=VALUE     Explicit runtime test configuration (repeatable).
   --snapshot-record PATH  Keep the tested tree receipt outside the repository.
-  --python-shards N       Run all Python tests in one process (default) or two parallel shards.
+  --python-shards N       Run all Python tests in one process or two parallel shards (default).
   --with-unit-tests        Also run scripts/run_offline_unit_tests.py for iOS and tvOS.
   --ios-destination DEST   xcodebuild destination for iOS, e.g. 'platform=iOS Simulator,id=<UDID>'.
   --tvos-destination DEST  xcodebuild destination for tvOS, e.g. 'platform=tvOS Simulator,id=<UDID>'.
@@ -63,7 +63,7 @@ with_unit_tests=0
 ios_destination=""
 tvos_destination=""
 output_dir=""
-python_shards=1
+python_shards=2
 
 while [[ $# -gt 0 ]]; do
     case "$1" in

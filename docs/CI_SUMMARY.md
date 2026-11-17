@@ -39,7 +39,7 @@ or an unapproved deselection fails. The [expected-population and policy model](C
 defines exception accounting.
 Exit 1 means failed coverage, a failed command, expected failure, missing result,
 empty Python suite or infrastructure problem; invalid arguments
-exit 2. `--timeout-seconds` sets the total
+exit 2. `--timeout-seconds` sets the per-process
 host budget (default 900, maximum 1200), not a product timing threshold. A timeout
 stops the child process group and records remaining checks as `not-run`.
 The hosted Linux partition explicitly uses 1200 seconds inside its 25-minute job;
@@ -47,10 +47,10 @@ the macOS partition and local default retain 900 seconds.
 
 ### Parallel Python execution
 
-`--python-shards 2` runs the complete admitted Python population in two parallel
-child processes. `scripts/check_all.sh --python-shards 2` exposes the same option;
-its default remains one process running every check and test. Both hosted gate
-partitions and the toolchain workflow enable two shards inside their existing jobs.
+The host runner and `scripts/check_all.sh` default to `--python-shards 2`, running
+the complete admitted Python population in two parallel child processes. Use
+`--python-shards 1` to run every check and test in one process. Both hosted gate
+partitions and the toolchain workflow explicitly enable two shards inside their existing jobs.
 Job names, uploaded files, artifact names and the published version 1 summary stay
 unchanged, so the existing trusted base reader can validate them without a rollout.
 
@@ -1895,8 +1895,8 @@ The gate producer now activates both partitions. Each Python executor first
 checks full dynamic discovery against the complete static inventory, then runs
 its base-owned subset. Linux uses the existing pinned Python packages and zstd;
 macOS executes the base-listed Swift-calling methods and swift-format. The default local host
-command remains unsplit and still runs every host check and Python method; the
-[parallel option](#parallel-python-execution) preserves the same admitted population.
+command remains unpartitioned by platform and still runs every host check and Python method;
+the [default parallel execution](#parallel-python-execution) preserves the same admitted population.
 
 The Python executor flushes `PYTHON START` and `PYTHON FINISH` lines with the
 discovered test identity, outcome and elapsed time. If one test (or discovery or

@@ -175,8 +175,8 @@ class CheckAllTests(unittest.TestCase):
         self.assertIn("RESULT: FAIL (1 step(s) failed)", result.stdout)
         self.assertEqual(len(self.calls()), 1)
 
-    def test_python_shard_count_reaches_the_host_runner_with_single_process_default(self):
-        for arguments, expected in (((), "1"), (("--python-shards", "2"), "2")):
+    def test_python_shard_count_reaches_the_host_runner_with_two_shards_by_default(self):
+        for arguments, expected in (((), "2"), (("--python-shards", "1"), "1"), (("--python-shards", "2"), "2")):
             with self.subTest(arguments=arguments):
                 self.log.unlink(missing_ok=True)
                 result = self.run_check_all(*arguments)

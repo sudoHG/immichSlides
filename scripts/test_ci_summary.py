@@ -2889,7 +2889,7 @@ print('parsed 3 nightly retry records without image or runner dependencies')
                         shard["population"].update(declared=entries, compiled=compiled, observed=rows)
                         receipts.append((number, shard, code))
                     return receipts
-                with patch("sys.argv", ["run_host_checks.py", "--python-shards", "2", "--output-dir", str(output)]), \
+                with patch("sys.argv", ["run_host_checks.py", "--output-dir", str(output)]), \
                         patch.object(run_host_checks, "run_identity", return_value=valid_summary()["identity"]), \
                         patch.object(run_host_checks, "toolchain", return_value=valid_summary()["toolchain"]), \
                         patch.object(run_host_checks, "python_shard_weights", return_value=weights), \
@@ -3171,6 +3171,7 @@ time.sleep(30)
                             patch.object(run_host_checks, "shard_execution_deadline", return_value=17), \
                             patch("ci_population.python_identities", return_value=python), \
                             patch.object(run_host_checks, "run_steps", side_effect=steps), \
+                            patch.object(run_host_checks, "run_parallel_shards", side_effect=AssertionError("unexpected fan-out")), \
                             contextlib.redirect_stdout(io.StringIO()):
                         self.assertEqual(run_host_checks.main(), 0)
                     summary = ci_summary.parse_summary((output / "summary.json").read_text())
@@ -3387,11 +3388,12 @@ class HostResultTests(unittest.TestCase):
                     self.assertIn("--selection-path", invocation)
                     return [ci_summary.observation(ci_summary.test_identity("host", name), "passed", 0)
                             for name, command in commands], []
-                with patch("sys.argv", ["run_host_checks.py", "--host-platform", scope, "--output-dir", str(output)]), \
+                with patch("sys.argv", ["run_host_checks.py", "--python-shards", "1", "--host-platform", scope, "--output-dir", str(output)]), \
                         patch.object(run_host_checks, "run_identity", return_value=valid_summary()["identity"]), \
                         patch.object(run_host_checks, "toolchain", return_value=valid_summary()["toolchain"]), \
                         patch("ci_population.python_identities", return_value=python), \
                         patch.object(run_host_checks, "run_steps", side_effect=steps), \
+                        patch.object(run_host_checks, "run_parallel_shards", side_effect=AssertionError("unexpected fan-out")), \
                         contextlib.redirect_stdout(io.StringIO()):
                     self.assertEqual(run_host_checks.main(), 0)
                 summary = ci_summary.parse_summary((output / "summary.json").read_text())
@@ -3680,10 +3682,11 @@ class HostResultTests(unittest.TestCase):
                 return [ci_summary.observation(ci_summary.test_identity("host", name), "failed" if name == "python tests" else "passed", 0)
                         for name, _ in run_host_checks.HOST_CHECKS], []
 
-            with patch("sys.argv", ["run_host_checks.py", "--output-dir", str(output)]), \
+            with patch("sys.argv", ["run_host_checks.py", "--python-shards", "1", "--output-dir", str(output)]), \
                     patch.object(run_host_checks, "run_identity", return_value=valid_summary()["identity"]), \
                     patch.object(run_host_checks, "toolchain", return_value=valid_summary()["toolchain"]), \
                     patch.object(run_host_checks, "run_steps", side_effect=steps), \
+                    patch.object(run_host_checks, "run_parallel_shards", side_effect=AssertionError("unexpected fan-out")), \
                     contextlib.redirect_stdout(io.StringIO()) as terminal, contextlib.redirect_stderr(io.StringIO()):
                 code = run_host_checks.main()
             self.assertEqual(code, 1)
@@ -3706,11 +3709,12 @@ class HostResultTests(unittest.TestCase):
                 return [ci_summary.observation(ci_summary.test_identity("host", name), "passed", 0)
                         for name, _ in run_host_checks.HOST_CHECKS], []
 
-            with patch("sys.argv", ["run_host_checks.py", "--output-dir", str(output)]), \
+            with patch("sys.argv", ["run_host_checks.py", "--python-shards", "1", "--output-dir", str(output)]), \
                     patch.object(run_host_checks, "run_identity", return_value=valid_summary()["identity"]) as identity_call, \
                     patch.object(run_host_checks, "toolchain", return_value=valid_summary()["toolchain"]), \
                     patch("ci_population.python_identities", return_value=[identity]), \
                     patch.object(run_host_checks, "run_steps", side_effect=steps), \
+                    patch.object(run_host_checks, "run_parallel_shards", side_effect=AssertionError("unexpected fan-out")), \
                     contextlib.redirect_stdout(io.StringIO()):
                 code = run_host_checks.main()
             self.assertEqual(code, 1)
@@ -3742,12 +3746,13 @@ class HostResultTests(unittest.TestCase):
                     return [ci_summary.observation(ci_summary.test_identity("host", name), "passed", 0)
                             for name, _ in run_host_checks.HOST_CHECKS], []
 
-                with patch("sys.argv", ["run_host_checks.py", "--output-dir", str(output)]), \
+                with patch("sys.argv", ["run_host_checks.py", "--python-shards", "1", "--output-dir", str(output)]), \
                         patch.object(run_host_checks, "run_identity", return_value=valid_summary()["identity"]), \
                         patch.object(run_host_checks, "toolchain", return_value=valid_summary()["toolchain"]), \
                         patch("ci_population.python_identities", return_value=[identity]), \
                         patch("ci_verdict.parse_policy", side_effect=lambda raw: policy if isinstance(raw, str) else parse_policy(raw)), \
                         patch.object(run_host_checks, "run_steps", side_effect=steps), \
+                        patch.object(run_host_checks, "run_parallel_shards", side_effect=AssertionError("unexpected fan-out")), \
                         contextlib.redirect_stdout(io.StringIO()):
                     code = run_host_checks.main()
                 self.assertEqual(code, 0)
@@ -3757,8 +3762,11 @@ class HostResultTests(unittest.TestCase):
                 self.assertIn("test-policy", summary["hashes"]["policies"])
 
     def test_invalid_population_or_policy_still_writes_placeholder_and_runs_all_checks(self):
-        for invalid in ("python_identities", "parse_policy"):
-            with self.subTest(invalid=invalid), tempfile.TemporaryDirectory() as directory:
+        cases = [("python_identities", ["--python-shards", "1"]),
+                 ("python_identities", []), ("python_identities", ["--python-shards", "2"]),
+                 ("parse_policy", ["--python-shards", "1"])]
+        for invalid, arguments in cases:
+            with self.subTest(invalid=invalid, arguments=arguments), tempfile.TemporaryDirectory() as directory:
                 output = Path(directory) / "output"
 
                 def steps(commands, *args, **kwargs):
@@ -3770,12 +3778,13 @@ class HostResultTests(unittest.TestCase):
                     return [ci_summary.observation(ci_summary.test_identity("host", name), "passed", 0)
                             for name, _ in commands], []
 
-                with patch("sys.argv", ["run_host_checks.py", "--output-dir", str(output)]), \
+                with patch("sys.argv", ["run_host_checks.py", *arguments, "--output-dir", str(output)]), \
                         patch.object(run_host_checks, "run_identity", return_value=valid_summary()["identity"]), \
                         patch.object(run_host_checks, "toolchain", return_value=valid_summary()["toolchain"]), \
                         patch(("ci_population." if invalid == "python_identities" else "ci_verdict.") + invalid,
                               side_effect=ci_summary.ContractError("unsupported test base")), \
                         patch.object(run_host_checks, "run_steps", side_effect=steps) as run, \
+                        patch.object(run_host_checks, "run_parallel_shards", side_effect=AssertionError("unexpected fan-out")), \
                         contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                     code = run_host_checks.main()
                 self.assertEqual(code, 1)
