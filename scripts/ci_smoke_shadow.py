@@ -33,6 +33,21 @@ PRODUCER_BUDGET_MINUTES = 27
 SETUP_FAILURE_STEPS = {"job-clock", "preflight", "archive-verify", "simulator", "simulator-ready",
                        "archive-load", "runner-command"}
 SETUP_FAILURE_COMMANDS = {"git", "xcrun-sdk", "simctl", "codesign", "readiness", "other"}
+# Staged control must validate old tested heads without importing a new runner constant.
+PRETEST_STEPS = frozenset({
+    "flow-directory", "source-identity", "private-evidence", "destination",
+    "simulator-reset:validate", "simulator-reset:prepare", "simulator-reset:terminate",
+    "simulator-reset:boot", "simulator-reset:bootstatus", "simulator-reset:readiness",
+    "simulator-reset:uninstall", "simulator-reset:uninstall-retry", "simulator-reset:container",
+    "simulator-reset:keychain", "simulator-reset:keychain-retry",
+    "simulator-reset:privacy", "simulator-reset:privacy-retry",
+    "simulator-reset:autofill-device", "simulator-reset:autofill-disable",
+    "simulator-reset:autofill-readback", "simulator-reset:autofill-deadline",
+    "simulator-reset:log", "fixture-service:a", "fixture-service:b",
+    "fixture-artifacts:a", "fixture-artifacts:b", "test-environment",
+    "private-result-bundle", "first-failure-spool", "prepare-run", "prepare-command",
+})
+PRETEST_FAILURE_STEPS = PRETEST_STEPS | {step + ":timeout" for step in PRETEST_STEPS}
 
 
 def smoke_artifact_name(configuration, control):
@@ -400,6 +415,14 @@ def valid_setup_failure(record):
     return (isinstance(command, str) and command in SETUP_FAILURE_COMMANDS if setup_timeout else command is None)
 
 
+def valid_pretest_failure(row):
+    step = row.get("pretest_failure_step")
+    return (step is None or isinstance(step, str) and step in PRETEST_FAILURE_STEPS
+            and row.get("outcome") in {"FAIL", "failed"} and row.get("official_execution_complete") is False
+            and row.get("elapsed_seconds") == 0 and row.get("failure_kind") in {"infrastructure", "cleanup"}
+            and type(row.get("exit_code")) is int and row["exit_code"] != 0)
+
+
 def timeout_command(argv):
     if isinstance(argv, (list, tuple)):
         for prefix, command in ((["git"], "git"), (["xcrun", "--sdk"], "xcrun-sdk"),
@@ -491,6 +514,9 @@ def aggregate(plan, records, matrix_result, *, producers=None, producer_results=
                     continue
                 if row.get("failure_locations") is not None and public_failure_locations(row["failure_locations"]) is None:
                     errors.append("invalid public failure locations: " + row["id"])
+                    continue
+                if not valid_pretest_failure(row):
+                    errors.append("invalid pretest failure step: " + row["id"])
                     continue
                 if "first_failure" in row:
                     try:
@@ -594,13 +620,15 @@ def markdown(record):
              f"({nightly['conclusion']}; evidence: {nightly['execution']}; aggregate: {markdown_text(old_status)}).", "",
              f"Executed: {record['executed']}; comparable executed shadow: {record['comparison_eligible']}. "
              "Informational only; first results, no retries or yellow.", "",
-             "| Flow | Device | Configuration | Outcome | Elapsed (s) | Failure class | First public failure | First failure context |",
-             "|---|---|---|---|---:|---|---|---|"]
+             "| Flow | Device | Configuration | Outcome | Elapsed (s) | Failure class | Pre-test failure step | First public failure | First failure context |",
+             "|---|---|---|---|---:|---|---|---|---|"]
     if record.get("not_run_reason"):
         lines[6:6] = ["Not run: " + markdown_text(record["not_run_reason"]), ""]
     for row in record["flows"]:
         values = [row["id"], row["device"], row["configuration"], row["outcome"], row["elapsed_seconds"],
-                  row.get("failure_category"), row.get("first_failure_message"),
+                  row.get("failure_category"),
+                  (row["pretest_failure_step"] or "none") if "pretest_failure_step" in row else "unknown",
+                  row.get("first_failure_message"),
                   render_first_failure(row["first_failure"]) if "first_failure" in row else None]
         lines.append("| " + " | ".join(markdown_text(value) if value is not None else "unknown" for value in values) + " |")
     if record["group_timings"]:
@@ -684,6 +712,7 @@ def copy_first_failure_images(evidence, records, rows):
 def check_group_upload(directory, record):
     from ci_failure_diagnostics import validate_first_failure, validate_ui_first_failure_images
     require(valid_setup_failure(record), "invalid group setup failure")
+    require(all(valid_pretest_failure(row) for row in record["flows"]), "invalid pretest failure step")
     declared = [{"key": row["selector"]} for row in record["flows"]]
     observed = []
     for identity, row in zip(declared, record["flows"]):
@@ -865,6 +894,7 @@ def read_runner_flows(evidence, scheduling, selected, destination, *, validation
                 and (result["failure_kind"] == "none") == (result["outcome"] == "PASS")
                 and type(result.get("official_execution_complete")) is bool,
                 "smoke runner flow metadata differs")
+        require(valid_pretest_failure(result), "smoke runner pretest failure step differs")
         locations = result.get("failure_locations")
         require(locations is None or public_failure_locations(locations) is not None,
                 "smoke runner public failure locations differ")
@@ -877,6 +907,8 @@ def read_runner_flows(evidence, scheduling, selected, destination, *, validation
                "executed": False, "official_execution_complete": False,
                "failure_category": None if result["outcome"] == "PASS" else "infra",
                "first_failure_message": None}
+        if "pretest_failure_step" in result:
+            row["pretest_failure_step"] = result["pretest_failure_step"]
         fixed_messages = {"Smoke flow execution exceeded its hang guard.",
                           "Smoke flow infrastructure or official-result validation failed."}
         message = result.get("first_public_failure_message")
