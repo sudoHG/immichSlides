@@ -179,16 +179,31 @@ not authorize archive admission, relax group validation or change comparison eli
 
 Smoke shadow alone may retire and re-create its simulator once when `simulator` or
 `simulator-ready` fails, including a timeout, before archive load, warm-up or any flow
-starts. Shutdown and delete must both succeed within their existing bounds; otherwise
-the original failure and device remain for cleanup. Re-creation uses the same pinned
+starts. A create that never publishes a device is not re-created, even when the
+environment inherited a device. Retirement accepts a nonzero shutdown only when
+CoreSimulator reports `current state: Shutdown`; delete must still return zero.
+Both commands retain their existing bounds. Otherwise the original failure and
+device remain for cleanup. Re-creation uses the same pinned
 create/boot and readiness path, publishes the fresh device for cleanup, and prints
 `setup-recreate: step=<simulator|simulator-ready>; command=<closed token>; attempt=1`.
 The group field `simulator_recreate` is null (also the default for historical records)
 or `{"step": ..., "command": ...}`, using only the setup command vocabulary above;
-the group summary displays it. It requires enough of the unchanged group/job budget
-for retirement, a full second device setup (including TV warm-up), every selected
-flow at its normal 330-second native cap, and the existing three-minute cleanup reserve;
-the budget is checked again after retirement. There is no second re-create or flow
+the group summary displays it. Eligibility uses only the remaining inner budget:
+`inner_remaining = job_started_epoch + GROUP_BUDGET_MINUTES[group]*60 - time.time()`.
+Let `R = 2*SIMULATOR_COMMAND_TIMEOUT_SECONDS` (120 seconds for retirement),
+`C = 2*SIMULATOR_SETUP_COMMAND_TIMEOUT_SECONDS` (120 seconds for create/boot),
+`P = SIMULATOR_PREPARATION_TIMEOUT_SECONDS` (600 seconds), and
+`L = ARCHIVE_LOAD_OWN_CAP_SECONDS` (510 seconds from existing git `3*30`,
+SDK `2*60`, simctl list `3*60` and codesign `120` caps). iOS archive groups require
+`inner_remaining >= R+C+P` before retirement and `>= C+P` afterward. Only on the
+re-create path, archive load additionally requires `inner_remaining >= L`
+immediately before it starts. TV groups require `>= R+C` before retirement and
+`>= C` afterward. Flows, warm-up and the cold build are excluded from eligibility;
+their runner receives the remaining inner budget. The three-minute job reserve
+is unchanged and excluded. A late re-create can still end red as
+`group-budget-exhausted`, including when the archive-load check refuses to start
+loading. The summary then shows the failed setup step as `none`, with the original
+failure in the simulator re-create column. There is no second re-create or flow
 retry: a second setup failure stays red with its own attribution. Complete official
 first flow results count normally; "attempt 1" in the counting rule means the workflow
 run attempt, which is unchanged. Legacy nightly, PR CI and UI shards are unaffected.

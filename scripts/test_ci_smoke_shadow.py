@@ -11,7 +11,7 @@ import tempfile
 import time
 import tarfile
 import unittest
-from contextlib import ExitStack, contextmanager, redirect_stderr
+from contextlib import ExitStack, redirect_stderr
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -150,10 +150,17 @@ def plan_fixture(temporary, stack, *, ancestor=0):
     return context, api, reader
 
 
-def _simulator_group_fixture(*, archive=True, group_id="iphone-debug", elapsed=0):
+class SimulatorGroupFixture(ExitStack):
     """Keep real group control/ownership and fake only host and official-result boundaries."""
-    with tempfile.TemporaryDirectory() as raw, ExitStack() as stack:
-        temporary = Path(raw)
+
+    def __init__(self, *, archive=True, group_id="iphone-debug", elapsed=0):
+        super().__init__()
+        self.archive, self.group_id, self.elapsed = archive, group_id, elapsed
+
+    def __enter__(self):
+        stack = self
+        archive, group_id, elapsed = self.archive, self.group_id, self.elapsed
+        temporary = Path(stack.enter_context(tempfile.TemporaryDirectory()))
         scheduling = shared_plan() if archive else plan()
         context = dict(environment(), SMOKE_GROUP=group_id, GITHUB_ENV=str(temporary / "github-env"))
         clock = [1000.0]
@@ -196,21 +203,17 @@ def _simulator_group_fixture(*, archive=True, group_id="iphone-debug", elapsed=0
         stack.enter_context(patch.object(shadow, "scan_records"))
         stack.enter_context(patch("ci_failure_diagnostics.validate_ui_first_failure_images"))
         log = stack.enter_context(redirect_stderr(io.StringIO()))
-        yield SimpleNamespace(temporary=temporary, scheduling=scheduling, context=context, clock=clock,
+        return SimpleNamespace(temporary=temporary, scheduling=scheduling, context=context, clock=clock,
             verify=verify, load=load, prepare=prepare, create=create, simulator=simulator, retire=retire,
             runner=runner, log=log,
             run=lambda: shadow.run_group(scheduling, context, temporary),
             record=lambda: json.loads((temporary / "smoke-records/group.json").read_text()))
 
 
-def simulator_group_fixture(**options):
-    return contextmanager(_simulator_group_fixture)(**options)
-
-
 class SmokeShadowTests(unittest.TestCase):
     def test_successful_setup_never_recreates_the_simulator(self):
         for archive, group in ((True, "iphone-debug"), (False, "tv-release")):
-            with self.subTest(archive=archive), simulator_group_fixture(archive=archive, group_id=group) as fixture:
+            with self.subTest(archive=archive), SimulatorGroupFixture(archive=archive, group_id=group) as fixture:
                 self.assertEqual(fixture.run(), 0)
                 self.assertEqual(fixture.simulator.call_count, 1)
                 fixture.retire.assert_not_called()
@@ -221,7 +224,7 @@ class SmokeShadowTests(unittest.TestCase):
         from strict_e2e_runner_support import CommandError, InfrastructureTimeout
         for step in ("simulator", "simulator-ready"):
             for kind in ("command", "timeout", "readiness-timeout", "converted-timeout"):
-                with self.subTest(step=step, kind=kind), simulator_group_fixture() as fixture:
+                with self.subTest(step=step, kind=kind), SimulatorGroupFixture() as fixture:
                     failure = {"command": CommandError("PRIVATE_SENTINEL"),
                         "timeout": subprocess.TimeoutExpired(["xcrun", "simctl", "PRIVATE_SENTINEL"], 60),
                         "readiness-timeout": InfrastructureTimeout("PRIVATE_SENTINEL", 300),
@@ -256,7 +259,7 @@ class SmokeShadowTests(unittest.TestCase):
     def test_second_setup_failure_stays_red_without_another_recreate(self):
         from strict_e2e_runner_support import InfrastructureTimeout
         for second in ("simulator", "simulator-ready"):
-            with self.subTest(second=second), simulator_group_fixture() as fixture:
+            with self.subTest(second=second), SimulatorGroupFixture() as fixture:
                 failure = InfrastructureTimeout("PRIVATE_SENTINEL", 300)
                 fixture.prepare.side_effect = [failure, failure]
                 def create(*args):
@@ -279,9 +282,8 @@ class SmokeShadowTests(unittest.TestCase):
                 fixture.runner.assert_not_called()
 
     def test_recreate_never_catches_archive_runner_or_group_budget_failures(self):
-        for boundary in ("archive-verify", "archive-load", "runner-command", "warm-up", "flows", "budget"):
-            with self.subTest(boundary=boundary), simulator_group_fixture(archive=boundary != "warm-up",
-                    elapsed=2000 if boundary == "budget" else 0) as fixture:
+        for boundary in ("archive-verify", "archive-load", "runner-command", "warm-up", "flows"):
+            with self.subTest(boundary=boundary), SimulatorGroupFixture(archive=boundary != "warm-up") as fixture:
                 failure = subprocess.TimeoutExpired(["xcrun", "simctl", "PRIVATE_SENTINEL"], 60)
                 target = {"archive-verify": fixture.verify, "archive-load": fixture.load,
                           "warm-up": fixture.runner, "flows": fixture.runner}.get(boundary)
@@ -295,15 +297,40 @@ class SmokeShadowTests(unittest.TestCase):
                 self.assertEqual(fixture.record()["setup_failure_step"], boundary if boundary in {
                     "archive-verify", "archive-load", "runner-command"} else None)
                 self.assertNotIn("setup-recreate:", fixture.log.getvalue())
-                if boundary == "budget":
-                    self.assertEqual(fixture.record()["errors"], ["group-budget-exhausted"])
-                    fixture.runner.assert_not_called()
+
+    def test_create_without_publication_never_retires_an_inherited_device(self):
+        with SimulatorGroupFixture() as fixture:
+            fixture.context["UI_SIMULATOR"] = "inherited-device"
+            publication = Path(fixture.context["GITHUB_ENV"])
+            publication.write_text("UNRELATED=unchanged\n")
+            fixture.simulator.side_effect = ContractError("PRIVATE_SENTINEL")
+            self.assertEqual(fixture.run(), 1)
+            self.assertEqual(fixture.simulator.call_count, 1)
+            fixture.retire.assert_not_called()
+            self.assertNotIn("setup-recreate:", fixture.log.getvalue())
+            self.assertEqual(publication.read_text(), "UNRELATED=unchanged\n")
+            self.assertIsNone(fixture.record()["simulator_recreate"])
+
+    def test_already_shutdown_device_can_be_retired_before_recreating(self):
+        from strict_e2e_runner_support import InfrastructureTimeout
+        with SimulatorGroupFixture() as fixture:
+            fixture.prepare.side_effect = [InfrastructureTimeout("PRIVATE_SENTINEL", 300), None]
+            fixture.retire.side_effect = [SimpleNamespace(returncode=149, stderr=
+                "Unable to shutdown device in current state: Shutdown\nPRIVATE_SENTINEL"),
+                SimpleNamespace(returncode=0)]
+            self.assertEqual(fixture.run(), 0)
+            self.assertEqual(fixture.simulator.call_count, 2)
+            self.assertEqual([call.args[0] for call in fixture.retire.call_args_list], [
+                ["xcrun", "simctl", action, "synthetic-1"] for action in ("shutdown", "delete")])
+            self.assertEqual(fixture.record()["simulator_recreate"],
+                             {"step": "simulator-ready", "command": "readiness"})
+            self.assertNotIn("PRIVATE_SENTINEL", fixture.log.getvalue() + json.dumps(fixture.record()))
 
     def test_failed_retirement_keeps_the_original_setup_attribution_and_device(self):
         from strict_e2e_runner_support import InfrastructureTimeout
         for action in ("shutdown", "delete"):
             for kind in ("exit", "timeout", "launch"):
-                with self.subTest(action=action, kind=kind), simulator_group_fixture() as fixture:
+                with self.subTest(action=action, kind=kind), SimulatorGroupFixture() as fixture:
                     fixture.prepare.side_effect = InfrastructureTimeout("PRIVATE_SENTINEL", 300)
                     def retire(argv, *_args, **_options):
                         if argv[2] == action:
@@ -311,13 +338,16 @@ class SmokeShadowTests(unittest.TestCase):
                                 raise InfrastructureTimeout("PRIVATE_SENTINEL", 60)
                             if kind == "launch":
                                 raise OSError("PRIVATE_SENTINEL")
-                            return SimpleNamespace(returncode=1)
+                            return SimpleNamespace(returncode=1, stderr="PRIVATE_SENTINEL" if action == "shutdown"
+                                                   else "current state: Shutdown")
                         return SimpleNamespace(returncode=0)
                     fixture.retire.side_effect = retire
                     self.assertEqual(fixture.run(), 1)
                     self.assertEqual(fixture.simulator.call_count, 1)
                     self.assertEqual(fixture.retire.call_count, 1 if action == "shutdown" else 2)
                     self.assertEqual(fixture.context["UI_SIMULATOR"], "synthetic-1")
+                    published = dict(line.split("=", 1) for line in Path(fixture.context["GITHUB_ENV"]).read_text().splitlines())
+                    self.assertEqual(published["UI_SIMULATOR"], "synthetic-1")
                     record = fixture.record()
                     self.assertIsNone(record["simulator_recreate"])
                     self.assertEqual((record["setup_failure_step"], record["setup_failure_command"], record["runner_exit_code"]),
@@ -325,40 +355,69 @@ class SmokeShadowTests(unittest.TestCase):
                     self.assertEqual(fixture.log.getvalue(), "setup-step-timeout: step=simulator-ready; command=readiness\n")
                     fixture.load.assert_not_called()
 
-    def test_recreate_budget_reserves_full_setup_all_native_flows_and_cleanup(self):
+    def test_recreate_eligibility_bounds_setup_before_and_after_retirement(self):
         from strict_e2e_runner_support import InfrastructureTimeout
-        from strict_e2e_smoke import FLOW_TIMEOUT_SECONDS
-        smoke_manifest = json.loads((shadow.ROOT / shadow.MANIFEST).read_text())
-        scheduling = shadow.make_plan(environment(), nightly(), smoke_manifest, "c" * 64, "real")
-        for group in scheduling["groups"]:
-            count = len(shadow.group_flows(scheduling, group["id"]))
-            archive = group["platform"] == "ios"
-            required = 2 * 60 + 2 * 60 + (600 if archive else 1200) + count * FLOW_TIMEOUT_SECONDS
-            inner = shadow.GROUP_BUDGET_MINUTES[group["id"]] * 60
-            with self.subTest(group=group["id"]):
-                self.assertIs(shadow.can_recreate_simulator(group["id"], count, archive, 1000, now=1000), required <= inner)
-                if required <= inner:
-                    self.assertIs(shadow.can_recreate_simulator(group["id"], count, archive, 1000,
-                        now=1000 + inner - required), True)
-                    self.assertIs(shadow.can_recreate_simulator(group["id"], count, archive, 1000,
-                        now=1001 + inner - required), False)
-        for elapsed, retirement_seconds, expected in ((451, 0, 0), (450, 0, 1), (450, 121, 0)):
-            with self.subTest(elapsed=elapsed, retirement_seconds=retirement_seconds), simulator_group_fixture(elapsed=elapsed) as fixture:
-                fixture.prepare.side_effect = [InfrastructureTimeout("PRIVATE_SENTINEL", 300), None]
-                def retire(*_args, **_options):
-                    fixture.clock[0] += retirement_seconds / 2
-                    return SimpleNamespace(returncode=0)
-                fixture.retire.side_effect = retire
-                self.assertEqual(fixture.run(), 0 if expected else 1)
-                self.assertEqual(fixture.simulator.call_count, 1 + expected)
-                self.assertEqual(fixture.record()["simulator_recreate"] is not None, bool(expected))
-                if elapsed == 451:
-                    fixture.retire.assert_not_called()
+        for archive, group, before_elapsed, after_elapsed in ((True, "iphone-debug", 780, 900),
+                                                            (False, "tv-release", 1080, 1200)):
+            for boundary in ("before", "after"):
+                for offset in (-1, 0, 1):
+                    elapsed = before_elapsed + offset if boundary == "before" else 0
+                    with self.subTest(archive=archive, boundary=boundary, offset=offset), SimulatorGroupFixture(
+                            archive=archive, group_id=group, elapsed=elapsed) as fixture:
+                        failure = InfrastructureTimeout("PRIVATE_SENTINEL", 300)
+                        if archive:
+                            fixture.prepare.side_effect = [failure, None]
+                        else:
+                            def create(*args):
+                                udid = fixture.create(*args)
+                                if fixture.simulator.call_count == 1:
+                                    raise failure
+                                return udid
+                            fixture.simulator.side_effect = create
+                        if boundary == "after":
+                            def retire(*_args, **_options):
+                                fixture.clock[0] = 1000 + after_elapsed + offset
+                                return SimpleNamespace(returncode=0)
+                            fixture.retire.side_effect = retire
+                        eligible = offset <= 0
+                        self.assertEqual(fixture.run(), 0 if eligible else 1)
+                        self.assertEqual(fixture.simulator.call_count, 2 if eligible else 1)
+                        self.assertEqual(fixture.retire.call_count, 0 if boundary == "before" and not eligible else 2)
+                        self.assertEqual(fixture.record()["simulator_recreate"] is not None, eligible)
+                        if not eligible:
+                            self.assertEqual(fixture.record()["setup_failure_step"], "simulator-ready" if archive else "simulator")
+                            fixture.load.assert_not_called()
+                            fixture.runner.assert_not_called()
+
+    def test_recreated_archive_requires_its_own_caps_before_loading(self):
+        from strict_e2e_runner_support import InfrastructureTimeout
+        for recreated in (False, True):
+            for offset in (-1, 0, 1):
+                with self.subTest(recreated=recreated, offset=offset), SimulatorGroupFixture() as fixture:
+                    def prepare(*_args, **_options):
+                        if recreated and fixture.prepare.call_count == 1:
+                            raise InfrastructureTimeout("PRIVATE_SENTINEL", 300)
+                        fixture.clock[0] = 1000 + 1110 + offset
+                    fixture.prepare.side_effect = prepare
+                    eligible = not recreated or offset <= 0
+                    self.assertEqual(fixture.run(), 0 if eligible else 1)
+                    self.assertEqual(fixture.simulator.call_count, 2 if recreated else 1)
+                    self.assertEqual(fixture.load.call_count, int(eligible))
+                    self.assertEqual(fixture.runner.call_count, int(eligible))
+                    self.assertEqual(fixture.record()["simulator_recreate"] is not None, recreated)
+                    if not eligible:
+                        record = fixture.record()
+                        self.assertEqual(record["errors"], ["group-budget-exhausted"])
+                        self.assertEqual(record["runner_exit_code"], 124)
+                        self.assertIsNone(record["setup_failure_step"])
+                        self.assertIsNone(record["setup_failure_command"])
+                        self.assertTrue(all(row["outcome"] == "not-run" and not row["executed"] for row in record["flows"]))
+                        self.assertFalse(shadow.aggregate(fixture.scheduling, [record], "failure")["comparison_eligible"])
 
     def test_cleanup_uses_the_fresh_published_device_even_when_its_boot_fails(self):
         from strict_e2e_runner_support import InfrastructureTimeout
         for failure in (None, "boot", "create"):
-            with self.subTest(failure=failure), simulator_group_fixture() as fixture:
+            with self.subTest(failure=failure), SimulatorGroupFixture() as fixture:
                 fixture.prepare.side_effect = [InfrastructureTimeout("PRIVATE_SENTINEL", 300), None]
                 def create(*args):
                     if failure == "create" and fixture.simulator.call_count == 2:

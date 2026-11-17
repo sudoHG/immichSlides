@@ -34,8 +34,8 @@ SETUP_FAILURE_STEPS = {"job-clock", "preflight", "archive-verify", "simulator", 
                        "archive-load", "runner-command"}
 SETUP_FAILURE_COMMANDS = {"git", "xcrun-sdk", "simctl", "codesign", "readiness", "other"}
 SIMULATOR_RECREATE_STEPS = {"simulator", "simulator-ready"}
-COLD_BUILD_TIMEOUT_SECONDS = 1200
-WARM_BUILD_TIMEOUT_SECONDS = 600
+# Existing archive-load caps: git x3, xcrun-sdk x2, simctl-list x3, codesign x1.
+ARCHIVE_LOAD_OWN_CAP_SECONDS = 3 * 30 + 2 * 60 + 3 * 60 + 120
 
 
 def smoke_artifact_name(configuration, control):
@@ -428,16 +428,15 @@ def setup_failure_command(error, step):
     return "simctl" if step == "simulator" else "other"
 
 
-def can_recreate_simulator(group_id, flow_count, archive, started, *, now=None, retiring=True):
+def can_recreate_simulator(group_id, archive, started, *, retiring=True):
     from ci_simulator import SIMULATOR_SETUP_COMMAND_TIMEOUT_SECONDS
     from strict_e2e_runner_support import SIMULATOR_COMMAND_TIMEOUT_SECONDS, SIMULATOR_PREPARATION_TIMEOUT_SECONDS
-    from strict_e2e_smoke import FLOW_TIMEOUT_SECONDS
-    remaining = started + (GROUP_BUDGET_MINUTES[group_id] + JOB_RESERVE_MINUTES) * 60 - (time.time() if now is None else now)
+    remaining = started + GROUP_BUDGET_MINUTES[group_id] * 60 - time.time()
     setup = 2 * SIMULATOR_SETUP_COMMAND_TIMEOUT_SECONDS
-    setup += SIMULATOR_PREPARATION_TIMEOUT_SECONDS if archive else COLD_BUILD_TIMEOUT_SECONDS
+    setup += SIMULATOR_PREPARATION_TIMEOUT_SECONDS if archive else 0
     retirement = 2 * SIMULATOR_COMMAND_TIMEOUT_SECONDS if retiring else 0
-    # The reserve is outside the inner deadline, never available to device setup or flows.
-    return remaining >= retirement + setup + flow_count * FLOW_TIMEOUT_SECONDS + JOB_RESERVE_MINUTES * 60
+    # Warm-up and flows receive the remaining inner budget through run_runner.
+    return remaining >= retirement + setup
 
 
 def create_group_simulator(group, environment):
@@ -467,7 +466,8 @@ def retire_group_simulator(udid):
     for action in ("shutdown", "delete"):
         completed = simulator_command(["xcrun", "simctl", action, udid], "simulator-retire",
                                       timeout_seconds=SIMULATOR_COMMAND_TIMEOUT_SECONDS)
-        if completed.returncode != 0:
+        if completed.returncode != 0 and (action != "shutdown" or
+                "current state: shutdown" not in completed.stderr.lower()):
             return False
     return True
 
@@ -888,8 +888,8 @@ def runner_command(group, destination, root, evidence, *, warm, archive=False):
             "--derived-data-path", str(root / "derived"), "--cloned-source-packages-path", str(root / "packages"),
             "--evidence-dir", str(evidence), "--min-free-gib", "20" if os.environ.get("GITHUB_ACTIONS") == "true" else "80",
             *(["--smoke-archive", "--smoke-control-path", str(root / "expected-control.json")] if archive else []),
-            *(["--test-without-building", "--warm-timeout-seconds", str(WARM_BUILD_TIMEOUT_SECONDS), "--simulator-boot-submitted"] if warm
-              else ["--warm-up-only", "--cold-timeout-seconds", str(COLD_BUILD_TIMEOUT_SECONDS)])]
+            *(["--test-without-building", "--warm-timeout-seconds", "600", "--simulator-boot-submitted"] if warm
+              else ["--warm-up-only", "--cold-timeout-seconds", "1200"])]
 
 
 def read_runner_flows(evidence, scheduling, selected, destination, *, validation=None):
@@ -1120,7 +1120,7 @@ def run_group(scheduling, environment, temporary):
             except (CommandError, OfflineCommandError, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
                 failed_udid = environment.get("UI_SIMULATOR")
                 if (attempt != 0 or not failed_udid or not can_recreate_simulator(
-                        group_id, len(flows), archive_mode, record["job_started_epoch"])):
+                        group_id, archive_mode, record["job_started_epoch"])):
                     raise
                 try:
                     retired = retire_group_simulator(failed_udid)
@@ -1129,13 +1129,17 @@ def run_group(scheduling, environment, temporary):
                 except (CommandError, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
                     # Retirement never replaces the original setup failure or its timeout attribution.
                     raise error
-                if not retired or not can_recreate_simulator(group_id, len(flows), archive_mode,
+                if not retired or not can_recreate_simulator(group_id, archive_mode,
                         record["job_started_epoch"], retiring=False):
                     raise
                 command = setup_failure_command(error, setup_step)
                 record["simulator_recreate"] = {"step": setup_step, "command": command}
                 print(f"setup-recreate: step={setup_step}; command={command}; attempt=1", file=sys.stderr, flush=True)
         if archive_mode:
+            remaining = record["job_started_epoch"] + GROUP_BUDGET_MINUTES[group_id] * 60 - time.time()
+            if record["simulator_recreate"] is not None and remaining < ARCHIVE_LOAD_OWN_CAP_SECONDS:
+                setup_step = None
+                raise subprocess.TimeoutExpired([], 0)
             setup_step = "archive-load"
             load_smoke_archive(ROOT, group["configuration"], destination, group["device"], root / "derived",
                                control=scheduling["control"])
