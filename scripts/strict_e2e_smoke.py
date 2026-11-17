@@ -580,7 +580,8 @@ def execute_flow(flow, root, arguments, source_run, runner, evidence, *, build_s
                     "sha256": None, "request_count": None}
         record["total_elapsed_seconds"] = round(time.monotonic() - started, 3)
         if directory_created:
-            write_json(directory / "case-manifest.json", {"source_sha": record["source_sha"],
+            source_sha = runner.read_source_sha(root) if record["source_sha"] is not None else None
+            write_json(directory / "case-manifest.json", {"source_sha": source_sha,
                 "source_dirty_paths": record["source_dirty_paths"],
                 "platform": arguments.platform, "suite": "smoke-flow", "flow": record,
                 "destination": arguments.destination, "scenario": "normal", "fixture_set": "a",

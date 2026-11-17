@@ -8488,6 +8488,7 @@ class SmokeFlowResultTests(unittest.TestCase):
                 record, runner, _ = self.execute_record(Path(temporary), code=code, official_failed=official_failed)
                 self.assertIsNone(record["pretest_failure_step"])
                 self.assertEqual(1, runner.run_command.call_count)
+                self.assertEqual(2, runner.read_source_sha.call_count)
 
     def test_smoke_exit_and_cleanup_failures_override_a_passing_official_method(self):
         for code, cleanup, invalid, expected in ((0, False, False, ("PASS", 0, "none")),
