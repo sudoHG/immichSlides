@@ -8454,9 +8454,9 @@ class SmokeFlowResultTests(unittest.TestCase):
 
     def test_smoke_pretest_preparation_gates_and_autofill_deadline_are_attributed(self):
         from strict_e2e_runner_support import InfrastructureTimeout
-        for step in ("boot", "bootstatus", "readiness", "autofill-deadline", "pretest-other"):
+        for step in ("boot", "bootstatus", "readiness", "autofill-deadline", "pretest-other", "autofill-report"):
             for timeout in (False, True):
-                if step == "pretest-other" and timeout or step == "autofill-deadline" and not timeout:
+                if step in {"pretest-other", "autofill-report"} and timeout or step == "autofill-deadline" and not timeout:
                     continue
                 clock = [0.0]
                 def command(argv, phase, **kwargs):
@@ -8464,7 +8464,7 @@ class SmokeFlowResultTests(unittest.TestCase):
                         if timeout:
                             raise InfrastructureTimeout(phase, 1)
                         return subprocess.CompletedProcess(argv, 1, "", "private-input-sentinel")
-                    if step == "autofill-deadline" and phase == "simulator-password-autofill-readback":
+                    if step in {"autofill-deadline", "autofill-report"} and phase == "simulator-password-autofill-readback":
                         clock[0] = 61
                     stdout = (json.dumps({"devices": {"runtime": [{"udid": "device", "dataPath": "/synthetic/device"}]}})
                               if phase.endswith("autofill-device") else "false" if phase.endswith("autofill-readback") else "")
@@ -8472,7 +8472,8 @@ class SmokeFlowResultTests(unittest.TestCase):
                 def configure(runner):
                     runner.reset_simulator_app = strict_runner.reset_simulator_app
                 def report(line, **kwargs):
-                    if step == "pretest-other" and line.startswith("password_autofill=disabled;"):
+                    if (step == "pretest-other" and line.startswith("password_autofill=disabled;")
+                            or step == "autofill-report" and line.startswith("password-autofill:")):
                         raise OSError("private-input-sentinel")
                 with self.subTest(step=step, timeout=timeout), tempfile.TemporaryDirectory() as temporary, ExitStack() as stack:
                     stack.enter_context(mock.patch("strict_e2e_runner_support.simulator_command", side_effect=command))
@@ -8483,7 +8484,7 @@ class SmokeFlowResultTests(unittest.TestCase):
                         error = InfrastructureTimeout("simulator-readiness", 1) if timeout else CommandError("private-input-sentinel")
                         stack.enter_context(mock.patch("strict_e2e_runner_support.wait_for_simulator_app_response", side_effect=error))
                     record, runner, _ = self.execute_record(Path(temporary), configure_runner=configure)
-                expected = "pretest-other" if step == "pretest-other" else "simulator-reset:" + step + (":timeout" if timeout else "")
+                expected = "pretest-other" if step in {"pretest-other", "autofill-report"} else "simulator-reset:" + step + (":timeout" if timeout else "")
                 self.assertEqual(expected, record["pretest_failure_step"])
                 self.assertNotIn("private-input-sentinel", json.dumps(record))
                 runner.run_command.assert_not_called()

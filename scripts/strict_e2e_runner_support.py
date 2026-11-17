@@ -903,7 +903,11 @@ def _disable_password_autofill(simulator_udid: str, reset_deadline: float, repor
         line = (f"password-autofill: {outcome}; elapsed={time.monotonic() - started:.3f}s; budget={budget:.3f}s; "
                 f"reset_remaining={max(0, reset_deadline - time.monotonic()):.3f}s")
         lines.append(line)
-        report(line)
+        try:
+            report(line)
+        except (OSError, ValueError):
+            report_step("pretest-other")
+            raise
     return lines
 
 
