@@ -501,7 +501,7 @@ def main():
         'Invoke with "${PYTHON:-python3}"; every Python check uses that interpreter, '
         'honoring an active venv or pyenv when PYTHON is unset.'))
     parser.add_argument("--output-dir", type=Path, help="Outside the repository; default is a new temporary directory")
-    parser.add_argument("--timeout-seconds", type=float, default=900, help="Total host-check budget; default 900")
+    parser.add_argument("--timeout-seconds", type=float, default=900, help="Per-process host-check budget; default 900")
     parser.add_argument("--workflow-path", help="Enable CI identity; assert this path against GITHUB_WORKFLOW_REF. Omit for local identity, regardless of CI environment")
     parser.add_argument("--host-platform", choices=("linux", "macos"), help="Run the admitted platform partition; default runs the complete host suite")
     shards = parser.add_mutually_exclusive_group()
@@ -566,11 +566,13 @@ def main():
             policy = parse_policy(policy_bytes.decode("utf-8"))
         except (ContractError, ImportError, OSError, ValueError, TypeError) as error:
             summary["infrastructure"].append({"code": "population-invalid", "message": f"Test policy: {error}"})
+        inventory_failed = False
         try:
             from ci_population import python_identities, python_sources
 
             declared.extend(python_identities(python_sources(REPO_ROOT / "scripts")))
         except (ContractError, ImportError, OSError, ValueError, TypeError) as error:
+            inventory_failed = True
             summary["infrastructure"].append({"code": "population-invalid", "message": f"Static inventory: {error}"})
         steps = [(name, command + (["--output", str(output / "python-results.json")] if name == "python tests" else []))
                  for name, command in HOST_CHECKS]
@@ -586,7 +588,7 @@ def main():
             summary["population"]["compiled"] = [entry for entry in declared if entry["kind"] == "host"]
             steps = partition_steps(complete, declared, output, args.host_platform)
         shard_commands_passed = True
-        if args.python_shards == 2 and not args.python_shard:
+        if args.python_shards == 2 and not args.python_shard and not inventory_failed:
             require(any(entry["kind"] == "python" for entry in complete), "empty complete Python inventory")
             parts = python_shard_populations(declared, python_shard_weights())
             children = run_parallel_shards(output, timeout_seconds=args.timeout_seconds,

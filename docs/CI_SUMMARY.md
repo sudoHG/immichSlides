@@ -39,7 +39,7 @@ or an unapproved deselection fails. The [expected-population and policy model](C
 defines exception accounting.
 Exit 1 means failed coverage, a failed command, expected failure, missing result,
 empty Python suite or infrastructure problem; invalid arguments
-exit 2. `--timeout-seconds` sets the total
+exit 2. `--timeout-seconds` sets the per-process
 host budget (default 900, maximum 1200), not a product timing threshold. A timeout
 stops the child process group and records remaining checks as `not-run`.
 The hosted Linux partition explicitly uses 1200 seconds inside its 25-minute job;
