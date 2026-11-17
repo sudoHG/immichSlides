@@ -150,8 +150,7 @@ def plan_fixture(temporary, stack, *, ancestor=0):
     return context, api, reader
 
 
-@contextmanager
-def simulator_group_fixture(*, archive=True, group_id="iphone-debug", elapsed=0):
+def _simulator_group_fixture(*, archive=True, group_id="iphone-debug", elapsed=0):
     """Keep real group control/ownership and fake only host and official-result boundaries."""
     with tempfile.TemporaryDirectory() as raw, ExitStack() as stack:
         temporary = Path(raw)
@@ -202,6 +201,10 @@ def simulator_group_fixture(*, archive=True, group_id="iphone-debug", elapsed=0)
             runner=runner, log=log,
             run=lambda: shadow.run_group(scheduling, context, temporary),
             record=lambda: json.loads((temporary / "smoke-records/group.json").read_text()))
+
+
+def simulator_group_fixture(**options):
+    return contextmanager(_simulator_group_fixture)(**options)
 
 
 class SmokeShadowTests(unittest.TestCase):
