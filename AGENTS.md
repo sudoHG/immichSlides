@@ -71,7 +71,7 @@ Script entry points ignore local configuration by default and test a recorded wo
 Every `check_all.sh` Python step uses `"${PYTHON:-python3}"`. Prerequisites and interpreter setup are described in [CONTRIBUTING.md](CONTRIBUTING.md#setup).
 
 ```bash
-# All host checks: formatting, test conventions, release guards, localization, prerequisites, workflow policy, known-flaky registry, Python tests
+# All host checks: formatting, test conventions, release guards, localization, prerequisites, workflow policy, known-flaky registry, Python tests (two parallel shards by default; --python-shards 1 for one process)
 scripts/check_all.sh
 
 # Offline unit tests (pick a local simulator UDID with `xcrun simctl list devices available`)

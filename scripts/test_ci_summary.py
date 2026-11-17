@@ -2889,7 +2889,7 @@ print('parsed 3 nightly retry records without image or runner dependencies')
                         shard["population"].update(declared=entries, compiled=compiled, observed=rows)
                         receipts.append((number, shard, code))
                     return receipts
-                with patch("sys.argv", ["run_host_checks.py", "--python-shards", "2", "--output-dir", str(output)]), \
+                with patch("sys.argv", ["run_host_checks.py", "--output-dir", str(output)]), \
                         patch.object(run_host_checks, "run_identity", return_value=valid_summary()["identity"]), \
                         patch.object(run_host_checks, "toolchain", return_value=valid_summary()["toolchain"]), \
                         patch.object(run_host_checks, "python_shard_weights", return_value=weights), \
@@ -3387,7 +3387,7 @@ class HostResultTests(unittest.TestCase):
                     self.assertIn("--selection-path", invocation)
                     return [ci_summary.observation(ci_summary.test_identity("host", name), "passed", 0)
                             for name, command in commands], []
-                with patch("sys.argv", ["run_host_checks.py", "--host-platform", scope, "--output-dir", str(output)]), \
+                with patch("sys.argv", ["run_host_checks.py", "--python-shards", "1", "--host-platform", scope, "--output-dir", str(output)]), \
                         patch.object(run_host_checks, "run_identity", return_value=valid_summary()["identity"]), \
                         patch.object(run_host_checks, "toolchain", return_value=valid_summary()["toolchain"]), \
                         patch("ci_population.python_identities", return_value=python), \
@@ -3680,7 +3680,7 @@ class HostResultTests(unittest.TestCase):
                 return [ci_summary.observation(ci_summary.test_identity("host", name), "failed" if name == "python tests" else "passed", 0)
                         for name, _ in run_host_checks.HOST_CHECKS], []
 
-            with patch("sys.argv", ["run_host_checks.py", "--output-dir", str(output)]), \
+            with patch("sys.argv", ["run_host_checks.py", "--python-shards", "1", "--output-dir", str(output)]), \
                     patch.object(run_host_checks, "run_identity", return_value=valid_summary()["identity"]), \
                     patch.object(run_host_checks, "toolchain", return_value=valid_summary()["toolchain"]), \
                     patch.object(run_host_checks, "run_steps", side_effect=steps), \
@@ -3706,7 +3706,7 @@ class HostResultTests(unittest.TestCase):
                 return [ci_summary.observation(ci_summary.test_identity("host", name), "passed", 0)
                         for name, _ in run_host_checks.HOST_CHECKS], []
 
-            with patch("sys.argv", ["run_host_checks.py", "--output-dir", str(output)]), \
+            with patch("sys.argv", ["run_host_checks.py", "--python-shards", "1", "--output-dir", str(output)]), \
                     patch.object(run_host_checks, "run_identity", return_value=valid_summary()["identity"]) as identity_call, \
                     patch.object(run_host_checks, "toolchain", return_value=valid_summary()["toolchain"]), \
                     patch("ci_population.python_identities", return_value=[identity]), \
@@ -3742,7 +3742,7 @@ class HostResultTests(unittest.TestCase):
                     return [ci_summary.observation(ci_summary.test_identity("host", name), "passed", 0)
                             for name, _ in run_host_checks.HOST_CHECKS], []
 
-                with patch("sys.argv", ["run_host_checks.py", "--output-dir", str(output)]), \
+                with patch("sys.argv", ["run_host_checks.py", "--python-shards", "1", "--output-dir", str(output)]), \
                         patch.object(run_host_checks, "run_identity", return_value=valid_summary()["identity"]), \
                         patch.object(run_host_checks, "toolchain", return_value=valid_summary()["toolchain"]), \
                         patch("ci_population.python_identities", return_value=[identity]), \
@@ -3770,7 +3770,7 @@ class HostResultTests(unittest.TestCase):
                     return [ci_summary.observation(ci_summary.test_identity("host", name), "passed", 0)
                             for name, _ in commands], []
 
-                with patch("sys.argv", ["run_host_checks.py", "--output-dir", str(output)]), \
+                with patch("sys.argv", ["run_host_checks.py", "--python-shards", "1", "--output-dir", str(output)]), \
                         patch.object(run_host_checks, "run_identity", return_value=valid_summary()["identity"]), \
                         patch.object(run_host_checks, "toolchain", return_value=valid_summary()["toolchain"]), \
                         patch(("ci_population." if invalid == "python_identities" else "ci_verdict.") + invalid,

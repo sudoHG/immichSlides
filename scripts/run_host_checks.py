@@ -505,8 +505,8 @@ def main():
     parser.add_argument("--workflow-path", help="Enable CI identity; assert this path against GITHUB_WORKFLOW_REF. Omit for local identity, regardless of CI environment")
     parser.add_argument("--host-platform", choices=("linux", "macos"), help="Run the admitted platform partition; default runs the complete host suite")
     shards = parser.add_mutually_exclusive_group()
-    shards.add_argument("--python-shards", type=int, choices=(1, 2), default=1,
-                        help="Run all Python tests in one process (default) or two parallel time-balanced shards")
+    shards.add_argument("--python-shards", type=int, choices=(1, 2), default=2,
+                        help="Run all Python tests in one process or two parallel time-balanced shards (default)")
     shards.add_argument("--python-shard", type=int, choices=(1, 2), help=argparse.SUPPRESS)
     parser.add_argument("--shard-deadline-path", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--no-summary-path", action="store_true", help="Suppress the record path in the final report")
@@ -586,7 +586,7 @@ def main():
             summary["population"]["compiled"] = [entry for entry in declared if entry["kind"] == "host"]
             steps = partition_steps(complete, declared, output, args.host_platform)
         shard_commands_passed = True
-        if args.python_shards == 2:
+        if args.python_shards == 2 and not args.python_shard:
             require(any(entry["kind"] == "python" for entry in complete), "empty complete Python inventory")
             parts = python_shard_populations(declared, python_shard_weights())
             children = run_parallel_shards(output, timeout_seconds=args.timeout_seconds,
