@@ -18,20 +18,21 @@ METHOD_TIMEOUT_SECONDS = 180
 STARTUP_OVERHEAD_SECONDS = 150
 FLOW_TIMEOUT_SECONDS = METHOD_TIMEOUT_SECONDS + STARTUP_OVERHEAD_SECONDS
 # Public diagnostics are code-defined steps, never exception text or command arguments.
-PRETEST_STEPS = frozenset({
-    "flow-directory", "source-identity", "private-evidence", "destination",
-    "simulator-reset:validate", "simulator-reset:prepare", "simulator-reset:terminate",
+PRETEST_TIMEOUT_STEPS = frozenset({
+    "simulator-reset:terminate",
     "simulator-reset:boot", "simulator-reset:bootstatus", "simulator-reset:readiness",
     "simulator-reset:uninstall", "simulator-reset:uninstall-retry", "simulator-reset:container",
     "simulator-reset:keychain", "simulator-reset:keychain-retry",
     "simulator-reset:privacy", "simulator-reset:privacy-retry",
     "simulator-reset:autofill-device", "simulator-reset:autofill-disable",
     "simulator-reset:autofill-readback", "simulator-reset:autofill-deadline",
-    "simulator-reset:log", "fixture-service:a", "fixture-service:b",
-    "fixture-artifacts:a", "fixture-artifacts:b", "test-environment",
-    "private-result-bundle", "first-failure-spool", "prepare-run", "prepare-command",
+    "fixture-service:a", "fixture-service:b",
 })
-PRETEST_FAILURE_STEPS = PRETEST_STEPS | {step + ":timeout" for step in PRETEST_STEPS}
+PRETEST_STEPS = (PRETEST_TIMEOUT_STEPS - {"simulator-reset:autofill-deadline"}) | {
+    "pretest-other", "simulator-reset:log", "fixture-artifacts:a", "fixture-artifacts:b",
+    "private-result-bundle", "first-failure-spool", "prepare-run",
+}
+PRETEST_FAILURE_STEPS = PRETEST_STEPS | {step + ":timeout" for step in PRETEST_TIMEOUT_STEPS}
 FLOW_METHODS = {
     "album-selection": "testAlbumSelection", "background-return": "testBackgroundReturn",
     "connection-error": "testConnectionError", "first-boot": "testFirstBoot",
@@ -430,34 +431,25 @@ def execute_flow(flow, root, arguments, source_run, runner, evidence, *, build_s
     from strict_e2e_build import prepare_test_run, warm_test_command
     from strict_e2e_server import PUBLIC_API_KEY
     directory = evidence / flow["id"]
+    directory.mkdir()
     started = time.monotonic()
     record = {"id": flow["id"], "selector": flow["selector"], "outcome": "FAIL",
-              "source_sha": None, "source_dirty_paths": None,
+              "source_sha": runner.read_source_sha(root), "source_dirty_paths": runner.read_source_dirty_paths(root),
               "failure_kind": "infrastructure",
               "official_execution_complete": False, "official_summary": None, "official_tests_sha256": None,
               "failure_locations": None, "pretest_failure_step": None,
               "elapsed_seconds": 0, "first_public_failure_message": None, "exit_code": 2}
     private_evidence = evidence.parent / "private" / evidence.name / flow["id"]
+    private_evidence.mkdir(mode=0o700, parents=True)
     processes, private_run, bundle, digest = [], None, None, None
     exported, summary, fixture_payload = False, None, None
-    directory_created, private_evidence_created = False, False
     stage = "infrastructure"
-    pretest_step = "flow-directory"
+    pretest_step = "pretest-other"
     def mark_pretest(step):
         nonlocal pretest_step
         pretest_step = step
     try:
-        directory.mkdir()
-        directory_created = True
-        started = time.monotonic()
-        mark_pretest("source-identity")
-        record.update(source_sha=runner.read_source_sha(root), source_dirty_paths=runner.read_source_dirty_paths(root))
-        mark_pretest("private-evidence")
-        private_evidence.mkdir(mode=0o700, parents=True)
-        private_evidence_created = True
-        mark_pretest("destination")
         udid = runner.destination_udid(arguments.destination)
-        mark_pretest("simulator-reset:prepare")
         reset = runner.reset_simulator_app(udid, platform=arguments.platform,
             boot_submitted=arguments.simulator_boot_submitted, report_step=mark_pretest)
         mark_pretest("simulator-reset:log")
@@ -483,7 +475,7 @@ def execute_flow(flow, root, arguments, source_run, runner, evidence, *, build_s
             mark_pretest("fixture-artifacts:b")
             write_json(directory / "fixture-manifest-b.json", runner.fixture_manifest("b"))
             runner.write_member_manifest(directory / "member-manifest-b.json", "b")
-        mark_pretest("test-environment")
+        mark_pretest("pretest-other")
         environment = runner.make_test_environment(os.environ, server_url=urls[0], public_key=PUBLIC_API_KEY,
                                                    server_url_b=urls[1] if len(urls) == 2 else None)
         environment["STRICT_E2E_EVIDENCE_DIR"] = str(directory)
@@ -497,7 +489,7 @@ def execute_flow(flow, root, arguments, source_run, runner, evidence, *, build_s
         mark_pretest("prepare-run")
         private_run = prepare_test_run(source_run, bundle.parent / "run",
             {**environment, **first_failure_environment(spool, [flow["selector"]], screenshots=True)})
-        mark_pretest("prepare-command")
+        mark_pretest("pretest-other")
         command = warm_test_command(private_run, arguments.destination, bundle,
                                     "immichSlidesUITests/" + flow["selector"])
         command += ["-test-timeouts-enabled", "YES", "-default-test-execution-time-allowance", str(METHOD_TIMEOUT_SECONDS),
@@ -546,7 +538,7 @@ def execute_flow(flow, root, arguments, source_run, runner, evidence, *, build_s
             from strict_e2e_runner_support import InfrastructureTimeout
             timeout = (isinstance(error, (subprocess.TimeoutExpired, InfrastructureTimeout))
                        or isinstance(error, runner.CommandError) and error.code == 124)
-            record["pretest_failure_step"] = pretest_step + (":timeout" if timeout else "")
+            record["pretest_failure_step"] = pretest_step + (":timeout" if timeout and pretest_step in PRETEST_TIMEOUT_STEPS else "")
         record["exit_code"] = getattr(error, "code", 2)
         if record["failure_kind"] != "hang-guard":
             record["failure_kind"] = stage
@@ -565,10 +557,6 @@ def execute_flow(flow, root, arguments, source_run, runner, evidence, *, build_s
         record["request_logs"] = {}
         for fixture in flow["fixtures"]:
             path = private_evidence / f"service-{fixture}.log"
-            if not private_evidence_created:
-                record["request_logs"][fixture] = {"state": "unavailable", "bytes": None,
-                    "sha256": None, "request_count": None}
-                continue
             try:
                 payload = path.read_bytes()
                 path.chmod(0o600)
@@ -579,14 +567,12 @@ def execute_flow(flow, root, arguments, source_run, runner, evidence, *, build_s
                 record["request_logs"][fixture] = {"state": "unavailable", "bytes": None,
                     "sha256": None, "request_count": None}
         record["total_elapsed_seconds"] = round(time.monotonic() - started, 3)
-        if directory_created:
-            source_sha = runner.read_source_sha(root) if record["source_sha"] is not None else None
-            write_json(directory / "case-manifest.json", {"source_sha": source_sha,
-                "source_dirty_paths": record["source_dirty_paths"],
-                "platform": arguments.platform, "suite": "smoke-flow", "flow": record,
-                "destination": arguments.destination, "scenario": "normal", "fixture_set": "a",
-                "configuration": arguments.configuration, "human_review": "NOT_RUN",
-                "fixture_sha256": fixture_payload["fixture_sha256"] if fixture_payload else None,
-                "official_tests_sha256": digest, "official_summary": summary,
-                "result": "Passed" if record["exit_code"] == 0 else "FAILED", "exit_code": record["exit_code"]})
+        write_json(directory / "case-manifest.json", {"source_sha": runner.read_source_sha(root),
+            "source_dirty_paths": record["source_dirty_paths"],
+            "platform": arguments.platform, "suite": "smoke-flow", "flow": record,
+            "destination": arguments.destination, "scenario": "normal", "fixture_set": "a",
+            "configuration": arguments.configuration, "human_review": "NOT_RUN",
+            "fixture_sha256": fixture_payload["fixture_sha256"] if fixture_payload else None,
+            "official_tests_sha256": digest, "official_summary": summary,
+            "result": "Passed" if record["exit_code"] == 0 else "FAILED", "exit_code": record["exit_code"]})
     return record

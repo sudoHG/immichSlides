@@ -177,57 +177,24 @@ log line names only the setup step and command family, plus integer seconds from
 Both stay red, with unavailable first results marked `not-run` / `infra`; attribution does
 not authorize archive admission, relax group validation or change comparison eligibility.
 
-Per-flow runner records and compact group rows additionally retain
-`pretest_failure_step`: null once preparation succeeds, otherwise one closed step
-from the following map. The aggregate preserves it in each flow and prints it next
-to the failure class. Missing fields from older tested heads remain valid and render
-`unknown`; explicit null renders `none`. The staged main controller owns its own
-vocabulary, independent of imports from the paired nightly checkout. Runner admission,
-group upload and aggregation reject unknown tokens and attribution alongside official
-execution, nonzero native elapsed time or a passing outcome.
-
-| Step token | Fallible work before native execution |
-|---|---|
-| `flow-directory` | Create the per-flow public directory |
-| `source-identity` | Read Git source SHA and dirty paths |
-| `private-evidence` | Create the private fixture-log directory |
-| `destination` | Extract the explicit simulator ID |
-| `simulator-reset:validate` | Validate the platform |
-| `simulator-reset:prepare` | Enter shared preparation, including diagnostic setup |
-| `simulator-reset:boot`, `simulator-reset:bootstatus` | Submit boot when needed and await boot completion |
-| `simulator-reset:readiness` | Require a known App-container response under the existing readiness budget |
-| `simulator-reset:terminate` | Terminate an installed App; the existing tolerated nonzero return stays tolerated |
-| `simulator-reset:uninstall`, `simulator-reset:uninstall-retry` | Uninstall and its existing second attempt |
-| `simulator-reset:container` | Verify the App container is absent after uninstall |
-| `simulator-reset:keychain`, `simulator-reset:keychain-retry` | Reset Keychain and its existing second attempt |
-| `simulator-reset:privacy`, `simulator-reset:privacy-retry` | Reset TCC and its existing second attempt |
-| `simulator-reset:autofill-device` | Look up and validate the iOS device data path |
-| `simulator-reset:autofill-disable` | Write the iOS Password AutoFill preference |
-| `simulator-reset:autofill-readback` | Verify the persisted boolean with host plutil |
-| `simulator-reset:autofill-deadline` | Check the unchanged shared preference deadline |
-| `simulator-reset:log` | Write the reset log |
-| `fixture-service:a`, `fixture-service:b` | Open startup output, spawn that fixture child, await fixture build and healthy service |
-| `fixture-artifacts:a`, `fixture-artifacts:b` | Generate and write that fixture's manifest and member manifest |
-| `test-environment` | Construct the isolated test environment |
-| `private-result-bundle` | Allocate the private result-bundle path |
-| `first-failure-spool` | Create the private first-failure spool |
-| `prepare-run` | Build recorder inputs, read/validate/relocate the source plist and write the private xctestrun |
-| `prepare-command` | Construct the native invocation |
-
-Every listed step also admits exactly its `:timeout` suffix, for a
-`subprocess.TimeoutExpired`, shared `InfrastructureTimeout`, or an explicit runner
-`CommandError` with timeout code 124 (including fixture build/health deadlines).
-Other raised failures, including rejected nonzero subprocess exits, retain the base
-token. These describe the observed failing operation, not a root cause. The existing
-stderr exception line, fixed public failure message, exit code and `failure_kind`
-remain unchanged; no exception text, paths, command output, simulator IDs or URLs
-enter this field. Steps are cleared immediately before xcodebuild; later failures
-leave the field null. A failure preventing the public record itself from being
-written still fails the group and cannot promise per-flow attribution.
-The optional callbacks in the shared reset support module only report boundaries;
-all deadlines, guards, existing reset retries and verdicts are unchanged. Hosted
-emission starts only with a paired nightly whose tested head includes this change;
-that hosted effect is `NOT_RUN` until such a nightly executes.
+Per-flow runner records and compact group rows retain `pretest_failure_step`, a
+closed diagnostic naming the observed preparation operation, not its root cause.
+It is cleared immediately before xcodebuild: explicit JSON `null` renders `none`,
+while an absent historical field remains valid and renders `unknown`. Only operations
+with real timeout sources admit `:timeout`, for `TimeoutExpired`, shared
+`InfrastructureTimeout` or `CommandError(code=124)`; the final AutoFill deadline
+has only that variant. `pretest-other` has no timeout variant and prevents stale
+attribution across preparation regions without a dedicated step. The staged controller
+owns its vocabulary independently of the tested runner; the two `PRETEST_STEPS`
+constants in [`strict_e2e_smoke.py`](../scripts/strict_e2e_smoke.py) and
+[`ci_smoke_shadow.py`](../scripts/ci_smoke_shadow.py), with their timeout sets, define
+the values. Runner admission, group upload and aggregation fail closed on unknown
+tokens or tokens accompanying a pass, official execution, nonzero native elapsed
+time, zero exit or a failure kind other than infrastructure/cleanup. Directory creation,
+source reads and private-directory creation precede the per-flow handler and still
+abort the group on failure. No exception text, paths, output, simulator IDs or URLs
+enter the field; existing failure messages, verdicts, exits, guards and retries remain
+unchanged, and a failed public-record write cannot promise per-flow attribution.
 
 Cleanup failures print `cleanup-failed: step=<value>` before failing closed. The
 closed steps are `runner-cleanup`, `ownership`, `simctl-shutdown`, `simctl-delete`,

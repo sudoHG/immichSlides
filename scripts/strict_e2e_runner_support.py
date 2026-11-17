@@ -895,6 +895,7 @@ def _disable_password_autofill(simulator_udid: str, reset_deadline: float, repor
         report_step("simulator-reset:autofill-deadline")
         if time.monotonic() >= deadline:
             raise InfrastructureTimeout("simulator-password-autofill", budget)
+        report_step("pretest-other")
         lines.append("password_autofill=disabled; domain=com.apple.WebUI; key=AutoFillPasswords; readback=false; verifier=host-plutil")
         report(lines[-1])
         outcome = "passed"
@@ -924,12 +925,11 @@ def reset_simulator_app(simulator_udid: str, bundle_id: str = "com.331works.immi
                         platform: str, boot_submitted: bool = False,
                         report_step: Callable[[str], None] | None = None) -> str:
     report_step = report_step or (lambda step: None)
-    report_step("simulator-reset:validate")
+    report_step("pretest-other")
     if platform not in ("ios", "tvos"):
         raise CommandError(f"Unsupported simulator platform {platform!r}; expected 'ios' or 'tvos'.")
     # The fixed sleep waits for simctl to release the container lock; a second uninstall failure must stop the run.
     report = lambda line: print(line, flush=True)
-    report_step("simulator-reset:prepare")
     container, preparation_log = prepare_simulator(simulator_udid, bundle_id, report=report,
         boot_submitted=boot_submitted, report_step=report_step)
     lines = preparation_log.splitlines()

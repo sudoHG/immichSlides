@@ -8342,31 +8342,33 @@ class SmokeFlowResultTests(unittest.TestCase):
             configure_runner(runner)
         with mock.patch("strict_e2e_smoke.subprocess.Popen", side_effect=start):
             record = smoke.execute_flow(flow, root, arguments, source, runner, evidence, build_source_root=build_source_root)
+        if record["pretest_failure_step"] is not None:
+            self.assertIn(record["pretest_failure_step"], smoke.PRETEST_FAILURE_STEPS)
         return record, runner, evidence
 
     def test_smoke_pretest_failures_publish_only_the_closed_step_and_timeout_variant(self):
-        operations = {
-            "source-identity": "read_source_sha", "destination": "destination_udid",
-            "simulator-reset:prepare": "reset_simulator_app", "fixture-service:a": "wait_for_service",
-            "fixture-artifacts:a": "write_fixture_artifacts", "fixture-artifacts:b": "write_member_manifest",
-            "test-environment": "make_test_environment", "private-result-bundle": "prepare_private_result_bundle_path",
-        }
-        for step, operation in operations.items():
-            for timeout in (False, True):
-                error = subprocess.TimeoutExpired("private-input-sentinel", 1) if timeout else CommandError("private-input-sentinel")
-                with self.subTest(step=step, timeout=timeout), tempfile.TemporaryDirectory() as temporary:
-                    def configure(runner):
-                        getattr(runner, operation).side_effect = error
-                    with mock.patch("strict_e2e_smoke.sys.stderr", io.StringIO()):
-                        record, runner, evidence = self.execute_record(Path(temporary), configure_runner=configure, fixtures=["a", "b"])
-                    self.assertEqual(step + (":timeout" if timeout else ""), record["pretest_failure_step"])
-                    self.assertEqual(("FAIL", "infrastructure", False, 0),
-                        (record["outcome"], record["failure_kind"], record["official_execution_complete"], record["elapsed_seconds"]))
-                    self.assertEqual("Smoke flow infrastructure or official-result validation failed.", record["first_public_failure_message"])
-                    runner.run_command.assert_not_called()
-                    saved = json.loads((evidence / record["id"] / "case-manifest.json").read_text())
-                    self.assertEqual(record, saved["flow"])
-                    self.assertNotIn("private-input-sentinel", json.dumps(saved))
+        operations = (
+            ("fixture-service:a", "wait_for_service", CommandError("private-input-sentinel"), 2),
+            ("fixture-service:a:timeout", "wait_for_service", CommandError("private-input-sentinel", code=124), 124),
+            ("fixture-artifacts:a", "write_fixture_artifacts", OSError("private-input-sentinel"), 2),
+            ("fixture-artifacts:b", "write_member_manifest", OSError("private-input-sentinel"), 2),
+            ("private-result-bundle", "prepare_private_result_bundle_path", OSError("private-input-sentinel"), 2),
+        )
+        for step, operation, error, expected_code in operations:
+            with self.subTest(step=step), tempfile.TemporaryDirectory() as temporary:
+                def configure(runner):
+                    getattr(runner, operation).side_effect = error
+                with mock.patch("strict_e2e_smoke.sys.stderr", io.StringIO()):
+                    record, runner, evidence = self.execute_record(Path(temporary), configure_runner=configure, fixtures=["a", "b"])
+                self.assertEqual(step, record["pretest_failure_step"])
+                self.assertEqual(expected_code, record["exit_code"])
+                self.assertEqual(("FAIL", "infrastructure", False, 0),
+                    (record["outcome"], record["failure_kind"], record["official_execution_complete"], record["elapsed_seconds"]))
+                self.assertEqual("Smoke flow infrastructure or official-result validation failed.", record["first_public_failure_message"])
+                runner.run_command.assert_not_called()
+                saved = json.loads((evidence / record["id"] / "case-manifest.json").read_text())
+                self.assertEqual(record, saved["flow"])
+                self.assertNotIn("private-input-sentinel", json.dumps(saved))
 
     def test_smoke_reset_substeps_keep_nonzero_exits_distinct_from_timeouts(self):
         from strict_e2e_runner_support import InfrastructureTimeout
@@ -8412,8 +8414,8 @@ class SmokeFlowResultTests(unittest.TestCase):
 
     def test_smoke_pretest_file_and_run_preparation_failures_name_the_operation(self):
         import strict_e2e_smoke as smoke
-        for step in ("flow-directory", "private-evidence", "simulator-reset:log", "first-failure-spool",
-                     "fixture-service:b", "prepare-run", "prepare-command"):
+        for step in ("flow-directory", "source-sha", "source-dirty-paths", "private-evidence",
+                     "simulator-reset:log", "first-failure-spool", "fixture-service:b", "prepare-run"):
             with self.subTest(step=step), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 original_mkdir, original_write = Path.mkdir, Path.write_text
@@ -8431,25 +8433,30 @@ class SmokeFlowResultTests(unittest.TestCase):
                 def configure(runner):
                     if step == "fixture-service:b":
                         runner.wait_for_service.side_effect = [("127.0.0.1", 1234), error]
+                    if step in {"source-sha", "source-dirty-paths"}:
+                        operation = "read_source_sha" if step == "source-sha" else "read_source_dirty_paths"
+                        getattr(runner, operation).side_effect = error
                 with ExitStack() as stack:
                     stack.enter_context(mock.patch.object(Path, "mkdir", mkdir))
                     stack.enter_context(mock.patch.object(Path, "write_text", write))
                     stack.enter_context(mock.patch.object(smoke.sys, "stderr", io.StringIO()))
-                    if step in {"prepare-run", "prepare-command"}:
-                        target = "prepare_test_run" if step == "prepare-run" else "warm_test_command"
-                        stack.enter_context(mock.patch("strict_e2e_build." + target, side_effect=error))
+                    if step == "prepare-run":
+                        stack.enter_context(mock.patch("strict_e2e_build.prepare_test_run", side_effect=error))
+                    if step in {"flow-directory", "source-sha", "source-dirty-paths", "private-evidence"}:
+                        with self.assertRaises(OSError):
+                            self.execute_record(root, configure_runner=configure)
+                        self.assertFalse((root / "evidence/iphone-first-boot/case-manifest.json").exists())
+                        continue
                     record, runner, _ = self.execute_record(root, configure_runner=configure, fixtures=["a", "b"])
                 self.assertEqual(step, record["pretest_failure_step"])
-                if step == "flow-directory":
-                    self.assertFalse((root / "evidence/iphone-first-boot/case-manifest.json").exists())
                 self.assertNotIn("private-input-sentinel", json.dumps(record))
                 runner.run_command.assert_not_called()
 
     def test_smoke_pretest_preparation_gates_and_autofill_deadline_are_attributed(self):
         from strict_e2e_runner_support import InfrastructureTimeout
-        for step in ("validate", "boot", "bootstatus", "readiness", "autofill-deadline"):
+        for step in ("boot", "bootstatus", "readiness", "autofill-deadline", "pretest-other"):
             for timeout in (False, True):
-                if step == "validate" and timeout or step == "autofill-deadline" and not timeout:
+                if step == "pretest-other" and timeout or step == "autofill-deadline" and not timeout:
                     continue
                 clock = [0.0]
                 def command(argv, phase, **kwargs):
@@ -8457,38 +8464,48 @@ class SmokeFlowResultTests(unittest.TestCase):
                         if timeout:
                             raise InfrastructureTimeout(phase, 1)
                         return subprocess.CompletedProcess(argv, 1, "", "private-input-sentinel")
-                    if phase == "simulator-password-autofill-readback":
+                    if step == "autofill-deadline" and phase == "simulator-password-autofill-readback":
                         clock[0] = 61
                     stdout = (json.dumps({"devices": {"runtime": [{"udid": "device", "dataPath": "/synthetic/device"}]}})
                               if phase.endswith("autofill-device") else "false" if phase.endswith("autofill-readback") else "")
                     return subprocess.CompletedProcess(argv, 2 if phase == "simulator-container" else 0, stdout, "")
                 def configure(runner):
-                    def reset(*args, **kwargs):
-                        if step == "validate":
-                            kwargs["platform"] = "invalid"
-                        return strict_runner.reset_simulator_app(*args, **kwargs)
-                    runner.reset_simulator_app = reset
+                    runner.reset_simulator_app = strict_runner.reset_simulator_app
+                def report(line, **kwargs):
+                    if step == "pretest-other" and line.startswith("password_autofill=disabled;"):
+                        raise OSError("private-input-sentinel")
                 with self.subTest(step=step, timeout=timeout), tempfile.TemporaryDirectory() as temporary, ExitStack() as stack:
                     stack.enter_context(mock.patch("strict_e2e_runner_support.simulator_command", side_effect=command))
                     stack.enter_context(mock.patch("strict_e2e_runner_support.time.sleep"))
                     stack.enter_context(mock.patch("strict_e2e_runner_support.time.monotonic", side_effect=lambda: clock[0]))
-                    stack.enter_context(mock.patch("builtins.print"))
+                    stack.enter_context(mock.patch("builtins.print", side_effect=report))
                     if step == "readiness":
                         error = InfrastructureTimeout("simulator-readiness", 1) if timeout else CommandError("private-input-sentinel")
                         stack.enter_context(mock.patch("strict_e2e_runner_support.wait_for_simulator_app_response", side_effect=error))
                     record, runner, _ = self.execute_record(Path(temporary), configure_runner=configure)
-                suffix = ":timeout" if timeout and step != "validate" else ""
-                self.assertEqual("simulator-reset:" + step + suffix, record["pretest_failure_step"])
+                expected = "pretest-other" if step == "pretest-other" else "simulator-reset:" + step + (":timeout" if timeout else "")
+                self.assertEqual(expected, record["pretest_failure_step"])
                 self.assertNotIn("private-input-sentinel", json.dumps(record))
                 runner.run_command.assert_not_called()
 
     def test_smoke_executed_flows_leave_pretest_diagnostics_null(self):
-        for code, official_failed in ((0, False), (65, True)):
-            with self.subTest(code=code), tempfile.TemporaryDirectory() as temporary:
-                record, runner, _ = self.execute_record(Path(temporary), code=code, official_failed=official_failed)
+        cases = ((0, False, None), (65, True, None), (0, False, "run_command"),
+                 (0, False, "export_private_result_bundle"))
+        for code, official_failed, failing_operation in cases:
+            with self.subTest(code=code, operation=failing_operation), tempfile.TemporaryDirectory() as temporary:
+                def configure(runner):
+                    if failing_operation is not None:
+                        getattr(runner, failing_operation).side_effect = CommandError("private-input-sentinel", code=124)
+                with mock.patch("strict_e2e_smoke.sys.stderr", io.StringIO()):
+                    record, runner, _ = self.execute_record(Path(temporary), code=code, official_failed=official_failed,
+                                                          configure_runner=configure)
                 self.assertIsNone(record["pretest_failure_step"])
                 self.assertEqual(1, runner.run_command.call_count)
                 self.assertEqual(2, runner.read_source_sha.call_count)
+                if failing_operation is not None:
+                    expected_kind = "hang-guard" if failing_operation == "run_command" else "official-result"
+                    self.assertEqual(("FAIL", 124, expected_kind),
+                                     (record["outcome"], record["exit_code"], record["failure_kind"]))
 
     def test_smoke_exit_and_cleanup_failures_override_a_passing_official_method(self):
         for code, cleanup, invalid, expected in ((0, False, False, ("PASS", 0, "none")),

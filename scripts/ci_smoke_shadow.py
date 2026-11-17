@@ -34,20 +34,21 @@ SETUP_FAILURE_STEPS = {"job-clock", "preflight", "archive-verify", "simulator", 
                        "archive-load", "runner-command"}
 SETUP_FAILURE_COMMANDS = {"git", "xcrun-sdk", "simctl", "codesign", "readiness", "other"}
 # Staged control must validate old tested heads without importing a new runner constant.
-PRETEST_STEPS = frozenset({
-    "flow-directory", "source-identity", "private-evidence", "destination",
-    "simulator-reset:validate", "simulator-reset:prepare", "simulator-reset:terminate",
+PRETEST_TIMEOUT_STEPS = frozenset({
+    "simulator-reset:terminate",
     "simulator-reset:boot", "simulator-reset:bootstatus", "simulator-reset:readiness",
     "simulator-reset:uninstall", "simulator-reset:uninstall-retry", "simulator-reset:container",
     "simulator-reset:keychain", "simulator-reset:keychain-retry",
     "simulator-reset:privacy", "simulator-reset:privacy-retry",
     "simulator-reset:autofill-device", "simulator-reset:autofill-disable",
     "simulator-reset:autofill-readback", "simulator-reset:autofill-deadline",
-    "simulator-reset:log", "fixture-service:a", "fixture-service:b",
-    "fixture-artifacts:a", "fixture-artifacts:b", "test-environment",
-    "private-result-bundle", "first-failure-spool", "prepare-run", "prepare-command",
+    "fixture-service:a", "fixture-service:b",
 })
-PRETEST_FAILURE_STEPS = PRETEST_STEPS | {step + ":timeout" for step in PRETEST_STEPS}
+PRETEST_STEPS = (PRETEST_TIMEOUT_STEPS - {"simulator-reset:autofill-deadline"}) | {
+    "pretest-other", "simulator-reset:log", "fixture-artifacts:a", "fixture-artifacts:b",
+    "private-result-bundle", "first-failure-spool", "prepare-run",
+}
+PRETEST_FAILURE_STEPS = PRETEST_STEPS | {step + ":timeout" for step in PRETEST_TIMEOUT_STEPS}
 
 
 def smoke_artifact_name(configuration, control):
