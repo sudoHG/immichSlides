@@ -808,6 +808,7 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None, stderr: Te
     parser.add_argument("--scenario", choices=RUNNER_SCENARIOS, default="normal")
     parser.add_argument("--suite", choices=(*RUNNER_SUITES, "smoke-flow"), default="smoke")
     parser.add_argument("--smoke-device", choices=("iphone", "ipad", "tv"))
+    parser.add_argument("--smoke-scope", choices=("core", "full"), default="full")
     parser.add_argument("--smoke-flow", help="Debug one manifest flow; never a complete smoke group")
     parser.add_argument("--smoke-archive", action="store_true", help="Explicitly admit relocated smoke archive v2 products")
     parser.add_argument("--smoke-control-path", type=Path, help="Independent expected smoke archive control JSON")

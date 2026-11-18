@@ -1,27 +1,9 @@
-# Nightly strict and fixture UI tiers
+# Smoke nightly and legacy diagnostic tiers
 
-The approved [target tier model](TESTING.md#approved-target-tiers-planning-only)
-and [`ci-test-tiers.json`](../scripts/ci-test-tiers.json) plan 23 short nightly
-smoke flows and weekly human visual review. They are planning-only: this guide
-describes the current complete strict and fixture UI execution. The unit-coverage
-PRs retire no E2E assertions; duplicate-removal batch #721 is separate and retains
-those assertions in other tests. Yellow/retry exceptions stay frozen. Switching requires
-mutation-proven rule coverage, 5–7 shadow runs and the separately reviewed activation;
-completion then needs 10 actually executed nights without unexplained red.
-
-`ci-nightly` schedules a primary run at 14:07 UTC (22:07 Beijing) and a backup at
-19:07 UTC (03:07 Beijing the next day) on the default branch, avoiding the busy
-top of the hour, and supports
-`workflow_dispatch` on a selected branch. GitHub has typically started scheduled
-runs 3–4 hours late and can miss a trigger entirely; these times are requests, not
-start-time guarantees. Strict and fixture UI work overlap after archive selection;
-the full nightly waits for the slower tier, plus aggregation.
-Runner queues, shard durations and trigger delays determine completion,
-so neither schedule guarantees a morning result. PRs touching its entry points
-run planning and credential-free live probes. Branch dispatches provide diagnostic
-execution evidence. It has read-only permissions and no publisher, reporter or
-release authority. Separate [live unit jobs](CI_LIVE_TESTS.md) use the main-only
-`immich-test-server` environment after credential-free admission.
+The standalone smoke workflow is the only scheduled nightly. The legacy
+`ci-nightly` retains only manual diagnostics; its two cron triggers and its
+path-filtered pull-request trigger are removed. The remaining legacy strict
+and fixture UI machinery below is retained until the later bulk-deletion phase.
 
 ```bash
 gh workflow run ci-nightly.yml --ref <branch> -f strict_only=true
@@ -63,425 +45,42 @@ The optional dispatch `shard` input diagnoses one known shard exactly once. It r
 the complete scheduling record; missing shards and the diagnostic marker make aggregate
 equality fail. This run cannot substitute for a complete nightly, and does not retry cases.
 
-## Smoke shadow (informational, before the tier switch)
+## Standalone smoke nightly
 
-`ci-smoke-shadow` is a separate, read-only workflow. It starts only after a
-same-repository main full `ci-nightly` has completed: a schedule, or a manual
-dispatch with the exact `ci_nightly_change.FULL_MANUAL_TITLE` (`ci-nightly full`).
-Diagnostic dispatches, including environment probes, shard, UI-only, strict-only
-and live-only runs, are refused. The trigger uses
-`workflow_run` filtered to main and completion. It independently verifies
-the producer workflow ID/path, repository, event, attempt and head SHA against
-the API and main ancestry. Its tested checkout is that nightly's head SHA,
-even when main has moved. Pull requests, fork heads, branch nightlies and
-unfinished nightlies are refused. This workflow changes no nightly job, retry,
-yellow rule, verdict, reporter input, required check or release eligibility.
-The plan outputs its exact control commit; every later job checks out that SHA.
-Planning and each job require that control to be equal to or an ancestor of main.
-Device jobs stage only this workflow's trusted control entry point from that commit
-outside the checkout, then select the admitted nightly SHA. All runner modules,
-App sources and the manifest come from that tested SHA. This supports nightlies
-that already contain the smoke runner but predate the shadow control entry point;
-downloaded artifacts remain data and are never executed.
-Main may advance during a shadow without changing its planned control or breaking
-archive admission. Artifacts remain data, never a source of executable control.
-Only the reviewed complete artifact `uses` strings, including their exact pins,
-receive narrow upload/download exceptions; aliases and other 40-digit commits
-cannot bypass attempt/path restrictions.
+`ci-smoke-shadow` runs daily at `7 14 * * *` (14:07 UTC / 22:07 Beijing),
+with `7 19 * * *` (19:07 UTC / 03:07 Beijing the next day) as a backup,
+on `main` only, testing the run's `github.sha`. It has no dependency on
+`ci-nightly`. Its results are informational and never block merges.
 
-Qualified source events share the fixed `ci-smoke-shadow` concurrency group,
-without cancelling an active shadow. Events rejected by the source guard, or
-automatic events with unusable nightly conclusions, use a per-run group and
-cannot displace a pending qualified shadow. Planning checks the API for any main `ci-nightly`
-in `ci_nightly_change.ACTIVE_RUN_STATUSES`, including queued, in-progress,
-waiting, pending and requested. If one exists, no device group starts, including
-for manual shadow dispatches: the scanned plan and final record name the blocking
-nightly IDs and an explicit `not_run_reason`; `comparison_eligible` is false.
-There remains a race with a backup nightly that starts after this check. The
-shadow does not lock or change the old nightly, so such an overlap must be
-identified in the first hosted observations. GitHub may replace an older pending
-shadow in its concurrency queue; cancelled runs never count as observations.
-Manual dispatches on main always join the shared queue before API admission;
-even a subsequently refused manual target can replace a pending automatic
-shadow. The concurrency expression cannot see that target nightly's conclusion.
-An admitted full nightly whose conclusion is not `success` or `failure` also produces an
-explicit non-counting `not-run` record, for automatic and manual shadow dispatches;
-it never schedules device groups.
+Scheduled runs use `core`: exactly `tv-first-boot`, `tv-playback-controls`,
+`tv-pause-resume`, `tv-background-return`, `tv-server-switch`,
+`iphone-first-boot` and `ipad-rotation`. The core set lives beside the flow
+method definitions in `scripts/strict_e2e_smoke.py`. Manual dispatch accepts
+`scope=core` or `scope=full` (default); full runs all 23 flows in
+`scripts/ci-test-tiers.json` through the validated `scripts/smoke-flows.json`.
+Only groups containing selected flows start jobs. iOS configurations build their
+own archives; tvOS groups build locally. No legacy nightly artifacts are used.
 
-After merge, a coordinator can request an extra observation with:
+A scheduled run skips every group when an earlier smoke run on this repository
+already tested the same head: its selected flows have official first results and
+its groups completed without being skipped or cancelled. The planner reads smoke
+history with `actions: read`. Any exception while reading history means not tested;
+the run executes. The aggregate reports a skip in one line with a link to the
+earlier run, its attempt and its outcome, including a prior failure. Manual dispatch
+always runs. The same-head skip also prevents duplicate execution at the backup time.
+
+The aggregate is red when any selected flow fails or lacks a first result,
+and green when every selected flow passes with valid source and official evidence.
+Pre-test attribution and the one-time simulator re-create remain unchanged,
+as do the existing timeouts, budgets, privacy checks and cleanup guards.
 
 ```bash
-gh workflow run ci-smoke-shadow.yml --ref main -f nightly_run_id=<completed-main-nightly-run-id>
+gh workflow run ci-smoke-shadow.yml --ref main -f scope=core
+gh workflow run ci-smoke-shadow.yml --ref main -f scope=full
 ```
 
-The selected nightly must contain the smoke runner and its CI-trusted
-[`smoke-flows.json`](../scripts/smoke-flows.json). Planning reads that manifest
-at the tested SHA, rather than the planning-only tier inventory. Distinct
-platform/device/configuration tuples form the matrix; flow counts are not
-hard-coded in the workflow. The approved manifest currently produces these groups:
-
-| Device | Debug flows | Release flows |
-|---|---:|---:|
-| iPhone | 6 | 2 |
-| iPad | 4 | 1 |
-| Apple TV | 6 | 4 |
-
-The graph is `plan → (ios-debug, ios-release) → six flows groups → aggregate`.
-Two named producers each build the existing smoke UI-only scheme/plan once for
-`generic/platform=iOS Simulator`, with explicit Debug or Release. Four iOS groups
-select their configuration's immutable ID, download once, verify manifest/tar
-hashes and inventory, and use only `test-without-building`. TV groups retain their
-existing per-group build/execution and wait at the same producer barrier.
-At most two producers precede at most three concurrent flow groups; they never
-overlap as five macOS jobs. A failed/missing producer or rejected archive leaves
-affected flows `not-run`, fails aggregation and cannot count as an observation.
-The matrix starts after both producers finish regardless of their result: TV groups
-and the other configuration run normally. The failed configuration fails closed in
-selection and writes not-run evidence. The always-run aggregate writes every missing
-group, reports archive admission failures and retains each group's errors and phases.
-There is no latest/name fallback, download retry or silent rebuild.
-The [separate archive identities and compatibility gate](CI_BUILD_ARCHIVE.md#smoke-archive-reader-explicit-opt-in)
-bind both the admitted nightly source and the authoritative shadow control run.
-Historical tested commits without the complete v2 reader, source-plist preflight and
-explicit expected-control contract write a suppressed plan with the reason and a
-90-day not-run record. They never fall back to per-group iOS compilation.
-
-Download, hash, inventory and identity verification precede simulator creation/boot.
-The unchanged 120-second archive allowance covers download and verification; simulator
-creation is charged only to the existing group budget. Loading then checks the pinned
-execution target and the independently supplied expected control. Archive consumers run
-the existing `prepare_simulator(..., boot_submitted=True, should_check_app=False)` readiness gate before loading:
-without a cold build, early boot can starve the loader's Git identity reads and simulator
-inventory queries. The existing preparation bounds consume the same group budget, outside
-the unchanged transfer/verification allowance. No command timeout is increased. TV retains
-its build-first path. Hosted first-flow failure rates require separate observation.
-
-New group records include `setup_failure_step`, null unless setup fails. Its closed values
-are `job-clock`, `preflight`, `archive-verify`, `simulator`, `simulator-ready`, `archive-load`
-and `runner-command`; the upload and aggregate readers reject unknown values, a zero exit
-or claimed flow execution alongside a setup failure. Historical records without the field
-remain readable. New records also include `setup_failure_command`, null unless a setup
-timeout occurs. Its closed values are `git`, `xcrun-sdk`, `simctl`, `codesign`, `readiness`
-and `other`. Known argv prefixes alone identify subprocess command families; readiness
-`InfrastructureTimeout` maps to `readiness`. Both readers reject unknown values or command
-attribution without a setup timeout, while accepting historical records without the field.
-The aggregate retains both fields in `group_timings` and the group summary table, showing
-`none` for explicit null and `unknown` for an absent historical field. Invalid setup
-attribution omits both fields from `group_timings`, displaying `unknown` for both.
-Neither contains argv, paths, environment or subprocess output. Uncaught setup `TimeoutExpired` and the
-readiness gate's `InfrastructureTimeout` use `setup-step-timeout` / exit 124. The bounded
-log line names only the setup step and command family, plus integer seconds from
-`TimeoutExpired.timeout` when available. Simulator create/boot timeouts are converted to
-`ContractError` and retain exit 1 with the generic failure label.
-`group-budget-exhausted` remains the label for the group deadline and its bounded runner.
-Both stay red, with unavailable first results marked `not-run` / `infra`; attribution does
-not authorize archive admission, relax group validation or change comparison eligibility.
-
-Per-flow runner records and compact group rows retain `pretest_failure_step`, a
-closed diagnostic naming the observed preparation operation, not its root cause.
-It is cleared immediately before xcodebuild: explicit JSON `null` renders `none`,
-while an absent historical field remains valid and renders `unknown`. Only operations
-with real timeout sources admit `:timeout`, for `TimeoutExpired`, shared
-`InfrastructureTimeout` or `CommandError(code=124)`; the final AutoFill deadline
-has only that variant. `pretest-other` has no timeout variant and prevents stale
-attribution across preparation regions without a dedicated step. The staged controller
-owns its vocabulary independently of the tested runner; the two `PRETEST_STEPS`
-constants in [`strict_e2e_smoke.py`](../scripts/strict_e2e_smoke.py) and
-[`ci_smoke_shadow.py`](../scripts/ci_smoke_shadow.py), with their timeout sets, define
-the values. Runner admission, group upload and aggregation fail closed on unknown
-tokens or tokens accompanying a pass, official execution, nonzero native elapsed
-time, zero exit or a failure kind other than infrastructure/cleanup. Directory creation,
-source reads and private-directory creation precede the per-flow handler and still
-abort the group on failure. No exception text, paths, output, simulator IDs or URLs
-enter the field; existing failure messages, verdicts, exits, guards and retries remain
-unchanged, and a failed public-record write cannot promise per-flow attribution.
-
-Smoke shadow alone may retire and re-create its simulator once when `simulator` or
-`simulator-ready` fails, including a timeout, before archive load, warm-up or any flow
-starts. A create that never publishes a device is not re-created, even when the
-environment inherited a device. Retirement accepts a nonzero shutdown only when
-CoreSimulator reports `current state: Shutdown`; delete must still return zero.
-Both commands retain their existing bounds. Otherwise the original failure and
-device remain for cleanup. Re-creation uses the same pinned
-create/boot and readiness path, publishes the fresh device for cleanup, and prints
-`setup-recreate: step=<simulator|simulator-ready>; command=<closed token>; attempt=1`.
-The group field `simulator_recreate` is null (also the default for historical records)
-or `{"step": ..., "command": ...}`, using only the setup command vocabulary above;
-the group summary displays it. Eligibility uses only the remaining inner budget:
-`inner_remaining = job_started_epoch + GROUP_BUDGET_MINUTES[group]*60 - time.time()`.
-Let `R = 2*SIMULATOR_COMMAND_TIMEOUT_SECONDS` (120 seconds for retirement),
-`C = 2*SIMULATOR_SETUP_COMMAND_TIMEOUT_SECONDS` (120 seconds for create/boot),
-`P = SIMULATOR_PREPARATION_TIMEOUT_SECONDS` (600 seconds), and
-`L = ARCHIVE_LOAD_OWN_CAP_SECONDS` (510 seconds from existing git `3*30`,
-SDK `2*60`, simctl list `3*60` and codesign `120` caps). iOS archive groups require
-`inner_remaining >= R+C+P` before retirement and `>= C+P` afterward. Only on the
-re-create path, archive load additionally requires `inner_remaining >= L`
-immediately before it starts. TV groups require `>= R+C` before retirement and
-`>= C` afterward. Flows, warm-up and the cold build are excluded from eligibility;
-their runner receives the remaining inner budget. The three-minute job reserve
-is unchanged and excluded. A late re-create can still end red as
-`group-budget-exhausted`, including when the archive-load check refuses to start
-loading. The summary then shows the failed setup step as `none`, with the original
-failure in the simulator re-create column. There is no second re-create or flow
-retry: a second setup failure stays red with its own attribution. Complete official
-first flow results count normally; "attempt 1" in the counting rule means the workflow
-run attempt, which is unchanged. Legacy nightly, PR CI and UI shards are unaffected.
-
-Cleanup failures print `cleanup-failed: step=<value>` before failing closed. The
-closed steps are `runner-cleanup`, `ownership`, `simctl-shutdown`, `simctl-delete`,
-`lsof-timeout`, `lsof-probe`, `lsof-holders` and `remove`. Shutdown output stays suppressed;
-delete retains its original stdout/stderr inheritance so simctl's own reason reaches
-the job log. Ownership, verified runner stop, the 60-second shutdown/delete caps and the
-30-second empty holder check remain mandatory; unverifiable inputs are retained.
-Only a non-empty stdout from a completed lsof returning 0 or 1 is attributed to
-`lsof-holders`. Launch errors, other return codes, stderr-only results and exit 0 with
-empty stdout use `lsof-probe` without a family line; a timeout uses `lsof-timeout`.
-The removal condition is unchanged: exit 1 with both stdout and stderr empty.
-For `lsof-holders`, at most five additional `cleanup-holder: family=<value>` lines
-classify only `lsof -Fc` command fields as `spotlight` (`mds*`/`mdworker*`), `simulator`
-(`CoreSimulator*`/`com.apple.CoreSimulator*`/`launchd_sim`/`simctl`), `xcode` (`xcodebuild`/`XCBBuildService`/`testmanagerd`),
-`python` or `other`. Families are deduplicated and sorted; unavailable names yield `other`.
-The holder diagnostic never prints PIDs, paths, raw command names or lsof stderr. A family is a diagnostic
-classification, not proof that the named service caused the failure.
-
-Flow-group inputs live under `$RUNNER_TEMP/smoke-execution.noindex`, using the
-`.noindex` suffix that Spotlight conventionally skips. The hosted effect is
-`NOT_VERIFIED`, and the single re-probe is a fallback. The producer root remains `smoke-producer`; ownership,
-freshness, `smoke-records` and uploaded contents are unchanged. For either root,
-cleanup makes exactly one additional probe only when lsof returns 0, stdout is
-nonempty, stderr is empty and the holder families are exactly `["spotlight"]`.
-It prints only `cleanup-retry: family=spotlight attempt=1`, sleeps five seconds and
-repeats the same 30-second lsof command. The last probe supplies failure attribution;
-mixed/non-Spotlight holders, stderr, other return codes and launch errors never retry.
-Nonempty stdout from exit 0 or 1 remains `lsof-holders` even alongside stderr.
-This does not loosen cleanup: removal still requires exit 1 with both output streams
-empty, and any reported holder retains the root. Shutdown/delete ordering and caps
-remain unchanged. The extra probe adds at most `5 + 30 = 35` seconds: the full
-cleanup worst case is `60 + 60 + 30 + 5 + 30 = 185` seconds for flow groups
-(previously 150) and `30 + 5 + 30 = 65` seconds for producers (previously 30).
-For a flow group, this can exhaust the existing three-minute job reserve only
-after the group has used its entire inner budget and is already red with exit 124;
-a passing group usually finishes well inside that budget, but after a late re-create
-it can finish close to the inner deadline. The reserve also covers
-finalization and uploads, so it is not a worst-case completion guarantee.
-The coordinator accepts this cleanup tail without changing any job or inner timeout.
-If the job timeout kills cleanup, the job stays red and the root is retained;
-nothing can turn green.
-
-Each group uses the pinned simulator and the existing fixture service,
-readiness/reset, official-result export, privacy-scan and process-group cleanup helpers.
-No whole-flow retry, listed retry, nightly retry or tool-failure allowance is
-enabled. A classification such as infrastructure, XCTest tool or assertion is
-only a label: a failed first result remains failed. Missing results, a failed
-runner after passing XCTest, invalid provenance or incomplete execution stay red.
-After a verified runner-group stop, timeout/interruption retains every available
-validated first flow result and marks unfinished flows `not-run`; the original
-nonzero exit and failed group remain intact. Unverified process cleanup does not
-read potentially changing evidence or dispose its inputs.
-Only scanned compact records and the existing recorder's approved first-failure
-PNGs are uploaded. Raw bundles, logs, arbitrary attachments and recordings are not.
-Each officially failed flow can retain the UI shards' validated `first_failure`
-JSON in its group row. Images come only from that flow's validated recorder export,
-are rechecked with the UI upload validator, and stay in the seven-day group artifact;
-the 90-day aggregate retains JSON and the shared `render_first_failure` text only.
-First boot, secure fields, PIN, server settings and unknown surfaces retain the
-recorder's `withheld-privacy` status and publish no image. The sensitive scan covers
-the entire group immediately before its upload-safety output, including the PNGs.
-Smoke keeps the original XCTest screen-capture format and attachment lifetime;
-only the recorder requests its own `XCUIScreen.main.screenshot()`. The recorder's
-synchronous AX snapshot, screenshot and thumbnail work counts toward the smoke
-180-second method allowance and 330-second native invocation cap. When comparing
-earlier shadows, treat a failure-category shift (for example `xctest-tool` to
-`unknown`, or a new `hang-guard`) as possibly caused by this failure-path work.
-At aggregation, an invalid or stale optional `first_failure` receipt is dropped
-from that row without changing its outcome, execution or comparison eligibility.
-The consumer requires `selection=group` in both root records, including groups
-with only one flow; a diagnostic `--smoke-flow` result cannot stand in for a
-complete group. The runner's shared `validate_group_evidence` decides whether
-a group is wholly successful, with the expected source SHA passed explicitly;
-its verdict and rejection reason are retained in `group_validation`. Failed or
-interrupted groups still retain individually verified first results, while a
-rejected all-pass group stays red. The consumer checks clean source state and
-the root, first-result and per-flow source SHAs,
-official hashes, selected method and counts, and the runner's
-`official_execution_complete` flag. Each compact row retains `failure_kind`,
-source-bound reviewed relative `failure_locations`, and the raw runner outcome.
-Late warm-product, privacy, build-cleanup or evidence-finalization failures stay
-failed even when native XCTest passed; the native official result is retained.
-The runner's separately recorded `group_failures` also remain attached to group
-validation without replacing an earlier test/65 or hang-guard/124 first failure.
-`failure_kind=test` means an official method failed;
-it does not establish an App root cause. Full fixture request logs under
-`evidence.parent/private/<evidence-name>/<flow-id>/` and native `xcodebuild.log` remain outside the
-published records and are disposed with job-owned execution inputs.
-
-The plan and Linux aggregate each have a five-minute timeout. Device groups use
-these budgets, with at most three groups running together and fail-fast disabled:
-
-| Groups | Inner group budget | Job timeout |
-|---|---:|---:|
-| `iphone-debug`, `iphone-release` | 27 minutes | 30 minutes |
-| `ipad-debug`, `ipad-release` | 27 minutes | 30 minutes |
-| `tv-debug`, `tv-release` | 22 minutes | 25 minutes |
-
-The plan matrix derives every job timeout from the script's inner budget plus
-the same three-minute reserve; workflow policy requires that matrix field, and
-the policy regression checks the reserve against all six runner budgets.
-Each producer has a 27-minute inner budget, a 30-minute job timeout and the
-unchanged 1200-second cold xcodebuild cap. The conservative workflow envelope is
-**100 minutes** (`5 + 30 + 60 + 5`): plan, producer wave, two flow waves, aggregate.
-Timeout capacity is **230 runner minutes** (`2×30 + 4×30 + 2×25`), up from 170.
-These capacity numbers are separate from the observed-workload estimate of about
-**21–35 runner minutes saved per shadow**, which is not a hosted measurement.
-These budgets are **NOT_VERIFIED** on hosted CI;
-the larger iPhone and iPad caps do not establish an expected completion time.
-Each inner group deadline starts at the current attempt's GitHub job
-`started_at`, read through the existing complete-attempt jobs API reader. Thus
-checkout, setup and plan download consume that same budget. Groups have only
-read access to actions for this clock lookup. Missing, ambiguous or invalid job
-start evidence fails closed. The budget bounds transfer/verification plus flows
-(or TV build plus flows); it does not multiply
-the runner's 330-second per-flow limit (180 seconds for the method and 150 for
-startup/teardown) into a larger job budget. A group that exhausts this
-budget fails and records unfinished flows, even if every per-flow limit has not
-been reached.
-The clock token is removed from the process environment and control context
-immediately after lookup, including on lookup failure, before tested runner
-processes can inherit it.
-GitHub queue delays are measured separately from that envelope. Reaching a cap
-fails; it does not extend product waits or produce passing evidence.
-
-Hogan approved the smoke-only guard increase from 60 to 120 seconds on 2026-11-15,
-with matching method/native caps of 180/330 seconds, after five hosted first failures
-exhausted the guard while the App showed normal playback. The
-[runner guide](CI_STRICT_RUNNER.md#short-smoke-flow-suite) records the evidence and scope.
-Group budgets above stay fixed. In a worst-case-to-worst-case comparison of guard
-sums or native-cap sums, added group time is at most the flow count times 60 seconds.
-This does not bound the change for an individual execution: a flow formerly stopped
-at the 60-second guard may now continue and fail later in a native operation, up to
-the 180-second method allowance / 330-second native invocation cap.
-
-| Group | Flows | Guard time before → after | Added time | Native caps after (before) |
-|---|---:|---:|---:|---:|
-| iPhone Debug | 6 | 360 → 720 s | 360 s | 1980 s (1620 s) |
-| iPhone Release | 2 | 120 → 240 s | 120 s | 660 s (540 s) |
-| iPad Debug | 4 | 240 → 480 s | 240 s | 1320 s (1080 s) |
-| iPad Release | 1 | 60 → 120 s | 60 s | 330 s (270 s) |
-| TV Debug | 6 | 360 → 720 s | 360 s | 1980 s (1620 s) |
-| TV Release | 4 | 240 → 480 s | 240 s | 1320 s (1080 s) |
-
-For the per-group cold-build path before #751, the 1200-second build cap plus guard time
-changes from 1560/1320/1440/1260/1560/1440 to
-1920/1440/1680/1320/1920/1680 seconds in table order, before other overhead.
-On that historical path, iPhone Debug (1560 → 1920 seconds) and iPad Debug
-(1440 → 1680 seconds) flip from fitting to not fitting the 1620-second inner budget.
-Both TV groups already exceed their 1320-second budget before the increase.
-Build plus native caps is 3180/1860/2520/1530/3180/2520 seconds. Thus complete
-worst-case execution does **not** fit all groups' 1620-second iOS / 1320-second TV
-inner deadlines. Even the old six-flow native sum was `6 × 270 = 1620` seconds
-before build or overhead: the native-cap worst-case limitation already existed,
-while the two guard-case fit reversals above are specific to the historical path.
-
-With the merged iOS shared-build path in
-[#751](https://github.com/sudoHG/immichSlides/pull/751), iOS consumers avoid their
-per-group cold build: their guard sums are 720/240/480/120 seconds and native sums
-1980/660/1320/330 seconds, plus download, verification, preparation and export.
-This PR is based on #751, so no merged head with the approved 120-second guard can
-take the historical iOS per-group cold-build path. With shared builds, no group's
-build-plus-guard sum flips from fitting to not fitting; overhead is additional.
-TV retains its cold build and the values above. Shared builds reduce repeated work
-but cannot make a six-flow `6 × 330 = 1980`-second native worst case fit 27 minutes.
-The unchanged group deadline terminates such a group, retains first results and
-marks unfinished flows `not-run`; that incomplete shadow does not count toward
-the approved 5–7 shadow runs or 10 actually executed nights. No complete worst-case
-or hosted completion guarantee follows from the common guard-failure arithmetic.
-
-An automatically triggered shadow after a **verified unchanged-night skip**
-writes an explicit `not-run` record and summary without scheduling device jobs.
-It does not count as execution. With no active main nightly, a manual shadow
-executes the selected SHA, including when that nightly skipped; the record still says the old nightly
-was skipped, so it is not a comparable old/new executed pair. An unverified old
-nightly remains explicitly unverified in the paired metadata. The old nightly's
-conclusion and its own first results/retries remain untouched.
-
-The aggregate job writes the flow ID, device, configuration, raw outcome,
-elapsed seconds, failure class and first public failure message to its job
-summary, plus the same first-failure context rendered by UI shards when available.
-The JSON retains the recorder's action, surface and timing fields without inventing
-a remaining-time measurement; nulls and unknown fields stay unknown. Missing flows
-stay `not-run`. The
-`smoke-shadow-<run>-<attempt>` artifact retains `shadow.json`, `summary.md` and
-the shared sensitive-scan receipt for 90 days. The attempt-bound plan and
-per-group and compact producer artifacts have seven-day retention; configuration
-archives have one-day retention and compression level 0. The plan is scanned before
-upload too. Producer provenance, artifact ID, manifest/tar hashes and build/pack/upload
-timing remain in the 90-day summary after binary expiry. `shadow.json` schema 1
-contains the repository, tested `head_sha`, manifest SHA-256, shadow run/event/
-attempt, old nightly run ID/attempt/conclusion/execution state, matrix job
-result, `nightly_run_id` pairing key, suppression reason/blocking IDs, group
-validation verdicts/reasons, job/build phase timings, errors and per-flow records.
-`failure_category` is the displayed failure
-class; it is separate from the existing diagnostic enum named `failure_class`.
-The first smoke assertion message retains only the runner's reviewed, complete
-code-defined step/control vocabulary; arbitrary suffixes, PIN digits, picker IDs
-and fixture/peer labels remain redacted. The shared projection and public-message
-scanner use the same closed table, including the reader's second projection;
-see [the smoke diagnostic contract](CI_STRICT_RUNNER.md#short-smoke-flow-suite).
-`executed` means every expected flow has actual first-attempt execution evidence;
-`comparison_eligible` additionally requires valid complete shadow records and a
-completed old nightly at the same SHA with a conclusion in
-`ci_nightly_change.REAL_RESULT_CONCLUSIONS` (`success` or `failure`), which is not
-a verified unchanged skip. A cancelled old nightly cannot count.
-The shadow's own `counts_as_shadow` rule determines this; the old nightly's
-unchanged-skip baseline `real` verdict is not a counting gate. Old yellow,
-`environment_limited` and infrastructure-incomplete results do not prevent a
-complete first shadow execution from counting. Available bound old aggregate
-`status`, `environment_limited`, `errors`, `matrix` and `tiers` fields are retained
-unchanged under `nightly.aggregate`; unavailable or mismatched old evidence stays
-explicitly unavailable/unverified. Genuine red executed pairs remain red and can
-be compared; these booleans never promote a failure or verify old-nightly health.
-
-The coordinator counts at most one `comparison_eligible` observation per
-`nightly_run_id` toward the approved **5–7 comparable runs**, and records the cause of every red before
-deciding on the separately reviewed switch. Automatic skips, manual runs paired
-with verified skipped nightlies, new-shadow cancellation, missing groups,
-`single-flow` and `not-run` flows do not count. Only first shadow attempts are accepted; to collect another
-observation, dispatch a new run rather than re-running jobs. Multiple shadow IDs
-or nightly attempts paired with the same nightly ID do not add observations;
-the exported pairing key is the deduplication key. Distinct nightly IDs at the
-same source SHA may each count once. The observation for each nightly ID is the
-earliest eligible shadow, by smallest numeric shadow run ID. Later shadows never replace it, and any later red must still be
-explained; redispatch is not a retry or a way to replace the first outcome.
-After the switch, the independent requirement remains 10 actually executed nights with no
-unexplained red. Shadow success gates nothing and does not activate the switch.
-
-Hosted execution is **NOT_RUN before merge**. The first hosted dispatch must
-show the selected nightly SHA in every group, all manifest groups and all 23
-officially executed first results, no retry/yellow promotion, a complete
-comparison table with a nightly link, scanned 90-day artifacts, and disposal of
-only job-owned simulators/products. A failing flow must make both its group and
-the shadow conclusion fail. A verified skipped automatic night must show only
-plan/aggregate with `not-run`; manually selecting it must execute the groups.
-Legacy group records retain schema 1 and `warm-up, flows` timing. Archive group
-records use schema 2 / `timing_mode=smoke-archive-v2` and require
-`archive-verify, flows` and build provenance, with separate transfer/verify diagnostics;
-they never invent a zero warm-up. Shared build runner seconds are counted once,
-from the two producer records. Per-flow native/total time retains preparation,
-reset, export and cleanup costs; queue time remains separate from job clocks.
-Transfer/upload step timings are read by the aggregate after the jobs finish.
-Missing, partial, invalid or failed timing reads stay `unknown` and never fail a
-producer, group or aggregate. Producer build/pack times and group `transfer_seconds`
-and `verify_seconds` are diagnostics too. Group `job_started_epoch`,
-`job_elapsed_seconds` and every phase's `elapsed_seconds` must remain valid;
-job-budget start evidence and execution deadlines remain gates.
-The first hosted report must include both producer build/pack/upload durations,
-each iOS group's transfer/verification and each TV group's warm-up/build duration
-and each flow's native and total elapsed seconds from `group_timings` and `flows`.
-Compare the API's `started_at` with the first step of each matrix job, especially
-groups delayed by `max-parallel`; the job-clock assumption remains unverified
-until that hosted observation.
-Measure actual queue, build, execution/export and total wall times before
-claiming the budget is met.
+Hosted behavior is `NOT_RUN` until the first scheduled or dispatched run after
+merge: both triggers read this workflow from `main`.
 
 ## Early failure diagnostics
 

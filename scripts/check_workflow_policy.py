@@ -29,15 +29,12 @@ XCC_BINDINGS = {"CI_WORKFLOW_TOKEN": "${{ github.token }}",
 XCC_CONTROL_BINDINGS = {**XCC_BINDINGS, "CI_XCC_ROUTING_OVERRIDE": "${{ vars.CI_XCC_ROUTING_OVERRIDE }}"}
 LIVE_WORKFLOW = ".github/workflows/ci-nightly.yml"
 SHADOW_WORKFLOW = ".github/workflows/ci-smoke-shadow.yml"
-SHADOW_PLAN_GUARD = ("github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || "
-    "(github.event_name == 'workflow_run' && github.event.workflow_run.head_repository.full_name == github.repository && "
-    "github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.path == '.github/workflows/ci-nightly.yml' && "
-    "github.event.workflow_run.status == 'completed' && (github.event.workflow_run.event == 'schedule' || "
-    "(github.event.workflow_run.event == 'workflow_dispatch' && github.event.workflow_run.display_title == 'ci-nightly full'))))")
+SHADOW_PLAN_GUARD = ("github.ref == 'refs/heads/main' && "
+    "(github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')")
 SHADOW_CONCURRENCY_GROUP = ("${{ (" + SHADOW_PLAN_GUARD + ") && "
-    "(github.event_name != 'workflow_run' || contains(fromJSON('[\"failure\",\"success\"]'), github.event.workflow_run.conclusion)) && "
     "'ci-smoke-shadow' || format('ci-smoke-shadow-rejected-{0}', github.run_id) }}")
-SHADOW_BINDINGS = {"SMOKE_NIGHTLY_RUN_ID": "${{ inputs.nightly_run_id }}", "SMOKE_TOKEN": "${{ github.token }}",
+SHADOW_BINDINGS = {"SMOKE_SCOPE": "${{ github.event_name == 'workflow_dispatch' && (inputs.scope || 'full') || 'core' }}",
+                   "SMOKE_TOKEN": "${{ github.token }}",
                    "SMOKE_GROUP": "${{ matrix.id }}", "SMOKE_MATRIX_RESULT": "${{ needs.flows.result }}"}
 SHADOW_CONFIGURATION = "${{ github.job == 'ios-debug' && 'Debug' || 'Release' }}"
 SHADOW_BINDINGS.update(SMOKE_CONFIGURATION=SHADOW_CONFIGURATION, SMOKE_ARTIFACT_ID="${{ steps.archive.outputs.artifact-id }}")
@@ -70,7 +67,6 @@ PROBE_ENVIRONMENT = {
     "CI_PROBE_SIMULATE_MISSING_PIN": "${{ inputs.simulate_missing_pin || false }}",
 }
 WORKFLOW_RUN_SOURCES = {
-    SHADOW_WORKFLOW: {"ci-nightly"},
     XCC_DISPATCH_WORKFLOW: {"ci-ui", "ci-xcode-cloud-route"},
     ".github/workflows/ci-publish.yml": {"ci-gate"},
     REPORT_WORKFLOW: {"ci-nightly", "ci-gate", "ci-ui"},
@@ -98,7 +94,7 @@ ENVIRONMENT_WORKFLOWS = {
     "ci-approval": {".github/workflows/ci-approval.yml"},
     "release": {".github/workflows/ci-release.yml"},
 }
-TRUSTED_WORKFLOWS = {PRIVACY_WORKFLOW, ".github/workflows/ci-probe.yml"} | set(WORKFLOW_RUN_SOURCES)
+TRUSTED_WORKFLOWS = {PRIVACY_WORKFLOW, SHADOW_WORKFLOW, ".github/workflows/ci-probe.yml"} | set(WORKFLOW_RUN_SOURCES)
 for allowed in ENVIRONMENT_WORKFLOWS.values():
     TRUSTED_WORKFLOWS.update(allowed)
 
@@ -261,7 +257,7 @@ def trusted_run_allowed(script, path, events):
     if not isinstance(script, str):
         return False
     script = script.strip()
-    if path == SHADOW_WORKFLOW and set(events) == {"workflow_run", "workflow_dispatch"}:
+    if path == SHADOW_WORKFLOW and set(events) == {"schedule", "workflow_dispatch"}:
         return script in {SHADOW_SETUP, SHADOW_STAGE, SHADOW_STAGED_SETUP, SHADOW_COMMAND + "plan", SHADOW_COMMAND + "plan-shared",
                           SHADOW_COMMAND + "aggregate", SHADOW_GROUP_COMMAND + "build", SHADOW_GROUP_COMMAND + "producer-record",
                           SHADOW_GROUP_COMMAND + "select-archive", SHADOW_GROUP_COMMAND + "run", SHADOW_GROUP_COMMAND + "cleanup"}
@@ -511,7 +507,9 @@ def check_shared_shadow_contract(document, events, flag):
         for role in ("ios-debug", "ios-release"):
             job = jobs[role]
             valid &= (set(job) == {"needs", "if", "name", "runs-on", "timeout-minutes", "permissions", "outputs", "steps"}
-                      and job["needs"] == "plan" and job["if"] == guard and job["name"] == "smoke-shadow-" + role
+                      and job["needs"] == "plan"
+                      and job["if"] == guard.replace("outputs.execute", "outputs." + role.replace("-", "_"))
+                      and job["name"] == "smoke-shadow-" + role
                       and job["runs-on"] == "xcode-27" and job["timeout-minutes"] == 30
                       and job["permissions"] == {"contents": "read", "actions": "read"}
                       and job["outputs"] == {"artifact_id": "${{ steps.archive.outputs.artifact-id }}",
@@ -536,8 +534,9 @@ def check_shared_shadow_contract(document, events, flag):
         plan_steps = jobs["plan"]["steps"]
         valid &= len(plan_steps) == 4 and plan_steps[2].get("run") == SHADOW_COMMAND + "plan-shared"
         valid &= jobs["plan"]["outputs"] == {key: "${{ steps.plan.outputs." + key + " }}" for key in
-                                              ("matrix", "head_sha", "control_sha", "execute")}
-        projected["jobs"]["plan"]["outputs"].pop("control_sha")
+                                              ("matrix", "head_sha", "control_sha", "execute", "ios_debug", "ios_release")}
+        for key in ("control_sha", "ios_debug", "ios_release"):
+            projected["jobs"]["plan"]["outputs"].pop(key)
         projected["jobs"]["plan"]["steps"][2]["run"] = SHADOW_COMMAND + "plan"
         flows = jobs["flows"]
         steps = flows["steps"]
@@ -587,9 +586,9 @@ def check_shared_shadow_contract(document, events, flag):
 def check_shadow_contract(document, events, flag):
     if any(role in document["jobs"] for role in ("ios-debug", "ios-release")):
         return check_shared_shadow_contract(document, events, flag)
-    expected_events = {"workflow_run": {"workflows": ["ci-nightly"], "branches": ["main"], "types": ["completed"]},
-        "workflow_dispatch": {"inputs": {"nightly_run_id": {
-            "description": "Completed main ci-nightly run to compare at its head SHA", "required": True, "type": "string"}}}}
+    expected_events = {"schedule": [{"cron": "7 14 * * *"}, {"cron": "7 19 * * *"}],
+        "workflow_dispatch": {"inputs": {"scope": {"description": "Smoke flow scope", "required": True,
+            "default": "full", "type": "choice", "options": ["core", "full"]}}}}
     jobs = document["jobs"]
     concurrency = document.get("concurrency", {})
     valid = (document.get("name") == "ci-smoke-shadow" and events == expected_events
@@ -617,6 +616,7 @@ def check_shadow_contract(document, events, flag):
             valid &= job.get("strategy") == {"fail-fast": False, "max-parallel": 3,
                                              "matrix": "${{ fromJSON(needs.plan.outputs.matrix) }}"}
         if role == "plan":
+            valid &= steps[0].get("with") == {"ref": "${{ github.sha }}", "fetch-depth": 0, "persist-credentials": False}
             valid &= job.get("outputs") == {key: "${{ steps.plan.outputs." + key + " }}" for key in ("matrix", "head_sha", "execute")}
         phase = "run" if role == "flows" else role
         runs = [step for step in steps if isinstance(step, dict) and "run" in step]
@@ -625,7 +625,7 @@ def check_shadow_contract(document, events, flag):
         valid &= [step["run"] for step in runs] == expected_runs
         index = 2 if role == "flows" else 1
         if len(runs) > index:
-            expected_environment = ({"SMOKE_NIGHTLY_RUN_ID": SHADOW_BINDINGS["SMOKE_NIGHTLY_RUN_ID"],
+            expected_environment = ({"SMOKE_SCOPE": SHADOW_BINDINGS["SMOKE_SCOPE"],
                                      "SMOKE_TOKEN": SHADOW_BINDINGS["SMOKE_TOKEN"]} if role == "plan" else
                                     {"SMOKE_GROUP": SHADOW_BINDINGS["SMOKE_GROUP"], "SMOKE_TOKEN": SHADOW_BINDINGS["SMOKE_TOKEN"]}
                                     if role == "flows" else {"SMOKE_MATRIX_RESULT": SHADOW_BINDINGS["SMOKE_MATRIX_RESULT"]})
@@ -636,7 +636,7 @@ def check_shadow_contract(document, events, flag):
         if role == "flows" and runs:
             valid &= runs[-1].get("if") == "always()"
     if not valid:
-        flag("workflow", "smoke-shadow-contract", "Shadow keeps main-only completion/manual admission, manifest groups, read-only authority and a 70-minute execution budget")
+        flag("workflow", "smoke-shadow-contract", "Smoke keeps main-only scheduled/manual admission, manifest groups, read-only authority and a 70-minute execution budget")
 
 
 def check_workflow(path: str, source: str, *, ui_shards=None, run_named_workflows=()) -> list[Violation]:
@@ -1150,6 +1150,9 @@ def check_workflow(path: str, source: str, *, ui_shards=None, run_named_workflow
         if isinstance(uses, str) and uses.split("@")[0].lower() == "actions/checkout":
             ref = options.get("ref")
             allowed_refs = {"main", "refs/heads/main", "${{ github.event.repository.default_branch }}"}
+            shadow_plan_checkout = path == SHADOW_WORKFLOW and location == "workflow.jobs.plan.steps[0]"
+            if shadow_plan_checkout:
+                allowed_refs.add("${{ github.sha }}")
             shadow_tested_checkout = (path == SHADOW_WORKFLOW and location in {
                 "workflow.jobs." + role + ".steps[2]" for role in ("flows", "ios-debug", "ios-release")})
             if shadow_tested_checkout:
@@ -1171,7 +1174,8 @@ def check_workflow(path: str, source: str, *, ui_shards=None, run_named_workflow
                 flag(location, "report-contract", "Reporter needs explicit main checkout and full history")
             if path == SHADOW_WORKFLOW and options != {
                     "ref": "${{ needs.plan.outputs.head_sha }}" if shadow_tested_checkout else
-                           "${{ needs.plan.outputs.control_sha }}" if shadow_control_checkout else "main",
+                           "${{ needs.plan.outputs.control_sha }}" if shadow_control_checkout else
+                           "${{ github.sha }}" if shadow_plan_checkout else "main",
                     "fetch-depth": 0, "persist-credentials": False}:
                 flag(location, "trusted-checkout", "Shadow executes only the plan-admitted main ancestor, with full history and no stored token")
             if path in XCC_WORKFLOWS | {XCC_DISPATCH_WORKFLOW} and (ref != "main" or options.get("fetch-depth") != 0

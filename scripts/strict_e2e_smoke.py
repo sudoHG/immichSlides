@@ -42,6 +42,16 @@ FLOW_METHODS = {
     "directional-wake": "testDirectionalWake", "pause-resume": "testPauseResume",
     "person-selection": "testPersonSelection", "server-switch": "testServerSwitch",
 }
+CORE_FLOW_IDS = frozenset({
+    "tv-first-boot", "tv-playback-controls", "tv-pause-resume", "tv-background-return",
+    "tv-server-switch", "iphone-first-boot", "ipad-rotation",
+})
+
+
+def select_scope(flows, scope):
+    if scope not in {"core", "full"}:
+        raise ValueError("smoke scope must be core or full")
+    return [flow for flow in flows if scope == "full" or flow["id"] in CORE_FLOW_IDS]
 
 
 def unique_object(pairs):
@@ -313,6 +323,7 @@ def run(arguments, root, runner, stdout, stderr):
         raise runner.CommandError("expected smoke control requires --smoke-archive")
     manifest, planned, methods = load_manifest(root)
     flows = validate_manifest(manifest, planned)
+    flows = select_scope(flows, getattr(arguments, "smoke_scope", "full"))
     selected = select_flows(flows, arguments.smoke_device, arguments.configuration, arguments.smoke_flow)
     for flow in selected:
         if arguments.platform not in methods.get(flow["selector"], set()):

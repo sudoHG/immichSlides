@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only smoke shadow planning and raw first-result aggregation."""
+"""Standalone smoke planning and raw first-result aggregation."""
 
 from __future__ import annotations
 
@@ -23,7 +23,6 @@ ROOT = Path(os.environ.get("GITHUB_WORKSPACE") or Path(__file__).resolve().paren
 sys.path.insert(0, str(ROOT / "scripts"))
 from ci_summary import ContractError, decode, markdown_text, require, sha
 WORKFLOW = ".github/workflows/ci-smoke-shadow.yml"
-NIGHTLY = ".github/workflows/ci-nightly.yml"
 MANIFEST = "scripts/smoke-flows.json"
 GROUP_BUDGET_MINUTES = {"iphone-debug": 27, "iphone-release": 27, "ipad-debug": 27,
                         "ipad-release": 27, "tv-debug": 22, "tv-release": 22}
@@ -324,34 +323,13 @@ def shadow_context(environment):
             "event": environment.get("GITHUB_EVENT_NAME")}
 
 
-def admit(environment, payload, run, workflow):
-    from ci_nightly_change import FULL_MANUAL_TITLE
+def admit(environment):
     require(environment.get("GITHUB_REF") == "refs/heads/main"
-            and environment.get("GITHUB_EVENT_NAME") in {"workflow_run", "workflow_dispatch"},
-            "smoke shadow is main-only with completion/manual triggers")
+            and environment.get("GITHUB_EVENT_NAME") in {"schedule", "workflow_dispatch"},
+            "smoke is main-only with scheduled/manual triggers")
     require(shadow_context(environment)["attempt"] == 1, "smoke shadow records only the first attempt; dispatch a new run")
-    repository = environment.get("GITHUB_REPOSITORY")
-    require(run.get("repository", {}).get("full_name") == repository
-            and (run.get("head_repository") or {}).get("full_name") == repository
-            and run.get("head_branch") == "main" and run.get("event") in {"schedule", "workflow_dispatch"},
-            "nightly source must be a same-repository main schedule or dispatch")
-    require(run["event"] == "schedule" or run.get("display_title") == FULL_MANUAL_TITLE,
-            "shadow requires a full scheduled or manual nightly")
-    require(run.get("path") == workflow.get("path") == NIGHTLY and run.get("workflow_id") == workflow.get("id"),
-            "nightly workflow path or ID differs")
-    require(run.get("status") == "completed", "nightly must be completed before shadow execution")
-    sha(run.get("head_sha"))
-    if environment["GITHUB_EVENT_NAME"] == "workflow_run":
-        event_run = payload.get("workflow_run", {})
-        require(all(event_run.get(key) == run.get(key) for key in
-                    ("id", "run_attempt", "head_sha", "head_branch", "path", "workflow_id", "event"))
-                and (event_run.get("head_repository") or {}).get("full_name") == repository,
-                "completion event differs from authoritative nightly attempt")
-    else:
-        requested = environment.get("SMOKE_NIGHTLY_RUN_ID", "")
-        require(requested.isdecimal() and int(requested) > 0 and int(requested) == run.get("id"),
-                "manual shadow requires a completed nightly run ID")
-    return run["head_sha"]
+    sha(environment.get("GITHUB_SHA"))
+    return environment["GITHUB_SHA"]
 
 
 def manifest_groups(manifest):
@@ -362,17 +340,14 @@ def manifest_groups(manifest):
             for platform, device, configuration in groups]
 
 
-def make_plan(environment, run, manifest, manifest_hash, nightly_execution, nightly_aggregate=None):
-    execute = environment["GITHUB_EVENT_NAME"] == "workflow_dispatch" or nightly_execution != "skipped"
-    return {"schema_version": 1, "repository": environment["GITHUB_REPOSITORY"], "head_sha": run["head_sha"],
+def make_plan(environment, manifest, manifest_hash):
+    from strict_e2e_smoke import select_scope
+    scope = environment.get("SMOKE_SCOPE") or ("full" if environment["GITHUB_EVENT_NAME"] == "workflow_dispatch" else "core")
+    selected = select_scope(manifest["flows"], scope)
+    return {"schema_version": 1, "repository": environment["GITHUB_REPOSITORY"], "head_sha": environment["GITHUB_SHA"],
             "shadow": shadow_context(environment), "started_epoch": time.time(),
-            "manifest_sha256": manifest_hash, "flows": manifest["flows"],
-            "groups": manifest_groups(manifest),
-            "nightly": {"id": str(run["id"]), "attempt": run["run_attempt"], "head_sha": run["head_sha"],
-                        "event": run["event"], "status": run["status"], "conclusion": run["conclusion"],
-                        "execution": nightly_execution, "aggregate": nightly_aggregate},
-            "execute": execute, "blocked_by_active_nightly": [],
-            "not_run_reason": None if execute else "Nightly skipped unchanged source; automatic shadow was not run."}
+            "manifest_sha256": manifest_hash, "scope": scope, "flows": selected,
+            "groups": manifest_groups({"flows": selected}), "execute": True, "not_run_reason": None}
 
 
 def group_flows(plan, group_id):
@@ -388,21 +363,13 @@ def validate_plan(plan, environment, *, checkout_sha=None, manifest_hash=None, m
             and plan.get("shadow") == shadow_context(environment), "shadow plan context differs")
     sha(plan["head_sha"])
     if checkout_sha is not None:
-        require(checkout_sha == plan["head_sha"], "tested checkout differs from nightly head SHA")
+        require(checkout_sha == plan["head_sha"], "tested checkout differs from run head SHA")
     if manifest_hash is not None:
-        require(manifest_hash == plan["manifest_sha256"], "manifest binding differs from the planned nightly SHA")
+        require(manifest_hash == plan["manifest_sha256"], "manifest binding differs from the planned run SHA")
     if manifest is not None:
-        require(plan["flows"] == manifest["flows"] and plan["groups"] == manifest_groups(manifest),
-                "manifest population differs from the planned nightly SHA")
-
-
-def counts_as_shadow(plan, *, executed, errors, matrix_result):
-    """Count new first execution independently of the old nightly's health/baseline verdict."""
-    from ci_nightly_change import REAL_RESULT_CONCLUSIONS
-    return (executed and not errors and matrix_result in {"success", "failure"}
-            and plan["shadow"]["attempt"] == 1 and plan["nightly"]["status"] == "completed"
-            and plan["nightly"]["head_sha"] == plan["head_sha"] and plan["nightly"]["execution"] != "skipped"
-            and plan["nightly"]["conclusion"] in REAL_RESULT_CONCLUSIONS)
+        selected = make_plan(dict(environment, SMOKE_SCOPE=plan["scope"]), manifest, plan["manifest_sha256"])
+        require(plan["flows"] == selected["flows"] and plan["groups"] == selected["groups"],
+                "manifest population differs from the planned run SHA")
 
 
 def valid_setup_failure(record):
@@ -515,7 +482,7 @@ def aggregate(plan, records, matrix_result, *, producers=None, producer_results=
     timings = {}
     builds, admitted_builds = {}, {}
     if plan.get("build_mode") == ARCHIVE_MODE and plan["execute"]:
-        for configuration in ("Debug", "Release"):
+        for configuration in sorted({group["configuration"] for group in plan["groups"] if group["platform"] == "ios"}):
             candidates = [record for record in producers or [] if record.get("configuration") == configuration]
             try:
                 require(len(candidates) == 1, "missing or duplicate producer")
@@ -660,7 +627,7 @@ def aggregate(plan, records, matrix_result, *, producers=None, producer_results=
                                                    for row in observed.values()):
             errors.append("matrix jobs did not succeed")
     elif records or matrix_result not in {"skipped", "success"}:
-        errors.append("unexpected execution on skipped nightly")
+        errors.append("unexpected execution on skipped smoke")
     flows = []
     for flow in plan["flows"]:
         row = observed.get(flow["id"], {"id": flow["id"], "selector": flow["selector"], "outcome": "not-run",
@@ -674,11 +641,9 @@ def aggregate(plan, records, matrix_result, *, producers=None, producer_results=
     outcome = ("not-run" if not plan["execute"] and not errors else "passed" if not errors
                and all(row["outcome"] == "passed" for row in flows) else "failed")
     return {"schema_version": 1, "repository": plan["repository"], "head_sha": plan["head_sha"],
-            "manifest_sha256": plan["manifest_sha256"], "shadow": plan["shadow"], "nightly": plan["nightly"],
-            "nightly_run_id": plan["nightly"]["id"], "not_run_reason": plan["not_run_reason"],
-            "blocked_by_active_nightly": plan["blocked_by_active_nightly"],
+            "manifest_sha256": plan["manifest_sha256"], "shadow": plan["shadow"], "scope": plan["scope"],
+            "not_run_reason": plan["not_run_reason"],
             "outcome": outcome, "executed": executed,
-            "comparison_eligible": counts_as_shadow(plan, executed=executed, errors=errors, matrix_result=matrix_result),
             "wall_seconds": max(0, time.time() - plan["started_epoch"]),
             "matrix_job_result": matrix_result, "errors": errors, "group_validation": validations,
             "group_timings": timings, "flows": flows,
@@ -692,14 +657,11 @@ def aggregate(plan, records, matrix_result, *, producers=None, producer_results=
 
 def markdown(record):
     from ci_failure_diagnostics import render_first_failure
-    nightly = record["nightly"]
-    old_status = (nightly.get("aggregate") or {}).get("status", "unknown")
-    url = f"https://github.com/{record['repository']}/actions/runs/{nightly['id']}/attempts/{nightly['attempt']}"
-    lines = ["## Smoke shadow: " + record["outcome"].upper(), "",
-             f"Source `{record['head_sha']}`; [old nightly {nightly['id']}, attempt {nightly['attempt']}]({url}) "
-             f"({nightly['conclusion']}; evidence: {nightly['execution']}; aggregate: {markdown_text(old_status)}).", "",
-             f"Executed: {record['executed']}; comparable executed shadow: {record['comparison_eligible']}. "
-             "Informational only; first results, no retries or yellow.", "",
+    if record["outcome"] == "not-run":
+        return "Smoke skipped: " + markdown_text(record["not_run_reason"]) + "\n"
+    lines = ["## Smoke: " + record["outcome"].upper(), "",
+             f"Source `{record['head_sha']}`; scope `{record['scope']}`; executed: {record['executed']}. "
+             "Informational only; results never block merges; first results, no retries or yellow.", "",
              "| Flow | Device | Configuration | Outcome | Elapsed (s) | Failure class | Pre-test failure step | First public failure | First failure context |",
              "|---|---|---|---|---:|---|---|---|---|"]
     if record.get("not_run_reason"):
@@ -824,73 +786,77 @@ def setup(environment):
                            cwd=ROOT, env=environment)
 
 
-def paired_nightly_aggregate(api, run):
-    from ci_publish import json_member
-    name = f"nightly-aggregate-{run['id']}-{run['run_attempt']}"
-    matches = [item for item in api.pages(f"actions/runs/{run['id']}/artifacts", "artifacts") if item["name"] == name]
-    if len(matches) != 1 or matches[0].get("expired") is not False:
-        return {"availability": "unavailable"}
-    raw = json_member(api, matches[0], "nightly.json")
-    require(isinstance(raw, dict), "paired nightly aggregate source differs")
-    identity = raw.get("identity", {})
-    require(isinstance(identity, dict) and raw.get("run") == {"id": str(run["id"]), "attempt": run["run_attempt"]}
-            and identity.get("repository") == api.repository and identity.get("commit_sha") == run["head_sha"],
-            "paired nightly aggregate source differs")
-    # Preserve the old verdict and diagnostics as reported; none is a new-shadow health gate.
-    return {"availability": "present", **{key: raw.get(key) for key in
-            ("status", "environment_limited", "errors", "matrix", "tiers")}}
+def already_tested(api, scheduling):
+    """Require actual first results and completed groups before suppressing a schedule."""
+    from ci_publish import complete_attempt_jobs, json_member
+    repository, head = scheduling["repository"], scheduling["head_sha"]
+    expected = {flow["id"] for flow in scheduling["flows"]}
+    groups = {"smoke-shadow-" + group["id"] for group in scheduling["groups"]}
+    try:
+        for run in api.pages("actions/workflows/ci-smoke-shadow.yml/runs", "workflow_runs",
+                             branch="main", status="completed", head_sha=head):
+            if (type(run.get("id")) is not int or not 0 < run["id"] < int(scheduling["shadow"]["id"])
+                    or run.get("head_sha") != head
+                    or run.get("path") != WORKFLOW or run.get("head_branch") != "main"
+                    or run.get("repository", {}).get("full_name") != repository
+                    or (run.get("head_repository") or {}).get("full_name") != repository
+                    or run.get("status") != "completed" or run.get("conclusion") not in {"success", "failure"}
+                    or run.get("event") not in {"schedule", "workflow_dispatch"}):
+                continue
+            name = f"smoke-shadow-{run['id']}-{run['run_attempt']}"
+            artifacts = [item for item in api.pages(f"actions/runs/{run['id']}/artifacts", "artifacts")
+                         if item.get("name") == name and item.get("expired") is False]
+            if len(artifacts) != 1:
+                continue
+            record = json_member(api, artifacts[0], "shadow.json")
+            if (record.get("repository") != repository or record.get("head_sha") != head
+                    or record.get("shadow") != {"id": str(run["id"]), "attempt": run["run_attempt"], "event": run["event"]}
+                    or record.get("executed") is not True or record.get("outcome") not in {"passed", "failed"}):
+                continue
+            executed = {row["id"] for row in record["flows"] if row.get("executed") is True
+                        and row.get("official_execution_complete") is True
+                        and row.get("outcome") in {"passed", "failed", "crashed", "timed-out"}}
+            jobs = complete_attempt_jobs(api, run)
+            completed = {job["name"] for job in jobs if job.get("status") == "completed"
+                         and job.get("conclusion") in {"success", "failure"}}
+            if expected <= executed and groups <= completed:
+                return {"id": str(run["id"]), "attempt": run["run_attempt"], "outcome": record["outcome"]}
+    except Exception:
+        # Any exception while reading history means not tested; execute this run.
+        return None
+    return None
 
 
 def plan_run(environment, directory, *, shared=False):
     from ci_publish import GitHub
-    from ci_nightly_change import run_evidence, ACTIVE_RUN_STATUSES, REAL_RESULT_CONCLUSIONS
-    payload = decode(Path(environment["GITHUB_EVENT_PATH"]).read_text())
-    automatic = environment.get("GITHUB_EVENT_NAME") == "workflow_run"
-    requested = str(payload.get("workflow_run", {}).get("id", "")) if automatic else environment.get("SMOKE_NIGHTLY_RUN_ID", "")
-    require(requested.isdecimal() and int(requested) > 0, "manual shadow requires a completed nightly run ID")
+    head = admit(environment)
     api = GitHub(environment["GITHUB_REPOSITORY"], environment.get("SMOKE_TOKEN"))
-    run = api.repo("actions/runs/" + requested)
-    workflow = api.repo("actions/workflows/ci-nightly.yml")
-    head = admit(environment, payload, run, workflow)
     require(subprocess.call(["git", "merge-base", "--is-ancestor", head, "origin/main"], cwd=ROOT, timeout=30) == 0,
-            "nightly source is not an ancestor of main")
+            "run source is not an ancestor of main")
     manifest, manifest_hash = manifest_at_head(head)
-    try:
-        execution = run_evidence(api, run) or "unverified"
-    except (OSError, ValueError, KeyError, TypeError, AttributeError):
-        # Incomplete old-nightly evidence cannot suppress the new raw smoke observation.
-        execution = "unverified"
-    try:
-        old_aggregate = paired_nightly_aggregate(api, run)
-    except (OSError, ValueError, KeyError, TypeError):
-        old_aggregate = {"availability": "unverified"}
-    scheduling = make_plan(environment, run, manifest, manifest_hash, execution, old_aggregate)
-    active = set()
-    for status in sorted(ACTIVE_RUN_STATUSES):
-        for candidate in api.pages("actions/workflows/ci-nightly.yml/runs", "workflow_runs", branch="main", status=status):
-            require(isinstance(candidate, dict) and candidate.get("head_branch") == "main"
-                    and candidate.get("status") == status and candidate.get("path") == NIGHTLY
-                    and candidate.get("workflow_id") == workflow["id"]
-                    and type(candidate.get("id")) is int and candidate["id"] > 0,
-                    "active nightly listing differs")
-            active.add(str(candidate["id"]))
-    if active:
-        scheduling.update(execute=False, blocked_by_active_nightly=sorted(active),
-                          not_run_reason="Main nightly is active; shadow was not run.")
-    if run.get("conclusion") not in REAL_RESULT_CONCLUSIONS:
-        scheduling.update(execute=False, not_run_reason="Nightly conclusion is not success/failure; shadow was not run.")
+    scheduling = make_plan(environment, manifest, manifest_hash)
+    if environment["GITHUB_EVENT_NAME"] == "schedule":
+        tested = already_tested(api, scheduling)
+        if tested:
+            url = f"https://github.com/{scheduling['repository']}/actions/runs/{tested['id']}/attempts/{tested['attempt']}"
+            scheduling.update(execute=False, not_run_reason=(
+                f"Main head already tested by [run {tested['id']}, attempt {tested['attempt']}]({url}) "
+                f"({tested['outcome'].upper()}); all groups skipped."))
     if shared and scheduling["execute"]:
         plan_shared(scheduling, environment, api)
     if shared:
         scheduling["control_source_sha"] = git("rev-parse", "HEAD")
-        require(subprocess.call(["git", "merge-base", "--is-ancestor", scheduling["control_source_sha"], "origin/main"],
-                                cwd=ROOT, timeout=30) == 0, "planned control source is not admitted main")
+        require(scheduling["control_source_sha"] == head, "planned control differs from run head")
     write_json(directory / "plan.json", scheduling)
     scan_records(directory)
     output(environment, "head_sha", head)
     if shared:
         output(environment, "control_sha", scheduling["control_source_sha"])
     output(environment, "execute", str(scheduling["execute"]).lower())
+    for configuration in ("Debug", "Release"):
+        selected = scheduling["execute"] and any(group["platform"] == "ios" and group["configuration"] == configuration
+                                                for group in scheduling["groups"])
+        output(environment, "ios_" + configuration.lower(), str(selected).lower())
     output(environment, "matrix", json.dumps({"include": scheduling["groups"]}, separators=(",", ":")))
     output(environment, "records_safe", "true")
     return 0
@@ -912,9 +878,10 @@ def job_started_epoch(environment, group_id):
     return started.timestamp()
 
 
-def runner_command(group, destination, root, evidence, *, warm, archive=False):
+def runner_command(group, destination, root, evidence, *, warm, archive=False, scope="full"):
     return [sys.executable, "-B", str(ROOT / "scripts/run_strict_e2e.py"), "--suite", "smoke-flow",
             "--platform", group["platform"], "--smoke-device", group["device"],
+            "--smoke-scope", scope,
             "--configuration", group["configuration"], "--destination", destination,
             "--derived-data-path", str(root / "derived"), "--cloned-source-packages-path", str(root / "packages"),
             "--evidence-dir", str(evidence), "--min-free-gib", "20" if os.environ.get("GITHUB_ACTIONS") == "true" else "80",
@@ -1183,7 +1150,8 @@ def run_group(scheduling, environment, temporary):
                 continue
             setup_step = "runner-command"
             remaining = record["job_started_epoch"] + GROUP_BUDGET_MINUTES[group_id] * 60 - time.time()
-            command = runner_command(group, destination, root, root / name, warm=warm, archive=archive_mode)
+            command = runner_command(group, destination, root, root / name, warm=warm, archive=archive_mode,
+                                     scope=scheduling["scope"])
             setup_step = None
             if remaining <= 0:
                 raise subprocess.TimeoutExpired(command, 0)
@@ -1411,7 +1379,7 @@ def main(argv=None):
                                                  for configuration in ("Debug", "Release")})
             if unreadable:
                 record["errors"].append("unreadable group record")
-                record.update(outcome="failed", comparison_eligible=False)
+                record.update(outcome="failed")
             destination = temporary / "smoke-shadow"
             write_json(destination / "shadow.json", record)
             (destination / "summary.md").write_text(markdown(record), encoding="utf-8")
