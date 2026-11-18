@@ -26,12 +26,12 @@ from urllib.parse import urlencode
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from ci_summary import ContractError, parse_identity, parse_summary, require, sha
-from ci_publish_git import derive_record, evaluate_records, git, ui_failure_hint, workflow_contract
+from ci_publish_git import derive_record, evaluate_records, git, workflow_contract
 
 PUBLISH_PATH = ".github/workflows/ci-publish.yml"
 APPROVAL_PATH = ".github/workflows/ci-approval.yml"
 APPROVE_PATH = ".github/workflows/ci-approve.yml"
-PRODUCERS = {"ci-pr-gate": ".github/workflows/ci-gate.yml", "ci-ui": ".github/workflows/ci-ui.yml"}
+PRODUCERS = {"ci-pr-gate": ".github/workflows/ci-gate.yml"}
 MAX_JSON_BYTES = 16 * 1024 * 1024
 
 
@@ -141,7 +141,7 @@ def complete_attempt_jobs(api, run):
 def cancelled_unstarted_run(api, run):
     """Recognize an unexecuted first-attempt main gate or UI run superseded by a push."""
     try:
-        workflow_file = {path: path.rpartition("/")[2] for path in PRODUCERS.values()}.get(run["path"])
+        workflow_file = {path: path.rpartition("/")[2] for path in (*PRODUCERS.values(), ".github/workflows/ci-ui.yml")}.get(run["path"])
         if (workflow_file is None or run["event"] != "push"
                 or run["head_branch"] != "main" or run["head_repository"]["full_name"] != api.repository
                 or run["repository"]["full_name"] != api.repository
@@ -594,9 +594,6 @@ def admit(api, event):
         require(subprocess.run(["git", "merge-base", "--is-ancestor", identity["base_sha"], "refs/remotes/origin/main"],
                                capture_output=True, timeout=30).returncode == 0, "admitted base is not trusted main history")
     record = derive_record(identity, run)
-    if pr:
-        author = pr.get("user") or {}
-        record["cloud_pr_author"] = {key: author.get(key) for key in ("login", "id")}
     return record
 
 
@@ -693,7 +690,7 @@ def producer_evidence(api, run, source, *, diagnostics=None, admission=None, clo
 def archive_blocked_ui(api, record, run, jobs, summaries):
     """Excuse only a bound archive timeout behind a superseded unexecuted gate."""
     try:
-        if (run["path"] != PRODUCERS["ci-ui"] or run["event"] != "push" or run["head_branch"] != "main"
+        if (run["path"] != ".github/workflows/ci-ui.yml" or run["event"] != "push" or run["head_branch"] != "main"
                 or run["head_repository"]["full_name"] != api.repository or run["status"] != "completed"
                 or run["conclusion"] != "failure" or type(run["run_attempt"]) is not int or run["run_attempt"] != 1):
             return False
@@ -794,7 +791,7 @@ def compute(api, pr_number, pushed, login):
                           and run["head_repository"]["full_name"] == pr["head"]["repo"]["full_name"]]
         runs[context] = authoritative_run(candidates, head, workflow, api.repository)
     not_evaluated = {context: {"state": "pending",
-        "description": "Not evaluated: " + ("gate" if context == "ci-pr-gate" else "UI run") + " cancelled before any job executed",
+        "description": "Not evaluated: gate cancelled before any job executed",
         "target_url": f"https://github.com/{api.repository}/actions/runs/{run['id']}"}
         for context, run in runs.items() if not pr and run and cancelled_unstarted_run(api, run)}
     admissions = trusted_admissions(api, [run["id"] for context, run in runs.items() if run and context not in not_evaluated])
@@ -812,7 +809,6 @@ def compute(api, pr_number, pushed, login):
         summaries = []
         diagnostic_errors = []
         failure_diagnostics = []
-        missing_cloud = []
         stage = "admission-validation"
         try:
             require(record["workflow_id"] == run["workflow_id"] and record["workflow_path"] == run["path"], "admission producer mismatch")
@@ -822,41 +818,9 @@ def compute(api, pr_number, pushed, login):
                     "admission does not name current head")
             source = record["workflows"][run["path"]]["candidate" if approved else "base"]
             require(source is not None, "workflow is absent on the base; exact-head approval required")
-            if context == "ci-ui":
-                ui = record.get("ui_inputs", {}).get("candidate" if approved else "base")
-                if ui is not None:
-                    require("error" not in ui, ui.get("error", "candidate UI inputs are invalid"))
-            cloud = None
-            stage = "cloud-evidence"
-            if context == "ci-ui" and pr and not fork:
-                from ci_xcode_cloud_groups import skipped_groups, trusted_groups
-                from ci_xcode_cloud import apple_tv_skip_names
-                cloud_skips = apple_tv_skip_names(source, run)
-                current_jobs = api.pages(f"actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs", "jobs")
-                if ((ui or {}).get("selection") or {}).get("coverage") == "functional":
-                    groups = skipped_groups(source, run, current_jobs, record, approved=approved)
-                    if groups:
-                        proofs = {}
-                        from ci_xcode_cloud_groups import GROUPS
-                        for group in sorted(groups):
-                            try:
-                                proof = trusted_groups(api, record, run, {group}, approved=approved)
-                                proofs.update(proof["groups"])
-                            except (ContractError, KeyError, ValueError, TypeError) as error:
-                                record_failure(error, stage, failure_diagnostics, log=True)
-                                for device in GROUPS[group]:
-                                    missing_cloud.extend({"identity": item, "reason": "NOT_RUN: no accepted Cloud " + group + " proof"}
-                                        for entries in ui["selection"]["shards"][device].values() for item in entries)
-                        require(not missing_cloud, "Cloud " + "/".join(sorted({item["identity"]["dimensions"]["platform"]
-                                for item in missing_cloud})) + " proof missing or invalid; selected methods NOT_RUN")
-                        cloud = {"schema_version": 2, "groups": proofs,
-                                 "identities": [item for proof in proofs.values() for item in proof["identities"]]}
-                elif any(job["conclusion"] == "skipped" and job["name"] in cloud_skips for job in current_jobs):
-                    from ci_xcode_cloud import trusted_cloud
-                    cloud = trusted_cloud(api, record, run, approved=approved)
             stage = "producer-evidence"
             jobs, summaries = producer_evidence(api, run, source, diagnostics=diagnostic_errors, admission=record,
-                                               cloud=cloud, failures=failure_diagnostics)
+                                               failures=failure_diagnostics)
             stage = "producer-identity"
             for summary in summaries:
                 mismatch = match_producer(summary["identity"], identity)
@@ -864,31 +828,13 @@ def compute(api, pr_number, pushed, login):
             stage = "evidence-completeness"
             require(not diagnostic_errors, "missing or invalid artifact evidence")
             stage = "base-evaluation"
-            if context == "ci-ui" and not pr and archive_blocked_ui(api, record, run, jobs, summaries):
-                not_evaluated[context] = {"state": "pending", "description": "Not evaluated: archive unavailable for unexecuted gate",
-                    "target_url": f"https://github.com/{api.repository}/actions/runs/{run['id']}"}
-                continue
-            if context == "ci-ui" and not pr and any(job["conclusion"] == "skipped" for job in jobs):
-                from ci_ui_reuse import evaluate_reused_push
-                evaluations[context] = evaluate_reused_push(api, record, run, jobs, summaries)
-            else:
-                evaluations[context] = evaluate_records(record, run, jobs, summaries, approved=approved, fork=fork, cloud=cloud)
-                if context == "ci-ui" and cloud is None:
-                    from ci_ui_reuse import make_verdict
-                    receipt = make_verdict(record, run, summaries, evaluations[context])
-                    if receipt is not None:
-                        evaluations[context]["reuse_verdict"] = receipt
+            evaluations[context] = evaluate_records(record, run, jobs, summaries, approved=approved, fork=fork)
             from ci_report import summary_diagnostics
             stage = "producer-diagnostics"
-            if cloud is not None:
-                from ci_report import cloud_pr_diagnostics
-                evaluations[context]["diagnostics"] = cloud_pr_diagnostics(summaries, cloud=cloud)
-            else:
-                evaluations[context]["diagnostics"] = summary_diagnostics(summaries, diagnostic_errors)
+            evaluations[context]["diagnostics"] = summary_diagnostics(summaries, diagnostic_errors)
         except (ContractError, KeyError, ValueError, TypeError) as error:
             record_failure(error, stage, failure_diagnostics, log=True)
-            evaluations[context] = {"state": "failure", "description": ui_failure_hint(error) or
-                                   "Missing, invalid or mismatched admitted evidence"}
+            evaluations[context] = {"state": "failure", "description": "Missing, invalid or mismatched admitted evidence"}
             # The infrastructure advice is deterministic, without candidate text.
             if any(match_producer(s["identity"], record["identity"]) for s in summaries):
                 previous = prior_mismatch(api.pages("commits/" + head + "/statuses"), run, login)
@@ -902,10 +848,6 @@ def compute(api, pr_number, pushed, login):
                 record_failure(error, "producer-diagnostics", failure_diagnostics, log=True)
                 evaluations[context]["diagnostics"] = {"counts": {}, "failures": [], "missing": [],
                     "infrastructure": ["failure diagnostics unavailable"], "skipped": [], "deselected": []}
-        if missing_cloud:
-            diagnostics = evaluations[context]["diagnostics"]
-            diagnostics["missing"].extend(missing_cloud)
-            diagnostics["counts"]["not_run"] = len(missing_cloud)
         if failure_diagnostics:
             evaluations[context]["failure_diagnostics"] = failure_diagnostics
         evaluations[context]["report_source"] = {
@@ -915,19 +857,11 @@ def compute(api, pr_number, pushed, login):
             "approval_based": bool(approved and needs_approval)}
     if pr:
         plan = publication_plan(pr, runs, admissions, evaluations, approved=approved, needs_approval=needs_approval)
-        # UI has not shipped yet. Docs-only changes may be independently shown as
-        # not applicable, but unknown/CI changes never become green without it.
-        if classified and not any(r["classification"]["app_affected"] for r in records) and (not needs_approval or approved):
-            plan["ci-ui"] = {"state": "success", "description": "Not applicable: trusted classification cannot affect the app"}
-            if fork:
-                plan["ci-ui"]["description"] += "; self-reported; approval-based"
     else:
         synthetic = {"number": 1, "head": {"sha": head, "repo": {"full_name": api.repository}},
                      "base": {"repo": {"full_name": api.repository}}}
         plan = publication_plan(synthetic, runs, admissions, evaluations, approved=False, needs_approval=False)
         plan.update(not_evaluated)
-        if classified and not any(r["classification"]["app_affected"] for r in records):
-            plan["ci-ui"] = {"state": "success", "description": "Not applicable: trusted classification cannot affect the app"}
     if pr and not classified:
         plan["ci-approval-state"] = {"state": "pending", "description": "Waiting for trusted classification"}
     requests = approval_requests(api, pr) if pr else []
@@ -942,12 +876,6 @@ def write_publication(api, app, pr_number, pushed, login, *, dry_run=False):
     # records write independently, then dispatch a fresh publication.
     if pr_number:
         check_closed_pr(api.repo(f"pulls/{pr_number}"), api.repository)
-    if not dry_run:
-        from ci_xcode_cloud_selection import publish_pointers
-        try:
-            publish_pointers(api, app, pr_number)
-        except (ContractError, KeyError, TypeError, ValueError, OSError, subprocess.SubprocessError):
-            print("Cloud selection pointer unavailable; GitHub remains required")
     head, plan, approval = compute(api, pr_number, pushed, login)
     target = f"https://github.com/{api.repository}/actions/runs/{os.environ.get('GITHUB_RUN_ID', '')}"
     if dry_run:
@@ -957,13 +885,6 @@ def write_publication(api, app, pr_number, pushed, login, *, dry_run=False):
         current = api.repo(f"pulls/{pr_number}")
         check_closed_pr(current, api.repository)
         require(current["state"] == "open" and current["head"]["sha"] == head, "PR head changed before publication")
-    receipt = plan.get("ci-ui", {}).get("reuse_verdict")
-    if receipt is not None:
-        directory = Path(os.environ["RUNNER_TEMP"], "ci-ui-verdict")
-        directory.mkdir(mode=0o700, exist_ok=False)
-        (directory / "verdict.json").write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
-        with open(os.environ["GITHUB_OUTPUT"], "a") as handle:
-            handle.write("ui_verdict_tree=" + receipt["identity"]["tree_sha"] + "\n")
     for context, status in plan.items():
         app.status(head, context, status["state"], status["description"], status.get("target_url", target))
         if status.get("mismatch"):
@@ -1012,28 +933,11 @@ def write_publication(api, app, pr_number, pushed, login, *, dry_run=False):
                     handle.write(f"  Source: {source['repository']}, {source['workflow_path']}; run {source['run_id']}, attempt {source['attempt']}; "
                                  f"event: {source.get('event', 'unknown')}; CI-changing: {source.get('ci_changing')}; "
                                  f"approval-based: {source['approval_based']}, fork-originated: {source['fork_originated']}.\n")
-                reuse = status.get("reuse")
-                if reuse:
-                    handle.write(f"  Reuse: producer run {reuse['producer_run_id']}, attempt {reuse['producer_attempt']}; "
-                                 f"verdict artifact {reuse['verdict_artifact_id']}; tree {reuse['tree_sha']}; "
-                                 f"approval-based: {reuse['approval_based']}, fork-originated: {reuse['fork_originated']}, "
-                                 f"CI-changing: {reuse['ci_changing']}.\n")
                 for population in status.get("population", []):
                     compiled = population["compiled"] if population["compiled"] is not None else "NOT_EXPOSED_BY_API"
                     handle.write(f"  {population['tier']} / {population['shard']}: expected {population['expected']}, "
                                  f"compiled {compiled}, observed {population['observed']}, "
                                  "per-job population.\n")
-                cloud = status.get("xcode_cloud")
-                if cloud:
-                    proofs = cloud["groups"].values() if cloud.get("schema_version") == 2 else [cloud]
-                    for proof in proofs:
-                        compute_label = (f"compute upper bound {proof['compute_upper_minutes']:.2f} min"
-                                   if cloud.get("schema_version") == 2 else f"compute {proof['compute_minutes']:.2f} min")
-                        links = proof["actions"] if cloud.get("schema_version") == 2 else [proof]
-                        for action in links:
-                            handle.write(f"  Xcode Cloud: [{proof['cloud_run_id']}]({action['details_url']}); "
-                                         f"import artifact {proof['import_artifact_id']}; route artifact {proof['route_artifact_id']}; "
-                                         f"wall {proof['wall_minutes']:.2f} min; {compute_label}.\n")
                 for skipped in status.get("not_applicable", []):
                     handle.write(f"  {skipped['job']}: not applicable; {len(skipped['identities'])} admitted identities; "
                                  "trusted PR classification cannot affect the app or CI tooling.\n")

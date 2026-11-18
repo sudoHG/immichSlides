@@ -1,10 +1,11 @@
 # Trusted CI publication and approval
 
-`ci-publish` writes informational commit statuses `ci-pr-gate`, `ci-ui` and
+`ci-publish` writes informational commit statuses `ci-pr-gate` and
 `ci-approval-state`. Requiring a context or changing a ruleset is a separate
-maintainer decision. It reacts to `ci-gate` and `ci-ui` workflow-run events
+maintainer decision. It reacts only to `ci-gate` workflow-run events
 (`requested`, `in_progress`, `completed`) and supports main-only manual
-re-evaluation. A manual re-evaluation runs no build or test.
+re-evaluation. A manual re-evaluation runs no build or test. Missing UI runs never
+create a pending or failed verdict; UI results are outside PR publication.
 
 ## Trust and identities
 
@@ -63,16 +64,11 @@ keep the ordinary fail-closed path. This reader does not change producer schedul
 The reporter retains its separate rule that every cancelled main push is
 ineligible for notification; see [CI reporting](CI_REPORT.md).
 
-The same predicate, with the same proof, applies to a first-attempt main `ci-ui`
-run replaced while pending, checked against the `ci-ui` workflow and its own newer
-main-push run. Its UI status is then pending with "Not evaluated: UI run cancelled
-before any job executed" instead of a failure.
-
 ### Main-push coalescing
 
 Main history is protected and linear, so a newer pushed SHA contains every older
-one. Piling up one `ci-gate` and one `ci-ui` run per merge only spends the five
-scarce hosted macOS slots on SHAs nobody will release. Both workflows therefore use
+one. Piling up one `ci-gate` run per merge spends scarce hosted macOS slots on SHAs
+nobody will release. The gate therefore uses
 one shared concurrency group for first-attempt main pushes, with
 `cancel-in-progress: false` (`scripts/check_workflow_policy.py` enforces the exact
 expressions):
@@ -109,30 +105,6 @@ cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 - **Publication:** a replaced run is not evaluated; the publisher keeps that SHA
   pending with a link and the reporter records `not-run` without a notification.
   The post-merge notification covers evaluated SHAs only.
-- **ci-ui:** its group coalesces separately from the gate's, so a replaced UI run
-  needs no archive. The final SHA's UI run starts waiting for the gate archive at
-  push time while the gate may still queue behind an older run. While the same-head
-  gate run is `pending`, the archive selection deadline is paused for at most
-  50 minutes in total. The iPhone/iPad and Apple TV selections share one deadline
-  that includes the accumulated pause, so the total wall-clock cap is 170 minutes
-  inside the 185-minute Linux job timeout. The 15 minutes of margin cover the final
-  API reads and downloads, which the deadline does not count; a job that still hits
-  the job timeout fails closed (no archive, no pass). The wait ends immediately when
-  the same-head gate run was cancelled.
-- **Release:** the maintainer tags `v*` on main. Tag the newest SHA whose gate and
-  UI runs both evaluated. For a SHA that was replaced, use "Re-run all jobs" on its
-  cancelled `ci-gate` and `ci-ui` runs; the rerun is attempt 2 in its own group, so
-  later pushes cannot cancel it.
-
-For the same SHA, a first-attempt main UI run is also **not evaluated** only when
-its complete jobs listing shows a failed `ui-archive` and every admitted UI shard
-skipped without a runner or steps. The sole archive summary must bind to the run,
-attempt, trusted admission identity and manifest, with only the exact
-`archive-unavailable` timeout outcome and no archive refusal record. The reader
-independently verifies that SHA's authoritative gate satisfies the superseded,
-unexecuted predicate above. The UI status stays pending with its own run link.
-Executed shards, identity mismatches, any refusal, other archive failures and
-reruns retain the ordinary failure path.
 
 Admission is separate from publication, serialized by producer run ID with
 `cancel-in-progress: false`. It reads GitHub's test merge SHA and commit parents,
@@ -144,8 +116,7 @@ from source text. The trusted `ci-admission-<producer-run-id>` artifact stores:
 - the repository, PR number, GitHub merge/base/head/tree identity (or main push identity);
 - producer workflow ID and path;
 - the complete tree listing, populations and base populations;
-- default-plan UI populations by device/shard, the base UI population, and manifest/plan hashes;
-- the trusted base reader revision, classification, workflow metadata and policies.
+- the trusted base reader revision, classification, gate workflow metadata and policies.
 
 The artifact is kept 30 days. Readers query its exact name, verify the producing
 run's workflow ID/path, event, branch and both repository identities, then verify
@@ -186,7 +157,7 @@ Only publication jobs use the `ci-state-pr-<number>` concurrency group. Approval
 wait, record and fallback jobs have no replaceable concurrency queue, so another
 publication cannot cancel a pending approval record. Publication always
 re-reads the current head, selects the highest producer run ID and latest attempt,
-and writes all three display contexts. An older completion cannot supersede a
+and writes both display contexts. An older completion cannot supersede a
 newer failure. An in-progress rerun invalidates the previously green context.
 An absent admission is pending even if the producer already completed; the
 approval display is pending until trusted classification exists. Only a newly
@@ -207,290 +178,10 @@ successful jobs' artifacts and refuses older artifacts for a job that actually r
 Unknown matrices, shards or tiers fail closed until a supported reader is landed
 on main before the producer starts emitting them.
 
-The UI reader supports a Linux `ci_ui_tests.py wait-archive` job and literal
-`ci_ui_tests.py run --device DEVICE --shard SHARD` jobs. Each still requires one
-bound summary artifact and a successful GitHub job. Supported devices are
-`iphone`, `ipad` and `appletv`; the producer determines which device matrix is
-currently in scope. A device's shard names must exactly equal the admitted
-manifest's names, without duplicate assignments. Each shard's independently
-derived default-plan population includes its platform and device. The gate
-checks this complete union, including declared, compiled and observed identities.
-
-The producer must emit these literal summary fields and hash logical names:
-
-| Producer | `run.tier` | `run.job` | `run.shard` | Required identities / hashes |
-| --- | --- | --- | --- | --- |
-| `wait-archive` | `ui-infrastructure` | `ui-archive` | `null` | One `host` identity with key `UI archive selection` and empty dimensions; `hashes.manifests.ui-shards` |
-| `select --pack-scoped-ui` | `ui-infrastructure` | `ui-selection` | `null` | One `host` identity `UI selection`; shard manifest and packed plan hashes |
-| `wait-group --group ios` / `tvos` | `ui-infrastructure` | `ui-cloud-wait-ios` / `ui-cloud-wait-tvos` | `null` | One `host` identity `UI cloud selection (ios)` / `(tvos)`; shard manifest and packed plan hashes |
-| `run --device DEVICE --shard SHARD` | `ui` | `ui-<device>` | The literal manifest shard | Complete shard UI identities with `platform` and `device`; `hashes.manifests.ui-shards` and `hashes.manifests.test-plan` |
-
-The archive-selection summary still carries the consumer's complete PR
-merge/base/head/tree identity (or main push identity). An archive's producer run
-ID cannot replace the consumer's `run.id`. Upload artifact names bind the
-GitHub job and its actual evidence attempt through the admitted workflow.
-
-Admission retains the base and candidate `scripts/ci-ui-shards.json`, default
-plans and their SHA-256 hashes as data. It calls the isolated base revision's
-shard rules at admission and stores both rule selections' complete device/shard
-populations; publication reads these stored populations without recalculating
-them using a later publisher's rules. Candidate-side parsing errors are retained
-as an invalid UI input and fail only `ci-ui`. Invalid base manifest, plan or
-workflow data refuses admission. Errors computing shards from the tested tree,
-including an empty shard after a class or method rename/removal, are recorded for either
-rule selection and fail only `ci-ui`; the gate admission still completes. The
-base's filtered source population remains available for an approved replacement
-manifest to account for removed tests. Renaming or removing a class or exact method
-named in the manifest requires updating its selectors and exact-head CI approval,
-even when the affected shard remains nonempty. Only the fixed empty-shard and missing-base-workflow
-hints reach status descriptions; other parsing details stay generic.
-A new workflow absent on the base is
-retained only as candidate metadata; exact-head approval is still required before
-it is selected. Before approval the context reports
-`workflow is absent on the base; exact-head approval required`, and the approval
-request is still created. Candidate files are never imported. Every UI summary binds the
-manifest hash; device shards also bind their default-plan hash. The base's
-known-flaky registry remains authoritative, with eligibility checked against the
-producer's GitHub run start date, including reruns. Fixture UI is hermetic for
-registry scope; platform-method entries apply to verified devices on that
-platform. Device dimensions remain in coverage and expected-skip accounting.
-
-Shard manifest version 1 contains `schema_version`, a named `revision`,
-`default_shard` and `shards` (a map from shard names to exact XCTest class names).
-The reader also accepts version 2, described in [CI_UI.md](CI_UI.md).
-Unknown classes go to the default shard, including tests in extensions. A class
-cannot appear twice. The default test plan's class/method selections and
-exclusions apply before assignment; Evidence and strict tests stay outside this
-population. Every required shard must contain tests on every device in the
-producer's literal matrix. An empty shard reports
-`shard X has no tests on DEVICE; update scripts/ci-ui-shards.json`; update the
-partition before adding a device whose platform would leave a shard empty.
-The manifest and both default `immichSlides-iOS.xctestplan` /
-`immichSlides-tvOS.xctestplan` files are CI-trusted classification inputs;
-changing selections or exclusions requires exact-head approval.
-The reader accepts no dynamic matrices or alternate manifest paths.
-The post-merge reader additionally accepts skipped device shards on a main push
-after independently finding a complete trusted identical-tree PR verdict (success),
-or verifying the admitted base workflow's explicit `--defer-main-ui` declaration
-(pending: "UI deferred to nightly"). All required selection jobs must still succeed
-and supply identity-bound, manifest-bound summaries; skipping a selection job or
-only part of the device matrix fails.
-GitHub may report a whole skipped matrix as one unexpanded job name. The reader
-maps that exact trusted-workflow name to its declared literal shards while
-retaining the real job's identity and attempt. Each attempt is normalized before
-execution history is merged by logical shard, so a rerun may switch between
-skipping and executing the matrix. Overlapping shards within one attempt,
-unknown names or an incomplete final job set fail. This mapping supplies no test
-observations. Success still requires independent trusted reuse proof; the explicit
-trusted deferral declaration supplies only a pending status.
-
-For PR reruns, an older attempt whose `ui-archive` infrastructure job failed may
-contain a raw skipped matrix placeholder because no shard started. The reader
-discards only that historical placeholder; it contributes no shard evidence.
-Its matrix shards acquire a minimum valid attempt after that skip, invalidating
-even successful shard evidence retained from earlier attempts.
-Later literal jobs must cover the entire required population with records bound
-to their own execution attempts. A current PR matrix skip, incomplete later
-execution, overlapping literal jobs or stale artifacts remains inadmissible.
-
-Every ordinary run retains the existing successful-job and complete-population checks.
-
-The [feature-area reader](CI_UI.md#feature-areas-and-the-reader-first-rollout)
-also admits an exact scoped population. Admission calls `ci_ui_selection.py`
-from the verified base with the trusted diff, base classification policy and
-base `scripts/ci-ui-areas.json`; candidate area maps never authorize selection,
-even after exact-head approval. Both base/candidate shard-rule inputs retain
-that same map revision/hash and their derived selections. Historical bases
-without this reader/map remain full-only.
-Admission also reads the tested tree's map only as data that can confirm removals under the [PR removal rule](CI_UI.md#scheduling-the-selection).
-
-Historical unflagged shard computation and feature selection have separate failure
-boundaries. A failed selection is stored only in `selection.error`; the complete
-population remains admitted, while scoped evidence fails closed. The activated
-[packed protocol](#packed-scoped-ui-protocol) instead refuses selection errors.
-Host checks require smoke coverage
-in every device's default plan. Admission retains the same `immichSlidesUITests`
-inventory roots as the producer and shard validation; TestSupport is coverage-only.
-
-For historical unflagged producers, publication first recognizes a complete full
-population for compatibility. Otherwise the entire UI population must equal the stored
-selection on iPhone, iPad and Apple TV, and every shard must equal its own selected
-identities. Arbitrary subsets, per-device omissions and mixtures fail closed.
-Compiled and observed equality, run/head/tree identity, manifest/plan hashes,
-outcomes, registry and approval checks still apply. Only shards whose independently
-selected population is empty may skip: their literal GitHub jobs must be complete,
-skipped, have no runner or steps, and supply no summary. Selection exclusions
-are not reported as test removals. External cloud evidence retains the full path;
-scoped cloud routing is outside this rollout.
-
-### Bound dynamic UI shards
-
-GitHub cannot skip one entry of a static matrix, so a scoped producer lists only
-the shards it runs: each UI matrix may take exactly
-`shard: ${{ fromJSON(needs.archive.outputs.ios_shards) }}` (or `tvos_shards`) beside
-a literal device list of that one platform. The activated packed protocol requires
-`iphone_shards` and `ipad_shards` in separate matrices beside each literal device.
-Any other dynamic matrix value, a
-second occurrence of that expression, or a mixed-platform device list is refused.
-Admission binds the expression in both stored `ci-ui.yml` texts to trusted names
-and leaves every other byte unchanged. For an unflagged non-CI-changing pull request
-with a `scoped` base selection, the names are the manifest-ordered shards with selected
-identities (iPhone and iPad must agree); for a docs-only `none` selection they are
-empty; otherwise they are every manifest shard. Packed PRs instead bind their exact
-independent device lists, including core/unknown/CI-changing selections. Every later reader (job
-contract, artifacts, reuse, reporting, Cloud skip recognition) uses the bound text,
-so a producer that schedules a different shard set fails the required-job check.
-Main-push reuse reads the pushed revision's workflow directly; it binds the dynamic
-form to every shard of that revision's manifest before comparing receipt shards,
-while input hashes still use the raw workflow bytes. Publication checks the scoped
-device scope against the bound workflow's device declarations, so a platform without
-selected shards still counts as present.
-An unflagged workflow's shard union must equal either the full manifest or exactly
-the non-empty selected shards; a packed PR requires only its exact packed union.
-A matrix bound to no shard is accepted only as its distinct collapsed matrix
-skip: complete, skipped, no runner and no steps. Static literal
-matrices remain readable unchanged. The main Cloud router returns `github` with
-reason `scoped-ui-selection` for every scoped admission, so a scoped pull request,
-including one whose selection has no Apple TV test, never starts a Cloud build.
-
-Scoped successes emit no identical-tree full-UI reuse receipt. Full receipts bind
-the area-map hash too, preserving main-push full coverage when area definitions
-change. Pull-request producers schedule the bound trusted selection
-([scheduling](CI_UI.md#scheduling-the-selection)); full bindings apply to pushes,
-nightly, manual and legacy CI-changing runs, and a main push may still skip its matrices
-through reuse or nightly deferral.
-
-### Packed scoped UI protocol
-
-The reader recognizes `--pack-scoped-ui` only as one literal flag on the admitted
-workflow's `ci_ui_tests.py select` command (historically `wait-archive`). The current producer activates
-this flag after the reader landed separately. Historical and
-unflagged producers retain the existing full-or-exact-selection compatibility.
-
-Admission reads the area map, synchronized app platform filters and
-`scripts/ci-ui-durations.json` from the verified base. The isolated reader executes
-only the base `ci_ui_selection.py`, `ci_ui_test_kinds.py` and `ci_ui_packing.py`; candidate scripts and
-duration data are never imported or used as selection authority. The map, weights
-and project file come only from the base; an approved candidate workflow may
-enable the packing protocol for its own run. The deterministic plan
-contains exact per-device shard identities, frozen duration hash and predicted
-costs, with a canonical SHA-256 over all these fields. The
-[selection and packing rules](CI_UI.md#platform-selection-and-capacity-packing)
-define its bounded scheduling behavior. Full default-plan partitions remain v2.
-Admission also reads the tested tree's map only as data that can confirm removals under the [PR removal rule](CI_UI.md#scheduling-the-selection).
-
-For an activated scoped PR the job union must be exactly the nonempty packed
-shards, named `scoped-a` through `scoped-f`. All three device declarations remain
-mandatory even when one platform has no test. Every executed infrastructure and
-device summary must bind `hashes.manifests.ui-scoped-plan` to the admitted hash,
-in addition to the existing manifest, default-plan and run/head/tree checks.
-Per-job declared, compiled and observed identities must equal its exact plan;
-missing, extra, duplicate or cross-device evidence fails closed. Legacy full shard
-summaries cannot satisfy a packed selection, even when its union happens to equal
-the full population. An excluded platform may produce only the existing complete,
-skipped, no-runner/no-steps collapsed matrix record; no archive or device summary
-can claim its tests passed. Scoped successes still provide no full reuse receipt.
-
-Every activated PR excludes methods whose method name contains `Screenshot` or
-`Acceptance`, including locale methods. Core, unknown and CI-changing PRs retain
-all **functional** default-plan methods on every platform. CI-changing evidence
-still needs the existing exact-head approval; functional selection cannot waive
-that boundary. The host audit rejects methods matching zero or multiple kind rules.
-Separate literal iPhone and iPad matrices may bind `iphone_shards` and `ipad_shards`
-outputs, so their independently capped counts need not agree. A device output on
-another device, or a grouped matrix with differing selected lists, is refused.
-Pushes, manual and nightly full runs retain every default-plan method.
-Selection/classification/packing errors fail activated PR admission; only unflagged
-historical producers retain full-population compatibility on selection errors.
-Plan estimates are diagnostic data, not passing samples or duration acceptance.
-
-### Prepared scoped UI acceleration reader
-
-The producer now uses the additional literal `--scoped-ui-v2` on the same packed selection command to opt
-into the base-owned `capacity-v2` planner. Historical producers keep `capacity-v1`.
-Every `ci_ui_tests.py run` command must also carry the literal
-`--compiled-from-official-results`; planner-only activation fails admission and
-the host workflow policy check.
-The successor models the PR's gate builds becoming ready, two unit consumers,
-per-job overhead without preliminary enumeration, and publication time on five
-shared hosted macOS slots. Every device retains the existing shard-count and
-28-minute predicted job bounds; device concurrency is at most two and the three
-matrix limits sum to at most five. Non-scoped `ci-ui` runs keep their original
-two/one/one limits; nightly partitions and concurrency remain unchanged.
-Predictions never establish the 30-minute acceptance criterion.
-
-Admission accepts only `strategy.max-parallel` expressions of the form
-`${{ fromJSON(needs.archive.outputs.<device>_capacity) }}` or the corresponding
-`needs.selection.outputs` form, beside that one literal device. It binds them to
-the exact base-computed plan's capacities and freezes those integers in admission.
-The outputs must belong to the selection step; a swapped device, arbitrary
-expression, duplicate reference outside the strategy, or changed resolved limit
-fails closed. The plan hash includes its complete capacity model and limits.
-
-Separately, a shard's literal `--compiled-from-official-results` enables only the
-[version 2 discovery evidence](CI_SUMMARY.md#prepared-version-2-scoped-official-discovery)
-for exact packed functional PR shards with no approved base fixture deselection
-matching their admitted population. The producer uses the same eligibility rule;
-a matching base deselection retains version 1 and preliminary enumeration. Only
-eligibility comes from base policy; the producer's deselections, expected skips,
-verdict and policy hash continue to use the tested-tree policy. Candidate policy
-still needs exact-head approval at publication. A candidate fixture deselection
-on a base-eligible shard fails before execution with a clear conflict; merge that
-policy change first. The isolated base
-reader parses the official case tree independently and checks the complete
-declared/discovered/compiled/observed equality, raw first exit, run/attempt, plan
-and evidence hashes. Other eligible shards cannot fall back to version 1.
-For an incomplete first invocation, version 2 has a fail-only shape: the raw first
-exit is nonzero, producer status is `failed`, compiled equals the strict discovered
-subset, and each undiscovered declared identity is `not-run` or `timed-out` with
-that raw exit. A missing export is `official_tests: null`. The fixture's final writer
-preserves these diagnostics; the verdict reports missing compiled identities and
-cannot pass. Malformed exports remain rejected. Scanned failed diagnostics marked
-`discovery-record-invalid` may be uploaded without a valid discovery proof; this
-does not make them valid summaries or allow a passing trusted verdict.
-
-Public strict/UI method records may carry the optional paired `failure_phase`
-and `failure_class` fields, including on individual failed retry attempts.
-The [fixed diagnostic contract](CI_STRICT_RUNNER.md#public-failure-diagnostics)
-defines the allowlists and private prefix mapping. Summary validation and the
-existing publication sensitive scan reject arbitrary diagnostic strings;
-historical records without these fields remain readable. The enums convey no
-assertion text and do not change the trusted verdict or any identity population.
-The [host partition](CI_SUMMARY.md#prepared-linuxmacos-host-partition) likewise
-requires the base-owned disjoint union of Linux and macOS producers. The producer
-derives that partition from the merge first parent's reader, then verifies the
-complete Python discovery before selecting execution members. `host-linux` runs
-portable rules and all portable Python methods on `ubuntu-24.04`; `host-macos`
-runs swift-format and the base-listed Swift-calling methods. The portable setup
-adds the existing Pillow pin to the publisher environment; portable prerequisites
-still require zstd, Pillow and PyYAML, while actual Swift execution stays on macOS.
-Both jobs publish separately bound summaries. Default local host checks remain
-the complete suite. Product assertions, skips, deadlines, Cloud routing and
-nightly execution are unchanged.
-
-### Prepared grouped Xcode Cloud reader
-
-The [v2 Cloud evidence contract](XCODE_CLOUD_UI.md#grouped-evidence-reader-v2)
-adds independent iOS (iPhone plus iPad) and tvOS groups to packed functional PR
-evaluation. The trusted base registry, exact per-device selection, publisher
-pointer/hash, main uploader provenance, retained selection attempt and newest
-registered Xcode Cloud App checks all remain mandatory. Each group supplies
-complete GitHub evidence or complete API-verified Cloud evidence; partial providers
-within one group cannot be combined. Missing Cloud evidence never authorizes
-skips. Complete GitHub fallback is evaluated without consuming stale Cloud receipts.
-Compiled Cloud identities remain unavailable, and scoped/Cloud PR successes
-cannot supply a full identical-tree reuse receipt or daily main history.
-
-The reader additionally recognizes `ci_ui_tests.py select --pack-scoped-ui`,
-`wait-group --group ios|tvos` and bounded `needs.selection.outputs` shard matrices.
-It accepts one `ui-selection` anchor instead of the legacy `ui-archive`, so
-Cloud groups need not wait for a GitHub gate archive. Independent matrices require
-distinct literal name prefixes to authenticate collapsed skips. These are prepared
-contracts used by the producer. Routing and pointer writes remain inactive while
-the reviewed registry is absent. Both route and import JSON bind their main
-uploader run/attempt. Public pointer descriptions explicitly say `Selection only`;
-they never report a test outcome. Grouped compute is a destination-weighted upper
-bound. The existing v1 full Apple TV reader remains unchanged in behavior.
+UI/Cloud selection, proof validation and reuse helpers remain for legacy tools and
+historical main reporting; see [the UI protocol](CI_UI.md). The publisher no longer
+prepares UI/Cloud admission inputs, reads UI evidence, publishes UI selection pointers
+or writes UI reuse verdict artifacts. Existing retained records remain readable.
 
 The gate reader also supports a Linux `ci_gate.py classify` producer with one
 `host` identity, `Gate change classification`, tier `gate-infrastructure`, job
@@ -516,43 +207,6 @@ both the portable Linux host partition and the short macOS host partition. Publi
 the admitted first parent's verdict reader and independently verifies that
 classification before reporting the skipped populations as not applicable.
 
-After publishing a complete PR UI success, the main publisher retains
-`ci-ui-verdict-<tree-sha>` for 30 days. Its `verdict.json` version 1 stores the
-admitted identity, producer run/attempt, fork/CI-change/approval provenance, exact
-manifest/default-plan/policy/registry/classification/workflow/pins hashes, covered
-device shards and observed toolchains. This is publisher output, never a producer
-claim or a matching artifact name alone. The reuse reader verifies the uploader's
-workflow ID/path, event, both repositories, main branch and main-history revision,
-then resolves the pushed commit's associated PRs to exactly one same-repository
-PR merged into main with `merge_commit_sha` equal to the pushed SHA. The receipt's
-PR number and head SHA must match that PR's final head; another green head with
-the same tree cannot authorize reuse. It verifies that the upstream UI producer is still its head's newest completed
-successful run and exact attempt. A rerun in progress invalidates the receipt.
-Unknown versions, missing/expired proof, red/cancelled runs, forks, CI changes,
-approval-based verdicts, different trees or inputs, incomplete device coverage,
-or observed toolchains that disagree with current pins all mean reuse is unavailable.
-Malformed nested receipt fields and corrupt ZIP or compressed data also refuse reuse.
-Without explicit trusted deferral intent, unavailable proof means run the UI tier;
-skipped shards without proof fail. The [main UI scheduling contract](CI_UI.md#main-ui-scheduling-contract)
-additionally recognizes the literal `--defer-main-ui` flag in the admitted base's
-archive-selection command. Complete, passed infrastructure records and entirely
-unexecuted skipped shards permit a pending "UI deferred to nightly" status when
-no trusted identical-tree proof exists. Missing records, invalid provenance and
-failed jobs cannot claim this state. A PR or candidate-only flag cannot authorize it.
-The publisher repeats this decision before accepting skipped shards. Reuse links
-the original successful UI run; deferral links the main nightly workflow.
-The publication summary displays the reused producer run/attempt, verdict artifact,
-tree and approval/fork/CI-change provenance alongside that link.
-
-Reader changes land in a separate PR before a producer activates new skipping or
-deferral behavior. A CI-changing reader PR requires maintainer approval of its
-exact head and cannot approve itself.
-The [UI producer](CI_UI.md) uses this contract with a Linux archive-selection job
-and a literal device/shard matrix whose shard names must match the manifest on
-each of iPhone, iPad and Apple TV. Publisher trust and
-exact-head approval rules apply to every device. The producer is activated only
-after the reuse reader is installed on main.
-
 The bridge calls the admitted base revision's `evaluate_gate`, including per-job
 expectations and the complete context population. `ci-pr-gate` includes host,
 unit iOS, unit tvOS, both build operations and any supported additional build
@@ -561,12 +215,8 @@ that population. Before the unit producer ships, valid existing evidence yields
 **pending: unit tier not yet produced**, never success. There is no second
 publisher implementation of population or gate verdicts.
 
-`ci-ui` is pending for app-affecting changes until that producer is available.
-Trusted docs-only classification may display it as not applicable, including an
-exact-head-approved docs-only fork; fork/approval labels still apply. Unit/archive
-producer changes are independent sibling work; this publisher does not create
-or rename their jobs. Fork successes remain explicitly **self-reported**, and
-approved CI-changing/fork verdicts are labeled **approval-based**.
+Fork successes remain explicitly **self-reported**, and approved CI-changing/fork
+verdicts are labeled **approval-based**.
 Failure Details links identify the authoritative producer run. Publication summaries
 retain failing identities, exact attempt exits, counts and missing artifact/identity
 diagnostics even after producer failure. Diagnostic parsing errors publish a controlled

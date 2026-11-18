@@ -1,13 +1,6 @@
 name: ci-strict-tracer
 
 on:
-  pull_request:
-    paths:
-      - .github/workflows/ci-strict-tracer.yml
-      - scripts/run_strict*.py
-      - scripts/strict_e2e_*.py
-      - scripts/test_run_strict_e2e.py
-      - scripts/strict-tracer.json
   workflow_dispatch:
 
 permissions:

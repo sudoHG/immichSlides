@@ -118,16 +118,17 @@ Welcome, with one rule: the agent must follow [AGENTS.md](AGENTS.md) (`CLAUDE.md
 - Naming and SwiftUI conventions (View / ViewModel / Store / Service roles, `@MainActor` for UI-driving types, no network or credential access in views) are in [AGENTS.md](AGENTS.md). Code comments are written in English and explain why, not what.
 - Architecture overview: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-The [informational iPhone, iPad and Apple TV UI tier](docs/CI_UI.md) reuses exact-identity gate archives
-and runs versioned manifest shards against public loopback fixtures on pull requests.
-Its guide includes one-command shard reproduction by Git revision, listed-only retry, artifact
-retention and the [post-merge reuse or nightly deferral rule](docs/CI_UI.md#post-merge-reuse).
+The retained [iPhone, iPad and Apple TV UI workflow](docs/CI_UI.md), strict tracer and
+standalone P2 review workflow are manual-only pending legacy removal. PR publication
+depends only on `ci-gate`; a missing UI run does not delay or fail the verdict.
+The UI guide retains one-command shard reproduction by Git revision, listed-only retry,
+artifact retention and historical [post-merge reuse](docs/CI_UI.md#post-merge-reuse).
 Removing the last test of a shard, or any method assigned by the version 2
 manifest, requires a manifest edit with exact-head approval.
 
 The informational `ci-gate` host job and [secret-free build archive jobs](docs/CI_BUILD_ARCHIVE.md)
 run on pull requests and pushes to `main`. Pushes to `main` replace a still-pending
-`ci-gate` or `ci-ui` run instead of queueing behind it, so superseded SHAs are
+`ci-gate` run instead of queueing behind it, so superseded SHAs are
 "not evaluated" ([rules](docs/CI_PUBLISHER.md#main-push-coalescing)). Separate hosted runners execute the
 [complete iOS/tvOS unit targets from relocated archives](docs/CI_UNIT_TESTS.md).
 Every `ci-gate` run first classifies changes on Linux with the base reader before
@@ -135,8 +136,8 @@ scheduling builds. On app-unaffected pull requests, both build/unit platform pat
 are not applicable,
 while host checks remain on macOS. Unknown and CI-trusted changes still run all
 gate jobs; the [publisher contract](docs/CI_PUBLISHER.md) explains the fail-closed rules.
-The [UI tier](docs/CI_UI.md) consumes the iOS archive for iPhone/iPad and the tvOS
-archive for Apple TV across runs.
+The retained manual [UI tier](docs/CI_UI.md) can consume the iOS archive for iPhone/iPad
+and the tvOS archive for Apple TV across runs.
 [P2 visual review](docs/CI_P2_REVIEWS.md) explains the fixture-only seven-day packages
 and the maintainer's signed record pull request; agents never supply human sign-off.
 Release archive preparation and the maintainer-gated App Store Connect steps are in

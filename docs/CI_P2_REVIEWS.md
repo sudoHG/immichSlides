@@ -1,5 +1,8 @@
 # P2 review packages and signed records
 
+The standalone `ci-p2-review` workflow is manual-only (`workflow_dispatch`), pending
+legacy workflow removal. Pull requests do not generate its review packages.
+
 The nightly uploads `p2-review-<shard>-<run>-<attempt>` artifacts for seven days.
 Download and unzip them, open a case's `review.html`, inspect every original image
 and recording, and answer Pass, Fail, or Not reviewed / Partial. Public photo references are included.

@@ -18,7 +18,6 @@ import sys
 import tempfile
 from datetime import date
 from pathlib import Path
-from xml.etree import ElementTree
 
 import yaml
 
@@ -29,7 +28,6 @@ BASE_MODULES = ("ci_summary.py", "ci_population.py", "ci_verdict.py", "ui_test_i
                 "run_host_checks.py")
 OPTIONAL_BASE_MODULES = ("ci_flaky.py", "ci_ui_shards.py", "ci_ui_selection.py", "ci_ui_packing.py", "ci_ui_test_kinds.py",
                          "ci_ui_discovery.py", "ci_failure_diagnostics.py", "ci_bounded_diagnostics.py")
-UI_WORKFLOW_PATH = ".github/workflows/ci-ui.yml"
 # The only dynamic matrix value a UI producer may use; admission binds it to trusted shard names.
 DYNAMIC_UI_SHARDS = {scope: "${{ fromJSON(needs.archive.outputs." + scope + "_shards) }}"
                      for scope in ("ios", "tvos", "iphone", "ipad", "appletv")}
@@ -198,7 +196,7 @@ def derive_record(identity, run, *, before=None):
         paths = git("diff", "--name-only", "--no-renames", base + "..." + identity["head_sha"]).splitlines()
     else:
         # workflow_run omits the push's before SHA. Without an independently
-        # verified range, a burst is unknown and must run the UI tier.
+        # verified range, a burst is unknown and must run the full gate.
         paths = git("diff", "--name-only", "--no-renames", before, commit).splitlines() if before else ["__unknown_push_range__"]
     paths = paths or ["__unknown_empty_diff__"]
     base_listing, base_sources = tree_inputs(base)
@@ -210,7 +208,7 @@ def derive_record(identity, run, *, before=None):
     payload["sources"] = base_sources
     base_derived = base_reader(modules, payload)
     workflows = {}
-    for path in (".github/workflows/ci-gate.yml", ".github/workflows/ci-ui.yml"):
+    for path in (".github/workflows/ci-gate.yml",):
         present_base = any(entry["path"] == path for entry in base_listing)
         present_candidate = any(entry["path"] == path for entry in listing)
         if present_base or present_candidate:
@@ -229,94 +227,10 @@ def derive_record(identity, run, *, before=None):
                                  and isinstance(keyword.value, ast.Constant))
             operational[function.name] = {platform: [test_identity(call.args[0].value, call.args[1].value,
                                          platform=platform, configuration=configuration)] for platform in ("ios", "tvos")}
-    ui = {}
-    selection_inputs = None
-    if "ci_ui_selection.py" in modules and any(entry["path"] == "scripts/ci-ui-areas.json" for entry in base_listing):
-        raw_map = read_blob(base, "scripts/ci-ui-areas.json")
-        selection_inputs = {"paths": paths, "classification_policy": payload["classification_policy"],
-                            "build_target_paths": payload["build_target_paths"], "event": identity["event"],
-                            "area_map": raw_map, "map_revision": base,
-                            "map_sha256": hashlib.sha256(raw_map.encode()).hexdigest()}
-        if identity["event"] == "pull_request":
-            selection_inputs["head_area_map"] = None
-            if any(entry["path"] == "scripts/ci-ui-areas.json" and entry["type"] == "blob"
-                   and entry["mode"] in {"100644", "100755"} for entry in listing):
-                try:
-                    selection_inputs["head_area_map"] = read_blob(commit, "scripts/ci-ui-areas.json")
-                except (subprocess.CalledProcessError, UnicodeDecodeError):
-                    pass  # Unavailable tested-tree data grants no removal exception.
-        if "ci_ui_packing.py" in modules:
-            from ci_ui_packing import DURATIONS_PATH
-            base_paths = {entry["path"] for entry in base_listing if entry["type"] == "blob"
-                          and entry["mode"] in {"100644", "100755"}}
-            selection_inputs["project"] = (read_blob(base, "immichSlides.xcodeproj/project.pbxproj")
-                                           if "immichSlides.xcodeproj/project.pbxproj" in base_paths else "")
-            if DURATIONS_PATH in base_paths:
-                selection_inputs["durations"] = read_blob(base, DURATIONS_PATH)
-            selection_inputs["expected_skips"] = json.loads(read_blob(base, "scripts/ci-test-policy.json"))["expected_skips"]
-    for side, revision, entries in (("base", base, base_listing), ("candidate", commit, listing)):
-        try:
-            ui[side] = ui_inputs(revision, entries, populations=derived["populations"],
-                                 base_populations=base_derived["populations"],
-                                 workflow=workflows.get(".github/workflows/ci-ui.yml", {}).get(side), run=run, modules=modules,
-                                 selection_inputs=selection_inputs)
-        except Exception as error:
-            if side == "base":
-                raise
-            # Bad candidate UI data cannot suppress a separate gate admission.
-            ui[side] = {"error": ui_failure_hint(error) or "candidate UI inputs are invalid"}
-    if UI_WORKFLOW_PATH in workflows:
-        for side in ("base", "candidate"):
-            if ui.get(side) and "error" not in ui[side]:
-                try:
-                    workflows[UI_WORKFLOW_PATH][side] = bind_ui_shards(
-                        workflows[UI_WORKFLOW_PATH][side], ui_shard_lists(ui[side], identity, derived["classification"]))
-                    workflows[UI_WORKFLOW_PATH][side] = bind_ui_capacities(workflows[UI_WORKFLOW_PATH][side], ui[side])
-                except (ContractError, KeyError, TypeError) as error:
-                    # Invalid UI binding cannot suppress the independent gate admission.
-                    ui[side]["error"] = ("UI shard binding refused: " + str(error))[:500]
-    cloud_inputs = None
-    from ci_xcode_cloud import PLAN_PATH, SCHEME_PATH
-    cloud_paths = {PLAN_PATH, SCHEME_PATH, "scripts/strict_e2e_server.py", "ci_scripts/fixture_server.py"}
-    candidate_paths = {entry["path"] for entry in listing if entry["type"] == "blob" and entry["mode"] in {"100644", "100755"}}
-    if identity["event"] == "pull_request" and cloud_paths <= candidate_paths:
-        head = identity["head_sha"]
-        head_listing, _ = tree_inputs(head)
-        head_paths = {entry["path"] for entry in head_listing
-                      if entry["type"] == "blob" and entry["mode"] in {"100644", "100755"}}
-        # Cloud checks out on a case-insensitive filesystem; no head path may
-        # shadow another plan, scheme, hook or source while retaining its hash.
-        unambiguous = len({entry["path"].casefold() for entry in head_listing}) == len(head_listing)
-        if cloud_paths <= head_paths and unambiguous:
-            raw_plan = read_blob(head, "XcodeCloud-UI-tvOS.xctestplan")
-            try:
-                parsed_plan = decode(raw_plan)
-            except (ContractError, TypeError, ValueError):
-                parsed_plan = None
-            cloud_inputs = {"plan": parsed_plan, "plan_sha256": hashlib.sha256(raw_plan.encode()).hexdigest(),
-                            "scheme": read_blob(head, SCHEME_PATH),
-                            "plan_paths": [entry["path"] for entry in head_listing
-                                           if Path(entry["path"]).name.casefold() == PLAN_PATH.casefold()],
-                            "head_tree_sha": git("rev-parse", head + "^{tree}"),
-                            "fixture_sha256": hashlib.sha256(read_blob(head, "ci_scripts/fixture_server.py").encode()).hexdigest(),
-                            "source_sha256": hashlib.sha256(read_blob(head, "scripts/strict_e2e_server.py").encode()).hexdigest()}
-    cloud_v2_inputs = None
-    from ci_xcode_cloud_groups import REGISTRY_PATH, snapshot
-    if identity["event"] == "pull_request" and any(entry["path"] == REGISTRY_PATH for entry in base_listing):
-        try:
-            head_listing, _ = tree_inputs(identity["head_sha"])
-            cloud_v2_inputs = snapshot(base, identity["head_sha"], base_listing, head_listing, read_blob,
-                                       git("rev-parse", identity["head_sha"] + "^{tree}"))
-        except (ContractError, KeyError, TypeError, ValueError, ElementTree.ParseError):
-            # Invalid Cloud eligibility must not suppress complete GitHub evidence.
-            cloud_v2_inputs = {"error": "Cloud trusted inputs differ or are unsupported; run GitHub"}
     return {"schema_version": 1, "run_id": run["id"], "workflow_id": run["workflow_id"],
             "workflow_path": run["path"], "identity": identity, "tree_listing": listing,
             "populations": derived["populations"], "base_populations": base_derived["populations"],
             "operational_populations": operational,
-            "ui_inputs": ui,
-            "cloud_inputs": cloud_inputs,
-            "cloud_v2_inputs": cloud_v2_inputs,
             "classification": derived["classification"], "reader_revision": base, "workflows": workflows,
             "base_registry": json.loads(read_blob(base, "scripts/ci-known-flaky.json"))
                              if any(entry["path"] == "scripts/ci-known-flaky.json" for entry in base_listing) else None,

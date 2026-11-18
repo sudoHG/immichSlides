@@ -2,7 +2,7 @@ name: ci-publish
 
 on:
   workflow_run:
-    workflows: [ci-gate, ci-ui]
+    workflows: [ci-gate]
     types: [requested, in_progress, completed]
   workflow_dispatch:
     inputs:
@@ -106,11 +106,3 @@ jobs:
           CI_PR_NUMBER: ${{ needs.route.outputs.pr }}
           CI_PUSHED_SHA: ${{ needs.route.outputs.pushed }}
         run: '"$RUNNER_TEMP/ci-python/bin/python3" -B scripts/ci_publish.py publish'
-      - name: Retain the trusted complete UI verdict
-        if: steps.publish.outputs.ui_verdict_tree != ''
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: ci-ui-verdict-${{ steps.publish.outputs.ui_verdict_tree }}
-          path: ${{ runner.temp }}/ci-ui-verdict/verdict.json
-          if-no-files-found: error
-          retention-days: 30

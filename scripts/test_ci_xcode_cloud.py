@@ -548,43 +548,6 @@ class GroupEvidenceTests(unittest.TestCase):
         self.assertEqual(set(diagnostics["xcode_cloud"]["groups"]), {"ios", "tvos"})
         self.assertTrue(all("identities" not in group for group in diagnostics["xcode_cloud"]["groups"].values()))
 
-    def test_publication_reads_cloud_only_for_selected_skipped_groups_and_ignores_failed_cloud_on_complete_fallback(self):
-        from ci_publish import compute
-        from ci_publish_git import BASE_MODULES, OPTIONAL_BASE_MODULES
-        modules = {name: (Path(__file__).parent / name).read_text() for name in BASE_MODULES + OPTIONAL_BASE_MODULES}
-        run = dict(self.run, workflow_id=42, status="completed", conclusion="success", head_branch="feature")
-        workflow = {"id": 42, "path": cloud.UI_PATH}
-        pr = {"number": 7, "state": "open", "head": {"sha": "a" * 40, "repo": {"full_name": "owner/repo"}},
-              "base": {"ref": "main", "repo": {"full_name": "owner/repo"}}}
-        api = Mock(repository="owner/repo")
-        api.repo.return_value = pr
-        with patch("ci_publish.workflows", return_value={"ci-ui": workflow}), \
-                patch("ci_publish.approved_status", return_value=False), patch("ci_publish.approval_requests", return_value=[]), \
-                patch("ci_publish_git.trusted_reader", return_value=modules), \
-                patch.object(self.groups, "trusted_groups", side_effect=ContractError("Cloud failed")) as read_cloud:
-            record, jobs, summaries, _ = self.gate_fixture(set())
-            record.update(workflow_id=42, workflow_path=cloud.UI_PATH)
-            api.pages.side_effect = lambda path, *args, **kwargs: [run] if path.endswith("/runs") else jobs
-            with patch("ci_publish.trusted_admissions", return_value={123: record}), \
-                    patch("ci_publish.producer_evidence", return_value=(jobs, summaries)):
-                self.assertEqual(compute(api, 7, "", "publisher")[1]["ci-ui"]["state"], "success")
-                read_cloud.assert_not_called()
-            record, jobs, summaries, _ = self.gate_fixture({"ios"})
-            record.update(workflow_id=42, workflow_path=cloud.UI_PATH)
-            with patch("ci_publish.trusted_admissions", return_value={123: record}), \
-                    patch("ci_publish.producer_evidence", return_value=(jobs, summaries)):
-                status = compute(api, 7, "", "publisher")[1]["ci-ui"]
-                self.assertEqual(status["state"], "failure")
-                self.assertIn("Cloud ios", status["description"])
-                self.assertIn("NOT_RUN", status["description"])
-                self.assertEqual({item["identity"]["dimensions"]["device"] for item in status["diagnostics"]["missing"]},
-                                 {"iphone", "ipad"})
-                self.assertEqual(read_cloud.call_args.args[3], {"ios"})
-            record["ui_inputs"]["base"]["selection"]["shards"]["appletv"] = {}
-            tv_skip = {"name": "ui-appletv-scoped-a", "conclusion": "skipped"}
-            source = record["workflows"][cloud.UI_PATH]["base"]
-            self.assertEqual(self.groups.skipped_groups(source, run, jobs + [tv_skip], record, approved=False), {"ios"})
-
 
 class GroupProducerTests(unittest.TestCase):
     """Guard scheduling, pointer provenance and exact plan materialization."""

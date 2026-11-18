@@ -43,7 +43,7 @@ A strict row may invoke more than one XCTest method.
 | Target tier | Responsibility | Frequency |
 |---|---|---|
 | Deterministic App unit and no-UI interface tests | Playback, pause/resume, history, late callbacks, filters, settings, server errors, cache and PIN rules through production code; fake clocks, in-memory stores, controlled continuations, loopback HTTP or URLProtocol | Every PR, on iOS and tvOS |
-| Existing per-PR functional UI smoke (`pr-smoke`) | Keep the `functional_smoke` methods in `ci-ui-areas.json`, including the iOS keyboard and tvOS first-boot form checks; the iOS method runs on iPhone and iPad | Every applicable PR on each selected device, under the unchanged UI selection policy |
+| Legacy functional UI smoke (`pr-smoke`) | Retain the `functional_smoke` inventory and methods until the bulk-deletion phase | Manual legacy UI execution only; no PR trigger |
 | Short real-App smoke | Keyboard, remote/focus, native controls, navigation, relaunch and background wiring; one user purpose per bounded flow | Nightly: exactly 23 device flows |
 | Human visual review | Screenshots and short recordings, including actual paused and transitional output, crops, text and focus appearance | Weekly, affected visual PRs and before release |
 | Existing safety and build gates | Privacy, release isolation, localization, official-result completeness, source identity and exact-head approval | Keep the existing gates |
