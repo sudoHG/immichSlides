@@ -252,7 +252,7 @@ producer cannot substitute full evidence. Partial, mixed or extra populations fa
 Only independently empty selected shards may be unexecuted literal skips.
 Scoped success cannot supply a full post-merge reuse receipt.
 GitHub cannot skip one entry of a static matrix, so the reader accepts
-[bound dynamic shard lists](CI_PUBLISHER.md#bound-dynamic-ui-shards). The main Cloud
+[bound dynamic shard lists](#scheduling-the-selection). The main Cloud
 router keeps every group on GitHub while its reviewed registry is absent.
 [Grouped Cloud routing](XCODE_CLOUD_UI.md) uses the same functional selection
 after separate activation. Nightly and main push deferral retain their contracts;
@@ -270,7 +270,7 @@ The `ci-ui.yml` producer activates the reader's protocol with the literal
 The reader landed separately before this producer. Historical unflagged runs
 retain their original contract. No assertions, skips, deadlines or default plans change.
 
-The [acceleration reader](CI_PUBLISHER.md#prepared-scoped-ui-acceleration-reader)
+The [retained acceleration reader](../scripts/ci_publish_git.py)
 landed before the producer's `--scoped-ui-v2` and
 `--compiled-from-official-results` activation. Eligible scoped PR shards discover
 compiled methods from the first official test result instead of starting a
@@ -353,13 +353,13 @@ UI summary to carry the same `hashes.manifests.ui-scoped-plan` hash. Declared,
 compiled and observed identities must equal the base plan for that job. An active
 packed run cannot substitute legacy full-shard evidence; empty platforms still
 declare their devices and admit only an unexecuted collapsed matrix skip. See
-[publisher validation](CI_PUBLISHER.md#packed-scoped-ui-protocol).
+[retained validation](../scripts/ci_publish_git.py).
 The producer publishes this plan, carries its exact per-job selectors,
 and avoids waiting for or downloading an unselected platform's gate archive.
 Archive identity and signature checks remain mandatory for every selected platform.
 An earlier build with a different head/base/tree cannot supply a cache shortcut.
 
-The [acceleration reader](CI_PUBLISHER.md#prepared-scoped-ui-acceleration-reader)
+The [retained acceleration reader](../scripts/ci_publish_git.py)
 requires official-result discovery intent on every shard command before admitting
 `capacity-v2`. A shard with an approved base fixture deselection keeps version 1
 and preliminary enumeration. Base policy controls only this protocol eligibility;

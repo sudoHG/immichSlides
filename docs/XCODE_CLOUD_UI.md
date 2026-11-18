@@ -635,7 +635,7 @@ The remainder of this section describes the historical v1 router. Its CLI no
 longer starts new builds; the grouped policy above replaces it after activation.
 Without a reviewed active registry, pull-request UI runs on GitHub only.
 Functional packing makes every app-affecting PR
-[scoped](CI_PUBLISHER.md#bound-dynamic-ui-shards), including core, unknown and
+[scoped](CI_UI.md#platform-selection-and-capacity-packing), including core, unknown and
 CI-changing PRs; the historical router returned `scoped-ui-selection` for them.
 Nightly and main-push scheduling are unaffected. The historical full-selection
 overflow protocol below requires trusted `app_affected is True`, a base selection
